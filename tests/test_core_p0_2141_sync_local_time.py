@@ -56,7 +56,10 @@ def test_phase_clocks_keep_inventory_and_download_distinct(paris_clock):
         ),
     )
     rendered = sync_source_presentation(source)
-    assert "Dernier succès 20/10/2026 13:55" in rendered.sync_label
+    # A local partial phase makes the current status actionable; the
+    # earlier successful timestamp remains visible only as history.
+    assert rendered.sync_label == "État à vérifier"
+    assert "Dernier succès confirmé : 20/10/2026 13:55" in rendered.summary
     assert "Notices et droits : Réussie · dernier essai 20/10/2026 13:55" in rendered.summary
     assert "Téléchargement local : Partielle · dernier essai 20/10/2026 13:54" in rendered.summary
     assert "Téléchargement local : Partielle · dernier essai 20/10/2026 13:54 · dernier succès" not in rendered.summary
