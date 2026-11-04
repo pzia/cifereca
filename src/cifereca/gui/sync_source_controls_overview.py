@@ -69,9 +69,15 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
     # Match the effective/suspended semantics of the sticky dashboard.
     # Persisted ON is a preference, not an operational permission when the
     # selected source is disabled or its session is disconnected.
-    source_enabled = getattr(source, "enabled", None) is True
-    source_connected = getattr(source, "connected", None) is True
-    available = source_enabled and source_connected
+    raw_enabled = getattr(source, "enabled", None)
+    raw_connected = getattr(source, "connected", None)
+    available = raw_enabled is True and raw_connected is True
+    suspended = raw_enabled is False or raw_connected is False
+    # An unknown/malformed broker flag is NOT a confirmed OFF connection.
+    inactive_suffix = (
+        " (suspendue)" if suspended else
+        " (effet non confirmé)" if not available else ""
+    )
     parts = []
     if "remote_inventory" in capabilities:
         if "scheduled_refresh" in capabilities:
@@ -95,7 +101,7 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
                 }[policy["mode"]]
                 parts.append(
                     "Notices et droits : " + mode
-                    + (" (suspendue)" if mode != "manuelle" and not available else "")
+                    + (inactive_suffix if mode != "manuelle" else "")
                 )
             else:
                 parts.append("Notices et droits : réglage indisponible")
@@ -143,15 +149,19 @@ def sync_source_controls_overview(source: object, broker: object) -> str:
             parts.append(
                 "Fichiers : autorisation "
                 + ("activée" if consent["enabled"] else "désactivée")
-                + (" (suspendue)" if consent["enabled"] and not available else "")
+                + (inactive_suffix if consent["enabled"] else "")
             )
 
     if not parts:
         return ""
-    if not source_enabled:
+    if raw_enabled is False:
         parts.append("source désactivée")
-    if not source_connected:
+    elif raw_enabled is not True:
+        parts.append("activation de la source non confirmée")
+    if raw_connected is False:
         parts.append("source déconnectée")
+    elif raw_connected is not True:
+        parts.append("connexion de la source non confirmée")
     return "Réglages · " + " · ".join(parts)
 
 
@@ -180,8 +190,10 @@ def sync_axes_dashboard_summary(sources: object, broker: object) -> str:
             continue
         sid = getattr(source, "source_id", None)
         scoped = type(sid) is str and bool(sid) and len(sid) <= 256
-        available = (getattr(source, "enabled", None) is True
-                     and getattr(source, "connected", None) is True)
+        raw_enabled = getattr(source, "enabled", None)
+        raw_connected = getattr(source, "connected", None)
+        available = raw_enabled is True and raw_connected is True
+        suspended = raw_enabled is False or raw_connected is False
         if "remote_inventory" in caps and "scheduled_refresh" in caps:
             policy = None
             reader = getattr(broker, "inventory_refresh_schedule", None)
@@ -201,8 +213,10 @@ def sync_axes_dashboard_summary(sources: object, broker: object) -> str:
                 manual += 1
             elif available:
                 scheduled += 1
-            else:
+            elif suspended:
                 inventory_suspended += 1
+            else:
+                inventory_unknown += 1
 
         if "local_materialization" in caps:
             consent = None
@@ -232,8 +246,10 @@ def sync_axes_dashboard_summary(sources: object, broker: object) -> str:
             elif consent["enabled"]:
                 if consent["supported"] and available:
                     authorized += 1
-                else:
+                elif not consent["supported"] or suspended:
                     consent_suspended += 1
+                else:
+                    consent_unknown += 1
 
     message = (
         f"Notices et droits : {scheduled} programmation(s) active(s)"
