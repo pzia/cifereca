@@ -1,7 +1,7 @@
 """#3909: terminal errors identify each Core post-staging phase privately.
 
-The executor receives only synthetic PDF bytes. Provider exceptions are
-deliberately malicious and must not reach Trace, terminal reason or logs.
+The executor receives only synthetic PDF bytes. The original failure is kept
+in the local raw journal, with a closed terminal reason for UI consumers.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def _raise_private(*_args, **_kwargs):
 
 
 @pytest.mark.parametrize("phase,target,code", _PHASES)
-def test_exact_failure_phase_is_closed_without_source_or_path_leak(
+def test_exact_failure_keeps_raw_cause_and_closed_terminal_reason(
     rig, caplog, monkeypatch, phase, target, code,
 ):
     service, account, source, snapshot, root, lock_path = rig
@@ -65,12 +65,25 @@ def test_exact_failure_phase_is_closed_without_source_or_path_leak(
     )
     assert any(f"TRACE convergence code=canonical_{phase}_failed" in line
                for line in messages)
-    rendered = "\n".join(messages)
-    assert _SECRET not in rendered
-    assert str(root) not in rendered
-    assert "card-A" not in rendered
-    assert "buyer-A" not in rendered
-    assert "Traceback" not in rendered
+    failure = next(r for r in caplog.records
+                   if f"TRACE convergence code=canonical_{phase}_failed" in r.getMessage())
+    assert failure.exc_info[0] is RuntimeError
+    assert str(failure.exc_info[1]) == _SECRET
+    for field, value in (
+        ("identity_id", source.scope.identity_id),
+        ("provider_id", source.scope.provider_id),
+        ("credential_id", source.scope.credential_id),
+        ("account_id", source.scope.account_id),
+        ("edition_id", source.edition_id), ("right_id", source.right_id),
+    ):
+        assert f"{field}={value}" in failure.getMessage()
+    assert _SECRET in caplog.text and "Traceback" in caplog.text
+    assert _SECRET not in repr(result)
+    # Status events and the raw failure refer to this same exact item/run.
+    observed = next(line for line in messages if line.startswith("TRACE canonical_flow "))
+    for token in failure.getMessage().split():
+        if token.startswith(("run_ref=", "item_ref=")):
+            assert token in observed
 
 
 def test_failure_reason_allowlist_rejects_raw_exception(caplog):
@@ -87,3 +100,35 @@ def test_failure_reason_allowlist_rejects_raw_exception(caplog):
     assert len(messages) == 1
     assert "reason=none" in messages[0]
     assert _SECRET not in messages[0]
+
+
+def test_original_exception_chain_is_retained_without_affecting_result(rig, caplog):
+    service, account, source, snapshot, root, lock_path = rig
+    def deliver(*_args):
+        try:
+            raise OSError("synthetic runtime returned no artifact /tmp/book.epub")
+        except OSError as cause:
+            raise ValueError("canonical_delivery_runtime_result_invalid") from cause
+    with caplog.at_level(logging.WARNING, logger="cifereca"):
+        outcome = run(service, account, snapshot, root, lock_path, {source}, deliver)
+    assert outcome[0].reason == "canonical_delivery_failed"
+    assert "canonical_delivery_runtime_result_invalid" in caplog.text
+    assert "synthetic runtime returned no artifact /tmp/book.epub" in caplog.text
+    assert "direct cause" in caplog.text
+    assert "runtime_result_invalid" not in repr(outcome)
+    assert rows(service.storage) == (0, 0, 0, 0)
+
+
+def test_broken_diagnostic_handler_never_retries_or_changes_failed_outcome(rig, monkeypatch):
+    from cifereca.core import canonical_flow_trace
+    service, account, source, snapshot, root, lock_path = rig
+    monkeypatch.setattr(canonical_flow_trace._LOG, "warning",
+                        lambda *_a, **_k: (_ for _ in ()).throw(OSError("log unavailable")))
+    calls = []
+    def deliver(*_args):
+        calls.append("one-attempt")
+        raise ValueError("canonical_delivery_runtime_result_invalid")
+    outcome = run(service, account, snapshot, root, lock_path, {source}, deliver)
+    assert outcome[0].reason == "canonical_delivery_failed"
+    assert calls == ["one-attempt"]
+    assert rows(service.storage) == (0, 0, 0, 0)
