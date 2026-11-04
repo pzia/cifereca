@@ -122,7 +122,7 @@ def test_bad_html_and_redirects_never_count_as_empty_loans(reply, reason):
         assert snapshot.status == "partial"
         assert snapshot.loans == ()
         assert [(b.upstream, b.completeness) for b in snapshot.branches] == [
-            ("dilicom", "partial"), ("syracuse", "unknown"),
+            ("dilicom", "partial"), ("syracuse", "complete"),
         ]
         # Typed snapshots publish only bounded branch evidence.
         assert "last_loan_errors" not in vars(session)
@@ -148,8 +148,9 @@ def test_both_404_then_upstream_recovers_without_claiming_absence():
         snapshot = session.loan_inventory_snapshot(account)
         assert snapshot.status == "success"
         assert snapshot.loans == ()
-        # Even a valid empty Paris response does not attest exhaustive absence.
-        assert all(branch.completeness == "unknown" for branch in snapshot.branches)
+        # A fresh, valid empty response attests only this exact borrower.
+        assert all(branch.completeness == "complete" and branch.pagination_complete is True
+                   for branch in snapshot.branches)
         assert "last_loan_errors" not in vars(session)
     finally:
         session.close()

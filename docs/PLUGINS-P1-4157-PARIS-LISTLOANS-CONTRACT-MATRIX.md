@@ -1,63 +1,67 @@
-# #4157 — matrice d'acceptation ListLoans Paris (préparation sans modification de l'adaptateur)
+# #4157 — couverture de lecture ListLoans Paris
 
-## Frontière de travail
+## Autorité et portée
 
-Tant que le P0 [#3723](https://github.com/pzia/cifereca/issues/3723)
-réserve les modules `provider-paris/cifereca_paris*.py`, le P1 ne
-modifie **que les tests et cette documentation**. Aucun accès à un
-compte réel, ni échange HTTP externe, ni appel ADEPT, ni mutation de
-droit, emprunt, restitution, fichier ou base de données.
+L’arbitrage utilisateur du 02/11/2026 considère la consultation officielle
+ListLoans réussie comme la liste courante complète du **compte exact et de
+la branche demandée**, y compris `Loans=[]`. Aucun indicateur de pagination
+supplémentaire n’est exigé sur la réponse nominale de cette API.
 
-`test_p1_4157_listloans_completeness_matrix.py` simule avec
-`httpx.MockTransport` les deux lectures officielles
-`UserAccountService.svc/ListLoans` avec
-`serviceCode=DILICOM|SYRACUSE` et le même `userUniqueIdentifier`.
-Les assertions sur les emprunts positifs sont **actives dès maintenant**.
+Le client exige HTTP réussi sans redirection, JSON `success=true`, enveloppe
+`d.Loans` sous forme de liste de dictionnaires. Les indicateurs explicites de
+pagination inachevée et les totaux contradictoires sont refusés (#4474).
+Le lecteur conserve ses gardes identité/credential/emprunteur/instance de compte
+et sa sérialisation avec connexion et fermeture ; aucun cache ni GET n’est ajouté.
 
-## Critères
+## Certificat par branche
 
-| Scénario | Comportement exigé | État dans cette tranche |
-| --- | --- | --- |
-| Réponse JSON `success=true`, `d.Loans=[]` | Observation valable; 0 ligne positive; une éventuelle attestation de fin de liste doit rester *par branche et compte* | Régression active ; attestation positive **xfail explicite** |
-| 1/N lignes DILICOM et SYRACUSE | Pas de fusion des deux supports, scope identité+connexion+emprunteur, exactement 2 GET | Régression active ; attestation positive **xfail explicite** |
-| Échec 401, timeout, HTML, redirection, liste absente ou malformée sur une branche | `partial`; branche défaillante sans preuve d'absence; l'autre branche conserve ses seules observations positives | Régression active |
-| Marqueurs `HasMore`, `NextPage`, `ContinuationToken`, `TotalCount/PageSize` non qualifiés | **Jamais** un certificat `complete` issu d'un nombre de lignes ou d'un indicateur ambigu; le futur parseur devra rejeter la pagination non résolue | Garde « pas de fausse complétude » active |
-| Changement de lecteur, identité, credential, session après le premier GET | Aucun deuxième GET privé; aucun snapshot publié sous un ancien scope | Régression active |
-| Compte étranger avant lecture | Refus avant tout GET | Régression active |
-| Fin de liste réellement attestée par le contrat officiel pour chaque service et emprunteur | `LoanBranchCoverage(completeness="complete", pagination_complete=True)` pour **chaque branche réussie**, y compris liste vide | **Non livré : xfail explicite** |
+`_snapshot_for_account` qualifie séparément `dilicom/digital` et
+`syracuse/physical`. Une branche lue avec succès porte `complete` et
+`pagination_complete=True` si toutes ses lignes ont des identifiants amont
+`Id`/`HoldingId` et `RecordId` valides, correspondent au Loan normalisé et ne
+répètent pas le même identifiant de prêt. Une liste vide valide est complète.
 
-**Point de preuve restant :** documenter/tester précisément la garantie
-officielle de réponse non paginée, l'absence effective de jeton de
-continuation, et les champs de compte nécessaires pour rejeter les
-réponses hétérogènes. La décision produit « liste exhaustive quand
-la consultation officielle réussit » ne dispense jamais le parseur
-d'une forme de réponse valide.
+| Scénario | Couverture et résultat |
+| --- | --- |
+| Deux branches nominales, 0/1/N prêts | Chaque branche `complete`, snapshot `success` |
+| Erreur HTTP/auth, timeout, HTML, redirection, forme/pagination invalide | Branche `partial/branch_unavailable`, snapshot `partial` ; certificat propre de la branche réussie conservé |
+| Identifiants manquants/invalides, même prêt répété ou contradictoire | Branche `partial/invalid_response`, snapshot `partial` ; lignes positives/descriptives conservées, aucune absence certifiée |
+| Client legacy fournissant des Loan sans preuve brute | Branche `unknown`, aucun certificat de complétude fabriqué |
+| Scope étranger, compte remplacé, credential/session révoqué | Refus ; pas de deuxième GET privé sous un scope changé |
+| Nouvelle lecture vide après une lecture non vide | Nouvelle observation indépendante, sans réutilisation des lignes/preuves précédentes |
 
-Le statut `LoanInventorySnapshot.success` désigne la réussite de
-lecture des branches, **pas** l'acquisition de fichiers ni la
-convergence locale. Une erreur ADEPT/placement conserve son propre
-statut `partial/failed` même avec un inventaire distant complet.
-La préférence personnelle de plafond #4065 n'autorise ni nouvelle
-transaction, ni calcul d'un quota serveur ou d'un « reste ».
+Le helper public `branch_claims_complete` conserve sa garde Core : un
+snapshot globalement `partial` n’autorise aucune clôture par absence, même
+si sa branche sœur porte un certificat positif. Cette PR ne modifie pas le Core.
 
-## Suite dès déverrouillage du P0
+## Lecture, livraison et conservation
 
-1. Qualifier, avec le contrat effectivement exposé par le fournisseur,
-   le succès terminal de `ListLoans` pour chaque couple
-   `(userUniqueIdentifier, serviceCode)`.
-2. Ajouter la validation stricte dans le client Paris, sans dégrader les
-   protections HTTP, les conditions de réauthentification et l'isolation
-   de compte. Le parseur devra préserver les détails de cause dans le
-   journal privé uniquement ; aucun texte de réponse brut ne doit
-   devenir un motif d'autorisation.
-3. Publier la couverture positive par branche **uniquement après**
-   les vérifications de réponse et de compte, tout en conservant
-   `partial` pour la branche échouée.
-4. Lever les `xfail` du test d'attestation positive et ajouter un
-   contrôle strict de rejet des marqueurs de pagination explicitement
-   non terminaux. Passer la CI plugins, les tests Core pertinents et
-   l'installation/rollback sur le HEAD final, puis effectuer une
-   recette réelle **sans échec ADEPT** pour vérifier l'état global.
+La couverture décrit la **consultation distante**, jamais la disponibilité
+locale d’un EPUB/PDF, la réussite ADEPT, le consentement ou un droit à une
+nouvelle action. Un fichier manquant ou une acquisition échouée conserve son
+état `partial/failed`. Aucune restitution volontaire, suppression de fichier
+ou mutation fournisseur n’est effectuée par les adaptateurs d’inventaire.
 
-Les fixtures sont entièrement synthétiques ; aucune pièce privée ni
-capture de prêt historique n'est publiée.
+Les tests d’intégration utilisent le vrai adaptateur Paris sur
+`httpx.MockTransport`, puis la Sync Core et SQLite/FS réels :
+
+- liste non vide puis zéro valide : seul le prêt numérique du borrower exact
+  est terminé ; l’autre borrower reste actif ; Placements, origines fournisseur
+  et ADEPT et octets sont conservés ; un prêt réobservé redevient actif ;
+- une branche indisponible ne permet aucune fausse clôture ;
+- source correctement lue avec fichier exact attesté : résultat nominal ;
+  fichier manquant ou branche échouée : résultat partiel, sans acquisition.
+
+Suites : `src/plugins/provider-paris/tests/test_p1_4157_listloans_completeness_matrix.py`
+et `tests/test_p1_4157_paris_complete_inventory_core.py`, plus les gardes
+existantes #3222/#3252/#3723 et le gate de conformance Paris/BnF.
+Les trois anciens `xfail` d’acceptation positive deviennent des assertions
+actives ; les autres `xfail` documentaires restent indépendants.
+
+Les réponses HTTP et données des tests sont synthétiques. Les recettes réelles
+consignées dans #4157 et #3723 attestent des lectures nominales distinctes
+(2 DILICOM + 12 SYRACUSE pour une portée, zéro pour une autre), sans prouver à
+elles seules l’ancienne valeur interne du certificat. Aucun nouvel emprunt,
+retour, fulfillment ADEPT ou capture n’est requis pour cette livraison technique.
+Les optimisations de relecture/cache restent #4281 et le cas BnF réellement
+sans prêt reste #4480 P2/PU.

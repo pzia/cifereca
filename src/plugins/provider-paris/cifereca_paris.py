@@ -95,6 +95,47 @@ def _paris_pnb_offer_id(scope, edition_id: str, right_id: str) -> str:
     return "paris.pnb:" + hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()
 
 
+def _paris_loan_branch_coverage(rows, upstream, medium, failed):
+    """Qualify one successful scoped ListLoans read, independently of files."""
+    def partial(reason):
+        return LoanBranchCoverage(
+            upstream=upstream.casefold(), medium=medium,
+            completeness="partial", reason_code=reason,
+        )
+
+    if upstream in failed:
+        return partial("branch_unavailable")
+    seen = set()
+    legacy = False
+    for row in rows:
+        if row.provider not in ("DILICOM", "SYRACUSE"):
+            return partial("invalid_response")
+        if row.provider != upstream:
+            continue
+        if row.medium != medium:
+            return partial("invalid_response")
+        if type(row.raw) is not dict or not row.raw:
+            # A legacy/custom client may supply descriptive Loan objects,
+            # but cannot attest provider identifiers or negative absence.
+            legacy = True
+            continue
+        identifiers = (row.raw.get("Id") or row.raw.get("HoldingId"),
+                       row.raw.get("RecordId"))
+        if any(type(value) not in (str, int) or not 1 <= len(str(value)) <= 1024
+               or any(c in str(value) for c in ("\x00", "\r", "\n"))
+               for value in identifiers):
+            return partial("invalid_response")
+        loan_id, record_id = map(str, identifiers)
+        if row.id != loan_id or row.record_id != record_id or loan_id in seen:
+            return partial("invalid_response")
+        seen.add(loan_id)
+    return LoanBranchCoverage(
+        upstream=upstream.casefold(), medium=medium,
+        completeness="unknown" if legacy else "complete",
+        pagination_complete=None if legacy else True,
+    )
+
+
 
 DESCRIPTOR = ProviderDescriptor(
     id="paris",
@@ -703,11 +744,12 @@ class ParisProviderSession(ProviderSession):
             return self._snapshot_for_account(account)
 
     def _snapshot_for_account(self, account: Account) -> LoanInventorySnapshot:
-        """One scoped legacy read with separate DILICOM/SYRACUSE evidence.
+        """One scoped read; each qualified ListLoans branch is complete.
 
-        Neither legacy Paris upstream currently attests pagination/exhaustive
-        absence. Consequently even an all-successful read claims UNKNOWN
-        completeness, never proof that a missing loan was returned.
+        The official endpoint returns the current whole list, including zero
+        loans. HTTP/shape/pagination failures are rejected by the client;
+        malformed or ambiguous row IDs cannot certify absent loans here.
+        No local file or ADEPT success is inferred from this certificate.
         """
         # A borrower may be passed as an Account copy by the Core; choose
         # the unique live account by its scoped values, but then pin that
@@ -772,11 +814,7 @@ class ParisProviderSession(ProviderSession):
             for row in rows
         )
         branches = tuple(
-            LoanBranchCoverage(
-                upstream=upstream.casefold(), medium=medium,
-                completeness="partial" if upstream in failed else "unknown",
-                reason_code="branch_unavailable" if upstream in failed else None,
-            )
+            _paris_loan_branch_coverage(normalized, upstream, medium, failed)
             for upstream, medium in (
                 ("DILICOM", "digital"), ("SYRACUSE", "physical")
             )
@@ -784,9 +822,11 @@ class ParisProviderSession(ProviderSession):
         return LoanInventorySnapshot(
             scope=LoanInventoryScope.for_account(account),
             loans=normalized,
-            status="partial" if failed else "success",
+            status="partial" if any(b.completeness == "partial" for b in branches) else "success",
             branches=branches,
-            reason_code="branch_unavailable" if failed else None,
+            reason_code=("branch_unavailable" if failed else
+                         "invalid_response" if any(b.reason_code == "invalid_response"
+                                                   for b in branches) else None),
         )
 
     def rights_observation_snapshot(self, account: Account) -> ProviderRightsSnapshot:
