@@ -348,9 +348,7 @@ def test_revoking_formats_returns_to_unconfigured_without_physical_change(
     ("target_occupied", "blocked"),
     ("target_volume_read_only", "blocked"),
     ("target_space_insufficient", "blocked"),
-    ("target_mount_changed", "verify"),
-    ("target_io_unverified", "verify"),
-    ("target_scope_unverified", "verify"),
+    ("target_directory_unbounded", "verify"),
 ])
 def test_physical_target_refusals_stop_content_read(
     tmp_path, monkeypatch, preflight_reason, expected_action,
@@ -381,6 +379,32 @@ def test_physical_target_refusals_stop_content_read(
     assert calls[0]["intention"]["target_relative_path"] == TARGET
     assert db.device_placements() == before
     assert book.read_bytes() == PAYLOAD
+
+
+@pytest.mark.parametrize("reason", [
+    "target_mount_changed", "target_mount_unverified",
+    "target_scope_unverified", "target_io_unverified",
+    "target_directory_changed", "target_directory_unverified",
+])
+def test_lost_physical_mount_or_directory_attestation_discards_all_rows(
+    tmp_path, monkeypatch, reason,
+):
+    db, root, book, mount = setup(tmp_path)
+    db.device_usb_reader_formats_set(
+        identity_id="alice", device_id="reader-a",
+        usb_fingerprint="uuid-alice-0001", supported_formats=("epub",),
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: fake_scan())
+    monkeypatch.setattr(
+        run, "preflight_usb_target",
+        lambda **_: run.UsbTargetPreflight("blocked", reason),
+    )
+    result = inspect(db, root, mount)
+    assert result.status == "scope_unverified"
+    assert result.rows == ()
+    assert result.scan_attested is False
+    assert result.observed_at is None
+    assert result.executable is False
 
 
 def test_available_space_must_cover_this_batch_plus_reserve(
