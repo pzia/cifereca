@@ -30,6 +30,9 @@ from .canonical_recovery import (
 from .source_convergence import SourceKey
 
 _LOG = logging.getLogger("cifereca")
+# A damaged/imported SQLite may contain arbitrarily many claims to one A.
+# Bound the receipt comparison *before* loading rows into Python.
+_MAX_EXACT_ORIGIN_ROWS = 512
 
 
 def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
@@ -63,11 +66,17 @@ def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
         "AND s.account_id=? AND s.branch_id=? "
         "AND s.edition_id=? AND s.right_id=? "
         "AND s.reference_kind=? AND s.evidence_kind='provider_response' "
-        "AND s.evidence_ref<>''",
+        "AND s.evidence_ref<>'' "
+        "ORDER BY o.origin_link_id LIMIT ?",
         (row[2], scope.identity_id, scope.identity_id, scope.provider_id,
          scope.credential_id, scope.account_id, source.branch,
-         source.edition_id, source.right_id, source.kind),
+         source.edition_id, source.right_id, source.kind,
+         _MAX_EXACT_ORIGIN_ROWS + 1),
     ).fetchall()
+    if len(references) > _MAX_EXACT_ORIGIN_ROWS:
+        # A truncated link set might exclude the only genuine receipt.
+        # Do not pick an arbitrary one or promote unbounded provenance.
+        raise ValueError("canonical_stock_receipt_missing_or_ambiguous")
     if not references:
         raise ValueError("canonical_stock_exact_origin_missing")
 
