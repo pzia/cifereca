@@ -37,6 +37,13 @@ _REASON_LABELS = {
     "owned_source_unverified": "Fichier local ou propriété non vérifiables",
     "invalid_intent": "Intention illisible",
     "device_disabled_or_unverified": "Liseuse désactivée ou non attestée",
+    "reader_formats_unconfigured": "Formats acceptés non déclarés pour cette liseuse",
+    "reader_format_unsupported": "Format du livre non déclaré compatible avec cette liseuse",
+    "selected_variant_unverified": "Variante du fichier non qualifiée",
+    "target_variant_suffix_mismatch": "Extension de destination incompatible avec la variante",
+    "reader_scope_unverified": "Profil ou volume USB non vérifiable",
+    "protection_reported": "Protection DRM signalée : transfert interdit",
+    "drm_and_transfer_rights_unverified": "Format déclaré ; droits DRM et de copie non vérifiés",
 }
 _CURRENT = {
     "present": "Présence observée lors de cet examen",
