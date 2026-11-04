@@ -111,6 +111,7 @@ PARIS_LOAN_ERROR_CODES = frozenset({
     "paris_loans_json_shape_invalid",
     "paris_loans_transport_timeout",
     "paris_loans_transport_failed",
+    "paris_loans_pagination_incomplete",
 })
 
 
@@ -474,6 +475,25 @@ class ParisClient:
             rows = envelope["Loans"]
             if type(rows) is not list or any(type(row) is not dict for row in rows):
                 raise ParisError("paris_loans_inventory_shape_invalid")
+            # The active-loan list is authoritative only after the actual
+            # read finishes. Do not promote an explicitly unfinished page to
+            # complete rights coverage (including an empty first page).
+            # This reader has no attested continuation protocol: refuse the
+            # branch instead of guessing another URL or replaying a request.
+            for paging in (data, envelope):
+                unfinished = any(
+                    key in paging and paging[key] is not None
+                    and paging[key] is not False
+                    for key in ("HasMore", "HasMorePages")
+                ) or any(
+                    key in paging and paging[key] not in (None, "", 0)
+                    for key in ("NextPage", "Next", "ContinuationToken")
+                )
+                total = paging.get("TotalCount")
+                if (unfinished or ("TotalCount" in paging and (
+                        type(total) is not int or total < 0 or total != len(rows)))):
+                    raise ParisLoanListError("paris_loans_pagination_incomplete",
+                                             status=r.status_code)
             return [normalize_loan(row, provider) for row in rows]
         return self._timed("API", f"loans {provider}", work)
 
