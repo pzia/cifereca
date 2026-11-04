@@ -18,7 +18,9 @@ import stat
 
 from ..catalog import LocalCatalog
 from .canonical_publication import _physical_target, _same_file
-from .canonical_recovery import _path_verified, _stage_id
+from .canonical_recovery import (
+    _exact_borrower_bound_in_db, _path_verified, _stage_id,
+)
 from .source_convergence import SourceKey
 
 
@@ -351,6 +353,11 @@ def cleanup_published_staging(
             (profile.name, scope.identity_id),
         ).fetchone()
         if registered != (profile.name,) or aliased is not None:
+            return False
+        # This is the final SQLite read/physical-delete boundary, including
+        # direct cleanup callers. A former buyer with the same receipt/SHA
+        # must not erase staging after its connection was disabled or rebound.
+        if not _exact_borrower_bound_in_db(db, scope):
             return False
         for table, column in (
             ("placements", "path"),
