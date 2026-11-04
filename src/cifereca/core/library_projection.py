@@ -19,6 +19,7 @@ from ..core.covers import candidate as cover_candidate, resolve_cover
 from ..models import HistoryItem, Loan, SearchResult
 from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
+from .local_placement_open_guard import scoped_existing_placement_path
 
 
 def refresh_history(self, force: bool=False) -> list[HistoryItem]:
@@ -407,7 +408,6 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         try:
             # The row was already loaded with the complete Placement batch:
             # avoid an extra per-row SQLite placement_get on the GTK path.
-            from .local_placement_open_guard import scoped_existing_placement_path
             path = scoped_existing_placement_path(
                 self, placement, identity_id=identity_id,
             )
