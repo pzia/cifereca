@@ -1315,11 +1315,13 @@ class KoboSession(ProviderSession):
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
         kdrm_ready = kdrm_runtime_ready(self)
+        kdrm_legacy_ready = kdrm_delegated_runtime_ready(self)
         qualification_diagnostic = {}
         offer_id = exact_kobo_offer_id(
             payload, identity_id=identity_id, credential_id=self.credential_id,
             account_id=account_id, product_id=right_id,
             kdrm_runtime_ready=kdrm_ready,
+            kdrm_delegated_ready=kdrm_legacy_ready,
             diagnostic=qualification_diagnostic,
         )
         qualified_reason = (
@@ -1346,6 +1348,7 @@ class KoboSession(ProviderSession):
                     identity_id=identity_id, credential_id=self.credential_id,
                     account_id=account_id, product_id=right_id,
                     kdrm_runtime_ready=kdrm_ready,
+                    kdrm_delegated_ready=kdrm_legacy_ready,
                 ) == offer_id
             ]
             if len(pinned) != 1:
@@ -1363,6 +1366,7 @@ class KoboSession(ProviderSession):
                         delegated, pinned[0], product_id=right_id,
                         account_id=account_id, identity_id=identity_id,
                         credential_id=self.credential_id,
+                        kdrm_delegated_ready=kdrm_legacy_ready,
                     )
                     if source is None:
                         offer_id = ""
@@ -1975,12 +1979,15 @@ class KoboSession(ProviderSession):
             ensure_acquisition_scope()
             if expected_offer_id is not None:
                 from cifereca_kobo_delivery_offer import exact_kobo_offer_id
-                from cifereca_kobo_delivery_offer import kdrm_runtime_ready
+                from cifereca_kobo_delivery_offer import (
+                    kdrm_runtime_ready, kdrm_delegated_runtime_ready,
+                )
                 current = exact_kobo_offer_id(
                     result, identity_id=expected_identity_id,
                     credential_id=self.credential_id,
                     account_id=account_id, product_id=product_id,
                     kdrm_runtime_ready=kdrm_runtime_ready(self),
+                    kdrm_delegated_ready=kdrm_delegated_runtime_ready(self),
                 )
                 if current != expected_offer_id:
                     raise ProviderCapabilityError("kobo_delivery_offer_changed")
