@@ -19,6 +19,9 @@ from .missing_placement_relocation_transaction import relocate_missing_placement
 from .missing_placement_retirement import (
     prepare_missing_placement_retirement, retire_missing_placement,
 )
+from .missing_placement_same_path import (
+    preview_reappeared_missing_placement, restore_reappeared_missing_placement,
+)
 from .missing_placement_catalogue_detachment import (
     prepare_missing_catalogue_detachment, retire_missing_linked_catalogue,
 )
@@ -30,11 +33,12 @@ def _public(result: object, *, preview: bool) -> dict[str, object]:
     status = result.get("status")
     if type(status) is not str or status not in {
         "blocked", "ready", "review_required", "relocated", "retired",
+        "restored",
     }:
         return {"status": "blocked", "reason": "unavailable", "read_only": True}
     outcome: dict[str, object] = {
         "status": status,
-        "read_only": status not in {"relocated", "retired"},
+        "read_only": status not in {"relocated", "retired", "restored"},
     }
     reason = result.get("reason")
     # Caller-facing reasons are bounded fixed Core codes, never SQL errors,
@@ -121,6 +125,37 @@ class MissingPlacementOperatorSession:
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             self.cancel()
             return None
+
+    def preview_same_path_restoration(self, *, placement_id: str) -> dict[str, object]:
+        """One orphan, exact old filename, independent physical SHA proof."""
+        self.cancel()
+        if not self._inspection_complete:
+            return _public(
+                {"status": "blocked", "reason": "incomplete_inspection"},
+                preview=True,
+            )
+        root = self._root()
+        if root is None:
+            return _public(
+                {"status": "blocked", "reason": "scope_changed"},
+                preview=True,
+            )
+        result = preview_reappeared_missing_placement(
+            self._service.storage, placement_id=placement_id,
+            identity_id=self._identity_id, library_root=root,
+        )
+        token = result.get("plan_token")
+        if (result.get("status") == "ready" and type(token) is str
+                and len(token) == 64 and self._root() == root):
+            self._pending = ("restore", placement_id, None, root, token)
+        else:
+            self.cancel()
+            if result.get("status") == "ready":
+                return _public(
+                    {"status": "blocked", "reason": "scope_changed"},
+                    preview=True,
+                )
+        return _public(result, preview=True)
 
     def preview_retirement(self, *, placement_id: str) -> dict[str, object]:
         self.cancel()
@@ -219,7 +254,13 @@ class MissingPlacementOperatorSession:
                 if self._root() != root:
                     return _public({"status": "blocked", "reason": "scope_changed"},
                                    preview=False)
-                if operation == "retire":
+                if operation == "restore":
+                    result = restore_reappeared_missing_placement(
+                        self._service.storage, placement_id=placement_id,
+                        identity_id=self._identity_id, library_root=root,
+                        plan_token=token, confirmed=True, shared_lock=locked,
+                    )
+                elif operation == "retire":
                     result = retire_missing_placement(
                         self._service.storage, placement_id=placement_id,
                         identity_id=self._identity_id, library_root=root,

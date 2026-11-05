@@ -29,6 +29,7 @@ STATES = {
     'unverified_file': 'Fichier non vérifié', 'stored_path_missing': 'Chemin enregistré absent',
     'stored_path_missing_active': 'Chemin absent, placement encore actif',
     'stored_path_missing_historical': 'Ancien emplacement déjà marqué manquant',
+    'stored_path_returned_historical': 'Fichier revenu, placement SQLite encore manquant',
     'stored_path_missing_other': 'Chemin absent, état SQLite atypique',
     'loan_inactive': 'Prêt Paris non actif enregistré (lecture seule)',
     'stored_path_unavailable': 'Chemin non inspectable', 'stored_path_out_of_scope': 'Chemin hors périmètre',
@@ -1147,13 +1148,19 @@ class LocalInspection:
             if len(bounded) < 5:
                 bounded.append(other_path)
         for index, state in audit.stored_paths.states.items():
-            if state not in STATES or not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
+            if not 0 <= index < len(placements) or placements[index].get('identity_id') != identity_id:
+                continue
+            returned_missing = (state == 'stored_path_present'
+                                and placements[index].get('state') == 'missing')
+            if state not in STATES and not returned_missing:
                 continue
             # An old SQLite location is not an active broken link just
             # because its original pathname is absent. Expose the historic
             # state to a private filter, not to any automatic cleanup.
-            case_states = {state}
-            label = STATES[state]
+            case_states = ({'stored_path_returned_historical'} if returned_missing
+                           else {state})
+            label = (STATES['stored_path_returned_historical'] if returned_missing
+                     else STATES[state])
             sqlite_state = placements[index].get('state')
             if state == 'stored_path_missing':
                 bucket = sqlite_state if sqlite_state in ('present', 'missing') else 'other'
@@ -1225,7 +1232,7 @@ class LocalInspection:
                 label + ' ' + _text(placements[index].get('placement_id'))[:128]
                 + ' ' + _text(placements[index].get('path'))[-256:]
             )[:3200]
-            if state == 'stored_path_missing' and sqlite_state == 'missing':
+            if (state == 'stored_path_missing' or returned_missing) and sqlite_state == 'missing':
                 placement_id = placements[index].get('placement_id')
                 if type(placement_id) is str and 0 < len(placement_id) <= 256:
                     self._missing_case_placements[f'path:{index}'] = placement_id
@@ -2193,15 +2200,19 @@ class LocalInspection:
         if self._missing_operator is not None:
             self._missing_operator.cancel()
 
-    def _missing_operator_for_case(self, case_key):
+    def _missing_operator_for_case(self, case_key, *, allow_returned=False):
         if (not self.valid() or not self._manual_audit_complete
                 or self._manual_service is None
                 or type(case_key) is not str
                 or case_key not in self._missing_case_placements):
             return None
         case = self._cases.get(case_key)
-        if (case is None or 'stored_path_missing_historical' not in case.states
-                or not case.key.startswith('path:')):
+        if (case is None or not case.key.startswith('path:')
+                or not (
+                    'stored_path_missing_historical' in case.states
+                    or (allow_returned
+                        and 'stored_path_returned_historical' in case.states)
+                )):
             return None
         if self._missing_operator is None:
             from .missing_placement_operator import MissingPlacementOperatorSession
@@ -2211,6 +2222,31 @@ class LocalInspection:
                 inspection_complete=self._manual_audit_complete,
             )
         return self._missing_operator
+
+    def preview_missing_same_path_restoration(self, case_key):
+        """Only a fully observed returned original path can be reactivated.
+
+        A file's presence alone is never a right or OriginLink: the private
+        operator independently checks an orphan, exact Artifact SHA and scope.
+        """
+        self.cancel_missing_repair()
+        case = self._cases.get(case_key) if type(case_key) is str else None
+        if (case is None
+                or 'stored_path_returned_historical' not in case.states):
+            return {'status': 'blocked', 'reason': 'file_not_observed',
+                    'read_only': True}
+        operator = self._missing_operator_for_case(
+            case_key, allow_returned=True,
+        )
+        if operator is None:
+            return {'status': 'blocked', 'reason': 'inspection_scope_unavailable',
+                    'read_only': True}
+        outcome = operator.preview_same_path_restoration(
+            placement_id=self._missing_case_placements[case_key],
+        )
+        if outcome.get('status') == 'ready':
+            self._missing_pending = (case_key, None)
+        return outcome
 
     def preview_missing_retirement(self, case_key):
         """CoreUI-only read-only preview for a historical path in this audit."""
@@ -2283,7 +2319,7 @@ class LocalInspection:
         outcome = operator.confirm(user_confirmed=True)
         # A successful SQLite write invalidates the audit stamp. The UI must
         # close/reopen this inspection instead of displaying stale evidence.
-        if outcome.get('status') in ('relocated', 'retired'):
+        if outcome.get('status') in ('relocated', 'retired', 'restored'):
             self.close()
         return outcome
 
