@@ -106,3 +106,34 @@ def test_real_epub_bytes_keep_core_final_veto_and_attribution(
         again = synchronize_account_source(service, service.account)
         assert again["canonical_execution"]["present_attested"] == 1
         assert calls == ["candidate"]
+
+
+def test_font_only_xmlenc_namespace_epub_is_receivable_without_drm_bypass(rig):
+    """Only standard font obfuscation is readable; Core still owns B."""
+    service, db, root = rig
+    _prepare(service)
+    source = io.BytesIO(_epub_bytes(encrypted=False))
+    with ZipFile(source, "a") as archive:
+        archive.writestr("META-INF/encryption.xml", (
+            '<encryption xmlns:enc="http://www.w3.org/2001/04/xmlenc#">'
+            '<enc:EncryptedData><enc:EncryptionMethod '
+            'Algorithm="http://www.idpf.org/2008/embedding"/>'
+            '</enc:EncryptedData></encryption>'
+        ))
+    payload = source.getvalue()
+    calls = []
+
+    def candidate(_account, *, target_dir, **_kwargs):
+        calls.append("get")
+        path = Path(target_dir) / "font-only.epub"
+        path.write_bytes(payload)
+        return path, ""
+
+    service.session.rights_selected_delivery_candidate = candidate
+    first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["downloaded"] == 1
+    assert refs(db)[1] == 1
+    assert Path(db.placements()[0]["path"]).read_bytes() == payload
+    again = synchronize_account_source(service, service.account)
+    assert again["canonical_execution"]["present_attested"] == 1
+    assert calls == ["get"]
