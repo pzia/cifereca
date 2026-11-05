@@ -17,7 +17,7 @@ from .library_declared_links import DeclarationRejected
 from .missing_placement_retirement import _scope, _directory_signature
 from .missing_placement_same_path import _blocked, _evidence
 
-_TOKEN = re.compile(r"[0-9a-f]{64}\\Z")
+_TOKEN = re.compile(r"[0-9a-f]{64}\Z")
 
 
 def preview_reappeared_linked_placement(
