@@ -25,7 +25,7 @@ def _fixture(root: Path, names: tuple[str, ...]):
         "name = pathlib.Path.cwd().name\n"
         "trace = pathlib.Path(os.environ['CI_TEST_TRACE'])\n"
         "(trace / (name + '.start')).write_text(str(time.monotonic()))\n"
-        "time.sleep(0.72 if name == 'a_slow' else 0.08 if name.endswith('_quick') else 0.24)\n"
+        "time.sleep(4.0 if name == 'a_slow' else 0.08 if name.endswith('_quick') else 0.24)\n"
         "(trace / (name + '.end')).write_text(str(time.monotonic()))\n"
         "print('executed ' + name)\n"
         "if name == 'broken': sys.exit(3)\n",
