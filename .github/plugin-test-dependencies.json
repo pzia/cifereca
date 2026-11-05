@@ -9,7 +9,8 @@
     "maintenance-library-audit",
     "provider-bnf-catalogue",
     "provider-gallica",
-    "provider-gutenberg"
+    "provider-gutenberg",
+    "recommendations"
   ],
   "dependencies": {
     "home-page": [
