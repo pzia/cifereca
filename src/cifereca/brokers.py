@@ -1242,6 +1242,22 @@ class SynchronizationBrokerImpl:
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
+
+        def terminal_cycle(status: str, execution: object = None) -> None:
+            """Publish with source status in the *same* SQLite metadata write.
+
+            Only the already-validated complete Core execution envelope can
+            become counters. An absent envelope is not evidence of zero.
+            """
+            payload = {
+                "schema": 1, "status": status,
+                "attempted_at": now,
+                "mode": "scheduled" if inventory_only else "manual",
+            }
+            if type(execution) is dict:
+                payload["canonical_execution"] = dict(execution)
+            state["last_cycle"] = payload
+
         # Keep the previous private-inventory evidence when a provider
         # rejects work after the broker's initial enabled/connection check.
         previous_inventory = {
@@ -1278,6 +1294,7 @@ class SynchronizationBrokerImpl:
             # diagnostic details and free-text errors. Only publish bounded
             # counters and known status/reason codes to plugins and GTK.
             if not isinstance(result, dict):
+                terminal_cycle("failed")
                 state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
                 if refreshes_private_inventory:
                     state["inventory_status"] = "failed"
@@ -1290,6 +1307,7 @@ class SynchronizationBrokerImpl:
                 # but before the underlying service starts remote inventory.
                 # Skipped is not proof of a successful refresh and must not
                 # mint last_success or advance the private inventory clock.
+                terminal_cycle("skipped")
                 state.update(status="skipped", error="")
                 if refreshes_private_inventory:
                     for key in ("inventory_last_attempt", "inventory_status"):
@@ -1344,6 +1362,10 @@ class SynchronizationBrokerImpl:
                           or bool(result.get("attention_required"))
                           or bool(result.get("warnings")))
             if incomplete:
+                terminal_cycle(
+                    "partial",
+                    None if invalid_status else facts.get("canonical_execution"),
+                )
                 facts["reason"] = "invalid_response" if invalid_status else "source_partial"
                 state.update(status="partial", error="Synchronisation partielle")
                 if refreshes_private_inventory:
@@ -1352,6 +1374,7 @@ class SynchronizationBrokerImpl:
                 return SyncResult(ok=False, changed=changed,
                                   warnings=("synchronisation partielle",), facts=facts)
             success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            terminal_cycle("success", facts.get("canonical_execution"))
             state.update(last_success=success_at, status="ok", error="")
             if refreshes_private_inventory:
                 state.update(
@@ -1368,6 +1391,7 @@ class SynchronizationBrokerImpl:
             from .providers import ProviderConfigurationError
             busy = (isinstance(exc, ProviderConfigurationError)
                     and isinstance(exc.__cause__, LockBusyError))
+            terminal_cycle("busy" if busy else "failed")
             state.update(
                 status="busy" if busy else "error",
                 error="" if busy else _SYNC_PUBLIC_FAILURE,
