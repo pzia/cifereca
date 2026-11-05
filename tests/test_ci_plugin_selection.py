@@ -127,7 +127,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"dev-updater", "literary-criticism"})
+        self.assertEqual(audited, {"dev-updater", "literary-criticism", "maintenance-library-audit"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -135,7 +135,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"dev-updater", "literary-criticism"})
+        self.assertEqual(audited, {"dev-updater", "literary-criticism", "maintenance-library-audit"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -235,6 +235,63 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"Unexpected dev-updater consumer: {source}",
+                    )
+
+    def test_audited_maintenance_tools_have_no_other_plugin_consumers(self):
+        # The package publishes Core-consumed maintenance.tool contracts,
+        # never providers or imports used by other plugin package suites.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("maintenance-library-audit", audited)
+        self.assertEqual(
+            selector.affected_packages({"maintenance-library-audit"}, graph),
+            ["maintenance-library-audit"],
+        )
+        for product in ("cifereca_library_audits.py", "cifereca_dedup_recovery.py"):
+            with self.subTest(product=product):
+                selected, reason = selector.select([
+                    ("M", "src/plugins/maintenance-library-audit/" + product),
+                ], ROOT)
+                self.assertEqual(selected, ["src/plugins/maintenance-library-audit"])
+                self.assertIn("dependency closure", reason)
+        # All product packages not audited retain exhaustive selection.
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/maintenance-library-audit/cifereca_library_audits.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/maintenance-library-audit/cifereca-plugin.json")],
+            [("M", "src/plugins/maintenance-library-audit/tests/conftest.py")],
+            [("D", "src/plugins/maintenance-library-audit/cifereca_library_audits.py")],
+            [("R100", "src/plugins/maintenance-library-audit/cifereca_library_audits.py")],
+        ):
+            with self.subTest(changes=changes):
+                selected, reason = selector.select(changes, ROOT)
+                self.assertEqual(selected, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_audited_maintenance_tool_runtime_has_no_cross_package_references(self):
+        # A later package consuming a specific audit, dedup tool or helper
+        # must invalidate this proof before a scoped green gate can persist.
+        tokens = (
+            "maintenance-library-audit", "cifereca_library_audits",
+            "cifereca_dedup_recovery", "maintenance.audit.",
+            "maintenance.repair.naming", "maintenance.cleanup.duplicates",
+            "library.duplicates.recover",
+            "org.cifereca.maintenance.library-audit",
+        )
+        source_root = ROOT / "src/plugins"
+        for item in sorted(source_root.glob("*/*")):
+            package = item.relative_to(source_root).parts[0]
+            if package == "maintenance-library-audit":
+                continue
+            sources = item.rglob("*") if item.is_dir() else (item,)
+            for file in sources:
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in content for token in tokens),
+                        f"Unexpected maintenance tool plugin consumer: {file}",
                     )
 
     def git(self, *args):
