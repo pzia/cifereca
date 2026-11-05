@@ -133,7 +133,10 @@ def test_restoration_refuses_unverified_or_dependent_historical_path(rig, obstac
     assert outcome["status"] == "blocked"
     assert "plan_token" not in outcome
     assert db.placement_get(pid) == saved
-    assert db.catalog_entries() == ([] if obstacle != "catalogue" else db.catalog_entries())
+    if obstacle == "catalogue":
+        assert db.catalog_entry_get("catalogue:original")["local_state"] == "missing"
+    else:
+        assert db.catalog_entries() == []
 
 
 def test_preview_token_revoked_on_file_change_and_sqlite_rebind(rig):
