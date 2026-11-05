@@ -395,3 +395,70 @@ def test_recovery_refuses_inode_swap_between_review_and_sql(
         assert journal.exists()
     finally:
         service.storage.close()
+
+
+def test_receipt_replaced_before_sql_intent_is_not_registered(tmp_path, monkeypatch):
+    service, source, _ = _library(tmp_path)
+    try:
+        from cifereca.core import derived_variant_recovery as recovery
+        original = recovery._read_receipt_nofollow
+        replaced = []
+
+        def tamper_before_register(receipt):
+            if not replaced:
+                original_bytes = original(receipt)
+                receipt.write_bytes(original_bytes + b" ")
+                replaced.append(receipt)
+            return original(receipt)
+
+        monkeypatch.setattr(recovery, "_read_receipt_nofollow",
+                            tamper_before_register)
+        with pytest.raises(ValueError, match="derived_receipt_changed_before_intent"):
+            ArtifactExecutionBrokerImpl(service).execute_transform(
+                TransformRequest(source, "optimize"), control=Control(),
+            )
+        assert len(replaced) == 1
+        from cifereca.core.derived_variant_recovery import _pending_intent_key
+        assert service.storage.metadata_get(_pending_intent_key(replaced[0])) is None
+        assert service.storage.artifact_variants() == []
+        assert [p for p in service.storage.placements()
+                if p["artifact_id"] != source.artifact_id] == []
+    finally:
+        service.storage.close()
+
+
+def test_successful_publish_does_not_unlink_replaced_receipt(
+    tmp_path, monkeypatch,
+):
+    service, source, _ = _library(tmp_path)
+    try:
+        from cifereca.core import derived_variant_recovery as recovery
+        original = recovery._read_receipt_nofollow
+        calls = []
+        replaced = []
+
+        def replace_at_retirement(receipt):
+            calls.append(receipt)
+            if len(calls) == 2:
+                # The profile owner alters the journal after SQLite has
+                # committed. Retirement must preserve foreign bytes rather
+                # than unlink an unrelated new receipt inode.
+                receipt.unlink()
+                receipt.write_bytes(b"concurrent foreign receipt")
+                replaced.append(receipt)
+            return original(receipt)
+
+        monkeypatch.setattr(recovery, "_read_receipt_nofollow",
+                            replace_at_retirement)
+        result = ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        assert result.artifact_id != source.artifact_id
+        assert len(replaced) == 1
+        assert replaced[0].read_bytes() == b"concurrent foreign receipt"
+        assert recovery.review_pending_derived_receipts(
+            service, identity_id="id1",
+        )[0]["status"] == "manual_review"
+        assert service.storage.artifact_variants()
+    finally:
+        service.storage.close()
