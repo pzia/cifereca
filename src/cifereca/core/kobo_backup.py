@@ -46,12 +46,13 @@ def _observed_backup_artifact(path: Path) -> dict[str, Any]:
 def _kobo_legacy_current_path_scoped(
     service: Any, path: Path, target_dir: Path, *, identity_id: str,
 ) -> bool:
-    """An old complete backup cannot attest a different profile's file.
+    """Read-only physical fence for one historical complete Kobo claim.
 
-    Permit only the exact identity Kobo folder, or one flat v0.7 file in
-    the library root. Even inside these lexical roots, a symlinked parent
-    or file must fail before artifact inspection. This read-only check is
-    not a right, a SourceReference or permission to migrate a backup row.
+    An ordinary Kobo file or flat 0.7 library file remains compatible.
+    An explicitly adopted same-identity *present* Placement may also live
+    elsewhere (cross-reader transfer/recovery). A recorded backup never
+    justifies following a symlink or reading a sibling identity's directory.
+    No rights, OriginLinks or new Placements are produced by this check.
     """
     if (type(identity_id) is not str or not identity_id
             or not path.is_absolute() or ".." in path.parts):
@@ -60,13 +61,32 @@ def _kobo_legacy_current_path_scoped(
         candidate = Path(os.path.abspath(path))
         target = Path(os.path.abspath(target_dir))
         library_root = Path(os.path.abspath(service.library_dir()))
-        if not (candidate.is_relative_to(target) or candidate.parent == library_root):
+        # Reject symlinks on the leaf OR any ancestor. Do not require the
+        # identity to appear in config.identities(): imported identities may
+        # already exist in the authoritative Storage/service profile list.
+        if candidate.resolve(strict=True) != candidate:
             return False
-        from .local_placement_open_guard import scoped_existing_placement_path
-        return scoped_existing_placement_path(
-            service, {"path": str(candidate), "identity_id": identity_id},
-            identity_id=identity_id,
-        ) == candidate
+        backup_root = target.parent.parent
+        for identity in service.identities:
+            if identity.identity_id == identity_id:
+                continue
+            other = str(identity.directory_name or "").strip()
+            if not other or other in {".", ".."} or "/" in other or "\\\\" in other:
+                return False
+            if (candidate.is_relative_to(library_root / other)
+                    or candidate.is_relative_to(backup_root / other / "kobo")):
+                return False
+        if candidate.is_relative_to(target) or candidate.parent == library_root:
+            return True
+        # A successful explicit B receipt can attach a file in an Outbox or
+        # other owned folder. Accept that nonstandard path only when a live
+        # canonical Placement already belongs to this exact identity.
+        with service.storage._lock, service.storage._connect() as db:
+            bound = db.execute(
+                "SELECT identity_id,state FROM placements WHERE path=?",
+                (str(candidate),),
+            ).fetchone()
+        return bound == (identity_id, "present")
     except (OSError, ValueError, RuntimeError, TypeError):
         return False
 
