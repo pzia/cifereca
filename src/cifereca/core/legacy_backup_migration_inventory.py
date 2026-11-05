@@ -11,6 +11,8 @@ import json
 import sqlite3
 from typing import Any
 
+from .canonical_publication import _stable
+
 _MAX_ROWS = 1000
 _MAX_CHECKPOINT = 65536
 _SHA = set("0123456789abcdef")
@@ -75,9 +77,9 @@ def _receipt_shape(row: tuple, ledger: tuple) -> bool:
             or not 0 < len(document["receipt"]) <= 1024
             or len(document["adept_receipt"]) > 1024):
         return False
-    # Do not call the stage-ID or OriginLink construction here: this is
-    # deliberately a *shape* counter, not a publication/migration clearance.
-    return type(operation) is str and bool(operation)
+    # An unrelated completed journal operation must not impersonate the
+    # exact stage of the receipt. Still NO proof of OriginLink or bytes.
+    return operation == _stable("canonical-intake", *document["source"], document["offer_id"])
 
 
 def inventory_legacy_kobo_backups(
