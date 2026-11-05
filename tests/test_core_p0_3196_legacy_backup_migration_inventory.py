@@ -109,7 +109,7 @@ def test_budget_returns_no_partial_counts_and_other_identity_is_isolated(store):
 
 @pytest.mark.parametrize("owner,cap", [
     ("", 1), (None, 1), ("A", 0), ("A", 1001),
-    ("A", True), ("A\\x00other", 2), ("A\\nother", 2),
+    ("A", True), ("A" + chr(0) + "other", 2), ("A" + chr(10) + "other", 2),
 ])
 def test_invalid_identity_or_budget_does_not_inventory(store, owner, cap):
     result = _report(store, identity=owner, max_rows=cap)
