@@ -39,6 +39,14 @@ from .source_convergence import SourceKey
 _LOG = logging.getLogger("cifereca")
 
 
+class CanonicalDrmUnresolved(ValueError):
+    """Core final-inspection veto for a structurally valid but protected EPUB.
+
+    A provider runtime returning success is not proof of readable final bytes.
+    This exception does not authorize a GET, recovery or canonical B receipt.
+    """
+
+
 def _check_post_placement_duplicates(storage, *, library_root: Path,
                                      placement_id: str) -> None:
     """Checkpoint verified maintenance candidates without touching B or GET."""
@@ -619,15 +627,22 @@ def execute_admitted_convergence(
             # cannot explain a runtime success without a usable Artifact.
             # Logging never retries delivery or changes the closed UI result.
             trace.failure(key, phase, error)
-            results.append(ConvergenceOutcome(
-                key, "failed", {
+            # #3252/1A: preserve the existing failed terminal count and
+            # never accept protected bytes as B. Only the Core's own final
+            # EPUB inspection may distinguish an unresolved DRM refusal from
+            # transport, runtime or structural delivery failures.
+            reason = (
+                "drm_unresolved"
+                if phase == "delivery" and type(error) is CanonicalDrmUnresolved
+                else {
                     "recovery": "canonical_recovery_failed",
                     "delivery": "canonical_delivery_failed",
                     "receipt": "canonical_receipt_failed",
                     "promotion": "canonical_promotion_failed",
                     "publication": "canonical_publication_failed",
-                }[phase],
-            ))
+                }[phase]
+            )
+            results.append(ConvergenceOutcome(key, "failed", reason))
     # Every terminal result is correlated to the same ephemeral item handle.
     # Emit only after the transaction: no callback or logging can create B.
     for outcome in results:
