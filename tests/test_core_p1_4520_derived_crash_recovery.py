@@ -503,3 +503,46 @@ def test_successful_publish_preserves_same_bytes_replaced_receipt(tmp_path):
         assert len(service.storage.artifact_variants(artifact_id=result.artifact_id)) == 1
     finally:
         service.storage.close()
+
+
+def test_successful_publication_never_unlinks_any_receipt(tmp_path, monkeypatch):
+    service, source, _ = _library(tmp_path)
+    try:
+        original_unlink = os.unlink
+        deleted_names = []
+
+        def guard_unlink(name, *args, **kwargs):
+            deleted_names.append(str(name))
+            assert not Path(str(name)).name.startswith("pending-"), (
+                "publication must never delete a receipt, even after SQL commit"
+            )
+            return original_unlink(name, *args, **kwargs)
+
+        monkeypatch.setattr(os, "unlink", guard_unlink)
+        child = ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        assert child.artifact_id != source.artifact_id
+        assert any(name.endswith(".epub") for name in deleted_names)
+        observed = review_pending_derived_receipts(service, identity_id="id1")
+        assert [r["status"] for r in observed] == ["already_committed"]
+    finally:
+        service.storage.close()
+
+
+def test_receipt_review_fails_closed_when_retention_limit_is_reached(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        from cifereca.core.derived_variant_recovery import MAX_RECEIPTS
+        _failed_publication(service, source)
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        for number in range(MAX_RECEIPTS):
+            foreign = stage / ("pending-" + f"{number:032x}" + ".json")
+            foreign.write_bytes(b"{}")
+        with pytest.raises(ValueError, match="derived_recovery_receipt_limit"):
+            review_pending_derived_receipts(service, identity_id="id1")
+        assert service.storage.artifact_variants() == []
+        # Fail-closed never deletes or rewrites the original pending proof.
+        assert len(list(stage.glob("pending-*.json"))) == MAX_RECEIPTS + 1
+    finally:
+        service.storage.close()
