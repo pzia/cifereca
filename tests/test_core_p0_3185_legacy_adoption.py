@@ -21,13 +21,15 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 )
 
 
-def _adopt(rig, *, action="preview", confirmed=False, shared_lock=None):
+def _adopt(rig, *, action="preview", confirmed=False, shared_lock=None,
+           expected_token=""):
     storage, root, _paths, pubs, _lock = rig
     return adopt_verified_legacy_placement(
         storage, library_root=root,
         candidate_placement_id=pubs[1].placement_id,
         keeper_placement_id=pubs[0].placement_id,
         action=action, confirmed=confirmed, shared_lock=shared_lock,
+        expected_review_token=expected_token,
     )
 
 
@@ -36,10 +38,15 @@ def _placement(rig):
     return storage.placement_get(pubs[1].placement_id)
 
 
-def _commit(rig):
+def _commit(rig, *, expected_token=None):
     *_, lock_path = rig
+    if expected_token is None:
+        expected_token = _adopt(rig).review_token
     with InterProcessLock(lock_path) as lock:
-        return _adopt(rig, action="commit", confirmed=True, shared_lock=lock)
+        return _adopt(
+            rig, action="commit", confirmed=True, shared_lock=lock,
+            expected_token=expected_token,
+        )
 
 
 def test_proven_legacy_label_is_adopted_without_mutating_any_file_or_receipt(rig):
@@ -65,6 +72,7 @@ def test_proven_legacy_label_is_adopted_without_mutating_any_file_or_receipt(rig
     preview = _adopt(rig)
     assert preview.status == "review_required"
     assert preview.completed_path_receipts == 1
+    assert len(preview.review_token) == 64
     assert preview.may_delete is False
     assert (preview.catalogue_references, preview.backup_references) == (1, 1)
     assert _placement(rig)["provider_id"] == "seller-b"
@@ -297,3 +305,105 @@ def test_public_maintenance_broker_refuses_unsupported_adoption_action(
             options={"action": action},
         ))
     assert all(path.exists() for path in paths)
+
+
+def test_operator_preview_token_rejects_swapped_profile_directory(rig):
+    """Identical hardlinks do not authorize adopting a replacement profile."""
+    import os
+
+    storage, root, paths, _pubs, _lock = rig
+    _mark_legacy(rig)
+    _journal(rig)
+    folder = root / "A"
+    swap = root / "A_swap"
+    retired = root / "A_original"
+    swap.mkdir()
+    # Hardlinks intentionally keep SHA and file inode identical after swap.
+    # They are created BEFORE the preview so ctime is also stable.
+    for file in paths[:2]:
+        os.link(file, swap / file.name)
+    preview = _adopt(rig)
+    assert preview.status == "review_required"
+    folder.rename(retired)
+    swap.rename(folder)
+    try:
+        result = _commit(rig, expected_token=preview.review_token)
+        assert result.status == "blocked"
+        assert result.reason == "stale_plan"
+        assert _placement(rig)["provider_id"] == "seller-b"
+        assert all(file.read_bytes() == BYTES for file in paths)
+    finally:
+        folder.rename(swap)
+        retired.rename(folder)
+
+
+def test_profile_directory_swap_during_commit_is_detected(rig, monkeypatch):
+    """Recheck directory inode after all SQL/FS admission, before SQL commit."""
+    import os
+    from cifereca.core import canonical_legacy_adoption as adoption
+
+    storage, root, paths, _pubs, _lock = rig
+    _mark_legacy(rig)
+    _journal(rig)
+    old = root / "A"
+    alternate = root / "A_other"
+    saved = root / "A_saved"
+    alternate.mkdir()
+    for file in paths[:2]:
+        os.link(file, alternate / file.name)
+    preview = _adopt(rig)
+    assert preview.status == "review_required"
+    original = adoption._references
+    moved = False
+
+    def switch_after_references(*args, **kwargs):
+        nonlocal moved
+        result = original(*args, **kwargs)
+        if not moved:
+            moved = True
+            old.rename(saved)
+            alternate.rename(old)
+        return result
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(adoption, "_references", switch_after_references)
+            result = _commit(rig, expected_token=preview.review_token)
+        assert result.status == "blocked"
+        assert result.reason == "physical_changed_during_review"
+        assert _placement(rig)["provider_id"] == "seller-b"
+    finally:
+        if moved:
+            old.rename(alternate)
+            saved.rename(old)
+
+
+def test_public_broker_stale_plan_rejects_profile_directory_swap(rig, monkeypatch):
+    import os
+    from tests.test_core_p0_3185_maintenance_supervisor_broker import broker_for
+
+    storage, root, paths, _pubs, _lock = rig
+    _mark_legacy(rig)
+    _journal(rig)
+    broker = broker_for(rig, monkeypatch)
+    plan = broker.plan(_maintenance_request(
+        rig, action="commit", confirmed=True,
+    ))
+    assert len(plan.facts["review_token"]) == 64
+    alternate = root / "A_alternate"
+    old = root / "A"
+    saved = root / "A_saved"
+    alternate.mkdir()
+    for file in paths[:2]:
+        os.link(file, alternate / file.name)
+    old.rename(saved)
+    alternate.rename(old)
+    try:
+        result = broker.run(plan)
+        assert not result.ok
+        assert result.facts["status"] == "blocked"
+        assert result.facts["reason"] == "stale_plan"
+        assert _placement(rig)["provider_id"] == "seller-b"
+    finally:
+        old.rename(alternate)
+        saved.rename(old)
