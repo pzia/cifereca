@@ -59,6 +59,10 @@ def test_orphan_returned_bytes_restore_only_original_sqlite_state(rig):
     assert placed["path"] == str(old)
     assert placed["artifact_id"] == artifact
     assert placed["identity_id"] == "alice"
+    # Old provider/item columns are unchanged historical labels, not a new
+    # provider assertion. Restoration must create no source or right.
+    assert placed["provider_id"] == "kobo"
+    assert placed["source_item_id"] == "book-a"
     assert db.catalog_entries() == []
     assert db.entitlements() == []
     assert db.acquisitions() == []
@@ -138,6 +142,56 @@ def test_restoration_refuses_unverified_or_dependent_historical_path(rig, obstac
     else:
         assert db.catalog_entries() == []
 
+
+
+@pytest.mark.parametrize("metadata", [
+    '{"owner":"bob"}',
+    '{"source_reference_id":"provider:unverified"}',
+    '{"metadata":{"claim":"untyped"}}',
+    '{"relative_path":"other.epub"}',
+    '{"relative_path":null,"opaque":"unknown"}',
+    '{"relative_path":"","relative_path":""}',
+])
+def test_restoration_refuses_opaque_or_ambiguous_placement_metadata(rig, metadata):
+    db, root, old, new, pid, artifact, payload, lockpath = rig
+    old.write_bytes(payload)
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE placements SET metadata_json=? WHERE placement_id=?",
+            (metadata, pid),
+        )
+    saved = db.placement_get(pid)
+    outcome = _preview(rig)
+    assert outcome["status"] == "blocked"
+    assert "plan_token" not in outcome
+    assert db.placement_get(pid) == saved
+    assert db.entitlements() == []
+    assert db.acquisitions() == []
+    assert old.read_bytes() == payload
+
+
+@pytest.mark.parametrize("metadata", ['{}', '{"relative_path":null}', '{"relative_path":""}'])
+def test_restoration_allows_only_nonbinding_placement_metadata(rig, metadata):
+    db, root, old, new, pid, artifact, payload, lockpath = rig
+    old.write_bytes(payload)
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE placements SET metadata_json=? WHERE placement_id=?",
+            (metadata, pid),
+        )
+    original = db.placement_get(pid)
+    pre = _preview(rig)
+    assert pre["status"] == "ready"
+    assert _commit(rig, pre["plan_token"])["status"] == "restored"
+    restored = db.placement_get(pid)
+    assert restored["metadata"] == original["metadata"]
+    assert restored["provider_id"] == original["provider_id"]
+    assert restored["source_item_id"] == original["source_item_id"]
+    assert db.entitlements() == []
+    assert db.acquisitions() == []
+    with db._lock, db._connect() as sql:
+        assert sql.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
+        assert sql.execute("SELECT COUNT(*) FROM source_references").fetchone()[0] == 0
 
 def test_preview_token_revoked_on_file_change_and_sqlite_rebind(rig):
     db, root, old, new, pid, artifact, payload, lockpath = rig
