@@ -3899,6 +3899,16 @@ class LibraryService:
         # Digital provider payloads are staged outside ~/EBooks. In particular,
         # ACSM files are transient inputs and must not become user-library items.
         identity = self.identity_for_connection(loan.source_provider, loan.source_credential)
+        # #3121: if the later authenticated loan inventory omitted EbookUrl,
+        # use at most once the PRIVATE first offer from THIS exact confirmed
+        # manual Paris borrow. The Paris provider still validates the URL,
+        # live borrower and source scope; this does not repeat ASSARedirect.
+        # There is intentionally no persisted signed URL to recover at startup.
+        if loan.source_provider == "paris" and not loan.ebook_url:
+            from .core.manual_paris_first_acsm import take_first_acsm_loan
+            first = take_first_acsm_loan(self, loan, account)
+            if first is not None:
+                loan = first
         trace_ref = loan_trace_ref(loan, identity.identity_id)
         _TRACE_LOG.info("TRACE download acquire admitted request_ref=%s loan_ref=%s",
                         loan_trace_ref(loan, None), trace_ref)
