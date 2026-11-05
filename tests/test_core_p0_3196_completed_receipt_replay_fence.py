@@ -205,3 +205,20 @@ def test_other_borrower_canonical_stage_does_not_suppress_legacy_scope(storage):
         ).fetchall()
     assert ("borrower", "A", "acquiring") in statuses
     assert ("another-borrower", "B", "complete") in statuses
+
+
+def test_canonical_checkpoint_with_incomplete_status_blocks_legacy_replay(
+    storage,
+):
+    _promote_synthetic_receipt(storage)
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET status='acquiring' "
+            "WHERE provider_id='kobo'"
+        )
+    before = _snapshot(storage)
+    projection = storage.backup_get("kobo", "synthetic-vault", "synthetic-book")
+    with pytest.raises(ValueError, match="backup_canonical_receipt_status_conflict"):
+        storage.backup_put(_backup(status="complete", sha="b" * 64))
+    assert _snapshot(storage) == before
+    assert storage.backup_get("kobo", "synthetic-vault", "synthetic-book") == projection
