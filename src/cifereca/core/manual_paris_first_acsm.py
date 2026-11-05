@@ -18,6 +18,7 @@ import time
 from urllib.parse import urlsplit
 
 from ..models import Account, Loan, SearchResult
+from .loan_action_scope import _inert_session_accounts, _inert_session_state
 
 _TTL_SECONDS = 15 * 60
 _MAX_OFFERS = 12
@@ -37,6 +38,7 @@ class _Offer:
     claim_key: str
     operation_id: str
     context_epoch: int
+    provider_epoch: object = field(repr=False)
     created: float
     url: str = field(repr=False)
 
@@ -82,8 +84,15 @@ def _offers(service: object) -> dict[tuple[str, ...], _Offer]:
 def _current(service: object, account: Account, session: object,
              epoch: int) -> bool:
     try:
+        session_state = _inert_session_state(session)
+        session_accounts = _inert_session_accounts(session)
         return (
-            type(account) is Account
+            session_state is not None
+            and session_state.get("connected") is True
+            and session_state.get("_closed") is not True
+            and session_accounts is not None
+            and sum(a is account for a in session_accounts) == 1
+            and type(account) is Account
             and account.provider_id == "paris"
             and account.is_primary is True
             and account.unique_id == ""
@@ -140,11 +149,15 @@ def remember_confirmed_first_acsm(
         entries = _offers(service)
         if len(entries) >= _MAX_OFFERS and _key(account, loan) not in entries:
             return False
+        session_state = _inert_session_state(session)
+        if session_state is None:
+            return False
         entries[_key(account, loan)] = _Offer(
             account, session, account.identity_id, account.provider_id,
             account.credential_id, account.unique_id, loan.id,
             str(loan.record_id), claim_key, operation_id,
-            context_epoch, time.monotonic(), loan.ebook_url,
+            context_epoch, session_state.get("_epoch"),
+            time.monotonic(), loan.ebook_url,
         )
     return True
 
@@ -176,7 +189,9 @@ def take_first_acsm_loan(service, loan: Loan, account: Account) -> Loan | None:
             or record.loan_id != loan.id
             or record.edition_id != str(loan.record_id)
             or not _current(service, account, record.session,
-                            record.context_epoch)):
+                            record.context_epoch)
+            or _inert_session_state(record.session).get("_epoch")
+                != record.provider_epoch)::
         return None
     try:
         claim = service.storage.loan_borrow_state(record.claim_key)
