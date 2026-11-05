@@ -6,12 +6,12 @@ WORKFLOW = ROOT / ".github/workflows/pr-ci.yml"
 MAIN_WORKFLOW = ROOT / ".github/workflows/core-tests.yml"
 
 
-def test_two_workers_only_in_exhaustive_core_mode():
+def test_three_workers_only_in_exhaustive_pr_core_mode():
     content = WORKFLOW.read_text(encoding="utf-8")
     assert content.count('if [[ "$CORE_TEST_MODE" == "full" ]]; then') == 1
     runner = content.split("- name: Run Core tests", 1)[1]
     runner = runner.split("\n      - name:", 1)[0]
-    assert 'python -m pytest -q --durations=10 -n 2 --dist=loadfile $CORE_TEST_TARGETS' in runner
+    assert 'python -m pytest -q --durations=10 -n 3 --dist=loadfile $CORE_TEST_TARGETS' in runner
     assert 'python -m pytest -q --durations=10 $CORE_TEST_TARGETS' in runner
     assert 'if [[ "$CORE_TEST_MODE" == "full" ]]' in runner
     assert 'else\n            python -m pytest -q --durations=10 $CORE_TEST_TARGETS' in runner
