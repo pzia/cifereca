@@ -1035,17 +1035,40 @@ class LibraryReadBrokerImpl:
 
     def preferred_artifact(self, book_id: str, *, purpose: str = "read",
                            identity_id: str | None = None) -> ArtifactRef | None:
-        view = self.book(book_id, identity_id=identity_id)
+        # A legacy global preference is not authority for another profile.
+        # Without an explicit filter use only the active identity, never an
+        # arbitrary first Placement of a content-addressed SHA.
+        owner = identity_id
+        if owner is None:
+            owner = getattr(getattr(self.service, "current_identity", None),
+                            "identity_id", None)
+        owner = owner if type(owner) is str and owner else None
+        view = self.book(book_id, identity_id=owner)
         if view is None or not view.artifacts:
             return None
-        source_ids = {v.source_artifact_id for v in view.variants}
-        originals = [a for a in view.artifacts if a.artifact_id not in {v.artifact_id for v in view.variants}]
+        originals = [a for a in view.artifacts
+                     if a.artifact_id not in {v.artifact_id for v in view.variants}]
         source = originals[0] if originals else view.artifacts[0]
-        preferred = self.service.storage.metadata_get(f"artifact.variant.preferred.{source.artifact_id}.{str(purpose or 'read')}")
-        if preferred:
-            candidate = next((a for a in view.artifacts if a.artifact_id == preferred), None)
-            if candidate is not None:
-                return candidate
+        purpose = purpose or "read"
+        if owner and purpose in ("read", "export", "transfer"):
+            preferred = self.service.storage.metadata_get(
+                f"artifact.variant.preferred.{owner}.{source.artifact_id}.{purpose}"
+            )
+            if preferred:
+                rows = self.service.storage.artifact_variants(
+                    artifact_id=preferred,
+                )
+                if (len(rows) == 1
+                        and rows[0].get("source_artifact_id") == source.artifact_id
+                        and _scoped_derived_preference_candidate(
+                            self.service.storage, rows[0], owner,
+                        ) is not None):
+                    candidate = next(
+                        (a for a in view.artifacts if a.artifact_id == preferred),
+                        None,
+                    )
+                    if candidate is not None:
+                        return candidate
         return source
 
     def _view(self, entries: list[dict[str, Any]], book_id: str,
