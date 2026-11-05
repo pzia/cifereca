@@ -60,7 +60,8 @@ def build_identity_settings_editor(
 
     primary_row = Adw.EntryRow()
     primary_row.set_title("Connexion Paris principale (ID de source)")
-    primary_row.set_text(str(data.get("primary_paris_connection_id") or ""))
+    saved_primary = data.get("primary_paris_connection_id", "")
+    primary_row.set_text(saved_primary if type(saved_primary) is str else "")
     primary_row.set_tooltip_text(
         "ID exact du compte Paris dans Sources, pour cette identité. "
         "Laissez vide uniquement si une seule connexion Paris active existe. "
