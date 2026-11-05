@@ -77,3 +77,11 @@ La substitution du répertoire parent de `variants` par un symlink vers
 le dossier d'origine déplacé (inode `variants` identique) est également
 refusée, en commit et en abort. Ce cas empêche de contourner la garde
 `O_NOFOLLOW` appliquée au seul dernier composant.
+
+La réservation du nom temporaire ne dépend plus d'une séquence
+`mkstemp(chemin)` / `unlink(chemin)` redirigeable : elle s'effectue avec
+`os.open(..., O_CREAT|O_EXCL|O_NOFOLLOW, dir_fd=stage_fd)`, puis
+`unlink(..., dir_fd=stage_fd)` sur le **même répertoire épinglé**.
+Le transformeur reçoit toujours un chemin temporaire libre, tandis que
+le Core ne supprime jamais un fichier par un chemin susceptible de traverser
+un staging remplacé par symlink.
