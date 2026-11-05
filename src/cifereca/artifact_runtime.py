@@ -816,6 +816,7 @@ class ArtifactExecutionBrokerImpl:
             receipt, receipt_sha256 = write_pending_derived_receipt(
                 path, candidate, stage_dir_fd=stage_fd,
                 source_path=source_path,
+                source_stamp=lease.source_stamp,
                 source_artifact_id=source.artifact_id,
                 source_sha256=source.sha256,
                 source_placement_id=lease.source_placement_id,
