@@ -89,6 +89,8 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
             return httpx.Response(200, json={"success": True, "d": {"Loans": rows}})
         if request.url.path.endswith("/synthetic.acsm"):
             assert request.method == "GET"
+            if result == "replay-redirect":
+                return httpx.Response(302, headers={"Location": href})
             return httpx.Response(200, content=(
                 b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
                 b'<format>application/epub+zip</format></fulfillmentToken>'
@@ -399,6 +401,28 @@ def test_first_offer_get_failure_does_not_repeat_or_unconfirm_borrow(tmp_path, m
         assert state["mutations"] == 1
         assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
         assert attempts == ["GET"]
+        assert state["mutations"] == 1
+    finally:
+        service.close()
+
+
+def test_first_token_redirect_cannot_reenter_mutating_assaredirect(tmp_path):
+    """A signed token GET returning a loan endpoint is rejected without replay."""
+    from cifereca import acsm_cache
+
+    service, _session, account, item, state = setup(
+        tmp_path, result="replay-redirect")
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        # The first request creates the loan. The redirected second one is
+        # refused *before* any HTTP request to the mutating endpoint.
+        assert state["mutations"] == 1
+        assert len(state["calls"]) == 5
+        stage = service._acquisition_work_dir("default", "paris", "loan-exact")
+        assert not (stage / acsm_cache.INITIAL_MANIFEST).exists()
+        assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
         assert state["mutations"] == 1
     finally:
         service.close()
