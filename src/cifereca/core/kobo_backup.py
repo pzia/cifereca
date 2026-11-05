@@ -1760,6 +1760,22 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 "job_id": None,
             })
             emit("reconcile_conflict", item_id=previous.get("item_id"), title=previous.get("title"), count=len(candidates))
+        elif previous_status == "acquiring" and stored_path:
+            # A previously recorded locator must remain a manual
+            # reconciliation case even when the file is no longer at the
+            # old path. The earlier no-candidate fallback used to reach
+            # this classification in _skip_manifest_item; the new
+            # interrupted-GET fence must not mask the physical locator.
+            self.storage.backup_put({
+                **previous,
+                "status": "reconcile_required",
+                "updated_at": int(time.time()),
+                "error": (
+                    "Artefact Kobo précédemment lié introuvable ; "
+                    "vérifiez son déplacement avant tout téléchargement"
+                ),
+                "job_id": None,
+            })
         elif previous_status == "acquiring":
             self.storage.backup_put({
                 **previous,
@@ -2012,10 +2028,17 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
             # provenance with the newer remote revision.
             "revision_id": (
                 current.get("revision_id")
-                if current.get("status") in {
-                    "ok", "complete", "reconcile_required", "reconcile_conflict",
-                    "acquiring", "pending_acquisition",
-                }
+                if (
+                    current.get("status") in {
+                        "ok", "complete", "reconcile_required", "reconcile_conflict",
+                        "acquiring",
+                    } or (current.get("status") == "pending_acquisition"
+                          and (current.get("attention_code")
+                               == "interrupted_acquisition_review"
+                               or str(current.get("error") or "").startswith(
+                                   "Acquisition locale interrompue avant finalisation"
+                               )))
+                )
                 and current.get("revision_id") != revision_id
                 else revision_id
             ),
