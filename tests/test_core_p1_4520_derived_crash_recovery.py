@@ -62,7 +62,13 @@ def test_fsync_receipt_can_explicitly_restore_after_sql_interruption(tmp_path):
         before = review_pending_derived_receipts(service, identity_id="id1")
         assert len(before) == 1 and before[0]["status"] == "recoverable"
         assert service.storage.artifact_variants() == []
-        done = review_pending_derived_receipts(service, identity_id="id1", commit=True)
+        # No unattended bulk promotion from a user-writable JSON journal.
+        denied = review_pending_derived_receipts(service, identity_id="id1", commit=True)
+        assert denied[0]["status"] == "approval_required"
+        done = review_pending_derived_receipts(
+            service, identity_id="id1", commit=True,
+            approved_receipt_sha256=before[0]["sha256"],
+        )
         assert done[0]["status"] == "recovered"
         child = service.storage.artifact_variants()[0]["artifact_id"]
         with service.storage._lock, service.storage._connect() as db:
