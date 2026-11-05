@@ -127,7 +127,7 @@ def _manifest_row(item_id="book-1", title="Book One", revision_id="rev-1"):
     }
 
 
-def test_interrupted_row_absent_from_authoritative_manifest_is_recovered_then_pruned(tmp_path: Path):
+def test_interrupted_row_absent_from_manifest_keeps_recovery_checkpoint(tmp_path: Path):
     service = _service(tmp_path, manifest=[])
     try:
         service.storage.backup_put({
@@ -147,8 +147,17 @@ def test_interrupted_row_absent_from_authoritative_manifest_is_recovered_then_pr
         summary = service.sync_kobo_backup()
 
         assert summary["recovered_interrupted"] == 1
-        assert summary["legacy_pruned"] == 1
-        assert service.storage.backup_get("kobo", "vault-1", "orphan") is None
+        assert summary["legacy_pruned"] == 0
+        checkpoint = service.storage.backup_get("kobo", "vault-1", "orphan")
+        assert checkpoint is not None
+        assert checkpoint["status"] == "pending_acquisition"
+        assert checkpoint["local_path"] is None
+        # The next manifest still cannot close/erase this interrupted
+        # checkpoint or silently turn it into a second download.
+        repeat = service.sync_kobo_backup()
+        assert repeat["recovered_interrupted"] == 0
+        assert repeat["legacy_pruned"] == 0
+        assert service.storage.backup_get("kobo", "vault-1", "orphan") == checkpoint
     finally:
         service.close()
 

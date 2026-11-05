@@ -2071,9 +2071,10 @@ class Storage:
 
         A provider manifest admitted by the Kobo compatibility synchronizer
         may retire obsolete backup_items rows without local_path and without
-        a pending manual-reconciliation state; an unmigrated Kobo row with a
-        historical locator or an unresolved reconcile_required/conflict state
-        is never pruned. Manifest absence cannot attest an
+        an interrupted-acquisition or manual-reconciliation state. An unmigrated
+        Kobo row with a historical locator, acquiring/pending_acquisition
+        checkpoint or unresolved reconcile_required/conflict state is never
+        pruned. Manifest absence cannot attest an
         exact SourceReference right, entitlement revocation or removal of bytes.
         Entitlements/OriginLinks/Placements/acquisition history are never
         mutated by this obsolete projection. Negative canonical rights require
@@ -2147,12 +2148,15 @@ class Storage:
                     # not stat or follow this untrusted historical pathname.
                     and not (provider == "kobo" and type(path) is str
                              and bool(path.strip()))
-                    # A legacy Kobo row explicitly quarantined for manual
-                    # reconciliation is unresolved history, even if no
-                    # candidate path could safely be selected. A manifest
-                    # lacking the item does NOT prove that the competing
-                    # physical candidates or acquisition attempt vanished.
+                    # An interrupted 0.7 acquisition without an observed
+                    # local file must retain its last resumable checkpoint,
+                    # even if the edition is absent from the next manifest.
+                    # A manifest cannot certify that a prior download or
+                    # ADEPT staging completed, failed or is safe to retry.
+                    # The explicit manual-reconciliation quarantines share
+                    # this historical non-prune boundary.
                     and not (provider == "kobo" and status in (
+                        "acquiring", "pending_acquisition",
                         "reconcile_required", "reconcile_conflict",
                     ))
                     and item_id.strip() not in seen)
