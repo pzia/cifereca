@@ -362,6 +362,15 @@ class ArtifactExecutionBrokerImpl:
         if len(rows) != 1:
             raise Conflict("Placement source ambigu", code="artifact_source_ambiguous")
         row = rows[0]
+        # A valid SHA owned only by profile A still is not available to a
+        # user whose active profile is B. ArtifactRef has no identity, so the
+        # host's current selection is the second mandatory authority.
+        active_identity = getattr(getattr(self.service, "current_identity", None),
+                                  "identity_id", None)
+        if (type(active_identity) is not str or not active_identity
+                or active_identity != row.get("identity_id")):
+            raise Conflict("Profil actif distinct du placement",
+                           code="artifact_source_identity_mismatch")
         path = Path(str(row.get("path") or ""))
         if (type(row.get("identity_id")) is not str
                 or not row["identity_id"] or not path.is_absolute()
