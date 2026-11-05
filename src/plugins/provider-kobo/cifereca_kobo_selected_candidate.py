@@ -85,7 +85,18 @@ def _candidate_format_ok(path: Path, fmt: str) -> bool:
         if fmt == "pdf":
             return head.startswith(b"%PDF-")
         if fmt == "epub":
-            return head.startswith(b"PK") and zipfile.is_zipfile(path)
+            if not head.startswith(b"PK") or not zipfile.is_zipfile(path):
+                return False
+            # Match Core's EPUB format detector: a ZIP alone is not an
+            # EPUB. Reject archive impostors before returning a candidate.
+            with zipfile.ZipFile(path) as archive:
+                if "META-INF/container.xml" not in archive.namelist():
+                    return False
+                try:
+                    mimetype = archive.read("mimetype").strip()
+                except KeyError:
+                    mimetype = b""
+                return mimetype in (b"", b"application/epub+zip")
         if fmt == "acsm" and path.stat().st_size <= _MAX_ACSM_BYTES:
             node = ElementTree.parse(path).getroot()
             return (node.tag.rsplit("}", 1)[-1].casefold()
