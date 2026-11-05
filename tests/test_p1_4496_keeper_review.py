@@ -140,7 +140,7 @@ def test_tamper_or_symlink_refuses_without_mutation(store, tmp_path):
     assert check(store, root).reason == "candidate_not_safe_for_retirement"
     victim.unlink()
     victim.symlink_to(root / "A" / "Livres" / "A" / "Autrice - Livre.pdf")
-    assert check(store, root).reason == "candidate_not_safe_for_retirement"
+    assert check(store, root).reason == "excluded_or_unverified_path"
 
 
 def test_legacy_placement_and_invalid_scope_block(store, tmp_path):
