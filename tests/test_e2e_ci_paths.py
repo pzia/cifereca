@@ -34,13 +34,15 @@ def test_active_components_trigger_real_gtk_e2e():
         "tests/test_e2e_runner_contract.py",
     )
     for path in included:
+        assert (ROOT / path).is_file(), f"Dead active-component fixture: {path}"
         assert any(fnmatchcase(path, pattern) for pattern in patterns), f"{path} must trigger E2E Smoke"
 
 def test_unrelated_work_stays_out_of_heavy_gtk_gate():
     patterns = e2e_pull_request_patterns()
     excluded = (
-        "src/plugins/kobo-vault/kobo_vault.py",
-        "src/plugins/instapaper/instapaper.py",
+        "src/plugins/baen/cifereca_baen.py",
+        "src/plugins/provider-gutenberg/cifereca_gutenberg.py",
+        "src/plugins/provider-numilog/cifereca_numilog.py",
         "src/plugins/provider-bnf-pret/WEB.md",
         "src/plugins/provider-bnf-pret/tests/test_p1_4118_two_cover_pipeline.py",
         "docs/PLUGINS-ONLY-RELEASE.md",
@@ -48,6 +50,8 @@ def test_unrelated_work_stays_out_of_heavy_gtk_gate():
         "README.md",
     )
     for path in excluded:
+        if path.startswith("src/plugins/"):
+            assert (ROOT / path).is_file(), f"Dead plugin path fixture: {path}"
         assert not any(fnmatchcase(path, pattern) for pattern in patterns), (
             f"{path} must not launch E2E Smoke"
         )
