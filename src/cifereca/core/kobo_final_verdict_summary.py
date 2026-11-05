@@ -31,6 +31,11 @@ _ENCRYPTION_PROFILES = frozenset((
     "encryption_manifest_oversized", "encryption_manifest_unreadable",
 ))
 _ENCRYPTION_PATTERN = re.compile(r"(?:^| )encryption_profile=([^ ]+)(?: |$)")
+_RUNTIME_READER = "downloadable_selected_delivery_candidate_runtime_guarded"
+_DIRECT_READER = "downloadable_selected_delivery_candidate_guarded"
+_READER_PATTERN = re.compile(r"(?:^| )reader=([^ ]+)(?: |$)")
+_RUNTIME_PATTERN = re.compile(r"(?:^| )runtime_guarded=(True|False)(?: |$)")
+
 
 
 _PATTERN = {
@@ -43,6 +48,8 @@ def classify(events: object) -> dict[str, object]:
     """Return only closed diagnostic counts; never propagate private fields."""
     counts: Counter[str] = Counter()
     profiles: Counter[str] = Counter()
+    route_profiles: Counter[str] = Counter()
+    route_unknown = 0
     matched = 0
     complete = 0
     if type(events) is not list:
@@ -59,8 +66,27 @@ def classify(events: object) -> dict[str, object]:
             continue
         matched += 1
         profile_match = _ENCRYPTION_PATTERN.search(message)
-        if profile_match and profile_match.group(1) in _ENCRYPTION_PROFILES:
-            profiles[profile_match.group(1)] += 1
+        profile = (
+            profile_match.group(1)
+            if profile_match and profile_match.group(1) in _ENCRYPTION_PROFILES
+            else None
+        )
+        if profile is not None:
+            profiles[profile] += 1
+            reader_match = _READER_PATTERN.search(message)
+            runtime_match = _RUNTIME_PATTERN.search(message)
+            reader = reader_match.group(1) if reader_match else None
+            guarded = runtime_match.group(1) if runtime_match else None
+            if reader == _RUNTIME_READER and guarded == "True":
+                route = "runtime"
+            elif reader == _DIRECT_READER and guarded == "False":
+                route = "direct"
+            else:
+                route = None
+            if route is None:
+                route_unknown += 1
+            else:
+                route_profiles[f"{route}:{profile}"] += 1
         fields = {}
         for key, accepted in _FIELD.items():
             match = _PATTERN[key].search(message)
@@ -103,6 +129,8 @@ def classify(events: object) -> dict[str, object]:
         "instrumented": complete,
         "reasons": dict(sorted(counts.items())),
         "encryption_profiles": dict(sorted(profiles.items())),
+        "route_encryption_profiles": dict(sorted(route_profiles.items())),
+        "route_unqualified_occurrences": route_unknown,
         "note": "Occurrences, not distinct items; no causal attribution to historical failures.",
     }
 

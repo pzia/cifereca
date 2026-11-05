@@ -137,3 +137,59 @@ def test_closed_encryption_profile_counts_never_echo_unknown_private_markers():
         "font_obfuscation_algorithms_only": 1,
     }
     assert "PRIVATE_KEY" not in str(report)
+
+
+def test_route_profile_matrix_separates_two_runtime_and_direct_failures():
+    events = []
+    for route, guard, marker in (
+        ("downloadable_selected_delivery_candidate_runtime_guarded",
+         "True", "aes_algorithm"),
+        ("downloadable_selected_delivery_candidate_runtime_guarded",
+         "True", "adobe_adept_marker"),
+        ("downloadable_selected_delivery_candidate_guarded",
+         "False", "font_obfuscation_algorithms_only"),
+    ):
+        event = _event(protected="True", product="PRIVATE_EXACT_EDITION")
+        event["message"] = event["message"].replace(
+            "reader=rights_selected_delivery_candidate",
+            f"reader={route} runtime_guarded={guard}",
+        )
+        event["message"] += f" encryption_profile={marker}"
+        events.append(event)
+    result = classify(events)
+    assert result["route_encryption_profiles"] == {
+        "direct:font_obfuscation_algorithms_only": 1,
+        "runtime:adobe_adept_marker": 1,
+        "runtime:aes_algorithm": 1,
+    }
+    assert result["route_unqualified_occurrences"] == 0
+    assert result["occurrences"] == 3
+    assert "PRIVATE_EXACT_EDITION" not in str(result)
+
+
+def test_route_mismatch_never_associates_runtime_or_direct_speculatively():
+    event = _event(protected="True")
+    event["message"] = event["message"].replace(
+        "reader=rights_selected_delivery_candidate",
+        "reader=downloadable_selected_delivery_candidate_runtime_guarded "
+        "runtime_guarded=False",
+    )
+    event["message"] += " encryption_profile=aes_algorithm"
+    result = classify([event])
+    assert result["encryption_profiles"] == {"aes_algorithm": 1}
+    assert result["route_encryption_profiles"] == {}
+    assert result["route_unqualified_occurrences"] == 1
+
+
+def test_route_counts_are_occurrences_not_distinct_editions():
+    event = _event(protected="True")
+    event["message"] = event["message"].replace(
+        "reader=rights_selected_delivery_candidate",
+        "reader=downloadable_selected_delivery_candidate_guarded "
+        "runtime_guarded=False",
+    )
+    event["message"] += " encryption_profile=aes_algorithm"
+    report = classify([event, event, event])
+    assert report["occurrences"] == 3
+    assert report["route_encryption_profiles"] == {"direct:aes_algorithm": 3}
+    assert "distinct" in report["note"]
