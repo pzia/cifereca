@@ -123,3 +123,31 @@ def test_actual_preview_and_postplacement_exclude_outbox_in_both_directions(
     ) == ()
     assert outbox_file.read_bytes() == BYTES
     assert store.placement_get(outbox)["state"] == "present"
+
+
+def test_many_outbox_registrations_do_not_consume_ordinary_duplicate_budget(
+    store, tmp_path,
+):
+    from tests.test_core_p0_3719_post_placement_duplicates import _two_accounts
+
+    root, paths, (first, second, foreign) = _two_accounts(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.executemany(
+            "INSERT INTO placements(placement_id,artifact_id,path,identity_id,"
+            "state,metadata_json,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            [
+                (f"outbox-{n:03d}", first.artifact_id,
+                 str(root / "A" / "Outbox" / "reader-1" / f"{n:03d}.pdf"),
+                 "A", "present", "{}", 1, 1)
+                for n in range(70)
+            ],
+        )
+    # 70 Outbox delivery copies are not part of the ordinary 64 candidates.
+    assert verified_post_placement_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) == (second.placement_id,)
+    assert verified_post_placement_duplicates(
+        store, library_root=root, placement_id=second.placement_id,
+    ) == (first.placement_id,)
+    assert all(path.read_bytes() == BYTES for path in paths)
