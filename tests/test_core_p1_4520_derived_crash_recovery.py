@@ -289,3 +289,57 @@ def test_mutated_receipt_rejected_even_with_approved_new_sha(tmp_path):
         assert service.storage.artifact_variants() == []
     finally:
         service.storage.close()
+
+
+def test_recovery_commit_rejects_nonactive_identity(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        inspected = review_pending_derived_receipts(service, identity_id="id1")
+        assert inspected[0]["status"] == "recoverable"
+        service.current_identity.identity_id = "different"
+        with pytest.raises(ValueError, match="derived_recovery_active_identity_mismatch"):
+            review_pending_derived_receipts(
+                service, identity_id="id1", commit=True,
+                approved_receipt_sha256=inspected[0]["sha256"],
+            )
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
+
+
+def test_removed_sql_intent_between_preview_and_transaction_refuses_commit(
+    tmp_path, monkeypatch,
+):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        from cifereca.core import derived_variant_recovery as recovery
+        receipt = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        reviewed = recovery.review_pending_derived_receipts(service, identity_id="id1")
+        assert reviewed[0]["status"] == "recoverable"
+        original = recovery.publish_derived_variant
+
+        def revoke_intent_just_before_commit(storage, **kwargs):
+            # Simulate another worker revoking approval after initial review
+            # but before the BEGIN IMMEDIATE of canonical publication.
+            with storage._lock, storage._connect() as db:
+                db.execute(
+                    "DELETE FROM metadata WHERE key=?",
+                    (recovery._pending_intent_key(receipt),),
+                )
+            return original(storage, **kwargs)
+
+        monkeypatch.setattr(recovery, "publish_derived_variant",
+                            revoke_intent_just_before_commit)
+        outcome = recovery.review_pending_derived_receipts(
+            service, identity_id="id1", commit=True,
+            approved_receipt_sha256=reviewed[0]["sha256"],
+        )
+        assert outcome[0]["status"] == "manual_review"
+        assert service.storage.artifact_variants() == []
+        assert receipt.exists()
+    finally:
+        service.storage.close()
