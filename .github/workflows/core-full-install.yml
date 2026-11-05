@@ -1,9 +1,15 @@
 name: Validate full Core release install
 
+# The transaction gate covers Core/CLI/updater/plugins, not pure GTK widgets.
+# GUI-only changes keep the Core test, wheel-install and GTK E2E coverage.
+
 on:
   pull_request:
     paths:
       - "src/cifereca/**"
+      - "!src/cifereca/gui/**"
+      - "!src/cifereca/builtin_ui/**"
+      - "!src/cifereca/app.py"
       - "src/plugins/*/cifereca-plugin.json"
       - "scripts/ci-full-release-install-gate.py"
       - "scripts/prepare-admitted-wheelhouse.py"
@@ -17,8 +23,12 @@ on:
     branches: [main]
     paths:
       - "src/cifereca/**"
+      - "!src/cifereca/gui/**"
+      - "!src/cifereca/builtin_ui/**"
+      - "!src/cifereca/app.py"
       - "src/plugins/*/cifereca-plugin.json"
       - "scripts/ci-full-release-install-gate.py"
+      - "scripts/prepare-admitted-wheelhouse.py"
       - "scripts/plugin_packaging.py"
       - "scripts/package-dev-snapshot.py"
       - "scripts/verify-packaging.py"
