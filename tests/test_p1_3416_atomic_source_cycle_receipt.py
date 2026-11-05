@@ -256,6 +256,13 @@ def test_colliding_primary_and_literal_account_ids_cannot_share_cycle_counts(tmp
             display_name="Other borrower",
         )
         broker.service.accounts.append(literal)
+        # fake_broker's helper normally returns only its initial account.
+        broker.service.accounts_for_identity = (
+            lambda identity=None: [
+                row for row in broker.service.accounts
+                if identity is None or row.identity_id == identity
+            ]
+        )
         assert broker._source_id(primary) == broker._source_id(literal)
         sid = broker._source_id(primary)
         db.metadata_set("sync.source.state." + sid, json.dumps({
