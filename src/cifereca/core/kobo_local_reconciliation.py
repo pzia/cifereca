@@ -158,6 +158,16 @@ def _snapshot(db, storage, credential, item, path, sha):
     backup = _rows(db, "backup_items", "provider_id='kobo' AND credential_id=? AND item_id=?", (credential, item))
     _require(len(backup) == 1, "backup_evidence_missing")
     backup = backup[0]
+    # #3196 W4: this offline 0.7 repair must not become a second writer
+    # for a SourceReference already admitted by the canonical Core. The
+    # legacy key omits the borrower and branch, so even an account-mismatched
+    # typed source is a veto, never a row to relink by SHA.
+    if db.execute(
+        "SELECT 1 FROM source_references WHERE provider_id='kobo' "
+        "AND credential_id=? AND edition_id=? LIMIT 1",
+        (credential, item),
+    ).fetchone():
+        raise ReconciliationRejected("canonical_source_requires_core_recovery")
     placement_id = storage._stable_id("placement", path)
     placements = _rows(db, "placements", "path=? OR placement_id=?", (path, placement_id))
     _require(len(placements) <= 1, "ambiguous_placement")
@@ -183,6 +193,28 @@ def _snapshot(db, storage, credential, item, path, sha):
         _require(not any(row["catalog_entry_id"] == catalogue_id for row in catalogue), "catalogue_key_conflict")
     acquisitions = _rows(db, "acquisition_ledger", "provider_id='kobo' AND credential_id=? AND item_id=?", (credential, item))
     _require(len(acquisitions) == 1, "acquisition_evidence_missing")
+    # A canonical intake checkpoint can precede SourceReference publication.
+    # Never overwrite its status/artifact as a *legacy* confirmed repair:
+    # only the canonical recovery engine may replay that operation. Decode
+    # the JSON so escaped schema markers cannot evade this guard.
+    raw_stage = acquisitions[0].get("metadata_json")
+    if type(raw_stage) is str and len(raw_stage) <= 65536:
+        def unique_fields(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ReconciliationRejected("canonical_stage_ambiguous")
+                result[key] = value
+            return result
+        try:
+            stage = json.loads(raw_stage, object_pairs_hook=unique_fields)
+        except (ValueError, TypeError, RecursionError):
+            raise ReconciliationRejected("canonical_stage_ambiguous") from None
+        if (type(stage) is dict
+                and stage.get("schema") == "canonical.completed-delivery.v1"):
+            raise ReconciliationRejected("canonical_stage_requires_core_recovery")
+    elif raw_stage is not None:
+        raise ReconciliationRejected("canonical_stage_ambiguous")
     artifacts = _rows(db, "artifacts", "artifact_id=?", ("sha256:" + sha,))
     _require(len(artifacts) == 1, "artifact_evidence_missing")
     return {
