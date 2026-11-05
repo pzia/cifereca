@@ -436,6 +436,7 @@ def sync_source_last_cycle_summary(source: object) -> str:
     if (type(counts) is not tuple
             or len(counts) != len(CANONICAL_EXECUTION_STATUSES)
             or any(type(pair) is not tuple or len(pair) != 2
+                   or type(pair[0]) is not str or type(pair[1]) is not int
                    for pair in counts)):
         return headline + "\nRésultats de réception locale : non attestés"
     values = dict(counts)
