@@ -142,7 +142,9 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 release()
                 error(None)
 
-        editor["normal_adept_check"].connect("clicked", check_adept)
+        # Legacy test/headless builders may not expose the optional row.
+        if editor.get("normal_adept_check") is not None:
+            editor["normal_adept_check"].connect("clicked", check_adept)
         def delete_identity(_button, e=editor):
             e["deleted"] = True
             e["group"].set_visible(False)
