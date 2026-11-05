@@ -23,6 +23,16 @@ CONTRACTS = (
         "downloadable_selected_delivery_candidate",
     ),
     (
+        "downloadable_resource_snapshot",
+        "downloadable_selected_offer_snapshot",
+        "downloadable_selected_delivery_candidate_guarded",
+    ),
+    (
+        "downloadable_resource_snapshot",
+        "downloadable_selected_offer_snapshot",
+        "downloadable_selected_delivery_candidate_runtime_guarded",
+    ),
+    (
         "rights_observation_snapshot",
         "rights_selected_delivery_offer_snapshot",
         "rights_selected_delivery_candidate",
@@ -40,7 +50,11 @@ def _abi(session, monkeypatch, contract):
         )
 
 
-@pytest.mark.parametrize("contract", CONTRACTS, ids=("downloadable_v2", "rights_v1"))
+@pytest.mark.parametrize(
+    "contract", CONTRACTS,
+    ids=("downloadable_v2", "downloadable_guarded_only",
+         "downloadable_runtime_guarded_only", "rights_v1"),
+)
 def test_canonical_kobo_never_offers_or_executes_legacy_direct_item(
     tmp_path, monkeypatch, contract,
 ):
