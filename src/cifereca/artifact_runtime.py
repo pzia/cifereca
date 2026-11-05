@@ -5,6 +5,7 @@ from collections.abc import Mapping
 import hashlib
 import json
 import os
+import secrets
 import stat
 from pathlib import Path
 import shutil
@@ -444,10 +445,51 @@ class ArtifactExecutionBrokerImpl:
                 or _variant_file_stamp(source_path) != stamp):
             raise Conflict("Répertoire de source modifié", code="artifact_source_changed")
         suffix = "." + str(output_format.format or source_path.suffix.lstrip(".") or "bin").lower().lstrip(".")
-        fd, name = tempfile.mkstemp(prefix="variant-", suffix=suffix, dir=staging)
-        os.close(fd)
-        path = Path(name)
-        path.unlink(missing_ok=True)
+        # Do not mkstemp(path) then unlink(path): a swapped staging
+        # parent between those operations could redirect unlink to another
+        # profile. Reserve and release the random filename under one pinned
+        # O_NOFOLLOW directory descriptor.
+        stage_pin = _variant_directory_stamp(staging)
+        stage_root_pin = _variant_directory_stamp(staging_root)
+        if stage_pin is None or stage_root_pin is None:
+            raise Conflict("Staging non vérifié", code="artifact_variant_staging_unverified")
+        dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        stage_fd = None
+        name = ""
+        try:
+            stage_fd = os.open(staging, dir_flags)
+            info = os.fstat(stage_fd)
+            if ((info.st_dev, info.st_ino) != stage_pin
+                    or _variant_directory_stamp(staging) != stage_pin
+                    or _variant_directory_stamp(staging_root) != stage_root_pin):
+                raise Conflict("Staging déplacé", code="artifact_variant_staging_changed")
+            for _ in range(8):
+                attempt = f"variant-{secrets.token_hex(12)}{suffix}"
+                try:
+                    fd = os.open(
+                        attempt, os.O_CREAT | os.O_EXCL | os.O_RDWR
+                        | getattr(os, "O_NOFOLLOW", 0),
+                        0o600, dir_fd=stage_fd,
+                    )
+                except FileExistsError:
+                    continue
+                os.close(fd)
+                os.unlink(attempt, dir_fd=stage_fd)
+                name = attempt
+                break
+            if not name:
+                raise Conflict("Staging saturé", code="artifact_variant_staging_unavailable")
+        except OSError as error:
+            raise Conflict("Staging inaccessible",
+                           code="artifact_variant_staging_unavailable") from error
+        finally:
+            if stage_fd is not None:
+                os.close(stage_fd)
+        if (_variant_directory_stamp(staging) != stage_pin
+                or _variant_directory_stamp(staging_root) != stage_root_pin
+                or _variant_directory_stamp(source_path.parent) != folder):
+            raise Conflict("Staging déplacé", code="artifact_variant_staging_changed")
+        path = staging / name
         return _OutputLease(
             path, source, output_format, str(proposed_filename or ""),
             str(variant_kind or "derived"),
@@ -456,8 +498,8 @@ class ArtifactExecutionBrokerImpl:
             source_identity_id=row["identity_id"],
             source_stamp=stamp,
             source_directory_stamp=folder,
-            staging_directory_stamp=_variant_directory_stamp(staging),
-            staging_root_stamp=_variant_directory_stamp(staging_root),
+            staging_directory_stamp=stage_pin,
+            staging_root_stamp=stage_root_pin,
         )
 
     @staticmethod
