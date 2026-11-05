@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncPhaseState, SyncSourceRef
+from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncPhaseState, SyncSourceCycleReceipt, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
@@ -252,9 +252,51 @@ class SynchronizationBrokerImpl:
             state["inventory_status"] = "unknown"
         if state.get("scope", "") not in {"", "manual", "opening", "scheduled"}:
             state["scope"] = ""
+        terminal = self._closed_last_cycle(value.get("last_cycle"))
+        if terminal is not None:
+            state["last_cycle"] = terminal
         if legacy:
             self._set_state(source_id, state)
         return state
+
+    @classmethod
+    def _closed_last_cycle(cls, value: object) -> dict[str, Any] | None:
+        """Only a complete, bounded v1 Core terminal can reach a source row.
+
+        Absent counters mean unattested, not zero. Malformed nested metadata
+        cannot leak supplier text or fabrications into the read-only view.
+        """
+        if type(value) is not dict or set(value) not in (
+            {"schema", "status", "attempted_at", "mode"},
+            {"schema", "status", "attempted_at", "mode", "canonical_execution"},
+        ):
+            return None
+        if (type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["status"]) is not str
+                or value["status"] not in {"success", "partial", "failed", "busy", "skipped"}
+                or type(value["mode"]) is not str
+                or value["mode"] not in {"manual", "scheduled"}):
+            return None
+        instant = cls._safe_phase_timestamp(value.get("attempted_at"))
+        if not instant:
+            return None
+        safe = {
+            "schema": 1, "status": value["status"],
+            "attempted_at": instant, "mode": value["mode"],
+        }
+        if "canonical_execution" in value:
+            from .core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+            counts = value["canonical_execution"]
+            if (type(counts) is not dict
+                    or set(counts) != set(CANONICAL_EXECUTION_STATUSES)
+                    or any(type(counts.get(name)) is not int
+                           or not 0 <= counts[name] <= 1_000_000
+                           for name in CANONICAL_EXECUTION_STATUSES)):
+                return None
+            safe["canonical_execution"] = {
+                name: counts[name] for name in CANONICAL_EXECUTION_STATUSES
+            }
+        return safe
 
     def _set_state(self, source_id: str, value: dict[str, Any]) -> None:
         self.service.storage.metadata_set(
@@ -467,6 +509,18 @@ class SynchronizationBrokerImpl:
         # Exact source/account/session binding is checked before provider I/O.
         if "personal_library" in source_caps:
             declared_sync_caps.append("scheduled_refresh")
+        last_cycle = self._closed_last_cycle(state.get("last_cycle"))
+        receipt = (
+            SyncSourceCycleReceipt(
+                status=last_cycle["status"],
+                attempted_at=last_cycle["attempted_at"],
+                mode=last_cycle["mode"],
+                canonical_execution=(
+                    tuple(last_cycle["canonical_execution"].items())
+                    if "canonical_execution" in last_cycle else None
+                ),
+            ) if last_cycle is not None else None
+        )
         return SyncSourceRef(
             source_id=source_id,
             identity_id=account_ref.identity_id,
@@ -482,6 +536,7 @@ class SynchronizationBrokerImpl:
             error=str(state.get("error") or ""),
             sync_capabilities=tuple(declared_sync_caps),
             phase_states=self._phase_states(account, state, tuple(declared_sync_caps)),
+            last_cycle=receipt,
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
