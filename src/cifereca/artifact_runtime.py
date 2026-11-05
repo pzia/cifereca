@@ -219,6 +219,89 @@ def _variant_ref(storage: Any, row: dict[str, Any], *, book_id: str = "",
     )
 
 
+def _scoped_derived_preference_candidate(
+    storage: Any, variant: Mapping[str, Any], identity_id: str,
+) -> tuple[str, str] | None:
+    """One locally derived Placement, not a global SHA/recipe preference.
+
+    This is an SQLite read-only projection. A receipt binds the exact parent
+    Placement and output Placement to one identity; a manually imported copy
+    with the same SHA or an old recipe without an OriginLink is unqualified.
+    Neither the receipt nor this preference is a license or content permission.
+    """
+    if (type(identity_id) is not str or not identity_id
+            or not isinstance(variant, Mapping)):
+        return None
+    aid = variant.get("artifact_id")
+    sid = variant.get("source_artifact_id")
+    rid = variant.get("variant_id")
+    digest = variant.get("source_sha256")
+    if (any(type(v) is not str or not v for v in (aid, sid, rid, digest))
+            or aid == sid or len(digest) != 64):
+        return None
+    try:
+        with storage._lock, storage._connect() as db:
+            db.execute("BEGIN")
+            physical = db.execute(
+                "SELECT placement_id,path,metadata_json FROM placements "
+                "WHERE artifact_id=? AND identity_id=? AND provider_id='cifereca' "
+                "AND state='present' LIMIT 2",
+                (aid, identity_id),
+            ).fetchall()
+            if len(physical) != 1:
+                return None
+            pid, child_path, stored_metadata = physical[0]
+            if any(type(v) is not str or not v
+                   for v in (pid, child_path, stored_metadata)):
+                return None
+            placement_meta = json.loads(stored_metadata)
+            if (type(placement_meta) is not dict
+                    or placement_meta.get("variant") is not True
+                    or placement_meta.get("source_artifact_id") != sid):
+                return None
+            parent_id = placement_meta.get("source_placement_id")
+            if type(parent_id) is not str or not parent_id:
+                return None
+            parent = db.execute(
+                "SELECT artifact_id,identity_id,state,path FROM placements "
+                "WHERE placement_id=?", (parent_id,),
+            ).fetchone()
+            if (parent is None or parent[:3] != (sid, identity_id, "present")
+                    or type(parent[3]) is not str
+                    or not Path(child_path).is_absolute()
+                    or Path(child_path).parent != Path(parent[3]).parent):
+                return None
+            links = db.execute(
+                "SELECT evidence_ref,metadata_json FROM origin_links "
+                "WHERE origin_kind='derived' AND artifact_id=? "
+                "AND identity_id=? AND parent_artifact_id=? "
+                "AND source_reference_id IS NULL LIMIT 3",
+                (aid, identity_id, sid),
+            ).fetchall()
+            expected = {
+                "source_placement_id": parent_id,
+                "transformer_plugin_id": variant.get("transformer_plugin_id"),
+                "transformer_version": variant.get("transformer_version") or "",
+                "profile_plugin_id": variant.get("profile_plugin_id") or "",
+                "profile_version": variant.get("profile_version") or "",
+                "options_fingerprint": variant.get("options_fingerprint") or "",
+                "source_sha256": digest,
+                "result_sha256": aid.removeprefix("sha256:"),
+            }
+            qualifying = 0
+            for evidence_ref, raw in links:
+                if evidence_ref != f"derived:{rid}:{pid}":
+                    continue
+                metadata = json.loads(raw)
+                if (type(metadata) is dict
+                        and all(metadata.get(k) == v
+                                for k, v in expected.items())):
+                    qualifying += 1
+            return (sid, pid) if qualifying == 1 else None
+    except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
+        return None
+
+
 def _variant_file_stamp(path: Path) -> tuple[int, ...] | None:
     """No-follow immutable-file signature; a source pathname is not proof."""
     try:
