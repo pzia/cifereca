@@ -1,6 +1,8 @@
 from dataclasses import replace
 from threading import Event, Thread
 
+import pytest
+
 from cifereca.plugin_api import (
     CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
 )
@@ -77,15 +79,18 @@ def test_empty_response_keeps_facets_but_query_variants_never_replace_them(tmp_p
         service.close()
 
 
-def test_malformed_facet_values_stay_unverified_without_dropping_notices(tmp_path):
+@pytest.mark.parametrize("count", [True, -1, 2**63])
+def test_malformed_facet_values_stay_unverified_without_dropping_notices(tmp_path, count):
     service = _service(tmp_path)
     session = FacetedSession("faceted")
     original = session.search_with_response_facets
 
     def malformed(*args, **kwargs):
         result = original(*args, **kwargs)
-        value = replace(FACET.values[0], count=True)
-        return replace(result, facets=(replace(FACET, values=(value,)), object()))
+        value = replace(FACET.values[0], count=count)
+        return replace(result, facets=(
+            replace(FACET, values=(value,)), replace(FACET, page=2**31), object(),
+        ))
 
     session.search_with_response_facets = malformed
     service._sessions = {"faceted": session}

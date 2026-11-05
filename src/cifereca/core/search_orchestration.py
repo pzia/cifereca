@@ -795,7 +795,7 @@ def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]
                 or not all(_valid_facet_text(text) for text in (
                     facet.scenario, facet.field, facet.label
                 ))
-                or type(facet.page) is not int or facet.page < 0):
+                or type(facet.page) is not int or not 0 <= facet.page < 2**31):
             continue
         key = (facet.scenario, facet.page, facet.field.casefold())
         if key in seen:
@@ -807,7 +807,7 @@ def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]
             or any(
                 type(value) is not CatalogSearchFacetValue
                 or not _valid_facet_text(value.label)
-                or type(value.count) is not int or value.count < 0
+                or type(value.count) is not int or not 0 <= value.count < 2**63
                 or type(value.is_selected) is not bool
                 or (value.display_label is not None
                     and not _valid_facet_text(value.display_label))
@@ -819,7 +819,11 @@ def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]
     return tuple(accepted)
 
 
-def _search_provider_session(self, session: ProviderSession, query: str, scope: str, *, field: str='all', content_types: tuple[str, ...]=(), facade_type, response_facets: list[CatalogSearchFacet] | None = None) -> tuple[list[SearchResult], list[str], str, str]:
+def _search_provider_session(
+    self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
+    content_types: tuple[str, ...] = (), facade_type,
+    response_facets: list[CatalogSearchFacet] | None = None,
+) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
     This is deliberately safe to run in parallel with *other* provider sessions;
@@ -1186,7 +1190,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             elif on_batch is not None and isinstance(session, ProviderSearchWithFacets):
                 future = executor.submit(
                     _search_provider_session, self, session, query, scope,
-                    field=field, content_types=types, facade_type=type(self),
+                    field=field, content_types=tuple(content_types or ()), facade_type=type(self),
                     response_facets=response_facets,
                 )
             else:
