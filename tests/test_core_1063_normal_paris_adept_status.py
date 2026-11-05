@@ -183,6 +183,12 @@ def test_service_facade_honours_persisted_choice_without_modifying_grants(tmp_pa
             "credential_id": "alice-secondary", "label": "Paris secondaire",
         })
         service.accounts.append(_primary("alice", "alice-secondary"))
+        service.config.set("providers.accounts", [
+            {"id": "alice-paris", "provider": "paris", "identity_id": "alice",
+             "enabled": True},
+            {"id": "alice-secondary", "provider": "paris", "identity_id": "alice",
+             "enabled": True},
+        ])
         assert service.normal_paris_adept_status("alice")["reason"] == (
             "multiple_paris_connections"
         )
@@ -191,6 +197,24 @@ def test_service_facade_honours_persisted_choice_without_modifying_grants(tmp_pa
             "primary_paris_connection_id": "alice-paris",
         })
         assert service.normal_paris_adept_status("alice")["status"] == "ready"
+        # The old SQLite connection can still say enabled after a config
+        # disabling. It must not satisfy an explicitly persisted choice.
+        service.config.set("providers.accounts", [
+            {"id": "alice-paris", "provider": "paris", "identity_id": "alice",
+             "enabled": False},
+            {"id": "alice-secondary", "provider": "paris", "identity_id": "alice",
+             "enabled": True},
+        ])
+        assert service.normal_paris_adept_status("alice")["reason"] == (
+            "primary_paris_connection_missing"
+        )
+        # Restore the exact configured scope before verifying the rest.
+        service.config.set("providers.accounts", [
+            {"id": "alice-paris", "provider": "paris", "identity_id": "alice",
+             "enabled": True},
+            {"id": "alice-secondary", "provider": "paris", "identity_id": "alice",
+             "enabled": True},
+        ])
         # No exceptional grant or historic origin is created by the choice.
         assert service.storage.paris_borrower_adept_binding_get(
             credential_id="alice-paris", account_id="linked-123"
