@@ -712,8 +712,11 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     scheduled_accounts = [
         a for a in eligible_accounts if a.credential_id in scheduled_credentials
     ]
-    if not legacy_enabled and not scheduled:
-        reason = "disabled"
+    # #3198: only current source/session facts determine the opening state.
+    # Historical kobo_backup.enabled is exposed separately for rollback,
+    # never as a source-wide OFF decision or acquisition permission.
+    if not kobo and not any(a.provider_id == "kobo" for a in self.accounts):
+        reason = "disabled"  # No configured account and no active session.
     elif not connected:
         reason = "no_session"
     elif not capable:
@@ -1582,7 +1585,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 "partial", "attention_required", "fresh_cache_partial", "cancelled",
             } else "fresh_cache" if batch_status == "fresh_cache" else "started"
         )
-    elif kobo_decision["status"] == "manual_only":
+    elif (kobo_decision["status"] == "manual_only"
+          and kobo_decision["persisted_enabled"] is True):
+        # Keep the historical compatibility summary exactly as before:
+        # legacy OFF publishes no `kobo` batch, even though the source
+        # diagnostic correctly says manual_only. No source permission here.
         # A formerly enabled global toggle never licenses new downloads.
         kobo_summary = {"status": "manual_only", "skipped": True}
     for field in ("manifest_items", "owned", "archived", "downloadable",

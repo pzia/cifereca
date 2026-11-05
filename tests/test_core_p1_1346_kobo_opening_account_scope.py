@@ -55,11 +55,34 @@ def test_disconnected_or_uncapable_session_never_qualifies():
         assert result["status"] in {"no_session", "capability_unavailable"}
 
 
-def test_old_global_toggle_cannot_turn_manual_source_into_auto():
+def test_old_global_toggle_neither_enables_nor_disables_source_sync():
     host = _host([_account("a", "c")], [_session("c")])
     assert _kobo_opening_decision(host)["status"] == "manual_only"
     host.kobo_backup_enabled = lambda: False
-    assert _kobo_opening_decision(host)["status"] == "disabled"
+    result = _kobo_opening_decision(host)
+    assert result["status"] == "manual_only"
+    assert result["persisted_enabled"] is False
+
+
+def test_opening_reason_depends_only_on_live_source_state_not_retired_toggle():
+    # No source, disconnected provider, missing capability, source explicitly
+    # disabled and connected/manual-only are distinct diagnostic facts.
+    cases = (
+        ([], [], "disabled"),
+        ([_account("a", "c")], [], "no_session"),
+        ([_account("a", "c")], [_session("c", connected=False)], "no_session"),
+        ([_account("a", "c")], [_session("c", backup=False)], "capability_unavailable"),
+        ([_account("a", "c", False)], [_session("c")], "source_disabled"),
+        ([_account("a", "c")], [_session("c")], "manual_only"),
+    )
+    for accounts, sessions, expected in cases:
+        host = _host(accounts, sessions)
+        for historical_enabled in (True, False):
+            host.kobo_backup_enabled = lambda enabled=historical_enabled: enabled
+            outcome = _kobo_opening_decision(host)
+            assert outcome["status"] == expected
+            assert outcome["persisted_enabled"] is historical_enabled
+            assert outcome["scheduled_kobo"] == 0
 
 
 def test_deep_never_overrides_source_manual_mode():
