@@ -77,6 +77,69 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(names, ["consumer", "leaf", "optional", "provider"])
         self.assertIn("dependency closure", reason)
 
+    def test_optional_recommendation_closes_to_provider_and_transitive_consumers(self):
+        self.add_package("recommended", [
+            {"id": "service.recommended", "type": "optional.runtime"},
+        ])
+        self.add_package("recommender", [
+            {"id": "service.recommender", "type": "consumer",
+             "recommends": [{"plugin": "service.recommended", "version": ">=1"}]},
+        ])
+        self.add_package("downstream", [
+            {"id": "service.downstream", "type": "consumer",
+             "requires": [{"plugin": "service.recommender"}]},
+        ])
+        # Include newly added packages in synthetic audit; no shortcuts for
+        # unqualified product packages in the actual repository.
+        self.write_explicit(
+            ["provider", "consumer", "optional", "leaf",
+             "recommended", "recommender", "downstream"],
+            {"leaf": ["consumer"], "consumer": ["leaf"]},
+        )
+        names, reason = self.names([
+            ("M", "src/plugins/recommended/module.py"),
+        ])
+        self.assertEqual(names, ["downstream", "recommended", "recommender"])
+        self.assertIn("dependency closure", reason)
+        # Changing the recommender must not imply testing the dependency.
+        names, _ = self.names([("M", "src/plugins/recommender/module.py")])
+        self.assertEqual(names, ["downstream", "recommender"])
+
+    def test_malformed_recommendations_fail_closed(self):
+        for bad in (None, "unexpected", [None], [{}], [{"plugin": 4}]):
+            with self.subTest(bad=bad):
+                self.add_package("invalid", [
+                    {"id": "service.invalid", "type": "consumer",
+                     "recommends": bad},
+                ])
+                names, reason = self.names([
+                    ("M", "src/plugins/provider/module.py"),
+                ])
+                self.assertEqual(names, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+        # An unknown optional external ID has no in-repo suite to select.
+        self.add_package("external", [
+            {"id": "service.external", "type": "consumer",
+             "recommends": [{"plugin": "outside.repository"}]},
+        ])
+        graph, _ = selector.dependency_graph(self.root)
+        self.assertEqual(graph["external"], set())
+
+    def test_real_kobo_adept_optional_consumers_are_selected(self):
+        graph, _ = selector.dependency_graph(ROOT)
+        affected = selector.affected_packages({"runtime-kobo-adept"}, graph)
+        self.assertTrue(
+            {"runtime-kobo-adept", "provider-kobo", "provider-paris",
+             "provider-numilog"} <= set(affected),
+        )
+        # Runtime is not yet audited: an isolated product edit must still
+        # run the exhaustive plugin gate, despite its known consumers.
+        names, reason = selector.select([
+            ("M", "src/plugins/runtime-kobo-adept/cifereca_kobo_adept.py"),
+        ], ROOT)
+        self.assertEqual(names, [])
+        self.assertIn("not audited", reason)
+
     def test_cycle_converges_and_union_is_stable(self):
         graph, _ = selector.dependency_graph(self.root)
         self.assertEqual(selector.affected_packages({"consumer"}, graph), ["consumer", "leaf"])
