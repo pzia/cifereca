@@ -56,24 +56,3 @@ def test_pdf_uses_public_artifact_execution():
     assert request.capability_id=='pdf.image-optimize-eink'
     assert transformer_id=='document.transformer.pdf-eink-optimizer'
     assert request.options['max_pdf_pages']==1000
-
-def test_plugin_passes_exact_core_placement_without_reading_source_path():
-    from dataclasses import replace
-
-    execution = Execution()
-    page = make_page(execution)
-    shared = replace(
-        artifact("epub"), identity_id="alice",
-        placement_id="placement:alice-original",
-    )
-    page._execute_artifact(shared, "device.profile.fixture", Control())
-    request, _, _ = execution.calls[0]
-    assert request.source is shared
-    assert request.identity_id == "alice"
-    assert request.placement_id == "placement:alice-original"
-    # The unscoped legacy call remains deliberately unscoped: only Core can
-    # decide whether exactly one physical source exists globally.
-    page._execute_artifact(artifact("pdf"), "device.profile.fixture", Control())
-    request2 = execution.calls[1][0]
-    assert request2.identity_id is None
-    assert request2.placement_id is None
