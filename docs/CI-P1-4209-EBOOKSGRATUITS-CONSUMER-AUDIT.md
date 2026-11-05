@@ -9,7 +9,7 @@ Qualifier le package `ebooksgratuits` comme **dixième package audité sur 21**,
 - Manifest `provider.ebooksgratuits` : `requires transport.http` (package `transport-http`), aucun `recommends` ou `requires_contracts`. Le graphe manifeste couvre déjà le transport ; sa modification ferme donc vers `ebooksgratuits` puis `home-page`.
 - Le module `cifereca_ebooksgratuits.py` utilise le contrat Core public et la bibliothèque Python, sans import direct d'un autre plugin produit.
 - `home-page/cifereca_home.py` classe `ebooksgratuits` dans `PUBLIC_PROVIDERS`, `SOURCE_NAMES` et `_NON_LOAN_PROVIDERS`. C'est un couplage produit effectif absent des manifestes. Il justifie une dépendance explicite dans le graphe du sélecteur.
-- Aucun autre package plugin ne référence les IDs ou modules spécifiques en code ou manifests (test de garde). Les consommations dans Core, les tests transverses et les simulations restent couvertes par les gates indépendants inchangés.
+- Aucun autre package plugin ne référence les IDs ou modules spécifiques en code produit ou manifests, hors `home-page` (test de garde). Le test `transport-http/tests/test_opds_same_origin_redirect_p1_2460.py` utilise **une URL externe fixe** `opds2.ebooksgratuits.org` pour vérifier les redirections same-origin : ce n'est pas une dépendance au plugin `ebooksgratuits`. Le test de garde vérifie explicitement que cette exception reste confinée à ce fichier. Les consommations dans Core, les tests transverses et les simulations restent couvertes par les gates indépendants inchangés.
 
 ## Garanties
 
