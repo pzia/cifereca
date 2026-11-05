@@ -100,7 +100,9 @@ GLOBAL = {
     "environnements/openai-chat-debian/capture_app.py",
     ".github/workflows/e2e-smoke.yml",
     "tests/test_e2e_runner_contract.py",
-    "tests/test_e2e_ci_paths.py", "tests/test_ci_select_e2e.py",
+    "tests/test_ci_select_e2e.py",
+    # tests/test_e2e_ci_paths.py inspects path filters only: PR CI validates
+    # it; E2E Smoke still runs synthetic checks, not the 35 GTK scenarios.
 }
 
 def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
