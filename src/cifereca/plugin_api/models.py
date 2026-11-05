@@ -733,6 +733,20 @@ class SyncPhaseState:
 
 
 @dataclass(frozen=True, slots=True)
+class SyncSourceCycleReceipt:
+    """One terminal Core cycle for one exact source and borrower.
+
+    canonical_execution=None means no complete A-to-B evidence was attested.
+    A present all-zero tuple is a real zero-valued canonical observation.
+    The receipt is informational; it cannot authorize a provider operation.
+    """
+    status: str
+    attempted_at: str
+    mode: str
+    canonical_execution: tuple[tuple[str, int], ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SyncSourceRef:
     source_id: str
     identity_id: str
@@ -750,6 +764,7 @@ class SyncSourceRef:
     # synchronization operation. Never imply an acquisition is automatic.
     sync_capabilities: tuple[str, ...] = ()
     phase_states: tuple[SyncPhaseState, ...] = ()
+    last_cycle: SyncSourceCycleReceipt | None = None
 
 
 @dataclass(frozen=True, slots=True)
