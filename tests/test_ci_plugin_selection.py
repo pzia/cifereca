@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -362,6 +362,67 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
+                    )
+
+    def test_epub_optimizer_profiles_and_transformers_are_one_package(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("epub_optimizer", audited)
+        self.assertEqual(
+            selector.affected_packages({"epub_optimizer"}, graph),
+            ["epub_optimizer"],
+        )
+        # Required device.profile contracts are implemented in this package;
+        # UI requires the two transformer IDs from the same package.
+        for module in (
+            "cifereca_epub_optimizer_transformer.py",
+            "cifereca_pdf_optimizer_transformer.py",
+            "cifereca_epub_optimizer_profiles.py",
+            "cifereca_epub_optimizer_plugin.py",
+        ):
+            with self.subTest(module=module):
+                chosen, reason = selector.select([
+                    ("M", "src/plugins/epub_optimizer/" + module),
+                ], ROOT)
+                self.assertEqual(chosen, ["src/plugins/epub_optimizer"])
+                self.assertIn("dependency closure", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/epub_optimizer/cifereca_epub_optimizer_plugin.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/epub_optimizer/cifereca-plugin.json")],
+            [("M", "src/plugins/epub_optimizer/tests/conftest.py")],
+            [("D", "src/plugins/epub_optimizer/cifereca_epub_optimizer_plugin.py")],
+            [("R100", "src/plugins/epub_optimizer/cifereca_epub_optimizer_plugin.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_epub_optimizer_has_no_other_plugin_implementation_consumers(self):
+        tokens = (
+            "ui.page.epub-optimizer",
+            "document.transformer.epub-optimizer",
+            "document.transformer.pdf-eink-optimizer",
+            "device.profile.xteink-x3",
+            "device.profile.xteink-x4",
+            "device.profile.kobo-clara-bw",
+            "device.profile.generic-eink",
+            "cifereca_epub_optimizer",
+            "cifereca_pdf_optimizer",
+        )
+        root = ROOT / "src/plugins"
+        for package_dir in sorted(root.iterdir()):
+            if not package_dir.is_dir() or package_dir.name == "epub_optimizer":
+                continue
+            for file in package_dir.rglob("*"):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yaml", ".yml", ".sh",
+                }:
+                    data = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in data for token in tokens),
+                        f"New EPUB optimizer consumer: {file}",
                     )
 
     def test_home_page_optional_library_contract_closure(self):
