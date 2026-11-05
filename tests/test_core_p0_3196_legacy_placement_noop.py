@@ -7,6 +7,9 @@ repeated manifest snapshot or catalogue title. No supplier/DRM/network IO.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+
+import pytest
 
 from cifereca.storage import Storage
 
@@ -86,5 +89,78 @@ def test_legacy_replay_without_sha_keeps_original_unverified_time(tmp_path):
         store.backup_put(_claim(path, sha="", updated_at=5678))
         assert _placement(store) == first
         assert store.artifacts() == []
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("alias_kind", ("leaf_symlink", "parent_symlink"))
+def test_legacy_alias_never_claims_another_profiles_physical_path(
+    tmp_path, alias_kind,
+):
+    # An old Kobo path is a declaration, never permission to resolve a
+    # symlink from profile A into B and reserve B's later canonical path.
+    store = Storage(tmp_path / "state.sqlite")
+    a = tmp_path / "library" / "A"
+    b = tmp_path / "library" / "B"
+    a.mkdir(parents=True)
+    b.mkdir()
+    physical = b / "private.pdf"
+    payload = b"%PDF-1.7\nsynthetic foreign profile"
+    physical.write_bytes(payload)
+    if alias_kind == "leaf_symlink":
+        alias = a / "old.pdf"
+        alias.symlink_to(physical)
+    else:
+        intermediary = a / "linked"
+        intermediary.symlink_to(b, target_is_directory=True)
+        alias = intermediary / "private.pdf"
+    assert alias.resolve() == physical
+    try:
+        store.backup_put(_claim(alias, sha="a" * 64, updated_at=1000))
+        backup = store.backup_get("opaque-legacy", "card", "edition")
+        assert backup["local_path"] == str(alias)
+        claims = store.placements()
+        assert len(claims) == 1
+        assert claims[0]["identity_id"] == "A"
+        assert claims[0]["path"] == str(alias)
+        assert claims[0]["state"] == "unverified"
+        assert claims[0]["last_seen_at"] is None
+
+        digest = hashlib.sha256(payload).hexdigest()
+        store.artifact_put({
+            "artifact_id": "sha256:" + digest, "sha256": digest,
+            "size": len(payload), "media_format": "pdf",
+        })
+        actual_id = store.placement_put({
+            "path": str(physical), "identity_id": "B",
+            "artifact_id": "sha256:" + digest, "state": "present",
+            "provider_id": "local", "source_item_id": "other-edition",
+        })
+        after = {p["placement_id"]: p for p in store.placements()}
+        assert len(after) == 2
+        assert after[actual_id]["identity_id"] == "B"
+        assert after[actual_id]["path"] == str(physical)
+        assert after[actual_id]["artifact_id"] == "sha256:" + digest
+        assert store.backup_get("opaque-legacy", "card", "edition") == backup
+        assert physical.read_bytes() == payload
+        with store._lock, store._connect() as sql:
+            assert sql.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
+            assert sql.execute("SELECT COUNT(*) FROM source_references").fetchone()[0] == 0
+    finally:
+        store.close()
+
+
+def test_legacy_claim_with_embedded_nul_rolls_back_without_poisoning_sql(tmp_path):
+    # Path.resolve() used to reject NUL. The new lexical-only path must
+    # preserve that fail-closed behavior, including the backup_items UPSERT.
+    store = Storage(tmp_path / "state.sqlite")
+    try:
+        bad = str(tmp_path / "legacy") + "\x00" + "poisoned.pdf"
+        with pytest.raises(ValueError, match="backup_legacy_path_invalid"):
+            store.backup_put(_claim(Path(bad), sha="a" * 64, updated_at=1000))
+        assert store.backup_list("opaque-legacy") == []
+        assert store.placements() == []
+        assert store.entitlements() == []
+        assert store.acquisitions(provider_id="opaque-legacy") == []
     finally:
         store.close()
