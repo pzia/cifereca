@@ -26,19 +26,35 @@ pids=()
 names=()
 logs=()
 
-finish_batch() {
-  local index
+# Refill a free slot immediately rather than waiting for the slowest pytest
+# in a fixed batch. wait -n requires Bash >= 5.1 (Ubuntu 24.04 provides 5.2).
+finish_one() {
+  local finished='' status=0 index
+  if wait -n -p finished "${pids[@]}"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ -z "${finished:-}" ]]; then
+    # Fallback if every child completed before wait -n was called.
+    finished="${pids[0]}"
+    if wait "$finished"; then status=0; else status=$?; fi
+  fi
   for index in "${!pids[@]}"; do
-    if ! wait "${pids[index]}"; then
-      failed=1
+    if [[ "${pids[index]}" == "$finished" ]]; then
+      echo "::group::${names[index]}"
+      cat "${logs[index]}"
+      echo "::endgroup::"
+      unset 'pids[index]' 'names[index]' 'logs[index]'
+      pids=("${pids[@]}")
+      names=("${names[@]}")
+      logs=("${logs[@]}")
+      if (( status != 0 )); then failed=1; fi
+      return 0
     fi
-    echo "::group::${names[index]}"
-    cat "${logs[index]}"
-    echo "::endgroup::"
   done
-  pids=()
-  names=()
-  logs=()
+  echo "Plugin test worker status could not be matched to a child PID" >&2
+  exit 2
 }
 
 for p in "${targets[@]}"; do
@@ -50,13 +66,13 @@ for p in "${targets[@]}"; do
     names+=("$(basename "$p")")
     logs+=("$log")
     if (( ${#pids[@]} >= jobs )); then
-      finish_batch
+      finish_one
     fi
   fi
 done
-if (( ${#pids[@]} )); then
-  finish_batch
-fi
+while (( ${#pids[@]} )); do
+  finish_one
+done
 
 echo "Tested $count plugin package(s) (max parallel: $jobs)"
 exit "$failed"
