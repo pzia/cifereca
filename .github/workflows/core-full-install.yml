@@ -1,11 +1,12 @@
 name: Validate full Core release install
 
+# The transaction gate covers Core/CLI/updater/plugins, not pure GTK widgets.
+# GUI-only changes keep the Core test, wheel-install and GTK E2E coverage.
+
 on:
   pull_request:
     paths:
       - "src/cifereca/**"
-      # Pure GTK/CoreUI changes are covered by Core tests, wheel smoke and E2E.
-      # Full release/rollback has no GTK entrypoint: keep Core/CLI/update paths.
       - "!src/cifereca/gui/**"
       - "!src/cifereca/builtin_ui/**"
       - "!src/cifereca/app.py"
@@ -22,8 +23,6 @@ on:
     branches: [main]
     paths:
       - "src/cifereca/**"
-      # Pure GTK/CoreUI changes are covered by Core tests, wheel smoke and E2E.
-      # Full release/rollback has no GTK entrypoint: keep Core/CLI/update paths.
       - "!src/cifereca/gui/**"
       - "!src/cifereca/builtin_ui/**"
       - "!src/cifereca/app.py"
