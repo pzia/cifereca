@@ -130,6 +130,62 @@ def forget(path: Path) -> None:
 INITIAL_MANIFEST = '.initial-acsm-receipt.json'
 
 
+def _initial_digest(path: Path, directory: Path, now: float) -> str | None:
+    """Verify the exact regular file via a no-follow directory and file fd.
+
+    Never accept an ACSM replaced with a symlink between stat and read.
+    The standard cache retains its historical ABI; this new receipt is stricter.
+    """
+    import stat
+    if (type(path) is not Path or type(directory) is not Path
+            or path.parent != directory or path.suffix.casefold() != '.acsm'
+            or not path.name or '/' in path.name or chr(92) in path.name):
+        return None
+    parent_fd = file_fd = None
+    try:
+        parent_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory_info = os.fstat(parent_fd)
+        if (not stat.S_ISDIR(directory_info.st_mode)
+                or directory_info.st_uid != os.geteuid()):
+            return None
+        file_fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        info = os.fstat(file_fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or not 0 < info.st_size <= MAX_BYTES):
+            return None
+        with os.fdopen(file_fd, 'rb', closefd=False) as stream:
+            data = stream.read(MAX_BYTES + 1)
+        again = os.fstat(file_fd)
+        if (len(data) != info.st_size or info.st_ino != again.st_ino
+                or info.st_dev != again.st_dev
+                or info.st_size != again.st_size or info.st_mtime_ns != again.st_mtime_ns):
+            return None
+        upper = data.upper()
+        if b'<!DOCTYPE' in upper or b'<!ENTITY' in upper:
+            return None
+        root = ElementTree.fromstring(data)
+        if root.tag != '{http://ns.adobe.com/adept}fulfillmentToken':
+            return None
+        for element in root.iter():
+            if element.tag.rsplit('}', 1)[-1].casefold() in {
+                'expiration', 'expires', 'validuntil',
+            }:
+                value = (element.text or '').strip()
+                expiry = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                if now >= expiry.timestamp():
+                    return None
+        return hashlib.sha256(data).hexdigest()
+    except (OSError, ValueError, OverflowError, ElementTree.ParseError):
+        return None
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
+
+
 def _initial_scope(loan, identity_id: str, account_id: str) -> dict | None:
     """Only an exact, active Paris DILICOM borrowing scope is receivable."""
     if (type(identity_id) is not str or not identity_id
@@ -161,7 +217,7 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
     now = time.time() if now is None else now
     try:
         owner = _initial_scope(loan, identity_id, account_id)
-        digest = _digest(path, directory, now)
+        digest = _initial_digest(path, directory, now)
         if (owner is None or digest is None or not _active(loan, now)
                 or directory.is_symlink() or path.parent != directory):
             return False
@@ -215,7 +271,7 @@ def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
                 or not name.casefold().endswith('.acsm')):
             return None
         candidate = directory / name
-        actual = _digest(candidate, directory, now)
+        actual = _initial_digest(candidate, directory, now)
         return (candidate if actual is not None
                 and actual == row.get('sha256') else None)
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
