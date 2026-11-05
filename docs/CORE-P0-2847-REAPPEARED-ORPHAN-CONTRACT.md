@@ -26,7 +26,12 @@ from cifereca.core.missing_placement_same_path import (
   sans suivre les liens symboliques des dossiers et du fichier.
 - **Cette première tranche est limitée aux Placements orphelins.** Tout
   catalogue directement lié, `backup_items` référent, reçu,
-  déclaration, metadata opaque ou autre dépendance recensée est un **veto**.
+  déclaration, **clé de `metadata_json` autre que `relative_path` vide
+  ou nul**, ou autre dépendance recensée est un **veto**.
+  `provider_id` et `source_item_id` préexistants d'un Placement orphelin
+  sont seulement des **étiquettes historiques** : leur conservation n'atteste
+  ni droit fournisseur ni `SourceReference` / `OriginLink`. Ils ne peuvent
+  déclencher d'acquisition ou de rattachement source.
   Les Placements liés demandent le mécanisme de rapprochement spécialisé :
   jamais un simple changement de `state` par corrélation SHA.
 - Le `plan_token` privé est l'empreinte du scope, du contenu SQLite,
