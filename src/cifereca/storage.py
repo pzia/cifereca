@@ -1964,7 +1964,7 @@ class Storage:
         if item.get("provider_id") == "kobo":
             key = item.get("item_id")
             if (type(key) is not str or not key.strip()
-                    or len(key) > 1024
+                    or key != key.strip() or len(key) > 1024
                     or any(c in key for c in "\x00\r\n")):
                 raise ValueError("backup_legacy_item_id_invalid")
         now = int(item.get("updated_at") or time.time())
