@@ -53,7 +53,16 @@ jobs:
 
       - name: Install test dependencies
         if: steps.scope.outputs.plugin_mode != 'skip'
-        run: python -m pip install --disable-pip-version-check "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12" "PyMuPDF>=1.26,<2"
+        shell: bash
+        env:
+          PLUGIN_TARGETS: ${{ steps.scope.outputs.plugin_targets }}
+        run: |
+          python -m pip install --disable-pip-version-check "pytest>=8,<9" "httpx>=0.28.1,<0.29" "packaging>=24,<26" "Pillow>=10,<12"
+          # No PDF engine is required for packages other than epub_optimizer.
+          # Empty targets mean exhaustive tests: retain every dependency.
+          if [[ -z "$PLUGIN_TARGETS" || " $PLUGIN_TARGETS " == *" src/plugins/epub_optimizer "* ]]; then
+            python -m pip install --disable-pip-version-check "PyMuPDF>=1.26,<2"
+          fi
 
       - name: Run plugin tests
         if: steps.scope.outputs.plugin_mode != 'skip'
