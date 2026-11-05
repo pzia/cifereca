@@ -56,6 +56,29 @@ def _verified_sha(path: Path, expected_stamp: tuple[int, ...],
         return False
 
 
+def _read_receipt_nofollow(journal: Path) -> bytes:
+    """Read a bounded, stable regular file, never an attacker-controlled link."""
+    expected = _stamp(journal)
+    if expected is None or expected[2] > MAX_BYTES:
+        raise ValueError("derived_receipt_invalid_file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(journal, flags)
+    try:
+        before = os.fstat(fd)
+        signature = lambda st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+        if (not stat.S_ISREG(before.st_mode)
+                or signature(before) != expected):
+            raise ValueError("derived_receipt_changed")
+        raw = os.read(fd, MAX_BYTES + 1)
+        if (len(raw) != expected[2] or len(raw) > MAX_BYTES
+                or signature(os.fstat(fd)) != expected
+                or _stamp(journal) != expected):
+            raise ValueError("derived_receipt_changed")
+        return raw
+    finally:
+        os.close(fd)
+
+
 def _directory(path: Path) -> bool:
     try:
         return stat.S_ISDIR(path.lstat().st_mode)
@@ -191,9 +214,7 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
         outcome = {"receipt": journal.name, "status": "manual_review"}
         out.append(outcome)
         try:
-            if _stamp(journal) is None or journal.stat().st_size > MAX_BYTES:
-                continue
-            receipt_bytes = journal.read_bytes()
+            receipt_bytes = _read_receipt_nofollow(journal)
             receipt_digest = hashlib.sha256(receipt_bytes).hexdigest()
             data = json.loads(receipt_bytes)
             if (type(data) is not dict or data.get("schema") != SCHEMA
@@ -216,6 +237,10 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                 continue
             source_stamp = _stamp(source)
             output_stamp = tuple(data["output_stamp"])
+            if (type(data.get("output_size")) is not int
+                    or data["output_size"] <= 0
+                    or data["output_size"] != output_stamp[2]):
+                continue
             if (source_stamp is None
                     or not _verified_sha(target, output_stamp, data["output_sha256"])
                     or not _verified_sha(source, source_stamp, data["source_sha256"])):
