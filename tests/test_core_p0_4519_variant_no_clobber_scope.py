@@ -418,3 +418,23 @@ def test_unknown_active_identity_never_selects_first_sha_placement(tmp_path):
         broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
     assert caught.value.code == "artifact_source_identity_mismatch"
     assert not (tmp_path / "library" / "Optimized.epub").exists()
+
+
+def test_active_identity_change_during_transform_blocks_commit(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+
+    class ChangeSelectedProfile(FakeTransformer):
+        def transform(self, request, source_lease, destination, control):
+            result = super().transform(request, source_lease, destination, control)
+            service.current_identity.identity_id = "profile-b"
+            return result
+
+    service.plugin_manager = FakeManager(transformer=ChangeSelectedProfile())
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"),
+                                 control=Control())
+    assert caught.value.code == "artifact_source_identity_mismatch"
+    assert (tmp_path / "library" / "Book.epub").read_bytes() == b"book-data"
+    assert not (tmp_path / "library" / "Optimized.epub").exists()
+    assert service.storage.placement_get(original_id) is not None
+    assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
