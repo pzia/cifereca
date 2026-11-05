@@ -174,10 +174,14 @@ def record_verified_usb_observation(
                 unresolved += 1
                 continue
             found = observed_by_path.get(target.casefold())
-            if found is None and artifact_id in snapshot.files:
-                # The same registered Artifact exists at a *different*
-                # managed path. Do not call that book absent: an unexpected
-                # move demands reconciliation, never implicit recopy/removal.
+            if found is None and (
+                artifact_id in snapshot.files
+                or any(entry.sha256 == expected
+                       for entry in snapshot.files.values())
+            ):
+                # The registered Artifact or identical bytes appear at a
+                # different managed path. This is an unresolved relocation,
+                # NOT authority to call this book absent or to recopy it.
                 unresolved += 1
                 continue
             if found is None:
