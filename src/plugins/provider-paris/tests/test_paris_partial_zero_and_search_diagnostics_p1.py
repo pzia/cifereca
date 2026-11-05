@@ -30,7 +30,7 @@ def test_healthy_empty_branch_plus_broken_sibling_is_partial_zero(healthy):
     def fake_search(query, scenario, page, size):
         calls.append((scenario, size))
         if scenario == healthy:
-            return []
+            return [], []
         raise ParisError("PRIVATE_SIGNED_URL?token=PRIVATE_ACCOUNT")
 
     client._search_scenario = fake_search
@@ -74,7 +74,7 @@ def test_all_catalogues_down_is_still_a_retryable_failure():
 
 def test_an_empty_single_catalogue_is_not_a_service_failure():
     client, _ = session()
-    client._search_scenario = lambda *args: []
+    client._search_scenario = lambda *args: ([], [])
     try:
         assert client.search("absent", scope="digital") == []
         assert client.last_search_warnings == []
@@ -87,7 +87,7 @@ def test_network_error_is_reported_as_partial_without_unsafe_diagnostics():
 
     def fail_ebook(query, scenario, page, size):
         if scenario == "CATALOGUE":
-            return []
+            return [], []
         raise httpx.ConnectError("PRIVATE_URL?access_token=SECRET")
 
     client._search_scenario = fail_ebook

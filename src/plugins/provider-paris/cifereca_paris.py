@@ -1076,11 +1076,8 @@ class ParisProviderSession(ProviderSession):
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
 
-    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
-        # An unsupported field/scope is a new failed attempt, not a reason
-        # to keep a previous partial Syracuse branch warning visible.
-        self.last_search_warnings = []
-        self.last_search_response_facets = []
+    @staticmethod
+    def _search_arguments(query: str, scope: str, page: int, field: str) -> tuple[str, str]:
         # Syracuse search is a general text query. Do not advertise an
         # author/ISBN/subject restriction that the upstream client ignores.
         if type(field) is not str or field.strip().casefold() != "all":
@@ -1103,7 +1100,13 @@ class ParisProviderSession(ProviderSession):
         # The public capability validator accepts case/whitespace variants,
         # but ParisClient dispatches exact tokens. Pass the validated scope
         # rather than implicitly widening " DIGITAL " to all catalogues.
-        scope = scope.strip().casefold()
+        return query, scope.strip().casefold()
+
+    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        # An unsupported field/scope is a new failed attempt.
+        self.last_search_warnings = []
+        self.last_search_response_facets = []
+        query, scope = self._search_arguments(query, scope, page, field)
         try:
             rows = self._decorate(
                 self.client.search(query, scope, page),
@@ -1116,6 +1119,41 @@ class ParisProviderSession(ProviderSession):
             self.last_search_response_facets = [
                 dict(facet) for facet in getattr(self.client, "last_search_response_facets", ())
             ]
+
+    def search_with_response_facets(
+        self, query: str, scope: str = "all", *, field: str = "all",
+        content_types: tuple[str, ...] = (),
+    ):
+        # Import the optional contract only when a compatible Core invokes it.
+        from cifereca.plugin_api import (
+            CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
+        )
+
+        self.last_search_warnings = []
+        self.last_search_response_facets = []
+        query, scope = self._search_arguments(query, scope, 0, field)
+        try:
+            rows, facets, warnings = self.client.search_response(query, scope)
+        except Exception:
+            self.last_search_warnings = list(self.client.last_search_warnings)
+            raise
+        self.last_search_warnings = warnings
+        self.last_search_response_facets = [dict(facet) for facet in facets]
+        projected = tuple(
+            CatalogSearchFacet(
+                facet["scenario"], facet["page"], facet["field"], facet["label"],
+                tuple(CatalogSearchFacetValue(**value) for value in facet["values"])
+                if facet["values_schema"] == "label_count_selected_v1" else None,
+            )
+            for facet in facets
+        )
+        return ProviderSearchResponse(
+            [_project_paris_acquisition_formats(item) for item in self._decorate(
+                rows, self.provider_id, self.credential_id
+            )],
+            projected,
+            partial=bool(warnings),
+        )
 
     def acquisition_offers(self, item: SearchResult) -> AcquisitionOfferSet:
         return _paris_acquisition_offer_set(item)
