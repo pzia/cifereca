@@ -87,6 +87,12 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
             if result == "duplicate" and state["active"]:
                 rows *= 2
             return httpx.Response(200, json={"success": True, "d": {"Loans": rows}})
+        if request.url.path.endswith("/synthetic.acsm"):
+            assert request.method == "GET"
+            return httpx.Response(200, content=(
+                b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
+                b'<format>application/epub+zip</format></fulfillmentToken>'
+            ), headers={"content-type": "application/vnd.adobe.adept+xml"})
         if "GetListHoldings" in request.url.path:
             assert request.method == "POST"
             state["before_holdings"]()
@@ -131,7 +137,8 @@ def test_single_manual_action_confirms_current_loan_independently_of_acsm(tmp_pa
         assert state["calls"] == []  # availability is inert
         outcome = attempt(service, account, item)
         assert outcome["status"] == "confirmed" and outcome["provider_verified"] is True
-        assert state["mutations"] == 1 and len(state["calls"]) == 4
+        assert state["mutations"] == 1
+        assert len(state["calls"]) == (5 if result == "acsm" else 4)
         row = service.storage.loan_borrow_state(borrow_claim_key(account, item))
         assert row["verified_loan_id"] == "loan-exact" and row["status"] == "confirmed"
         assert service.storage.entitlements(provider_id="paris") == []
