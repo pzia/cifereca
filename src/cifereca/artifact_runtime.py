@@ -230,6 +230,7 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
                                basename: str, sha256: str,
                                directory_stamp: tuple[int, int],
                                staging_directory_stamp: tuple[int, int],
+                               staging_root_stamp: tuple[int, int],
                                claimed_paths: frozenset[str]) -> Path:
     """Hardlink a verified staging inode atomically, with no replace path.
 
@@ -242,7 +243,8 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
     candidates = (basename, f"{stem}-{sha256[:8]}{suffix}")
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
     if (_variant_directory_stamp(source_parent) != directory_stamp
-            or _variant_directory_stamp(staged.parent) != staging_directory_stamp):
+            or _variant_directory_stamp(staged.parent) != staging_directory_stamp
+            or _variant_directory_stamp(staged.parent.parent) != staging_root_stamp):
         raise Conflict("Répertoire de variante modifié", code="artifact_variant_directory_changed")
     parent_fd = stage_fd = None
     try:
@@ -253,6 +255,7 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
         if ((parent_info.st_dev, parent_info.st_ino) != directory_stamp
                 or (stage_dir_info.st_dev, stage_dir_info.st_ino) != staging_directory_stamp
                 or _variant_directory_stamp(staged.parent) != staging_directory_stamp
+                or _variant_directory_stamp(staged.parent.parent) != staging_root_stamp
                 or _variant_directory_stamp(source_parent) != directory_stamp):
             raise Conflict("Répertoire de variante modifié", code="artifact_variant_directory_changed")
         stage_info = os.stat(staged.name, dir_fd=stage_fd, follow_symlinks=False)
@@ -335,6 +338,7 @@ class _OutputLease:
     source_stamp: tuple[int, ...] | None = None
     source_directory_stamp: tuple[int, int] | None = None
     staging_directory_stamp: tuple[int, int] | None = None
+    staging_root_stamp: tuple[int, int] | None = None
     active: bool = True
     @property
     def path(self) -> Path: return self._path
@@ -444,6 +448,7 @@ class ArtifactExecutionBrokerImpl:
             source_stamp=stamp,
             source_directory_stamp=folder,
             staging_directory_stamp=_variant_directory_stamp(staging),
+            staging_root_stamp=_variant_directory_stamp(staging_root),
         )
 
     @staticmethod
@@ -534,6 +539,7 @@ class ArtifactExecutionBrokerImpl:
             path, source_path.parent, basename=stem + suffix,
             sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
             staging_directory_stamp=lease.staging_directory_stamp,
+            staging_root_stamp=lease.staging_root_stamp,
             claimed_paths=claimed_paths,
         )
         lease.active = False
@@ -591,7 +597,9 @@ class ArtifactExecutionBrokerImpl:
         lease.active = False
         expected = lease.staging_directory_stamp
         path = lease.path
-        if expected is None or _variant_directory_stamp(path.parent) != expected:
+        if (expected is None
+                or _variant_directory_stamp(path.parent) != expected
+                or _variant_directory_stamp(path.parent.parent) != lease.staging_root_stamp):
             raise Conflict("Staging de variante déplacé", code="artifact_variant_staging_changed")
         flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
         try:
@@ -599,7 +607,8 @@ class ArtifactExecutionBrokerImpl:
             try:
                 directory = os.fstat(fd)
                 if ((directory.st_dev, directory.st_ino) != expected
-                        or _variant_directory_stamp(path.parent) != expected):
+                        or _variant_directory_stamp(path.parent) != expected
+                        or _variant_directory_stamp(path.parent.parent) != lease.staging_root_stamp):
                     raise Conflict("Staging de variante déplacé",
                                    code="artifact_variant_staging_changed")
                 try:
