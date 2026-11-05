@@ -73,7 +73,7 @@ def make_service(tmp_path: Path):
         return f'{author} - {title}.{extension}' if author else f'{title}.{extension}'
     config = SimpleNamespace(get=lambda key, default=None:
                              str(tmp_path) if key == 'library.directory' else default)
-    return SimpleNamespace(storage=storage,config=config,plugin_manager=None,preview_library_filename=preview_library_filename), ArtifactRef(aid,'book-1',ArtifactFormat('application/epub+zip','epub'),source.stat().st_size,sha,filename=source.name), pid
+    return SimpleNamespace(storage=storage,config=config,current_identity=SimpleNamespace(identity_id='id1'),plugin_manager=None,preview_library_filename=preview_library_filename), ArtifactRef(aid,'book-1',ArtifactFormat('application/epub+zip','epub'),source.stat().st_size,sha,filename=source.name), pid
 
 
 def test_schema_10_and_transform_is_core_authoritative(tmp_path):
