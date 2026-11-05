@@ -96,6 +96,7 @@ def manual_borrow(
     confirmed: bool = False, site_checked: bool = False,
     expected_context_epoch: int | None = None,
     expected_account: Account | None = None,
+    additional_scope_current=None,
 ) -> dict[str, object]:
     """Select the exact live lender account and admit at most one attempt.
 
@@ -160,7 +161,9 @@ def manual_borrow(
         def current():
             return (lease.current(service) and (
                 expected_context_epoch is None
-                or service._account_context_epoch == expected_context_epoch))
+                or service._account_context_epoch == expected_context_epoch)
+                and (additional_scope_current is None
+                     or additional_scope_current() is True))
         # Canonical installed PluginManager descriptor is the manifest source;
         # never accept a capability fabricated by a caller or the selected row.
         fact = assess_lending_operation(
