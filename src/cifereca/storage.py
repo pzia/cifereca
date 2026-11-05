@@ -2098,6 +2098,18 @@ class Storage:
             # together. Nothing in the canonical source/receipt tables is
             # in this write set.
             db.execute("BEGIN IMMEDIATE")
+            # #3196 W3: no 0.7 manifest can revoke a typed Core source.
+            # The raw backup PK has no borrower/branch; preserve *any*
+            # historical projection whose credential/edition already has a
+            # SourceReference, even if that edition is missing from today's
+            # legacy manifest. A typed right is not a deletion authority.
+            protected_kobo_items = (
+                {edition for (edition,) in db.execute(
+                    "SELECT edition_id FROM source_references WHERE "
+                    "provider_id='kobo' AND credential_id=?", (credential,),
+                )}
+                if provider == "kobo" else set()
+            )
             rows = db.execute(
                 "SELECT item_id,local_path FROM backup_items "
                 "WHERE provider_id=? AND credential_id=?",
@@ -2122,6 +2134,7 @@ class Storage:
                     # their absence from a normalized manifest. Other
                     # providers keep their historical prune semantics.
                     and (provider != "kobo" or item_id == item_id.strip())
+                    and item_id not in protected_kobo_items
                     and item_id.strip() not in seen)
             ]
             local_preserved = 0
