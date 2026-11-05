@@ -53,7 +53,8 @@ def test_statistics_keep_format_source_and_cover_breakdowns():
     source = _method_source(SERVICES, "LibraryService", "identity_statistics")
 
     assert "'formats': dict(formats)" in source
-    assert "'sources': dict(sources)" in source
+    assert "'sources': sources" in source
+    assert "'local_books_without_provider_origin': without_provider_origin" in source
     assert "'epub_covers': dict(covers)" in source
     assert "'extracted' if meta.get('epub_cover')" in source
 

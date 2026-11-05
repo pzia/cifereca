@@ -30,10 +30,19 @@ def statistics_lines(stats: Mapping[str, Any]) -> list[str]:
     ]
     for title, key in (
         ("Formats", "formats"),
-        ("Sources locales", "sources"),
+        ("Origines fournisseur attestées", "sources"),
         ("Couvertures EPUB", "epub_covers"),
     ):
         values = stats[key]
+        if key == "sources":
+            unattested = stats.get("local_books_without_provider_origin")
+            if unattested is None:
+                rows.append(title + " : — (non déterminé)")
+            else:
+                origins = ", ".join(f"{name} {count}" for name, count in sorted(values.items()))
+                rows.append(title + " : " + (origins or "aucune"))
+                rows.append(f"Origine non attestée : {unattested}")
+            continue
         rows.append(
             title + " : " +
             (", ".join(f"{name} {count}" for name, count in sorted(values.items())) or "—")

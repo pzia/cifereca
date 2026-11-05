@@ -685,41 +685,47 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None,
         return ()
     try:
         with storage._lock, storage._connect() as db:
-            rows = db.execute(
-                "SELECT DISTINCT p.artifact_id,p.identity_id,s.provider_id,"
-                "s.credential_id,s.account_id,s.edition_id,s.reference_kind "
-                "FROM placements p "
-                # A historical OriginLink remains for audit even if imported
-                # Artifact metadata are corrupt. It must not become a live
-                # supplier facet or fold a remote possession onto B when the
-                # Artifact's content identifier/size cannot attest B.
-                "JOIN artifacts a ON a.artifact_id=p.artifact_id "
-                "AND a.artifact_id='sha256:'||a.sha256 AND a.size>0 "
-                "AND length(a.sha256)=64 "
-                "AND a.sha256 NOT GLOB '*[^0-9a-f]*' "
-                "JOIN origin_links o ON o.artifact_id=p.artifact_id "
-                "AND o.identity_id=p.identity_id "
-                "JOIN source_references s "
-                "ON s.source_reference_id=o.source_reference_id "
-                "AND s.identity_id=o.identity_id "
-                "WHERE p.state='present' AND o.origin_kind='provider' "
-                "AND s.evidence_kind='provider_response' "
-                "AND o.evidence_ref IS NOT NULL AND o.evidence_ref<>'' "
-                "AND s.evidence_ref IS NOT NULL AND s.evidence_ref<>'' "
-                + ("AND p.identity_id=? " if identity_id else "")
-                + "ORDER BY p.identity_id,p.artifact_id,s.provider_id,"
-                "s.credential_id,s.account_id,s.edition_id,s.reference_kind LIMIT 100001",
-                (identity_id,) if identity_id else (),
-            ).fetchall()
+            return _read_provider_origin_coordinates(
+                db, identity_id=identity_id, with_kind=with_kind,
+            ) or ()
     except (SqliteError, AttributeError):
-        # Legacy fixtures and earlier DB schemas cannot attest canonical
-        # provenance. Do not infer associations from a title or a shared SHA.
+        # Earlier DB schemas cannot attest canonical provenance.
         return ()
+
+
+def _read_provider_origin_coordinates(db, *, identity_id: str | None,
+                                      with_kind: bool = False):
+    rows = db.execute(
+        "SELECT DISTINCT p.artifact_id,p.identity_id,s.provider_id,"
+        "s.credential_id,s.account_id,s.edition_id,s.reference_kind "
+        "FROM placements p "
+        # A historical OriginLink remains for audit even if imported
+        # Artifact metadata are corrupt. It must not become a live
+        # supplier facet or fold a remote possession onto B when the
+        # Artifact's content identifier/size cannot attest B.
+        "JOIN artifacts a ON a.artifact_id=p.artifact_id "
+        "AND a.artifact_id='sha256:'||a.sha256 AND a.size>0 "
+        "AND length(a.sha256)=64 "
+        "AND a.sha256 NOT GLOB '*[^0-9a-f]*' "
+        "JOIN origin_links o ON o.artifact_id=p.artifact_id "
+        "AND o.identity_id=p.identity_id "
+        "JOIN source_references s "
+        "ON s.source_reference_id=o.source_reference_id "
+        "AND s.identity_id=o.identity_id "
+        "WHERE p.state='present' AND o.origin_kind='provider' "
+        "AND s.evidence_kind='provider_response' "
+        "AND o.evidence_ref IS NOT NULL AND o.evidence_ref<>'' "
+        "AND s.evidence_ref IS NOT NULL AND s.evidence_ref<>'' "
+        + ("AND p.identity_id=? " if identity_id else "")
+        + "ORDER BY p.identity_id,p.artifact_id,s.provider_id,"
+        "s.credential_id,s.account_id,s.edition_id,s.reference_kind LIMIT 100001",
+        (identity_id,) if identity_id else (),
+    ).fetchall()
     if len(rows) > 100_000:
         # A truncated join could silently turn an ambiguous multi-source
         # Artifact into a falsely unique (and thus attachable) right. Fail
         # closed for every facet instead of projecting a partial source set.
-        return ()
+        return None
     return tuple(
         (artifact, owner, provider, credential, account, edition, kind)
         if with_kind else (artifact, owner, provider, credential, account, edition)
