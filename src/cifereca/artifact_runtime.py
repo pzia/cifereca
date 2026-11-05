@@ -794,7 +794,8 @@ class LibraryMaintenanceBrokerImpl:
                 warnings=(("Écriture SQLite confirmée ; aucun fichier supprimé.",)
                           if action == "commit" else ()),
                 facts={"action": action, "status": evidence.status,
-                       "reason": evidence.reason},
+                       "reason": evidence.reason,
+                       "review_token": evidence.review_token},
             )
         if op == "canonical_dedup":
             from .core.canonical_dedup_supervisor import supervise_canonical_duplicate
@@ -1077,6 +1078,7 @@ class LibraryMaintenanceBrokerImpl:
                         result = adopt_verified_legacy_placement(
                             self.service.storage, **kwargs,
                             action="commit", confirmed=True, shared_lock=lease,
+                            expected_review_token=plan.facts.get("review_token", ""),
                         )
                 except LockBusyError as error:
                     raise _CanonicalDedupConflict(
