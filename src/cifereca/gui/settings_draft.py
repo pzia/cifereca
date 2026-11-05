@@ -137,10 +137,25 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if directory_name in directory_names:
             raise SettingsValidationError(f'Répertoire d’identité dupliqué : {directory_name}')
         directory_names.add(directory_name)
+        # A missing widget key only occurs in old/headless callers. Use
+        # the exact existing binding without coercing malformed saved IDs.
+        prior_identity = config.identity(identity_id) or {}
+        selected = editor.get(
+            'primary_paris_connection_id',
+            prior_identity.get('primary_paris_connection_id', ''),
+        )
+        if type(selected) is not str or len(selected) > 256 or (
+                selected and (selected != selected.strip()
+                              or not selected.isprintable())):
+            raise SettingsValidationError(
+                'Identifiant de connexion Paris principale invalide : recharger les paramètres.'
+            )
+        selected = selected.strip()
         languages = [part.strip().lower() for part in editor['languages'].split(',') if part.strip()]
         if not languages:
             languages = ['fr']
         saved_identities.append({
+            **({'primary_paris_connection_id': selected} if selected else {}),
             'id': identity_id,
             'label': editor['label'].strip() or identity_id,
             'directory_name': directory_name,
@@ -490,6 +505,26 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             'credentials': credentials, 'options': options,
         })
         saved_accounts.append(saved_account)
+    # The normal binding refers to a configured, enabled Paris connection
+    # of this exact identity. A save cannot silently redirect it to another
+    # login (including after an account was removed or reassigned).
+    for identity in saved_identities:
+        selected = identity.get('primary_paris_connection_id')
+        if not selected:
+            continue
+        matched = [row for row in saved_accounts if (
+            type(row.get('id')) is str
+            and row['id'] == selected
+            and type(row.get('provider')) is str
+            and row['provider'].casefold() == 'paris'
+            and row.get('identity_id') == identity['id']
+            and row.get('enabled') is True
+        )]
+        if len(matched) != 1:
+            raise SettingsValidationError(
+                'Connexion Paris principale absente, désactivée ou ambiguë : '
+                'corrigez son ID ou effacez le choix explicite.'
+            )
     draft.set('providers.accounts', saved_accounts)
     try:
         global_command = shlex.split(values['download_command']) if values['download_command'].strip() else []
