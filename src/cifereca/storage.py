@@ -2075,8 +2075,15 @@ class Storage:
                 # same normalization to historical SQLite keys for membership
                 # only: otherwise a still-seen legacy " book " is deleted
                 # while the manifest contains "book". Keep the original key
-                # unchanged for the exact DELETE below.
-                if str(item_id or "").strip() not in seen
+                # unchanged for the exact DELETE below. Unlike current
+                # manifest IDs, old SQLite keys may be empty, overlong or
+                # contain control characters. Those rows have no admissible
+                # manifest counterpart: preserve them for explicit migration
+                # review instead of interpreting non-membership as absence.
+                if (type(item_id) is str and bool(item_id.strip())
+                    and len(item_id) <= 1024
+                    and not any(c in item_id for c in "\x00\r\n")
+                    and item_id.strip() not in seen)
             ]
             local_preserved = 0
             for item_id, path in stale:
