@@ -7,6 +7,7 @@ exact-source receipt without a second supplier GET.
 """
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 import hashlib
 import json
 import os
@@ -22,6 +23,9 @@ from .canonical_recovery import (
     _exact_borrower_bound_in_db, _path_verified, _stage_id,
 )
 from .source_convergence import SourceKey
+from .transfer_storage_policy import (
+    _filename_component, _utf8_prefix, transfer_readable_filename,
+)
 
 
 _ATTEMPT = re.compile(r"run-[0-9a-f]{32}")
@@ -40,40 +44,96 @@ def _stage_parts(physical: Path, profile: Path) -> tuple[str, ...] | None:
     return parts
 
 
-def _readable_epub_target_name(stream, *, opaque_name: str) -> str:
-    """Stable human prefix from *verified own copy*; receipt hash remains exact.
+def _attested_epub_series(metadata: dict) -> tuple[str, str] | None:
+    """Require one unambiguous embedded series and its own volume number."""
+    original = metadata["original"]
+    rows = [row for row in original if row["name"] == "meta"]
+    calibre_names = [row["attributes"].get("content", "") for row in rows
+                     if row["attributes"].get("name") == "calibre:series"]
+    calibre_numbers = [row["attributes"].get("content", "") for row in rows
+                       if row["attributes"].get("name") == "calibre:series_index"]
+    pairs = set()
+    if calibre_names or calibre_numbers:
+        if len(calibre_names) != 1 or len(calibre_numbers) != 1:
+            return None
+        pairs.add((calibre_names[0].strip(), calibre_numbers[0].strip()))
+
+    # The descriptive projection may fill a missing index from Calibre.
+    # For a filename, require an explicit position on this exact collection.
+    id_counts = Counter(row["attributes"].get("id") for row in original)
+    by_ref = defaultdict(list)
+    for row in rows:
+        by_ref[row["attributes"].get("refines")].append(row)
+    collections = [row for row in rows
+                   if row["attributes"].get("property") == "belongs-to-collection"]
+    for row in collections:
+        ref = row["attributes"].get("id")
+        if not ref:
+            continue
+        refinements = by_ref[f"#{ref}"]
+        types = [meta["value"] for meta in refinements
+                 if meta["attributes"].get("property") == "collection-type"]
+        if "series" not in types:
+            continue
+        numbers = [meta["value"] for meta in refinements
+                   if meta["attributes"].get("property") == "group-position"]
+        if types != ["series"] or len(numbers) != 1 or id_counts[ref] != 1:
+            return None
+        pairs.add((row["value"], numbers[0]))
+
+    if len(pairs) != 1:
+        return None
+    name, number = pairs.pop()
+    if not _filename_component(name) or not re.fullmatch(r"[0-9]{1,6}(?:\.[0-9]{1,4})?", number):
+        return None
+    return name, number
+
+
+def _readable_epub_target_names(stream, *, opaque_name: str) -> tuple[str, ...]:
+    """Recognized names in recovery order, with the publication name last.
 
     This helper runs only after a complete, fsynced, SHA-checked copy is in
     Core's private directory. A damaged/encrypted EPUB keeps its opaque name.
     Bibliographic metadata is descriptive, never a supplier authorization.
     """
+    fallback = (opaque_name + ".epub",)
     try:
         from ..epub_metadata import inspect_epub
-        from .transfer_storage_policy import transfer_readable_filename
 
         inspected = inspect_epub(stream, metadata_only=True)
         if inspected.get("epub_status") != "ok":
-            return opaque_name + ".epub"
+            return fallback
         metadata = inspected.get("epub_metadata")
         if type(metadata) is not dict:
-            return opaque_name + ".epub"
+            return fallback
         title = metadata.get("title")
         authors = metadata.get("authors")
         author = authors[0] if type(authors) is list and authors else None
         if type(title) is not str or not title.strip():
-            return opaque_name + ".epub"
+            return fallback
         # Include the entire original 256-bit receipt discriminator: two
         # same-title acquisitions must never alias one another's path.
         readable = transfer_readable_filename(
             Path("received.epub"), title=title, author=author,
         )
-        prefix = Path(readable).stem
-        prefix = prefix.encode("utf-8")[:120].decode("utf-8", "ignore").rstrip(" .-")
+        prefix = _utf8_prefix(Path(readable).stem, 120)
         if not prefix:
-            return opaque_name + ".epub"
-        return prefix + " - " + opaque_name + ".epub"
+            return fallback
+        ending = " - " + opaque_name + ".epub"
+        legacy_name = prefix + ending
+        series = _attested_epub_series(metadata)
+        title_text = _filename_component(title)
+        if series is None or not title_text:
+            return (legacy_name,)
+        series_name, number = series
+        lead = " - ".join(part for part in (
+            _utf8_prefix(_filename_component(author), 32),
+            _utf8_prefix(_filename_component(series_name), 36), number,
+        ) if part) + " - "
+        title_text = _utf8_prefix(title_text, 120 - len(lead.encode("utf-8")))
+        return legacy_name, lead + title_text + ending
     except (OSError, ValueError, TypeError, RuntimeError, KeyError):
-        return opaque_name + ".epub"
+        return fallback
 
 
 def _profile(storage, root: Path, source: SourceKey) -> tuple[Path, Path]:
@@ -248,19 +308,24 @@ def promote_completed_delivery(
                 dir_fd=dir_fd,
             )
             with os.fdopen(staged_fd, "rb") as staged:
-                target = destination_dir / _readable_epub_target_name(
+                opened_copy = os.fstat(staged.fileno())
+                if (opened_copy.st_dev, opened_copy.st_ino) != (made.st_dev, made.st_ino):
+                    raise ValueError("canonical_promotion_destination_changed")
+                names = _readable_epub_target_names(
                     staged, opaque_name=name,
                 )
-            if target.exists() or target.is_symlink():
-                try:
-                    return _path_verified(
-                        storage, root=root, source=source, path=target,
-                        final_sha256=completed.final_sha256,
-                    )
-                except (ValueError, OSError) as exc:
-                    raise ValueError(
-                        "canonical_promotion_destination_conflict"
-                    ) from exc
+            for candidate in names:
+                target = destination_dir / candidate
+                if target.exists() or target.is_symlink():
+                    try:
+                        return _path_verified(
+                            storage, root=root, source=source, path=target,
+                            final_sha256=completed.final_sha256,
+                        )
+                    except (ValueError, OSError) as exc:
+                        raise ValueError(
+                            "canonical_promotion_destination_conflict"
+                        ) from exc
         # A no-replace hardlink is an atomic namespace promotion. No other
         # thread can ever open a partially written final file; a foreign
         # final target is never overwritten or adopted by filename alone.
