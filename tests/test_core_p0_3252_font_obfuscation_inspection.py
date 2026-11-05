@@ -50,6 +50,8 @@ def _epub(encryption: str | None) -> bytes:
     (ENVELOPE.format(data=_entry(FONT) + "<enc:EncryptionMethod Algorithm='urn:other'/>"), True),
     (ENVELOPE.format(data=_entry(FONT) + "<enc:EncryptedKey/>"), True),
     (ENVELOPE.format(data=_entry(FONT) + "<enc:KeyInfo/>"), True),
+    (ENVELOPE.format(data=_entry(FONT) + "<enc:CipherValue/>"), True),
+    (ENVELOPE.format(data=_entry(FONT) + "<custom:Unknown xmlns:custom='urn:test'/>"), True),
     ("<encryption", True),
     ("<encryption/>", True),
     ("<invalid>" + _entry(FONT) + "</invalid>", True),
@@ -67,3 +69,21 @@ def test_font_only_manifest_does_not_trip_core_protection_veto(
     assert on_disk.media_format == in_memory.media_format == "epub"
     assert on_disk.protected is protected
     assert in_memory.protected is protected
+
+
+def test_duplicate_encryption_manifest_cannot_hide_aes_behind_font_only(tmp_path):
+    from warnings import catch_warnings, simplefilter
+    buffer = io.BytesIO()
+    with catch_warnings():
+        simplefilter("ignore", UserWarning)
+        with ZipFile(buffer, "w") as archive:
+            archive.writestr("mimetype", "application/epub+zip")
+            archive.writestr("META-INF/container.xml", "<container/>")
+            archive.writestr("META-INF/encryption.xml",
+                             ENVELOPE.format(data=_entry(AES)))
+            archive.writestr("META-INF/encryption.xml",
+                             ENVELOPE.format(data=_entry(FONT)))
+    path = tmp_path / "duplicate.epub"
+    path.write_bytes(buffer.getvalue())
+    assert inspect_artifact(path).protected is True
+    assert inspect_artifact_content(buffer.getvalue()).protected is True
