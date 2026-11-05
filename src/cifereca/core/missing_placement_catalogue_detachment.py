@@ -65,9 +65,17 @@ def _evidence(db, *, root: Path, root_stat: os.stat_result,
         return _blocked("identity_mismatch"), None
     if state != "missing":
         return _blocked("not_missing"), None
+    # A scanned local import has *both* source coordinates NULL; it is a
+    # legitimate catalogue-only physical placement. Do not require invented
+    # provider/edition values to remove its obsolete path. A half-present,
+    # empty or malformed source remains ambiguous and cannot be retired.
+    local_only = provider is None and item is None
+    scoped_source = (
+        type(provider) is str and bool(provider)
+        and type(item) is str and bool(item)
+    )
     if (type(artifact) is not str or not artifact
-            or type(provider) is not str or not provider
-            or type(item) is not str or not item
+            or not (local_only or scoped_source)
             or type(old_path) is not str or not old_path):
         return _blocked("source_coordinates_unavailable"), None
     profile_root = root / directory
