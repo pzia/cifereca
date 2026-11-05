@@ -226,3 +226,31 @@ def test_corrupt_intent_owner_or_scan_failure_preserves_old_state(
         storage=store, identity_id="alice", device_id="reader-a",
         mountpoint=mount, now=NOW,
     ).status == "blocked"
+
+
+def test_persisted_presence_is_only_last_known_without_new_usb_scan(
+    rig, monkeypatch,
+):
+    from cifereca.core.device_usb_preview import preview_usb_delta
+
+    store, mount, file = rig
+    monkeypatch.setattr(
+        recorded, "scan_managed_usb",
+        lambda **_: scan(files={ART: UsbObservedFile(TARGET, SHA, True)}),
+    )
+    first = recorded.record_verified_usb_observation(
+        storage=store, identity_id="alice", device_id="reader-a",
+        mountpoint=mount, now=NOW,
+    )
+    assert first.status == "recorded"
+    rows = preview_usb_delta(
+        identity_id="alice", binding=store.device_binding_get("reader-a"),
+        placements=store.device_placements(device_id="reader-a"),
+        local={}, scan=None, now=NOW + 1,
+    )
+    assert len(rows) == 1
+    assert (rows[0].last_known, rows[0].observed, rows[0].action) == (
+        "present", "unknown", "verify",
+    )
+    assert rows[0].executable is False
+    assert file.read_bytes() == DATA
