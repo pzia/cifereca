@@ -6,6 +6,19 @@ must not display that row as attested; supervised commit must not unlink B.
 All bytes, identities and OriginLinks are disposable and offline.
 """
 import pytest
+@pytest.fixture(autouse=True)
+def _enable_legacy_dedup_test_path(monkeypatch):
+    """Retain synthetic tests of the OLD Core retirement engine only.
+
+    Production is suspended by #4496. This file exercises pre-existing
+    SQLite/FS crash-recovery invariants under an explicit test-only monkeypatch.
+    New acceptance tests of the default safety hold never use this fixture.
+    """
+    from cifereca.core import canonical_dedup_supervisor
+    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
+                        lambda: True)
+
+
 
 from cifereca.core.canonical_dedup_reference_plan import (
     plan_verified_canonical_reference_migration,
