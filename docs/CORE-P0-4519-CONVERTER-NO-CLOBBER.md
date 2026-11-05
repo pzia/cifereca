@@ -34,8 +34,9 @@ Si les deux chemins sont déjà occupés physiquement, par symlink ou par
 un Placement SQLite même lorsque le fichier manque, **refus explicite**
 `artifact_variant_filename_conflict` : aucun écrasement. Une création
 concurrente de destination échoue par `EEXIST`, sans remplacer la cible.
-Les signatures des répertoires (y compris **le staging initial épinglé**)
-et le SHA de la sortie sont recontrôlés avant de retirer le staging
+Les signatures des répertoires (y compris **les deux niveaux**
+`.cifereca-staging` et `variants` épinglés séparément) et le SHA de
+la sortie sont recontrôlés avant de retirer le staging
 et d'enregistrer l'Artifact. L'annulation utilise un descripteur
 `O_DIRECTORY|O_NOFOLLOW` du staging et vérifie son inode avant `unlink` :
 une substitution du dossier par un symlink vers un autre profil ne peut pas
@@ -65,3 +66,8 @@ du répertoire source et du répertoire de staging (pendant l'échec **et**
 pendant la publication), puis annulation après transformation.
 
 Aucun livre utilisateur, fournisseur ou téléchargement n'est utilisé.
+
+La substitution du répertoire parent de `variants` par un symlink vers
+le dossier d'origine déplacé (inode `variants` identique) est également
+refusée, en commit et en abort. Ce cas empêche de contourner la garde
+`O_NOFOLLOW` appliquée au seul dernier composant.
