@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from .source_context import source_context_epoch
 from .canonical_delivery_abi import has_complete_delivery_abi
+from .kobo_legacy_source_guard import has_typed_kobo_source
 
 import time
 import os
@@ -1512,6 +1513,17 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     summary["skipped"] += 1
                     item_committed = True
                     continue
+                # #3196 W2: the 0.7 batch writer has no borrower in its key.
+                # A typed Core SourceReference (even for another borrower)
+                # already owns this credential/edition. Do not touch the raw
+                # backup, synthesize a mirror, inspect legacy bytes or GET.
+                # No completed delivery is inferred: report unresolved here.
+                if has_typed_kobo_source(
+                    self.storage, session.credential_id, product_id,
+                ):
+                    summary["pending"] += 1
+                    item_committed = True
+                    continue
                 item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
                 if _skip_manifest_item(
                     self, item, raw, session_target_dir, indexed_kobo_paths,
@@ -1525,6 +1537,15 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
 
                 if source_guard is not None:
                     source_guard()
+                # Last admission before the 0.7 acquiring row and provider
+                # I/O. If a canonical intake appeared since the preflight,
+                # leave its publication to Core rather than double GET.
+                if has_typed_kobo_source(
+                    self.storage, session.credential_id, product_id,
+                ):
+                    summary["pending"] += 1
+                    item_committed = True
+                    continue
                 if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger, item_guard=item_guard):
                     abort_all = True
                     item_committed = True
@@ -1614,6 +1635,13 @@ def _store_kobo_checkpoint(
 def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: str | None = None):
     for previous in self.storage.backup_list("kobo"):
         if credential_id is not None and previous.get("credential_id") != credential_id:
+            continue
+        # Interruption recovery is also a writer: a prior 0.7 receipt cannot
+        # update/claim a typed Core source before the manifest is inspected.
+        if has_typed_kobo_source(
+            self.storage, previous.get("credential_id"),
+            previous.get("item_id"),
+        ):
             continue
         previous_status = str(previous.get("status") or "")
         previous_error = str(previous.get("error") or "")
