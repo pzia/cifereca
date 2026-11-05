@@ -99,7 +99,17 @@ def test_first_failed_branch_then_cancel_still_does_not_publish_partial():
         ]
         # A preceding real branch outage can be diagnostic, but a subsequent
         # cancellation must not return an authoritative or partial snapshot.
-        assert len(sink.events) == 1
-        assert sink.events[0][1]["detail"]["upstream"] == "DILICOM"
+        errors = [
+            (args, kwargs) for args, kwargs in sink.events
+            if args[:3] == ("API", "loans DILICOM", "error")
+        ]
+        assert len(errors) == 1
+        assert errors[0][1]["detail"]["upstream"] == "DILICOM"
+        # Timing observations are allowed, but a cancelled read must never
+        # emit a whole-inventory success or completeness certificate.
+        assert not any(
+            args[:2] == ("PERF", "Paris loan inventory")
+            for args, _kwargs in sink.events
+        )
     finally:
         obj.close()
