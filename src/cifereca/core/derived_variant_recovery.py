@@ -86,14 +86,36 @@ def _directory(path: Path) -> bool:
         return False
 
 
-def _safe_unlink_receipt(path: Path) -> None:
-    """Remove only a receipt owned by this operation, never a foreign inode."""
+def _safe_unlink_receipt(path: Path, *, expected_sha256: str = "") -> bool:
+    """Best-effort cleanup; refuse substitutions instead of unlinking blindly.
+
+    The directory FD prevents traversal through a swapped staging symlink.
+    The exact receipt bytes and inode are verified immediately before unlink.
+    No path-based cleanup can atomically defeat a malicious concurrent rename;
+    supervised recovery still treats any residue as evidence, not garbage.
+    """
     if not _directory(path.parent) or _stamp(path) is None:
-        return
-    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+        return False
+    if expected_sha256:
+        if hashlib.sha256(_read_receipt_nofollow(path)).hexdigest() != expected_sha256:
+            return False
+    stamp = _stamp(path)
+    if stamp is None:
+        return False
+    fd = os.open(
+        path.parent, os.O_RDONLY | os.O_DIRECTORY
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
     try:
+        info = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
+        signature = lambda st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+        if signature(info) != stamp or _stamp(path) != stamp:
+            return False
         os.unlink(path.name, dir_fd=fd)
         os.fsync(fd)
+        return True
+    except FileNotFoundError:
+        return False
     finally:
         os.close(fd)
 
@@ -109,7 +131,7 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
                                   profile_id: str | None, profile_version: str,
                                   options_fingerprint: str, book_id: str | None,
                                   warnings: tuple[str, ...] | list[str],
-                                  facts: dict[str, Any]) -> Path:
+                                  facts: dict[str, Any]) -> tuple[Path, str]:
     """fsync output, receipt, and directory BEFORE exclusive hardlink creation."""
     if (_stamp(staged) is None or not _directory(staged.parent)
             or not _directory(published.parent)
@@ -164,7 +186,7 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
         _safe_unlink_receipt(journal)
         raise
     os.fsync(stage_dir_fd)
-    return journal
+    return journal, hashlib.sha256(raw).hexdigest()
 
 
 _INTENT_KEY = "derived.publication.pending.v1:"
@@ -180,10 +202,15 @@ def _pending_intent_key(journal: Path) -> str:
     return _INTENT_KEY + nonce
 
 
-def register_pending_derived_receipt(storage: Any, journal: Path) -> None:
-    """Create a durable DB intent before hardlink; not an OriginLink or right."""
+def register_pending_derived_receipt(
+    storage: Any, journal: Path, *, expected_sha256: str,
+) -> None:
+    """Bind the ORIGINAL bytes written by Core; reject replacement before SQL."""
     raw = _read_receipt_nofollow(journal)
     digest = hashlib.sha256(raw).hexdigest()
+    if (type(expected_sha256) is not str
+            or digest != expected_sha256):
+        raise ValueError("derived_receipt_changed_before_intent")
     key = _pending_intent_key(journal)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -207,12 +234,13 @@ def _intent_matches(storage: Any, journal: Path, digest: str) -> bool:
 
 def retire_pending_derived_receipt(storage: Any, journal: Path) -> None:
     """After SQL success, remove only the receipt then its DB intent."""
-    _safe_unlink_receipt(journal)
-    if journal.exists() or journal.is_symlink():
-        return
     key = _pending_intent_key(journal)
+    expected = storage.metadata_get(key)
+    if (type(expected) is not str or len(expected) != 64
+            or not _safe_unlink_receipt(journal, expected_sha256=expected)):
+        return
     with storage._lock, storage._connect() as db:
-        db.execute("DELETE FROM metadata WHERE key=?", (key,))
+        db.execute("DELETE FROM metadata WHERE key=? AND value=?", (key, expected))
 
 
 def review_pending_derived_receipts(service: Any, *, identity_id: str,
