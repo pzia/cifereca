@@ -65,9 +65,12 @@ def test_fsync_receipt_can_explicitly_restore_after_sql_interruption(tmp_path):
         done = review_pending_derived_receipts(service, identity_id="id1", commit=True)
         assert done[0]["status"] == "recovered"
         child = service.storage.artifact_variants()[0]["artifact_id"]
-        links = service.storage.origin_links(identity_id="id1")
-        assert len([x for x in links if x["artifact_id"] == child
-                    and x["origin_kind"] == "derived"]) == 1
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute(
+                "SELECT COUNT(*) FROM origin_links "
+                "WHERE identity_id='id1' AND artifact_id=? "
+                "AND origin_kind='derived'", (child,),
+            ).fetchone()[0] == 1
         assert service.storage.placement_get(source_pid)["artifact_id"] == source.artifact_id
         assert len([p for p in service.storage.placements() if p["artifact_id"] == child]) == 1
         # Repeated restart never creates a second OriginLink nor an entitlement.
