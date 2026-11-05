@@ -1652,7 +1652,7 @@ class Storage:
         if local_path:
             # Path.resolve() previously rejected embedded NUL. Lexical
             # normalization must not silently admit a poisoned SQL pathname.
-            if "\\x00" in local_path:
+            if "\x00" in local_path:
                 raise ValueError("backup_legacy_path_invalid")
             # 0.7 has only a *claim* about this pathname, not permission to
             # dereference it. Path.resolve() followed a symlink from A into
