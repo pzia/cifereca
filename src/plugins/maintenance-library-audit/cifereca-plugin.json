@@ -138,7 +138,7 @@
       "priority": 46,
       "instantiation": "singleton_public",
       "enabled_by_default": false,
-      "help_text": "Suspendu — arbitrage produit #4496 : aucune suppression ordinaire de doublons autorisée. Le contrôle Core maintient aussi un gel non contournable par les préférences ; seules l'analyse en lecture seule et la reprise des tombstones déjà existants restent utilisables selon leurs garanties propres.",
+      "help_text": "Suspendu — arbitrage produit #4496 : aucune suppression ordinaire de doublons autorisée. Le verrou Core est non contournable par les préférences. Les audits indépendants et la reprise des tombstones déjà existants conservent leurs propres conditions d'admission.",
       "capabilities": [
         "maintenance.cleanup",
         "maintenance.cleanup.duplicates"
