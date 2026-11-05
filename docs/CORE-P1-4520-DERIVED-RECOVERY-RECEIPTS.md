@@ -40,3 +40,10 @@ SQLite + FS synthétiques réels : reçu forgé ou modifié sans intent SQL, int
 - Reprise refusée si le parent source a été supprimé et recréé avec les **mêmes octets**, mais un inode différent.
 
 **Périmètre résiduel :** atomicité de l'unlink face à une substitution au dernier instant, interruption entre les étapes de retrait, et preuves de couverture des sous-répertoires profonds. L'API reste interne, et la PR ne doit pas être fusionnée sur la seule réussite CI.
+
+### Vérifications additionnelles de retrait et de publication
+
+- Le reçu conserve désormais l'empreinte **et le stamp inode originaux mesurés directement sur le descripteur après fsync**. Le retrait post-SQL ne s'effectue que pour ce fichier exact ; une réécriture ou un remplacement avec les **mêmes octets** laisse le reçu en place. L'intent SQLite est conservé si le retrait échoue.
+- Une erreur de nettoyage après commit SQLite ne transforme pas rétroactivement une publication réussie en échec de transformation ; elle laisse un reçu à vérifier.
+- En reprise, parent et sortie sont tous deux re-hachés et revalidés physiquement dans la transaction SQLite après vérification de l'intent. Tests de substitution d'inode parent/sortie juste avant la transaction.
+- **Risque résiduel** : POSIX ne fournit pas d'unlink conditionné atomiquement par numéro d'inode ; une substitution au tout dernier instant après la vérification reste à qualifier avec un répertoire de journal possédé exclusivement par Core ou un protocole de retrait différé. La PR reste draft jusqu'à ce choix de sûreté.
