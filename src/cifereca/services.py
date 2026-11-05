@@ -690,61 +690,18 @@ class LibraryService:
         return path
 
     def _migrate_legacy_flat_kobo_files(self, default_identity: Identity) -> None:
-        default_credentials = {
-            str(row.get("credential_id") or "")
-            for row in self.storage.provider_connections(identity_id=default_identity.identity_id)
-            if str(row.get("provider_id") or "") == "kobo"
-        }
-        if not default_credentials:
-            return
-        root = self.library_dir().resolve()
-        target_dir = self.library_identity_provider_dir(default_identity.identity_id, "kobo").resolve()
-        if target_dir == root:
-            return
-        for record in self.storage.backup_list("kobo"):
-            if str(record.get("credential_id") or "") not in default_credentials:
-                continue
-            raw_path = str(record.get("local_path") or "").strip()
-            if not raw_path:
-                continue
-            source = Path(raw_path).expanduser()
-            try:
-                source_resolved = source.resolve()
-            except OSError:
-                continue
-            if not source_resolved.is_file() or source_resolved.parent != root:
-                continue
-            target = target_dir / source_resolved.name
-            if target.resolve() == source_resolved:
-                continue
-            if target.exists():
-                try:
-                    if sha256_file(target) != sha256_file(source_resolved):
-                        suffix = sha256_file(source_resolved)[:8]
-                        target = target.with_name(f"{target.stem}-{suffix}{target.suffix}")
-                except OSError:
-                    continue
-            if not target.exists():
-                tmp = target.with_name(target.name + ".migrating")
-                try:
-                    shutil.copy2(source_resolved, tmp)
-                    if sha256_file(tmp) != sha256_file(source_resolved):
-                        tmp.unlink(missing_ok=True)
-                        raise OSError("hash mismatch while reclassifying legacy Kobo file")
-                    tmp.replace(target)
-                finally:
-                    tmp.unlink(missing_ok=True)
-            self.storage.relocate_local_path(
-                source_resolved, target, identity_id=default_identity.identity_id, provider_id="kobo"
-            )
-            try:
-                source_resolved.unlink()
-            except FileNotFoundError:
-                pass
-            self.diagnostics.add(
-                "CATALOG", "legacy Kobo placement reclassified",
-                detail={"identity": default_identity.identity_id, "target": str(target)},
-            )
+        """Refuse the deprecated, non-transactional Kobo 0.7 file migration.
+
+        This former helper could overwrite an existing destination via
+        Path.replace(), reassign the SQL path, then unlink the original
+        without a durable journal, pinned inodes, crash recovery or consent.
+        Its facade signature is kept for compatibility, but historical rows
+        must be reconciled through the supervised Core migration (#3196).
+        Do not inspect, move, unlink or silently adopt any source here.
+        """
+        raise ProviderConfigurationError(
+            "legacy_kobo_reclassification_requires_supervised_migration"
+        )
 
     def adept_profile_choices(self) -> list[dict[str, str]]:
         """Fetch only usable profile references; choosing/persisting stays explicit."""
