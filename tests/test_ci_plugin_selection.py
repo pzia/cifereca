@@ -406,6 +406,7 @@ class PluginSelectionTests(unittest.TestCase):
         )
         source_root = ROOT / "src/plugins"
         consumers = set()
+        transport_fixtures = set()
         for package_dir in sorted(source_root.iterdir()):
             if not package_dir.is_dir() or package_dir.name == "ebooksgratuits":
                 continue
@@ -415,7 +416,16 @@ class PluginSelectionTests(unittest.TestCase):
                 }:
                     data = file.read_text(encoding="utf-8", errors="replace")
                     if any(token in data for token in tokens):
-                        consumers.add(package_dir.name)
+                        if package_dir.name == "transport-http":
+                            transport_fixtures.add(file.relative_to(package_dir).as_posix())
+                        else:
+                            consumers.add(package_dir.name)
+        # An HTTP transport test exercises a fixed external OPDS URL:
+        # it neither imports nor consumes the ebooksgratuits plugin.
+        # Any further transport reference must be reviewed explicitly.
+        self.assertEqual(transport_fixtures, {
+            "tests/test_opds_same_origin_redirect_p1_2460.py",
+        })
         self.assertEqual(consumers, {"home-page"})
 
     def test_gallica_product_selects_home_page_consumer(self):
