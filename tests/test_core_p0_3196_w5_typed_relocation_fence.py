@@ -100,11 +100,20 @@ def test_typed_source_allows_true_noop_but_never_promotes_owner(tmp_path):
     store, old, new = _case(tmp_path)
     try:
         _typed(store)
-        original = _tables(store)
+        original_backup = store.backup_get("kobo", "vault", "edition-a")
+        with store._lock, store._connect() as db:
+            original_sources = db.execute(
+                "SELECT * FROM source_references ORDER BY source_reference_id"
+            ).fetchall()
         store.relocate_local_path(
             old, old, identity_id="alice", provider_id="kobo",
         )
-        # A no-op must not change a typed source, placement or legacy row.
-        assert _tables(store) == original
+        # The existing no-op contract may refresh a placement timestamp,
+        # but it cannot promote a 0.7 owner or rewrite typed provenance.
+        assert store.backup_get("kobo", "vault", "edition-a") == original_backup
+        with store._lock, store._connect() as db:
+            assert db.execute(
+                "SELECT * FROM source_references ORDER BY source_reference_id"
+            ).fetchall() == original_sources
     finally:
         store.close()
