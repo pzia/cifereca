@@ -111,7 +111,7 @@ def test_exact_same_account_canonical_receipt_and_bytes_are_readonly_attested(
     ("missing_receipt", "canonical_receipt_unverified"),
     ("ledger_path_collision", "canonical_receipt_unverified"),
     ("shared_backup_path", "shared_backup_path"),
-    ("ambiguous_profile_dir", "profile_unverified"),
+    ("invalid_profile_dir", "profile_unverified"),
     ("malformed_receipt", "canonical_receipt_unverified"),
 ])
 def test_unproven_legacy_source_or_physical_path_never_binds(
@@ -201,11 +201,12 @@ def test_unproven_legacy_source_or_physical_path_never_binds(
                     ("kobo", "other-card", "other-book", "Other", "pending",
                      str(file), 1),
                 )
-            elif condition == "ambiguous_profile_dir":
+            elif condition == "invalid_profile_dir":
+                # UNIQUE(directory_name) already prevents a second identity
+                # from claiming the same folder; test a reachable invalid one.
                 connection.execute(
-                    "INSERT INTO identities(identity_id,label,directory_name,"
-                    "created_at,updated_at) VALUES(?,?,?,?,?)",
-                    ("B", "B", "A", 1, 1),
+                    "UPDATE identities SET directory_name='..' "
+                    "WHERE identity_id='A'"
                 )
             elif condition == "malformed_receipt":
                 connection.execute(
