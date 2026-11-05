@@ -175,6 +175,21 @@ def inspect_exact_source(
         check = "not_requested"
         multi_proof = None
         if physical and verify_files:
+            def physical_proof(artifact: str, path: str, state: str) -> str:
+                # SQL state='missing' is an old observation, NOT proof that
+                # a path remains physically absent. A file may have returned
+                # after a move or mount recovery. Reprobe under the same
+                # exact no-follow profile fence as any present Placement.
+                observed = _file_proof(
+                    root=library_root, directory=directory,
+                    path=path, artifact_id=artifact,
+                )
+                if state != "present" and observed == "verified_sha256":
+                    # Bytes have reappeared, but the old SQL state has NOT
+                    # been repaired. Do not count this as an active Placement
+                    # or let a read-only audit silently promote it.
+                    return "placement_state_unverified"
+                return observed
             if len(physical) > 1:
                 # Every same-identity Placement must be checked: using the
                 # first row falsely reports "missing_file" when another
@@ -186,9 +201,7 @@ def inspect_exact_source(
                     multi_proof = (0, 0, len(physical))
                 else:
                     proofs = [
-                        ("missing_file" if placement_state != "present" else
-                         _file_proof(root=library_root, directory=directory,
-                                     path=path, artifact_id=artifact))
+                        physical_proof(artifact, path, placement_state)
                         for artifact, path, placement_state in physical.values()
                     ]
                     verified = sum(value == "verified_sha256" for value in proofs)
@@ -203,13 +216,8 @@ def inspect_exact_source(
                 artifact, path, placement_state = next(iter(physical.values()))
                 if directory is None:
                     check = "scope_unavailable"
-                elif placement_state != "present":
-                    check = "missing_file"
                 else:
-                    check = _file_proof(
-                        root=library_root, directory=directory,
-                        path=path, artifact_id=artifact,
-                    )
+                    check = physical_proof(artifact, path, placement_state)
                 if classification == "local_unverified":
                     classification = "complete_local" if check == "verified_sha256" else (
                         "missing_file" if check == "missing_file" else "local_unverified"
