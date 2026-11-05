@@ -301,7 +301,7 @@ def test_completed_ledger_does_not_complete_legacy_backup_or_supply_revision(
 
 @pytest.mark.parametrize("source_index,unqualified", [
     (4, ""),
-    (4, "branch\\nother"),
+    (4, "branch\nother"),
     (4, "x" * 1025),
     (6, ""),
     (7, "ambiguous"),
