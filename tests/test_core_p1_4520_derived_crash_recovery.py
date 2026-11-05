@@ -4,6 +4,7 @@ Filesystem and SQLite are synthetic and real. No network or supplier rights.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -373,8 +374,9 @@ def test_recovery_refuses_inode_swap_between_review_and_sql(
         def replace_inode_after_review(storage, **kwargs):
             # Simulate an adversarial unlink+recreate after the second
             # pre-commit SHA verification but before BEGIN IMMEDIATE.
-            path.unlink()
-            path.write_bytes(earlier)
+            alternate = path.with_name(path.name + ".adversary")
+            alternate.write_bytes(earlier)
+            os.replace(alternate, path)
             return original(storage, **kwargs)
 
         monkeypatch.setattr(
@@ -473,8 +475,9 @@ def test_recreated_source_with_identical_bytes_does_not_establish_causality(
         root = tmp_path / "library"
         original_path = root / "Book.epub"
         saved_bytes = original_path.read_bytes()
-        original_path.unlink()
-        original_path.write_bytes(saved_bytes)
+        alternate = original_path.with_name("Book-replacement.epub")
+        alternate.write_bytes(saved_bytes)
+        os.replace(alternate, original_path)
         observed = review_pending_derived_receipts(service, identity_id="id1")
         assert observed[0]["status"] == "manual_review"
         assert service.storage.artifact_variants() == []
@@ -498,8 +501,9 @@ def test_successful_publish_preserves_replaced_same_bytes_receipt_inode(
             if len(seen) == 2:
                 # Preserving the SHA is NOT preserving the original inode.
                 raw = original(receipt)
-                receipt.unlink()
-                receipt.write_bytes(raw)
+                alternate = receipt.with_name(receipt.name + ".replacement")
+                alternate.write_bytes(raw)
+                os.replace(alternate, receipt)
                 replaced.append(receipt)
             return original(receipt)
 
