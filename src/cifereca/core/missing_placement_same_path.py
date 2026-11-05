@@ -163,13 +163,30 @@ def _evidence(db, *, root: Path, identity_id: str, placement_id: str,
     if type(metadata) is not str or not 0 < len(metadata) <= 65536:
         return _blocked("placement_metadata_unavailable"), None
     parsed = json.loads(metadata, object_pairs_hook=_unique_pairs)
-    # Only an empty/nonbinding metadata envelope is admissible. A legacy
-    # provider_id/source_item_id column is an opaque label, not attestation;
-    # but arbitrary JSON keys may carry independent provenance, ownership or
-    # operational references not covered by the generic path/ID dependency
-    # scanner. Never flip those rows to present by SHA alone.
-    if (type(parsed) is not dict or set(parsed) - {"relative_path"}
-            or parsed.get("relative_path") not in (None, "")):
+    # Orphans still admit only the old empty envelope. A *linked* catalogue
+    # can also have the exact non-authorizing file-scan metadata written by
+    # LocalCatalog.index_path: unlike source/receipt fields, these four
+    # values describe the same already-linked physical Placement. This
+    # prevents a normal scan -> missing -> returned cycle from becoming
+    # permanently unrepairable. Unknown keys or a mismatched path stay vetoes.
+    if type(parsed) is not dict:
+        return _blocked("placement_metadata_unavailable"), None
+    empty_envelope = (not (set(parsed) - {"relative_path"})
+                      and parsed.get("relative_path") in (None, ""))
+    scan_envelope = (
+        linked_catalogue
+        and set(parsed) == {
+            "relative_path", "artifact_kind", "file_size", "mtime_ns",
+        }
+        and parsed.get("relative_path")
+        == str(Path(path).relative_to(root))
+        and parsed.get("artifact_kind") == "file"
+        and type(parsed.get("file_size")) is int
+        and parsed["file_size"] > 0
+        and type(parsed.get("mtime_ns")) is int
+        and parsed["mtime_ns"] > 0
+    )
+    if not (empty_envelope or scan_envelope):
         return _blocked("placement_metadata_unavailable"), None
 
     artifact = db.execute(
@@ -180,6 +197,8 @@ def _evidence(db, *, root: Path, identity_id: str, placement_id: str,
             or type(artifact[1]) is not int
             or not 0 < artifact[1] <= _MAX_FILE_BYTES):
         return _blocked("artifact_unverified"), None
+    if scan_envelope and parsed["file_size"] != artifact[1]:
+        return _blocked("placement_metadata_unavailable"), None
     try:
         before = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
