@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"constellations", "dev-updater", "literary-criticism", "maintenance-library-audit"})
+        self.assertEqual(audited, {"constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"constellations", "dev-updater", "literary-criticism", "maintenance-library-audit"})
+        self.assertEqual(audited, {"constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -362,6 +362,63 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
+                    )
+
+    def test_audited_diagnostics_page_is_a_single_plugin_suite(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("diagnostics-page", audited)
+        self.assertEqual(
+            selector.affected_packages({"diagnostics-page"}, graph),
+            ["diagnostics-page"],
+        )
+        for module in (
+            "cifereca_diagnostics_page.py", "diagnostics_explorer.py",
+            "diagnostics_ai.py", "diagnostics_support.py",
+        ):
+            with self.subTest(module=module):
+                targets, reason = selector.select([
+                    ("M", "src/plugins/diagnostics-page/" + module),
+                ], ROOT)
+                self.assertEqual(targets, ["src/plugins/diagnostics-page"])
+                self.assertIn("dependency closure", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/diagnostics-page/diagnostics_ai.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/diagnostics-page/cifereca-plugin.json")],
+            [("M", "src/plugins/diagnostics-page/tests/conftest.py")],
+            [("D", "src/plugins/diagnostics-page/diagnostics_ai.py")],
+            [("R100", "src/plugins/diagnostics-page/diagnostics_ai.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_diagnostics_page_plugin_has_no_cross_package_consumers(self):
+        # Concrete modules and contribution IDs, not generic "diagnostics".
+        tokens = (
+            "diagnostics-page", "cifereca_diagnostics_page",
+            "diagnostics_explorer", "diagnostics_ai",
+            "diagnostics_support", "diagnostics_selection",
+            "diagnostics_performance", "diagnostics_pseudonyms",
+            "diagnostics_adept_guidance", "ui.page.diagnostics",
+            "org.cifereca.diagnostics",
+        )
+        source_root = ROOT / "src/plugins"
+        for item in sorted(source_root.glob("*/*")):
+            package = item.relative_to(source_root).parts[0]
+            if package == "diagnostics-page":
+                continue
+            sources = item.rglob("*") if item.is_dir() else (item,)
+            for file in sources:
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in content for token in tokens),
+                        f"New diagnostics-page plugin consumer: {file}",
                     )
 
     def test_audited_constellations_only_targets_its_plugin_suite(self):
