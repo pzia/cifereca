@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import secrets
+import sqlite3
 import stat
 from pathlib import Path
 import shutil
@@ -217,6 +218,90 @@ def _variant_ref(storage: Any, row: dict[str, Any], *, book_id: str = "",
         options_fingerprint=str(row.get("options_fingerprint") or ""), source_sha256=str(row.get("source_sha256") or ""),
         created_at=str(row.get("created_at") or ""), stale=bool(metadata.get("stale", False)), facts=metadata,
     )
+
+
+def _scoped_derived_preference_candidate(
+    storage: Any, variant: Mapping[str, Any], identity_id: str,
+) -> tuple[str, str] | None:
+    """One locally derived Placement, not a global SHA/recipe preference.
+
+    This is an SQLite read-only projection. A receipt binds the exact parent
+    Placement and output Placement to one identity; a manually imported copy
+    with the same SHA or an old recipe without an OriginLink is unqualified.
+    Neither the receipt nor this preference is a license or content permission.
+    """
+    if (type(identity_id) is not str or not identity_id
+            or not isinstance(variant, Mapping)):
+        return None
+    aid = variant.get("artifact_id")
+    sid = variant.get("source_artifact_id")
+    rid = variant.get("variant_id")
+    digest = variant.get("source_sha256")
+    if (any(type(v) is not str or not v for v in (aid, sid, rid, digest))
+            or aid == sid or len(digest) != 64):
+        return None
+    try:
+        with storage._lock, storage._connect() as db:
+            db.execute("BEGIN")
+            physical = db.execute(
+                "SELECT placement_id,path,metadata_json FROM placements "
+                "WHERE artifact_id=? AND identity_id=? AND provider_id='cifereca' "
+                "AND state='present' LIMIT 2",
+                (aid, identity_id),
+            ).fetchall()
+            if len(physical) != 1:
+                return None
+            pid, child_path, stored_metadata = physical[0]
+            if any(type(v) is not str or not v
+                   for v in (pid, child_path, stored_metadata)):
+                return None
+            placement_meta = json.loads(stored_metadata)
+            if (type(placement_meta) is not dict
+                    or placement_meta.get("variant") is not True
+                    or placement_meta.get("source_artifact_id") != sid):
+                return None
+            parent_id = placement_meta.get("source_placement_id")
+            if type(parent_id) is not str or not parent_id:
+                return None
+            parent = db.execute(
+                "SELECT artifact_id,identity_id,state,path FROM placements "
+                "WHERE placement_id=?", (parent_id,),
+            ).fetchone()
+            if (parent is None or parent[:3] != (sid, identity_id, "present")
+                    or type(parent[3]) is not str
+                    or not Path(child_path).is_absolute()
+                    or Path(child_path).parent != Path(parent[3]).parent):
+                return None
+            links = db.execute(
+                "SELECT evidence_ref,metadata_json FROM origin_links "
+                "WHERE origin_kind='derived' AND artifact_id=? "
+                "AND identity_id=? AND parent_artifact_id=? "
+                "AND source_reference_id IS NULL LIMIT 3",
+                (aid, identity_id, sid),
+            ).fetchall()
+            expected = {
+                "source_placement_id": parent_id,
+                "transformer_plugin_id": variant.get("transformer_plugin_id"),
+                "transformer_version": variant.get("transformer_version") or "",
+                "profile_plugin_id": variant.get("profile_plugin_id") or "",
+                "profile_version": variant.get("profile_version") or "",
+                "options_fingerprint": variant.get("options_fingerprint") or "",
+                "source_sha256": digest,
+                "result_sha256": aid.removeprefix("sha256:"),
+            }
+            qualifying = 0
+            for evidence_ref, raw in links:
+                if evidence_ref != f"derived:{rid}:{pid}":
+                    continue
+                metadata = json.loads(raw)
+                if (type(metadata) is dict
+                        and all(metadata.get(k) == v
+                                for k, v in expected.items())):
+                    qualifying += 1
+            return (sid, pid) if qualifying == 1 else None
+    except (sqlite3.DatabaseError, OSError, ValueError, TypeError,
+            RuntimeError, AttributeError):
+        return None
 
 
 def _variant_file_stamp(path: Path) -> tuple[int, ...] | None:
@@ -952,17 +1037,40 @@ class LibraryReadBrokerImpl:
 
     def preferred_artifact(self, book_id: str, *, purpose: str = "read",
                            identity_id: str | None = None) -> ArtifactRef | None:
-        view = self.book(book_id, identity_id=identity_id)
+        # A legacy global preference is not authority for another profile.
+        # Without an explicit filter use only the active identity, never an
+        # arbitrary first Placement of a content-addressed SHA.
+        owner = identity_id
+        if owner is None:
+            owner = getattr(getattr(self.service, "current_identity", None),
+                            "identity_id", None)
+        owner = owner if type(owner) is str and owner else None
+        view = self.book(book_id, identity_id=owner)
         if view is None or not view.artifacts:
             return None
-        source_ids = {v.source_artifact_id for v in view.variants}
-        originals = [a for a in view.artifacts if a.artifact_id not in {v.artifact_id for v in view.variants}]
+        originals = [a for a in view.artifacts
+                     if a.artifact_id not in {v.artifact_id for v in view.variants}]
         source = originals[0] if originals else view.artifacts[0]
-        preferred = self.service.storage.metadata_get(f"artifact.variant.preferred.{source.artifact_id}.{str(purpose or 'read')}")
-        if preferred:
-            candidate = next((a for a in view.artifacts if a.artifact_id == preferred), None)
-            if candidate is not None:
-                return candidate
+        purpose = purpose or "read"
+        if owner and purpose in ("read", "export", "transfer"):
+            preferred = self.service.storage.metadata_get(
+                f"artifact.variant.preferred.{owner}.{source.artifact_id}.{purpose}"
+            )
+            if preferred:
+                rows = self.service.storage.artifact_variants(
+                    artifact_id=preferred,
+                )
+                if (len(rows) == 1
+                        and rows[0].get("source_artifact_id") == source.artifact_id
+                        and _scoped_derived_preference_candidate(
+                            self.service.storage, rows[0], owner,
+                        ) is not None):
+                    candidate = next(
+                        (a for a in view.artifacts if a.artifact_id == preferred),
+                        None,
+                    )
+                    if candidate is not None:
+                        return candidate
         return source
 
     def _view(self, entries: list[dict[str, Any]], book_id: str,
@@ -1325,8 +1433,29 @@ class LibraryMaintenanceBrokerImpl:
             return LibraryMutationPlan(op, "Supprimer la variante et ses placements", request, destructive=True, changes=(request.artifact_id,), warnings=("Les matérialisations de cette variante seront supprimées.",))
         if op == "set_preferred_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
-            if not rows: raise NotFound("Variante inconnue", code="artifact_variant_not_found")
-            return LibraryMutationPlan(op, f"Définir la variante préférée pour {request.purpose or 'read'}", request, changes=(request.artifact_id, request.purpose or "read"))
+            if len(rows) != 1:
+                raise _VariantScopeConflict("Recette de variante absente ou ambiguë")
+            owner = getattr(getattr(self.service, "current_identity", None),
+                            "identity_id", None)
+            purpose = request.purpose or "read"
+            if (type(owner) is not str or not owner
+                    or (request.target_identity_id is not None
+                        and request.target_identity_id != owner)
+                    or purpose not in ("read", "export", "transfer")):
+                raise _VariantScopeConflict("Préférence sans profil actif vérifié")
+            qualified = _scoped_derived_preference_candidate(
+                self.service.storage, rows[0], owner,
+            )
+            if qualified is None:
+                raise _VariantScopeConflict("Variante du profil non attestée")
+            source_id, child_placement_id = qualified
+            return LibraryMutationPlan(
+                op, f"Définir la variante préférée pour {purpose}",
+                request, changes=(request.artifact_id, purpose),
+                facts={"identity_id": owner, "source_artifact_id": source_id,
+                       "placement_id": child_placement_id,
+                       "variant_id": rows[0]["variant_id"]},
+            )
         raise UnsupportedOperation(f"Opération de maintenance non supportée: {op}")
 
     def run(self, plan: LibraryMutationPlan, control: TaskControl | None = None) -> LibraryMutationResult:
@@ -1740,11 +1869,37 @@ class LibraryMaintenanceBrokerImpl:
                 self.service.storage.catalog_entry_update_metadata(str(entry.get("catalog_entry_id")),meta); changed += 1
             return LibraryMutationResult(True,changed,plan.summary,facts={"cover_artifact_id":request.cover_artifact_id})
         if request.operation == "set_preferred_variant":
-            row=self.service.storage.artifact_variants(artifact_id=request.artifact_id)[0]
-            source_id=str(row.get("source_artifact_id") or "")
-            purpose=str(request.purpose or "read")
-            self.service.storage.metadata_set(f"artifact.variant.preferred.{source_id}.{purpose}", request.artifact_id)
-            return LibraryMutationResult(True,1,plan.summary,facts={"source_artifact_id":source_id,"artifact_id":request.artifact_id,"purpose":purpose})
+            rows = self.service.storage.artifact_variants(
+                artifact_id=request.artifact_id,
+            )
+            owner = getattr(getattr(self.service, "current_identity", None),
+                            "identity_id", None)
+            purpose = request.purpose or "read"
+            if (len(rows) != 1 or type(owner) is not str or not owner
+                    or (request.target_identity_id is not None
+                        and request.target_identity_id != owner)
+                    or purpose not in ("read", "export", "transfer")):
+                raise _VariantScopeConflict("Portée de préférence modifiée")
+            qualified = _scoped_derived_preference_candidate(
+                self.service.storage, rows[0], owner,
+            )
+            if (qualified is None
+                    or plan.facts.get("identity_id") != owner
+                    or plan.facts.get("source_artifact_id") != qualified[0]
+                    or plan.facts.get("placement_id") != qualified[1]
+                    or plan.facts.get("variant_id") != rows[0].get("variant_id")):
+                raise _VariantScopeConflict("Variante préférée requalifiée après plan")
+            source_id = qualified[0]
+            self.service.storage.metadata_set(
+                f"artifact.variant.preferred.{owner}.{source_id}.{purpose}",
+                request.artifact_id,
+            )
+            return LibraryMutationResult(
+                True, 1, plan.summary,
+                facts={"source_artifact_id": source_id,
+                       "artifact_id": request.artifact_id,
+                       "identity_id": owner, "purpose": purpose},
+            )
         if request.operation == "delete_variant":
             rows = self.service.storage.artifact_variants(
                 artifact_id=request.artifact_id,
