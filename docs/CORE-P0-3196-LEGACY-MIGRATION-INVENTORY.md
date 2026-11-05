@@ -32,6 +32,10 @@ reprise vérifiées.
   de propriétaire et doublons, et des **formes** de reçus Core terminés
   liés au chemin, au SHA et au stage déterministe exact (SourceKey + offre). Une forme de reçu n'est pas sa preuve cryptographique
   ou une preuve d'OriginLink : ce compteur reste exclusivement consultatif.
+  La forme candidate requiert aussi **backup historique `status=complete`**
+  et **`revision_id` renseigné**, indépendamment de `ledger.status=complete` :
+  un reçu de journal ne transforme jamais un backup `acquiring`,
+  `reconcile_required` ou archivé en sauvegarde complète.
   Le compteur `receipt_unproven` inclut **toutes** les lignes scannées,
   même lorsqu'une forme de reçu a été reconnue ; aucun reçu n'est attesté
   par ce seul inventaire.
