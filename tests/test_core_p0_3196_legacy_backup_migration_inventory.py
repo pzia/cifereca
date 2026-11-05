@@ -255,6 +255,48 @@ def test_unrelated_operation_is_not_a_completed_receipt_candidate(store, tmp_pat
     assert not path.exists()
 
 
+@pytest.mark.parametrize("legacy_status,revision", [
+    ("pending_acquisition", "r1"),
+    ("acquiring", "r1"),
+    ("reconcile_required", "r1"),
+    ("skipped_archived", "r1"),
+    ("attention_required", "r1"),
+    ("complete", None),
+    ("complete", ""),
+])
+def test_completed_ledger_does_not_complete_legacy_backup_or_supply_revision(
+    store, tmp_path, legacy_status, revision,
+):
+    register(store, "A", "kobo", "card-a", account="buyer")
+    path = tmp_path / "absent.epub"
+    _backup(store, item="book", status=legacy_status, revision=revision,
+            path=path, sha="a" * 64, size=42)
+    source = ["A", "kobo", "card-a", "buyer", "purchases",
+              "book", "purchase", "purchase"]
+    checkpoint = {
+        "schema": "canonical.completed-delivery.v1",
+        "source": source, "offer_id": "exact-offer",
+        "path": str(path), "sha256": "a" * 64,
+        "receipt": "synthetic-receipt", "adept_receipt": "",
+    }
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET acquisition_id=?,status='complete',"
+            "artifact_id=?,metadata_json=? WHERE provider_id='kobo' "
+            "AND item_id='book'",
+            (_stable("canonical-intake", *source, "exact-offer"),
+             "sha256:" + "a" * 64, json.dumps(checkpoint)),
+        )
+    before = _rows(store)
+    report = _report(store)
+    assert report["status"] == "complete"
+    assert report["receipt_shape_candidate"] == 0
+    assert report["receipt_unproven"] == 1
+    assert report["revision_unrecorded"] == int(not revision)
+    assert _rows(store) == before
+    assert not path.exists()
+
+
 def test_malformed_duplicate_checkpoint_is_not_a_receipt(store, tmp_path):
     register(store, "A", "kobo", "card-a", account="buyer")
     path = tmp_path / "not-on-disk.epub"

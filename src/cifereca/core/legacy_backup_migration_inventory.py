@@ -227,7 +227,13 @@ def inventory_legacy_kobo_backups(
                 # Even a matching receipt shape does NOT prove bytes,
                 # OriginLink, stage ID, rights or permission to mutate.
                 candidate = (
-                    len(ledger) == 1
+                    # Only a completed *legacy* delivery with an explicit
+                    # revision may be considered for further migration proof.
+                    # An independent completed ledger row does not complete
+                    # an acquiring/reconciliation/archived legacy record.
+                    status == "complete"
+                    and type(revision) is str and bool(revision)
+                    and len(ledger) == 1
                     and account_bound and not path_shared
                     and type(path) is str and bool(path)
                     and type(digest) is str and len(digest) == 64
