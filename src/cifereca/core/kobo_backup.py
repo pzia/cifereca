@@ -71,7 +71,7 @@ def _kobo_legacy_current_path_scoped(
             if identity.identity_id == identity_id:
                 continue
             other = str(identity.directory_name or "").strip()
-            if not other or other in {".", ".."} or "/" in other or "\\\\" in other:
+            if not other or other in {".", ".."} or "/" in other or "\\" in other:
                 return False
             if (candidate.is_relative_to(library_root / other)
                     or candidate.is_relative_to(backup_root / other / "kobo")):
