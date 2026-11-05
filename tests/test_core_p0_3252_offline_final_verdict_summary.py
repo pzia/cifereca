@@ -73,33 +73,44 @@ def test_non_kobo_and_nonfinal_errors_ignored():
 
 
 def test_missing_evidence_with_gapped_rotations_is_not_clean():
-    report = summarize_document({
-        "events": [], "coverage": "partial",
-        "rotation_gaps": ["synthetic-rotation"], "active_log_missing": False,
+    report = summarize_document({"events": []}, manifest_coverage={
+        "coverage": "partial", "rotation_gaps_present": True,
+        "active_log_missing": False,
     })
     assert report["status"] == "no_evidence_partial_coverage"
     assert report["journal_coverage"] == "partial"
     assert report["historical_completeness_attested"] is False
-    assert "synthetic-rotation" not in str(report)
 
 
 def test_available_retained_window_does_not_prove_historical_completeness():
-    report = summarize_document({
-        "events": [], "coverage": "available",
-        "rotation_gaps": [], "active_log_missing": False,
+    report = summarize_document({"events": []}, manifest_coverage={
+        "coverage": "available", "rotation_gaps_present": False,
+        "active_log_missing": False,
     })
     assert report["status"] == "no_instrumented_evidence"
     assert report["journal_coverage"] == "available"
     assert report["historical_completeness_attested"] is False
 
 
-def test_unattested_metadata_is_not_treated_as_complete():
-    report = summarize_document({"events": [], "coverage": "available"})
-    assert report["journal_coverage"] == "unknown"
-    assert report["historical_completeness_attested"] is False
+def test_raw_journal_must_not_self_attest_coverage_even_if_forged():
     report = summarize_document({
         "events": [], "coverage": "available",
-        "rotation_gaps": [], "active_log_missing": True,
+        "rotation_gaps": [], "active_log_missing": False,
+    })
+    assert report["status"] == "no_instrumented_evidence"
+    assert report["journal_coverage"] == "unknown"
+    assert report["historical_completeness_attested"] is False
+
+
+def test_unattested_manifest_metadata_is_not_treated_as_complete():
+    report = summarize_document({"events": []}, manifest_coverage={
+        "coverage": "available", "rotation_gaps_present": None,
+        "active_log_missing": False,
+    })
+    assert report["journal_coverage"] == "unknown"
+    report = summarize_document({"events": []}, manifest_coverage={
+        "coverage": "available", "rotation_gaps_present": False,
+        "active_log_missing": True,
     })
     assert report["journal_coverage"] == "partial"
 
@@ -108,3 +119,4 @@ def test_invalid_document_is_never_a_success():
     result = summarize_document([])
     assert result["status"] == "invalid_journal"
     assert result["journal_coverage"] == "unknown"
+    assert result["historical_completeness_attested"] is False
