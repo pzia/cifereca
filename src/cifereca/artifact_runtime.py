@@ -835,16 +835,14 @@ class ArtifactExecutionBrokerImpl:
         plugin_id, transformer = self._select_transformer(request, transformer_plugin_id)
         # Validate the current source bytes before considering an existing
         # derivative. A stale local source must never reuse an older variant.
-        source_lease = self.input_lease(request.source)
+        source_lease = self.input_lease(
+            request.source, identity_id=request.identity_id,
+            placement_id=request.placement_id,
+        )
         fingerprint = hashlib.sha256(
             json.dumps(dict(request.options), ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
-        identity_id = None
-        try:
-            placement = self._source_placement(request.source)
-            identity_id = placement.get("identity_id")
-        except Exception:
-            pass
+        identity_id = source_lease.source_identity_id
 
         existing = self.service.storage.artifact_variant_find(
             source_sha256=request.source.sha256,
@@ -853,46 +851,27 @@ class ArtifactExecutionBrokerImpl:
             options_fingerprint=fingerprint,
         )
         if existing:
-            metadata = dict(existing.get("metadata") or {})
-            transformer_version = self._version_for_plugin(plugin_id)
-            profile_version = self._version_for_plugin(request.profile_plugin_id)
-            version_match = (
-                str(existing.get("transformer_version") or "") == transformer_version
-                and str(existing.get("profile_version") or "") == profile_version
-                and not bool(metadata.get("stale", False))
+            cached = self._scoped_derived_cache(
+                source=request.source, source_lease=source_lease,
+                recipe=existing, transformer_id=plugin_id,
+                profile_id=request.profile_plugin_id,
+                options_fingerprint=fingerprint,
             )
-            if version_match:
-                cached = _artifact_ref(
-                    self.service.storage,
-                    str(existing.get("artifact_id") or ""),
-                    book_id=request.source.book_id,
-                    identity_id=identity_id,
-                )
-                if cached is not None:
-                    try:
-                        # Also verifies that a present placement still matches
-                        # the canonical checksum.
-                        self.input_lease(cached)
-                    except Exception:
-                        cached = None
-                if cached is not None:
-                    control.check_cancelled()
-                    control.report(current=1, total=1, message="Variante existante réutilisée")
-                    recorder = getattr(self.service, "_record_action", None)
-                    if callable(recorder):
-                        recorder(
-                            identity_id,
-                            "transformation",
-                            "success",
-                            plugin_id=plugin_id,
-                            facts={
-                                "capability": request.capability_id,
-                                "source_artifact_id": request.source.artifact_id,
-                                "artifact_id": cached.artifact_id,
-                                "cache_hit": True,
-                            },
-                        )
-                    return cached
+            if cached is not None:
+                control.check_cancelled()
+                control.report(current=1, total=1, message="Variante existante réutilisée")
+                recorder = getattr(self.service, "_record_action", None)
+                if callable(recorder):
+                    recorder(
+                        identity_id, "transformation", "success", plugin_id=plugin_id,
+                        facts={
+                            "capability": request.capability_id,
+                            "source_artifact_id": request.source.artifact_id,
+                            "artifact_id": cached.artifact_id,
+                            "cache_hit": True,
+                        },
+                    )
+                return cached
 
         plan = transformer.plan(request, source_lease, control)
         destination = self.output_lease(
@@ -900,6 +879,8 @@ class ArtifactExecutionBrokerImpl:
             output_format=plan.output_format,
             proposed_filename=plan.proposed_filename,
             variant_kind=request.capability_id or "derived",
+            identity_id=source_lease.source_identity_id,
+            placement_id=source_lease.source_placement_id,
         )
         try:
             # The transformer may move or swap the original after plan.
