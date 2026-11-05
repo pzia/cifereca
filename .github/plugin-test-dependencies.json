@@ -2,6 +2,7 @@
   "audited_product_packages": [
     "constellations",
     "dev-updater",
+    "diagnostics-page",
     "literary-criticism",
     "maintenance-library-audit"
   ],
