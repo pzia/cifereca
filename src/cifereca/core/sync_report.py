@@ -137,7 +137,7 @@ _AUDIT_RECEIPT_CLASSES = frozenset({"staged_unpublished", "receipt_recorded"})
 _AUDIT_FILE_STATES = frozenset({
     "not_requested", "scope_unavailable", "missing_file",
     "invalid_placement", "file_changed", "sha_mismatch",
-    "file_unavailable", "verified_sha256",
+    "file_unavailable", "verified_sha256", "placement_state_unverified",
     "multiple_placements_unverified", "multiple_placements_all_verified",
     "multiple_placements_mixed", "multiple_placements_none_verified",
 })
