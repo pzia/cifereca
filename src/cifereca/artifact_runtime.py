@@ -539,6 +539,11 @@ class ArtifactExecutionBrokerImpl:
         if lease.source.artifact_id != source.artifact_id:
             raise _VariantConflict("Le lease de sortie ne correspond pas à la source", code="artifact_lease_source_mismatch")
         path = lease.path
+        # A moved/replaced source directory may also make the staged output
+        # disappear from its old path. Preserve the stronger source lease
+        # refusal instead of misreporting a missing transformer output.
+        if _variant_directory_stamp(lease.source_path.parent) != lease.source_directory_stamp:
+            raise _VariantConflict("Répertoire de source modifié", code="artifact_source_changed")
         if _variant_file_stamp(path) is None:
             raise _VariantNotFound("Le transformer n'a produit aucun fichier régulier",
                            code="artifact_output_missing")
