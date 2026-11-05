@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -363,6 +363,70 @@ class PluginSelectionTests(unittest.TestCase):
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
                     )
+
+    def test_ebooksgratuits_product_selects_home_page_consumer(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("ebooksgratuits", audited)
+        self.assertIn("transport-http", graph["ebooksgratuits"])
+        self.assertIn("ebooksgratuits", graph["home-page"])
+        self.assertEqual(
+            selector.affected_packages({"ebooksgratuits"}, graph),
+            ["ebooksgratuits", "home-page"],
+        )
+        chosen, reason = selector.select([
+            ("M", "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py"),
+        ], ROOT)
+        self.assertEqual(chosen, [
+            "src/plugins/ebooksgratuits", "src/plugins/home-page",
+        ])
+        self.assertIn("dependency closure", reason)
+        affected = selector.affected_packages({"transport-http"}, graph)
+        self.assertTrue(
+            {"transport-http", "ebooksgratuits", "home-page"} <= set(affected),
+        )
+        for changes in (
+            [("M", "src/plugins/home-page/cifereca_home.py")],
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/ebooksgratuits/cifereca-plugin.json")],
+            [("M", "src/plugins/ebooksgratuits/tests/conftest.py")],
+            [("D", "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py")],
+            [("R100", "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_ebooksgratuits_specific_cross_plugin_consumers_are_known(self):
+        tokens = (
+            "provider.ebooksgratuits", "cifereca_ebooksgratuits",
+            "ebooksgratuits",
+        )
+        source_root = ROOT / "src/plugins"
+        consumers = set()
+        transport_fixtures = set()
+        for package_dir in sorted(source_root.iterdir()):
+            if not package_dir.is_dir() or package_dir.name == "ebooksgratuits":
+                continue
+            for file in package_dir.rglob("*"):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yaml", ".yml", ".sh",
+                }:
+                    data = file.read_text(encoding="utf-8", errors="replace")
+                    if any(token in data for token in tokens):
+                        if package_dir.name == "transport-http":
+                            transport_fixtures.add(file.relative_to(package_dir).as_posix())
+                        else:
+                            consumers.add(package_dir.name)
+        # An HTTP transport test exercises a fixed external OPDS URL:
+        # it neither imports nor consumes the ebooksgratuits plugin.
+        # Any further transport reference must be reviewed explicitly.
+        self.assertEqual(transport_fixtures, {
+            "tests/test_opds_same_origin_redirect_p1_2460.py",
+        })
+        self.assertEqual(consumers, {"home-page"})
 
     def test_gallica_product_selects_home_page_consumer(self):
         graph, audited = selector.dependency_graph(ROOT)
