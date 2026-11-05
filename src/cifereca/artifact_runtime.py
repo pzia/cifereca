@@ -681,19 +681,20 @@ class ArtifactExecutionBrokerImpl:
             profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
         )
         if existing:
-            artifact = _artifact_ref(
-                self.service.storage, str(existing.get("artifact_id") or ""),
-                book_id=source.book_id,
-                identity_id=lease.source_identity_id,
+            cached = self._scoped_derived_cache(
+                source=source,
+                source_lease=_InputLease(
+                    source_path, source, lease.source_placement_id,
+                    lease.source_identity_id, lease.source_stamp,
+                    lease.source_directory_stamp,
+                ),
+                recipe=existing, transformer_id=transformer_plugin_id,
+                profile_id=profile_plugin_id,
+                options_fingerprint=options_fingerprint,
             )
-            if artifact is not None:
-                try:
-                    self.input_lease(artifact)
-                except (Conflict, NotFound, OSError, ValueError):
-                    artifact = None
-            if artifact is not None:
+            if cached is not None:
                 self.abort_output(lease)
-                return artifact
+                return cached
         proposed = Path(str(result.proposed_filename or lease.proposed_filename or "")).name
         if not proposed:
             suffix = "." + str(result.output_format.format or lease.output_format.format or source_path.suffix.lstrip(".")).lstrip(".")
