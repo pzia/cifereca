@@ -329,6 +329,10 @@ class ParisProviderSession(ProviderSession):
         self._same_cycle_rights_inventory: ContextVar[LoanInventorySnapshot | None] = ContextVar(
             "paris_same_cycle_rights_inventory", default=None,
         )
+        # Tiny one-shot proof that Core's defensive copy stems from THIS
+        # session's latest completed typed read, not a different borrower,
+        # account instance or older session. Never retain loan rows here.
+        self._last_typed_loan_marker = None
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
@@ -622,6 +626,9 @@ class ParisProviderSession(ProviderSession):
         Both loans() and the typed snapshot reuse the same GETs; only the
         typed snapshot may attest branch coverage. No mutable v1 error facade.
         """
+        # A new private inventory request supersedes any previously offered
+        # same-cycle observation, including before a provider failure.
+        self._last_typed_loan_marker = None
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
@@ -799,7 +806,24 @@ class ParisProviderSession(ProviderSession):
         with self._loan_inventory_lock:
             token = self._loan_read_consumer.set("loan_inventory")
             try:
-                return self._snapshot_for_account(account)
+                snapshot = self._snapshot_for_account(account)
+                # The Core adapter makes defensive copies. Keep only a
+                # short marker and the live Account object's identity, not
+                # a second LoanInventorySnapshot or a persistent rights cache.
+                matches = [
+                    live for live in self._accounts if type(live) is Account
+                    and LoanInventoryScope.for_account(live) == snapshot.scope
+                ]
+                if (snapshot.status == "success"
+                        and snapshot.observed_at
+                        and snapshot.branch_claims_complete("dilicom", "digital")
+                        and snapshot.branch_claims_complete("syracuse", "physical")
+                        and len(matches) == 1):
+                    self._last_typed_loan_marker = (
+                        snapshot.observed_at, snapshot.scope, id(matches[0]),
+                        id(self._accounts), getattr(self, "_epoch", None),
+                    )
+                return snapshot
             finally:
                 self._loan_read_consumer.reset(token)
 
@@ -884,6 +908,7 @@ class ParisProviderSession(ProviderSession):
             loans=normalized,
             status="partial" if any(b.completeness == "partial" for b in branches) else "success",
             branches=branches,
+            observed_at=datetime.now(timezone.utc).isoformat(),
             reason_code=("branch_unavailable" if failed else
                          "invalid_response" if any(b.reason_code == "invalid_response"
                                                    for b in branches) else None),
@@ -1274,13 +1299,31 @@ class ParisProviderSession(ProviderSession):
                 or not loan_inventory.branch_claims_complete("syracuse", "physical")):
             raise ProviderCapabilityError("paris_same_cycle_inventory_unverified")
         from cifereca.plugin_api import from_legacy_rights_snapshot
-        token = self._same_cycle_rights_inventory.set(loan_inventory)
-        try:
-            return from_legacy_rights_snapshot(
-                self.rights_observation_snapshot(account)
-            )
-        finally:
-            self._same_cycle_rights_inventory.reset(token)
+        with self._loan_inventory_lock:
+            marker = self._last_typed_loan_marker
+            # Consume before rights projection, including on rejection. A
+            # replay can never use this token, and independent rights reads
+            # still perform two fresh ListLoans calls.
+            self._last_typed_loan_marker = None
+            matching = [
+                live for live in self._accounts if type(live) is Account
+                and LoanInventoryScope.for_account(live) == loan_inventory.scope
+            ]
+            if (marker is None or len(matching) != 1
+                    or marker != (
+                        loan_inventory.observed_at, loan_inventory.scope,
+                        id(matching[0]), id(self._accounts),
+                        getattr(self, "_epoch", None),
+                    )
+                    or self.connected is not True):
+                raise ProviderCapabilityError("paris_same_cycle_inventory_stale")
+            token = self._same_cycle_rights_inventory.set(loan_inventory)
+            try:
+                return from_legacy_rights_snapshot(
+                    self.rights_observation_snapshot(account)
+                )
+            finally:
+                self._same_cycle_rights_inventory.reset(token)
 
     def downloadable_selected_offer_snapshot(
         self, account, *, edition_id, resource_id, kind, branch,
