@@ -144,3 +144,58 @@ def test_symlink_substitution_never_promotes_or_deletes(tmp_path):
         assert service.storage.artifact_variants() == []
     finally:
         service.storage.close()
+
+
+def test_receipt_is_durable_before_any_exclusive_hardlink(tmp_path, monkeypatch):
+    service, source, _ = _library(tmp_path)
+    try:
+        import os
+        from cifereca.plugin_api import Conflict
+        checked = []
+
+        def link_refused(*args, **kwargs):
+            journals = list((
+                tmp_path / "library" / ".cifereca-staging" / "variants"
+            ).glob("pending-*.json"))
+            assert journals, "receipt must be visible before os.link"
+            # A genuine prelink receipt is fsynced and has the exact origin.
+            import json
+            row = json.loads(journals[-1].read_text())
+            assert row["source_artifact_id"] == source.artifact_id
+            assert row["identity_id"] == "id1"
+            checked.append(row["published_path"])
+            raise FileExistsError("synthetic publish collision")
+
+        monkeypatch.setattr(os, "link", link_refused)
+        with pytest.raises(Conflict):
+            ArtifactExecutionBrokerImpl(service).execute_transform(
+                TransformRequest(source, "optimize"), control=Control(),
+            )
+        assert len(checked) == 2  # primary name and short-SHA alternative
+        assert review_pending_derived_receipts(
+            service, identity_id="id1", commit=True,
+        )
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
+
+
+def test_changed_source_refuses_recovery_without_tampering_with_orphan(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        import json
+        journal = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        output = Path(json.loads(journal.read_text())["published_path"])
+        prior = output.read_bytes()
+        (tmp_path / "library" / "Book.epub").write_bytes(b"changed-parent")
+        status = review_pending_derived_receipts(
+            service, identity_id="id1", commit=True,
+        )
+        assert status[0]["status"] == "manual_review"
+        assert output.read_bytes() == prior
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
