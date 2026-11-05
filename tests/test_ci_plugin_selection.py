@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -362,6 +362,64 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
+                    )
+
+    def test_audited_browser_recorder_has_its_own_suite(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("browser-recorder", audited)
+        self.assertEqual(
+            selector.affected_packages({"browser-recorder"}, graph),
+            ["browser-recorder"],
+        )
+        for module in (
+            "browser_recorder.py", "browser_recorder_page.py",
+            "browser_recorder_zip.py", "browser_recorder_vault.py",
+        ):
+            with self.subTest(module=module):
+                chosen, reason = selector.select([
+                    ("M", "src/plugins/browser-recorder/" + module),
+                ], ROOT)
+                self.assertEqual(chosen, ["src/plugins/browser-recorder"])
+                self.assertIn("dependency closure", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/browser-recorder/browser_recorder.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/browser-recorder/cifereca-plugin.json")],
+            [("M", "src/plugins/browser-recorder/tests/conftest.py")],
+            [("D", "src/plugins/browser-recorder/browser_recorder.py")],
+            [("R100", "src/plugins/browser-recorder/browser_recorder.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_browser_recorder_modules_have_no_other_plugin_consumers(self):
+        # Plugin-specific imports and entrypoint, not generic diagnostic
+        # "browser_recorder" domain labels used in another package's tests.
+        tokens = (
+            "from browser_recorder import", "import browser_recorder.",
+            "browser_recorder_page", "browser_recorder_devkit",
+            "browser_recorder_zip", "browser_recorder_review",
+            "browser_recorder_vault", "browser_recorder_http",
+            "browser_recorder_download", "browser_recorder_review_ui",
+            "ui.page.browser-recorder", "org.cifereca.technical.browser-recorder",
+        )
+        source_root = ROOT / "src/plugins"
+        for item in sorted(source_root.glob("*/*")):
+            package = item.relative_to(source_root).parts[0]
+            if package == "browser-recorder":
+                continue
+            sources = item.rglob("*") if item.is_dir() else (item,)
+            for file in sources:
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in content for token in tokens),
+                        f"New cross-plugin Browser Recorder consumer: {file}",
                     )
 
     def test_audited_diagnostics_page_is_a_single_plugin_suite(self):

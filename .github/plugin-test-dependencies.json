@@ -1,5 +1,6 @@
 {
   "audited_product_packages": [
+    "browser-recorder",
     "constellations",
     "dev-updater",
     "diagnostics-page",
