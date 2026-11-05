@@ -57,6 +57,18 @@ def dependency_graph(root: Path) -> tuple[dict[str, set[str]], set[str]]:
                     raise GraphError(f"unknown required plugin in {name}")
                 if dependency != name:
                     graph[name].add(dependency)
+            # Optional in-repository capabilities are real runtime edges:
+            # changing the recommended provider must test its consumers.
+            recommends = plugin.get("recommends", [])
+            if not isinstance(recommends, list):
+                raise GraphError(f"invalid recommendations in {name}")
+            for recommendation in recommends:
+                if (not isinstance(recommendation, dict)
+                        or not isinstance(recommendation.get("plugin"), str)):
+                    raise GraphError(f"invalid recommendation in {name}")
+                dependency = owners.get(recommendation["plugin"])
+                if dependency is not None and dependency != name:
+                    graph[name].add(dependency)
             for requirement in plugin.get("requires_contracts", []):
                 category = requirement.get("category")
                 if not isinstance(category, str):
