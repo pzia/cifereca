@@ -41,13 +41,21 @@ def _failed_publication(service, source):
         db.execute("DROP TRIGGER fail_recovery_insert")
 
 
-def test_receipts_are_removed_after_normal_atomic_commit(tmp_path):
+def test_normal_commit_preserves_receipt_as_non_destructive_evidence(tmp_path):
     service, source, _ = _library(tmp_path)
     try:
         ArtifactExecutionBrokerImpl(service).execute_transform(
             TransformRequest(source, "optimize"), control=Control(),
         )
-        assert review_pending_derived_receipts(service, identity_id="id1") == ()
+        journal = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        assert journal.is_file()
+        observed = review_pending_derived_receipts(service, identity_id="id1")
+        assert len(observed) == 1
+        assert observed[0]["status"] == "already_committed"
+        from cifereca.core.derived_variant_recovery import _pending_intent_key
+        assert service.storage.metadata_get(_pending_intent_key(journal))
     finally:
         service.storage.close()
 
@@ -429,39 +437,24 @@ def test_receipt_replaced_before_sql_intent_is_not_registered(tmp_path, monkeypa
         service.storage.close()
 
 
-def test_successful_publish_does_not_unlink_replaced_receipt(
-    tmp_path, monkeypatch,
-):
+def test_successful_publish_preserves_foreign_receipt_replacement(tmp_path):
     service, source, _ = _library(tmp_path)
     try:
-        from cifereca.core import derived_variant_recovery as recovery
-        original = recovery._read_receipt_nofollow
-        calls = []
-        replaced = []
-
-        def replace_at_retirement(receipt):
-            calls.append(receipt)
-            if len(calls) == 2:
-                # The profile owner alters the journal after SQLite has
-                # committed. Retirement must preserve foreign bytes rather
-                # than unlink an unrelated new receipt inode.
-                receipt.unlink()
-                receipt.write_bytes(b"concurrent foreign receipt")
-                replaced.append(receipt)
-            return original(receipt)
-
-        monkeypatch.setattr(recovery, "_read_receipt_nofollow",
-                            replace_at_retirement)
         result = ArtifactExecutionBrokerImpl(service).execute_transform(
             TransformRequest(source, "optimize"), control=Control(),
         )
-        assert result.artifact_id != source.artifact_id
-        assert len(replaced) == 1
-        assert replaced[0].read_bytes() == b"concurrent foreign receipt"
-        assert recovery.review_pending_derived_receipts(
+        journal = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        assert journal.is_file()
+        alternate = journal.with_name(journal.name + ".foreign")
+        alternate.write_bytes(b"concurrent foreign receipt")
+        os.replace(alternate, journal)
+        assert journal.read_bytes() == b"concurrent foreign receipt"
+        assert review_pending_derived_receipts(
             service, identity_id="id1",
         )[0]["status"] == "manual_review"
-        assert service.storage.artifact_variants()
+        assert len(service.storage.artifact_variants(artifact_id=result.artifact_id)) == 1
     finally:
         service.storage.close()
 
@@ -486,43 +479,27 @@ def test_recreated_source_with_identical_bytes_does_not_establish_causality(
         service.storage.close()
 
 
-def test_successful_publish_preserves_replaced_same_bytes_receipt_inode(
-    tmp_path, monkeypatch,
-):
+def test_successful_publish_preserves_same_bytes_replaced_receipt(tmp_path):
     service, source, _ = _library(tmp_path)
     try:
-        from cifereca.core import derived_variant_recovery as recovery
-        original = recovery._read_receipt_nofollow
-        seen = []
-        replaced = []
-
-        def replace_same_bytes_at_retirement(receipt):
-            seen.append(receipt)
-            if len(seen) == 2:
-                # Preserving the SHA is NOT preserving the original inode.
-                raw = original(receipt)
-                alternate = receipt.with_name(receipt.name + ".replacement")
-                alternate.write_bytes(raw)
-                os.replace(alternate, receipt)
-                replaced.append(receipt)
-            return original(receipt)
-
-        monkeypatch.setattr(
-            recovery, "_read_receipt_nofollow",
-            replace_same_bytes_at_retirement,
-        )
-        derived = ArtifactExecutionBrokerImpl(service).execute_transform(
+        result = ArtifactExecutionBrokerImpl(service).execute_transform(
             TransformRequest(source, "optimize"), control=Control(),
         )
-        assert derived.artifact_id != source.artifact_id
-        assert len(replaced) == 1
-        assert replaced[0].is_file()
-        # A stale but valid signed intent may still be inspected and is
-        # already committed; it must never create a duplicate derived link.
-        reviewed = recovery.review_pending_derived_receipts(
+        journal = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        original_bytes = journal.read_bytes()
+        original_inode = journal.lstat().st_ino
+        alternate = journal.with_name(journal.name + ".replacement")
+        alternate.write_bytes(original_bytes)
+        os.replace(alternate, journal)
+        assert journal.is_file()
+        assert journal.read_bytes() == original_bytes
+        assert journal.lstat().st_ino != original_inode
+        reviewed = review_pending_derived_receipts(
             service, identity_id="id1",
         )
         assert reviewed[0]["status"] == "already_committed"
-        assert len(service.storage.artifact_variants()) == 1
+        assert len(service.storage.artifact_variants(artifact_id=result.artifact_id)) == 1
     finally:
         service.storage.close()
