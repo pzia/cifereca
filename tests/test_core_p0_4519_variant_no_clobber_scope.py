@@ -193,3 +193,83 @@ def test_cancellation_after_transform_creates_no_final_variant(tmp_path):
                                  control=Cancelled())
     assert not (tmp_path / "library" / "Optimized.epub").exists()
     _assert_no_variant(service, source, original_id, tmp_path / "library" / "Book.epub")
+
+
+def test_missing_sql_placement_at_fallback_does_not_claim_other_profile(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+    primary = tmp_path / "library" / "Optimized.epub"
+    fallback = tmp_path / "library" / f"Optimized-{SHA[:8]}.epub"
+    primary.write_bytes(b"unrelated existing primary")
+    foreign_id = service.storage.placement_put({
+        "artifact_id": source.artifact_id,
+        "path": str(fallback),
+        "identity_id": "other-profile",
+        "provider_id": "other-provider",
+        "source_item_id": "other-edition",
+        "state": "missing",
+        "metadata": {},
+    })
+    old_placement = service.storage.placement_get(foreign_id)
+    assert not fallback.exists()
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    assert caught.value.code == "artifact_variant_filename_conflict"
+    assert service.storage.placement_get(foreign_id) == old_placement
+    assert not fallback.exists()
+    assert primary.read_bytes() == b"unrelated existing primary"
+    _assert_no_variant(service, source, original_id, tmp_path / "library" / "Book.epub")
+
+
+def test_same_bytes_at_hash_fallback_are_never_overwritten(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+    primary = tmp_path / "library" / "Optimized.epub"
+    fallback = tmp_path / "library" / f"Optimized-{SHA[:8]}.epub"
+    primary.write_bytes(b"another title")
+    fallback.write_bytes(DATA)
+    old_stat = fallback.stat()
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    assert caught.value.code == "artifact_variant_filename_conflict"
+    assert fallback.read_bytes() == DATA
+    assert (fallback.stat().st_dev, fallback.stat().st_ino) == (
+        old_stat.st_dev, old_stat.st_ino
+    )
+    _assert_no_variant(service, source, original_id, tmp_path / "library" / "Book.epub")
+
+
+def test_source_symlink_is_rejected_without_touching_destination(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+    original = tmp_path / "library" / "Book.epub"
+    other = tmp_path / "unrelated-source.epub"
+    other.write_bytes(b"book-data")
+    original.unlink()
+    original.symlink_to(other)
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    assert caught.value.code == "artifact_source_unverified"
+    assert other.read_bytes() == b"book-data"
+    assert original.is_symlink()
+    assert not (tmp_path / "library" / "Optimized.epub").exists()
+    assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+
+
+def test_foreign_only_cached_variant_does_not_satisfy_other_profile(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+    first = broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    a_original = tmp_path / "library" / "Book.epub"
+    a_variant = tmp_path / "library" / "Optimized.epub"
+    assert a_variant.read_bytes() == DATA
+    b_original = tmp_path / "profile-b" / "Book.epub"
+    b_original.parent.mkdir()
+    shutil.copy2(a_original, b_original)
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=?,identity_id='id2' WHERE placement_id=?",
+            (str(b_original), original_id),
+        )
+    second = broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    assert second.sha256 == first.sha256
+    assert (b_original.parent / "Optimized.epub").read_bytes() == DATA
+    assert a_variant.read_bytes() == DATA
+    assert a_original.read_bytes() == b"book-data"
+    assert service.storage.placement_get(original_id)["identity_id"] == "id2"
