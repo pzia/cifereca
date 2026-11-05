@@ -2070,8 +2070,10 @@ class Storage:
         """Prune only the v0.7 compatibility projection after a complete manifest.
 
         A provider manifest admitted by the Kobo compatibility synchronizer
-        may retire obsolete backup_items rows; it cannot attest an exact
-        SourceReference right, an entitlement revocation or removal of bytes.
+        may retire obsolete backup_items rows without local_path; an unmigrated
+        Kobo row with a historical file locator is never pruned, even when
+        the path is currently inaccessible. Manifest absence cannot attest an
+        exact SourceReference right, entitlement revocation or removal of bytes.
         Entitlements/OriginLinks/Placements/acquisition history are never
         mutated by this obsolete projection. Negative canonical rights require
         a separately scoped, typed provider contract under #3171/#3197.
@@ -2135,6 +2137,15 @@ class Storage:
                     # providers keep their historical prune semantics.
                     and (provider != "kobo" or item_id == item_id.strip())
                     and item_id not in protected_kobo_items
+                    # #3196 W3: the 0.7 row may be the ONLY durable pointer
+                    # to a downloaded historical book. Manifest absence is
+                    # neither a verified deletion of those bytes nor proof
+                    # that the row was migrated to a canonical OriginLink.
+                    # Keep any Kobo local_path claim (even if currently
+                    # offline/missing) for a separate attested cutover. Do
+                    # not stat or follow this untrusted historical pathname.
+                    and not (provider == "kobo" and type(path) is str
+                             and bool(path.strip()))
                     and item_id.strip() not in seen)
             ]
             local_preserved = 0
