@@ -127,7 +127,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"literary-criticism"})
+        self.assertEqual(audited, {"dev-updater", "literary-criticism"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -135,7 +135,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"literary-criticism"})
+        self.assertEqual(audited, {"dev-updater", "literary-criticism"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -181,6 +181,61 @@ class PluginSelectionTests(unittest.TestCase):
                 any(token in content for token in tokens),
                 f"Unexpected new literary-criticism consumer: {file}",
             )
+
+    def test_audited_dev_updater_is_independent_of_other_plugin_suites(self):
+        # The opt-in releases page only imports its own helper, the Core
+        # plugin API and ordinary HTTPX/packaging dependencies; no other
+        # package consumes its ui.page.dev-updater contribution.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("dev-updater", audited)
+        self.assertEqual(
+            selector.affected_packages({"dev-updater"}, graph),
+            ["dev-updater"],
+        )
+        chosen, reason = selector.select([
+            ("M", "src/plugins/dev-updater/github_releases.py"),
+        ], ROOT)
+        self.assertEqual(chosen, ["src/plugins/dev-updater"])
+        self.assertIn("dependency closure", reason)
+        # A non-audited runtime change cannot piggy-back on a selected suite.
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/dev-updater/github_releases.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/dev-updater/cifereca-plugin.json")],
+            [("D", "src/plugins/dev-updater/github_releases.py")],
+            [("R100", "src/plugins/dev-updater/github_releases.py")],
+            [("M", "src/plugins/dev-updater/tests/helper.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_audited_dev_updater_has_no_cross_package_consumers(self):
+        # Stop the optimization if a new package imports or references this
+        # plugin directly, including in manifests, shell scripts or tests.
+        # Generic ui.page registration is not a plugin-specific dependency.
+        tokens = (
+            "dev-updater", "dev_updater", "dev_updater_page",
+            "github_releases", "ui.page.dev-updater",
+            "org.cifereca.dev-updater",
+        )
+        source_root = ROOT / "src/plugins"
+        for file in sorted(source_root.glob("*/*")):
+            package = file.relative_to(source_root).parts[0]
+            if package == "dev-updater":
+                continue
+            sources = file.rglob("*") if file.is_dir() else (file,)
+            for source in sources:
+                if source.is_file() and source.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = source.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in content for token in tokens),
+                        f"Unexpected dev-updater consumer: {source}",
+                    )
 
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.root), *args], stderr=subprocess.DEVNULL).decode().strip()
