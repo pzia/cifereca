@@ -883,14 +883,38 @@ class DetailPanel(Gtk.Box):
                 self._actions([borrow])
             else:
                 row = Adw.ActionRow()
-                row.set_title("Emprunt requis avant téléchargement")
-                row.set_subtitle(
-                    "Une demande BnF existe déjà pour ce livre, ou le compte "
-                    "actif n’est pas admissible. Consultez Mes emprunts."
+                row.set_title(
+                    "État de la demande d’emprunt"
+                    if item.source_provider == "bnf-pret"
+                    else "Emprunt requis avant téléchargement"
+                )
+                explanation = (
+                    "Une demande BnF existe peut-être déjà pour ce livre, "
+                    "ou le compte actif n’est pas admissible. "
+                    "Consultez Mes emprunts."
                     if item.source_provider == "bnf-pret"
                     else "Emprunt indisponible pour l’identité et le compte "
                          "actifs, ou non pris en charge par cette source."
                 )
+                if item.source_provider == "bnf-pret":
+                    # #4082: bounded local SQLite observation, NOT a provider
+                    # fetch or a new permission. No result is cached across
+                    # identities, accounts, editions or detail renderings.
+                    from .bnf_borrow_claim_status import bnf_borrow_claim_message
+                    observer = getattr(
+                        self.window.service, "bnf_borrow_claim_observation", None,
+                    )
+                    current = getattr(self.window.service, "current_identity", None)
+                    identity_id = getattr(current, "identity_id", None)
+                    if callable(observer) and type(identity_id) is str and identity_id:
+                        try:
+                            observation = observer(
+                                item, expected_identity_id=identity_id,
+                            )
+                        except Exception:
+                            observation = None
+                        explanation = bnf_borrow_claim_message(observation) or explanation
+                row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)
         elif item.source_provider == "kobo" and item.owned:
