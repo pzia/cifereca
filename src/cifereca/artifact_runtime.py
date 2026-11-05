@@ -335,7 +335,8 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
                                directory_stamp: tuple[int, int],
                                staging_directory_stamp: tuple[int, int],
                                staging_root_stamp: tuple[int, int],
-                               claimed_paths: frozenset[str]) -> Path:
+                               claimed_paths: frozenset[str],
+                               before_link: Any = None) -> Path:
     """Hardlink a verified staging inode atomically, with no replace path.
 
     Both directory descriptors pin the original physical locations. Even a
@@ -370,6 +371,10 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
             # Placement/other-owner claim. Never rebind that SQL path.
             if str(source_parent / candidate) in claimed_paths:
                 continue
+            # The durable, profile-scoped receipt precedes the hardlink.
+            # A killed process may later prove this exact inode and intent.
+            if before_link is not None:
+                before_link(source_parent / candidate)
             try:
                 os.link(staged.name, candidate, src_dir_fd=stage_fd,
                         dst_dir_fd=parent_fd, follow_symlinks=False)
@@ -797,8 +802,37 @@ class ArtifactExecutionBrokerImpl:
         claimed_paths = frozenset(
             str(row.get("path") or "") for row in self.service.storage.placements()
         )
+        from .core.derived_variant_recovery import (
+            write_pending_derived_receipt, _safe_unlink_receipt,
+        )
+        pending_receipts: list[Path] = []
+
+        def attest_prelink(candidate: Path) -> None:
+            receipt = write_pending_derived_receipt(
+                path, candidate, source_path=source_path,
+                source_artifact_id=source.artifact_id,
+                source_sha256=source.sha256,
+                source_placement_id=lease.source_placement_id,
+                identity_id=lease.source_identity_id,
+                output_sha256=actual_sha, output_size=actual_size,
+                media_format=result.output_format.format
+                or lease.output_format.format or suffix.lstrip("."),
+                mime_type=result.output_format.media_type
+                or lease.output_format.media_type,
+                variant_kind=lease.variant_kind or "derived",
+                transformer_id=transformer_plugin_id,
+                transformer_version=self._version_for_plugin(transformer_plugin_id),
+                profile_id=profile_plugin_id,
+                profile_version=self._version_for_plugin(profile_plugin_id),
+                options_fingerprint=options_fingerprint,
+                book_id=source.book_id, warnings=result.warnings,
+                facts=dict(result.facts),
+            )
+            pending_receipts.append(receipt)
+
         final = _publish_variant_exclusive(
             path, source_path.parent, basename=stem + suffix,
+            before_link=attest_prelink,
             sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
             staging_directory_stamp=lease.staging_directory_stamp,
             staging_root_stamp=lease.staging_root_stamp,
@@ -859,6 +893,13 @@ class ArtifactExecutionBrokerImpl:
             identity_id=lease.source_identity_id,
         )
         if ref is None: raise RuntimeError("committed artifact disappeared")
+        # A crash after SQL commit leaves a harmless receipt; the supervised
+        # review reports it as already committed. Cleanup is best-effort.
+        for receipt in pending_receipts:
+            try:
+                _safe_unlink_receipt(receipt)
+            except OSError:
+                pass
         return ref
 
     def abort_output(self, destination: Any) -> None:
