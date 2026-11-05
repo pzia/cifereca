@@ -212,7 +212,7 @@ def test_checkpoint_syntax_is_never_a_published_origin_or_physical_proof(
     result = _report(store)
     assert result["status"] == "complete"
     assert result["receipt_shape_candidate"] == 1
-    assert result["receipt_unproven"] == 0
+    assert result["receipt_unproven"] == 1
     # An absent file and nonexistent published OriginLink remain unproven.
     # The inventory deliberately has no commit or deletion authority.
     assert not path.exists()
