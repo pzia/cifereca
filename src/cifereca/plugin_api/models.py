@@ -475,6 +475,9 @@ class ArtifactRef:
     sha256: str
     variant_kind: str = "original"
     filename: str = ""
+    # Optional Core-attested physical source coordinates; never path authority.
+    identity_id: str | None = None
+    placement_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
