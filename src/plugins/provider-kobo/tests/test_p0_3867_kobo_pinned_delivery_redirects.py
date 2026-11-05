@@ -233,6 +233,9 @@ def test_requester_pays_header_from_exact_kvault_candidate(
 
     vault.acquisition = acquisition
     visited = []
+    # ZIP headers embed the generation timestamp. Capture once, rather
+    # than constructing a different archive across a wall-clock boundary.
+    payload = epub_bytes()
 
     def handler(request):
         visited.append(request)
@@ -240,7 +243,7 @@ def test_requester_pays_header_from_exact_kvault_candidate(
             return httpx.Response(302, headers={"Location": PARTNER})
         assert str(request.url) == PARTNER
         return httpx.Response(
-            200, content=epub_bytes(),
+            200, content=payload,
             headers={"Content-Type": "application/epub+zip"},
         )
 
@@ -249,7 +252,7 @@ def test_requester_pays_header_from_exact_kvault_candidate(
         offer = admitted(session, account)
         assert offer.startswith("kobo.descriptor:")
         received, _ = execute(session, account, offer, tmp_path)
-        assert received.read_bytes() == epub_bytes()
+        assert received.read_bytes() == payload
         assert len(posts) == 2 and len(visited) == 2
         for request in visited:
             assert request.headers.get("x-amz-request-payer") == (
