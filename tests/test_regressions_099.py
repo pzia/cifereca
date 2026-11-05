@@ -18,7 +18,6 @@ from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
-from cifereca.plugin_api import DetailField, DetailSection, UiBookDetailPresentation
 
 def _service(tmp: str) -> LibraryService:
     root = Path(tmp)
@@ -125,10 +124,10 @@ class DigitalDefault(unittest.TestCase):
 class SummaryRegression(unittest.TestCase):
     def test_summary_remains_when_holdings_replace_initial_view(self):
         gtk=NS(Label=Widget,Spinner=Widget,Box=Widget,Button=Widget,Orientation=NS(VERTICAL=1),Align=NS(START=1));adw=NS(PreferencesGroup=Widget,ActionRow=Widget)
-        helpers=functions('main_window.py',{'book_detail_presentation','compact_detail_rows','text_or_dash'},{'DetailField':DetailField,'DetailSection':DetailSection,'UiBookDetailPresentation':UiBookDetailPresentation,'detail_metadata_items':lambda _metadata:(), 'safe_detail_value':lambda value:str(value or '')})
-        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:str(s or '').lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':helpers['book_detail_presentation'],'compact_detail_rows':helpers['compact_detail_rows'],'text_or_dash':helpers['text_or_dash'],'detail_language':lambda _metadata:'','compact_availability_label':lambda value:value,'search_detail_borrow_action_candidate':lambda _item,_label:False,'search_detail_support_label':search_detail_support_label,'document_links':lambda _row:(),'result_row':lambda _item:{},'_commercial_search_usage':lambda _item, _service=None:'','Pango':NS(WrapMode=NS(WORD_CHAR=0),EllipsizeMode=NS(END=1,NONE=0))})
+        from cifereca.gui.detail_model import book_detail_presentation, compact_detail_rows, text_or_dash
+        funcs=methods('main_window.py','DetailPanel',{'show_search','show_item_detail','show_presentation','_show_description'},{'Gtk':gtk,'Adw':adw,'file_format':lambda s:str(s or '').lower(),'clear_box':lambda w:w.children.clear(),'description_text':description_text,'book_detail_presentation':book_detail_presentation,'compact_detail_rows':compact_detail_rows,'text_or_dash':text_or_dash,'detail_language':lambda _metadata:'','compact_availability_label':lambda value:value,'search_detail_borrow_action_candidate':lambda _item,_label:False,'search_detail_support_label':search_detail_support_label,'document_links':lambda _row:(),'result_row':lambda _item:{},'_commercial_search_usage':lambda _item, _service=None:'','Pango':NS(WrapMode=NS(WORD_CHAR=0),EllipsizeMode=NS(END=1,NONE=0))})
         service=NS(content_type_for=lambda _: 'ebook',provider_display_name=lambda _: 'Paris',availability_display_label=lambda *_:'Indisponible',can_direct_download=lambda _:False)
-        host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,_focused_action_key=lambda:'',content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a:None,_group=lambda *a, **k:None,_direct_download_action=lambda *a:None)
+        host=NS(_decorate=lambda item:None,_clear_actions=lambda:None,_focused_action_key=lambda:'',content=Widget(),window=NS(service=service),_cancel_meta_request=lambda:None,_cover_and_title=lambda *a,**k:None,_group=lambda *a, **k:None,_direct_download_action=lambda *a:None)
         host._append_content=host.content.append
         host.show_presentation=lambda presentation,description=None:funcs['show_presentation'](host,presentation,description=description)
         host._show_description=lambda text:funcs['_show_description'](host,text)

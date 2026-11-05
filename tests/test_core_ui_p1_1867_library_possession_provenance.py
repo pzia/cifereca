@@ -9,7 +9,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.gui.library_detail_controller import possession_usage_label
+from cifereca.gui.local_book_detail_sections import possession_usage_label
 from tests.test_core_ui_1129_library_detail_controller import _context
 
 
@@ -60,8 +60,9 @@ def test_library_multi_identity_detail_keeps_loan_purchase_archive_local_separat
         "state": "local",
         "local": True,
         "placements": [
-            {"identity_id": "alice", "storage_target_id": "Books"},
+            {"identity_id": "alice", "storage_target_id": "Books", "provider_id": "legacy-hint"},
         ],
+        "source_refs": [{"identity_id": "alice", "provider_id": "kobo"}],
         "possessions": [
             {"identity_id": "alice", "provider_id": "kobo",
              "kind": "owned", "state": "active"},
@@ -75,16 +76,10 @@ def test_library_multi_identity_detail_keeps_loan_purchase_archive_local_separat
     }
     window, events, projected, loans, call = _context(item)
     call(NS(key="edition-1"))
-    groups = [(row[1], row[2]) for row in events if row[0] == "group"]
-    assert groups == [(
-        "Présence / Bibliothèques / Sources",
-        [
-            ("Alice", "Stockage : Books"),
-            ("Alice", "Achat possédé en ligne : Kobo"),
-            ("Bob", "Achat archivé : numilog"),
-            ("Bob", "Prêt de bibliothèque actif : Paris"),
-        ],
-    )]
+    assert dict(projected[0]["section_rows"])["Bibliothèques et accès"] == [
+        ("Alice", "Fichier local : Books\nSource : Kobo\nAchat possédé en ligne : Kobo"),
+        ("Bob", "Achat archivé : numilog\nPrêt de bibliothèque actif : Paris"),
+    ]
     assert len(projected) == 1
     assert not any("Télécharger" in str(event) for event in events)
     window.service.can_download_loan.assert_not_called()
@@ -102,12 +97,11 @@ def test_malformed_or_legacy_stored_rows_stay_conservatively_unqualified():
             {"identity_id": "alice", "provider_id": "paris"},
         ],
     }
-    _window, events, _projected, _loans, call = _context(item)
+    _window, _events, projected, _loans, call = _context(item)
     call(NS(key="edition-2"))
-    group = next(row for row in events if row[0] == "group")
-    assert group[2] == [
-        ("Alice", "Droit distant non qualifié : numilog"),
+    group = dict(projected[0]["section_rows"])["Bibliothèques et accès"]
+    assert group == [
+        ("Alice", "Droit distant non qualifié : numilog\nDroit distant : Paris"),
         ("Bob", "Droit distant : numilog"),
-        ("Alice", "Droit distant : Paris"),
     ]
-    assert all("Achat" not in label and "Prêt" not in label for _owner, label in group[2])
+    assert all("Achat" not in label and "Prêt" not in label for _owner, label in group)

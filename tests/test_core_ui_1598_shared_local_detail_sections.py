@@ -66,15 +66,11 @@ def test_order_values_identity_and_nominal_acquisition_are_exact():
             ("Source", "Paris"), ("Format", "EPUB"),
             ("Langue", "français, anglais"), ("Disponibilité", "Disponible"),
         ]),
-        ("Bibliothèque", [
-            ("Identité", "Alice"),
-            ("Fichier local", "/private/alice/book.epub"),
-            ("État acquisition", ""),
-        ]),
+        ("Bibliothèques et accès", [("Alice", "Fichier local : book.epub · EPUB")]),
     ]
     assert calls == [
-        ("availability", item), ("identity", "alice"), ("sync", "done"),
-        ("provider", "paris"), ("language", item["metadata"]),
+        ("availability", item), ("sync", "done"), ("provider", "paris"),
+        ("language", item["metadata"]), ("identity", "alice"),
     ]
 
 
@@ -85,11 +81,9 @@ def test_missing_metadata_stays_empty_with_no_implicit_status_or_identity():
             ("Source", "Local"), ("Format", ""), ("Langue", ""),
             ("Disponibilité", ""),
         ]),
-        ("Bibliothèque", [
-            ("Identité", ""), ("Fichier local", ""), ("État acquisition", ""),
-        ]),
+        ("Bibliothèques et accès", []),
     ]
-    assert ("identity", "") in calls
+    assert not any(key == "identity" for key, value in calls)
     assert not any(key == "sync" for key, value in calls)
 
 
@@ -113,15 +107,17 @@ def test_attested_availability_and_sync_non_nominal_are_preserved():
         _item(), **opts, offline_if_local=True,
     ))
     assert data["Essentiel"][-1] == ("Disponibilité", "Possédé en ligne")
-    assert data["Bibliothèque"][-1] == ("État acquisition", "En attente")
+    assert data["Bibliothèques et accès"] == [
+        ("Alice", "Fichier local : book.epub · EPUB\nÉtat acquisition : En attente"),
+    ]
 
 
 def test_unresolved_identity_keeps_its_original_id_not_another_account():
     opts, calls = _options()
     section = dict(local_book_detail_sections(
         _item(identity_id="unknown"), **opts,
-    ))["Bibliothèque"]
-    assert section[0] == ("Identité", "unknown")
+    ))["Bibliothèques et accès"]
+    assert section[0] == ("unknown", "Fichier local : book.epub · EPUB")
     assert [value for key, value in calls if key == "identity"] == ["unknown"]
 
 
@@ -142,13 +138,13 @@ def test_shared_presentation_keeps_one_renderer_and_compacts_empty_rows():
         metadata=item["metadata"],
     )
     assert [section.title for section in model.sections[:2]] == [
-        "Essentiel", "Bibliothèque",
+        "Essentiel", "Bibliothèques et accès",
     ]
     assert [field.label for field in model.sections[0].fields] == [
         "Source", "Format", "Langue", "Disponibilité",
     ]
     assert [field.label for field in model.sections[1].fields] == [
-        "Identité", "Fichier local",
+        "Alice",
     ]
 
 

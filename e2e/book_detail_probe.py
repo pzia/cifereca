@@ -51,7 +51,11 @@ METADATA = {
     "collections": ["Collection enquête"],
     "series_index": 2,
     "synopsis": "<p>Une enquête de test.</p><p>Résumé disponible sans réseau.</p>",
+    "description": "<p>Une enquête de test.</p><p>Résumé disponible sans réseau.</p>",
     "catalogue_metadata": {"publishers": ["Maison A", "Maison B"]},
+    "epub_metadata": {"publishers": ["Éditions EPUB témoin"]},
+    "epub_metadata_schema": 1,
+    "epub_cover_status": "no_usable_image",
     "access_token": "SECRET_NE_JAMAIS_AFFICHER",
     "public_product_metadata": {
         "brand": "Marque commerciale", "pagination_label": "228 pages",
@@ -72,7 +76,7 @@ def walk(widget):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(1300, 1366, 1600))
+    parser.add_argument("--width", required=True, type=int, choices=(960, 1280, 1300, 1366, 1600))
     parser.add_argument("--geometry-1300", action="store_true", help="UX #611: measure native X11 position, shell and both split views at exact 1300×768")
     parser.add_argument("--component-contracts", action="store_true", help="P0 #1124/#1125: real widget lifecycle, summaries, overflow and stable selection")
     parser.add_argument("--short-component-actions", action="store_true", help="Reproduce the pre-existing boundary overflow case with eight shorter labels")
@@ -256,7 +260,8 @@ def main():
                                  "Fiche publique · Pagination déclarée (support non précisé)",
                                  "Fiche publique · Format commercial sélectionné",
                                  "Prix littéraire", "Mot-clé", "Collection",
-                                 "Numéro dans la série", "Résumé"}
+                                 "Numéro dans la série", "Résumé", "EPUB · Éditeur",
+                                 "Image du livre · Couverture"}
         ]
         return expanded[0], rows
 
@@ -320,6 +325,25 @@ def main():
             report["ux611_probe_stage"] = "selected_search"
             geometry_1300("search")
         expander, rows = detail_info("search")
+        p = panel("search")
+        header = p.content.get_first_child()
+        summary = header.get_next_sibling()
+        assert header.has_css_class("detail-heading"), "En-tête du Détail absent"
+        assert any(isinstance(node, Adw.PreferencesGroup) and node.get_title() == "Essentiel"
+                   for node in walk(header)), "Essentiel hors de l’en-tête"
+        assert isinstance(summary, Adw.PreferencesGroup) and summary.get_title() == "Résumé", (
+            "Résumé hors du premier emplacement sous l’en-tête",
+            [node.get_title() for node in walk(p.content) if isinstance(node, Adw.PreferencesGroup)],
+        )
+        width = p.body_scroll.get_child().get_width() - p.content.get_margin_start() - p.content.get_margin_end()
+        orientation = Gtk.Orientation.HORIZONTAL if width >= 400 else Gtk.Orientation.VERTICAL
+        assert header.get_orientation() == orientation, (width, header.get_orientation())
+        assert header.get_width() <= width, (width, header.get_width())
+        report["detail_layout_566"] = {
+            "window_width": window.get_width(), "panel_width": width,
+            "stacked_header": orientation == Gtk.Orientation.VERTICAL,
+            "header_height": header.get_height(),
+        }
         assert not expander.get_expanded(), "Détail doit être replié initialement"
         assert report["online_calls"] == [], "Recherche déclenchée par affichage"
         # Les sous-titres des Adw.ActionRows repliées ne sont pas encore
@@ -337,6 +361,15 @@ def main():
     def expanded_search():
         expander, rows = detail_info("search")
         assert expander.get_expanded()
+        grid = next(node for node in walk(expander)
+                    if isinstance(node, Gtk.FlowBox) and node.has_css_class("detail-fields"))
+        first = grid.get_first_child()
+        ok_first, left = first.compute_bounds(grid)
+        ok_second, right = first.get_next_sibling().compute_bounds(grid)
+        assert ok_first and ok_second
+        columns = 2 if right.get_x() > left.get_x() else 1
+        assert columns == (2 if report["detail_layout_566"]["panel_width"] >= 490 else 1)
+        report["detail_layout_566"]["columns"] = columns
         shown = read_rows(rows)
         report["search_rows"] = shown
         report["search_row_diagnostics"] = [
@@ -358,6 +391,8 @@ def main():
             ("Numéro dans la série", "2"),
             ("Résumé", "Une enquête de test.\n\nRésumé disponible sans réseau."),
             ("Catalogue · Éditeur", "Maison B"),
+            ("EPUB · Éditeur", "Éditions EPUB témoin"),
+            ("Image du livre · Couverture", "Aucune image exploitable"),
             ("Fiche publique · Marque", "Marque commerciale"),
             ("Fiche publique · Pagination déclarée (support non précisé)", "228 pages"),
             ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
@@ -596,6 +631,12 @@ def main():
         later(260, owned_book_action_visible)
 
     def owned_book_action_visible():
+        access = [node for node in walk(panel("library").content)
+                  if isinstance(node, Adw.PreferencesGroup) and node.get_title() == "Bibliothèques et accès"]
+        assert len(access) == 1
+        facts = [node.get_subtitle() for node in walk(access[0]) if isinstance(node, Adw.ActionRow)]
+        assert any("Achat possédé en ligne" in value for value in facts)
+        assert not any("Fichier local :" in value for value in facts)
         buttons = [node for node in walk(panel("library"))
                    if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_id", "") == ("resume-index-numilog" if owned_action["resume"] else "download-owned-" + owned_action["provider"])]
         assert len(buttons) == 1, "Action individuelle du livre possédé absente"

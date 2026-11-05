@@ -48,7 +48,8 @@ def test_detail_section_uses_collapsible_rows_without_network():
     source = ast.unparse(_method("DetailPanel", "_group"))
     assert "title == 'Détail'" in source
     assert "Adw.ExpanderRow()" in source
-    assert "expander.add_row(row)" in source
+    assert "expander.add_row(grid)" in source
+    assert "grid.insert(row, -1)" in source
     assert "notify::expanded" in source
     assert "set_subtitle_lines(0)" in source
     assert "self._detail_expanded" in source
@@ -102,6 +103,9 @@ def test_shared_facets_do_not_replace_multivalued_detail_rows():
             self.subtitle = subtitle
             self.activatable = None
             self.suffixes = []
+
+        def has_css_class(self, _class):
+            return False
 
         def get_title(self):
             return self.title
@@ -183,7 +187,7 @@ def test_collapsible_detail_is_marked_before_facet_traversal():
 
 def test_detail_copy_uses_gtk4_content_provider_with_explicit_feedback():
     """GTK4 bindings on Debian can lack GdkX11Clipboard.set_text."""
-    source = ast.unparse(_method("DetailPanel", "_group"))
+    source = ast.unparse(_method("DetailPanel", "_add_metadata_actions"))
     assert "Gdk.ContentProvider.new_for_value(value)" in source
     assert "self.window._clipboard_provider = provider" in source
     assert "display.get_clipboard().set_content(provider)" in source
