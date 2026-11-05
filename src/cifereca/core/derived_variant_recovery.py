@@ -351,6 +351,8 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                 profile_id=data["profile_id"], profile_version=data["profile_version"],
                 options_fingerprint=data["options_fingerprint"],
                 book_id=data["book_id"], warnings=data["warnings"], facts=data["facts"],
+                expected_intent_key=_pending_intent_key(journal),
+                expected_intent_sha256=receipt_digest,
             )
             outcome["status"] = "recovered"
         except (OSError, ValueError, TypeError, KeyError, RuntimeError):
