@@ -105,3 +105,49 @@ def test_disabled_source_keeps_historical_receipt_only_in_tooltip():
     assert "Dernier cycle ciblé" not in row.subtitle
     assert "en attente 7" in row.tooltip
     assert row.suffixes[0].get_active() is False
+
+
+def test_actual_partial_business_receipt_is_visible_on_its_exact_account_only():
+    """Replay a documented 512/3/3/4 targeted-cycle receipt without supplier IO.
+
+    A technical task result is not another source's business status; no
+    old count may appear for an account with no exact last_cycle.
+    """
+    source = _source(
+        identity_id="alice", source_id="kobo-alice",
+        provider_id="kobo", label="Compte Alice",
+        status="partial", error="Synchronisation partielle",
+        last_cycle=_receipt(
+            present_attested=512, pending=3, failed=3, skipped_archived=4,
+        ),
+    )
+    alert = sync_source_attention(source)
+    assert alert == ("warning", "Synchronisation : résultat partiel")
+    assert sync_source_cycle_pulse(source) == (
+        "Dernier cycle ciblé : 3 en attente · 3 en échec · "
+        "512 présents attestés"
+    )
+    window, _, calls, _, _ = _fixture(sources=[source])
+    row = window._sync_sources_box.children[0].children[0]
+    assert row.subtitle.splitlines()[0] == alert[1]
+    assert sync_source_cycle_pulse(source) in row.subtitle.splitlines()[1]
+    assert "archivés ignorés 4" in row.tooltip
+    assert not window.runner.tasks
+    assert not any(x[0] == "set-enabled" for x in calls)
+
+    # The second profile has no typed receipt. It must not inherit counters
+    # from the same provider or the previous visible account.
+    unobserved = _source(
+        identity_id="bob", source_id="kobo-bob",
+        provider_id="kobo", label="Compte Bob",
+        status="idle", last_cycle=None,
+    )
+    other, _, other_calls, _, _ = _fixture(
+        identity_id="bob", sources=[unobserved],
+    )
+    other_row = other._sync_sources_box.children[0].children[0]
+    assert sync_source_cycle_pulse(unobserved) == ""
+    assert "512" not in other_row.subtitle + other_row.tooltip
+    assert "Dernier cycle ciblé" not in other_row.subtitle
+    assert not other.runner.tasks
+    assert not any(x[0] == "set-enabled" for x in other_calls)
