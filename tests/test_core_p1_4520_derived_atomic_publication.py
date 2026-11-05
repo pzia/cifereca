@@ -35,8 +35,7 @@ def _origins(storage, artifact_id):
         ).fetchall()
 
 
-@pytest.mark.parametrize("extension", ["epub"])
-def test_single_derived_variant_commits_exact_origin_and_local_placement(tmp_path, extension):
+def test_single_derived_variant_commits_exact_origin_and_local_placement(tmp_path):
     service, source, source_pid, transformer, broker = _setup(tmp_path)
     try:
         result = broker.execute_transform(
