@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -363,6 +363,69 @@ class PluginSelectionTests(unittest.TestCase):
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
                     )
+
+    def test_bnf_catalogue_product_selects_home_page_consumer(self):
+        # home-page hardcodes the public BnF source ID and its non-lending
+        # presentation. Its suite must follow any catalogue product change.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("provider-bnf-catalogue", audited)
+        self.assertIn("provider-bnf-catalogue", graph["home-page"])
+        self.assertEqual(
+            selector.affected_packages({"provider-bnf-catalogue"}, graph),
+            ["home-page", "provider-bnf-catalogue"],
+        )
+        for module in ("cifereca_bnf_catalogue.py",):
+            with self.subTest(module=module):
+                chosen, reason = selector.select([
+                    ("M", "src/plugins/provider-bnf-catalogue/" + module),
+                ], ROOT)
+                self.assertEqual(chosen, [
+                    "src/plugins/home-page", "src/plugins/provider-bnf-catalogue",
+                ])
+                self.assertIn("dependency closure", reason)
+        # The reverse direction is not implied; home-page itself remains
+        # unaudited and its product changes run the full plugin gate.
+        chosen, reason = selector.select([
+            ("M", "src/plugins/home-page/cifereca_home.py"),
+        ], ROOT)
+        self.assertEqual(chosen, [])
+        self.assertIn("not audited", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-bnf-catalogue/cifereca-plugin.json")],
+            [("M", "src/plugins/provider-bnf-catalogue/tests/conftest.py")],
+            [("D", "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py")],
+            [("R100", "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_bnf_catalogue_specific_cross_package_consumers_are_known(self):
+        # Unknown cross-package imports or coupling by ID invalidate this
+        # targeted audit. The known home-page consumer has an explicit edge.
+        tokens = (
+            "provider-bnf-catalogue", "provider.bnf-catalogue",
+            "cifereca_bnf_catalogue", "bnf-catalogue", "bnf_catalogue",
+        )
+        source_root = ROOT / "src/plugins"
+        consumers = set()
+        for item in sorted(source_root.glob("*/*")):
+            package = item.relative_to(source_root).parts[0]
+            if package == "provider-bnf-catalogue":
+                continue
+            sources = item.rglob("*") if item.is_dir() else (item,)
+            for file in sources:
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = file.read_text(encoding="utf-8", errors="replace")
+                    if any(token in content for token in tokens):
+                        consumers.add(package)
+        self.assertEqual(consumers, {"home-page"})
 
     def test_audited_browser_recorder_has_its_own_suite(self):
         graph, audited = selector.dependency_graph(ROOT)
