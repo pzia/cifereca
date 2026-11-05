@@ -28,6 +28,8 @@ def test_active_components_trigger_real_gtk_e2e():
         "src/plugins/home-page/cifereca_home.py",
         "src/plugins/home-page/cifereca-plugin.json",
         "src/plugins/recommendations/recommendations.py",
+        "src/plugins/provider-bnf-pret/cifereca_bnf_pret.py",
+        "src/plugins/provider-bnf-pret/cifereca_bnf_pret_web.py",
         "scripts/ci-install-gtk-e2e-runtime.sh",
         "tests/test_e2e_runner_contract.py",
     )
@@ -41,6 +43,8 @@ def test_unrelated_work_stays_out_of_heavy_gtk_gate():
         "src/plugins/baen/cifereca_baen.py",
         "src/plugins/provider-gutenberg/cifereca_gutenberg.py",
         "src/plugins/provider-numilog/cifereca_numilog.py",
+        "src/plugins/provider-bnf-pret/WEB.md",
+        "src/plugins/provider-bnf-pret/tests/test_p1_4118_two_cover_pipeline.py",
         "docs/PLUGINS-ONLY-RELEASE.md",
         ".github/workflows/plugins-only-release.yml",
         "README.md",
