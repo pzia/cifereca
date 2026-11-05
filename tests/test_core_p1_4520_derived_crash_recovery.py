@@ -561,7 +561,7 @@ def test_recovery_rejects_invalid_pagination_cursor(tmp_path):
     service, source, _ = _library(tmp_path)
     try:
         _failed_publication(service, source)
-        for invalid in (None, 42, "a" * 513, "\\x00"):
+        for invalid in (None, 42, "a" * 513, chr(0)):
             with pytest.raises(ValueError, match="derived_recovery_cursor_invalid"):
                 review_pending_derived_receipts(
                     service, identity_id="id1", after_cursor=invalid,
