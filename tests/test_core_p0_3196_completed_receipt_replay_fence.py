@@ -131,3 +131,77 @@ def test_unfinished_compatibility_checkpoint_preserves_existing_writer(storage):
     assert storage.backup_get(
         "kobo", "synthetic-vault", "synthetic-book"
     )["status"] == "acquiring"
+
+
+def _add_canonical_stage(storage, *, account="borrower", owner="A"):
+    receipt = {
+        "schema": "canonical.completed-delivery.v1",
+        "source": [owner, "kobo", "synthetic-vault", account,
+                   "purchases", "synthetic-book", "purchase", "purchase"],
+        "offer_id": "synthetic-offer",
+        "path": "/synthetic/absent.epub",
+        "sha256": "a" * 64,
+        "receipt": "synthetic-published-receipt",
+        "adept_receipt": "",
+    }
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "INSERT INTO acquisition_ledger(acquisition_id,provider_id,"
+            "credential_id,account_id,item_id,identity_id,status,"
+            "artifact_id,metadata_json,created_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ("canonical-intake:independent-stage", "kobo",
+             "synthetic-vault", account, "synthetic-book", owner,
+             "complete", "sha256:" + "a" * 64, json.dumps(receipt), 1, 1),
+        )
+
+
+def test_normal_distinct_canonical_stage_stops_second_legacy_ledger_writer(
+    storage,
+):
+    """The usual canonical-intake stage ID differs from the legacy ID."""
+    _add_canonical_stage(storage)
+    original = _snapshot(storage)
+    with storage._lock, storage._connect() as db:
+        count = db.execute(
+            "SELECT COUNT(*) FROM acquisition_ledger"
+        ).fetchone()[0]
+    assert count == 2
+    storage.backup_put(_backup(status="acquiring", sha="b" * 64))
+    assert _snapshot(storage) == original
+    assert storage.backup_get(
+        "kobo", "synthetic-vault", "synthetic-book"
+    )["status"] == "acquiring"
+    assert storage.artifact_get("sha256:" + "b" * 64) is None
+
+
+def test_first_legacy_projection_after_canonical_stage_remains_non_authoritative(
+    tmp_path,
+):
+    db = Storage(tmp_path / "state.sqlite")
+    try:
+        _add_canonical_stage(db)
+        before = _snapshot(db)
+        assert before["entitlements"] == []
+        assert before["placements"] == []
+        assert len(before["acquisition_ledger"]) == 1
+        db.backup_put(_backup(status="complete"))
+        assert _snapshot(db) == before
+        assert len(db.backup_list("kobo")) == 1
+        assert db.artifact_get("sha256:" + "a" * 64) is None
+    finally:
+        db.close()
+
+
+def test_other_borrower_canonical_stage_does_not_suppress_legacy_scope(storage):
+    # A provider credential can serve multiple distinct borrower accounts.
+    # An unrelated canonical stage is not evidence for this local backup.
+    _add_canonical_stage(storage, account="another-borrower", owner="B")
+    storage.backup_put(_backup(status="acquiring"))
+    with storage._lock, storage._connect() as db:
+        statuses = db.execute(
+            "SELECT account_id,identity_id,status FROM acquisition_ledger "
+            "ORDER BY acquisition_id"
+        ).fetchall()
+    assert ("borrower", "A", "acquiring") in statuses
+    assert ("another-borrower", "B", "complete") in statuses
