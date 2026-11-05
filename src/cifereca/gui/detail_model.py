@@ -42,6 +42,36 @@ def detail_language(metadata: object) -> str:
             labels.append(label)
     return ", ".join(labels)
 
+def search_detail_support_label(item: object) -> str:
+    """Return the positive bibliographic medium for a search/detail notice.
+
+    A typed classification takes precedence over the older SearchResult.medium
+    (which Paris CATALOGUE historically defaulted to 'physical'). When such a
+    classification exists but is unverified or malformed, no historical
+    fallback is allowed. Documentary *nature* (audio, film, book, etc.) is
+    deliberately separate from physical/digital support.
+    """
+    from ..document_classification import DocumentClassification
+
+    labels = {
+        "physical": "Physique",
+        "digital": "Numérique",
+        "unknown": "Support indéterminé",
+    }
+    documented = getattr(item, "document_classification", None)
+    if documented is not None:
+        if type(documented) is not DocumentClassification:
+            return labels["unknown"]
+        evidence = documented.medium
+        if (getattr(evidence, "status", None) != "attested"
+                or type(getattr(evidence, "value", None)) is not str
+                or evidence.value not in {"physical", "digital"}):
+            return labels["unknown"]
+        return labels[evidence.value]
+    legacy_medium = getattr(item, "medium", None)
+    return labels.get(legacy_medium, labels["unknown"]) if type(legacy_medium) is str else labels["unknown"]
+
+
 def compact_availability_label(value: object) -> str:
     """Normalize verbose provider prose into a short business status."""
     text = str(value or "").strip()
