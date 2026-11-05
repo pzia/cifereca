@@ -109,7 +109,7 @@ def test_unsaved_identity_remains_editable_and_not_automatically_bound():
     assert editor["languages"].text == "fr"
     assert editor["prefer_vo"].active is False
     assert editor["adept_profile"].text == ""
-    assert group.children[0].children[6].subtitle == "À configurer"
+    assert group.children[0].children[7].subtitle == "À configurer"
 
 
 def test_adept_status_is_only_rendered_not_inferred_or_refreshed():
