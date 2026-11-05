@@ -162,3 +162,30 @@ def test_broker_preview_kept_available_while_ordinary_commit_is_suspended(
     assert review.changed == 0
     assert review.facts["status"] == "preview_ready"
     assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_suspension_preserves_legacy_adoption_broker(rig, monkeypatch):
+    """The cleanup hold must not remove the independently proven SQL-only adoption."""
+    from tests.test_core_p0_3185_legacy_scope_review import _mark_legacy
+    from tests.test_core_p0_3719_prepare_duplicate import _journal
+    storage, _root, paths, pubs, _lock = rig
+    _mark_legacy(rig)
+    _journal(rig)
+    broker = broker_for(rig, monkeypatch)
+    preview_request = LibraryMutationRequest(
+        "legacy_adopt", placement_id=pubs[1].placement_id,
+        keep_placement_id=pubs[0].placement_id,
+        options={"action": "preview"},
+    )
+    preview = broker.run(broker.plan(preview_request))
+    assert preview.ok and preview.facts["status"] == "review_required"
+    commit_request = LibraryMutationRequest(
+        "legacy_adopt", placement_id=pubs[1].placement_id,
+        keep_placement_id=pubs[0].placement_id,
+        options={"action": "commit", "confirmed": True},
+    )
+    committed = broker.run(broker.plan(commit_request))
+    assert committed.ok and committed.facts["status"] == "migrated"
+    assert committed.facts["removed_file"] is False
+    assert all(path.read_bytes() == BYTES for path in paths)
+    assert storage.placement_get(pubs[1].placement_id)["provider_id"] is None
