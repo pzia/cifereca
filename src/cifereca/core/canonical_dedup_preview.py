@@ -14,6 +14,7 @@ import stat
 from .canonical_publication import _same_file
 from .convergence_verified_presence import _verified_copy
 from .duplicate_maintenance_guard import candidate_has_active_dependencies_in_db
+from .canonical_dedup_exclusions import ordinary_dedup_paths_excluded
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +118,15 @@ def preview_canonical_duplicate(
             # The physical verifier checks the exact registered owner
             # directory; unrelated profile names carry no authority here.
             owner_dir = owner[0]
+            # #4496: an Outbox delivery or another internal excluded subtree
+            # is never an ordinary keeper NOR a retiree, even at equal SHA.
+            # This applies before computing a positive duplicate preview and
+            # is independently re-evaluated by the locked supervisor.
+            if ordinary_dedup_paths_excluded(
+                (candidate[0], keeper[0]), library_root=library_root,
+                identity_id=candidate[1], owner_directory=owner_dir,
+            ):
+                return report("blocked", "excluded_path")
             reserved = frozenset((owner_dir,))
             observations = []
             for raw in (candidate[0], keeper[0]):
