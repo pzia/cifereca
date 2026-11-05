@@ -183,3 +183,22 @@ def test_update_failure_rolls_back_both_tables(rig):
     assert commit(rig, token)["reason"] == "transaction_failed"
     assert db.placement_get(pid)["state"] == "missing"
     assert db.catalog_entry_get("catalogue:original")["local_state"] == "missing"
+
+
+def test_foreign_catalogue_path_claim_vetoes_reactivation(rig):
+    db, root, old, new, pid, artifact, payload, lockpath = rig
+    catalogue(rig)
+    old.write_bytes(payload)
+    db.catalog_entry_put({
+        "catalog_entry_id": "catalogue:foreign",
+        "placement_id": None, "identity_id": "bob",
+        "artifact_id": artifact, "provider_id": "kobo",
+        "item_id": "another-book", "title": "Conflicting declaration",
+        "local_state": "missing",
+        "metadata": {"nested": {"path": str(old)}},
+    })
+    before = db.placement_get(pid)
+    result = preview(rig)
+    assert result == {"status": "blocked", "reason": "foreign_catalogue_reference"}
+    assert db.placement_get(pid) == before
+    assert db.catalog_entry_get("catalogue:original")["local_state"] == "missing"
