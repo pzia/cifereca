@@ -10,7 +10,7 @@ from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 import pytest
 
@@ -20,18 +20,29 @@ from cifereca.identities import Identity
 from cifereca.storage import Storage
 
 
+# Fixture archives are generated during pytest collection by independent xdist
+# workers. ZipFile.writestr(name, ...) embeds the current local time and can
+# change the bytes, SHA and collection IDs across a two-second ZIP tick.
+_EPUB_FIXTURE_TIMESTAMP = (2020, 1, 1, 0, 0, 0)
+
+
 def epub_bytes(*, encrypted=False) -> bytes:
     sink = BytesIO()
     with ZipFile(sink, "w", compression=ZIP_DEFLATED) as archive:
-        archive.writestr("mimetype", "application/epub+zip")
-        archive.writestr(
+        def add(path: str, content: str) -> None:
+            info = ZipInfo(path, date_time=_EPUB_FIXTURE_TIMESTAMP)
+            # Each member has a deterministic header, compressor and order.
+            archive.writestr(info, content, compress_type=ZIP_DEFLATED)
+
+        add("mimetype", "application/epub+zip")
+        add(
             "META-INF/container.xml",
             '<container><rootfiles><rootfile full-path="OEBPS/package.opf"/>'
             '</rootfiles></container>',
         )
-        archive.writestr("OEBPS/package.opf", "<package/>")
+        add("OEBPS/package.opf", "<package/>")
         if encrypted:
-            archive.writestr("META-INF/encryption.xml", "<EncryptedData>AES</EncryptedData>")
+            add("META-INF/encryption.xml", "<EncryptedData>AES</EncryptedData>")
     return sink.getvalue()
 
 
@@ -40,6 +51,23 @@ DIGEST = sha256(PAYLOAD).hexdigest()
 ARTIFACT = "sha256:" + DIGEST
 TARGET = "Books/Cifereca/" + DIGEST + ".epub"
 NOW = 1800000120
+
+
+@pytest.mark.parametrize("encrypted", [False, True], ids=("plain", "encrypted"))
+def test_epub_fixture_has_fixed_zip_headers_for_xdist_collection(encrypted):
+    first, second = epub_bytes(encrypted=encrypted), epub_bytes(encrypted=encrypted)
+    assert first == second
+    assert first.startswith(b"PK")
+    with ZipFile(BytesIO(first)) as archive:
+        assert all(member.date_time == _EPUB_FIXTURE_TIMESTAMP
+                   for member in archive.infolist())
+        assert all(member.compress_type == ZIP_DEFLATED
+                   for member in archive.infolist())
+        assert ("META-INF/encryption.xml" in archive.namelist()) is encrypted
+    if not encrypted:
+        assert first == PAYLOAD
+        assert sha256(first).hexdigest() == DIGEST
+        assert TARGET.endswith(DIGEST + ".epub")
 
 
 @pytest.fixture(autouse=True)
