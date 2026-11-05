@@ -87,6 +87,13 @@ def build_identity_settings_editor(
         "État local enregistré, sans test Adobe ni connexion réseau. "
         "Après modification, enregistrez et rouvrez les paramètres pour actualiser cet état."
     )
+    normal_check = Gtk.Button(label="Vérifier ADEPT")
+    normal_check.set_valign(Gtk.Align.CENTER)
+    normal_check.set_tooltip_text(
+        "Lire le profil associé dans Kobo-Adept, sur demande uniquement. "
+        "Ne déclenche aucune activation Adobe, acquisition ACSM ou emprunt."
+    )
+    normal_row.add_suffix(normal_check)
     group.add(normal_row)
 
     delete_row = Adw.ActionRow()
@@ -102,6 +109,7 @@ def build_identity_settings_editor(
         "directory": directory_row, "languages": languages_row,
         "prefer_vo": vo_switch, "adept_profile": adept_row,
         "primary_paris_connection_id": primary_row,
+        "normal_adept_check": normal_check, "normal_adept_status": normal_row,
         "deleted": False,
     }
     return editor, choose_directory, choose_adept, delete_button
