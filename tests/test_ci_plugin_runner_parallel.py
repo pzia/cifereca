@@ -25,7 +25,7 @@ def _fixture(root: Path, names: tuple[str, ...]):
         "name = pathlib.Path.cwd().name\n"
         "trace = pathlib.Path(os.environ['CI_TEST_TRACE'])\n"
         "(trace / (name + '.start')).write_text(str(time.monotonic()))\n"
-        "time.sleep(0.24)\n"
+        "time.sleep(0.72 if name == 'a_slow' else 0.08 if name.endswith('_quick') else 0.24)\n"
         "(trace / (name + '.end')).write_text(str(time.monotonic()))\n"
         "print('executed ' + name)\n"
         "if name == 'broken': sys.exit(3)\n",
@@ -78,3 +78,27 @@ def test_invalid_parallelism_fails_without_starting_tests(tmp_path, value):
     assert result.returncode == 2
     assert "between 1 and 4" in result.stderr
     assert not list(trace.iterdir())
+
+def test_workers_refill_while_slow_package_is_still_running(tmp_path):
+    # Alphabetic target order: slow child starts first, followed by short ones.
+    # Fixed-size batches would leave a slot idle until a_slow completed.
+    names = ("a_slow", "b_quick", "c_quick", "d_quick")
+    env, trace = _fixture(tmp_path, names)
+    env["CIFERECA_PLUGIN_TEST_JOBS"] = "2"
+    result = _run(tmp_path, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.count("::group::") == len(names)
+    starts = {name: float((trace / f"{name}.start").read_text()) for name in names}
+    ends = {name: float((trace / f"{name}.end").read_text()) for name in names}
+    assert starts["c_quick"] < ends["a_slow"], (starts, ends)
+    events = sorted(
+        [(starts[name], 1) for name in names]
+        + [(ends[name], -1) for name in names]
+    )
+    active = peak = 0
+    for _, delta in events:
+        active += delta
+        peak = max(peak, active)
+        assert active >= 0
+    assert active == 0
+    assert peak == 2
