@@ -220,7 +220,7 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
     the SHA256 of the exact reviewed receipt bytes; no unattended bulk replay.
     """
     if (type(after_cursor) is not str or len(after_cursor) > 512
-            or "\\x00" in after_cursor):
+            or chr(0) in after_cursor):
         raise ValueError("derived_recovery_cursor_invalid")
     storage = service.storage
     if commit and getattr(getattr(service, "current_identity", None), "identity_id", None) != identity_id:
