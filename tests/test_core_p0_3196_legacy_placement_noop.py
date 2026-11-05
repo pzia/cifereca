@@ -148,3 +148,19 @@ def test_legacy_alias_never_claims_another_profiles_physical_path(
             assert sql.execute("SELECT COUNT(*) FROM source_references").fetchone()[0] == 0
     finally:
         store.close()
+
+
+def test_legacy_claim_with_embedded_nul_rolls_back_without_poisoning_sql(tmp_path):
+    # Path.resolve() used to reject NUL. The new lexical-only path must
+    # preserve that fail-closed behavior, including the backup_items UPSERT.
+    store = Storage(tmp_path / "state.sqlite")
+    try:
+        bad = str(tmp_path / "legacy") + "\x00" + "poisoned.pdf"
+        with pytest.raises(ValueError, match="backup_legacy_path_invalid"):
+            store.backup_put(_claim(Path(bad), sha="a" * 64, updated_at=1000))
+        assert store.backup_list("opaque-legacy") == []
+        assert store.placements() == []
+        assert store.entitlements() == []
+        assert store.acquisitions(provider_id="opaque-legacy") == []
+    finally:
+        store.close()
