@@ -432,19 +432,19 @@ def sync_source_last_cycle_summary(source: object) -> str:
     )
     counts = receipt.canonical_execution
     if counts is None:
-        return headline + "\\nRésultats de réception locale : non attestés"
+        return headline + "\nRésultats de réception locale : non attestés"
     if (type(counts) is not tuple
             or len(counts) != len(CANONICAL_EXECUTION_STATUSES)
             or any(type(pair) is not tuple or len(pair) != 2
                    for pair in counts)):
-        return headline + "\\nRésultats de réception locale : non attestés"
+        return headline + "\nRésultats de réception locale : non attestés"
     values = dict(counts)
     if (len(values) != len(CANONICAL_EXECUTION_STATUSES)
             or set(values) != set(CANONICAL_EXECUTION_STATUSES)
             or any(type(values[name]) is not int
                    or not 0 <= values[name] <= 1_000_000
                    for name in CANONICAL_EXECUTION_STATUSES)):
-        return headline + "\\nRésultats de réception locale : non attestés"
+        return headline + "\nRésultats de réception locale : non attestés"
     labels = (
         ("present_attested", "présents attestés"),
         ("downloaded", "téléchargés"),
@@ -456,7 +456,7 @@ def sync_source_last_cycle_summary(source: object) -> str:
         ("skipped_archived", "archivés ignorés"),
         ("inactive", "inactifs"),
     )
-    return headline + "\\nRéception locale : " + " · ".join(
+    return headline + "\nRéception locale : " + " · ".join(
         name + " " + str(values[key]) for key, name in labels
     )
 
@@ -900,7 +900,7 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     if phase_summary:
         summary += "\n" + phase_summary
     if last_cycle_summary:
-        summary += "\\n" + last_cycle_summary
+        summary += "\n" + last_cycle_summary
     if sync_source_informational_partial(source):
         summary += (
             "\nCouverture incomplète des notices et droits ; "
