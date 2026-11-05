@@ -93,7 +93,7 @@ def restore_reappeared_linked_placement(
                     return _blocked("stale_plan")
                 for cid, art, owner, provider, item, state, raw, prior in linked:
                     cur = db.execute(
-                        "UPDATE catalog_entries SET local_state='present',"
+                        "UPDATE catalog_entries SET local_state='local',"
                         "updated_at=MAX(updated_at+1,CAST(strftime('%s','now') AS INTEGER)) "
                         "WHERE catalog_entry_id=? AND placement_id=? "
                         "AND identity_id=? AND artifact_id=? "
