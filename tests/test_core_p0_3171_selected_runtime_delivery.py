@@ -6,8 +6,11 @@ supplier I/O. In particular, an offer ID or runtime result is not B proof.
 from __future__ import annotations
 
 from pathlib import Path
+import logging
 
 import pytest
+
+from cifereca.artifact_inspection import ArtifactInspection
 
 from cifereca.core.sync_coordination import synchronize_account_source
 from cifereca.plugin_api.downloadable_resources import DeliveryCandidate
@@ -313,3 +316,49 @@ def test_declared_broken_guarded_abi_never_falls_back_to_unchecked_get(
     assert db.placements() == [] and db.entitlements() == []
     assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
     assert calls == ["offer"]
+
+
+def test_runtime_success_with_rejected_final_bytes_reports_kdrm_verdict(
+    source, monkeypatch, caplog,
+):
+    # #3252: two real Kobo KDRM candidates reported a successful runtime but
+    # failed the later final validator. A zero runtime exit is not B proof.
+    service, db, root, calls, _broker = source
+    change(source, True)
+    bridge(service, calls)
+
+    monkeypatch.setattr(
+        "cifereca.core.canonical_selected_delivery.inspect_artifact",
+        lambda _path, *, strict_structure: ArtifactInspection(
+            "pdf", True, True, "synthetic_protected",
+        ),
+    )
+    with caplog.at_level(
+        logging.WARNING, logger="cifereca.core.canonical_selected_delivery",
+    ):
+        result = synchronize_account_source(service, service.account)
+
+    execution = result["canonical_execution"]
+    assert execution["downloaded"] == 0 and execution["failed"] == 1
+    assert db.placements() == [] and db.entitlements() == []
+    assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
+    assert calls == ["offer", "runtime"]
+    diagnoses = [
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("TRACE canonical delivery final rejected ")
+    ]
+    assert len(diagnoses) == 1
+    detail = diagnoses[0]
+    assert "code=canonical_delivery_final_invalid" in detail
+    assert "reader=downloadable_selected_delivery_candidate_runtime_guarded" in detail
+    assert "runtime_guarded=True" in detail
+    assert "expected_kind=pdf" in detail
+    assert "inspection_valid=True" in detail
+    assert "inspection_format=pdf" in detail
+    assert "inspection_protected=True" in detail
+    assert "inspection_reason=synthetic_protected" in detail
+    assert "catalog_valid=True" in detail
+    # Even detailed diagnostic mode never includes provider-private recipe
+    # URLs, borrower identity or the exact temporary file path.
+    assert "https://" not in detail
+    assert str(root) not in detail
