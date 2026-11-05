@@ -169,7 +169,10 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
         raise ValueError("derived_recovery_invalid_root")
     # No follow: an untrusted nested symlink cannot redirect the scanner.
     # Only the exact profile root and its direct child folders are examined.
-    if folder.is_symlink() or folder.resolve() != folder:
+    if (root.is_symlink() or root.resolve() != root
+            or folder.is_symlink() or folder.resolve() != folder
+            or sum(row.get("directory_name") == dirname
+                   for row in storage.identities()) != 1):
         raise ValueError("derived_recovery_invalid_root")
     receipts: list[Path] = []
     for subdir in [folder, *(p for p in sorted(folder.iterdir()) if _directory(p) and not p.is_symlink())]:
@@ -201,6 +204,8 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
             if (source.parent != journal.parent.parent.parent
                     or target.parent != source.parent
                     or source.is_symlink() or target.is_symlink()
+                    or source.resolve(strict=True) != source
+                    or target.resolve(strict=True) != target
                     or not source.is_relative_to(folder)
                     or not target.is_relative_to(folder)
                     or not isinstance(data.get("output_stamp"), list)
