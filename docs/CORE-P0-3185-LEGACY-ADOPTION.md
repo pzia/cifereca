@@ -37,11 +37,13 @@ preview = adopt_verified_legacy_placement(
     keeper_placement_id=canonical_id,
 )
 # status == review_required : diagnostic, PAS autorisation persistante.
+# Le jeton lie la validation aux inodes des deux fichiers ET du profil.
 with InterProcessLock(acquisition_lock_file()) as lock:
     result = adopt_verified_legacy_placement(
         storage, library_root=root, candidate_placement_id=old_id,
         keeper_placement_id=canonical_id, action="commit",
         confirmed=True, shared_lock=lock,
+        expected_review_token=preview.review_token,
     )
 ```
 
@@ -50,7 +52,12 @@ via `LibraryMutationRequest(operation="legacy_adopt")`, avec
 `placement_id`, `keep_placement_id`, et
 `options={"action": "preview" | "commit", "confirmed": True}` pour le commit.
 Le broker refuse toute action non prévue et tout plan forgé, reprend
-l'aperçu à l'exécution sous le verrou d'acquisition, et expose seulement
+l'aperçu à l'exécution sous le verrou d'acquisition, et conserve dans le plan
+un jeton lié à la paire d'inodes, aux répertoires racine/profil et aux
+preuves SQL. Un échange de répertoire entre plan et commit refuse
+`stale_plan` même lorsque les octets et SHA restent identiques.
+Ce jeton n'est jamais une permission de mutation à lui seul.
+Le broker expose seulement
 des compteurs et codes fermés (jamais de chemin ni reçu). Son plan
 `commit` est marqué `destructive=True` pour requérir une confirmation
 d'opérateur, **mais aucun octet physique n'est détruit**. Le plugin de
