@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/pr-ci.yml"
+MAIN_WORKFLOW = ROOT / ".github/workflows/core-tests.yml"
 
 
 def test_two_workers_only_in_exhaustive_core_mode():
@@ -38,3 +39,18 @@ def test_required_context_and_other_gates_still_present():
         "Smoke installed Core wheel",
     ):
         assert name in content
+
+
+def test_main_exhaustive_uses_two_workers_but_selected_remains_sequential():
+    content = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    assert "  workflow_dispatch:\n" in content
+    assert "    branches: [main]\n" in content
+    assert "python3 scripts/ci_select_core_push.py" in content
+    assert 'CORE_TEST_TARGETS: ${{ steps.scope.outputs.core_targets }}' in content
+    assert 'if [[ "$CORE_TEST_MODE" == "full" ]]; then' in content
+    assert 'python -m pytest -q --durations=10 -n 2 --dist=loadfile "${selected[@]}"' in content
+    assert 'else\n            python -m pytest -q --durations=10 "${selected[@]}"' in content
+    assert content.count("if: steps.scope.outputs.core_mode != 'skip'") == 3
+    assert 'if [[ "${{ steps.scope.outputs.core_mode }}" == "full" ]]; then' in content
+    assert content.count('python -m pip install --disable-pip-version-check "pytest-xdist>=3.6,<4"') == 1
+    assert 'Empty test selection: refusing to skip the Core suite' in content
