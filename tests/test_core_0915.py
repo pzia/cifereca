@@ -115,7 +115,7 @@ class Core0915(unittest.TestCase):
         from cifereca.gui.identity_activation_controller import activate_identity
         window=NS(service=NS(identity_by_id=lambda iid:None))
         with self.assertRaises(ValueError):activate_identity(window,'unknown')
-    def test_notice_builds_three_column_flow_and_retains_all_fields(self):
+    def test_notice_uses_at_most_two_columns_and_retains_all_fields(self):
         def factory(**kwargs):
             widget=Mock();widget.children=[]
             widget.add.side_effect=lambda child:widget.children.append(child)
@@ -127,7 +127,7 @@ class Core0915(unittest.TestCase):
             result=factory();rows.append(result);return result
         ns={'Gtk':NS(FlowBox=lambda:grid,SelectionMode=NS(NONE=0)),'Adw':NS(PreferencesGroup=lambda:group,ActionRow=row),'detail_display_value':lambda _label,value:(value or '—',value or '—'),'detail_subtitle_lines':lambda _section,_value:2}
         exec(self.extract('_group'),ns);ns['_group'](NS(content=content,_append_content=content.append),'Notice',[('Source','Paris'),('Format','EPUB'),('Éditeur','Long')])
-        grid.set_max_children_per_line.assert_called_once_with(3);self.assertEqual(len(grid.children),3)
+        grid.set_max_children_per_line.assert_called_once_with(2);self.assertEqual(len(grid.children),3)
         self.assertEqual(group.children,[grid]);self.assertEqual(content.children,[group])
     def test_library_actions_in_header_and_advanced_menu(self):
         page=NS(header_actions=Mock(),toolbar=Mock(),connect_selected=Mock())
