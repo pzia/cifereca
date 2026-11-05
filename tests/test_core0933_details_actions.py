@@ -25,6 +25,8 @@ def _method(class_name: str, method_name: str, namespace=None):
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == method_name)
     ns = dict(namespace or {})
+    # AST-isolated methods do not execute imports from the real GUI module.
+    ns.setdefault('current_detail_trace', lambda: None)
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(SOURCE), "exec"), ns)
     return ns[method_name]
 

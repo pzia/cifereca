@@ -15,7 +15,7 @@ from typing import Callable
 class GtkFramePaintProbe:
     """At most one pending frame observation per allowed page."""
 
-    _CATEGORIES = frozenset(("library", "recent"))
+    _CATEGORIES = frozenset(("library", "recent", "detail"))
 
     def __init__(
         self, *, timeout_add: Callable, source_remove: Callable,
@@ -46,7 +46,7 @@ class GtkFramePaintProbe:
 
     def observe(
         self, category: str, widget, monitor, *, clock=None,
-        operation_id: int | None = None,
+        operation_id: int | None = None, selection_started: float | None = None,
     ) -> bool:
         """Observe a future frame only when the user has opted into capture."""
         if category not in self._CATEGORIES:
@@ -89,7 +89,20 @@ class GtkFramePaintProbe:
                     monitor.record_phase(
                         category, "frame_wait", elapsed_ms, trigger="navigation",
                         operation_id=operation_id,
+                        capture_generation=generation,
                     )
+                    # First after-paint since selection: a frame-clock boundary,
+                    # not proof of a visible pixel. Never fabricate missing paint.
+                    if (category == "detail"
+                            and type(selection_started) in (int, float)
+                            and math.isfinite(selection_started)):
+                        selection_ms = (now() - selection_started) * 1000
+                        if 0 <= selection_ms <= self._timeout_ms:
+                            monitor.record_phase(
+                                "detail", "first_paint", selection_ms,
+                                operation_id=operation_id, trigger="navigation",
+                                capture_generation=generation,
+                            )
             except Exception:
                 # Diagnostics must never break the GDK frame clock.
                 pass
@@ -114,6 +127,10 @@ class GtkFramePaintProbe:
         except Exception:
             self._remove(category)
             return False
+
+    def cancel(self, category: str) -> None:
+        """Cancel an old selection without emitting a fictitious frame."""
+        self._remove(category)
 
     def dispose(self) -> None:
         self._closed = True

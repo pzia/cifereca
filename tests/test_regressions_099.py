@@ -48,6 +48,7 @@ def methods(file,cls,names,ns):
         obj.body=selected;obj.decorator_list=[]
         exec(compile(ast.fix_missing_locations(ast.Module(body=[future,obj],type_ignores=[])),file,'exec'),ns)
         return ns[cls]
+    ns.setdefault('current_detail_trace', lambda: None)  # AST-isolated GUI
     exec(compile(ast.fix_missing_locations(ast.Module(body=[future]+selected,type_ignores=[])),file,'exec'),ns)
     return {name:ns[name] for name in names}
 
