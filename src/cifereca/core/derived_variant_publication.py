@@ -25,6 +25,7 @@ def publish_derived_variant(
     profile_id: str | None, profile_version: str,
     options_fingerprint: str, book_id: str | None,
     warnings: tuple[str, ...] | list[str], facts: dict[str, Any],
+    expected_intent_key: str = "", expected_intent_sha256: str = "",
 ) -> str:
     """Commit Artifact B, Placement B, OriginLink(derived), recipe and notice.
 
@@ -75,6 +76,19 @@ def publish_derived_variant(
 
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        # Explicit crash recovery only: bind the approved receipt to the
+        # durable pre-hardlink intent while holding the SAME SQLite writer
+        # transaction that will attest derived provenance. Ordinary fresh
+        # publications do not need this optional checkpoint comparison.
+        if expected_intent_key or expected_intent_sha256:
+            if (not expected_intent_key.startswith("derived.publication.pending.v1:")
+                    or type(expected_intent_sha256) is not str
+                    or len(expected_intent_sha256) != 64
+                    or db.execute(
+                        "SELECT value FROM metadata WHERE key=?",
+                        (expected_intent_key,),
+                    ).fetchone() != (expected_intent_sha256,)):
+                raise DerivedPublicationConflict("derived_variant_intent_mismatch")
         parent = db.execute(
             "SELECT artifact_id,identity_id,path,state FROM placements "
             "WHERE placement_id=?", (parent_placement_id,),
