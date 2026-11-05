@@ -261,6 +261,9 @@ def test_foreign_only_cached_variant_does_not_satisfy_other_profile(tmp_path):
     assert a_variant.read_bytes() == DATA
     b_original = tmp_path / "profile-b" / "Book.epub"
     b_original.parent.mkdir()
+    service.storage.identity_put({
+        "identity_id": "id2", "label": "id2", "directory_name": "profile-b",
+    })
     shutil.copy2(a_original, b_original)
     with service.storage._lock, service.storage._connect() as db:
         db.execute(
@@ -273,3 +276,41 @@ def test_foreign_only_cached_variant_does_not_satisfy_other_profile(tmp_path):
     assert a_variant.read_bytes() == DATA
     assert a_original.read_bytes() == b"book-data"
     assert service.storage.placement_get(original_id)["identity_id"] == "id2"
+
+
+def test_sole_present_source_outside_registered_profile_is_refused(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+    other = tmp_path / "unowned" / "Book.epub"
+    other.parent.mkdir()
+    shutil.copy2(tmp_path / "library" / "Book.epub", other)
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE placement_id=?",
+            (str(other), original_id),
+        )
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    assert caught.value.code == "artifact_source_scope_unverified"
+    assert other.read_bytes() == b"book-data"
+    assert not (other.parent / "Optimized.epub").exists()
+    assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+
+
+def test_foreign_profile_path_of_same_sha_never_counts_as_owner(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+    foreign = tmp_path / "profile-b" / "Book.epub"
+    foreign.parent.mkdir()
+    service.storage.identity_put({
+        "identity_id": "id2", "label": "id2", "directory_name": "profile-b",
+    })
+    shutil.copy2(tmp_path / "library" / "Book.epub", foreign)
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE placement_id=?",
+            (str(foreign), original_id),
+        )
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    assert caught.value.code == "artifact_source_scope_unverified"
+    assert foreign.read_bytes() == b"book-data"
+    assert not (foreign.parent / "Optimized.epub").exists()
