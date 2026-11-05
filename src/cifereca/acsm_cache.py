@@ -176,6 +176,8 @@ def _initial_digest(path: Path, directory: Path, now: float) -> str | None:
                     expiry = expiry.replace(tzinfo=timezone.utc)
                 if now >= expiry.timestamp():
                     return None
+        # Durable byte payload before publishing a receipt that promises it.
+        os.fsync(file_fd)
         return hashlib.sha256(data).hexdigest()
     except (OSError, ValueError, OverflowError, ElementTree.ParseError):
         return None
