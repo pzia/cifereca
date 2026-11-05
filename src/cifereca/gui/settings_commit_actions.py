@@ -32,7 +32,8 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             if editor.get("deleted"):
                 continue
             row = {key: editor[key].get_text() for key in
-                   ("id", "label", "directory", "adept_profile", "languages")}
+                   ("id", "label", "directory", "adept_profile",
+                    "primary_paris_connection_id", "languages")}
             row["prefer_vo"] = editor["prefer_vo"].get_active()
             identities.append(row)
         accounts = []
