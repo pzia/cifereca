@@ -2605,6 +2605,53 @@ class Storage:
                     continue
                 target = db.execute("SELECT placement_id FROM placements WHERE path=?", (new,)).fetchone()
                 if target and target[0] != pid:
+                    # #3196 W5: an identical destination FILE does not prove
+                    # that two Placement rows represent the same provider
+                    # source or borrower. The former merge silently erased
+                    # the source's identity, artifact and provider columns,
+                    # then rebound its catalogue to the target's Placement.
+                    # Only *local-only* present rows sharing one exact
+                    # SHA Artifact, with no independently published rights
+                    # or historical backup path, may be folded together.
+                    # A genuine canonical/legacy relink has a separate
+                    # provenance-attested operator; don't infer it from SHA.
+                    source_scope = db.execute(
+                        "SELECT artifact_id,identity_id,provider_id,"
+                        "source_item_id,state FROM placements "
+                        "WHERE placement_id=?", (pid,),
+                    ).fetchone()
+                    target_scope = db.execute(
+                        "SELECT artifact_id,identity_id,provider_id,"
+                        "source_item_id,state FROM placements "
+                        "WHERE placement_id=?", (target[0],),
+                    ).fetchone()
+                    artifact = source_scope[0] if source_scope else None
+                    if (source_scope is None or target_scope is None
+                            or type(artifact) is not str
+                            or not artifact.startswith("sha256:")
+                            or len(artifact) != 71
+                            or any(ch not in "0123456789abcdef"
+                                   for ch in artifact[7:])
+                            or target_scope[0] != artifact
+                            or source_scope[1] is None
+                            or target_scope[1] not in (None, "", source_scope[1])
+                            or source_scope[2:] != (None, None, "present")
+                            or target_scope[2:] != (None, None, "present")
+                            or db.execute(
+                                "SELECT 1 FROM catalog_entries WHERE "
+                                "placement_id IN (?,?) AND "
+                                "(provider_id IS NOT NULL OR item_id IS NOT NULL) "
+                                "LIMIT 1", (pid, target[0]),
+                            ).fetchone() is not None
+                            or db.execute(
+                                "SELECT 1 FROM backup_items WHERE "
+                                "local_path IN (?,?) LIMIT 1", (path, new),
+                            ).fetchone() is not None
+                            or db.execute(
+                                "SELECT 1 FROM origin_links WHERE "
+                                "artifact_id=? LIMIT 1", (artifact,),
+                            ).fetchone() is not None):
+                        raise ValueError("directory_migration_placement_collision_requires_relink")
                     db.execute("UPDATE catalog_entries SET placement_id=? WHERE placement_id=?", (target[0], pid))
                     db.execute("DELETE FROM placements WHERE placement_id=?", (pid,))
                 else:
