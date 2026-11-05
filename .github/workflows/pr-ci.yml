@@ -360,7 +360,7 @@ jobs:
         run: |
           echo "Core test mode: $CORE_TEST_MODE"
           if [[ "$CORE_TEST_MODE" == "full" ]]; then
-            python -m pytest -q --durations=10 -n 2 --dist=loadfile $CORE_TEST_TARGETS
+            python -m pytest -q --durations=10 -n 3 --dist=loadfile $CORE_TEST_TARGETS
           else
             python -m pytest -q --durations=10 $CORE_TEST_TARGETS
           fi
