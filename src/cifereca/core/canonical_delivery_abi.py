@@ -9,11 +9,22 @@ from __future__ import annotations
 from inspect import getattr_static
 
 
+# A guarded-only producer is a complete Core v2 delivery ABI. Its selected
+# candidate is exclusively executable under Core's revocable admission lease
+# (and optionally its ADEPT runtime callback). Never route it to the 0.7
+# backup_items writer merely because it does not expose an unguarded GET.
 _CANONICAL_DELIVERY_CONTRACTS = (
-    (
-        "downloadable_resource_snapshot",
-        "downloadable_selected_offer_snapshot",
-        "downloadable_selected_delivery_candidate",
+    *(
+        (
+            "downloadable_resource_snapshot",
+            "downloadable_selected_offer_snapshot",
+            candidate,
+        )
+        for candidate in (
+            "downloadable_selected_delivery_candidate_runtime_guarded",
+            "downloadable_selected_delivery_candidate_guarded",
+            "downloadable_selected_delivery_candidate",
+        )
     ),
     (
         "rights_observation_snapshot",

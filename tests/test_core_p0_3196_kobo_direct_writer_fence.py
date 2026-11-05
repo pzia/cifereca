@@ -23,6 +23,16 @@ _CONTRACTS = (
         "downloadable_selected_delivery_candidate",
     ),
     (
+        "downloadable_resource_snapshot",
+        "downloadable_selected_offer_snapshot",
+        "downloadable_selected_delivery_candidate_guarded",
+    ),
+    (
+        "downloadable_resource_snapshot",
+        "downloadable_selected_offer_snapshot",
+        "downloadable_selected_delivery_candidate_runtime_guarded",
+    ),
+    (
         "rights_observation_snapshot",
         "rights_selected_delivery_offer_snapshot",
         "rights_selected_delivery_candidate",
@@ -30,7 +40,11 @@ _CONTRACTS = (
 )
 
 
-@pytest.mark.parametrize("contract", _CONTRACTS, ids=["downloadable_v2", "rights_v1"])
+@pytest.mark.parametrize(
+    "contract", _CONTRACTS,
+    ids=["downloadable_v2", "downloadable_guarded_only",
+         "downloadable_runtime_guarded_only", "rights_v1"],
+)
 @pytest.mark.parametrize("scoped", [True, False], ids=["scoped", "unscoped"])
 def test_complete_core_abi_blocks_direct_legacy_writer_before_io(
     tmp_path, monkeypatch, contract, scoped,
@@ -67,6 +81,29 @@ def test_complete_core_abi_blocks_direct_legacy_writer_before_io(
             )
         assert service.storage.backup_list() == before_backups
         assert service.storage.placements() == before_placements
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("only_method", [
+    "downloadable_selected_delivery_candidate_guarded",
+    "downloadable_selected_delivery_candidate_runtime_guarded",
+])
+def test_only_candidate_method_is_not_complete_without_source_and_offer(
+    tmp_path, monkeypatch, only_method,
+):
+    service = _service(tmp_path)
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    try:
+        monkeypatch.setattr(session, only_method, lambda *_a, **_kw: None,
+                            raising=False)
+        assert not has_complete_delivery_abi(session)
+        monkeypatch.setattr(session, "downloadable_resource_snapshot",
+                            lambda *_a, **_kw: None, raising=False)
+        assert not has_complete_delivery_abi(session)
+        monkeypatch.setattr(session, "downloadable_selected_offer_snapshot",
+                            lambda *_a, **_kw: None, raising=False)
+        assert has_complete_delivery_abi(session)
     finally:
         service.close()
 
