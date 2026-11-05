@@ -174,6 +174,12 @@ def record_verified_usb_observation(
                 unresolved += 1
                 continue
             found = observed_by_path.get(target.casefold())
+            if found is None and artifact_id in snapshot.files:
+                # The same registered Artifact exists at a *different*
+                # managed path. Do not call that book absent: an unexpected
+                # move demands reconciliation, never implicit recopy/removal.
+                unresolved += 1
+                continue
             if found is None:
                 state = "missing"  # complete scoped managed-subtree scan
             elif (found[0] == artifact_id
