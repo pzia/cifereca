@@ -1575,6 +1575,19 @@ class Storage:
             # No entitlement, Artifact, Placement, catalogue or acquisition
             # journal is synthesized from old and possibly stale data.
             return
+        # #3196 W1: a typed SourceReference may exist before canonical
+        # download/receipt, and the historical backup PK has no account or
+        # branch. The 0.7 writer may refresh its raw compatibility row, but
+        # cannot generate or update a parallel right, acquisition or local
+        # placement for an edition now owned by the canonical Core. Match the
+        # provider/credential/edition exactly; an alternate borrower is
+        # ambiguous, not authority to replay a legacy row.
+        if db.execute(
+            "SELECT 1 FROM source_references WHERE provider_id=? "
+            "AND credential_id=? AND edition_id=? LIMIT 1",
+            (expected[0], expected[1], expected[3]),
+        ).fetchone() is not None:
+            return
         if projection_owned:
             entitlement_cursor = db.execute(
                 "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
