@@ -21,7 +21,12 @@ from tests.test_core_p1_4093_capture_session_export import _entry, _http, _journ
     ("gzip", gzip.compress),
     ("deflate", zlib.compress),
 ])
-@pytest.mark.parametrize("tail", [b"PRIVATE_TRAILING", gzip.compress(b"<html>SECOND</html>")])
+# Deterministic module-level fixture: gzip's default mtime makes each xdist
+# worker collect a different parametrization ID and aborts the full CI suite.
+@pytest.mark.parametrize("tail", [
+    pytest.param(b"PRIVATE_TRAILING", id="plain-trailing-bytes"),
+    pytest.param(gzip.compress(b"<html>SECOND</html>", mtime=0), id="gzip-trailing-member"),
+])
 def test_compressed_html_with_trailing_bytes_is_not_claimed_complete(
     tmp_path, coding, encode, tail,
 ):
