@@ -5,10 +5,10 @@ from collections.abc import Mapping
 import hashlib
 import json
 import os
+import secrets
 import stat
 from pathlib import Path
 import shutil
-import tempfile
 import time
 from typing import Any
 
@@ -41,6 +41,22 @@ class _CanonicalDedupConflict(Conflict):
 class _VariantScopeConflict(Conflict):
     """Deleting a shared SHA is not authority to unlink another book."""
     code = "artifact_variant_scope_conflict"
+
+
+class _VariantConflict(Conflict):
+    """Typed refusal for transform safety without changing plugin_api errors."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class _VariantNotFound(NotFound):
+    """Typed missing-source refusal within the existing NotFound contract."""
+
+    def __init__(self, message: str, *, code: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 
@@ -203,10 +219,122 @@ def _variant_ref(storage: Any, row: dict[str, Any], *, book_id: str = "",
     )
 
 
+def _variant_file_stamp(path: Path) -> tuple[int, ...] | None:
+    """No-follow immutable-file signature; a source pathname is not proof."""
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        return tuple(int(getattr(info, attr)) for attr in (
+            "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns",
+        ))
+    except (OSError, ValueError):
+        return None
+
+
+def _variant_directory_stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode):
+            return None
+        return int(info.st_dev), int(info.st_ino)
+    except (OSError, ValueError):
+        return None
+
+
+def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
+                               basename: str, sha256: str,
+                               directory_stamp: tuple[int, int],
+                               staging_directory_stamp: tuple[int, int],
+                               staging_root_stamp: tuple[int, int],
+                               claimed_paths: frozenset[str]) -> Path:
+    """Hardlink a verified staging inode atomically, with no replace path.
+
+    Both directory descriptors pin the original physical locations. Even a
+    preexisting symlink, unrelated file or a racing writer cannot be clobbered
+    by an exclusive os.link. The short-hash fallback is attempted only once.
+    """
+    suffix = Path(basename).suffix
+    stem = Path(basename).stem
+    candidates = (basename, f"{stem}-{sha256[:8]}{suffix}")
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    if (_variant_directory_stamp(source_parent) != directory_stamp
+            or _variant_directory_stamp(staged.parent) != staging_directory_stamp
+            or _variant_directory_stamp(staged.parent.parent) != staging_root_stamp):
+        raise _VariantConflict("Répertoire de variante modifié", code="artifact_variant_directory_changed")
+    parent_fd = stage_fd = None
+    try:
+        parent_fd = os.open(source_parent, flags)
+        stage_fd = os.open(staged.parent, flags)
+        parent_info = os.fstat(parent_fd)
+        stage_dir_info = os.fstat(stage_fd)
+        if ((parent_info.st_dev, parent_info.st_ino) != directory_stamp
+                or (stage_dir_info.st_dev, stage_dir_info.st_ino) != staging_directory_stamp
+                or _variant_directory_stamp(staged.parent) != staging_directory_stamp
+                or _variant_directory_stamp(staged.parent.parent) != staging_root_stamp
+                or _variant_directory_stamp(source_parent) != directory_stamp):
+            raise _VariantConflict("Répertoire de variante modifié", code="artifact_variant_directory_changed")
+        stage_info = os.stat(staged.name, dir_fd=stage_fd, follow_symlinks=False)
+        if not stat.S_ISREG(stage_info.st_mode):
+            raise _VariantConflict("Fichier de variante non régulier", code="artifact_variant_output_unverified")
+        for candidate in candidates:
+            # A missing physical file can still have an authoritative
+            # Placement/other-owner claim. Never rebind that SQL path.
+            if str(source_parent / candidate) in claimed_paths:
+                continue
+            try:
+                os.link(staged.name, candidate, src_dir_fd=stage_fd,
+                        dst_dir_fd=parent_fd, follow_symlinks=False)
+            except FileExistsError:
+                continue
+            except OSError as error:
+                raise _VariantConflict("Publication de variante impossible",
+                               code="artifact_variant_publish_failed") from error
+            try:
+                final_info = os.stat(candidate, dir_fd=parent_fd, follow_symlinks=False)
+                current_stage = os.stat(staged.name, dir_fd=stage_fd,
+                                        follow_symlinks=False)
+                # Creating/removing a hardlink legitimately changes inode
+                # ctime; compare the stable content-bearing fields instead.
+                signature = lambda info: (
+                    info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+                )
+                if (not stat.S_ISREG(final_info.st_mode)
+                        or signature(final_info) != signature(stage_info)
+                        or signature(current_stage) != signature(stage_info)
+                        or sha256_file(source_parent / candidate) != sha256
+                        or _variant_directory_stamp(source_parent) != directory_stamp):
+                    raise _VariantConflict("Variante ou répertoire changé",
+                                   code="artifact_variant_publish_race")
+                os.unlink(staged.name, dir_fd=stage_fd)
+                return source_parent / candidate
+            except Exception:
+                # The exclusive hardlink is our new entry; never touch a
+                # preexisting path, and remove only this newly linked inode.
+                now = os.stat(candidate, dir_fd=parent_fd, follow_symlinks=False)
+                if (now.st_dev, now.st_ino) == (stage_info.st_dev, stage_info.st_ino):
+                    os.unlink(candidate, dir_fd=parent_fd)
+                raise
+        raise _VariantConflict("Nom de variante déjà occupé",
+                       code="artifact_variant_filename_conflict")
+    except OSError as error:
+        raise _VariantConflict("Publication de variante impossible",
+                       code="artifact_variant_publish_failed") from error
+    finally:
+        if stage_fd is not None:
+            os.close(stage_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
+
+
 @dataclass(slots=True)
 class _InputLease:
     _path: Path
     _artifact: ArtifactRef
+    source_placement_id: str = ""
+    source_identity_id: str = ""
+    source_stamp: tuple[int, ...] | None = None
+    source_directory_stamp: tuple[int, int] | None = None
     @property
     def path(self) -> Path: return self._path
     @property
@@ -220,6 +348,13 @@ class _OutputLease:
     output_format: ArtifactFormat
     proposed_filename: str
     variant_kind: str
+    source_path: Path | None = None
+    source_placement_id: str = ""
+    source_identity_id: str = ""
+    source_stamp: tuple[int, ...] | None = None
+    source_directory_stamp: tuple[int, int] | None = None
+    staging_directory_stamp: tuple[int, int] | None = None
+    staging_root_stamp: tuple[int, int] | None = None
     active: bool = True
     @property
     def path(self) -> Path: return self._path
@@ -233,31 +368,154 @@ class ArtifactExecutionBrokerImpl:
     service: Any
 
     def _source_placement(self, artifact: ArtifactRef) -> dict[str, Any]:
-        rows = [row for row in self.service.storage.placements(state="present") if str(row.get("artifact_id") or "") == artifact.artifact_id]
-        for row in rows:
-            path = Path(str(row.get("path") or ""))
-            if path.is_file():
-                return row
-        raise NotFound("Artefact local introuvable", code="artifact_missing")
+        rows = [row for row in self.service.storage.placements(state="present")
+                if str(row.get("artifact_id") or "") == artifact.artifact_id]
+        if not rows:
+            raise _VariantNotFound("Artefact local introuvable", code="artifact_missing")
+        # Artifact SHA is global. Without a scoped placement coordinate in
+        # TransformRequest, even two copies in the SAME profile are ambiguous;
+        # guessing a first row can write or reuse another profile's bytes.
+        if len(rows) != 1:
+            raise _VariantConflict("Placement source ambigu", code="artifact_source_ambiguous")
+        row = rows[0]
+        # A valid SHA owned only by profile A still is not available to a
+        # user whose active profile is B. ArtifactRef has no identity, so the
+        # host's current selection is the second mandatory authority.
+        active_identity = getattr(getattr(self.service, "current_identity", None),
+                                  "identity_id", None)
+        if (type(active_identity) is not str or not active_identity
+                or active_identity != row.get("identity_id")):
+            raise _VariantConflict("Profil actif distinct du placement",
+                           code="artifact_source_identity_mismatch")
+        path = Path(str(row.get("path") or ""))
+        if (type(row.get("identity_id")) is not str
+                or not row["identity_id"] or not path.is_absolute()
+                or _variant_file_stamp(path) is None
+                or _variant_directory_stamp(path.parent) is None):
+            raise _VariantConflict("Placement source non vérifié", code="artifact_source_unverified")
+        # P0 #4519: a global SHA is never permission to read another
+        # identity's physical copy. The registered profile subtree and the
+        # Core-owned library root are the only acceptable path authority.
+        config = getattr(self.service, "config", None)
+        get = getattr(config, "get", None)
+        raw = get("library.directory", None) if callable(get) else None
+        profile = self.service.storage.identity_get(row["identity_id"])
+        directory = profile.get("directory_name") if type(profile) is dict else None
+        if (type(raw) is not str or not raw or type(directory) is not str
+                or directory in ("", ".", "..")
+                or "/" in directory or "\\" in directory):
+            raise _VariantConflict("Profil de variante non vérifié", code="artifact_source_scope_unverified")
+        try:
+            root = Path(os.path.expandvars(raw)).expanduser()
+            owner_folder = root / directory
+            if (not root.is_absolute()
+                    or _variant_directory_stamp(root) is None
+                    or _variant_directory_stamp(owner_folder) is None
+                    or path.resolve(strict=True) != path
+                    or not path.is_relative_to(owner_folder)
+                    or any(
+                        (owner_folder.joinpath(*path.relative_to(owner_folder).parts[:n])).is_symlink()
+                        for n in range(1, len(path.relative_to(owner_folder).parts) + 1)
+                    )
+                    or sum(
+                        x.get("directory_name") == directory
+                        for x in self.service.storage.identities()
+                    ) != 1):
+                raise ValueError("variant_profile_path_unverified")
+        except (OSError, RuntimeError, ValueError, TypeError) as error:
+            raise _VariantConflict("Chemin de variante hors profil",
+                           code="artifact_source_scope_unverified") from error
+        return row
 
     def input_lease(self, artifact: ArtifactRef) -> _InputLease:
         row = self._source_placement(artifact)
-        path = Path(str(row.get("path"))).expanduser().resolve()
-        if artifact.sha256 and sha256_file(path) != artifact.sha256:
-            raise Conflict("Le contenu local ne correspond plus à l'artefact", code="artifact_checksum_mismatch")
-        return _InputLease(path, artifact)
+        path = Path(str(row["path"]))
+        stamp = _variant_file_stamp(path)
+        folder = _variant_directory_stamp(path.parent)
+        if (stamp is None or folder is None
+                or not artifact.sha256 or sha256_file(path) != artifact.sha256
+                or _variant_file_stamp(path) != stamp
+                or _variant_directory_stamp(path.parent) != folder):
+            raise _VariantConflict("Le contenu local ne correspond plus à l'artefact",
+                           code="artifact_checksum_mismatch")
+        return _InputLease(path, artifact, str(row.get("placement_id") or ""),
+                           row["identity_id"], stamp, folder)
 
     def output_lease(self, source: ArtifactRef, *, output_format: ArtifactFormat, proposed_filename: str = "", variant_kind: str = "") -> _OutputLease:
-        source_row = self._source_placement(source)
-        source_path = Path(str(source_row.get("path"))).expanduser().resolve()
-        staging = source_path.parent / ".cifereca-staging" / "variants"
+        row = self._source_placement(source)
+        source_path = Path(str(row["path"]))
+        stamp = _variant_file_stamp(source_path)
+        folder = _variant_directory_stamp(source_path.parent)
+        if stamp is None or folder is None or sha256_file(source_path) != source.sha256:
+            raise _VariantConflict("Source de variante modifiée", code="artifact_source_changed")
+        staging_root = source_path.parent / ".cifereca-staging"
+        staging = staging_root / "variants"
+        if ((staging_root.exists() and _variant_directory_stamp(staging_root) is None)
+                or (staging.exists() and _variant_directory_stamp(staging) is None)):
+            raise _VariantConflict("Staging de variante non vérifié", code="artifact_variant_staging_unverified")
         staging.mkdir(parents=True, exist_ok=True)
+        if (_variant_directory_stamp(source_path.parent) != folder
+                or _variant_directory_stamp(staging_root) is None
+                or _variant_directory_stamp(staging) is None
+                or _variant_file_stamp(source_path) != stamp):
+            raise _VariantConflict("Répertoire de source modifié", code="artifact_source_changed")
         suffix = "." + str(output_format.format or source_path.suffix.lstrip(".") or "bin").lower().lstrip(".")
-        fd, name = tempfile.mkstemp(prefix="variant-", suffix=suffix, dir=staging)
-        os.close(fd)
-        path = Path(name)
-        path.unlink(missing_ok=True)
-        return _OutputLease(path, source, output_format, str(proposed_filename or ""), str(variant_kind or "derived"))
+        # Do not mkstemp(path) then unlink(path): a swapped staging
+        # parent between those operations could redirect unlink to another
+        # profile. Reserve and release the random filename under one pinned
+        # O_NOFOLLOW directory descriptor.
+        stage_pin = _variant_directory_stamp(staging)
+        stage_root_pin = _variant_directory_stamp(staging_root)
+        if stage_pin is None or stage_root_pin is None:
+            raise _VariantConflict("Staging non vérifié", code="artifact_variant_staging_unverified")
+        dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        stage_fd = None
+        name = ""
+        try:
+            stage_fd = os.open(staging, dir_flags)
+            info = os.fstat(stage_fd)
+            if ((info.st_dev, info.st_ino) != stage_pin
+                    or _variant_directory_stamp(staging) != stage_pin
+                    or _variant_directory_stamp(staging_root) != stage_root_pin):
+                raise _VariantConflict("Staging déplacé", code="artifact_variant_staging_changed")
+            for _ in range(8):
+                attempt = f"variant-{secrets.token_hex(12)}{suffix}"
+                try:
+                    fd = os.open(
+                        attempt, os.O_CREAT | os.O_EXCL | os.O_RDWR
+                        | getattr(os, "O_NOFOLLOW", 0),
+                        0o600, dir_fd=stage_fd,
+                    )
+                except FileExistsError:
+                    continue
+                os.close(fd)
+                os.unlink(attempt, dir_fd=stage_fd)
+                name = attempt
+                break
+            if not name:
+                raise _VariantConflict("Staging saturé", code="artifact_variant_staging_unavailable")
+        except OSError as error:
+            raise _VariantConflict("Staging inaccessible",
+                           code="artifact_variant_staging_unavailable") from error
+        finally:
+            if stage_fd is not None:
+                os.close(stage_fd)
+        if (_variant_directory_stamp(staging) != stage_pin
+                or _variant_directory_stamp(staging_root) != stage_root_pin
+                or _variant_directory_stamp(source_path.parent) != folder):
+            raise _VariantConflict("Staging déplacé", code="artifact_variant_staging_changed")
+        path = staging / name
+        return _OutputLease(
+            path, source, output_format, str(proposed_filename or ""),
+            str(variant_kind or "derived"),
+            source_path=source_path,
+            source_placement_id=str(row.get("placement_id") or ""),
+            source_identity_id=row["identity_id"],
+            source_stamp=stamp,
+            source_directory_stamp=folder,
+            staging_directory_stamp=stage_pin,
+            staging_root_stamp=stage_root_pin,
+        )
 
     @staticmethod
     def _assert_output_lease(destination: Any) -> _OutputLease:
@@ -279,46 +537,95 @@ class ArtifactExecutionBrokerImpl:
     def commit_variant(self, *, source: ArtifactRef, destination: Any, result: TransformResult, transformer_plugin_id: str, profile_plugin_id: str | None = None, options_fingerprint: str = "") -> ArtifactRef:
         lease = self._assert_output_lease(destination)
         if lease.source.artifact_id != source.artifact_id:
-            raise Conflict("Le lease de sortie ne correspond pas à la source", code="artifact_lease_source_mismatch")
+            raise _VariantConflict("Le lease de sortie ne correspond pas à la source", code="artifact_lease_source_mismatch")
         path = lease.path
-        if not path.is_file():
-            raise NotFound("Le transformer n'a produit aucun fichier", code="artifact_output_missing")
-        actual_sha = sha256_file(path); actual_size = path.stat().st_size
+        # A moved/replaced source directory may also make the staged output
+        # disappear from its old path. Preserve the stronger source lease
+        # refusal instead of misreporting a missing transformer output.
+        if _variant_directory_stamp(lease.source_path.parent) != lease.source_directory_stamp:
+            raise _VariantConflict("Répertoire de source modifié", code="artifact_source_changed")
+        if _variant_file_stamp(path) is None:
+            raise _VariantNotFound("Le transformer n'a produit aucun fichier régulier",
+                           code="artifact_output_missing")
+        stage_stamp = _variant_file_stamp(path)
+        actual_sha = sha256_file(path)
+        actual_size = path.stat().st_size
+        if _variant_file_stamp(path) != stage_stamp:
+            raise _VariantConflict("Staging de variante modifié", code="artifact_variant_output_changed")
+        source_placement = self._source_placement(source)
+        source_path = Path(str(source_placement["path"]))
+        if (lease.source_path != source_path
+                or lease.source_placement_id != str(source_placement.get("placement_id") or "")
+                or lease.source_identity_id != source_placement["identity_id"]
+                or _variant_directory_stamp(source_path.parent) != lease.source_directory_stamp
+                or _variant_file_stamp(source_path) != lease.source_stamp
+                or sha256_file(source_path) != source.sha256
+                or _variant_file_stamp(source_path) != lease.source_stamp):
+            raise _VariantConflict("Source de variante remplacée", code="artifact_source_changed")
         if result.sha256 and actual_sha != result.sha256:
-            raise Conflict("Checksum de transformation invalide", code="artifact_output_checksum_mismatch")
+            raise _VariantConflict("Checksum de transformation invalide", code="artifact_output_checksum_mismatch")
         if result.size_bytes and actual_size != int(result.size_bytes):
-            raise Conflict("Taille de transformation invalide", code="artifact_output_size_mismatch")
+            raise _VariantConflict("Taille de transformation invalide", code="artifact_output_size_mismatch")
         # An identity transform has exactly the original content-addressed
         # artifact_id. Persisting a self-variant would make delete_variant
         # select and physically unlink the ORIGINAL book placements. The
         # produced staging file is disposable; preserve the existing source
         # artifact and do not create a false independent derivative.
         if actual_sha == source.sha256:
-            path.unlink()
-            lease.active = False
+            self.abort_output(lease)
             return source
         existing = self.service.storage.artifact_variant_find(
             source_sha256=source.sha256, transformer_plugin_id=transformer_plugin_id,
             profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
         )
         if existing:
-            artifact = _artifact_ref(self.service.storage, str(existing.get("artifact_id") or ""), book_id=source.book_id)
-            path.unlink(missing_ok=True); lease.active = False
-            if artifact is not None: return artifact
-        source_placement = self._source_placement(source)
-        source_path = Path(str(source_placement.get("path"))).resolve()
+            artifact = _artifact_ref(
+                self.service.storage, str(existing.get("artifact_id") or ""),
+                book_id=source.book_id,
+                identity_id=lease.source_identity_id,
+            )
+            if artifact is not None:
+                try:
+                    self.input_lease(artifact)
+                except (Conflict, NotFound, OSError, ValueError):
+                    artifact = None
+            if artifact is not None:
+                self.abort_output(lease)
+                return artifact
         proposed = Path(str(result.proposed_filename or lease.proposed_filename or "")).name
         if not proposed:
             suffix = "." + str(result.output_format.format or lease.output_format.format or source_path.suffix.lstrip(".")).lstrip(".")
             proposed = f"{source_path.stem} [{lease.variant_kind or 'variant'}]{suffix}"
         suffix = Path(proposed).suffix or ("." + str(result.output_format.format or lease.output_format.format or "bin").lstrip("."))
         stem = Path(proposed).stem or source_path.stem
-        final = source_path.parent / (stem + suffix)
-        if final.exists() and sha256_file(final) != actual_sha:
-            final = source_path.parent / f"{stem}-{actual_sha[:8]}{suffix}"
-        final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(path, final)
+        if (source_path.parent != path.parent.parent.parent
+                or _variant_file_stamp(path) != stage_stamp
+                or _variant_file_stamp(source_path) != lease.source_stamp
+                or _variant_directory_stamp(source_path.parent) != lease.source_directory_stamp):
+            raise _VariantConflict("Staging ou source déplacé", code="artifact_variant_scope_changed")
+        claimed_paths = frozenset(
+            str(row.get("path") or "") for row in self.service.storage.placements()
+        )
+        final = _publish_variant_exclusive(
+            path, source_path.parent, basename=stem + suffix,
+            sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
+            staging_directory_stamp=lease.staging_directory_stamp,
+            staging_root_stamp=lease.staging_root_stamp,
+            claimed_paths=claimed_paths,
+        )
         lease.active = False
+        # Revalidate the physical target is still our just-published inode;
+        # never report a variant if an unrelated writer substituted the path.
+        if (not final.is_file() or sha256_file(final) != actual_sha
+                or _variant_directory_stamp(final.parent) != lease.source_directory_stamp):
+            raise _VariantConflict("Variante publiée déplacée", code="artifact_variant_publish_race")
+        # A source or another profile may have claimed the filename while
+        # the exact physical hardlink was being installed. Stop before any
+        # SQL writer can rebind that existing Placement.
+        if any(str(row.get("path") or "") == str(final)
+               for row in self.service.storage.placements()):
+            raise _VariantConflict("Chemin de variante déjà réservé",
+                           code="artifact_variant_filename_conflict")
         now = int(time.time())
         artifact_id = f"sha256:{actual_sha}"
         self.service.storage.artifact_put({
@@ -355,7 +662,35 @@ class ArtifactExecutionBrokerImpl:
 
     def abort_output(self, destination: Any) -> None:
         lease = self._assert_output_lease(destination)
-        lease.path.unlink(missing_ok=True); lease.active = False
+        # A malicious transformer may swap the whole staging directory for
+        # a symlink into a foreign profile before raising. Never unlink
+        # through such a pathname; use a no-follow pinned directory FD.
+        lease.active = False
+        expected = lease.staging_directory_stamp
+        path = lease.path
+        if (expected is None
+                or _variant_directory_stamp(path.parent) != expected
+                or _variant_directory_stamp(path.parent.parent) != lease.staging_root_stamp):
+            raise _VariantConflict("Staging de variante déplacé", code="artifact_variant_staging_changed")
+        flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(path.parent, flags)
+            try:
+                directory = os.fstat(fd)
+                if ((directory.st_dev, directory.st_ino) != expected
+                        or _variant_directory_stamp(path.parent) != expected
+                        or _variant_directory_stamp(path.parent.parent) != lease.staging_root_stamp):
+                    raise _VariantConflict("Staging de variante déplacé",
+                                   code="artifact_variant_staging_changed")
+                try:
+                    os.unlink(path.name, dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+            finally:
+                os.close(fd)
+        except OSError as error:
+            raise _VariantConflict("Staging de variante inaccessible",
+                           code="artifact_variant_staging_changed") from error
 
     def variants(self, source: ArtifactRef) -> tuple[ArtifactVariant, ...]:
         out=[]
@@ -378,7 +713,7 @@ class ArtifactExecutionBrokerImpl:
                     if not supports(request): continue
                 except Exception: continue
             return row.plugin_id, row.service
-        raise NotFound("Aucun transformer compatible", code="artifact_transformer_unavailable")
+        raise _VariantNotFound("Aucun transformer compatible", code="artifact_transformer_unavailable")
 
     def execute_transform(self, request: TransformRequest, *, transformer_plugin_id: str = "", control: TaskControl | None = None) -> ArtifactRef:
         if control is None:
@@ -418,6 +753,7 @@ class ArtifactExecutionBrokerImpl:
                     self.service.storage,
                     str(existing.get("artifact_id") or ""),
                     book_id=request.source.book_id,
+                    identity_id=identity_id,
                 )
                 if cached is not None:
                     try:
@@ -453,7 +789,16 @@ class ArtifactExecutionBrokerImpl:
             variant_kind=request.capability_id or "derived",
         )
         try:
+            # The transformer may move or swap the original after plan.
+            # The lease pins both path and current physical inode.
+            if (destination.source_placement_id != source_lease.source_placement_id
+                    or destination.source_identity_id != source_lease.source_identity_id
+                    or destination.source_path != source_lease.path
+                    or destination.source_stamp != source_lease.source_stamp
+                    or destination.source_directory_stamp != source_lease.source_directory_stamp):
+                raise _VariantConflict("Source changée pendant le plan", code="artifact_source_changed")
             result = transformer.transform(request, source_lease, destination, control)
+            control.check_cancelled()
             committed = self.commit_variant(
                 source=request.source,
                 destination=destination,
