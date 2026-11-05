@@ -367,14 +367,28 @@ class _OutputLease:
 class ArtifactExecutionBrokerImpl:
     service: Any
 
-    def _source_placement(self, artifact: ArtifactRef) -> dict[str, Any]:
+    def _source_placement(
+        self, artifact: ArtifactRef, *, identity_id: str | None = None,
+        placement_id: str | None = None,
+    ) -> dict[str, Any]:
         rows = [row for row in self.service.storage.placements(state="present")
                 if str(row.get("artifact_id") or "") == artifact.artifact_id]
         if not rows:
             raise _VariantNotFound("Artefact local introuvable", code="artifact_missing")
-        # Artifact SHA is global. Without a scoped placement coordinate in
-        # TransformRequest, even two copies in the SAME profile are ambiguous;
-        # guessing a first row can write or reuse another profile's bytes.
+        if identity_id is not None or placement_id is not None:
+            # Both coordinates are mandatory, exact, and immutable throughout
+            # the lease. A bare identity or SHA cannot choose a first copy.
+            if (type(identity_id) is not str or not identity_id
+                    or type(placement_id) is not str or not placement_id):
+                raise _VariantConflict("Placement source non précisé",
+                                       code="artifact_source_scope_incomplete")
+            rows = [row for row in rows
+                    if row.get("identity_id") == identity_id
+                    and row.get("placement_id") == placement_id]
+            if not rows:
+                raise _VariantConflict("Placement source exact introuvable",
+                                       code="artifact_source_scope_unverified")
+        # Legacy unscoped calls stay safe only with one physical copy globally.
         if len(rows) != 1:
             raise _VariantConflict("Placement source ambigu", code="artifact_source_ambiguous")
         row = rows[0]
@@ -427,8 +441,12 @@ class ArtifactExecutionBrokerImpl:
                            code="artifact_source_scope_unverified") from error
         return row
 
-    def input_lease(self, artifact: ArtifactRef) -> _InputLease:
-        row = self._source_placement(artifact)
+    def input_lease(self, artifact: ArtifactRef, *,
+                    identity_id: str | None = None,
+                    placement_id: str | None = None) -> _InputLease:
+        row = self._source_placement(
+            artifact, identity_id=identity_id, placement_id=placement_id,
+        )
         path = Path(str(row["path"]))
         stamp = _variant_file_stamp(path)
         folder = _variant_directory_stamp(path.parent)
@@ -441,8 +459,13 @@ class ArtifactExecutionBrokerImpl:
         return _InputLease(path, artifact, str(row.get("placement_id") or ""),
                            row["identity_id"], stamp, folder)
 
-    def output_lease(self, source: ArtifactRef, *, output_format: ArtifactFormat, proposed_filename: str = "", variant_kind: str = "") -> _OutputLease:
-        row = self._source_placement(source)
+    def output_lease(self, source: ArtifactRef, *, output_format: ArtifactFormat,
+                     proposed_filename: str = "", variant_kind: str = "",
+                     identity_id: str | None = None,
+                     placement_id: str | None = None) -> _OutputLease:
+        row = self._source_placement(
+            source, identity_id=identity_id, placement_id=placement_id,
+        )
         source_path = Path(str(row["path"]))
         stamp = _variant_file_stamp(source_path)
         folder = _variant_directory_stamp(source_path.parent)
@@ -534,6 +557,82 @@ class ArtifactExecutionBrokerImpl:
         except Exception:
             return ""
 
+    def _scoped_derived_cache(
+        self, *, source: ArtifactRef, source_lease: _InputLease,
+        recipe: dict[str, Any], transformer_id: str,
+        profile_id: str | None, options_fingerprint: str,
+    ) -> ArtifactRef | None:
+        """Require an exact SAME-identity physical child and derived origin.
+
+        A global recipe/SHA or an unrelated Placement of B is never a cache
+        hit. Legacy variants without a per-identity derived OriginLink need
+        conservative migration instead of silently inheriting provenance.
+        """
+        if (recipe.get("source_artifact_id") != source.artifact_id
+                or recipe.get("source_sha256") != source.sha256
+                or recipe.get("transformer_plugin_id") != transformer_id
+                or str(recipe.get("profile_plugin_id") or "") != str(profile_id or "")
+                or str(recipe.get("options_fingerprint") or "") != options_fingerprint
+                or str(recipe.get("transformer_version") or "")
+                   != self._version_for_plugin(transformer_id)
+                or str(recipe.get("profile_version") or "")
+                   != self._version_for_plugin(profile_id)
+                or bool((recipe.get("metadata") or {}).get("stale", False))):
+            return None
+        aid = recipe.get("artifact_id")
+        rid = recipe.get("variant_id")
+        owner = source_lease.source_identity_id
+        if (type(aid) is not str or not aid or aid == source.artifact_id
+                or type(rid) is not str or not rid):
+            return None
+        matches = [row for row in self.service.storage.placements(state="present")
+                   if row.get("artifact_id") == aid and row.get("identity_id") == owner]
+        if len(matches) != 1:
+            return None
+        placement = matches[0]
+        pid = placement.get("placement_id")
+        if type(pid) is not str or not pid:
+            return None
+        try:
+            with self.service.storage._lock, self.service.storage._connect() as db:
+                links = db.execute(
+                    "SELECT evidence_ref,metadata_json FROM origin_links "
+                    "WHERE artifact_id=? AND parent_artifact_id=? "
+                    "AND identity_id=? AND origin_kind='derived' "
+                    "AND source_reference_id IS NULL",
+                    (aid, source.artifact_id, owner),
+                ).fetchall()
+            exact = []
+            for evidence_ref, raw in links:
+                if evidence_ref != "derived:" + rid + ":" + pid:
+                    continue
+                metadata = json.loads(raw)
+                if (type(metadata) is dict
+                        and metadata.get("source_placement_id")
+                            == source_lease.source_placement_id
+                        and metadata.get("source_sha256") == source.sha256
+                        and metadata.get("result_sha256") == aid.removeprefix("sha256:")
+                        and metadata.get("transformer_plugin_id") == transformer_id
+                        and metadata.get("profile_plugin_id") == str(profile_id or "")
+                        and metadata.get("options_fingerprint") == options_fingerprint
+                        and metadata.get("transformer_version")
+                            == self._version_for_plugin(transformer_id)
+                        and metadata.get("profile_version")
+                            == self._version_for_plugin(profile_id)):
+                    exact.append(evidence_ref)
+            if len(exact) != 1:
+                return None
+            cached = _artifact_ref(
+                self.service.storage, aid, book_id=source.book_id,
+                identity_id=owner,
+            )
+            if cached is None:
+                return None
+            self.input_lease(cached, identity_id=owner, placement_id=pid)
+            return cached
+        except (OSError, RuntimeError, TypeError, ValueError, Conflict, NotFound, json.JSONDecodeError):
+            return None
+
     def commit_variant(self, *, source: ArtifactRef, destination: Any, result: TransformResult, transformer_plugin_id: str, profile_plugin_id: str | None = None, options_fingerprint: str = "") -> ArtifactRef:
         lease = self._assert_output_lease(destination)
         if lease.source.artifact_id != source.artifact_id:
@@ -552,7 +651,10 @@ class ArtifactExecutionBrokerImpl:
         actual_size = path.stat().st_size
         if _variant_file_stamp(path) != stage_stamp:
             raise _VariantConflict("Staging de variante modifié", code="artifact_variant_output_changed")
-        source_placement = self._source_placement(source)
+        source_placement = self._source_placement(
+            source, identity_id=lease.source_identity_id,
+            placement_id=lease.source_placement_id,
+        )
         source_path = Path(str(source_placement["path"]))
         if (lease.source_path != source_path
                 or lease.source_placement_id != str(source_placement.get("placement_id") or "")
@@ -579,19 +681,20 @@ class ArtifactExecutionBrokerImpl:
             profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
         )
         if existing:
-            artifact = _artifact_ref(
-                self.service.storage, str(existing.get("artifact_id") or ""),
-                book_id=source.book_id,
-                identity_id=lease.source_identity_id,
+            cached = self._scoped_derived_cache(
+                source=source,
+                source_lease=_InputLease(
+                    source_path, source, lease.source_placement_id,
+                    lease.source_identity_id, lease.source_stamp,
+                    lease.source_directory_stamp,
+                ),
+                recipe=existing, transformer_id=transformer_plugin_id,
+                profile_id=profile_plugin_id,
+                options_fingerprint=options_fingerprint,
             )
-            if artifact is not None:
-                try:
-                    self.input_lease(artifact)
-                except (Conflict, NotFound, OSError, ValueError):
-                    artifact = None
-            if artifact is not None:
+            if cached is not None:
                 self.abort_output(lease)
-                return artifact
+                return cached
         proposed = Path(str(result.proposed_filename or lease.proposed_filename or "")).name
         if not proposed:
             suffix = "." + str(result.output_format.format or lease.output_format.format or source_path.suffix.lstrip(".")).lstrip(".")
@@ -732,16 +835,14 @@ class ArtifactExecutionBrokerImpl:
         plugin_id, transformer = self._select_transformer(request, transformer_plugin_id)
         # Validate the current source bytes before considering an existing
         # derivative. A stale local source must never reuse an older variant.
-        source_lease = self.input_lease(request.source)
+        source_lease = self.input_lease(
+            request.source, identity_id=request.identity_id,
+            placement_id=request.placement_id,
+        )
         fingerprint = hashlib.sha256(
             json.dumps(dict(request.options), ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
-        identity_id = None
-        try:
-            placement = self._source_placement(request.source)
-            identity_id = placement.get("identity_id")
-        except Exception:
-            pass
+        identity_id = source_lease.source_identity_id
 
         existing = self.service.storage.artifact_variant_find(
             source_sha256=request.source.sha256,
@@ -750,46 +851,27 @@ class ArtifactExecutionBrokerImpl:
             options_fingerprint=fingerprint,
         )
         if existing:
-            metadata = dict(existing.get("metadata") or {})
-            transformer_version = self._version_for_plugin(plugin_id)
-            profile_version = self._version_for_plugin(request.profile_plugin_id)
-            version_match = (
-                str(existing.get("transformer_version") or "") == transformer_version
-                and str(existing.get("profile_version") or "") == profile_version
-                and not bool(metadata.get("stale", False))
+            cached = self._scoped_derived_cache(
+                source=request.source, source_lease=source_lease,
+                recipe=existing, transformer_id=plugin_id,
+                profile_id=request.profile_plugin_id,
+                options_fingerprint=fingerprint,
             )
-            if version_match:
-                cached = _artifact_ref(
-                    self.service.storage,
-                    str(existing.get("artifact_id") or ""),
-                    book_id=request.source.book_id,
-                    identity_id=identity_id,
-                )
-                if cached is not None:
-                    try:
-                        # Also verifies that a present placement still matches
-                        # the canonical checksum.
-                        self.input_lease(cached)
-                    except Exception:
-                        cached = None
-                if cached is not None:
-                    control.check_cancelled()
-                    control.report(current=1, total=1, message="Variante existante réutilisée")
-                    recorder = getattr(self.service, "_record_action", None)
-                    if callable(recorder):
-                        recorder(
-                            identity_id,
-                            "transformation",
-                            "success",
-                            plugin_id=plugin_id,
-                            facts={
-                                "capability": request.capability_id,
-                                "source_artifact_id": request.source.artifact_id,
-                                "artifact_id": cached.artifact_id,
-                                "cache_hit": True,
-                            },
-                        )
-                    return cached
+            if cached is not None:
+                control.check_cancelled()
+                control.report(current=1, total=1, message="Variante existante réutilisée")
+                recorder = getattr(self.service, "_record_action", None)
+                if callable(recorder):
+                    recorder(
+                        identity_id, "transformation", "success", plugin_id=plugin_id,
+                        facts={
+                            "capability": request.capability_id,
+                            "source_artifact_id": request.source.artifact_id,
+                            "artifact_id": cached.artifact_id,
+                            "cache_hit": True,
+                        },
+                    )
+                return cached
 
         plan = transformer.plan(request, source_lease, control)
         destination = self.output_lease(
@@ -797,6 +879,8 @@ class ArtifactExecutionBrokerImpl:
             output_format=plan.output_format,
             proposed_filename=plan.proposed_filename,
             variant_kind=request.capability_id or "derived",
+            identity_id=source_lease.source_identity_id,
+            placement_id=source_lease.source_placement_id,
         )
         try:
             # The transformer may move or swap the original after plan.

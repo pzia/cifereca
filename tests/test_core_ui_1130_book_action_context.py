@@ -211,3 +211,37 @@ def test_captured_profile_does_not_follow_later_identity_changes():
     context = _build({"item_id": "a"}, identity=identity)
     identity.identity_id = "bob"
     assert context.identity_id == "alice"
+
+def test_context_exports_only_its_exact_scoped_placement_to_transformer(tmp_path):
+    source = tmp_path / "alice" / "Book.epub"
+    source.parent.mkdir()
+    source.write_bytes(b"test")
+    foreign = tmp_path / "bob" / "Book.epub"
+    foreign.parent.mkdir()
+    foreign.write_bytes(b"test")
+    rows = [
+        {"artifact_id": "sha256:shared", "identity_id": "alice",
+         "placement_id": "placement-alice", "path": str(source)},
+        {"artifact_id": "sha256:shared", "identity_id": "bob",
+         "placement_id": "placement-bob", "path": str(foreign)},
+    ]
+    storage = NS(artifacts=lambda: (
+        {"artifact_id": "sha256:shared", "sha256": "a" * 64},
+    ), placements=lambda state: rows if state == "present" else [])
+    selected = {
+        "artifact_id": "sha256:shared", "item_id": "book",
+        "local_path": str(source), "media_format": "epub",
+    }
+    context = _build(selected, storage=storage, identity=NS(identity_id="alice"))
+    assert context.artifact.identity_id == "alice"
+    assert context.artifact.placement_id == "placement-alice"
+    selected["local_path"] = str(foreign)
+    refused = _build(selected, storage=storage, identity=NS(identity_id="alice"))
+    assert refused.artifact.identity_id is None
+    assert refused.artifact.placement_id is None
+    assert refused.identity_id == "alice"
+    # Even a duplicate physical row cannot be arbitrarily selected.
+    selected["local_path"] = str(source)
+    rows.append(dict(rows[0], placement_id="duplicate"))
+    ambiguous = _build(selected, storage=storage, identity=NS(identity_id="alice"))
+    assert ambiguous.artifact.placement_id is None
