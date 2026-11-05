@@ -122,7 +122,8 @@ def _safe_unlink_receipt(path: Path, *, expected_sha256: str = "") -> bool:
 
 def write_pending_derived_receipt(staged: Path, published: Path, *,
                                   stage_dir_fd: int,
-                                  source_path: Path, source_artifact_id: str,
+                                  source_path: Path, source_stamp: tuple[int, ...],
+                                  source_artifact_id: str,
                                   source_sha256: str, source_placement_id: str,
                                   identity_id: str, output_sha256: str,
                                   output_size: int, media_format: str,
@@ -134,6 +135,7 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
                                   facts: dict[str, Any]) -> tuple[Path, str]:
     """fsync output, receipt, and directory BEFORE exclusive hardlink creation."""
     if (_stamp(staged) is None or not _directory(staged.parent)
+            or _stamp(source_path) != tuple(source_stamp[:4])
             or not _directory(published.parent)
             or published.parent != source_path.parent):
         raise ValueError("derived_receipt_scope_unverified")
@@ -157,6 +159,7 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
         os.close(fd)
     payload = {
         "schema": SCHEMA, "source_path": str(source_path),
+        "source_stamp": list(source_stamp[:4]),
         "source_artifact_id": source_artifact_id, "source_sha256": source_sha256,
         "source_placement_id": source_placement_id, "identity_id": identity_id,
         "published_path": str(published), "output_sha256": output_sha256,
@@ -315,6 +318,12 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                     or data.get("source_artifact_id") != "sha256:" + data.get("source_sha256", "")):
                 continue
             source_stamp = _stamp(source)
+            expected_source_stamp = data.get("source_stamp")
+            if (not isinstance(expected_source_stamp, list)
+                    or len(expected_source_stamp) != 4
+                    or any(type(value) is not int for value in expected_source_stamp)
+                    or source_stamp != tuple(expected_source_stamp)):
+                continue
             output_stamp = tuple(data["output_stamp"])
             if (type(data.get("output_size")) is not int
                     or data["output_size"] <= 0
