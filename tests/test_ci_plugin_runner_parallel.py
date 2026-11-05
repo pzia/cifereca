@@ -25,7 +25,15 @@ def _fixture(root: Path, names: tuple[str, ...]):
         "name = pathlib.Path.cwd().name\n"
         "trace = pathlib.Path(os.environ['CI_TEST_TRACE'])\n"
         "(trace / (name + '.start')).write_text(str(time.monotonic()))\n"
-        "time.sleep(4.0 if name == 'a_slow' else 0.08 if name.endswith('_quick') else 0.24)\n"
+        "# The slow test child stays alive until a freed slot starts c_quick.\n"
+        "# A broken fixed-batch runner never starts c_quick, so hit the cap.\n"
+        "if name == 'a_slow':\n"
+        "    deadline = time.monotonic() + 4.0\n"
+        "    while not (trace / 'c_quick.start').is_file() and time.monotonic() < deadline:\n"
+        "        time.sleep(0.01)\n"
+        "    time.sleep(0.05)\n"
+        "else:\n"
+        "    time.sleep(0.08 if name.endswith('_quick') else 0.24)\n"
         "(trace / (name + '.end')).write_text(str(time.monotonic()))\n"
         "print('executed ' + name)\n"
         "if name == 'broken': sys.exit(3)\n",
@@ -81,7 +89,7 @@ def test_invalid_parallelism_fails_without_starting_tests(tmp_path, value):
 
 def test_workers_refill_while_slow_package_is_still_running(tmp_path):
     # Alphabetic target order: slow child starts first, followed by short ones.
-    # Fixed-size batches would leave a slot idle until a_slow completed.
+    # Fixed-size batches would deadlock until the bounded rendezvous times out.
     names = ("a_slow", "b_quick", "c_quick", "d_quick")
     env, trace = _fixture(tmp_path, names)
     env["CIFERECA_PLUGIN_TEST_JOBS"] = "2"
