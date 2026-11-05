@@ -23,6 +23,16 @@ _FIELD = {
     "inspection_protected": frozenset(("True", "False", "None")),
     "catalog_valid": frozenset(("True", "False")),
 }
+_ENCRYPTION_PROFILES = frozenset((
+    "adobe_adept_marker", "aes_algorithm",
+    "font_obfuscation_algorithms_only", "aes_marker_without_algorithm",
+    "generic_xmlenc_marker", "other_encryption_marker",
+    "encryption_manifest_missing", "encryption_manifest_malformed",
+    "encryption_manifest_oversized", "encryption_manifest_unreadable",
+))
+_ENCRYPTION_PATTERN = re.compile(r"(?:^| )encryption_profile=([^ ]+)(?: |$)")
+
+
 _PATTERN = {
     key: re.compile(r"(?:^| )" + re.escape(key) + r"=([^ ]+)(?: |$)")
     for key in _FIELD
@@ -32,6 +42,7 @@ _PATTERN = {
 def classify(events: object) -> dict[str, object]:
     """Return only closed diagnostic counts; never propagate private fields."""
     counts: Counter[str] = Counter()
+    profiles: Counter[str] = Counter()
     matched = 0
     complete = 0
     if type(events) is not list:
@@ -47,6 +58,9 @@ def classify(events: object) -> dict[str, object]:
                 or "provider_id=kobo " not in message):
             continue
         matched += 1
+        profile_match = _ENCRYPTION_PATTERN.search(message)
+        if profile_match and profile_match.group(1) in _ENCRYPTION_PROFILES:
+            profiles[profile_match.group(1)] += 1
         fields = {}
         for key, accepted in _FIELD.items():
             match = _PATTERN[key].search(message)
@@ -88,6 +102,7 @@ def classify(events: object) -> dict[str, object]:
         "occurrences": matched,
         "instrumented": complete,
         "reasons": dict(sorted(counts.items())),
+        "encryption_profiles": dict(sorted(profiles.items())),
         "note": "Occurrences, not distinct items; no causal attribution to historical failures.",
     }
 
