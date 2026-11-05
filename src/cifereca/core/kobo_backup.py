@@ -462,6 +462,26 @@ def kobo_backup_preview(
             for row in stored
         ]
 
+    # #3196 D1: this preview is a 0.7 diagnostic, not Core's A->B
+    # publication/presence projection. Where an edition is already typed,
+    # never count a historical backup path or its stored revision as
+    # `already_local_linked`, `already_local_verified` or a fresh
+    # acquisition candidate. The v0.7 scope has no borrower/branch, so
+    # the credential + edition is the conservative boundary.
+    with self.storage._lock, self.storage._connect() as db:
+        typed_rows = db.execute(
+            "SELECT edition_id FROM source_references WHERE "
+            "provider_id='kobo' AND credential_id=? LIMIT 10001",
+            (credential_id,),
+        ).fetchall()
+    if len(typed_rows) > 10000:
+        raise ProviderConfigurationError(
+            "Aperçu Kobo indisponible : références canoniques trop nombreuses"
+        )
+    typed_editions = {
+        edition for (edition,) in typed_rows if type(edition) is str
+    }
+
     library_root, target_dir = _kobo_preview_paths(self, identity_id)
     indexed = _indexed_kobo_catalog_paths(self)
     source_digest = _kobo_checkpoint_key(identity_id, credential_id).rsplit(".", 1)[-1]
@@ -509,7 +529,11 @@ def kobo_backup_preview(
             "author": _manifest_author(raw) or (current or {}).get("author"),
         }
 
-        reason = "skipped_archived" if _manifest_archived(raw, current) else ""
+        # An archive is still a valid historical classification; otherwise
+        # a typed source must be reviewed via Core, never via backup_items.
+        reason = ("skipped_archived" if _manifest_archived(raw, current)
+                  else "attention_required" if product_id in typed_editions
+                  else "")
         path_raw = str((current or {}).get("local_path") or "").strip()
         if path_raw and not reason:
             linked = Path(path_raw)
