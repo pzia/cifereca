@@ -20,6 +20,8 @@ TransferStorageClass = Literal["transfer"]
 # Historical shared/ and supplier placements stay valid and unmoved.
 TRANSFER_STORAGE_CLASS: TransferStorageClass = "transfer"
 _TRANSFER_DIRECTORY = {"transfer": "Acquisitions"}
+# Leave room below Linux's 255-byte component limit for the collision suffix.
+_TRANSFER_FILENAME_BYTE_LIMIT = 224
 
 
 def directory_for_storage_class(storage_class: TransferStorageClass) -> str:
@@ -29,6 +31,10 @@ def directory_for_storage_class(storage_class: TransferStorageClass) -> str:
     return _TRANSFER_DIRECTORY[storage_class]
 
 
+def _utf8_prefix(value: str, limit: int) -> str:
+    return value.encode("utf-8")[:limit].decode("utf-8", "ignore").rstrip(" .-")
+
+
 def transfer_readable_filename(
     source_path: Path, *, title: object = None, author: object = None,
 ) -> str:
@@ -36,12 +42,13 @@ def transfer_readable_filename(
 
     Only owner-scoped catalogue metadata is admissible. Unknown fields retain
     the readable source filename. Strip filesystem separators/control chars,
-    cap length, never return hidden/path traversal names. Collision handling
+    cap encoded length, never return hidden/path traversal names. Collision handling
     and exclusive filesystem publication remain the caller's responsibility.
     """
     def component(value: object) -> str:
         if type(value) is not str:
             return ""
+        value = value.encode("utf-8", "ignore").decode("utf-8")
         value = re.sub(r"[\x00-\x1f\x7f/\\]+", " ", value)
         value = re.sub(r"\s+", " ", value).strip(" .-")
         return value[:96].rstrip(" .-")
@@ -52,11 +59,15 @@ def transfer_readable_filename(
     # Suffix is the witnessed *file's* extension, not an inferred codec from
     # an upstream bibliographic Frmt.
     suffix = suffix if len(suffix) <= 16 and re.fullmatch(r"\.[A-Za-z0-9]+", suffix) else ""
+    budget = _TRANSFER_FILENAME_BYTE_LIMIT - len(suffix)
     if title_text:
+        # Keep title text even when a long multibyte author fills the budget.
+        author_budget = max(budget // 2, budget - 3 - len(title_text.encode("utf-8")))
+        author_text = _utf8_prefix(author_text, author_budget)
         stem = f"{author_text} - {title_text}" if author_text else title_text
     else:
         stem = component(source_path.stem) or "Sans titre"
-    return stem[:190].rstrip(" .-") + suffix
+    return _utf8_prefix(stem[:190], budget) + suffix
 
 
 __all__ = [
