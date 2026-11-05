@@ -2094,6 +2094,11 @@ class Storage:
                 if (type(item_id) is str and bool(item_id.strip())
                     and len(item_id) <= 1024
                     and not any(c in item_id for c in "\x00\r\n")
+                    # #3196: old Kobo keys padded in SQL cannot be
+                    # qualified by a current typed SourceKey. Never infer
+                    # their absence from a normalized manifest. Other
+                    # providers keep their historical prune semantics.
+                    and (provider != "kobo" or item_id == item_id.strip())
                     and item_id.strip() not in seen)
             ]
             local_preserved = 0
