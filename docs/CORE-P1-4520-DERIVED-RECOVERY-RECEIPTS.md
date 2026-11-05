@@ -14,7 +14,7 @@ Une variante ne devient autoritative qu'après publication physique par `os.link
 
 `review_pending_derived_receipts(service, identity_id=..., commit=False)` est une API Core interne **non exposée** à un plugin ni déclenchée au démarrage.
 
-- Lecture seule par défaut. Scan du profil et de ses sous-dossiers directs non symboliques ; maximum **128 reçus visibles par appel**, 8 KiB chacun. Les sous-arborescences plus profondes ne sont pas encore couvertes.
+- Lecture seule par défaut. Scan du profil et de ses sous-dossiers directs non symboliques ; au maximum **128 reçus par page** (8 KiB chacun). Chaque entrée expose un `cursor` relatif au profil ; si une page suivante existe, la dernière expose `next_cursor`. Utiliser `after_cursor=<next_cursor>` pour continuer. Les résultats sont triés lexicalement et la mémoire de sélection est bornée à 129 entrées, sans supprimer aucun fichier. L'itération n'est pas un snapshot atomique si un acteur modifie les répertoires simultanément. Les sous-arborescences profondes restent hors périmètre.
 - L'opérateur doit valider l'empreinte précise du reçu et fournir `approved_receipt_sha256` pour `commit=True`, avec identité actuellement active identique.
 - Vérification de l'intent SQLite, du placement source exact, du chemin canonique, des stamps inode et SHA source/sortie via fd `O_NOFOLLOW`. Sous le verrou `BEGIN IMMEDIATE` du constructeur `publish_derived_variant`, revalidation de l'intent **et** nouveau hash des deux inodes avant création de `OriginLink(derived)`.
 - Un parent supprimé et recréé avec les mêmes octets mais un nouvel inode est refusé. Un reçu manquant/altéré, symlink, changement de profil, collision, retrait d'intent ou changement physique mène à `manual_review`, jamais à une purge.
@@ -24,7 +24,7 @@ Une variante ne devient autoritative qu'après publication physique par `os.link
 
 POSIX ne garantit pas un `unlink` atomiquement conditionné au numéro d'inode. Dans un dossier pouvant être modifié par un acteur concurrent, un contrôle `fstat` juste avant `unlink` ne suffit pas. **Cette tranche supprime entièrement les chemins de nettoyage automatique des reçus**, au lieu de supprimer potentiellement un fichier substitué.
 
-**Coût et limite connus :** les reçus et intents s'accumulent également après succès ; à plus de 128 reçus visibles, le scanner échoue explicitement (`derived_recovery_receipt_limit`). Une politique ultérieure de journal privé Core / consolidation bornée **non destructive** et une stratégie pour les dossiers profonds sont indispensables avant activation production. Ce comportement fail-closed est intentionnel dans la PR draft ; pas de purge silencieuse ni de promesse de stockage illimité.
+**Coût et limite connus :** les reçus et intents s'accumulent également après succès. **La consultation est paginée et bornée à 128 entrées par appel**, y compris au-delà de 128 reçus persistants, mais l'occupation disque et le coût de l'inventaire continuent de croître. Une politique ultérieure de journal privé Core / consolidation **non destructive** et une stratégie pour les dossiers profonds sont nécessaires avant activation production. Aucune purge silencieuse, aucun quota de stockage implicitement garanti.
 
 ## Tests / statut
 
