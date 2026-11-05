@@ -35,6 +35,15 @@ def _utf8_prefix(value: str, limit: int) -> str:
     return value.encode("utf-8")[:limit].decode("utf-8", "ignore").rstrip(" .-")
 
 
+def _filename_component(value: object) -> str:
+    if type(value) is not str:
+        return ""
+    value = value.encode("utf-8", "ignore").decode("utf-8")
+    value = re.sub(r"[\x00-\x1f\x7f/\\]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip(" .-")
+    return value[:96].rstrip(" .-")
+
+
 def transfer_readable_filename(
     source_path: Path, *, title: object = None, author: object = None,
 ) -> str:
@@ -45,16 +54,8 @@ def transfer_readable_filename(
     cap encoded length, never return hidden/path traversal names. Collision handling
     and exclusive filesystem publication remain the caller's responsibility.
     """
-    def component(value: object) -> str:
-        if type(value) is not str:
-            return ""
-        value = value.encode("utf-8", "ignore").decode("utf-8")
-        value = re.sub(r"[\x00-\x1f\x7f/\\]+", " ", value)
-        value = re.sub(r"\s+", " ", value).strip(" .-")
-        return value[:96].rstrip(" .-")
-
-    title_text = component(title)
-    author_text = component(author)
+    title_text = _filename_component(title)
+    author_text = _filename_component(author)
     suffix = source_path.suffix
     # Suffix is the witnessed *file's* extension, not an inferred codec from
     # an upstream bibliographic Frmt.
@@ -66,7 +67,7 @@ def transfer_readable_filename(
         author_text = _utf8_prefix(author_text, author_budget)
         stem = f"{author_text} - {title_text}" if author_text else title_text
     else:
-        stem = component(source_path.stem) or "Sans titre"
+        stem = _filename_component(source_path.stem) or "Sans titre"
     return _utf8_prefix(stem[:190], budget) + suffix
 
 
