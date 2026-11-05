@@ -30,7 +30,7 @@ from ..plugin_api.provider_rights_observation import ProviderRightObservation
 from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReference
 from .canonical_publication import _physical_target, _same_file
 from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
-from .convergence_execution import CompletedDelivery
+from .convergence_execution import CompletedDelivery, CanonicalDrmUnresolved
 from .source_convergence import SourceKey
 
 logger = logging.getLogger(__name__)
@@ -446,6 +446,14 @@ def complete_selected_delivery(
                 inspection.valid, inspection.media_format, inspection.protected,
                 inspection.reason, valid, catalog_reason, encryption_profile,
             )
+            # A validated EPUB can still carry content DRM after a
+            # successful runtime or HTTPS delivery. Keep the historical
+            # exception message for the private raw journal and the same
+            # final veto; only this *pure* protected-EPUB case gets the
+            # distinct closed terminal reason drm_unresolved.
+            if (inspection.valid and inspection.media_format == kind == "epub"
+                    and inspection.protected is True and valid):
+                raise CanonicalDrmUnresolved("canonical_delivery_final_invalid")
             raise ValueError("canonical_delivery_final_invalid")
         digest = LocalCatalog.sha256(final)
         if (runtime_guarded and (

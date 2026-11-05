@@ -34,7 +34,7 @@ _REASONS = frozenset({
     "scope_or_consent_after_promotion", "canonical_delivery_recovered",
     "canonical_delivery_committed", "delivery_cancelled",
     "canonical_recovery_failed", "canonical_delivery_failed",
-    "canonical_receipt_failed", "canonical_promotion_failed",
+    "drm_unresolved", "canonical_receipt_failed", "canonical_promotion_failed",
     "canonical_publication_failed",
     "stock_origin_unproven", "stock_receipt_unproven",
     "stock_account_unbound", "stock_consent_changed",
