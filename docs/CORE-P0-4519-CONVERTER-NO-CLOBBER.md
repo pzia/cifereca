@@ -10,7 +10,10 @@ Artifact d'entrée possède plusieurs Placements `present`, **même au sein
 d'un seul profil**, jusqu'à l'ajout ultérieur d'un identifiant de Placement
 source autoritatif dans le contrat du transformer (#4520). Il refuse aussi
 les chemins source absents, non absolus, symlinks et répertoires source
-non réguliers. Le contexte du source (Placement exact, identité, inode du
+non réguliers. Il exige en outre la racine Core configurée par
+`library.directory` et un répertoire `identities.directory_name` unique :
+les octets hors du sous-arbre physique de cette identité sont refusés,
+même lorsqu'il n'existe qu'un seul Placement SQLite. Le contexte du source (Placement exact, identité, inode du
 fichier et du répertoire) est épinglé dans les deux leases, puis revalidé
 avant publication. Les octets du source sont à nouveau hashés.
 
@@ -44,8 +47,8 @@ Le P0 n'implémente pas le nouveau modèle `OriginLink derived`, la
 transaction globale FS+SQLite de publication, ni un identifiant de Placement
 contextuel dans `TransformRequest`. Le P1 doit notamment traiter les
 annulations/crashes après publication physique mais au milieu des écritures
-SQLite, ainsi que la garantie de racine bibliothèque configurée et son
-placement par profil. Les refus conservateurs du P0 sont souhaités tant
+SQLite, ainsi que le scope exact et transactionnel du Placement B dans
+`TransformRequest`. Les refus conservateurs du P0 sont souhaités tant
 que ce contrat complet manque. Le gel de déduplication #4496 reste intact.
 
 ## Acceptation synthétique
