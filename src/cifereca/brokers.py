@@ -1381,7 +1381,7 @@ class SynchronizationBrokerImpl:
                           or bool(result.get("warnings")))
             if incomplete:
                 terminal_cycle(
-                    "partial",
+                    "failed" if outcome in {"failed", "error"} else "partial",
                     None if invalid_status else facts.get("canonical_execution"),
                 )
                 facts["reason"] = "invalid_response" if invalid_status else "source_partial"
