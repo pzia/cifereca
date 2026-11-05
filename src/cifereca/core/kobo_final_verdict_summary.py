@@ -93,7 +93,9 @@ def classify(events: object) -> dict[str, object]:
 
 
 
-def summarize_document(document: object) -> dict[str, object]:
+def summarize_document(
+    document: object, *, manifest_coverage: object = None,
+) -> dict[str, object]:
     """Do not confuse retained-log coverage with evidence of all attempts.
 
     Even an 'available' day ZIP is a sequential, non-atomic capture of only
@@ -103,16 +105,20 @@ def summarize_document(document: object) -> dict[str, object]:
     if type(document) is not dict:
         return {"status": "invalid_journal", "occurrences": 0,
                 "instrumented": 0, "reasons": {},
-                "journal_coverage": "unknown"}
+                "journal_coverage": "unknown",
+                "historical_completeness_attested": False}
     report = classify(document.get("events"))
-    declared = document.get("coverage")
-    gaps = document.get("rotation_gaps")
-    missing = document.get("active_log_missing")
-    if (declared == "partial" or
-            type(gaps) is list and bool(gaps) or missing is True):
+    # These fields live in the DAILY ZIP manifest, not the raw events JSON.
+    # A caller-supplied document containing fake coverage must never be
+    # mistaken for validated evidence from the ZIP reader.
+    metadata = manifest_coverage if type(manifest_coverage) is dict else {}
+    declared = metadata.get("coverage")
+    gaps = metadata.get("rotation_gaps_present")
+    missing = metadata.get("active_log_missing")
+    if (declared == "partial" or gaps is True or missing is True):
         coverage = "partial"
-    elif (declared in ("available", "empty")
-            and gaps == [] and missing is False):
+    elif (type(declared) is str and declared in ("available", "empty")
+            and gaps is False and missing is False):
         coverage = declared
     else:
         coverage = "unknown"
@@ -130,12 +136,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("journal_zip", type=Path)
     args = parser.parse_args(argv)
     try:
-        data = read_raw_journal_zip(args.journal_zip)
+        data, manifest_coverage = read_raw_journal_zip(
+            args.journal_zip, include_manifest_coverage=True,
+        )
     except (JournalZipError, OSError):
         # Never print the exception: it may contain a private path.
         print(json.dumps({"status": "journal_unreadable"}))
         return 2
-    print(json.dumps(summarize_document(data), sort_keys=True))
+    print(json.dumps(
+        summarize_document(data, manifest_coverage=manifest_coverage),
+        sort_keys=True,
+    ))
     return 0
 
 
