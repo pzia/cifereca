@@ -374,7 +374,7 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
             # The durable, profile-scoped receipt precedes the hardlink.
             # A killed process may later prove this exact inode and intent.
             if before_link is not None:
-                before_link(source_parent / candidate)
+                before_link(source_parent / candidate, stage_fd)
             try:
                 os.link(staged.name, candidate, src_dir_fd=stage_fd,
                         dst_dir_fd=parent_fd, follow_symlinks=False)
@@ -811,9 +811,10 @@ class ArtifactExecutionBrokerImpl:
         )
         pending_receipts: list[Path] = []
 
-        def attest_prelink(candidate: Path) -> None:
+        def attest_prelink(candidate: Path, stage_fd: int) -> None:
             receipt = write_pending_derived_receipt(
-                path, candidate, source_path=source_path,
+                path, candidate, stage_dir_fd=stage_fd,
+                source_path=source_path,
                 source_artifact_id=source.artifact_id,
                 source_sha256=source.sha256,
                 source_placement_id=lease.source_placement_id,
