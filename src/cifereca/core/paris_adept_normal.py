@@ -42,6 +42,8 @@ def normal_paris_adept_status(
         and row["credential_id"].strip()
     ]
     if not rows:
+        if primary_connection_id is not None:
+            response.update(status="to_verify", reason="primary_paris_connection_missing")
         return response
     # An explicitly designated source never falls back to another Paris
     # login when its credential disappears, is disabled, or changes owner.
