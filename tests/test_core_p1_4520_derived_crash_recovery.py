@@ -481,3 +481,44 @@ def test_recreated_source_with_identical_bytes_does_not_establish_causality(
         assert original_path.read_bytes() == saved_bytes
     finally:
         service.storage.close()
+
+
+def test_successful_publish_preserves_replaced_same_bytes_receipt_inode(
+    tmp_path, monkeypatch,
+):
+    service, source, _ = _library(tmp_path)
+    try:
+        from cifereca.core import derived_variant_recovery as recovery
+        original = recovery._read_receipt_nofollow
+        seen = []
+        replaced = []
+
+        def replace_same_bytes_at_retirement(receipt):
+            seen.append(receipt)
+            if len(seen) == 2:
+                # Preserving the SHA is NOT preserving the original inode.
+                raw = original(receipt)
+                receipt.unlink()
+                receipt.write_bytes(raw)
+                replaced.append(receipt)
+            return original(receipt)
+
+        monkeypatch.setattr(
+            recovery, "_read_receipt_nofollow",
+            replace_same_bytes_at_retirement,
+        )
+        derived = ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        assert derived.artifact_id != source.artifact_id
+        assert len(replaced) == 1
+        assert replaced[0].is_file()
+        # A stale but valid signed intent may still be inspected and is
+        # already committed; it must never create a duplicate derived link.
+        reviewed = recovery.review_pending_derived_receipts(
+            service, identity_id="id1",
+        )
+        assert reviewed[0]["status"] == "already_committed"
+        assert len(service.storage.artifact_variants()) == 1
+    finally:
+        service.storage.close()
