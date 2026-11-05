@@ -127,9 +127,60 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertFalse(audited)
+        self.assertEqual(audited, {"literary-criticism"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
+
+    def test_audited_literary_criticism_stays_isolated_from_other_plugin_suites(self):
+        # Specific package proved independent. Any newly discovered consumer
+        # must trigger an explicit graph audit before maintaining this scope.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertEqual(audited, {"literary-criticism"})
+        self.assertEqual(
+            selector.affected_packages({"literary-criticism"}, graph),
+            ["literary-criticism"],
+        )
+        chosen, reason = selector.select([
+            ("M", "src/plugins/literary-criticism/criticism_feeds.py"),
+        ], ROOT)
+        self.assertEqual(chosen, ["src/plugins/literary-criticism"])
+        self.assertIn("dependency closure", reason)
+        # All other product packages remain conservatively unaudited.
+        chosen, reason = selector.select([
+            ("M", "src/plugins/baen/cifereca_baen.py"),
+        ], ROOT)
+        self.assertEqual(chosen, [])
+        self.assertIn("not audited", reason)
+        chosen, reason = selector.select([
+            ("M", "src/plugins/literary-criticism/criticism_feeds.py"),
+            ("M", "src/plugins/baen/cifereca_baen.py"),
+        ], ROOT)
+        self.assertEqual(chosen, [])
+        self.assertIn("not audited", reason)
+        for status, path in (
+            ("M", "src/plugins/literary-criticism/cifereca-plugin.json"),
+            ("D", "src/plugins/literary-criticism/criticism_feeds.py"),
+            ("R100", "src/plugins/literary-criticism/criticism_feeds.py"),
+        ):
+            with self.subTest(status=status, path=path):
+                self.assertEqual(selector.select([(status, path)], ROOT)[0], [])
+
+    def test_audited_literary_python_imports_have_no_unaudited_consumers(self):
+        # A new explicit cross-package import requires adding the consumer to
+        # the dependency graph; do not silently retain a selective green gate.
+        tokens = (
+            "literary_criticism", "literary-criticism",
+            "criticism_feeds", "criticism_page", "criticism_llm",
+            "criticism.index", "criticism.source",
+        )
+        for file in sorted((ROOT / "src/plugins").glob("*/**/*.py")):
+            if file.relative_to(ROOT / "src/plugins").parts[0] == "literary-criticism":
+                continue
+            content = file.read_text(encoding="utf-8", errors="replace")
+            self.assertFalse(
+                any(token in content for token in tokens),
+                f"Unexpected new literary-criticism consumer: {file}",
+            )
 
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.root), *args], stderr=subprocess.DEVNULL).decode().strip()
