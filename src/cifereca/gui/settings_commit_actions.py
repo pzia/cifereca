@@ -32,8 +32,13 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             if editor.get("deleted"):
                 continue
             row = {key: editor[key].get_text() for key in
-                   ("id", "label", "directory", "adept_profile",
-                    "primary_paris_connection_id", "languages")}
+                   ("id", "label", "directory", "adept_profile", "languages")}
+            # Old headless/embedded identity editors predate this optional
+            # field. Omission preserves the exact persisted binding in
+            # build_settings_draft; live Settings always supplies this row.
+            primary = editor.get("primary_paris_connection_id")
+            if primary is not None:
+                row["primary_paris_connection_id"] = primary.get_text()
             row["prefer_vo"] = editor["prefer_vo"].get_active()
             identities.append(row)
         accounts = []
