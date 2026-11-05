@@ -17,12 +17,15 @@
 | W4 | `core/kobo_local_reconciliation.py::reconcile_kobo_local` | Écrit sous confirmation explicite `backup_items`, acquisition, entitlement, Artifact et Placement via `_write_row` ; undo journalisé | Rapprochement manuel legacy avec compte/chemin/SHA exact. **Refuse désormais toute SourceReference canonique sur le même credential/édition, même autre emprunteur, ainsi que tout checkpoint `canonical.completed-delivery.v1`** : seuls les dossiers réellement legacy restent accessibles. Doit être remplacé avant coupure. |
 | W5 | `Storage.relocate_local_path` et relocalisations historiques du stockage (notamment lors de migration de dossier d'identité) | La relocalisation ordinaire **refuse désormais** de réécrire `backup_items.local_path` lorsque le credential/édition Kobo possède une `SourceReference` (même autre emprunteur/profil), avant toute mutation de placement ; les dossiers strictement 0.7 restent compatibles. Les autres parcours de migration et le relink canonique attesté restent à qualifier. | La migration de chemins est distincte de la livraison : l'opérateur Core de déduplication avec preuves OriginLink exactes peut effectuer un relink sous contrôle, **pas** une simple normalisation sur reçu legacy. W5 n'est pas encore archivé globalement. |
 
-**Autre méthode existante :** `LibraryService._migrate_legacy_flat_kobo_files`
-contient des copies de fichiers + `relocate_local_path` fondées sur d'anciennes
-déclarations. Aucun appel depuis les sources de production courantes n'a été
-identifié par la recherche du symbole. Ne **pas** l'exécuter pour démontrer sa
-disparition ; décider explicitement de sa suppression ou de sa mise en lecture
-seule lors du cutover.
+**Autre entrée W5 retirée :** `LibraryService._migrate_legacy_flat_kobo_files`
+conserve sa signature privée de façade mais lève désormais immédiatement
+`legacy_kobo_flat_migration_retired`, sans ouvrir SQLite, copier ou détruire
+un fichier. L'ancienne implémentation copiait puis effaçait un fichier
+sur l'autorité insuffisante d'une ligne `backup_items`. Aucun appel de
+production n'était identifié ; le veto explicite permet de détecter un
+éventuel ancien appel au lieu d'effectuer un déplacement non attesté.
+La migration journalisée des répertoires d'identités et les relinks canoniques
+attestés restent des opérations distinctes, non retirées par cette tranche.
 
 **Gel de surface :** le test
 `tests/test_core_p0_3196_residual_writer_surface.py` détecte les nouveaux
