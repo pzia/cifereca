@@ -160,6 +160,49 @@ def test_active_matching_owned_right_and_prior_hash_are_independent_requirements
     assert _dump(case) == before
 
 
+
+@pytest.mark.parametrize("variant", [
+    "typed_source", "typed_source_other_account",
+    "canonical_checkpoint", "escaped_canonical_checkpoint",
+])
+def test_old_kobo_repair_cannot_write_over_a_canonical_source_or_stage(case, variant):
+    # W4 must not manufacture a second positive local link from a legacy
+    # projection when Core already owns a typed SourceReference or intake.
+    with case.storage._lock, case.storage._connect() as db:
+        if variant.startswith("typed_source"):
+            account = ("PRIVATE-account" if variant == "typed_source"
+                       else "another-borrower")
+            db.execute(
+                "INSERT INTO source_references("
+                "source_reference_id,identity_id,provider_id,credential_id,"
+                "account_id,branch_id,edition_id,right_id,reference_kind,"
+                "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                ("synthetic-source", "default", "kobo", "vault-1",
+                 account, "purchases", "PRIVATE-product", "purchase",
+                 "purchase", 1, 1),
+            )
+        else:
+            checkpoint = '{"schema":"canonical.completed-delivery.v1"}'
+            if variant == "escaped_canonical_checkpoint":
+                checkpoint = checkpoint.replace("schema", "sch\\u0065ma")
+            db.execute(
+                "UPDATE acquisition_ledger SET metadata_json=? "
+                "WHERE provider_id='kobo' AND credential_id='vault-1' "
+                "AND item_id='PRIVATE-product'",
+                (checkpoint,),
+            )
+    before = _dump(case)
+    with pytest.raises(
+        repair.ReconciliationRejected,
+        match=("canonical_source_requires_core_recovery"
+               if variant.startswith("typed_source")
+               else "canonical_stage_requires_core_recovery"),
+    ):
+        _run(case)
+    assert _dump(case) == before
+    assert case.original.is_file() and case.target.is_file()
+    assert case.original.read_bytes() == case.target.read_bytes()
+
 def test_different_bytes_are_not_matched_by_title_product_or_filename(case):
     case.target.write_bytes(b"different edition")
     before = _dump(case)
