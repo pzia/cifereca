@@ -1408,8 +1408,29 @@ class LibraryMaintenanceBrokerImpl:
             return LibraryMutationPlan(op, "Supprimer la variante et ses placements", request, destructive=True, changes=(request.artifact_id,), warnings=("Les matérialisations de cette variante seront supprimées.",))
         if op == "set_preferred_variant":
             rows=self.service.storage.artifact_variants(artifact_id=request.artifact_id)
-            if not rows: raise NotFound("Variante inconnue", code="artifact_variant_not_found")
-            return LibraryMutationPlan(op, f"Définir la variante préférée pour {request.purpose or 'read'}", request, changes=(request.artifact_id, request.purpose or "read"))
+            if len(rows) != 1:
+                raise _VariantScopeConflict("Recette de variante absente ou ambiguë")
+            owner = getattr(getattr(self.service, "current_identity", None),
+                            "identity_id", None)
+            purpose = request.purpose or "read"
+            if (type(owner) is not str or not owner
+                    or (request.target_identity_id is not None
+                        and request.target_identity_id != owner)
+                    or purpose not in ("read", "export", "transfer")):
+                raise _VariantScopeConflict("Préférence sans profil actif vérifié")
+            qualified = _scoped_derived_preference_candidate(
+                self.service.storage, rows[0], owner,
+            )
+            if qualified is None:
+                raise _VariantScopeConflict("Variante du profil non attestée")
+            source_id, child_placement_id = qualified
+            return LibraryMutationPlan(
+                op, f"Définir la variante préférée pour {purpose}",
+                request, changes=(request.artifact_id, purpose),
+                facts={"identity_id": owner, "source_artifact_id": source_id,
+                       "placement_id": child_placement_id,
+                       "variant_id": rows[0]["variant_id"]},
+            )
         raise UnsupportedOperation(f"Opération de maintenance non supportée: {op}")
 
     def run(self, plan: LibraryMutationPlan, control: TaskControl | None = None) -> LibraryMutationResult:
@@ -1823,11 +1844,37 @@ class LibraryMaintenanceBrokerImpl:
                 self.service.storage.catalog_entry_update_metadata(str(entry.get("catalog_entry_id")),meta); changed += 1
             return LibraryMutationResult(True,changed,plan.summary,facts={"cover_artifact_id":request.cover_artifact_id})
         if request.operation == "set_preferred_variant":
-            row=self.service.storage.artifact_variants(artifact_id=request.artifact_id)[0]
-            source_id=str(row.get("source_artifact_id") or "")
-            purpose=str(request.purpose or "read")
-            self.service.storage.metadata_set(f"artifact.variant.preferred.{source_id}.{purpose}", request.artifact_id)
-            return LibraryMutationResult(True,1,plan.summary,facts={"source_artifact_id":source_id,"artifact_id":request.artifact_id,"purpose":purpose})
+            rows = self.service.storage.artifact_variants(
+                artifact_id=request.artifact_id,
+            )
+            owner = getattr(getattr(self.service, "current_identity", None),
+                            "identity_id", None)
+            purpose = request.purpose or "read"
+            if (len(rows) != 1 or type(owner) is not str or not owner
+                    or (request.target_identity_id is not None
+                        and request.target_identity_id != owner)
+                    or purpose not in ("read", "export", "transfer")):
+                raise _VariantScopeConflict("Portée de préférence modifiée")
+            qualified = _scoped_derived_preference_candidate(
+                self.service.storage, rows[0], owner,
+            )
+            if (qualified is None
+                    or plan.facts.get("identity_id") != owner
+                    or plan.facts.get("source_artifact_id") != qualified[0]
+                    or plan.facts.get("placement_id") != qualified[1]
+                    or plan.facts.get("variant_id") != rows[0].get("variant_id")):
+                raise _VariantScopeConflict("Variante préférée requalifiée après plan")
+            source_id = qualified[0]
+            self.service.storage.metadata_set(
+                f"artifact.variant.preferred.{owner}.{source_id}.{purpose}",
+                request.artifact_id,
+            )
+            return LibraryMutationResult(
+                True, 1, plan.summary,
+                facts={"source_artifact_id": source_id,
+                       "artifact_id": request.artifact_id,
+                       "identity_id": owner, "purpose": purpose},
+            )
         if request.operation == "delete_variant":
             rows = self.service.storage.artifact_variants(
                 artifact_id=request.artifact_id,
