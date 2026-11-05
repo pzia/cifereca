@@ -270,6 +270,7 @@ def test_foreign_only_cached_variant_does_not_satisfy_other_profile(tmp_path):
             "UPDATE placements SET path=?,identity_id='id2' WHERE placement_id=?",
             (str(b_original), original_id),
         )
+    service.current_identity.identity_id = "id2"
     second = broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
     assert second.sha256 == first.sha256
     assert (b_original.parent / "Optimized.epub").read_bytes() == DATA
@@ -396,3 +397,24 @@ def test_swapped_intermediate_staging_root_cannot_escape_profile(
     assert not (tmp_path / "library" / "Optimized.epub").exists()
     assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
     assert service.storage.placement_get(original_id) is not None
+
+
+def test_active_other_profile_cannot_convert_unique_foreign_sha(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+    # Artifact is unique and verified under id1, but the user is now in id2.
+    service.current_identity.identity_id = "id2"
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    assert caught.value.code == "artifact_source_identity_mismatch"
+    assert not (tmp_path / "library" / "Optimized.epub").exists()
+    assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+    assert service.storage.placement_get(original_id)["identity_id"] == "id1"
+
+
+def test_unknown_active_identity_never_selects_first_sha_placement(tmp_path):
+    service, source, original_id, broker = _broker(tmp_path)
+    service.current_identity = None
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"), control=Control())
+    assert caught.value.code == "artifact_source_identity_mismatch"
+    assert not (tmp_path / "library" / "Optimized.epub").exists()
