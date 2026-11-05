@@ -359,6 +359,38 @@ class ArtifactExecutionBrokerImpl:
                 or _variant_file_stamp(path) is None
                 or _variant_directory_stamp(path.parent) is None):
             raise Conflict("Placement source non vérifié", code="artifact_source_unverified")
+        # P0 #4519: a global SHA is never permission to read another
+        # identity's physical copy. The registered profile subtree and the
+        # Core-owned library root are the only acceptable path authority.
+        config = getattr(self.service, "config", None)
+        get = getattr(config, "get", None)
+        raw = get("library.directory", None) if callable(get) else None
+        profile = self.service.storage.identity_get(row["identity_id"])
+        directory = profile.get("directory_name") if type(profile) is dict else None
+        if (type(raw) is not str or not raw or type(directory) is not str
+                or directory in ("", ".", "..")
+                or "/" in directory or "\\" in directory):
+            raise Conflict("Profil de variante non vérifié", code="artifact_source_scope_unverified")
+        try:
+            root = Path(os.path.expandvars(raw)).expanduser()
+            owner_folder = root / directory
+            if (not root.is_absolute()
+                    or _variant_directory_stamp(root) is None
+                    or _variant_directory_stamp(owner_folder) is None
+                    or path.resolve(strict=True) != path
+                    or not path.is_relative_to(owner_folder)
+                    or any(
+                        (owner_folder.joinpath(*path.relative_to(owner_folder).parts[:n])).is_symlink()
+                        for n in range(1, len(path.relative_to(owner_folder).parts) + 1)
+                    )
+                    or sum(
+                        x.get("directory_name") == directory
+                        for x in self.service.storage.identities()
+                    ) != 1):
+                raise ValueError("variant_profile_path_unverified")
+        except (OSError, RuntimeError, ValueError, TypeError) as error:
+            raise Conflict("Chemin de variante hors profil",
+                           code="artifact_source_scope_unverified") from error
         return row
 
     def input_lease(self, artifact: ArtifactRef) -> _InputLease:
