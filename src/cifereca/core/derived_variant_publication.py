@@ -6,7 +6,6 @@ origin. Orphan file recovery after a crash remains a separate bounded step.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 import time
