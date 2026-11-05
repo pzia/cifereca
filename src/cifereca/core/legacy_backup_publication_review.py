@@ -161,11 +161,15 @@ def review_legacy_backup_publication(
             # by its exact durable stage/SourceKey/OriginLink/borrower/path.
             # This helper checks the whole bounded ledger for collisions
             # with this physical path across every profile and account.
-            _require(_completed_path_receipt_evidence(
-                db, path=path, identity=identity_id, artifact=placement[1],
-                provider="kobo", edition=item_id,
-                credential=credential_id, account=account,
-            ) == 1, "canonical_receipt_unverified")
+            try:
+                receipt_count = _completed_path_receipt_evidence(
+                    db, path=path, identity=identity_id,
+                    artifact=placement[1], provider="kobo", edition=item_id,
+                    credential=credential_id, account=account,
+                )
+            except (ValueError, TypeError, sqlite3.Error) as error:
+                raise _Refuse("canonical_receipt_unverified") from error
+            _require(receipt_count == 1, "canonical_receipt_unverified")
 
             after_root = os.stat(library_root, follow_symlinks=False)
             _require((root_stat.st_dev, root_stat.st_ino)
