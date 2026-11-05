@@ -29,6 +29,7 @@ from ..paths import acquisition_lock_file
 from ..plugin_api.provider_rights_observation import ProviderRightObservation
 from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReference
 from .canonical_publication import _physical_target, _same_file
+from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
 from .convergence_execution import CompletedDelivery
 from .source_convergence import SourceKey
 
@@ -424,6 +425,13 @@ def complete_selected_delivery(
             # the independent validation facts *before* cleanup, without
             # exposing a temporary file or treating a runtime returncode=0
             # as evidence that the final EPUB/PDF is usable.
+            # Classification is evidence-only. Even a font-obfuscation profile
+            # cannot override the independent protected=True final veto.
+            encryption_profile = (
+                rejected_epub_encryption_profile(final)
+                if inspection.media_format == "epub"
+                and inspection.protected is True else "not_applicable"
+            )
             logger.warning(
                 "TRACE canonical delivery final rejected "
                 "code=canonical_delivery_final_invalid provider_id=%s "
@@ -431,12 +439,12 @@ def complete_selected_delivery(
                 "reader=%s runtime_guarded=%s expected_kind=%s "
                 "inspection_valid=%s inspection_format=%s "
                 "inspection_protected=%s inspection_reason=%s "
-                "catalog_valid=%s catalog_reason=%s",
+                "catalog_valid=%s catalog_reason=%s encryption_profile=%s",
                 scope.provider_id, scope.identity_id, scope.account_id,
                 source.edition_id, source.right_id,
                 reader_name, runtime_guarded, kind,
                 inspection.valid, inspection.media_format, inspection.protected,
-                inspection.reason, valid, catalog_reason,
+                inspection.reason, valid, catalog_reason, encryption_profile,
             )
             raise ValueError("canonical_delivery_final_invalid")
         digest = LocalCatalog.sha256(final)
