@@ -115,6 +115,16 @@ def test_ebooks_queries_and_cache_warmth_are_counted_not_reissued():
             session, ParisProviderSession,
         )
     )
+    # The synthetic fixture's default Loan.raw is deliberately empty, so
+    # typed branch coverage stays unknown. This test exercises enrichment on
+    # genuinely qualified complete branches: preserve the source Id/RecordId.
+    original_loans = session.client.loans
+    def supplier_loans(upstream, borrower_id):
+        result = original_loans(upstream, borrower_id)
+        for row in result:
+            row.raw = {"Id": row.id, "RecordId": row.record_id}
+        return result
+    session.client.loans = supplier_loans
     searches = []
     def search(query, *, scenario, result_size):
         assert scenario == "EBOOKS" and result_size == 12
