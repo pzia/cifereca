@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gutenberg"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gutenberg"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -363,6 +363,65 @@ class PluginSelectionTests(unittest.TestCase):
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
                     )
+
+    def test_gutenberg_product_selects_home_page_consumer(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("provider-gutenberg", audited)
+        self.assertIn("transport-http", graph["provider-gutenberg"])
+        self.assertIn("provider-gutenberg", graph["home-page"])
+        self.assertEqual(
+            selector.affected_packages({"provider-gutenberg"}, graph),
+            ["home-page", "provider-gutenberg"],
+        )
+        chosen, reason = selector.select([
+            ("M", "src/plugins/provider-gutenberg/cifereca_gutenberg.py"),
+        ], ROOT)
+        self.assertEqual(chosen, [
+            "src/plugins/home-page", "src/plugins/provider-gutenberg",
+        ])
+        self.assertIn("dependency closure", reason)
+        # Changing a required transport still reaches Gutenberg, its home
+        # consumer, and the other transport dependents transitively.
+        affected = selector.affected_packages({"transport-http"}, graph)
+        self.assertTrue({"transport-http", "provider-gutenberg", "home-page"} <= set(affected))
+        # A modification to the unaudited home-page itself stays exhaustive.
+        chosen, reason = selector.select([
+            ("M", "src/plugins/home-page/cifereca_home.py"),
+        ], ROOT)
+        self.assertEqual(chosen, [])
+        self.assertIn("not audited", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-gutenberg/cifereca_gutenberg.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-gutenberg/cifereca-plugin.json")],
+            [("M", "src/plugins/provider-gutenberg/tests/conftest.py")],
+            [("D", "src/plugins/provider-gutenberg/cifereca_gutenberg.py")],
+            [("R100", "src/plugins/provider-gutenberg/cifereca_gutenberg.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_gutenberg_specific_cross_plugin_consumers_are_known(self):
+        tokens = (
+            "provider-gutenberg", "provider.gutenberg",
+            "cifereca_gutenberg", "gutenberg",
+        )
+        root = ROOT / "src/plugins"
+        consumers = set()
+        for package_dir in sorted(root.iterdir()):
+            if not package_dir.is_dir() or package_dir.name == "provider-gutenberg":
+                continue
+            for file in package_dir.rglob("*"):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yaml", ".yml", ".sh",
+                }:
+                    data = file.read_text(encoding="utf-8", errors="replace")
+                    if any(token in data for token in tokens):
+                        consumers.add(package_dir.name)
+        self.assertEqual(consumers, {"home-page"})
 
     def test_bnf_catalogue_product_selects_home_page_consumer(self):
         # home-page hardcodes the public BnF source ID and its non-lending
