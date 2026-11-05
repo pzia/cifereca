@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gutenberg"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gutenberg"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -362,6 +362,65 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
+                    )
+
+    def test_gallica_product_selects_home_page_consumer(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("provider-gallica", audited)
+        self.assertIn("transport-http", graph["provider-gallica"])
+        self.assertIn("provider-gallica", graph["home-page"])
+        self.assertEqual(
+            selector.affected_packages({"provider-gallica"}, graph),
+            ["home-page", "provider-gallica"],
+        )
+        for module in ("cifereca_gallica.py", "cifereca_gallica_audio.py"):
+            with self.subTest(module=module):
+                chosen, reason = selector.select([
+                    ("M", "src/plugins/provider-gallica/" + module),
+                ], ROOT)
+                self.assertEqual(chosen, [
+                    "src/plugins/home-page", "src/plugins/provider-gallica",
+                ])
+                self.assertIn("dependency closure", reason)
+        affected = selector.affected_packages({"transport-http"}, graph)
+        self.assertTrue(
+            {"transport-http", "provider-gallica", "home-page"} <= set(affected),
+        )
+        for changes in (
+            [("M", "src/plugins/home-page/cifereca_home.py")],
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-gallica/cifereca_gallica.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-gallica/cifereca-plugin.json")],
+            [("M", "src/plugins/provider-gallica/tests/conftest.py")],
+            [("D", "src/plugins/provider-gallica/cifereca_gallica.py")],
+            [("R100", "src/plugins/provider-gallica/cifereca_gallica.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_gallica_plugin_ids_and_imports_have_no_unaudited_consumers(self):
+        # The literal "gallica" in BnF XML-link parsing refers to an
+        # external URL origin, not an in-process provider.gallica import.
+        tokens = (
+            "provider.gallica", "provider-gallica",
+            "cifereca_gallica", "from cifereca_gallica",
+            "import cifereca_gallica",
+        )
+        root = ROOT / "src/plugins"
+        for package_dir in sorted(root.iterdir()):
+            if not package_dir.is_dir() or package_dir.name == "provider-gallica":
+                continue
+            for file in package_dir.rglob("*"):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yaml", ".yml", ".sh",
+                }:
+                    data = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in data for token in tokens),
+                        f"Unexpected Gallica plugin consumer: {file}",
                     )
 
     def test_gutenberg_product_selects_home_page_consumer(self):
