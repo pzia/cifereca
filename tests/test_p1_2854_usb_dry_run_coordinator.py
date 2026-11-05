@@ -141,7 +141,7 @@ def test_verified_owned_source_and_complete_scan_only_propose_upload(tmp_path, m
 @pytest.mark.parametrize("payload,expected", [
     (b"invalid EPUB ZIP file", "content_structure_unverified"),
     (epub_bytes(encrypted=True), "content_protection_detected"),
-])
+], ids=("invalid_zip", "encrypted_epub"))
 def test_real_file_structure_and_encryption_block_after_sha(
     tmp_path, monkeypatch, payload, expected,
 ):
