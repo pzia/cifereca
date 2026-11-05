@@ -4785,6 +4785,16 @@ class Storage:
             row=dict(zip(columns,record)); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
         return out
 
+    def review_legacy_derived_variant(
+        self, *, identity_id: str, variant_id: str, library_root: Path,
+    ):
+        """Read-only legacy Converter review; never a migration capability."""
+        from .core.derived_legacy_review import review_legacy_derived_variant
+        return review_legacy_derived_variant(
+            self, identity_id=identity_id, variant_id=variant_id,
+            library_root=library_root,
+        )
+
     def artifact_variant_delete(self, variant_id: str) -> None:
         with self._lock, self._connect() as db:
             db.execute("DELETE FROM artifact_variants WHERE variant_id=?", (str(variant_id),))
