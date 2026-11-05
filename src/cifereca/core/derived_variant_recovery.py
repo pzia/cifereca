@@ -167,6 +167,54 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
     return journal
 
 
+_INTENT_KEY = "derived.publication.pending.v1:"
+
+
+def _pending_intent_key(journal: Path) -> str:
+    name = journal.name
+    nonce = name.removeprefix("pending-").removesuffix(".json")
+    if (not name.startswith("pending-") or not name.endswith(".json")
+            or len(nonce) != 32
+            or any(ch not in "0123456789abcdef" for ch in nonce)):
+        raise ValueError("derived_receipt_name_invalid")
+    return _INTENT_KEY + nonce
+
+
+def register_pending_derived_receipt(storage: Any, journal: Path) -> None:
+    """Create a durable DB intent before hardlink; not an OriginLink or right."""
+    raw = _read_receipt_nofollow(journal)
+    digest = hashlib.sha256(raw).hexdigest()
+    key = _pending_intent_key(journal)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        result = db.execute(
+            "INSERT INTO metadata(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO NOTHING",
+            (key, digest),
+        )
+        if result.rowcount != 1:
+            raise ValueError("derived_receipt_intent_collision")
+
+
+def _intent_matches(storage: Any, journal: Path, digest: str) -> bool:
+    """A filesystem receipt alone can never authorize new derived history."""
+    try:
+        key = _pending_intent_key(journal)
+        return storage.metadata_get(key) == digest
+    except (TypeError, ValueError):
+        return False
+
+
+def retire_pending_derived_receipt(storage: Any, journal: Path) -> None:
+    """After SQL success, remove only the receipt then its DB intent."""
+    _safe_unlink_receipt(journal)
+    if journal.exists() or journal.is_symlink():
+        return
+    key = _pending_intent_key(journal)
+    with storage._lock, storage._connect() as db:
+        db.execute("DELETE FROM metadata WHERE key=?", (key,))
+
+
 def review_pending_derived_receipts(service: Any, *, identity_id: str,
                                     commit: bool = False,
                                     approved_receipt_sha256: str = "") -> tuple[dict[str, str], ...]:
@@ -218,7 +266,8 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
             receipt_digest = hashlib.sha256(receipt_bytes).hexdigest()
             data = json.loads(receipt_bytes)
             if (type(data) is not dict or data.get("schema") != SCHEMA
-                    or data.get("identity_id") != identity_id):
+                    or data.get("identity_id") != identity_id
+                    or not _intent_matches(storage, journal, receipt_digest)):
                 continue
             source = Path(data["source_path"])
             target = Path(data["published_path"])
