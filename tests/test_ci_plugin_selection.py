@@ -507,7 +507,6 @@ class PluginSelectionTests(unittest.TestCase):
             {"transport-http", "ebooksgratuits", "home-page"} <= set(affected),
         )
         for changes in (
-            [("M", "src/plugins/home-page/cifereca_home.py")],
             [("M", "src/plugins/baen/cifereca_baen.py")],
             [("M", "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py"),
              ("M", "src/plugins/baen/cifereca_baen.py")],
@@ -573,7 +572,6 @@ class PluginSelectionTests(unittest.TestCase):
             {"transport-http", "provider-gallica", "home-page"} <= set(affected),
         )
         for changes in (
-            [("M", "src/plugins/home-page/cifereca_home.py")],
             [("M", "src/plugins/baen/cifereca_baen.py")],
             [("M", "src/plugins/provider-gallica/cifereca_gallica.py"),
              ("M", "src/plugins/baen/cifereca_baen.py")],
@@ -629,12 +627,12 @@ class PluginSelectionTests(unittest.TestCase):
         # consumer, and the other transport dependents transitively.
         affected = selector.affected_packages({"transport-http"}, graph)
         self.assertTrue({"transport-http", "provider-gutenberg", "home-page"} <= set(affected))
-        # A modification to the unaudited home-page itself stays exhaustive.
+        # Home-page is audited independently; reverse dependency is not implied.
         chosen, reason = selector.select([
             ("M", "src/plugins/home-page/cifereca_home.py"),
         ], ROOT)
-        self.assertEqual(chosen, [])
-        self.assertIn("not audited", reason)
+        self.assertEqual(chosen, ["src/plugins/home-page"])
+        self.assertIn("dependency closure", reason)
         for changes in (
             [("M", "src/plugins/baen/cifereca_baen.py")],
             [("M", "src/plugins/provider-gutenberg/cifereca_gutenberg.py"),
@@ -687,13 +685,13 @@ class PluginSelectionTests(unittest.TestCase):
                     "src/plugins/home-page", "src/plugins/provider-bnf-catalogue",
                 ])
                 self.assertIn("dependency closure", reason)
-        # The reverse direction is not implied; home-page itself remains
-        # unaudited and its product changes run the full plugin gate.
+        # Home-page is now audited; modifying the consumer does not
+        # invoke the provider's own suite in the reverse direction.
         chosen, reason = selector.select([
             ("M", "src/plugins/home-page/cifereca_home.py"),
         ], ROOT)
-        self.assertEqual(chosen, [])
-        self.assertIn("not audited", reason)
+        self.assertEqual(chosen, ["src/plugins/home-page"])
+        self.assertIn("dependency closure", reason)
         for changes in (
             [("M", "src/plugins/baen/cifereca_baen.py")],
             [("M", "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py"),
