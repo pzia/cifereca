@@ -34,8 +34,12 @@ Si les deux chemins sont déjà occupés physiquement, par symlink ou par
 un Placement SQLite même lorsque le fichier manque, **refus explicite**
 `artifact_variant_filename_conflict` : aucun écrasement. Une création
 concurrente de destination échoue par `EEXIST`, sans remplacer la cible.
-Les signatures des répertoires et le SHA de la sortie sont recontrôlés
-avant de retirer le staging et d'enregistrer l'Artifact.
+Les signatures des répertoires (y compris **le staging initial épinglé**)
+et le SHA de la sortie sont recontrôlés avant de retirer le staging
+et d'enregistrer l'Artifact. L'annulation utilise un descripteur
+`O_DIRECTORY|O_NOFOLLOW` du staging et vérifie son inode avant `unlink` :
+une substitution du dossier par un symlink vers un autre profil ne peut pas
+détourner ce nettoyage.
 
 Une annulation signalée après la phase `transform` mais avant le commit
 ne publie pas de nouveau fichier. Les références et fichiers existants ne
@@ -57,6 +61,7 @@ Tests FS+SQLite réels : double collision (dont même SHA), symlinks,
 cible de repli physiquement absente mais réservée par SQLite à un autre
 profil, course `EEXIST`, source globale dans plusieurs profils ou deux
 placements, cache étranger, changement d'octets de l'original, substitution
-du répertoire sous les leases et annulation après transformation.
+du répertoire source et du répertoire de staging (pendant l'échec **et**
+pendant la publication), puis annulation après transformation.
 
 Aucun livre utilisateur, fournisseur ou téléchargement n'est utilisé.
