@@ -16,7 +16,7 @@ Un fichier dérivé est publié par lien physique exclusif avant l'enregistremen
 
 API Core interne `review_pending_derived_receipts(service, identity_id=..., commit=False)`. Le mode sans écriture est le défaut et renvoie `recoverable`, `already_committed` ou `manual_review` avec le digest SHA-256 du reçu récupérable. Les scans portent uniquement sur le répertoire enregistré du profil et ses sous-dossiers directs non-symboliques, avec limite de 128 reçus et de 8 KiB par reçu. **Un sous-dossier plus profond n'est pas pris en charge dans cette tranche.**
 
-Pour un commit, le superviseur doit fournir **le SHA-256 du reçu exact lu en prévisualisation** via `approved_receipt_sha256`. `commit=True` sans approbation explicite renvoie `approval_required`, jamais une publication. La procédure revalide le répertoire, le parent `Placement` exact et actif, le profil, la signature inode, les hachages des deux fichiers avec ouverture `O_NOFOLLOW`, **la concordance du hash du reçu avec son intent SQLite**, et l'absence de revendication cible par SQLite. Elle réutilise uniquement le constructeur Core `publish_derived_variant`, qui ne crée ni SourceReference ni entitlement fournisseur.
+Pour un commit, le superviseur doit fournir **le SHA-256 du reçu exact lu en prévisualisation** via `approved_receipt_sha256`. `commit=True` sans approbation explicite renvoie `approval_required`, jamais une publication. La procédure exige aussi que l'identité ciblée soit le profil **actuellement actif** pour tout `commit=True`. Elle revalide le répertoire, le parent `Placement` exact et actif, le profil, la signature inode, les hachages des deux fichiers avec ouverture `O_NOFOLLOW`, **la concordance du hash du reçu avec son intent SQLite**, et l'absence de revendication cible par SQLite. Elle réutilise uniquement le constructeur Core `publish_derived_variant`, qui **revalide l'intent et son empreinte pendant la transaction `BEGIN IMMEDIATE`** : une suppression de l'intent entre revue et commit échoue sans publier. Ce constructeur ne crée ni SourceReference ni entitlement fournisseur.
 
 ## Limites de sécurité
 
@@ -28,6 +28,6 @@ Pour un commit, le superviseur doit fournir **le SHA-256 du reçu exact lu en pr
 
 ## Critères de tests
 
-SQLite + FS synthétiques réels : reçu forgé ou modifié sans intent SQL, lecture de reçu symlink, taille de sortie falsifiée, conversion normale et nettoyage reçu, SQL interrompu avant OriginLink, reprise après redémarrage, idempotence, absence de droit fournisseur, refus d'une reprise sans approbation, profil étranger, octets modifiés, symlink cible. Sans réseau ni compte réel.
+SQLite + FS synthétiques réels : reçu forgé ou modifié sans intent SQL, intent supprimé entre contrôle et transaction, profil actif erroné, lecture de reçu symlink, taille de sortie falsifiée, conversion normale et nettoyage reçu, SQL interrompu avant OriginLink, reprise après redémarrage, idempotence, absence de droit fournisseur, refus d'une reprise sans approbation, profil étranger, octets modifiés, symlink cible. Sans réseau ni compte réel.
 
 **Ne pas clore #4520 à ce stade :** reste à qualifier le parcours supervisé, les sous-arborescences profondes et les courses TOCTOU adversariales. Ne pas confondre cette reprise avec la migration des variantes historiques sans reçu.
