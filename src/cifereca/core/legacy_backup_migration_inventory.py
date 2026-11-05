@@ -12,6 +12,8 @@ import sqlite3
 from typing import Any
 
 from .canonical_publication import _stable
+from .source_convergence import SourceKey
+from ..plugin_api.provider_rights_observation import ProviderRightsScope
 
 _MAX_ROWS = 1000
 _MAX_CHECKPOINT = 65536
@@ -77,9 +79,22 @@ def _receipt_shape(row: tuple, ledger: tuple) -> bool:
             or not 0 < len(document["receipt"]) <= 1024
             or len(document["adept_receipt"]) > 1024):
         return False
+    # A completed journal may contain arbitrary parseable strings that do
+    # not construct a Core SourceKey (empty branch/right, unknown kind or
+    # out-of-budget account). This read-only *shape* counter must not count
+    # such rows as eligible for later exact-source provenance verification.
+    source = document["source"]
+    try:
+        SourceKey(
+            scope=ProviderRightsScope(*source[:4]),
+            branch=source[4], edition_id=source[5],
+            right_id=source[6], kind=source[7],
+        )
+    except (ValueError, TypeError):
+        return False
     # An unrelated completed journal operation must not impersonate the
     # exact stage of the receipt. Still NO proof of OriginLink or bytes.
-    return operation == _stable("canonical-intake", *document["source"], document["offer_id"])
+    return operation == _stable("canonical-intake", *source, document["offer_id"])
 
 
 def inventory_legacy_kobo_backups(

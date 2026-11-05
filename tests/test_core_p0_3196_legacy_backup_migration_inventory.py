@@ -186,16 +186,18 @@ def test_ledger_ambiguous_or_rebound_never_promotes_backup(store):
     assert report["receipt_shape_candidate"] == 0
 
 
+@pytest.mark.parametrize("account", ["buyer", ""])
 def test_checkpoint_syntax_is_never_a_published_origin_or_physical_proof(
-    store, tmp_path,
+    store, tmp_path, account,
 ):
-    register(store, "A", "kobo", "card-a", account="buyer")
+    register(store, "A", "kobo", "card-a", account=account)
     path = tmp_path / "absent-but-claimed.epub"
-    _backup(store, item="book", path=path, sha="a" * 64, size=42)
+    _backup(store, item="book", account=account,
+            path=path, sha="a" * 64, size=42)
     payload = {
         "schema": "canonical.completed-delivery.v1",
         "source": [
-            "A", "kobo", "card-a", "buyer", "purchases",
+            "A", "kobo", "card-a", account, "purchases",
             "book", "purchase", "purchase",
         ],
         "offer_id": "synthetic-offer", "path": str(path),
@@ -293,6 +295,47 @@ def test_completed_ledger_does_not_complete_legacy_backup_or_supply_revision(
     assert report["receipt_shape_candidate"] == 0
     assert report["receipt_unproven"] == 1
     assert report["revision_unrecorded"] == int(not revision)
+    assert _rows(store) == before
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("source_index,unqualified", [
+    (4, ""),
+    (4, "branch\nother"),
+    (4, "x" * 1025),
+    (6, ""),
+    (7, "ambiguous"),
+])
+def test_receipt_stage_with_invalid_typed_source_never_becomes_candidate(
+    store, tmp_path, source_index, unqualified,
+):
+    register(store, "A", "kobo", "card-a", account="buyer")
+    path = tmp_path / "unpublished.epub"
+    _backup(store, path=path, sha="a" * 64, size=42)
+    source = [
+        "A", "kobo", "card-a", "buyer", "purchases",
+        "book", "purchase", "purchase",
+    ]
+    source[source_index] = unqualified
+    checkpoint = {
+        "schema": "canonical.completed-delivery.v1",
+        "source": source, "offer_id": "synthetic-offer",
+        "path": str(path), "sha256": "a" * 64,
+        "receipt": "synthetic-receipt", "adept_receipt": "",
+    }
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET acquisition_id=?,status='complete',"
+            "artifact_id=?,metadata_json=? WHERE provider_id='kobo' "
+            "AND item_id='book'",
+            (_stable("canonical-intake", *source, "synthetic-offer"),
+             "sha256:" + "a" * 64, json.dumps(checkpoint)),
+        )
+    before = _rows(store)
+    report = _report(store)
+    assert report["status"] == "complete"
+    assert report["receipt_shape_candidate"] == 0
+    assert report["receipt_unproven"] == 1
     assert _rows(store) == before
     assert not path.exists()
 
