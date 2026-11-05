@@ -43,6 +43,54 @@ def _observed_backup_artifact(path: Path) -> dict[str, Any]:
     return {"format": inspection.media_format.upper(), "size": path.stat().st_size, "sha256": sha256_file(path)}
 
 
+def _kobo_legacy_current_path_scoped(
+    service: Any, path: Path, target_dir: Path, *, identity_id: str,
+) -> bool:
+    """Read-only physical fence for one historical complete Kobo claim.
+
+    An ordinary Kobo file or flat 0.7 library file remains compatible.
+    An explicitly adopted same-identity *present* Placement may also live
+    elsewhere (cross-reader transfer/recovery). A recorded backup never
+    justifies following a symlink or reading a sibling identity's directory.
+    No rights, OriginLinks or new Placements are produced by this check.
+    """
+    if (type(identity_id) is not str or not identity_id
+            or not path.is_absolute() or ".." in path.parts):
+        return False
+    try:
+        candidate = Path(os.path.abspath(path))
+        target = Path(os.path.abspath(target_dir))
+        library_root = Path(os.path.abspath(service.library_dir()))
+        # Reject symlinks on the leaf OR any ancestor. Do not require the
+        # identity to appear in config.identities(): imported identities may
+        # already exist in the authoritative Storage/service profile list.
+        if candidate.resolve(strict=True) != candidate:
+            return False
+        backup_root = target.parent.parent
+        for identity in service.identities:
+            if identity.identity_id == identity_id:
+                continue
+            other = str(identity.directory_name or "").strip()
+            if not other or other in {".", ".."} or "/" in other or "\\" in other:
+                return False
+            if (candidate.is_relative_to(library_root / other)
+                    or candidate.is_relative_to(backup_root / other / "kobo")):
+                return False
+        if candidate.is_relative_to(target) or candidate.parent == library_root:
+            return True
+        # A successful explicit B receipt can attach a file in an Outbox or
+        # other owned folder. Accept that nonstandard path only when a live
+        # canonical Placement already belongs to this exact identity.
+        with service.storage._lock, service.storage._connect() as db:
+            bound = db.execute(
+                "SELECT identity_id,state FROM placements WHERE path=?",
+                (str(candidate),),
+            ).fetchone()
+        return bound == (identity_id, "present")
+    except (OSError, ValueError, RuntimeError, TypeError):
+        return False
+
+
 def _kobo_artifact_plausible(path: Path, fmt: str) -> bool:
     """Perform a conservative local sanity check without interpreting DRM."""
     try:
@@ -1975,6 +2023,24 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             summary["reconcile_skipped"] += 1
             return True
         if local.is_file():
+            # P0 #3196: a complete 0.7 row is only a historical claim. Do
+            # not hash a sibling profile's file via a symlinked ancestor or
+            # an old absolute path outside this Kobo identity's roots.
+            # Quarantine that row rather than treating it as unchanged or
+            # allowing an automatic replacement download.
+            def refuse_unscoped():
+                self.storage.backup_put({
+                    **current, "status": "reconcile_required",
+                    "error": "Emplacement Kobo historique hors profil ou non vérifiable",
+                })
+                summary["reconcile_skipped"] += 1
+                return True
+
+            if not _kobo_legacy_current_path_scoped(
+                self, local, session_target_dir,
+                identity_id=str(base_record.get("identity_id") or ""),
+            ):
+                return refuse_unscoped()
             try:
                 observed = self._observed_backup_artifact(local)
             except ProviderConfigurationError:
@@ -1982,6 +2048,13 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 self.storage.backup_put({**current, "status": "reconcile_required", "error": "Artefact local invalide"})
                 summary["reconcile_skipped"] += 1
                 return True
+            # A directory swap while the legacy inspector reads is not a
+            # positive local-presence proof; never accept that observation.
+            if not _kobo_legacy_current_path_scoped(
+                self, local, session_target_dir,
+                identity_id=str(base_record.get("identity_id") or ""),
+            ):
+                return refuse_unscoped()
             # The stored checksum describes the *acquired* revision, not
             # merely any structurally valid EPUB/PDF now occupying that path.
             # Never silently accept changed bytes or overwrite the baseline:
