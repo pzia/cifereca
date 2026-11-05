@@ -5,6 +5,7 @@ Historical shared/ copies must remain in place and no supplier rights move.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,31 @@ def test_unrelated_destination_name_collision_never_overwrites(tmp_path):
         assert sent.read_bytes() == source.read_bytes()
         assert service.materialize_to_identity(placement, "bob")["path"] == str(sent)
         assert len(list(dest.parent.iterdir())) == 2
+    finally:
+        service.close()
+
+
+def test_multibyte_catalogue_name_fits_with_collision_suffix(tmp_path):
+    service = _service(tmp_path)
+    try:
+        source, placement = _source(service, tmp_path)
+        entry = next(row for row in service.storage.catalog_entries()
+                     if row.get("placement_id") == placement)
+        author, title = "編" * 96, "本" * 96
+        service.storage.catalog_entry_put({**entry, "author": author, "title": title})
+        dest_dir = tmp_path / "EBooks" / "bob" / "Acquisitions"
+        dest_dir.mkdir(parents=True)
+        occupied = dest_dir / transfer_readable_filename(source, author=author, title=title)
+        occupied.write_bytes(b"recipient's unrelated work")
+
+        receipt = service.materialize_to_identity(placement, "bob")
+        dest = Path(receipt["path"])
+        assert dest == occupied.with_name(occupied.stem + " (2).epub")
+        assert dest.name.startswith("編") and " - 本" in dest.name
+        assert len(os.fsencode(dest.name)) <= os.pathconf(dest_dir, "PC_NAME_MAX")
+        assert dest.read_bytes() == source.read_bytes()
+        assert occupied.read_bytes() == b"recipient's unrelated work"
+        assert service.materialize_to_identity(placement, "bob")["path"] == str(dest)
     finally:
         service.close()
 
