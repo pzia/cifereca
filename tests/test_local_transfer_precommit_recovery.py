@@ -231,7 +231,7 @@ def test_lost_source_artifact_cannot_downgrade_checkpoint_to_legacy_send(tmp_pat
             db.execute("DELETE FROM artifacts WHERE artifact_id=?", (source["artifact_id"],))
         with pytest.raises(ValueError, match="local_transfer_source_changed"):
             service.materialize_to_identity(source["placement_id"], "bob")
-        assert len(list((tmp_path / "EBooks/bob/shared").glob("*.pdf"))) == 1
+        assert len(list((tmp_path / "EBooks/bob/Acquisitions").glob("*.pdf"))) == 1
         assert canon_rows(service.storage)["origin_links"] == 0
         assert canon_rows(service.storage)["placements"] == 1
     finally:
