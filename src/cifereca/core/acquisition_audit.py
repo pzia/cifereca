@@ -5,6 +5,7 @@ or raw metadata is returned. Legacy title/SHA matching NEVER creates origins.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import hmac
 import json
@@ -30,7 +31,14 @@ def _reference(secret: bytes, category: str, value: str) -> str:
 
 
 def _file_proof(*, root: Path, directory: str, path: str, artifact_id: str) -> str:
-    """Bounded SHA proof under the exact profile root, never follow symlinks."""
+    """Bounded SHA proof under the exact profile root using no-follow FDs.
+
+    Checking Path.is_symlink() before os.open(path) is not sufficient:
+    another process can substitute an ancestor between check and open.
+    Walk every directory from '/' with O_DIRECTORY|O_NOFOLLOW and open the
+    file relative to the pinned parent FD. Recheck path/inode bindings after
+    hashing; a renamed source directory never becomes a positive proof.
+    """
     if (type(directory) is not str or not directory or directory in (".", "..")
             or "/" in directory or "\\" in directory
             or type(path) is not str or not path
@@ -38,49 +46,90 @@ def _file_proof(*, root: Path, directory: str, path: str, artifact_id: str) -> s
             or len(artifact_id) != 71
             or any(c not in "0123456789abcdef" for c in artifact_id[7:])):
         return "invalid_placement"
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        return "invalid_placement"
+    parent_fd = -1
+    file_fd = -1
     try:
         root_path = Path(os.path.abspath(root.expanduser()))
         physical = Path(os.path.abspath(Path(path).expanduser()))
         relative = physical.relative_to(root_path / directory)
         if not relative.parts or any(x in (".", "..") for x in relative.parts):
             return "invalid_placement"
-        current = root_path
-        for component in (directory, *relative.parts):
+        dir_flags = (
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        file_flags = (
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        parent_fd = os.open("/", dir_flags)
+        parents = []
+        current = Path("/")
+        for component in (*root_path.parts[1:], directory, *relative.parts[:-1]):
+            next_fd = os.open(component, dir_flags, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = next_fd
             current = current / component
-            if current.is_symlink():
+            pinned = os.fstat(parent_fd)
+            if not stat.S_ISDIR(pinned.st_mode):
                 return "invalid_placement"
-        if not physical.exists():
-            return "missing_file"
-        if not physical.resolve(strict=True).is_relative_to(
-            (root_path / directory).resolve(strict=True)
-        ):
+            parents.append((current, pinned))
+        file_fd = os.open(relative.parts[-1], file_flags, dir_fd=parent_fd)
+        before = os.fstat(file_fd)
+        if not stat.S_ISREG(before.st_mode):
             return "invalid_placement"
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(physical, flags)
+        if before.st_size > _MAX_FILE_BYTES or before.st_size <= 0:
+            return "invalid_placement"
+        digest = hashlib.sha256()
+        total = 0
+        while total < before.st_size:
+            part = os.read(file_fd, min(1024 * 1024, before.st_size - total))
+            if not part:
+                break
+            digest.update(part)
+            total += len(part)
+        after = os.fstat(file_fd)
+        stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if total != before.st_size or any(
+            getattr(before, key) != getattr(after, key) for key in stable
+        ):
+            return "file_changed"
+        # Detect an ancestor rename or substitution after the FD walk.
+        # Neither stat check is permission to reopen through these paths.
         try:
-            before = os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode):
-                return "invalid_placement"
-            if before.st_size > _MAX_FILE_BYTES or before.st_size <= 0:
-                return "invalid_placement"
-            digest = hashlib.sha256()
-            while True:
-                part = os.read(fd, 1024 * 1024)
-                if not part:
-                    break
-                digest.update(part)
-            after = os.fstat(fd)
-            if any(getattr(before, key) != getattr(after, key)
-                   for key in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")):
+            for parent, pinned in parents:
+                current_stat = os.stat(parent, follow_symlinks=False)
+                if (not stat.S_ISDIR(current_stat.st_mode)
+                        or (current_stat.st_dev, current_stat.st_ino)
+                        != (pinned.st_dev, pinned.st_ino)):
+                    return "file_changed"
+            current_file = os.stat(physical, follow_symlinks=False)
+            if (not stat.S_ISREG(current_file.st_mode)
+                    or (current_file.st_dev, current_file.st_ino)
+                    != (before.st_dev, before.st_ino)):
                 return "file_changed"
-            if digest.hexdigest() != artifact_id[7:]:
-                return "sha_mismatch"
-            return "verified_sha256"
-        finally:
-            os.close(fd)
-    except (OSError, ValueError, TypeError, RuntimeError):
+        except OSError:
+            return "file_changed"
+        if digest.hexdigest() != artifact_id[7:]:
+            return "sha_mismatch"
+        return "verified_sha256"
+    except FileNotFoundError:
+        return "missing_file"
+    except OSError as exc:
+        # ELOOP for a linked file, ENOTDIR for a linked ancestor opened
+        # with O_DIRECTORY|O_NOFOLLOW. Neither grants another owner proof.
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            return "invalid_placement"
         return "file_unavailable"
-
+    except (ValueError, TypeError, RuntimeError):
+        return "file_unavailable"
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 def inspect_exact_source(
     storage, account, *, library_root: Path | None = None,
