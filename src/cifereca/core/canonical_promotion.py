@@ -40,6 +40,42 @@ def _stage_parts(physical: Path, profile: Path) -> tuple[str, ...] | None:
     return parts
 
 
+def _readable_epub_target_name(stream, *, opaque_name: str) -> str:
+    """Stable human prefix from *verified own copy*; receipt hash remains exact.
+
+    This helper runs only after a complete, fsynced, SHA-checked copy is in
+    Core's private directory. A damaged/encrypted EPUB keeps its opaque name.
+    Bibliographic metadata is descriptive, never a supplier authorization.
+    """
+    try:
+        from ..epub_metadata import inspect_epub
+        from .transfer_storage_policy import transfer_readable_filename
+
+        inspected = inspect_epub(stream, metadata_only=True)
+        if inspected.get("epub_status") != "ok":
+            return opaque_name + ".epub"
+        metadata = inspected.get("epub_metadata")
+        if type(metadata) is not dict:
+            return opaque_name + ".epub"
+        title = metadata.get("title")
+        authors = metadata.get("authors")
+        author = authors[0] if type(authors) is list and authors else None
+        if type(title) is not str or not title.strip():
+            return opaque_name + ".epub"
+        # Include the entire original 256-bit receipt discriminator: two
+        # same-title acquisitions must never alias one another's path.
+        readable = transfer_readable_filename(
+            Path("received.epub"), title=title, author=author,
+        )
+        prefix = Path(readable).stem
+        prefix = prefix.encode("utf-8")[:120].decode("utf-8", "ignore").rstrip(" .-")
+        if not prefix:
+            return opaque_name + ".epub"
+        return prefix + " - " + opaque_name + ".epub"
+    except (OSError, ValueError, TypeError, RuntimeError, KeyError):
+        return opaque_name + ".epub"
+
+
 def _profile(storage, root: Path, source: SourceKey) -> tuple[Path, Path]:
     registered = storage.identities()
     matches = [
@@ -202,6 +238,29 @@ def promote_completed_delivery(
             raise ValueError("canonical_promotion_destination_changed")
         if not physical_owner_current():
             raise ValueError("canonical_promotion_profile_rebound")
+        if suffix == ".epub":
+            # Name from the exact *copied* bytes, never an unrelated provider
+            # catalogue title or an unverified URL. The receipt discriminator
+            # keeps crash recovery deterministic and prevents same-title
+            # collisions. Legacy opaque final names still win above.
+            staged_fd = os.open(
+                temporary, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=dir_fd,
+            )
+            with os.fdopen(staged_fd, "rb") as staged:
+                target = destination_dir / _readable_epub_target_name(
+                    staged, opaque_name=name,
+                )
+            if target.exists() or target.is_symlink():
+                try:
+                    return _path_verified(
+                        storage, root=root, source=source, path=target,
+                        final_sha256=completed.final_sha256,
+                    )
+                except (ValueError, OSError) as exc:
+                    raise ValueError(
+                        "canonical_promotion_destination_conflict"
+                    ) from exc
         # A no-replace hardlink is an atomic namespace promotion. No other
         # thread can ever open a partially written final file; a foreign
         # final target is never overwritten or adopted by filename alone.
