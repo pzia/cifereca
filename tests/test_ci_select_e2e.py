@@ -282,6 +282,23 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(mod.select([]), mod.ALL)
         self.assertEqual(mod.select([], full=True), mod.ALL)
 
+    def test_path_filter_contract_uses_synthetic_gate_not_gtk_replay(self):
+        # The workflow still starts to check selector and publication policy;
+        # Core PR CI runs the static path assertions directly.
+        path = "tests/test_e2e_ci_paths.py"
+        self.assertEqual(mod.select([path]), ())
+        self.assertEqual(mod.select([path, "docs/notes.md"]), ())
+        self.assertEqual(
+            mod.select([path, "src/cifereca/gui/main_window.py"]),
+            mod.MAINWINDOW,
+        )
+        self.assertEqual(mod.select([path, "unknown/runtime.py"]), mod.ALL)
+        self.assertEqual(mod.select([path], full=True), mod.ALL)
+        workflow = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(encoding="utf-8")
+        self.assertIn("      - 'tests/test_e2e_ci_paths.py'\\n", workflow)
+        self.assertIn("      - name: Test E2E scenario selector", workflow)
+        self.assertIn("      - name: Validate privacy-safe E2E publication policy", workflow)
+
     def test_docs_only(self):
         self.assertEqual(mod.select(["e2e/README.md", "docs/e2e-guide.md"]), ())
         self.assertEqual(mod.select(["docs/readme.md", "e2e/diagnostics_volume_probe.py"]),
