@@ -102,7 +102,10 @@ def test_other_profile_cannot_replay_first_profiles_receipt(tmp_path):
             "identity_id": "id2", "label": "Second", "directory_name": "another",
         })
         (tmp_path / "another").mkdir()
-        assert review_pending_derived_receipts(service, identity_id="id2", commit=True) == ()
+        # An inactive identity can be inspected but cannot commit a receipt.
+        assert review_pending_derived_receipts(service, identity_id="id2") == ()
+        with pytest.raises(ValueError, match="derived_recovery_active_identity_mismatch"):
+            review_pending_derived_receipts(service, identity_id="id2", commit=True)
         assert len(review_pending_derived_receipts(service, identity_id="id1")) == 1
         assert service.storage.artifact_variants() == []
     finally:
