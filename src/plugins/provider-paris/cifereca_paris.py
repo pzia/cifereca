@@ -1537,6 +1537,8 @@ class ParisProviderSession(ProviderSession):
         The same lock protects the full private GET/staging against reconnect,
         and mutable objects/broker ownership are fenced after network I/O.
         """
+        if initial_offer_only and not callable(admission_current):
+            raise ProviderConfigurationError("paris_initial_acsm_scope_required")
         with self._loan_inventory_lock:
             if (not self.connected or type(account) is not Account
                     or type(loan) is not Loan
@@ -1779,7 +1781,8 @@ class ParisProviderSession(ProviderSession):
         for hop in range(12):
             ensure_scope()
             if initial_offer_only and (
-                "assaredirect.ashx" in urlparse(current).path.casefold()
+                "assaredirect" in __import__("urllib.parse", fromlist=["unquote"]).unquote(
+                    urlparse(current).path).casefold()
                 or not direct_url
             ):
                 # The first borrow consumed its mutating ASSARedirect
