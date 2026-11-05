@@ -160,14 +160,22 @@ def read_raw_journal_zip(
     if include_manifest_coverage:
         # Avoid republishing private rotation names; the bound manifest
         # provides only a closed marker for whether gaps were declared.
+        declared = manifest.get("coverage") if manifest is not None else None
+        missing = (manifest.get("active_log_missing")
+                   if manifest is not None else None)
         coverage = (
             {
-                "coverage": manifest.get("coverage"),
+                "coverage": (
+                    declared if type(declared) is str
+                    and declared in ("available", "empty", "partial") else None
+                ),
                 "rotation_gaps_present": (
                     bool(manifest["rotation_gaps"])
                     if type(manifest.get("rotation_gaps")) is list else None
                 ),
-                "active_log_missing": manifest.get("active_log_missing"),
+                "active_log_missing": (
+                    missing if type(missing) is bool else None
+                ),
             }
             if manifest is not None else None
         )
