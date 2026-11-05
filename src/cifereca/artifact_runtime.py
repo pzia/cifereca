@@ -628,35 +628,45 @@ class ArtifactExecutionBrokerImpl:
                            code="artifact_variant_filename_conflict")
         now = int(time.time())
         artifact_id = f"sha256:{actual_sha}"
-        self.service.storage.artifact_put({
-            "artifact_id": artifact_id, "sha256": actual_sha, "size": actual_size,
-            "media_format": result.output_format.format or lease.output_format.format or suffix.lstrip("."),
-            "mime_type": result.output_format.media_type or lease.output_format.media_type,
-            "metadata": {"variant_kind": lease.variant_kind or "derived", "source_artifact_id": source.artifact_id, "book_id": source.book_id or ""},
-        })
-        placement_id = self.service.storage.placement_put({
-            "artifact_id": artifact_id, "path": str(final), "identity_id": source_placement.get("identity_id"),
-            "provider_id": source_placement.get("provider_id"), "source_item_id": source_placement.get("source_item_id"),
-            "state": "present", "last_seen_at": now,
-            "metadata": {"variant": True, "variant_kind": lease.variant_kind or "derived", "source_artifact_id": source.artifact_id},
-        })
-        source_entries = [e for e in self.service.storage.catalog_entries() if str(e.get("placement_id") or "") == str(source_placement.get("placement_id") or "")]
-        if source_entries:
-            src_entry = source_entries[0]
-            meta = dict(src_entry.get("metadata") or {}); meta.update({"path": str(final), "variant": True, "source_artifact_id": source.artifact_id})
-            self.service.storage.catalog_entry_put({
-                "artifact_id": artifact_id, "placement_id": placement_id, "title": src_entry.get("title"), "author": src_entry.get("author"),
-                "media_format": result.output_format.format, "identity_id": src_entry.get("identity_id"), "provider_id": src_entry.get("provider_id"),
-                "item_id": src_entry.get("item_id"), "local_state": "local", "metadata": meta,
-            })
-        self.service.storage.artifact_variant_put({
-            "artifact_id": artifact_id, "source_artifact_id": source.artifact_id, "source_sha256": source.sha256,
-            "variant_kind": lease.variant_kind or "derived", "transformer_plugin_id": transformer_plugin_id,
-            "transformer_version": self._version_for_plugin(transformer_plugin_id), "profile_plugin_id": profile_plugin_id,
-            "profile_version": self._version_for_plugin(profile_plugin_id), "options_fingerprint": options_fingerprint,
-            "metadata": {"book_id": source.book_id or "", "warnings": list(result.warnings), "facts": dict(result.facts)},
-        })
-        ref = _artifact_ref(self.service.storage, artifact_id, book_id=source.book_id)
+        # The filesystem hardlink is already verified. Commit all SQLite
+        # authorities together so an injected failure never exposes a partial
+        # local derivative or falsely inherited supplier provenance (#4520).
+        from .core.derived_variant_publication import (
+            DerivedPublicationConflict, publish_derived_variant,
+        )
+        try:
+            publish_derived_variant(
+                self.service.storage,
+                parent_artifact_id=source.artifact_id,
+                parent_sha256=source.sha256,
+                parent_placement_id=lease.source_placement_id,
+                parent_path=source_path,
+                identity_id=lease.source_identity_id,
+                published_path=final,
+                output_sha256=actual_sha,
+                output_size=actual_size,
+                media_format=result.output_format.format
+                or lease.output_format.format or suffix.lstrip("."),
+                mime_type=result.output_format.media_type
+                or lease.output_format.media_type,
+                variant_kind=lease.variant_kind or "derived",
+                transformer_id=transformer_plugin_id,
+                transformer_version=self._version_for_plugin(transformer_plugin_id),
+                profile_id=profile_plugin_id,
+                profile_version=self._version_for_plugin(profile_plugin_id),
+                options_fingerprint=options_fingerprint,
+                book_id=source.book_id,
+                warnings=result.warnings,
+                facts=dict(result.facts),
+            )
+        except DerivedPublicationConflict as exc:
+            raise _VariantConflict(
+                "Publication canonique de variante refusée", code=str(exc),
+            ) from None
+        ref = _artifact_ref(
+            self.service.storage, artifact_id, book_id=source.book_id,
+            identity_id=lease.source_identity_id,
+        )
         if ref is None: raise RuntimeError("committed artifact disappeared")
         return ref
 
