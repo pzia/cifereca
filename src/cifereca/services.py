@@ -2465,6 +2465,13 @@ class LibraryService:
                     (item.source_credential, item.record_id)
                 ) != "active"):
                     return False
+                # #3196 D3: a SourceReference can predate a complete provider
+                # ABI. Never advertise the 0.7 direct GET for that edition.
+                from .core.kobo_legacy_source_guard import has_typed_kobo_source
+                if has_typed_kobo_source(
+                    self.storage, item.source_credential, item.record_id,
+                ):
+                    return False
             session = self._session_for_source(item.source_provider, item.source_credential)
             if item.source_provider == "kobo":
                 # #3196: the typed A->B executor supersedes this *legacy*
@@ -2741,6 +2748,14 @@ class LibraryService:
                                     self._session_for_source("kobo", item.source_credential)
                                 )):
                             raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
+                    # Recheck on the selected source after admission and under
+                    # the acquisition lock: an ABI can remain partial while a
+                    # typed SourceReference already owns the exact edition.
+                    from .core.kobo_legacy_source_guard import has_typed_kobo_source
+                    if has_typed_kobo_source(
+                        self.storage, item.source_credential, item.record_id,
+                    ):
+                        raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
                     target = self._kobo_backup_target_dir(identity.identity_id)
                     candidates = self._kobo_record_candidate_paths(
                         {"item_id": item.record_id, "title": item.title,
