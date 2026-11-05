@@ -715,8 +715,8 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     # #3198: only current source/session facts determine the opening state.
     # Historical kobo_backup.enabled is exposed separately for rollback,
     # never as a source-wide OFF decision or acquisition permission.
-    if not kobo:
-        reason = "disabled"
+    if not kobo and not any(a.provider_id == "kobo" for a in self.accounts):
+        reason = "disabled"  # No configured account and no active session.
     elif not connected:
         reason = "no_session"
     elif not capable:
