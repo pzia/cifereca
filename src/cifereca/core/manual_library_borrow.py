@@ -237,6 +237,25 @@ def manual_borrow(
         )
         if finished is None:
             return _result("verification_unavailable", "borrow_checkpoint_unavailable")
+        # The first Paris ASSARedirect may have returned a transient ACSM
+        # offer along with the independently verified loan. Preserve it only
+        # in a PRIVATE one-shot Core handoff, after the confirmed SQLite
+        # claim. Never return the URL or reinterpret it as proof of B.
+        if provider_id == "paris" and loan.ebook_url:
+            try:
+                from .manual_paris_first_acsm import (
+                    remember_confirmed_first_acsm,
+                )
+                remember_confirmed_first_acsm(
+                    service, item=item, loan=loan, account=account,
+                    session=session, claim_key=key,
+                    operation_id=operation_id,
+                    context_epoch=service._account_context_epoch,
+                )
+            except Exception:
+                # A diagnostic/ephemeral handoff failure cannot undo an
+                # independently confirmed provider loan or permit a retry.
+                pass
         return _result("confirmed", "borrow_active_loan_observed", verified=True)
     except BorrowRequestNotSubmitted:
         # The trusted provider raises this ONLY before attempting a mutating request.
