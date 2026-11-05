@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Keep local and release invocations sequential. CI workflows opt into a
-# conservative parallelism explicitly; packages use distinct pytest processes.
+# Local and release invocations remain sequential. PR/main CI opts into three
+# independent pytest processes, with immediate replacement on completion.
 jobs="${CIFERECA_PLUGIN_TEST_JOBS:-1}"
 if ! [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || (( jobs > 4 )); then
   echo "CIFERECA_PLUGIN_TEST_JOBS must be an integer between 1 and 4" >&2
@@ -11,7 +11,7 @@ fi
 
 failed=0
 count=0
-
+active=0
 if (( $# )); then
   targets=("$@")
 else
@@ -22,57 +22,54 @@ fi
 
 logdir="$(mktemp -d)"
 trap 'rm -rf "$logdir"' EXIT
+mkfifo "$logdir/completed"
+exec 3<>"$logdir/completed"
 pids=()
 names=()
 logs=()
 
-# Refill a free slot immediately rather than waiting for the slowest pytest
-# in a fixed batch. wait -n requires Bash >= 5.1 (Ubuntu 24.04 provides 5.2).
+# A pipe keeps all completions (including children that finished early).
+# wait -n can miss already-reaped children on some Bash versions.
 finish_one() {
-  local finished='' status=0 index
-  if wait -n -p finished "${pids[@]}"; then
-    status=0
-  else
-    status=$?
+  local completed status child_status
+  if ! read -r completed status <&3; then
+    echo "Plugin test completion channel closed unexpectedly" >&2
+    exit 2
   fi
-  if [[ -z "${finished:-}" ]]; then
-    # Fallback if every child completed before wait -n was called.
-    finished="${pids[0]}"
-    if wait "$finished"; then status=0; else status=$?; fi
+  if ! [[ "$completed" =~ ^[1-9][0-9]*$ ]] || \
+     [[ -z "${pids[completed]:-}" ]] || ! [[ "$status" =~ ^[0-9]+$ ]]; then
+    echo "Invalid or duplicate plugin test completion: $completed ($status)" >&2
+    exit 2
   fi
-  for index in "${!pids[@]}"; do
-    if [[ "${pids[index]}" == "$finished" ]]; then
-      echo "::group::${names[index]}"
-      cat "${logs[index]}"
-      echo "::endgroup::"
-      unset 'pids[index]' 'names[index]' 'logs[index]'
-      pids=("${pids[@]}")
-      names=("${names[@]}")
-      logs=("${logs[@]}")
-      if (( status != 0 )); then failed=1; fi
-      return 0
-    fi
-  done
-  echo "Plugin test worker status could not be matched to a child PID" >&2
-  exit 2
+  child_status=0
+  if ! wait "${pids[completed]}"; then child_status=1; fi
+  echo "::group::${names[completed]}"
+  cat "${logs[completed]}"
+  echo "::endgroup::"
+  if (( status != 0 || child_status != 0 )); then failed=1; fi
+  unset 'pids[completed]' 'names[completed]' 'logs[completed]'
+  active=$((active-1))
 }
 
 for p in "${targets[@]}"; do
-  if [ -f "$p/cifereca-plugin.json" ] && [ -d "$p/tests" ]; then
-    count=$((count + 1))
+  if [[ -f "$p/cifereca-plugin.json" && -d "$p/tests" ]]; then
+    count=$((count+1))
+    active=$((active+1))
     log="$logdir/$count.log"
-    (cd "$p" && python -m pytest -q) > "$log" 2>&1 &
-    pids+=("$!")
-    names+=("$(basename "$p")")
-    logs+=("$log")
-    if (( ${#pids[@]} >= jobs )); then
-      finish_one
-    fi
+    names[count]="${p##*/}"
+    logs[count]="$log"
+    (
+      status=0
+      (cd "$p" && python -m pytest -q) || status=$?
+      printf '%s %s\n' "$count" "$status" >&3
+      exit "$status"
+    ) >"$log" 2>&1 &
+    pids[count]=$!
+    if (( active >= jobs )); then finish_one; fi
   fi
 done
-while (( ${#pids[@]} )); do
-  finish_one
-done
+while (( active > 0 )); do finish_one; done
+exec 3>&-
 
 echo "Tested $count plugin package(s) (max parallel: $jobs)"
 exit "$failed"
