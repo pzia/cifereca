@@ -142,3 +142,34 @@ def test_paris_one_failed_branch_keeps_other_branch_without_retry_or_cross_read(
         )
     finally:
         session.close()
+
+
+def test_paris_timing_marks_rights_observation_separately_from_inventory(caplog):
+    from tests.test_p1_3252_rights_observation_snapshot import fixture, upstream
+
+    session, account, client = fixture(digital=(upstream("loan-1", "edition-1"),))
+    caplog.set_level("INFO", logger="cifereca")
+    try:
+        inventory = session.loan_inventory_snapshot(account)
+        rights = session.rights_observation_snapshot(account)
+        assert inventory.status == "success"
+        assert rights.status == "success"
+        # Both reads remain authoritative and independent; the trace only
+        # attributes their costs, it does not introduce a rights cache.
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+        timing = [
+            record.getMessage() for record in caplog.records
+            if "TRACE paris list-loans timing " in record.getMessage()
+        ]
+        assert len(timing) == 6
+        assert sum("consumer=loan_inventory" in line for line in timing) == 3
+        assert sum("consumer=rights_observation" in line for line in timing) == 3
+        assert all("identity_id=identity-A credential_id=card-A borrower_id=reader-A" in line
+                   for line in timing)
+        assert all("ebooks_attempted=0" in line for line in timing
+                   if "phase=metadata" in line)
+    finally:
+        session.close()
