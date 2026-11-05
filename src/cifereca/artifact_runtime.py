@@ -228,7 +228,8 @@ def _variant_directory_stamp(path: Path) -> tuple[int, int] | None:
 
 def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
                                basename: str, sha256: str,
-                               directory_stamp: tuple[int, int]) -> Path:
+                               directory_stamp: tuple[int, int],
+                               claimed_paths: frozenset[str]) -> Path:
     """Hardlink a verified staging inode atomically, with no replace path.
 
     Both directory descriptors pin the original physical locations. Even a
@@ -254,6 +255,10 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
         if not stat.S_ISREG(stage_info.st_mode):
             raise Conflict("Fichier de variante non régulier", code="artifact_variant_output_unverified")
         for candidate in candidates:
+            # A missing physical file can still have an authoritative
+            # Placement/other-owner claim. Never rebind that SQL path.
+            if str(source_parent / candidate) in claimed_paths:
+                continue
             try:
                 os.link(staged.name, candidate, src_dir_fd=stage_fd,
                         dst_dir_fd=parent_fd, follow_symlinks=False)
@@ -485,11 +490,27 @@ class ArtifactExecutionBrokerImpl:
                 or _variant_file_stamp(source_path) != lease.source_stamp
                 or _variant_directory_stamp(source_path.parent) != lease.source_directory_stamp):
             raise Conflict("Staging ou source déplacé", code="artifact_variant_scope_changed")
+        claimed_paths = frozenset(
+            str(row.get("path") or "") for row in self.service.storage.placements()
+        )
         final = _publish_variant_exclusive(
             path, source_path.parent, basename=stem + suffix,
             sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
+            claimed_paths=claimed_paths,
         )
         lease.active = False
+        # Revalidate the physical target is still our just-published inode;
+        # never report a variant if an unrelated writer substituted the path.
+        if (not final.is_file() or sha256_file(final) != actual_sha
+                or _variant_directory_stamp(final.parent) != lease.source_directory_stamp):
+            raise Conflict("Variante publiée déplacée", code="artifact_variant_publish_race")
+        # A source or another profile may have claimed the filename while
+        # the exact physical hardlink was being installed. Stop before any
+        # SQL writer can rebind that existing Placement.
+        if any(str(row.get("path") or "") == str(final)
+               for row in self.service.storage.placements()):
+            raise Conflict("Chemin de variante déjà réservé",
+                           code="artifact_variant_filename_conflict")
         now = int(time.time())
         artifact_id = f"sha256:{actual_sha}"
         self.service.storage.artifact_put({
