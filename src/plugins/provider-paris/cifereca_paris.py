@@ -1528,7 +1528,7 @@ class ParisProviderSession(ProviderSession):
         expected_right_id: str | None = None,
         expected_identity_id: str | None = None,
         selected_stage_fd: int | None = None,
-        admission_current=None,
+        admission_current=None, initial_offer_only: bool = False,
     ) -> tuple[Path, str]:
         """Existing-loan delivery only: exact live Paris borrower and loan.
 
@@ -1686,6 +1686,7 @@ class ParisProviderSession(ProviderSession):
             completed, historical_url = self._download_digital_scoped_impl(
                 delivery_loan, account, target_dir,
                 scope_guard=scope_current, borrower_uid=borrower_uid,
+                initial_offer_only=initial_offer_only,
                 selected_stage_fd=selected_stage_fd,
                 **({"stream_admission_current": scope_current}
                    if admission_current is not None else {}),
@@ -1701,7 +1702,8 @@ class ParisProviderSession(ProviderSession):
                                       target_dir: Path, *, scope_guard=None,
                                       borrower_uid=None,
                                       selected_stage_fd=None,
-                                      stream_admission_current=None) -> tuple[Path, str]:
+                                      stream_admission_current=None,
+                                      initial_offer_only=False) -> tuple[Path, str]:
         """Network + validated staging, guarded by download_digital in service."""
         def ensure_scope():
             if scope_guard is not None and not scope_guard():
@@ -1728,6 +1730,10 @@ class ParisProviderSession(ProviderSession):
                 book_id, public_site(url),
             )
         else:
+            if initial_offer_only:
+                # A first-borrow token GET can never create/extend a loan.
+                # Missing one-shot URL means no candidate, not a fallback POST.
+                raise ProviderConfigurationError("paris_initial_acsm_url_missing")
             _TRACE_LOG.info(
                 "TRACE download paris direct-loan-url missing book_id=%s fallback=DownloadDigitalDocument",
                 book_id,
@@ -1772,6 +1778,13 @@ class ParisProviderSession(ProviderSession):
         visited_urls: set[str] = set()
         for hop in range(12):
             ensure_scope()
+            if initial_offer_only and (
+                "assaredirect.ashx" in urlparse(current).path.casefold()
+                or not direct_url
+            ):
+                # The first borrow consumed its mutating ASSARedirect
+                # already. No redirect or fallback may replay that endpoint.
+                raise ProviderConfigurationError("paris_initial_acsm_replay_denied")
             self.client._validate_pnb_redirect_url(current)
             if current in visited_urls:
                 # The signed URL may carry borrower tokens: do not re-GET or log it.
