@@ -26,6 +26,9 @@ reprise vérifiées.
   de propriétaire et doublons, et des **formes** de reçus Core terminés
   liés au chemin et au SHA. Une forme de reçu n'est pas sa preuve cryptographique
   ou une preuve d'OriginLink : ce compteur reste exclusivement consultatif.
+  Le compteur `receipt_unproven` inclut **toutes** les lignes scannées,
+  même lorsqu'une forme de reçu a été reconnue ; aucun reçu n'est attesté
+  par ce seul inventaire.
 - Aucun titre, chemin, compte, credential, fichier, reçu ou identifiant source
   n'apparaît dans le résultat ; seulement statuts fermés et compteurs.
   `status=complete` signifie *inventaire complet*, et **jamais**
