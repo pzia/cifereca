@@ -30,7 +30,7 @@ reprise vérifiées.
   exactement comme tel. Les autres identités/credentials sont opposables.
 - Inventaire du `acquisition_ledger` pour la même source, de ses collisions
   de propriétaire et doublons, et des **formes** de reçus Core terminés
-  liés au chemin et au SHA. Une forme de reçu n'est pas sa preuve cryptographique
+  liés au chemin, au SHA et au stage déterministe exact (SourceKey + offre). Une forme de reçu n'est pas sa preuve cryptographique
   ou une preuve d'OriginLink : ce compteur reste exclusivement consultatif.
   Le compteur `receipt_unproven` inclut **toutes** les lignes scannées,
   même lorsqu'une forme de reçu a été reconnue ; aucun reçu n'est attesté
