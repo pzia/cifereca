@@ -314,3 +314,54 @@ def test_foreign_profile_path_of_same_sha_never_counts_as_owner(tmp_path):
     assert caught.value.code == "artifact_source_scope_unverified"
     assert foreign.read_bytes() == b"book-data"
     assert not (foreign.parent / "Optimized.epub").exists()
+
+
+def test_swapped_staging_parent_cannot_unlink_foreign_file_on_abort(tmp_path):
+    foreign = tmp_path / "foreign-staging"
+    foreign.mkdir()
+
+    class SwapStaging(FakeTransformer):
+        def transform(self, request, source, destination, control):
+            destination.path.write_bytes(DATA)
+            victim = foreign / destination.path.name
+            victim.write_bytes(b"foreign file of another profile")
+            original_stage = destination.path.parent
+            original_stage.rename(tmp_path / "old-private-staging")
+            original_stage.symlink_to(foreign, target_is_directory=True)
+            raise RuntimeError("synthetic transformer failure after swap")
+
+    service, source, original_id, broker = _broker(tmp_path, SwapStaging())
+    with pytest.raises(RuntimeError, match="synthetic transformer failure"):
+        broker.execute_transform(TransformRequest(source, "optimize"),
+                                 control=Control())
+    victim, = tuple(foreign.iterdir())
+    assert victim.read_bytes() == b"foreign file of another profile"
+    assert not (tmp_path / "library" / "Optimized.epub").exists()
+    assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+
+
+def test_swapped_staging_parent_cannot_publish_or_unlink_foreign_bytes(tmp_path):
+    foreign = tmp_path / "foreign-staging"
+    foreign.mkdir()
+
+    class SwapThenSuccess(FakeTransformer):
+        def transform(self, request, source, destination, control):
+            result = super().transform(request, source, destination, control)
+            victim = foreign / destination.path.name
+            victim.write_bytes(DATA)
+            original_stage = destination.path.parent
+            original_stage.rename(tmp_path / "old-private-staging")
+            original_stage.symlink_to(foreign, target_is_directory=True)
+            return result
+
+    service, source, original_id, broker = _broker(tmp_path, SwapThenSuccess())
+    with pytest.raises(Conflict) as caught:
+        broker.execute_transform(TransformRequest(source, "optimize"),
+                                 control=Control())
+    assert caught.value.code in {
+        "artifact_variant_directory_changed", "artifact_variant_publish_failed",
+    }
+    victim, = tuple(foreign.iterdir())
+    assert victim.read_bytes() == DATA
+    assert not (tmp_path / "library" / "Optimized.epub").exists()
+    assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
