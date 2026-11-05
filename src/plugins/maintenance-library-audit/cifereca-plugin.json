@@ -137,8 +137,8 @@
       "version": "0.2.10",
       "priority": 46,
       "instantiation": "singleton_public",
-      "enabled_by_default": true,
-      "help_text": "Le plugin ne supprime aucun fichier lui-même : après confirmation destructive, library.maintenance exécute delete_duplicate pour les placements historiques ou canonical_dedup supervisé pour les copies canoniques B, avec contrôles des origines et reprise après interruption.",
+      "enabled_by_default": false,
+      "help_text": "Suspendu — arbitrage produit #4496 : aucune suppression ordinaire de doublons autorisée. Le verrou Core est non contournable par les préférences. Les audits indépendants et la reprise des tombstones déjà existants conservent leurs propres conditions d'admission.",
       "capabilities": [
         "maintenance.cleanup",
         "maintenance.cleanup.duplicates"
