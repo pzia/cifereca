@@ -86,7 +86,10 @@ def _directory(path: Path) -> bool:
         return False
 
 
-def _safe_unlink_receipt(path: Path, *, expected_sha256: str = "") -> bool:
+def _safe_unlink_receipt(
+    path: Path, *, expected_sha256: str = "",
+    expected_stamp: tuple[int, int, int, int] | None = None,
+) -> bool:
     """Best-effort cleanup; refuse substitutions instead of unlinking blindly.
 
     The directory FD prevents traversal through a swapped staging symlink.
@@ -94,13 +97,16 @@ def _safe_unlink_receipt(path: Path, *, expected_sha256: str = "") -> bool:
     No path-based cleanup can atomically defeat a malicious concurrent rename;
     supervised recovery still treats any residue as evidence, not garbage.
     """
-    if not _directory(path.parent) or _stamp(path) is None:
+    if (not _directory(path.parent) or _stamp(path) is None
+            or (expected_stamp is not None
+                and _stamp(path) != expected_stamp)):
         return False
     if expected_sha256:
         if hashlib.sha256(_read_receipt_nofollow(path)).hexdigest() != expected_sha256:
             return False
     stamp = _stamp(path)
-    if stamp is None:
+    if stamp is None or (expected_stamp is not None
+                         and stamp != expected_stamp):
         return False
     fd = os.open(
         path.parent, os.O_RDONLY | os.O_DIRECTORY
@@ -132,7 +138,9 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
                                   profile_id: str | None, profile_version: str,
                                   options_fingerprint: str, book_id: str | None,
                                   warnings: tuple[str, ...] | list[str],
-                                  facts: dict[str, Any]) -> tuple[Path, str]:
+                                  facts: dict[str, Any]) -> tuple[
+                                      Path, str, tuple[int, int, int, int],
+                                  ]:
     """fsync output, receipt, and directory BEFORE exclusive hardlink creation."""
     if (_stamp(staged) is None or not _directory(staged.parent)
             or _stamp(source_path) != tuple(source_stamp[:4])
@@ -185,11 +193,17 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
             file.write(raw)
             file.flush()
             os.fsync(file.fileno())
+            signed = os.fstat(file.fileno())
+            receipt_stamp = (
+                signed.st_dev, signed.st_ino,
+                signed.st_size, signed.st_mtime_ns,
+            )
     except Exception:
-        _safe_unlink_receipt(journal)
+        # An incomplete receipt has no SQL intent. Leave it for manual
+        # review rather than unlinking a possibly substituted file.
         raise
     os.fsync(stage_dir_fd)
-    return journal, hashlib.sha256(raw).hexdigest()
+    return journal, hashlib.sha256(raw).hexdigest(), receipt_stamp
 
 
 _INTENT_KEY = "derived.publication.pending.v1:"
@@ -235,12 +249,18 @@ def _intent_matches(storage: Any, journal: Path, digest: str) -> bool:
         return False
 
 
-def retire_pending_derived_receipt(storage: Any, journal: Path) -> None:
-    """After SQL success, remove only the receipt then its DB intent."""
+def retire_pending_derived_receipt(
+    storage: Any, journal: Path, *, expected_sha256: str,
+    expected_stamp: tuple[int, int, int, int],
+) -> None:
+    """Never retire an inode other than the one Core created and fsynced."""
     key = _pending_intent_key(journal)
     expected = storage.metadata_get(key)
-    if (type(expected) is not str or len(expected) != 64
-            or not _safe_unlink_receipt(journal, expected_sha256=expected)):
+    if (expected != expected_sha256
+            or not _safe_unlink_receipt(
+                journal, expected_sha256=expected_sha256,
+                expected_stamp=expected_stamp,
+            )):
         return
     with storage._lock, storage._connect() as db:
         db.execute("DELETE FROM metadata WHERE key=? AND value=?", (key, expected))
