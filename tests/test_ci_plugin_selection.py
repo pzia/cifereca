@@ -127,7 +127,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"dev-updater", "literary-criticism", "maintenance-library-audit"})
+        self.assertEqual(audited, {"constellations", "dev-updater", "literary-criticism", "maintenance-library-audit"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -135,7 +135,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"dev-updater", "literary-criticism", "maintenance-library-audit"})
+        self.assertEqual(audited, {"constellations", "dev-updater", "literary-criticism", "maintenance-library-audit"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -292,6 +292,63 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
+                    )
+
+    def test_audited_constellations_only_targets_its_plugin_suite(self):
+        # navigation.constellation and ui.page have no external contract
+        # consumers in plugin manifests; all dependencies are Core or local.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("constellations", audited)
+        self.assertEqual(
+            selector.affected_packages({"constellations"}, graph),
+            ["constellations"],
+        )
+        for module in ("constellations.py", "constellations_page.py",
+                       "constellation_view_model.py", "semantic_llm.py"):
+            with self.subTest(module=module):
+                chosen, reason = selector.select([
+                    ("M", "src/plugins/constellations/" + module),
+                ], ROOT)
+                self.assertEqual(chosen, ["src/plugins/constellations"])
+                self.assertIn("dependency closure", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/constellations/constellations.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/constellations/cifereca-plugin.json")],
+            [("M", "src/plugins/constellations/tests/helpers.py")],
+            [("D", "src/plugins/constellations/constellations_page.py")],
+            [("R100", "src/plugins/constellations/constellations.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_audited_constellations_has_no_other_plugin_consumers(self):
+        # Ignore a prose comparison in recommendations: only a real module,
+        # plugin ID, manifest or path reference creates this dependency.
+        tokens = (
+            "constellations_page", "constellation_view_model",
+            "navigation.constellations", "navigation.constellation",
+            "ui.page.constellations", "org.cifereca.constellations",
+            "from constellations import", "import constellations",
+            "from semantic_llm import", "/constellations/",
+        )
+        source_root = ROOT / "src/plugins"
+        for item in sorted(source_root.glob("*/*")):
+            package = item.relative_to(source_root).parts[0]
+            if package == "constellations":
+                continue
+            sources = item.rglob("*") if item.is_dir() else (item,)
+            for file in sources:
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in content for token in tokens),
+                        f"New constellations plugin consumer: {file}",
                     )
 
     def git(self, *args):
