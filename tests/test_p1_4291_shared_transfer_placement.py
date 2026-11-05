@@ -281,7 +281,7 @@ def test_canonical_bnf_send_survives_deep_scan_without_reclassifying_provider(
     try:
         sent = service.materialize_to_identity(pid, "bob")
         received = Path(sent["path"])
-        assert received.parent == root / "bob" / "shared"
+        assert received.parent == root / "bob" / "Acquisitions"
         assert received.read_bytes() == pdf.read_bytes()
         with service.storage._lock, service.storage._connect() as db:
             assert db.execute(
