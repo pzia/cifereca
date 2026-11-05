@@ -371,6 +371,7 @@ jobs:
       - name: Run plugin tests
         if: steps.scope.outputs.plugins == 'true'
         env:
+          CIFERECA_PLUGIN_TEST_JOBS: "3"
           PYTHONPATH: ${{ github.workspace }}/src
           PLUGIN_TARGETS: ${{ steps.scope.outputs.plugin_targets }}
         run: |
