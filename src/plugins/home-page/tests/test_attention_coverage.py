@@ -16,13 +16,14 @@ class AttentionCoverageTests(unittest.TestCase):
                 {"provider_id":"gutenberg","label":"Gutenberg","connected":False},
                 {"provider_id":"paris","label":"Paris","connected":False},
             ],
-            "statistics":{"local_books":12,"sources":{"local":12,"gutenberg":3,"paris":2}},
+            "statistics":{"local_books":12,"local_books_without_provider_origin":7,
+                          "sources":{"gutenberg":3,"paris":2}},
         }
         groups=mod.source_groups(row)
         self.assertEqual([x["provider_id"] for x in groups["local"]],["local"])
         self.assertEqual([x["provider_id"] for x in groups["public"]],["gutenberg"])
         self.assertEqual([x["provider_id"] for x in groups["authenticated"]],["paris"])
-        self.assertEqual(groups["local"][0]["count"],12)
+        self.assertEqual(groups["local"][0]["count"],7)
 
     def test_local_and_public_sources_never_become_connect_actions(self):
         row={
@@ -71,20 +72,38 @@ class AttentionCoverageTests(unittest.TestCase):
 
 
 class CompactDashboardTests(unittest.TestCase):
-    def test_counts_are_not_duplicated_as_another_local_statistic(self):
-        source={'label':'Local','provider_id':'local','kind':'local','count':562}
-        self.assertIn('déjà comptée',mod.compact_source_text(source,total_local_books=562))
-        self.assertNotIn('562',mod.compact_source_text(source,total_local_books=562))
-        self.assertIn('42 livre(s) d’origine',mod.compact_source_text(
-            dict(source,count=42),total_local_books=562))
+    def test_local_unattested_count_is_not_the_total(self):
+        row={'statistics':{'local_books':562,'local_books_without_provider_origin':42,
+                           'sources':{'numilog':520}}}
+        local,=mod.compact_source_groups(row)['local']
+        self.assertEqual(mod.compact_source_text(local),'Origine non attestée · 42 fichiers locaux')
+
+    def test_known_zero_and_unavailable_provenance_do_not_infer_owned_counts(self):
+        stats={'local_books':8,'local_books_without_provider_origin':8,
+               'sources':{},'remote_owned_rights':6}
+        row={'providers':['numilog'],'statistics':stats}
+        def source_text():
+            source,=mod.compact_source_groups(row)['authenticated']
+            return mod.compact_source_text(source)
+        self.assertIn('0 fichier local lié',source_text())
+        self.assertIn('Droits d’achat distants : 6',mod.overview_counts_lines(stats)[1])
+
+        del stats['local_books_without_provider_origin']
+        stats['sources']={'numilog':5,'manual':3}
+        groups=mod.compact_source_groups(row)
+        self.assertEqual(groups['unknown'],[])
+        self.assertIn('— (non déterminé)',source_text())
+        self.assertNotIn('5 fichiers',source_text())
+        self.assertEqual(mod.compact_source_text(groups['local'][0]),
+                         'Origine des fichiers locaux · — (non déterminé)')
 
     def test_grouping_keeps_public_auth_and_unknown_origins_distinct(self):
         row={
             'providers':['local','gutenberg','paris'],
             'sources':[{'provider_id':'paris','label':'Paris','connected':False},
                        {'provider_id':'gutenberg','label':'Gutenberg','connected':False}],
-            'statistics':{'local_books':562,
-                          'sources':{'local':562,'gutenberg':80,'paris':24,'orphan-provider':9}},
+            'statistics':{'local_books':562,'local_books_without_provider_origin':449,
+                          'sources':{'gutenberg':80,'paris':24,'orphan-provider':9}},
         }
         groups=mod.compact_source_groups(row)
         self.assertEqual([r['provider_id'] for r in groups['local']],['local'])
@@ -128,6 +147,7 @@ class StoreVsCatalogueProjectionTests(unittest.TestCase):
                 {'provider_id':'numilog-catalog','label':'Numilog','connected':False},
             ],
             'statistics':{'sources':{'numilog':4,'numilog-catalog':18},
+                          'local_books_without_provider_origin':0,
                           'known_loans':0,'remote_owned_rights':2},
             'sync':{},
         }
@@ -141,6 +161,7 @@ class StoreVsCatalogueProjectionTests(unittest.TestCase):
         self.assertNotIn('connexion',public)
         self.assertIn('Mes achats',private)
         self.assertIn('connectée',private)
+        self.assertIn('4 fichiers locaux liés',private)
         self.assertIn('achats non présumés',private)
         # No public anonymous catalogue should prompt a credential login.
         attention=mod.attention_items(row,now=100)
@@ -187,7 +208,7 @@ class StoreVsCatalogueProjectionTests(unittest.TestCase):
     def test_public_numilog_with_zero_indexed_books_does_not_infer_zero_offers(self):
         item={'provider_id':'numilog-catalog','kind':'public','count':0}
         text=mod.compact_source_text(item)
-        self.assertIn('0 livre(s) d’origine',text)
+        self.assertIn('0 fichier local lié',text)
         self.assertIn('sans achat attesté',text)
         self.assertNotIn('Mes achats',text)
 
