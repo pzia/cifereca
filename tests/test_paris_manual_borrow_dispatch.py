@@ -89,8 +89,10 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
             return httpx.Response(200, json={"success": True, "d": {"Loans": rows}})
         if request.url.path.endswith("/synthetic.acsm"):
             assert request.method == "GET"
-            if result == "replay-redirect":
-                return httpx.Response(302, headers={"Location": href})
+            if result in {"replay-redirect", "encoded-replay-redirect"}:
+                target = (href if result == "replay-redirect"
+                          else href.replace("ASSARedirect", "ASSA%52edirect"))
+                return httpx.Response(302, headers={"Location": target})
             return httpx.Response(200, content=(
                 b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
                 b'<format>application/epub+zip</format></fulfillmentToken>'
@@ -406,12 +408,13 @@ def test_first_offer_get_failure_does_not_repeat_or_unconfirm_borrow(tmp_path, m
         service.close()
 
 
-def test_first_token_redirect_cannot_reenter_mutating_assaredirect(tmp_path):
+@pytest.mark.parametrize("result", ["replay-redirect", "encoded-replay-redirect"])
+def test_first_token_redirect_cannot_reenter_mutating_assaredirect(tmp_path, result):
     """A signed token GET returning a loan endpoint is rejected without replay."""
     from cifereca import acsm_cache
 
     service, _session, account, item, state = setup(
-        tmp_path, result="replay-redirect")
+        tmp_path, result=result)
     try:
         outcome = attempt(service, account, item)
         assert outcome["status"] == "confirmed"
