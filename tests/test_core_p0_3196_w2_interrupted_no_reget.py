@@ -107,7 +107,12 @@ def test_pending_without_interrupted_attempt_proof_is_not_reclassified(
         summary = service.sync_kobo_backup()
         assert summary["reconcile_skipped"] == 0
         assert summary["attempted"] == 1
-        assert calls == ["attempt"]
+        # This synthetic legacy session has no normalize_item implementation;
+        # that old provider ABI fails *after* attempt admission but before
+        # invoking _execute_kobo_acquisition. The distinction proved here is
+        # that ordinary adapter-pending rows are not quarantined by W2.
+        assert summary["errors"] == 1
+        assert calls == []
     finally:
         service.close()
 
