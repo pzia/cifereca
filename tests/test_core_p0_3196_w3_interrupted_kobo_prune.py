@@ -38,9 +38,9 @@ def test_interrupted_no_path_kobo_row_is_not_pruned_on_empty_manifest(
         other_credential = store.backup_get("kobo", "other", "other-credential")
         rights = store.entitlements()
         ledger = store.acquisitions()
-        for _ in range(2):
+        for expected_pruned in (1, 0):
             assert store.backup_prune_missing("kobo", "vault", set()) == {
-                "pruned": 0 if store.backup_get("kobo", "vault", "stale-pending") is None else 1,
+                "pruned": expected_pruned,
                 "local_preserved": 0, "entitlements_inactivated": 0,
             }
             assert store.backup_get("kobo", "vault", "interrupted") == original
