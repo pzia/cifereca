@@ -1,0 +1,133 @@
+"""P0 #3196: the old v0.7 writer cannot regress an existing completed B receipt.
+
+Synthetic SQLite v14 only; no Kobo network, ADEPT or user library access.
+The canonical stage-id usually differs from v0.7's deterministic ID,
+but imported/transition databases may carry a completed B journal at that ID.
+"""
+import json
+
+import pytest
+
+from cifereca.storage import Storage
+
+
+def _backup(*, status="pending", sha="a" * 64, account="borrower", owner="A"):
+    return {
+        "provider_id": "kobo", "credential_id": "synthetic-vault",
+        "account_id": account, "identity_id": owner,
+        "item_id": "synthetic-book", "revision_id": "v1",
+        "title": "Synthetic title", "format": "epub",
+        "local_path": "/synthetic/absent.epub", "sha256": sha,
+        "size": 73, "status": status, "updated_at": 123,
+    }
+
+
+@pytest.fixture
+def storage(tmp_path):
+    service = Storage(tmp_path / "state.sqlite")
+    try:
+        service.backup_put(_backup(status="complete"))
+        yield service
+    finally:
+        service.close()
+
+
+def _ledger(storage):
+    with storage._lock, storage._connect() as db:
+        return db.execute(
+            "SELECT acquisition_id,provider_id,credential_id,account_id,"
+            "item_id,identity_id,status,artifact_id,metadata_json,updated_at "
+            "FROM acquisition_ledger WHERE provider_id='kobo'"
+        ).fetchone()
+
+
+def _snapshot(storage):
+    with storage._lock, storage._connect() as db:
+        return {
+            table: db.execute(
+                "SELECT * FROM " + table + " ORDER BY rowid"
+            ).fetchall()
+            for table in ("entitlements", "artifacts", "placements",
+                          "catalog_entries", "acquisition_ledger")
+        }
+
+
+def _promote_synthetic_receipt(storage, raw=None):
+    receipt = {
+        "schema": "canonical.completed-delivery.v1",
+        "source": [
+            "A", "kobo", "synthetic-vault", "borrower",
+            "purchases", "synthetic-book", "purchase", "purchase",
+        ],
+        "path": "/synthetic/absent.epub", "sha256": "a" * 64,
+        "offer_id": "synthetic-offer", "receipt": "synthetic-proof",
+        "adept_receipt": "",
+    }
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET status='complete',"
+            "metadata_json=?,artifact_id=? WHERE provider_id='kobo'",
+            (raw if raw is not None else json.dumps(receipt),
+             "sha256:" + "a" * 64),
+        )
+
+
+@pytest.mark.parametrize("status", [
+    "pending", "acquiring", "attention_required", "complete",
+])
+def test_existing_completed_canonical_checkpoint_is_immune_to_legacy_replay(
+    storage, status,
+):
+    _promote_synthetic_receipt(storage)
+    before = _snapshot(storage)
+    old_receipt = _ledger(storage)
+    storage.backup_put(_backup(status=status, sha="b" * 64))
+    assert _snapshot(storage) == before
+    assert _ledger(storage) == old_receipt
+    compat = storage.backup_get("kobo", "synthetic-vault", "synthetic-book")
+    assert compat["status"] == status
+    assert compat["sha256"] == "b" * 64
+    # The old projection's new SHA is not an Artifact or attested B.
+    assert storage.artifact_get("sha256:" + "b" * 64) is None
+
+
+@pytest.mark.parametrize("raw", [
+    '{"schema":"canonical.completed-delivery.v1","schema":"legacy"}',
+    '{"other":"canonical.completed-delivery.v1"}',
+    '{"schema":"canonical.completed-delivery.v1",',
+])
+def test_ambiguous_canonical_marker_rolls_back_legacy_update(storage, raw):
+    _promote_synthetic_receipt(storage, raw)
+    before = _snapshot(storage)
+    projection = storage.backup_get("kobo", "synthetic-vault", "synthetic-book")
+    with pytest.raises(ValueError, match="backup_canonical_receipt_unreadable"):
+        storage.backup_put(_backup(status="acquiring", sha="b" * 64))
+    assert _snapshot(storage) == before
+    assert storage.backup_get("kobo", "synthetic-vault", "synthetic-book") == projection
+
+
+def test_foreign_owner_on_canonical_checkpoint_is_never_rebound(storage):
+    _promote_synthetic_receipt(storage)
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET identity_id='other-profile' "
+            "WHERE provider_id='kobo'"
+        )
+    before = _snapshot(storage)
+    projection = storage.backup_get("kobo", "synthetic-vault", "synthetic-book")
+    with pytest.raises(ValueError, match="backup_acquisition_owner_conflict"):
+        storage.backup_put(_backup(status="acquiring", sha="b" * 64))
+    assert _snapshot(storage) == before
+    assert storage.backup_get("kobo", "synthetic-vault", "synthetic-book") == projection
+
+
+def test_unfinished_compatibility_checkpoint_preserves_existing_writer(storage):
+    before = _ledger(storage)
+    assert json.loads(before[8]) == {"legacy_status": "complete"}
+    storage.backup_put(_backup(status="acquiring"))
+    after = _ledger(storage)
+    assert after[6] == "acquiring"
+    assert json.loads(after[8]) == {"legacy_status": "complete"}
+    assert storage.backup_get(
+        "kobo", "synthetic-vault", "synthetic-book"
+    )["status"] == "acquiring"
