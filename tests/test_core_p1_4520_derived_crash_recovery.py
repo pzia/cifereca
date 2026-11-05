@@ -168,6 +168,12 @@ def test_receipt_is_durable_before_any_exclusive_hardlink(tmp_path, monkeypatch)
             row = json.loads(journals[-1].read_text())
             assert row["source_artifact_id"] == source.artifact_id
             assert row["identity_id"] == "id1"
+            import hashlib
+            from cifereca.core.derived_variant_recovery import _pending_intent_key
+            digest = hashlib.sha256(journals[-1].read_bytes()).hexdigest()
+            assert service.storage.metadata_get(
+                _pending_intent_key(journals[-1])
+            ) == digest, "SQL intent must exist before os.link"
             checked.append(row["published_path"])
             raise FileExistsError("synthetic publish collision")
 
@@ -238,6 +244,47 @@ def test_receipt_forged_output_size_is_not_recoverable(tmp_path):
         record["output_size"] += 1
         receipt.write_text(json.dumps(record), encoding="utf-8")
         observed = review_pending_derived_receipts(service, identity_id="id1")
+        assert observed[0]["status"] == "manual_review"
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
+
+
+def test_forged_receipt_without_sql_intent_never_recovers(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        receipt = next(stage.glob("pending-*.json"))
+        # Even byte-for-byte identical JSON has no authority under a newly
+        # fabricated receipt filename absent from SQLite's prelink intents.
+        forged = stage / ("pending-" + "a" * 32 + ".json")
+        forged.write_bytes(receipt.read_bytes())
+        observed = review_pending_derived_receipts(service, identity_id="id1")
+        assert len(observed) == 2
+        assert [x["status"] for x in observed].count("manual_review") == 1
+        assert [x["status"] for x in observed].count("recoverable") == 1
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
+
+
+def test_mutated_receipt_rejected_even_with_approved_new_sha(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        receipt = next(stage.glob("pending-*.json"))
+        import json
+        import hashlib
+        row = json.loads(receipt.read_text())
+        row["book_id"] = "forged-edition"
+        receipt.write_text(json.dumps(row), encoding="utf-8")
+        altered = hashlib.sha256(receipt.read_bytes()).hexdigest()
+        observed = review_pending_derived_receipts(
+            service, identity_id="id1", commit=True,
+            approved_receipt_sha256=altered,
+        )
         assert observed[0]["status"] == "manual_review"
         assert service.storage.artifact_variants() == []
     finally:
