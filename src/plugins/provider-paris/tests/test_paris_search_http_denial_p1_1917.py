@@ -99,7 +99,7 @@ def test_healthy_sibling_stays_accessible_when_other_branch_is_denied(
     try:
         def branch(query, scenario, page, size):
             if scenario == "CATALOGUE":
-                return []
+                return [], []
             request = httpx.Request(
                 "POST", "https://example.test/?token=PRIVATE_SECRET"
             )
