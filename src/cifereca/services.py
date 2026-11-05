@@ -3880,10 +3880,13 @@ class LibraryService:
         )
 
     def _cleanup_old_acsm_work(self, *, max_age_seconds: int | None = None) -> dict[str, int]:
+        def forget_receipts(expired_path):
+            acsm_cache.forget(expired_path)
+            acsm_cache.forget_initial(expired_path)
         return acsm_staging.cleanup_old_acsm_work(
             self.storage.path, max_age_seconds=max_age_seconds,
             config_get=self.config.get, clock=time.time,
-            forget=acsm_cache.forget, logger=_TRACE_LOG,
+            forget=forget_receipts, logger=_TRACE_LOG,
         )
 
     def acquire_digital_loan(self, loan: Loan, *, force_refresh: bool = False) -> Acquisition:
