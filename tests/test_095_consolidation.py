@@ -114,9 +114,9 @@ class Selection(unittest.TestCase):
         cls=next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='MasterDetailPage')
         method=next(n for n in cls.body if isinstance(n,ast.FunctionDef) and n.name=='_selection_changed')
         module=ast.Module(body=[ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0),method],type_ignores=[])
-        ns={'BookListItem':type('BookListItem',(),{})};exec(compile(ast.fix_missing_locations(module),str(source),'exec'),ns)
+        # The isolated AST method has no module imports; supply its optional\n        # metrics context without changing the selection contract.\n        from contextlib import nullcontext\n        import time\n        ns={'BookListItem':type('BookListItem',(),{}),\n            'capture_detail_selection':lambda *_args, **_kw: nullcontext(None),\n            'time':time};exec(compile(ast.fix_missing_locations(module),str(source),'exec'),ns)
         calls=[]
-        page=NS(selection=NS(get_selected_item=lambda:None),detail=NS(empty=lambda *args:calls.append('clear')), _selected_callbacks=[lambda selected:calls.append(selected)], _narrow_master_detail=False)
+        page=NS(window=NS(),selection=NS(get_selected_item=lambda:None),detail=NS(empty=lambda *args:calls.append('clear')), _selected_callbacks=[lambda selected:calls.append(selected)], _narrow_master_detail=False)
         ns['_selection_changed'](page,None,None)
         self.assertEqual(calls,['clear',None])
 
