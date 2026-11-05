@@ -19,7 +19,7 @@ from tests.test_p1_4157_listloans_completeness_matrix import loan_row, reply
     (0, 0), (1, 0), (4, 0), (20, 0), (0, 1), (4, 3),
 ])
 def test_paris_listloans_and_optional_ebooks_lookup_cost_at_cold_and_warm_read(
-    digital, physical,
+    digital, physical, caplog,
 ):
     """Two authoritative GETs on every read; optional catalogue metadata cached.
 
@@ -41,6 +41,7 @@ def test_paris_listloans_and_optional_ebooks_lookup_cost_at_cold_and_warm_read(
         return reply(rows)
 
     session, account, _diagnostics = _fixture(handler)
+    caplog.set_level("INFO", logger="cifereca")
     queries = []
     def search(query, *, scenario, result_size):
         assert scenario == "EBOOKS"
@@ -59,6 +60,24 @@ def test_paris_listloans_and_optional_ebooks_lookup_cost_at_cold_and_warm_read(
         # One exact edition lookup + one title fallback per un-enriched loan.
         assert len(queries) == 2 * digital
         assert all(q for q in queries)
+        timing = [
+            record.getMessage() for record in caplog.records
+            if "TRACE paris list-loans timing " in record.getMessage()
+        ]
+        assert len(timing) == 3
+        assert sum("phase=branch consumer=loan_inventory upstream=" in line for line in timing) == 2
+        assert any(
+            "phase=metadata consumer=loan_inventory" in line
+            and f"ebooks_attempted={2 * digital}" in line
+            for line in timing
+        )
+        assert all(
+            f"identity_id={account.identity_id}" in line
+            and f"credential_id={account.credential_id}" in line
+            and f"borrower_id={account.unique_id}" in line
+            for line in timing
+        )
+        assert all("duration_ms=" in line for line in timing)
 
         # A second *explicit* inventory is still a fresh two-branch read.
         # Only descriptive EBOOKS metadata, not loan rights, may be reused.
@@ -69,13 +88,20 @@ def test_paris_listloans_and_optional_ebooks_lookup_cost_at_cold_and_warm_read(
             "DILICOM": 2, "SYRACUSE": 2,
         }
         assert len(queries) == 2 * digital
+        timing = [
+            record.getMessage() for record in caplog.records
+            if "TRACE paris list-loans timing " in record.getMessage()
+        ]
+        assert len(timing) == 6
+        assert sum("phase=branch consumer=loan_inventory upstream=" in line for line in timing) == 4
+        assert "ebooks_attempted=0" in timing[-1]  # warm descriptive cache
     finally:
         session.close()
 
 
 @pytest.mark.parametrize("failed_branch", ["DILICOM", "SYRACUSE"])
 def test_paris_one_failed_branch_keeps_other_branch_without_retry_or_cross_read(
-    failed_branch,
+    failed_branch, caplog,
 ):
     requests = []
     def handler(request):
@@ -86,6 +112,7 @@ def test_paris_one_failed_branch_keeps_other_branch_without_retry_or_cross_read(
         return reply((loan_row("one"),))
 
     session, account, _diagnostics = _fixture(handler)
+    caplog.set_level("INFO", logger="cifereca")
     searches = []
     session.client.search_catalog = lambda *args, **kwargs: searches.append(args) or []
     try:
@@ -98,5 +125,20 @@ def test_paris_one_failed_branch_keeps_other_branch_without_retry_or_cross_read(
         ] == "partial"
         # A physical-only successful branch does not trigger EBOOKS.
         assert len(searches) == (2 if failed_branch == "SYRACUSE" else 0)
+        branch_logs = [
+            record.getMessage() for record in caplog.records
+            if "TRACE paris list-loans timing phase=branch" in record.getMessage()
+        ]
+        assert len(branch_logs) == 2
+        assert any(
+            f"upstream={failed_branch} " in line and "status=failed" in line
+            and "loans=0" in line
+            for line in branch_logs
+        )
+        assert any(
+            f"upstream={({'DILICOM', 'SYRACUSE'} - {failed_branch}).pop()} " in line
+            and "status=success" in line and "loans=1" in line
+            for line in branch_logs
+        )
     finally:
         session.close()
