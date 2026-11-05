@@ -10,6 +10,7 @@ Subsequent duplicate cleanup still uses the canonical supervisor separately.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ from .duplicate_maintenance_guard import (
     _mentions_exact_path, canonical_metadata_mentions_path,
 )
 from .library_declared_links import _records
+from .missing_placement_retirement import _directory_signature
 
 _LIMIT = 100_000
 _MAX_JSON = 65536
@@ -167,6 +169,22 @@ def _inspect(db, *, library_root, candidate_id, keeper_id):
             or sum(d == owners[0] for _, d in directories) != 1):
         raise _Refusal("profile_ambiguous")
     registered = frozenset(d for _, d in directories if type(d) is str and d)
+    # Pin the real directory inode as well as the two file inodes. The
+    # library/profile directory may be swapped while identical hardlinks
+    # remain readable at the old paths; a byte hash alone misses that swap.
+    if (owners[0] in ("", ".", "..") or "/" in owners[0]
+            or "\\" in owners[0]):
+        raise _Refusal("profile_ambiguous")
+    try:
+        physical_root = library_root.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise _Refusal("profile_ambiguous") from error
+    signatures = (
+        _directory_signature(physical_root),
+        _directory_signature(physical_root / owners[0]),
+    )
+    if any(value is None for value in signatures):
+        raise _Refusal("profile_ambiguous")
     observations = []
     for raw in (candidate[0], keeper[0]):
         file = Path(raw)
@@ -213,9 +231,27 @@ def _inspect(db, *, library_root, candidate_id, keeper_id):
         db, candidate_id=candidate_id, candidate=candidate,
         artifact_size=artifact[1], owner_scope=(credential, account),
     )
-    if any(not _same_file(file, before) for file, before in observations):
+    if (any(not _same_file(file, before) for file, before in observations)
+            or signatures != (
+                _directory_signature(physical_root),
+                _directory_signature(physical_root / owners[0]),
+            )):
         raise _Refusal("physical_changed_during_review")
-    return catalogue, backup, observations
+    # This opaque version stamp is not authority: the commit ALSO requires
+    # confirmation, the genuine shared lock, and full fresh revalidation.
+    # It refuses a swapped directory/file or a changed source between the
+    # operator's plan and the final SQL transaction.
+    fingerprint = [
+        str(physical_root), signatures, candidate, keeper, artifact,
+        owners[0], [tuple(int(getattr(state, field)) for field in (
+            "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns"))
+            for _file, state in observations],
+        credential, account, catalogue, backup,
+    ]
+    token = hashlib.sha256(json.dumps(
+        fingerprint, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
+    return catalogue, backup, observations, physical_root, owners[0], signatures, token
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +263,7 @@ class LegacyAdoptionResult:
     catalogue_references: int = 0
     backup_references: int = 0
     completed_path_receipts: int = 0
+    review_token: str = ""
 
     @property
     def may_delete(self) -> bool:
@@ -246,6 +283,7 @@ def adopt_verified_legacy_placement(
     storage, *, library_root: Path, candidate_placement_id: str,
     keeper_placement_id: str, action: Literal["preview", "commit"] = "preview",
     confirmed: bool = False, shared_lock=None,
+    expected_review_token: str = "",
 ) -> LegacyAdoptionResult:
     """Review or atomically clear ONLY the obsolete provider/item label.
 
@@ -260,10 +298,11 @@ def adopt_verified_legacy_placement(
     if action == "commit" and (confirmed is not True or not _lock_ok(shared_lock)):
         raise ValueError("legacy_adoption_confirmation_and_lock_required")
 
-    def report(status, reason, *, catalogue=0, backup=0, receipts=0):
+    def report(status, reason, *, catalogue=0, backup=0, receipts=0,
+               token=""):
         return LegacyAdoptionResult(
             status, reason, candidate_placement_id, keeper_placement_id,
-            catalogue, backup, receipts,
+            catalogue, backup, receipts, token,
         )
 
     try:
@@ -271,14 +310,20 @@ def adopt_verified_legacy_placement(
             return report("blocked", "schema_unavailable")
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN IMMEDIATE" if action == "commit" else "BEGIN")
-            catalogue, backup, observations = _inspect(
+            (catalogue, backup, observations, physical_root,
+             owner_folder, signatures, current_token) = _inspect(
                 db, library_root=library_root,
                 candidate_id=candidate_placement_id,
                 keeper_id=keeper_placement_id,
             )
             if action == "preview":
                 return report("review_required", "exact_path_receipt_attested",
-                              catalogue=catalogue, backup=backup, receipts=1)
+                              catalogue=catalogue, backup=backup, receipts=1,
+                              token=current_token)
+            if (type(expected_review_token) is not str
+                    or len(expected_review_token) != 64
+                    or expected_review_token != current_token):
+                raise _Refusal("stale_plan")
             changed = db.execute(
                 "UPDATE placements SET provider_id=NULL,source_item_id=NULL "
                 "WHERE placement_id=? AND identity_id=(SELECT identity_id "
@@ -289,7 +334,11 @@ def adopt_verified_legacy_placement(
             )
             if changed.rowcount != 1:
                 raise _Refusal("concurrent_placement_change")
-            if any(not _same_file(file, before) for file, before in observations):
+            if (any(not _same_file(file, before) for file, before in observations)
+                    or signatures != (
+                        _directory_signature(physical_root),
+                        _directory_signature(physical_root / owner_folder),
+                    )):
                 raise _Refusal("physical_changed_during_commit")
             # SQLite rollback covers the entire adoption on exceptions.
         return report("migrated", "legacy_label_cleared_no_file_mutation",
