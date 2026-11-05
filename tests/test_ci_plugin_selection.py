@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -362,6 +362,65 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
+                    )
+
+    def test_home_page_optional_library_contract_closure(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("home-page", audited)
+        self.assertEqual(
+            selector.affected_packages({"home-page"}, graph),
+            ["home-page"],
+        )
+        # Home declares an optional provider.library category contract,
+        # plus concrete source classification consumers. Providers must
+        # retain the reverse closure into Home when they change.
+        for provider in (
+            "provider-bnf-catalogue", "provider-gallica",
+            "provider-gutenberg", "ebooksgratuits",
+        ):
+            with self.subTest(provider=provider):
+                self.assertIn(provider, graph["home-page"])
+                self.assertIn(
+                    "home-page",
+                    selector.affected_packages({provider}, graph),
+                )
+        for module in ("cifereca_home.py",):
+            chosen, reason = selector.select([
+                ("M", "src/plugins/home-page/" + module),
+            ], ROOT)
+            self.assertEqual(chosen, ["src/plugins/home-page"])
+            self.assertIn("dependency closure", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/home-page/cifereca_home.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/home-page/cifereca-plugin.json")],
+            [("M", "src/plugins/home-page/tests/conftest.py")],
+            [("D", "src/plugins/home-page/cifereca_home.py")],
+            [("R100", "src/plugins/home-page/cifereca_home.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_home_page_has_no_cross_plugin_implementation_consumers(self):
+        tokens = (
+            "ui.page.home", "cifereca_home",
+            "from cifereca_home import", "import cifereca_home",
+        )
+        root = ROOT / "src/plugins"
+        for package_dir in sorted(root.iterdir()):
+            if not package_dir.is_dir() or package_dir.name == "home-page":
+                continue
+            for file in package_dir.rglob("*"):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yaml", ".yml", ".sh",
+                }:
+                    data = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in data for token in tokens),
+                        f"Unexpected direct home-page plugin consumer: {file}",
                     )
 
     def test_recommendations_product_is_scoped_to_its_own_suite(self):
