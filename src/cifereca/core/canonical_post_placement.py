@@ -15,6 +15,7 @@ from .missing_placement_readiness import _physical_absence
 from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 
 _MAX_MATCHES = 64
+_MAX_SCAN_ROWS = 10_000  # Bound raw registrations before exclusion filtering.
 
 
 def verified_post_placement_duplicates(
@@ -73,11 +74,21 @@ def verified_post_placement_duplicates(
             "SELECT placement_id,path FROM placements "
             "WHERE identity_id=? AND artifact_id=? AND state='present' "
             "AND placement_id<>? ORDER BY placement_id LIMIT ?",
-            (identity, artifact_id, placement_id, _MAX_MATCHES + 1),
+            (identity, artifact_id, placement_id, _MAX_SCAN_ROWS + 1),
         ).fetchall()
+        if len(candidates) > _MAX_SCAN_ROWS:
+            # Never silently take a subset of an unbounded SQLite snapshot.
+            raise ValueError("canonical_dedup_candidates_over_budget")
+        # A registered delivery Outbox is not a cleanable duplicate and must
+        # not consume the ordinary 64-candidate budget. Filter before SHA.
+        candidates = [
+            (other_id, path) for other_id, path in candidates
+            if not ordinary_dedup_path_excluded(
+                path, library_root=library_root, identity_id=identity,
+                owner_directory=owner_dir,
+            )
+        ]
         if len(candidates) > _MAX_MATCHES:
-            # A bounded SQL probe may not silently turn an oversized set
-            # into "no duplicates". No subset can authorize deduplication.
             raise ValueError("canonical_dedup_candidates_over_budget")
         if not candidates:
             # No duplicate => no extra full-file SHA pass on every successful
@@ -90,13 +101,7 @@ def verified_post_placement_duplicates(
         )
     if not valid(target):
         return ()
-    return tuple(
-        other_id for other_id, path in candidates
-        if not ordinary_dedup_path_excluded(
-            path, library_root=library_root, identity_id=identity,
-            owner_directory=owner_dir,
-        ) and valid(path)
-    )
+    return tuple(other_id for other_id, path in candidates if valid(path))
 
 
 def preview_post_placement_supervised_pairs(
