@@ -105,12 +105,15 @@ def test_scoped_variants_do_not_expose_files_in_another_identity(tmp_path):
     assert variant_id not in {artifact.artifact_id for artifact in alice.artifacts}
     assert variant_id not in {variant.artifact_id for variant in alice.variants}
     assert variant_id not in {placement.artifact_id for placement in alice.placements}
-    assert variant_id in {artifact.artifact_id for artifact in bob.artifacts}
-    assert [variant.filename for variant in bob.variants] == ["Bob optimized.epub"]
+    # Bob has a genuine local file, but only a legacy/global recipe row:
+    # no profile-scoped OriginLink(derived) or source placement proof exists.
+    # A SHA/filename must not make it a trusted derivative for either profile.
+    assert variant_id not in {artifact.artifact_id for artifact in bob.artifacts}
+    assert bob.variants == ()
     assert broker.artifact(variant_id, identity_id="id1") is None
     assert broker.artifact(variant_id, identity_id="id2").filename == "Bob optimized.epub"
-    # The source hash is shared, but Bob's derived variant is not Alice's.
+    # Direct placement reads remain owner-scoped; derived views are stricter.
     assert broker.book(variant_id, identity_id="id1") is None
     assert broker.for_artifact(variant_id, identity_id="id1") is None
-    assert broker.book(variant_id, identity_id="id2") is not None
-    assert broker.for_artifact(variant_id, identity_id="id2").variants[0].artifact_id == variant_id
+    assert broker.book(variant_id, identity_id="id2") is None
+    assert broker.for_artifact(variant_id, identity_id="id2") is None
