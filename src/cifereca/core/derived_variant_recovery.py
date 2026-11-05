@@ -6,6 +6,7 @@ Recovery is explicit (never on startup), bounded and non-destructive.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import os
 from pathlib import Path
@@ -211,12 +212,16 @@ def _intent_matches(storage: Any, journal: Path, digest: str) -> bool:
 
 def review_pending_derived_receipts(service: Any, *, identity_id: str,
                                     commit: bool = False,
-                                    approved_receipt_sha256: str = "") -> tuple[dict[str, str], ...]:
+                                    approved_receipt_sha256: str = "",
+                                    after_cursor: str = "") -> tuple[dict[str, str], ...]:
     """Explicit bounded review/recovery. No ambiguous evidence is promoted.
 
     The journal is NOT a provider right. For commit, an operator must approve
     the SHA256 of the exact reviewed receipt bytes; no unattended bulk replay.
     """
+    if (type(after_cursor) is not str or len(after_cursor) > 512
+            or "\\x00" in after_cursor):
+        raise ValueError("derived_recovery_cursor_invalid")
     storage = service.storage
     if commit and getattr(getattr(service, "current_identity", None), "identity_id", None) != identity_id:
         raise ValueError("derived_recovery_active_identity_mismatch")
@@ -241,21 +246,37 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
             or sum(row.get("directory_name") == dirname
                    for row in storage.identities()) != 1):
         raise ValueError("derived_recovery_invalid_root")
-    receipts: list[Path] = []
-    for subdir in [folder, *(p for p in sorted(folder.iterdir()) if _directory(p) and not p.is_symlink())]:
-        journal_dir = subdir / ".cifereca-staging" / "variants"
-        if not _directory(journal_dir) or not _directory(journal_dir.parent):
-            continue
-        if journal_dir.is_symlink() or journal_dir.parent.is_symlink():
-            continue
-        for file in sorted(journal_dir.iterdir()):
-            if file.name.startswith("pending-") and file.name.endswith(".json"):
-                receipts.append(file)
-                if len(receipts) > MAX_RECEIPTS:
-                    raise ValueError("derived_recovery_receipt_limit")
+    # Cursor pagination is non-destructive and memory bounded. Successful
+    # receipts are retained, so a global 128-file ceiling would otherwise
+    # render recovery unusable after 128 ordinary transformations.
+    def iter_receipts():
+        directories = [
+            folder,
+            *(p for p in sorted(folder.iterdir())
+              if _directory(p) and not p.is_symlink()),
+        ]
+        for subdir in directories:
+            journal_dir = subdir / ".cifereca-staging" / "variants"
+            if not _directory(journal_dir) or not _directory(journal_dir.parent):
+                continue
+            if journal_dir.is_symlink() or journal_dir.parent.is_symlink():
+                continue
+            for file in journal_dir.iterdir():
+                if file.name.startswith("pending-") and file.name.endswith(".json"):
+                    key = file.relative_to(folder).as_posix()
+                    if key > after_cursor:
+                        yield key, file
+
+    page = heapq.nsmallest(
+        MAX_RECEIPTS + 1, iter_receipts(), key=lambda item: item[0],
+    )
+    has_more = len(page) > MAX_RECEIPTS
+    if has_more:
+        page.pop()
     out: list[dict[str, str]] = []
-    for journal in receipts:
-        outcome = {"receipt": journal.name, "status": "manual_review"}
+    for key, journal in page:
+        outcome = {"receipt": journal.name, "cursor": key,
+                   "status": "manual_review"}
         out.append(outcome)
         try:
             receipt_bytes = _read_receipt_nofollow(journal)
@@ -361,4 +382,6 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
             outcome["status"] = "recovered"
         except (OSError, ValueError, TypeError, KeyError, RuntimeError):
             outcome["status"] = "manual_review"
+    if has_more and out:
+        out[-1]["next_cursor"] = out[-1]["cursor"]
     return tuple(out)
