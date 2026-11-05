@@ -10,8 +10,13 @@ L'ABI canonique est testée **statiquement, sans I/O**, dans
 `core/canonical_delivery_abi.py::has_complete_delivery_abi` :
 
 - **v2 complet** : `downloadable_resource_snapshot`,
-  `downloadable_selected_offer_snapshot`,
-  `downloadable_selected_delivery_candidate` ;
+  `downloadable_selected_offer_snapshot`, et **une** livraison v2
+  `downloadable_selected_delivery_candidate_runtime_guarded`,
+  `downloadable_selected_delivery_candidate_guarded` ou
+  `downloadable_selected_delivery_candidate`. Les deux formes protégées
+  peuvent être les **seules** méthodes de livraison : le Core sait leur
+  fournir le lease de consentement vivant, et la compatibilité 0.7 doit
+  donc déjà leur refuser un second writer ;
 - **v1 complet** : `rights_observation_snapshot`,
   `rights_selected_delivery_offer_snapshot`,
   `rights_selected_delivery_candidate` ;
