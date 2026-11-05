@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncPhaseState, SyncSourceRef
+from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncPhaseState, SyncSourceCycleReceipt, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
@@ -252,9 +252,51 @@ class SynchronizationBrokerImpl:
             state["inventory_status"] = "unknown"
         if state.get("scope", "") not in {"", "manual", "opening", "scheduled"}:
             state["scope"] = ""
+        terminal = self._closed_last_cycle(value.get("last_cycle"))
+        if terminal is not None:
+            state["last_cycle"] = terminal
         if legacy:
             self._set_state(source_id, state)
         return state
+
+    @classmethod
+    def _closed_last_cycle(cls, value: object) -> dict[str, Any] | None:
+        """Only a complete, bounded v1 Core terminal can reach a source row.
+
+        Absent counters mean unattested, not zero. Malformed nested metadata
+        cannot leak supplier text or fabrications into the read-only view.
+        """
+        if type(value) is not dict or set(value) not in (
+            {"schema", "status", "attempted_at", "mode"},
+            {"schema", "status", "attempted_at", "mode", "canonical_execution"},
+        ):
+            return None
+        if (type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["status"]) is not str
+                or value["status"] not in {"success", "partial", "failed", "busy", "skipped"}
+                or type(value["mode"]) is not str
+                or value["mode"] not in {"manual", "scheduled"}):
+            return None
+        instant = cls._safe_phase_timestamp(value.get("attempted_at"))
+        if not instant:
+            return None
+        safe = {
+            "schema": 1, "status": value["status"],
+            "attempted_at": instant, "mode": value["mode"],
+        }
+        if "canonical_execution" in value:
+            from .core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+            counts = value["canonical_execution"]
+            if (type(counts) is not dict
+                    or set(counts) != set(CANONICAL_EXECUTION_STATUSES)
+                    or any(type(counts.get(name)) is not int
+                           or not 0 <= counts[name] <= 1_000_000
+                           for name in CANONICAL_EXECUTION_STATUSES)):
+                return None
+            safe["canonical_execution"] = {
+                name: counts[name] for name in CANONICAL_EXECUTION_STATUSES
+            }
+        return safe
 
     def _set_state(self, source_id: str, value: dict[str, Any]) -> None:
         self.service.storage.metadata_set(
@@ -467,6 +509,36 @@ class SynchronizationBrokerImpl:
         # Exact source/account/session binding is checked before provider I/O.
         if "personal_library" in source_caps:
             declared_sync_caps.append("scheduled_refresh")
+        last_cycle = self._closed_last_cycle(state.get("last_cycle"))
+        receipt = (
+            SyncSourceCycleReceipt(
+                status=last_cycle["status"],
+                attempted_at=last_cycle["attempted_at"],
+                mode=last_cycle["mode"],
+                canonical_execution=(
+                    tuple(last_cycle["canonical_execution"].items())
+                    if "canonical_execution" in last_cycle else None
+                ),
+            ) if last_cycle is not None else None
+        )
+        if receipt is not None:
+            # An empty primary borrower and a literal upstream account named
+            # "provider:credential:primary" may hash to the same legacy ID.
+            # The existing enablement guard refuses that ambiguous source;
+            # never expose *either* borrower's private per-cycle counters
+            # through a shared status key, even when Sync remains OFF.
+            owner_count = 0
+            for candidate in (getattr(self.service, "accounts", ()) or ()):
+                try:
+                    if self._source_id(candidate) == source_id:
+                        owner_count += 1
+                except Exception:
+                    owner_count = 2
+                    break
+                if owner_count > 1:
+                    break
+            if owner_count != 1:
+                receipt = None
         return SyncSourceRef(
             source_id=source_id,
             identity_id=account_ref.identity_id,
@@ -482,6 +554,7 @@ class SynchronizationBrokerImpl:
             error=str(state.get("error") or ""),
             sync_capabilities=tuple(declared_sync_caps),
             phase_states=self._phase_states(account, state, tuple(declared_sync_caps)),
+            last_cycle=receipt,
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
@@ -1187,6 +1260,22 @@ class SynchronizationBrokerImpl:
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
+
+        def terminal_cycle(status: str, execution: object = None) -> None:
+            """Publish with source status in the *same* SQLite metadata write.
+
+            Only the already-validated complete Core execution envelope can
+            become counters. An absent envelope is not evidence of zero.
+            """
+            payload = {
+                "schema": 1, "status": status,
+                "attempted_at": now,
+                "mode": "scheduled" if inventory_only else "manual",
+            }
+            if type(execution) is dict:
+                payload["canonical_execution"] = dict(execution)
+            state["last_cycle"] = payload
+
         # Keep the previous private-inventory evidence when a provider
         # rejects work after the broker's initial enabled/connection check.
         previous_inventory = {
@@ -1223,6 +1312,7 @@ class SynchronizationBrokerImpl:
             # diagnostic details and free-text errors. Only publish bounded
             # counters and known status/reason codes to plugins and GTK.
             if not isinstance(result, dict):
+                terminal_cycle("failed")
                 state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
                 if refreshes_private_inventory:
                     state["inventory_status"] = "failed"
@@ -1235,6 +1325,7 @@ class SynchronizationBrokerImpl:
                 # but before the underlying service starts remote inventory.
                 # Skipped is not proof of a successful refresh and must not
                 # mint last_success or advance the private inventory clock.
+                terminal_cycle("skipped")
                 state.update(status="skipped", error="")
                 if refreshes_private_inventory:
                     for key in ("inventory_last_attempt", "inventory_status"):
@@ -1289,6 +1380,10 @@ class SynchronizationBrokerImpl:
                           or bool(result.get("attention_required"))
                           or bool(result.get("warnings")))
             if incomplete:
+                terminal_cycle(
+                    "failed" if outcome in {"failed", "error"} else "partial",
+                    None if invalid_status else facts.get("canonical_execution"),
+                )
                 facts["reason"] = "invalid_response" if invalid_status else "source_partial"
                 state.update(status="partial", error="Synchronisation partielle")
                 if refreshes_private_inventory:
@@ -1297,6 +1392,7 @@ class SynchronizationBrokerImpl:
                 return SyncResult(ok=False, changed=changed,
                                   warnings=("synchronisation partielle",), facts=facts)
             success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            terminal_cycle("success", facts.get("canonical_execution"))
             state.update(last_success=success_at, status="ok", error="")
             if refreshes_private_inventory:
                 state.update(
@@ -1313,6 +1409,7 @@ class SynchronizationBrokerImpl:
             from .providers import ProviderConfigurationError
             busy = (isinstance(exc, ProviderConfigurationError)
                     and isinstance(exc.__cause__, LockBusyError))
+            terminal_cycle("busy" if busy else "failed")
             state.update(
                 status="busy" if busy else "error",
                 error="" if busy else _SYNC_PUBLIC_FAILURE,
