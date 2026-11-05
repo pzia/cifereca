@@ -601,6 +601,9 @@ class LibraryService:
             connections=self.storage.provider_connections(identity_id=identity_id),
             accounts=self.accounts,
             profile_id=self.storage.adept_profile_binding_get("identity", identity_id),
+            primary_connection_id=(self.config.identity(identity_id) or {}).get(
+                "primary_paris_connection_id"
+            ),
         )
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
