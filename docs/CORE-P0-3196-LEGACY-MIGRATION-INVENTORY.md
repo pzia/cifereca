@@ -40,6 +40,29 @@ reprise vérifiées.
   `status=complete` signifie *inventaire complet*, et **jamais**
   `migration_ready`, `local_present` ou `right_attested`.
 
+## Consultation opérateur hors réseau (P0 #3196)
+
+Sur l'installation locale qui possède **déjà** la base SQLite v14 :
+
+```bash
+cifereca-cli legacy-backup-inventory --identity alice --json
+```
+
+La commande ouvre exclusivement la base existante en `sqlite mode=ro`
+**avant l'initialisation du Core** : ni session Kobo, ni ADEPT, ni GET, ni
+`Storage.__init__` (donc aucune mise à niveau implicite du schéma).
+Elle exige une identité enregistrée et ne retourne que les agrégats fermés,
+sans chemin, titre, compte, credential, édition ni ligne individuelle.
+La limite est de 1 000 lignes Kobo de cette identité ;
+`budget_exceeded` ou `scope_unverified` produisent un **échec sans
+compteurs partiels**. Une base absente n'est jamais créée, un schéma trop
+ancien n'est pas migré : `unavailable` et `schema_unavailable` ont un
+code de sortie non nul. Aucun résultat de cette commande n'autorise
+`backup_items` à accorder un droit ou ne donne une permission de migration.
+
+L'inventaire permet de mesurer les populations à qualifier sur une
+installation réelle, **sans relancer les 522 livraisons Kobo**.
+
 ## Étapes strictement restantes
 
 1. Par candidat, joindre les coordonnées **révision/SourceKey/compte** aux
