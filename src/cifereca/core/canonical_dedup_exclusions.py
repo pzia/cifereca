@@ -26,7 +26,7 @@ def ordinary_dedup_path_excluded(
     provider, UI checkbox, untrusted plan or user preference. An exclusion
     applies to either a candidate or a keeper, before any relink/retirement.
     """
-    if (type(path) not in (str, Path)
+    if (not isinstance(path, (str, Path))
             or not isinstance(library_root, Path)
             or not library_root.is_absolute()
             or any(p in ("", ".", "..") for p in library_root.parts)
