@@ -121,3 +121,114 @@ def forget(path: Path) -> None:
                 manifest.unlink()
     except (OSError, ValueError, AttributeError):
         pass
+
+
+# #3121: a first-borrow Paris ACSM may be issued under a one-shot signed
+# redirect URL that is absent from a later ListLoans response. The URL itself
+# must never become a persisted receipt, and the normal URL-keyed cache above
+# must remain unchanged for all existing provider paths.
+INITIAL_MANIFEST = '.initial-acsm-receipt.json'
+
+
+def _initial_scope(loan, identity_id: str, account_id: str) -> dict | None:
+    """Only an exact, active Paris DILICOM borrowing scope is receivable."""
+    if (type(identity_id) is not str or not identity_id
+            or type(account_id) is not str or not account_id
+            or loan.source_provider != 'paris'
+            or loan.provider != 'DILICOM' or loan.medium != 'digital'
+            or type(loan.source_credential) is not str
+            or not loan.source_credential
+            or type(loan.identity_id) is not str
+            or loan.identity_id != identity_id
+            or type(loan.source_account_id) is not str
+            or loan.source_account_id != account_id
+            or type(loan.id) is not str or not loan.id
+            or type(loan.record_id) is not str or not loan.record_id):
+        return None
+    return dict(identity=identity_id, provider='paris',
+                credential=loan.source_credential, borrower=account_id,
+                loan=loan.id, item=loan.record_id, due=loan.due_at)
+
+
+def remember_initial(path: Path, directory: Path, loan, identity_id: str,
+                     account_id: str, *, now=None) -> bool:
+    """Remember validated first-offer ACSM bytes, never their bearer URL.
+
+    An initial receipt is not a new loan or evidence of ADEPT fulfillment.
+    The caller must have confirmed this exact loan and staged a genuine ACSM
+    using its already supplied first-offer URL, with no replay of the borrow.
+    """
+    now = time.time() if now is None else now
+    try:
+        owner = _initial_scope(loan, identity_id, account_id)
+        digest = _digest(path, directory, now)
+        if (owner is None or digest is None or not _active(loan, now)
+                or directory.is_symlink() or path.parent != directory):
+            return False
+        row = dict(schema=1, scope=owner, file=path.name, sha256=digest,
+                   created_at=now)
+        temporary = directory / (INITIAL_MANIFEST + '.' + uuid.uuid4().hex + '.tmp')
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                json.dump(row, stream, ensure_ascii=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, directory / INITIAL_MANIFEST)
+            parent_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY
+                                | os.O_NOFOLLOW)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+            return True
+        finally:
+            temporary.unlink(missing_ok=True)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
+                  *, now=None) -> Path | None:
+    """Read a first-offer receipt by loan provenance, not an expiring URL."""
+    now = time.time() if now is None else now
+    try:
+        owner = _initial_scope(loan, identity_id, account_id)
+        manifest = directory / INITIAL_MANIFEST
+        if (owner is None or not _active(loan, now)
+                or directory.is_symlink() or manifest.is_symlink()
+                or manifest.stat().st_size > 16384):
+            return None
+        row = json.loads(manifest.read_text(encoding='utf-8'))
+        if (type(row) is not dict or row.get('schema') != 1
+                or row.get('scope') != owner):
+            return None
+        created_at = row['created_at']
+        if (type(created_at) not in (float, int)
+                or not 0 <= now - created_at < TTL):
+            return None
+        name = row.get('file')
+        if (type(name) is not str or not name
+                or Path(name).name != name
+                or '/' in name or chr(92) in name
+                or not name.casefold().endswith('.acsm')):
+            return None
+        candidate = directory / name
+        actual = _digest(candidate, directory, now)
+        return (candidate if actual is not None
+                and actual == row.get('sha256') else None)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def forget_initial(path: Path) -> None:
+    """Remove only the receipt for this input after successful fulfillment."""
+    manifest = path.parent / INITIAL_MANIFEST
+    try:
+        if not manifest.is_symlink() and manifest.stat().st_size <= 16384:
+            row = json.loads(manifest.read_text(encoding='utf-8'))
+            if type(row) is dict and row.get('file') == path.name:
+                manifest.unlink()
+    except (OSError, ValueError, AttributeError):
+        pass
