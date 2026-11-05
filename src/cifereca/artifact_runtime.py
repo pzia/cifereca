@@ -808,9 +808,7 @@ class ArtifactExecutionBrokerImpl:
         )
         from .core.derived_variant_recovery import (
             write_pending_derived_receipt, register_pending_derived_receipt,
-            retire_pending_derived_receipt,
         )
-        pending_receipts: list[tuple[Path, str, tuple[int, int, int, int]]] = []
 
         def attest_prelink(candidate: Path, stage_fd: int) -> None:
             receipt, receipt_sha256, receipt_stamp = write_pending_derived_receipt(
@@ -840,7 +838,6 @@ class ArtifactExecutionBrokerImpl:
             register_pending_derived_receipt(
                 self.service.storage, receipt, expected_sha256=receipt_sha256,
             )
-            pending_receipts.append((receipt, receipt_sha256, receipt_stamp))
 
         final = _publish_variant_exclusive(
             path, source_path.parent, basename=stem + suffix,
@@ -905,20 +902,11 @@ class ArtifactExecutionBrokerImpl:
             identity_id=lease.source_identity_id,
         )
         if ref is None: raise RuntimeError("committed artifact disappeared")
-        # A crash after SQL commit leaves a harmless receipt; the supervised
-        # review reports it as already committed. Cleanup is best-effort.
-        for receipt, receipt_sha256, receipt_stamp in pending_receipts:
-            try:
-                retire_pending_derived_receipt(
-                    self.service.storage, receipt,
-                    expected_sha256=receipt_sha256,
-                    expected_stamp=receipt_stamp,
-                )
-            except (OSError, ValueError, sqlite3.Error):
-                # The *canonical SQL publication has already committed*.
-                # A failed cleanup is a manual-review residue, not a
-                # failed transform or a reason to weaken provenance.
-                pass
+        # Preserve the fsynced receipt and its SQLite intent even on success.
+        # POSIX unlink cannot atomically compare-and-delete a named inode:
+        # concurrent profile writers could replace it after the final check.
+        # The supervised reviewer recognizes the exact derived OriginLink as
+        # already_committed. Retention policy remains deliberately explicit.
         return ref
 
     def abort_output(self, destination: Any) -> None:
