@@ -207,6 +207,11 @@ def _epub_encryption_protected(archive: zipfile.ZipFile) -> bool:
         return True
     if _local_name(root.tag) != "encryption":
         return True
+    # An additional encrypted-key or key-info declaration is *not* just
+    # font obfuscation, even beside an otherwise valid font method.
+    if any(_local_name(node.tag) in {"encryptedkey", "keyinfo"}
+           for node in root.iter()):
+        return True
     encrypted_nodes = [
         node for node in root.iter()
         if _local_name(node.tag) == "encrypteddata"
