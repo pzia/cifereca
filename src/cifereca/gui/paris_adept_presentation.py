@@ -33,3 +33,53 @@ def normal_paris_adept_summary(state: Mapping[str, Any]) -> str:
     if status == "to_configure":
         return f"À configurer · {reason}."
     return f"À vérifier · {reason}. Aucun profil ADEPT choisi automatiquement."
+
+_RUNTIME_REASONS = {
+    "local_binding_unverified": "liaisons Paris/ADEPT locales à vérifier avant tout contrôle",
+    "local_binding_changed": "liaisons modifiées pendant le contrôle ; recommencez après enregistrement",
+    "adept_runtime_unavailable": "lecture des profils Kobo-Adept indisponible",
+    "adept_profile_not_found": "profil ADEPT associé absent du runtime",
+    "adept_acsm_not_ready": "profil trouvé mais acquisition ACSM explicitement indisponible",
+    "adept_acsm_readiness_unknown": "profil trouvé ; disponibilité ACSM non publiée",
+}
+
+
+def normal_paris_adept_runtime_summary(result: Mapping[str, Any]) -> str:
+    """On-demand status only; never presents a local profile as Adobe-ready."""
+    if (result.get("status") == "observed"
+            and result.get("reason") == "adept_acsm_capability_reported"
+            and result.get("acsm_ready") is True):
+        return (
+            "ADEPT vérifié localement · capacité ACSM déclarée par le runtime. "
+            "Autorisation Adobe et emprunt non testés."
+        )
+    reason = _RUNTIME_REASONS.get(
+        result.get("reason") if type(result.get("reason")) is str else "",
+        "contrôle ADEPT non concluant",
+    )
+    return f"À vérifier · {reason}. Aucune autorisation Adobe attestée."
+
+_RUNTIME_REASONS = {
+    "local_binding_unverified": "liaisons Paris/ADEPT locales à vérifier avant tout contrôle",
+    "local_binding_changed": "liaisons modifiées pendant le contrôle ; recommencez après enregistrement",
+    "adept_runtime_unavailable": "lecture des profils Kobo-Adept indisponible",
+    "adept_profile_not_found": "profil ADEPT associé absent du runtime",
+    "adept_acsm_not_ready": "profil trouvé mais acquisition ACSM explicitement indisponible",
+    "adept_acsm_readiness_unknown": "profil trouvé ; disponibilité ACSM non publiée",
+}
+
+
+def normal_paris_adept_runtime_summary(result: Mapping[str, Any]) -> str:
+    """On-demand status only; never presents a local profile as Adobe-ready."""
+    if (result.get("status") == "observed"
+            and result.get("reason") == "adept_acsm_capability_reported"
+            and result.get("acsm_ready") is True):
+        return (
+            "ADEPT vérifié localement · capacité ACSM déclarée par le runtime. "
+            "Autorisation Adobe et emprunt non testés."
+        )
+    reason = _RUNTIME_REASONS.get(
+        result.get("reason") if type(result.get("reason")) is str else "",
+        "contrôle ADEPT non concluant",
+    )
+    return f"À vérifier · {reason}. Aucune autorisation Adobe attestée."

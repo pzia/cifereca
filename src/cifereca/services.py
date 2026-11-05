@@ -620,6 +620,39 @@ class LibraryService:
             primary_connection_id=selected,
         )
 
+    def check_normal_paris_adept_runtime(self, identity_id: str) -> dict[str, object]:
+        """Explicit read-only check, NEVER called during Settings rendering.
+
+        Resolve only the persisted local binding, then enumerate Kobo-Adept
+        profiles once. Not an Adobe login, ACSM operation or borrowing right.
+        The caller must request this check; this method never changes a
+        profile binding even if an old runtime reports a different alias.
+        """
+        from .core.paris_adept_runtime_check import describe_paris_adept_runtime
+
+        before = self.normal_paris_adept_status(identity_id)
+        if before.get("status") != "ready":
+            return describe_paris_adept_runtime(before, None)
+        try:
+            profiles = self.kobo_profiles()
+            if type(profiles) is not list or len(profiles) > 2048:
+                raise ValueError("adept_profile_inventory_invalid")
+            selected = self._adept_profile_row(
+                before["adept_profile_id"], profiles,
+            )
+            # Profile lookup uses only the pre-enumerated rows: no second
+            # runtime call, fallback to another name, or selected identity.
+        except Exception:
+            return describe_paris_adept_runtime(
+                before, None, runtime_available=False,
+            )
+        if self.normal_paris_adept_status(identity_id) != before:
+            return {
+                "identity_id": identity_id, "status": "to_verify",
+                "reason": "local_binding_changed", "acsm_ready": None,
+            }
+        return describe_paris_adept_runtime(before, selected)
+
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
         target = identity_id or (self.current_identity.identity_id if self.current_identity else None)
         return [account for account in self.accounts if target is None or account.identity_id == target]

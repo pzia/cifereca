@@ -3,14 +3,17 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from .paris_adept_presentation import normal_paris_adept_summary
+from .paris_adept_presentation import (
+    normal_paris_adept_summary, normal_paris_adept_runtime_summary,
+)
 from .settings_accounts_section import (build_identity_settings_header, build_provider_accounts_header, build_provider_account_buttons)
 from .settings_identity_editor import build_identity_settings_editor
 from .settings_account_editor import build_provider_account_editor
 
 
 def build_settings_editors(self, *, box, descriptors, public_ids,
-                           mark_settings_dirty, library_directory, Gtk, Adw, add_css):
+                           mark_settings_dirty, library_directory, Gtk, Adw, add_css,
+                           page_lifetime=None):
     identities_container = build_identity_settings_header(
         section=box, Gtk=Gtk, add_css=add_css,
     )
@@ -55,6 +58,93 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             "clicked", lambda button, entry=adept_row:
             self._choose_adept_profile(entry, button),
         )
+
+        def check_adept(_button, e=editor, saved_id=data.get("id")):
+            # Runtime inspection is explicit, never a side effect of opening
+            # Settings, switching identities or editing another source.
+            if (not saved_id or e.get("deleted")
+                    or getattr(self, "_closed", False)
+                    or (page_lifetime is not None and not page_lifetime.alive)
+                    or e.get("_adept_check_pending") is True):
+                return
+            # A runtime check concerns the SAVED binding, not an unsaved
+            # draft. A save/reopen is required before testing changed inputs.
+            saved = self.config.identity(saved_id) or {}
+            stored_profile = self.service.storage.adept_profile_binding_get(
+                "identity", saved_id,
+            ) or ""
+            stored_primary = saved.get("primary_paris_connection_id") or ""
+            if (e["adept_profile"].get_text() != stored_profile
+                    or e["primary_paris_connection_id"].get_text()
+                       != stored_primary):
+                e["normal_adept_status"].set_subtitle(
+                    "À vérifier · enregistrez les modifications avant le contrôle ADEPT."
+                )
+                return
+            start_status = self.service.normal_paris_adept_status(saved_id)
+            if start_status.get("status") != "ready":
+                e["normal_adept_status"].set_subtitle(
+                    normal_paris_adept_summary(start_status)
+                )
+                return
+            generations = (
+                getattr(self, "_identity_context_generation", None),
+                getattr(self, "_account_context_generation", None),
+            )
+            e["_adept_check_pending"] = True
+            button = e["normal_adept_check"]
+            button.set_sensitive(False)
+
+            def current():
+                return (
+                    not getattr(self, "_closed", False)
+                    and not e.get("deleted")
+                    and (page_lifetime is None or page_lifetime.alive)
+                    and generations == (
+                        getattr(self, "_identity_context_generation", None),
+                        getattr(self, "_account_context_generation", None),
+                    )
+                    and e["adept_profile"].get_text() == stored_profile
+                    and e["primary_paris_connection_id"].get_text()
+                        == stored_primary
+                    and self.service.normal_paris_adept_status(saved_id)
+                        == start_status
+                )
+
+            def release():
+                e["_adept_check_pending"] = False
+                if page_lifetime is None or page_lifetime.alive:
+                    button.set_sensitive(True)
+
+            def done(result):
+                release()
+                if current():
+                    e["normal_adept_status"].set_subtitle(
+                        normal_paris_adept_runtime_summary(result)
+                    )
+
+            def error(_exc):
+                release()
+                if current():
+                    e["normal_adept_status"].set_subtitle(
+                        normal_paris_adept_runtime_summary({
+                            "reason": "adept_runtime_unavailable",
+                        })
+                    )
+
+            try:
+                self.runner.submit(
+                    "Vérification ADEPT…",
+                    lambda: self.service.check_normal_paris_adept_runtime(saved_id),
+                    done, error, control=button,
+                )
+            except Exception:
+                release()
+                error(None)
+
+        # Legacy test/headless builders may not expose the optional row.
+        if editor.get("normal_adept_check") is not None:
+            editor["normal_adept_check"].connect("clicked", check_adept)
         def delete_identity(_button, e=editor):
             e["deleted"] = True
             e["group"].set_visible(False)
