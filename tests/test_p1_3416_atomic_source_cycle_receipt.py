@@ -238,3 +238,39 @@ def test_ui_never_projects_forged_cycle_or_counts(tmp_path):
         ) == ""
     finally:
         db.close()
+
+
+def test_colliding_primary_and_literal_account_ids_cannot_share_cycle_counts(tmp_path):
+    from cifereca.models import Account
+
+    db = Storage(tmp_path / "collision.sqlite3")
+    try:
+        broker = fake_broker(db)
+        primary = broker.service.accounts[0]
+        primary.unique_id = ""
+        literal = Account(
+            identity_id=primary.identity_id,
+            provider_id=primary.provider_id,
+            credential_id=primary.credential_id,
+            unique_id="paris:paris-1:primary",
+            display_name="Other borrower",
+        )
+        broker.service.accounts.append(literal)
+        assert broker._source_id(primary) == broker._source_id(literal)
+        sid = broker._source_id(primary)
+        db.metadata_set("sync.source.state." + sid, json.dumps({
+            "status": "partial",
+            "last_cycle": {
+                "schema": 1, "mode": "manual", "status": "partial",
+                "attempted_at": "2026-11-05T03:00:00+00:00",
+                "canonical_execution": _execution(pending=8),
+            },
+        }))
+        references = broker.sources()
+        assert len(references) == 2
+        assert all(source.enabled is False for source in references)
+        assert all(source.last_cycle is None for source in references)
+        assert not any("en attente 8" in sync_source_presentation(source).summary
+                       for source in references)
+    finally:
+        db.close()
