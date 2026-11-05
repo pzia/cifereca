@@ -2633,7 +2633,8 @@ class Storage:
                             or any(ch not in "0123456789abcdef"
                                    for ch in artifact[7:])
                             or target_scope[0] != artifact
-                            or source_scope[1] is None
+                            or type(source_scope[1]) is not str
+                            or not source_scope[1]
                             or target_scope[1] not in (None, "", source_scope[1])
                             or source_scope[2:] != (None, None, "present")
                             or target_scope[2:] != (None, None, "present")
