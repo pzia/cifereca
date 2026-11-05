@@ -79,6 +79,7 @@ def test_existing_identity_preserves_exact_rows_order_and_readonly_id():
         "Nom du répertoire bibliothèque",
         "Langues de lecture (ordre, séparées par des virgules)",
         "Préférer la langue originale",
+        "Connexion Paris principale (ID de source)",
         "Profil ADE lié à cette identité (optionnel)",
         "Parcours normal · Paris principal et ADEPT",
         "Supprimer cette identité de la configuration",
@@ -89,7 +90,9 @@ def test_existing_identity_preserves_exact_rows_order_and_readonly_id():
     assert editor["languages"].text == "fr, en"
     assert editor["prefer_vo"].active is True
     assert editor["adept_profile"].text == "alice-profile"
-    assert group.children[6].subtitle == "État local ADEPT"
+    assert editor["primary_paris_connection_id"].text == ""
+    assert group.children[5].title.startswith("Connexion Paris principale")
+    assert group.children[7].subtitle == "État local ADEPT"
     assert directory.icon == "folder-open-symbolic"
     assert directory in editor["directory"].suffixes
     assert adept in editor["adept_profile"].suffixes
@@ -116,8 +119,8 @@ def test_adept_status_is_only_rendered_not_inferred_or_refreshed():
         adept_profile="locally-bound-profile", normal_subtitle=text,
     )
     assert editor["adept_profile"].text == "locally-bound-profile"
-    assert container.children[0].children[6].subtitle == text
-    assert "sans test Adobe" in container.children[0].children[6].tooltip
+    assert container.children[0].children[7].subtitle == text
+    assert "sans test Adobe" in container.children[0].children[7].tooltip
 
 
 def test_builder_does_not_connect_callbacks_mutate_input_or_persist():
