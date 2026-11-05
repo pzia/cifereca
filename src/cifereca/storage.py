@@ -1956,6 +1956,17 @@ class Storage:
         return out
 
     def backup_put(self, item: dict[str, Any]) -> None:
+        # The Kobo 0.7 writer remains for legacy recovery. Never introduce
+        # *new* unusable product IDs into that compatibility table: the
+        # canonical migration cannot construct an exact SourceKey for them.
+        # Historical SQLite rows are preserved by pruning and still readable;
+        # this admission check only applies to future writes.
+        if item.get("provider_id") == "kobo":
+            key = item.get("item_id")
+            if (type(key) is not str or not key.strip()
+                    or key != key.strip() or len(key) > 1024
+                    or any(c in key for c in "\x00\r\n")):
+                raise ValueError("backup_legacy_item_id_invalid")
         now = int(item.get("updated_at") or time.time())
         attempt_count = item.get("attempt_count")
         try:
