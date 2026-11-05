@@ -529,11 +529,18 @@ def kobo_backup_preview(
             "author": _manifest_author(raw) or (current or {}).get("author"),
         }
 
-        # An archive is still a valid historical classification; otherwise
-        # a typed source must be reviewed via Core, never via backup_items.
-        reason = ("skipped_archived" if _manifest_archived(raw, current)
-                  else "attention_required" if product_id in typed_editions
-                  else "")
+        # The 0.7 cached "skipped_archived" status cannot decide a Core
+        # edition's availability. Only an explicit *fresh supplier* archived
+        # flag may still classify that edition as skipped; an offline
+        # projection or an omitted flag must defer to canonical Core.
+        if product_id in typed_editions:
+            reason = (
+                "skipped_archived"
+                if refresh_manifest and raw.get("archived") is True
+                else "attention_required"
+            )
+        else:
+            reason = "skipped_archived" if _manifest_archived(raw, current) else ""
         path_raw = str((current or {}).get("local_path") or "").strip()
         if path_raw and not reason:
             linked = Path(path_raw)
