@@ -1,8 +1,22 @@
 """#3185: an explicit Core supervisor never mistakes preview for unlink consent."""
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+@pytest.fixture(autouse=True)
+def _enable_legacy_dedup_test_path(monkeypatch):
+    """Retain synthetic tests of the OLD Core retirement engine only.
+
+    Production is suspended by #4496. This file exercises pre-existing
+    SQLite/FS crash-recovery invariants under an explicit test-only monkeypatch.
+    New acceptance tests of the default safety hold never use this fixture.
+    """
+    from cifereca.core import canonical_dedup_supervisor
+    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
+                        lambda: True)
+
+
 
 from cifereca.core import canonical_dedup_supervisor as core
 from cifereca.core.canonical_dedup_retirement import CanonicalRetirementResult
@@ -31,6 +45,17 @@ def inspect(rig, *, action="preview", candidate=None, keeper=None,
             action=action, confirmed=confirmed, shared_lock=lock,
         )
     with lock:
+        # This helper is imported by other historical transaction suites.
+        # Its explicit LOCAL patch keeps the old mechanics testable without
+        # weakening the new default production suspension.
+        if action == "commit":
+            with patch.object(core, "_ordinary_cleanup_enabled", return_value=True):
+                return core.supervise_canonical_duplicate(
+                    storage, library_root=root,
+                    candidate_placement_id=candidate or pubs[1].placement_id,
+                    keeper_placement_id=keeper or pubs[0].placement_id,
+                    action=action, confirmed=confirmed, shared_lock=lock,
+                )
         return core.supervise_canonical_duplicate(
             storage, library_root=root,
             candidate_placement_id=candidate or pubs[1].placement_id,
