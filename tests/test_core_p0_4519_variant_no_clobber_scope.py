@@ -365,3 +365,34 @@ def test_swapped_staging_parent_cannot_publish_or_unlink_foreign_bytes(tmp_path)
     assert victim.read_bytes() == DATA
     assert not (tmp_path / "library" / "Optimized.epub").exists()
     assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+
+
+@pytest.mark.parametrize("fail_transform", [True, False])
+def test_swapped_intermediate_staging_root_cannot_escape_profile(
+    tmp_path, fail_transform,
+):
+    class SwapRoot(FakeTransformer):
+        def transform(self, request, source, destination, control):
+            result = super().transform(request, source, destination, control)
+            original_root = destination.path.parent.parent
+            moved_root = tmp_path / "relocated-staging-root"
+            original_root.rename(moved_root)
+            original_root.symlink_to(moved_root, target_is_directory=True)
+            if fail_transform:
+                raise RuntimeError("synthetic stage root swap")
+            return result
+    service, source, original_id, broker = _broker(tmp_path, SwapRoot())
+    if fail_transform:
+        with pytest.raises(RuntimeError, match="synthetic stage root swap"):
+            broker.execute_transform(TransformRequest(source, "optimize"),
+                                     control=Control())
+    else:
+        with pytest.raises(Conflict) as caught:
+            broker.execute_transform(TransformRequest(source, "optimize"),
+                                     control=Control())
+        assert caught.value.code == "artifact_variant_directory_changed"
+    relocated = tuple((tmp_path / "relocated-staging-root" / "variants").iterdir())
+    assert len(relocated) == 1 and relocated[0].read_bytes() == DATA
+    assert not (tmp_path / "library" / "Optimized.epub").exists()
+    assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+    assert service.storage.placement_get(original_id) is not None
