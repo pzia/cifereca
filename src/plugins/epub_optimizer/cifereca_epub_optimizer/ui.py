@@ -586,8 +586,6 @@ class OptimizerPage:
             capability_id=capability_id,
             profile_plugin_id=profile_plugin_id,
             options=options,
-            identity_id=getattr(artifact, "identity_id", None),
-            placement_id=getattr(artifact, "placement_id", None),
         )
         return broker.execute_transform(
             request,
