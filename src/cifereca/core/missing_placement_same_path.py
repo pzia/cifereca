@@ -40,7 +40,8 @@ def _unique_pairs(pairs):
     return record
 
 
-def _evidence(db, *, root: Path, identity_id: str, placement_id: str):
+def _evidence(db, *, root: Path, identity_id: str, placement_id: str,
+              linked_catalogue: bool = False):
     owner = db.execute(
         "SELECT directory_name FROM identities WHERE identity_id=?",
         (identity_id,),
@@ -83,19 +84,80 @@ def _evidence(db, *, root: Path, identity_id: str, placement_id: str):
     if signature is None:
         return _blocked("identity_directory_unavailable"), None
 
-    # This operator is deliberately restricted to true orphan Placements.
-    # A linked catalogue or any path/ID reference needs the richer repair
-    # migration, not an implicit status flip based only on matching bytes.
-    if db.execute(
-        "SELECT 1 FROM catalog_entries WHERE placement_id=? LIMIT 1",
+    # A physically returned, linked catalogue requires a separate, exact
+    # two-table restoration. The generic orphan entry point remains strict.
+    linked = db.execute(
+        "SELECT catalog_entry_id,artifact_id,identity_id,provider_id,"
+        "item_id,local_state,metadata_json,updated_at "
+        "FROM catalog_entries WHERE placement_id=? "
+        "ORDER BY catalog_entry_id LIMIT 129",
         (placement_id,),
-    ).fetchone() is not None:
-        return _blocked("linked_catalogue_requires_review"), None
-    if (candidate_has_active_dependencies_in_db(
-            db, placement_id=placement_id, path=path)
-            or candidate_has_active_dependencies_in_db(
-                db, placement_id=placement_id, path=placement_id)):
-        return _blocked("dependent_references"), None
+    ).fetchall()
+    if linked_catalogue:
+        if not linked:
+            return _blocked("no_linked_catalogue"), None
+        if len(linked) > 128:
+            return _blocked("catalogue_budget"), None
+        # Never resurrect a historical Kobo receipt merely because bytes
+        # returned at its old path. Receipt/path reconciliation is distinct.
+        if db.execute(
+            "SELECT 1 FROM backup_items WHERE local_path=? LIMIT 1",
+            (path,),
+        ).fetchone():
+            return _blocked("backup_requires_separate_relink"), None
+        from .duplicate_maintenance_guard import _mentions_exact_path
+        for cid, art, owner, provider, item, local_state, raw, updated in linked:
+            if (art != artifact_id or owner != identity_id
+                    or provider != row[4] or item != row[5]
+                    or local_state != "missing"
+                    or type(raw) is not str or len(raw) > 65536):
+                return _blocked("catalogue_scope_conflict"), None
+            document = json.loads(raw, object_pairs_hook=_unique_pairs)
+            if (type(document) is not dict
+                    or document.get("path") not in (None, "", path)
+                    or document.get("relative_path") not in (None, "")
+                    or any(_mentions_exact_path(value, path)
+                           or _mentions_exact_path(value, placement_id)
+                           for key, value in document.items()
+                           if key != "path")):
+                return _blocked("catalogue_metadata_requires_review"), None
+        # An unrelated catalogue may reference the same path or Placement
+        # through opaque JSON even if its placement_id differs. Never
+        # assert physical presence for one source while another row silently
+        # claims this exact location. A bounded, strict scan preserves that
+        # ambiguity as a veto rather than adopting another account's bytes.
+        linked_ids = {record[0] for record in linked}
+        others = db.execute(
+            "SELECT catalog_entry_id,metadata_json FROM catalog_entries "
+            "ORDER BY catalog_entry_id LIMIT 100001"
+        ).fetchall()
+        if len(others) > 100000:
+            return _blocked("catalogue_budget"), None
+        for other_id, raw in others:
+            if other_id in linked_ids:
+                continue
+            if type(raw) is not str or len(raw) > 65536:
+                return _blocked("catalogue_metadata_requires_review"), None
+            document = json.loads(raw, object_pairs_hook=_unique_pairs)
+            if (type(document) is not dict
+                    or _mentions_exact_path(document, path)
+                    or _mentions_exact_path(document, placement_id)):
+                return _blocked("foreign_catalogue_reference"), None
+        # Linked rows are intentionally NOT tested by the destructive
+        # dependency guard: they survive with identical path and source.
+        # Operational metadata mentioning the Placement ID still vetoes.
+        if candidate_has_active_dependencies_in_db(
+                db, placement_id="__2847_linked_restore_probe__",
+                path=placement_id):
+            return _blocked("dependent_references"), None
+    else:
+        if linked:
+            return _blocked("linked_catalogue_requires_review"), None
+        if (candidate_has_active_dependencies_in_db(
+                db, placement_id=placement_id, path=path)
+                or candidate_has_active_dependencies_in_db(
+                    db, placement_id=placement_id, path=placement_id)):
+            return _blocked("dependent_references"), None
 
     metadata = row[8]
     if type(metadata) is not str or not 0 < len(metadata) <= 65536:
@@ -142,14 +204,18 @@ def _evidence(db, *, root: Path, identity_id: str, placement_id: str):
         identity_id, placement_id, str(root),
         (root_stat.st_dev, root_stat.st_ino),
         directory, signature, list(row), list(artifact),
+        [list(entry) for entry in linked],
         [getattr(after, field) for field in stable],
     ]
     token = hashlib.sha256(json.dumps(
         fingerprint, ensure_ascii=False, separators=(",", ":"), default=str,
     ).encode("utf-8")).hexdigest()
-    return {"status": "ready", "reason": "orphan_reappeared"}, (
+    return {"status": "ready", "reason": (
+        "linked_catalogue_reappeared" if linked_catalogue
+        else "orphan_reappeared"
+    )}, (
         token, path, row[10], metadata, signature,
-        root_stat.st_dev, root_stat.st_ino,
+        root_stat.st_dev, root_stat.st_ino, linked,
     )
 
 
@@ -209,7 +275,7 @@ def restore_reappeared_missing_placement(
                 if evidence is None:
                     db.rollback()
                     return result
-                token, path, updated, metadata, signature, dev, ino = evidence
+                token, path, updated, metadata, signature, dev, ino, _linked = evidence
                 if token != plan_token:
                     db.rollback()
                     return _blocked("stale_plan")

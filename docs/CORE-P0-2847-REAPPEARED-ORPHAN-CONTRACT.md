@@ -75,3 +75,27 @@ from cifereca.core.missing_placement_same_path import (
 Tests SQLite/FS synthétiques : retour physique, SHA, symlink, fichier absent,
 dépendances, identité étrangère, fichier changé, CAS périmé, absence de verrou,
 annulation, crash SQL et non-modification des droits/fichiers.
+
+## Tranche Core complémentaire : catalogue lié exact (#2847)
+
+L'opérateur privé `MissingPlacementOperatorSession.preview_linked_same_path_restoration()`
+permet désormais une réparation **distincte** pour le fichier revenu **au
+même chemin** lorsqu'une à 128 projections catalogue sont encore liées au
+Placement `missing`. Le préflight ne produit un plan révocable que si :
+
+- propriétaire/répertoire unique, Artifact SHA+taille exacts et preuve physique
+  du fichier stable sous le répertoire du profil ;
+- tous les catalogues ont l'identité, le provider, l'édition, l'Artifact et
+  l'état `missing` du Placement, sans référence imbriquée ni chemin relatif ;
+- aucun `backup_items.local_path` ne désigne ce chemin ; pas de métadonnées
+  de Placement opaques ni de référence opérationnelle à son identifiant.
+
+Sous verrou d'acquisition + transaction immédiate, le commit réévalue le
+token, modifie **uniquement** `Placement.state=present` et
+`catalog_entries.local_state=local`, puis contrôle de nouveau les octets
+avant commit. Les titres, comptes, chemins, sources, droits et fichiers
+restent inchangés. La restauration d'un orphelin reste interdite sur ces
+catalogues liés ; l'opération nouvellement ajoutée ne traite **pas** les
+reçus, backups, liens de provenance ou chemins relocalisés. Elle n'active pas
+de nouvelle action GTK sans décision UX séparée. #2847 reste ouvert pour
+les données réellement constatées.

@@ -2248,6 +2248,32 @@ class LocalInspection:
             self._missing_pending = (case_key, None)
         return outcome
 
+    def preview_missing_linked_same_path_restoration(self, case_key):
+        """Explicit repair of a returned original with exact catalogue links.
+
+        A returned file alone is not authority. The private Core operator
+        independently verifies the Artifact, matching catalogues and scope;
+        consent stays bound to the single fully inspected case.
+        """
+        self.cancel_missing_repair()
+        case = self._cases.get(case_key) if type(case_key) is str else None
+        if (case is None
+                or 'stored_path_returned_historical' not in case.states):
+            return {'status': 'blocked', 'reason': 'file_not_observed',
+                    'read_only': True}
+        operator = self._missing_operator_for_case(
+            case_key, allow_returned=True,
+        )
+        if operator is None:
+            return {'status': 'blocked', 'reason': 'inspection_scope_unavailable',
+                    'read_only': True}
+        outcome = operator.preview_linked_same_path_restoration(
+            placement_id=self._missing_case_placements[case_key],
+        )
+        if outcome.get('status') == 'ready':
+            self._missing_pending = (case_key, None)
+        return outcome
+
     def preview_missing_retirement(self, case_key):
         """CoreUI-only read-only preview for a historical path in this audit."""
         self.cancel_missing_repair()
