@@ -23,7 +23,7 @@ from .library_declared_links import DeclarationRejected
 from .missing_placement_readiness import _physical_absence
 from .missing_placement_retirement import _directory_signature
 from .missing_placement_relocation_preview import (
-    _blocked, preview_missing_placement_relocation,
+    _admissible_source_coords, _blocked, preview_missing_placement_relocation,
 )
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -68,8 +68,7 @@ def _validated_evidence(db, *, root: Path, identity_id: str,
     if state != "missing":
         return _blocked("not_missing"), None
     if (type(old_path) is not str or not old_path
-            or type(provider) is not str or not provider
-            or type(item) is not str or not item):
+            or not _admissible_source_coords(provider, item)):
         return _blocked("source_coordinates_unavailable"), None
     profile_signature = _directory_signature(root / directory)
     if (profile_signature is None
@@ -257,7 +256,7 @@ def relocate_missing_placement(
                 cur = db.execute(
                     "UPDATE placements SET path=?,state='present',updated_at=? "
                     "WHERE placement_id=? AND path=? AND identity_id=? "
-                    "AND artifact_id=? AND provider_id=? AND source_item_id=? "
+                    "AND artifact_id=? AND provider_id IS ? AND source_item_id IS ? "
                     "AND state='missing' AND updated_at=? AND metadata_json=?",
                     (str(candidate_path), now, placement_id, old_path,
                      identity_id, artifact_id, provider, item, updated, metadata),

@@ -25,6 +25,18 @@ def _blocked(reason: str) -> dict[str, object]:
     return {"status": "blocked", "reason": reason}
 
 
+def _admissible_source_coords(provider: object, item: object) -> bool:
+    """Accept a complete provider scope or a local-only SQL NULL/NULL pair.
+
+    A half-known or empty source must never be upgraded to local ownership.
+    """
+    return (
+        (provider is None and item is None)
+        or (type(provider) is str and bool(provider)
+            and type(item) is str and bool(item))
+    )
+
+
 def preview_missing_placement_relocation(
     storage, *, library_root: Path, identity_id: str, placement_id: str,
     candidate_path: Path,
@@ -85,8 +97,7 @@ def preview_missing_placement_relocation(
             if state != "missing":
                 return _blocked("not_missing")
             if (type(old_path) is not str or not old_path
-                    or type(provider) is not str or not provider
-                    or type(item) is not str or not item):
+                    or not _admissible_source_coords(provider, item)):
                 return _blocked("source_coordinates_unavailable")
             profile_signature = _directory_signature(root / directory)
             if (profile_signature is None
