@@ -2059,7 +2059,12 @@ class Storage:
             ).fetchall()
             stale = [
                 (item_id, path) for item_id, path in rows
-                if str(item_id or "") not in seen
+                # The admitted manifest IDs were stripped above. Apply the
+                # same normalization to historical SQLite keys for membership
+                # only: otherwise a still-seen legacy " book " is deleted
+                # while the manifest contains "book". Keep the original key
+                # unchanged for the exact DELETE below.
+                if str(item_id or "").strip() not in seen
             ]
             local_preserved = 0
             for item_id, path in stale:
