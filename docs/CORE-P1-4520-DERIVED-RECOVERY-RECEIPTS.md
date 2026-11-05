@@ -7,7 +7,7 @@ Un fichier dérivé est publié par lien physique exclusif avant l'enregistremen
 ## Protocole d'écriture
 
 1. Core valide le Placement source actif et exact, son identité, ses octets et le résultat transformer.
-2. Avant chaque tentative de lien `os.link`, Core crée sous `.cifereca-staging/variants/pending-<aléatoire>.json` un reçu de taille bornée (`0600`, `O_EXCL|O_NOFOLLOW`) portant source/Placement/profil exact, recette/versions, empreintes, chemin cible et signature inode `(dev, ino, size, mtime_ns)`. Le résultat, le fichier JSON et son répertoire sont `fsync` **avant** le lien.
+2. Avant chaque tentative de lien `os.link`, Core crée sous `.cifereca-staging/variants/pending-<aléatoire>.json` un reçu de taille bornée (`0600`, `O_EXCL|O_NOFOLLOW`) portant source/Placement/profil exact, recette/versions, empreintes, chemin cible et signature inode `(dev, ino, size, mtime_ns)` **pour le parent ET la sortie**. Un parent remplacé par des octets de SHA identique ne suffit pas à rétablir la causalité. Le résultat, le fichier JSON et son répertoire sont `fsync` **avant** le lien.
 2 bis. Core enregistre sous verrou SQLite un **intent** `metadata` avec clé aléatoire `derived.publication.pending.v1:<nonce>` et empreinte SHA-256 des octets du reçu. Le reçu sur disque seul ne peut jamais valider une nouvelle provenance : le hash doit également être inscrit dans la base **avant le hardlink**. Ce marqueur est un checkpoint technique, **pas** un `OriginLink`, un Placement ou un droit.
 3. Le lien destination est créé exclusivement et revérifié ; le répertoire de publication est `fsync` **avant** la transaction SQLite. Le répertoire staging est synchronisé après retrait du fichier temporaire.
 4. Après succès de la transaction SQLite, le reçu est nettoyé au mieux, puis son intent en base est retiré si le fichier a bien disparu ; si l'arrêt intervient après commit, il peut rester sur disque et est reconnu `already_committed` sur réinspection. Une erreur SQLite laisse le reçu pour examen : **ni purge de fichiers ni suppression du reçu**.
@@ -31,3 +31,12 @@ Pour un commit, le superviseur doit fournir **le SHA-256 du reçu exact lu en pr
 SQLite + FS synthétiques réels : reçu forgé ou modifié sans intent SQL, intent supprimé entre contrôle et transaction, profil actif erroné, lecture de reçu symlink, taille de sortie falsifiée, conversion normale et nettoyage reçu, SQL interrompu avant OriginLink, reprise après redémarrage, idempotence, absence de droit fournisseur, refus d'une reprise sans approbation, profil étranger, octets modifiés, symlink cible. Sans réseau ni compte réel.
 
 **Ne pas clore #4520 à ce stade :** reste à qualifier le parcours supervisé, les sous-arborescences profondes et les courses TOCTOU adversariales. Ne pas confondre cette reprise avec la migration des variantes historiques sans reçu.
+
+## Durcissement supplémentaire — concurrence et retrait des reçus (05/11/2026)
+
+- En reprise, le constructeur canonique recalcule les SHA-256 avec `O_NOFOLLOW`, contrôle les signatures d'inode attendues **sous `BEGIN IMMEDIATE`** avant d'enregistrer `OriginLink(derived)`. Le test injecte un remplacement du parent ou de la sortie juste avant cette transaction ; publication refusée et reçu conservé pour revue.
+- Le digest du reçu créé par Core est transmis sans le recalculer comme autorité depuis un fichier modifiable. La préparation de l'intent SQLite refuse une modification du JSON entre sa création et l'enregistrement.
+- Le retrait normal du reçu vérifie le SHA exact de l'intent et la signature inode avant unlink ; si le reçu a été remplacé, **pas de suppression automatique, intent conservé**. Le retrait non conditionnel d'un nom de fichier sur un répertoire possédé par un acteur concurrent ne peut pas être garanti parfaitement atomique par POSIX : prudence maintenue, PR non exposée en production tant que cette course n'est pas soldée.
+- Reprise refusée si le parent source a été supprimé et recréé avec les **mêmes octets**, mais un inode différent.
+
+**Périmètre résiduel :** atomicité de l'unlink face à une substitution au dernier instant, interruption entre les étapes de retrait, et preuves de couverture des sous-répertoires profonds. L'API reste interne, et la PR ne doit pas être fusionnée sur la seule réussite CI.
