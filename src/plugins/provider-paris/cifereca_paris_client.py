@@ -623,12 +623,12 @@ class ParisClient:
         )
 
     def search(self, query: str, scope: str = "all", page: int = 0) -> list[SearchResult]:
-        rows, _facets = self.search_response(query, scope, page)
+        rows, _facets, _warnings = self.search_response(query, scope, page)
         return rows
 
     def search_response(
         self, query: str, scope: str = "all", page: int = 0,
-    ) -> tuple[list[SearchResult], list[dict[str, Any]]]:
+    ) -> tuple[list[SearchResult], list[dict[str, Any]], list[str]]:
         """Recherche tolérante aux défaillances d'un des deux catalogues.
 
         Les requêtes très larges pouvaient demander ``ResultSize=-1`` et provoquer
@@ -797,7 +797,7 @@ class ParisClient:
             # Do not chain raw Syracuse errors (which can contain the
             # request URL, personal cookies, or provider response text).
             raise error
-        return out, facets
+        return out, facets, warnings
 
     def _holdings_payload(self, docbase: str, record_id: str, scenario: str, search_terms: str = "") -> dict[str, Any]:
         """Return the raw GetListHoldings payload.

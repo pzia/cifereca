@@ -51,11 +51,14 @@ def _client(responder):
     return client
 
 
-def test_concurrent_searches_return_their_own_page_facets():
+@pytest.mark.parametrize("partial", [False, True])
+def test_concurrent_searches_return_their_own_page_facets_and_coverage(partial):
     def respond(request):
         query = json.loads(request.content)["query"]
         text = query["QueryString"]
         scenario = query["ScenarioCode"]
+        if partial and text == "Première" and scenario == "EBOOKS":
+            return httpx.Response(503)
         result = _response(scenario, _facet(label=f"{text} {scenario}", values=[
             {"Label": text, "Count": 7, "IsSelected": False},
         ]))
@@ -90,12 +93,14 @@ def test_concurrent_searches_return_their_own_page_facets():
             finally:
                 resume.set()
             first = first.result(timeout=5)
-        assert [item.title for item in first.results] == ["Première", "Première"]
+        assert [item.title for item in first.results] == ["Première"] * (1 if partial else 2)
         assert [item.title for item in second.results] == ["Seconde"]
-        assert [(facet.scenario, facet.page, facet.label) for facet in first.facets] == [
-            ("CATALOGUE", 0, "Première CATALOGUE"), ("EBOOKS", 0, "Première EBOOKS"),
-        ]
+        expected = [("CATALOGUE", 0, "Première CATALOGUE")]
+        if not partial:
+            expected.append(("EBOOKS", 0, "Première EBOOKS"))
+        assert [(facet.scenario, facet.page, facet.label) for facet in first.facets] == expected
         assert [facet.label for facet in second.facets] == ["Seconde EBOOKS"]
+        assert first.partial is partial and second.partial is False
         assert first.facets[0].values[0].count == 7
         assert second.facets[0].filter_capability == "unverified"
         assert all("search_response_facets" not in item.metadata for item in first.results)

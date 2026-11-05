@@ -1,6 +1,8 @@
 from dataclasses import replace
 from threading import Event, Thread
 
+import pytest
+
 from cifereca.plugin_api import (
     CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
 )
@@ -77,15 +79,18 @@ def test_empty_response_keeps_facets_but_query_variants_never_replace_them(tmp_p
         service.close()
 
 
-def test_malformed_facet_values_stay_unverified_without_dropping_notices(tmp_path):
+@pytest.mark.parametrize("count", [True, -1, 2**63])
+def test_malformed_facet_values_stay_unverified_without_dropping_notices(tmp_path, count):
     service = _service(tmp_path)
     session = FacetedSession("faceted")
     original = session.search_with_response_facets
 
     def malformed(*args, **kwargs):
         result = original(*args, **kwargs)
-        value = replace(FACET.values[0], count=True)
-        return replace(result, facets=(replace(FACET, values=(value,)), object()))
+        value = replace(FACET.values[0], count=count)
+        return replace(result, facets=(
+            replace(FACET, values=(value,)), replace(FACET, page=2**31), object(),
+        ))
 
     session.search_with_response_facets = malformed
     service._sessions = {"faceted": session}
@@ -94,6 +99,25 @@ def test_malformed_facet_values_stay_unverified_without_dropping_notices(tmp_pat
         service.search_progressive("Progressive Book", force=True, on_batch=batches.append)
         assert batches[0].results
         assert batches[0].response_facets == (replace(FACET, values=None),)
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("partial", [True, False])
+def test_batch_coverage_comes_from_the_same_typed_response(tmp_path, partial):
+    service = _service(tmp_path)
+    session = FacetedSession("faceted")
+    session.last_search_warnings = [] if partial else ["Another request's warning"]
+    session.search_with_response_facets = lambda *args, **kwargs: ProviderSearchResponse(
+        [], (FACET,), partial=partial,
+    )
+    service._sessions = {"faceted": session}
+    try:
+        batches = []
+        service.search_progressive("Exact", force=True, on_batch=batches.append)
+        batch, = batches
+        assert batch.response_facets == (FACET,)
+        assert batch.result_status == ("partial" if partial else "live")
     finally:
         service.close()
 

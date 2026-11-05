@@ -795,7 +795,7 @@ def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]
                 or not all(_valid_facet_text(text) for text in (
                     facet.scenario, facet.field, facet.label
                 ))
-                or type(facet.page) is not int or facet.page < 0):
+                or type(facet.page) is not int or not 0 <= facet.page < 2**31):
             continue
         key = (facet.scenario, facet.page, facet.field.casefold())
         if key in seen:
@@ -807,7 +807,7 @@ def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]
             or any(
                 type(value) is not CatalogSearchFacetValue
                 or not _valid_facet_text(value.label)
-                or type(value.count) is not int or value.count < 0
+                or type(value.count) is not int or not 0 <= value.count < 2**63
                 or type(value.is_selected) is not bool
                 or (value.display_label is not None
                     and not _valid_facet_text(value.display_label))
@@ -819,7 +819,11 @@ def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]
     return tuple(accepted)
 
 
-def _search_provider_session(self, session: ProviderSession, query: str, scope: str, *, field: str='all', content_types: tuple[str, ...]=(), facade_type, response_facets: list[CatalogSearchFacet] | None = None) -> tuple[list[SearchResult], list[str], str, str]:
+def _search_provider_session(
+    self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
+    content_types: tuple[str, ...] = (), facade_type,
+    response_facets: list[CatalogSearchFacet] | None = None,
+) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
     This is deliberately safe to run in parallel with *other* provider sessions;
@@ -856,6 +860,7 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
                 if type(response) is not ProviderSearchResponse:
                     raise TypeError("Invalid provider search response")
                 session_rows = response.results
+                partial_failure = response.partial is True
                 response_facets.extend(_validated_response_facets(response.facets))
             else:
                 try:
@@ -868,21 +873,18 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
                     if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                         raise
                     session_rows = session.search(variant, provider_scope)
+                concrete = getattr(session, "client", None)
+                partial_failure = any(
+                    bool(getattr(source, "last_search_warnings", None))
+                    for source in (session, concrete)
+                )
             for raw_row in session_rows:
                 row = _provider_search_row(raw_row)
                 key = _search_result_scope_key(row)
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
-            concrete = getattr(session, "client", None)
-            partial_failure = False
-            for source in (session, concrete):
-                for warning in list(getattr(source, "last_search_warnings", []) or []):
-                    # Provider-owned strings may contain signed URLs,
-                    # cookies or a private title; the public batch only
-                    # exposes a fixed partial-result reason.
-                    warnings.append(f"{session.descriptor.display_name}: résultats partiels")
-                    partial_failure = True
             if partial_failure:
+                warnings.append(f"{session.descriptor.display_name}: résultats partiels")
                 break
             if attempt == 0 and provider_rows:
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
@@ -1186,7 +1188,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             elif on_batch is not None and isinstance(session, ProviderSearchWithFacets):
                 future = executor.submit(
                     _search_provider_session, self, session, query, scope,
-                    field=field, content_types=types, facade_type=type(self),
+                    field=field, content_types=tuple(content_types or ()), facade_type=type(self),
                     response_facets=response_facets,
                 )
             else:

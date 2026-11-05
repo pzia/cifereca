@@ -1133,9 +1133,11 @@ class ParisProviderSession(ProviderSession):
         self.last_search_response_facets = []
         query, scope = self._search_arguments(query, scope, 0, field)
         try:
-            rows, facets = self.client.search_response(query, scope)
-        finally:
+            rows, facets, warnings = self.client.search_response(query, scope)
+        except Exception:
             self.last_search_warnings = list(self.client.last_search_warnings)
+            raise
+        self.last_search_warnings = warnings
         self.last_search_response_facets = [dict(facet) for facet in facets]
         projected = tuple(
             CatalogSearchFacet(
@@ -1150,6 +1152,7 @@ class ParisProviderSession(ProviderSession):
                 rows, self.provider_id, self.credential_id
             )],
             projected,
+            partial=bool(warnings),
         )
 
     def acquisition_offers(self, item: SearchResult) -> AcquisitionOfferSet:
