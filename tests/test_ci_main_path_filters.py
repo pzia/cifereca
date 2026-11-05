@@ -83,17 +83,18 @@ def test_e2e_readme_push_keeps_status_aware_selector():
 
 def test_plugin_only_runs_plugin_suite_not_core_or_wheel():
     for path in (
-        "src/plugins/youth-catalog/youth_page.py",
-        "src/plugins/youth-source-milan/tests/test_milan_youth.py",
-        "src/plugins/kobo-vault/cifereca-plugin.json",
+        "src/plugins/baen/cifereca_baen.py",
+        "src/plugins/provider-gutenberg/tests/test_contract_038.py",
+        "src/plugins/provider-numilog/cifereca-plugin.json",
     ):
+        assert (ROOT / path).is_file(), f"Dead plugin routing fixture: {path}"
         assert route(path) == {"plugins"}, path
 
 
 def test_gui_only_runs_core_and_install_but_not_plugins():
     for path in (
         "src/cifereca/gui/main_window.py",
-        "src/cifereca/builtin_ui/search.py",
+        "src/cifereca/builtin_ui/pages.py",
         "src/cifereca/app.py",
     ):
         assert route(path) == {"core", "install"}, path
@@ -114,7 +115,7 @@ def test_test_script_and_workflow_consumers_are_explicit():
     expected = {
         "tests/test_updater.py": {"core"},
         "tests/test_ci_main_path_filters.py": {"core"},
-        "e2e/youth_page_probe.py": {"core"},
+        "e2e/run.py": {"core"},
         "environnements/openai-chat-debian/capture_app.py": {"core"},
         "scripts/ci-select-core-tests.py": {"core"},
         "scripts/ci_test_dependency_guard.py": {"core"},
@@ -144,8 +145,13 @@ def test_each_workflow_self_trigger_and_manual_dispatch_stays_available():
 
 
 def test_mixed_changes_run_union_of_relevant_suites():
-    assert route("docs/changelog.md", "src/plugins/youth-source-milan/milan_youth.py") == {"plugins"}
-    assert route("src/cifereca/gui/shell_model.py", "src/plugins/youth-catalog/youth_catalog.py") == {
+    for path in (
+        "src/plugins/provider-gutenberg/cifereca_gutenberg.py",
+        "src/plugins/baen/cifereca_baen.py",
+    ):
+        assert (ROOT / path).is_file(), f"Dead mixed-path fixture: {path}"
+    assert route("docs/changelog.md", "src/plugins/provider-gutenberg/cifereca_gutenberg.py") == {"plugins"}
+    assert route("src/cifereca/gui/shell_model.py", "src/plugins/baen/cifereca_baen.py") == {
         "core", "plugins", "install",
     }
     assert route("scripts/ci-run-plugin-tests.sh", "scripts/ci-smoke-installed-wheel.sh") == {
