@@ -327,12 +327,12 @@ def test_first_offer_staged_and_reused_without_reborrowing_or_reusing_url(tmp_pa
     """
     from unittest.mock import Mock
     from cifereca import acsm_cache
-    from cifereca.models import Loan
 
     service, session, account, item, state = setup(tmp_path, result="acsm")
     token = (b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
              b'<format>application/epub+zip</format></fulfillmentToken>')
     stage_calls = []
+    staged_loans = []
 
     def first_token(loan, owner, directory, *, admission_current=None):
         assert admission_current is not None
@@ -341,6 +341,7 @@ def test_first_offer_staged_and_reused_without_reborrowing_or_reusing_url(tmp_pa
         assert loan.record_id == item.record_id
         assert loan.ebook_url.endswith("synthetic.acsm")
         stage_calls.append("GET-first-offer")
+        staged_loans.append(loan)
         path = directory / "first-offer.acsm"
         path.write_bytes(token)
         return path, ""
@@ -354,13 +355,7 @@ def test_first_offer_staged_and_reused_without_reborrowing_or_reusing_url(tmp_pa
         assert state["mutations"] == 1
         assert len(state["calls"]) == 4
 
-        later_loan = Loan(
-            id="loan-exact", provider="DILICOM", medium="digital",
-            record_id="edition", title="Synthetic",
-            source_provider="paris", source_credential="card-A",
-            source_account_id="primary", identity_id="default",
-            due_at=None, ebook_url=None,
-        )
+        later_loan = replace(staged_loans[0], ebook_url=None)
         directory = service._acquisition_work_dir("default", "paris", "loan-exact")
         staged = acsm_cache.reuse_initial(
             directory, later_loan, "default", "primary")
