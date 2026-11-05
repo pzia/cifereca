@@ -807,7 +807,8 @@ class ArtifactExecutionBrokerImpl:
             str(row.get("path") or "") for row in self.service.storage.placements()
         )
         from .core.derived_variant_recovery import (
-            write_pending_derived_receipt, _safe_unlink_receipt,
+            write_pending_derived_receipt, register_pending_derived_receipt,
+            retire_pending_derived_receipt,
         )
         pending_receipts: list[Path] = []
 
@@ -833,6 +834,9 @@ class ArtifactExecutionBrokerImpl:
                 book_id=source.book_id, warnings=result.warnings,
                 facts=dict(result.facts),
             )
+            # Independent SQLite intent is durable BEFORE link publication.
+            # Receipt bytes alone never authorize a later derived OriginLink.
+            register_pending_derived_receipt(self.service.storage, receipt)
             pending_receipts.append(receipt)
 
         final = _publish_variant_exclusive(
@@ -902,7 +906,7 @@ class ArtifactExecutionBrokerImpl:
         # review reports it as already committed. Cleanup is best-effort.
         for receipt in pending_receipts:
             try:
-                _safe_unlink_receipt(receipt)
+                retire_pending_derived_receipt(self.service.storage, receipt)
             except OSError:
                 pass
         return ref
