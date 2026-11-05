@@ -346,3 +346,52 @@ def test_removed_sql_intent_between_preview_and_transaction_refuses_commit(
         assert receipt.exists()
     finally:
         service.storage.close()
+
+
+@pytest.mark.parametrize("victim", ["source", "target"])
+def test_recovery_refuses_inode_swap_between_review_and_sql(
+    tmp_path, monkeypatch, victim,
+):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        from cifereca.core import derived_variant_recovery as recovery
+        import json
+        journal = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        receipt = json.loads(journal.read_text())
+        path = Path(receipt["source_path" if victim == "source"
+                           else "published_path"])
+        earlier = path.read_bytes()
+        reviewed = recovery.review_pending_derived_receipts(
+            service, identity_id="id1",
+        )
+        assert reviewed[0]["status"] == "recoverable"
+        original = recovery.publish_derived_variant
+
+        def replace_inode_after_review(storage, **kwargs):
+            # Simulate an adversarial unlink+recreate after the second
+            # pre-commit SHA verification but before BEGIN IMMEDIATE.
+            path.unlink()
+            path.write_bytes(earlier)
+            return original(storage, **kwargs)
+
+        monkeypatch.setattr(
+            recovery, "publish_derived_variant", replace_inode_after_review,
+        )
+        outcome = recovery.review_pending_derived_receipts(
+            service, identity_id="id1", commit=True,
+            approved_receipt_sha256=reviewed[0]["sha256"],
+        )
+        assert outcome[0]["status"] == "manual_review"
+        assert service.storage.artifact_variants() == []
+        assert service.storage.placements(state="present") == [
+            service.storage.placement_get(
+                next(p["placement_id"] for p in service.storage.placements()
+                     if p["artifact_id"] == source.artifact_id)
+            )
+        ]
+        assert journal.exists()
+    finally:
+        service.storage.close()
