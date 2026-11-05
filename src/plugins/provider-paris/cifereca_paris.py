@@ -14,7 +14,7 @@ import time
 import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from cifereca.plugin_api import (
     Account, HistoryItem, ItemDetail, Loan, SearchResult,
@@ -1781,8 +1781,7 @@ class ParisProviderSession(ProviderSession):
         for hop in range(12):
             ensure_scope()
             if initial_offer_only and (
-                "assaredirect" in __import__("urllib.parse", fromlist=["unquote"]).unquote(
-                    urlparse(current).path).casefold()
+                "assaredirect" in unquote(urlparse(current).path).casefold()
                 or not direct_url
             ):
                 # The first borrow consumed its mutating ASSARedirect
