@@ -44,8 +44,8 @@ def _show_search():
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "show_search")
     env = dict(
         file_format=file_format, detail_language=detail_language,
-        search_detail_support_label=search_detail_support_label,
         book_detail_presentation=book_detail_presentation,
+        search_detail_support_label=search_detail_support_label,
         # Isolated AST execution does not import module-level GTK helpers.
         # This scenario is Gallica-only; the Numilog scope is tested separately.
         _commercial_search_usage=lambda _item, _service=None: "",
