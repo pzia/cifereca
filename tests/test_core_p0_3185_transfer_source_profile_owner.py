@@ -50,7 +50,7 @@ def test_misowned_source_cannot_be_sent_before_any_recipient_write(
         with pytest.raises(ProviderConfigurationError, match="profil propriétaire"):
             service.materialize_to_identity(placement, "bob")
 
-        assert not (root / "bob" / "shared").exists()
+        assert not (root / "bob" / "Acquisitions").exists()
         assert service.storage.placement_get(placement)["identity_id"] == "alice"
         assert not any(
             row.get("identity_id") == "bob" for row in service.storage.placements()

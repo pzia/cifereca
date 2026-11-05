@@ -161,6 +161,7 @@ def _materialize_to_identity_locked(
 
     from .transfer_storage_policy import (
         TRANSFER_STORAGE_CLASS, directory_for_storage_class,
+        transfer_readable_filename,
     )
 
     # Q025: the destination *storage class* is independent of source
@@ -171,11 +172,12 @@ def _materialize_to_identity_locked(
     identity_part = safe_library_component(
         target_identity.directory_name or target_identity_id, "default",
     )
-    storage_part = safe_library_component(destination_folder, "shared")
+    storage_part = safe_library_component(destination_folder, "Acquisitions")
     legacy_provider_part = safe_library_component(provider, "local")
     identity_dir = root / identity_part
     expected_dir = identity_dir / storage_part
     legacy_dir = identity_dir / legacy_provider_part
+    historical_shared_dir = identity_dir / "shared"
     # Do this before the service creates any directories: a symlink to an
     # external directory must not be followed by mkdir or by a later copy.
     if (identity_dir.is_symlink() or expected_dir.is_symlink()
@@ -276,12 +278,12 @@ def _materialize_to_identity_locked(
             checkpoint.finish(path)
 
     def verified_target(path: Path, *, historical: bool = False) -> bool:
-        # Existing A→B receipts under provider folders are valid and must
-        # remain where B originally received them. A *new* copy, however,
-        # always uses B/shared. Historical reuse still requires the exact
+        # Existing A→B receipts under provider/ and shared/ remain valid
+        # in place. New copies always go to B/Acquisitions. Historical reuse
+        # still requires the exact
         # donor/placement metadata gate below, not a matching name or SHA.
         accepted = path.parent == dest_dir or (
-            historical and path.parent == legacy_dir
+            historical and path.parent in {legacy_dir, historical_shared_dir}
         )
         if path.is_symlink() or path.resolve() != path or not accepted:
             return False
@@ -307,7 +309,9 @@ def _materialize_to_identity_locked(
                      # Exact transfer-origin evidence below still decides
                      # reuse; the folder name alone never does.
                      or (row.get("provider_id") == "shared"
-                         and Path(str(row.get("path") or "")).parent == dest_dir))
+                         and Path(str(row.get("path") or "")).parent in {
+                         dest_dir, historical_shared_dir
+                     }))
                 and (row.get("source_item_id") is None
                      or str(row.get("source_item_id") or "") == str(item_id or ""))
                 and row.get("artifact_id") == artifact_id
@@ -315,7 +319,9 @@ def _materialize_to_identity_locked(
                 and type(meta) is dict
                 and meta.get("materialized_from") == placement_id):
             path = Path(str(row.get("path") or ""))
-            if (path.parent in {dest_dir, legacy_dir} and path != src
+            if (path.parent in {
+                    dest_dir, legacy_dir, historical_shared_dir
+                } and path != src
                     and verified_target(path, historical=True)):
                 exact_provenance = (
                     meta.get("transfer_kind") == "local_copy"
@@ -437,7 +443,9 @@ def _materialize_to_identity_locked(
     elif recovered is not None:
         dest, status = recovered, "complete"
     else:
-        dest = dest_dir / src.name
+        dest = dest_dir / transfer_readable_filename(
+            src, title=source_entry.get("title"), author=source_entry.get("author"),
+        )
         stem, suffix = dest.stem, dest.suffix
         n = 2
         # A symbolic-link destination is a hard error, even when dangling.

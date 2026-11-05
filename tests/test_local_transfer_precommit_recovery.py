@@ -30,7 +30,7 @@ def test_sql_rollback_retry_reuses_same_precommit_copy(case, monkeypatch):
                    "WHEN NEW.origin_kind='cifereca' BEGIN SELECT RAISE(ABORT,'test_failure'); END")
     with pytest.raises(Exception, match="test_failure"):
         service.materialize_to_identity(placement, "bob")
-    b = root / "bob/shared/book.pdf"
+    b = root / "bob/Acquisitions/Synthetic book.pdf"
     before = b.stat().st_ino
     assert canon_rows(service.storage)["placements"] == 1
     assert canon_rows(service.storage)["origin_links"] == 0
@@ -95,7 +95,7 @@ def test_real_process_crash_recovers_completed_copy_without_duplicate(
     monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: tmp_path / "shared.lock")
     monkeypatch.setattr("cifereca.core.canonical_transfer.acquisition_lock_file", lambda: tmp_path / "shared.lock")
     root = tmp_path / "EBooks"
-    a, b = root / "alice/local/book.pdf", root / "bob/shared/book.pdf"
+    a, b = root / "alice/local/book.pdf", root / "bob/Acquisitions/Synthetic book.pdf"
     try:
         copies = list(b.parent.iterdir())
         original = next(p for p in copies if p.name.startswith(".cifereca-send-")) if phase == "before_link" else b
@@ -116,7 +116,7 @@ def test_real_process_crash_recovers_completed_copy_without_duplicate(
 
 def test_same_sha_foreign_destination_after_crash_is_not_adopted(tmp_path, monkeypatch):
     _crash(tmp_path, "before_link")
-    b = tmp_path / "EBooks/bob/shared/book.pdf"
+    b = tmp_path / "EBooks/bob/Acquisitions/Synthetic book.pdf"
     b.write_bytes(BYTES)
     inode = b.stat().st_ino
     service = _service(tmp_path)
@@ -170,7 +170,7 @@ def test_completed_recipient_file_modified_by_b_is_preserved_on_new_send(case):
 @pytest.mark.parametrize("change", ["inode", "bytes", "symlink"])
 def test_precommit_copy_replaced_or_changed_is_not_published(tmp_path, monkeypatch, change):
     _crash(tmp_path, "before_commit")
-    b = tmp_path / "EBooks/bob/shared/book.pdf"
+    b = tmp_path / "EBooks/bob/Acquisitions/Synthetic book.pdf"
     if change == "inode":
         replacement = b.with_name("replacement")
         replacement.write_bytes(BYTES)
@@ -231,7 +231,7 @@ def test_lost_source_artifact_cannot_downgrade_checkpoint_to_legacy_send(tmp_pat
             db.execute("DELETE FROM artifacts WHERE artifact_id=?", (source["artifact_id"],))
         with pytest.raises(ValueError, match="local_transfer_source_changed"):
             service.materialize_to_identity(source["placement_id"], "bob")
-        assert len(list((tmp_path / "EBooks/bob/shared").glob("*.pdf"))) == 1
+        assert len(list((tmp_path / "EBooks/bob/Acquisitions").glob("*.pdf"))) == 1
         assert canon_rows(service.storage)["origin_links"] == 0
         assert canon_rows(service.storage)["placements"] == 1
     finally:

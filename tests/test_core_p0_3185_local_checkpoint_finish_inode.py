@@ -54,7 +54,7 @@ def test_checkpoint_finish_refuses_substituted_temporary_inode(
     assert temporary.read_bytes() == payload
     if replacement == "symlink":
         assert marker.read_bytes() == payload
-    assert (root / "bob" / "shared" / "book.pdf").read_bytes() == BYTES
+    assert (root / "bob" / "Acquisitions" / "Synthetic book.pdf").read_bytes() == BYTES
     assert source.read_bytes() == BYTES
     assert canon_rows(service.storage)["origin_links"] == 2
     assert canon_rows(service.storage)["placements"] == 2

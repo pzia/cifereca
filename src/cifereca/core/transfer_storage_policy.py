@@ -4,19 +4,22 @@ The transfer storage class is not a bibliographic provider, a supplier account,
 a right, a license or a synchronizable source. A recipient never inherits a
 donor's supplier directory by receiving independent bytes.
 
-Historical transfers under supplier folders remain readable and in place.
+Historical transfers under shared/ or supplier folders remain readable and in place.
 No migration is triggered by this policy.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Literal
 
 
 TransferStorageClass = Literal["transfer"]
 
-# Q025: one directory under *each recipient identity*, not a global share.
+# #4496 (supersedes Q025): new A→B copies go to Acquisitions.
+# Historical shared/ and supplier placements stay valid and unmoved.
 TRANSFER_STORAGE_CLASS: TransferStorageClass = "transfer"
-_TRANSFER_DIRECTORY = {"transfer": "shared"}
+_TRANSFER_DIRECTORY = {"transfer": "Acquisitions"}
 
 
 def directory_for_storage_class(storage_class: TransferStorageClass) -> str:
@@ -26,7 +29,37 @@ def directory_for_storage_class(storage_class: TransferStorageClass) -> str:
     return _TRANSFER_DIRECTORY[storage_class]
 
 
+def transfer_readable_filename(
+    source_path: Path, *, title: object = None, author: object = None,
+) -> str:
+    """Name a *new* received copy, not a provider right or existing Placement.
+
+    Only owner-scoped catalogue metadata is admissible. Unknown fields retain
+    the readable source filename. Strip filesystem separators/control chars,
+    cap length, never return hidden/path traversal names. Collision handling
+    and exclusive filesystem publication remain the caller's responsibility.
+    """
+    def component(value: object) -> str:
+        if type(value) is not str:
+            return ""
+        value = re.sub(r"[\x00-\x1f\x7f/\\]+", " ", value)
+        value = re.sub(r"\s+", " ", value).strip(" .-")
+        return value[:96].rstrip(" .-")
+
+    title_text = component(title)
+    author_text = component(author)
+    suffix = source_path.suffix
+    # Suffix is the witnessed *file's* extension, not an inferred codec from
+    # an upstream bibliographic Frmt.
+    suffix = suffix if len(suffix) <= 16 and re.fullmatch(r"\.[A-Za-z0-9]+", suffix) else ""
+    if title_text:
+        stem = f"{author_text} - {title_text}" if author_text else title_text
+    else:
+        stem = component(source_path.stem) or "Sans titre"
+    return stem[:190].rstrip(" .-") + suffix
+
+
 __all__ = [
     "TransferStorageClass", "TRANSFER_STORAGE_CLASS",
-    "directory_for_storage_class",
+    "directory_for_storage_class", "transfer_readable_filename",
 ]
