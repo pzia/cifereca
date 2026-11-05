@@ -341,7 +341,9 @@ def test_first_offer_staged_and_reused_without_reborrowing_or_reusing_url(tmp_pa
     stage_calls = []
     staged_loans = []
 
-    def first_token(loan, owner, directory, *, admission_current=None):
+    def first_token(loan, owner, directory, *, admission_current=None,
+                    initial_offer_only=False):
+        assert initial_offer_only is True
         assert admission_current is not None
         assert admission_current()
         assert owner is account
