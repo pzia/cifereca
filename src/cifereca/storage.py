@@ -2640,8 +2640,10 @@ class Storage:
                             or db.execute(
                                 "SELECT 1 FROM catalog_entries WHERE "
                                 "placement_id IN (?,?) AND "
-                                "(provider_id IS NOT NULL OR item_id IS NOT NULL) "
-                                "LIMIT 1", (pid, target[0]),
+                                "(provider_id IS NOT NULL OR item_id IS NOT NULL "
+                                "OR artifact_id IS NOT ? "
+                                "OR local_state NOT IN ('local','present')) "
+                                "LIMIT 1", (pid, target[0], artifact),
                             ).fetchone() is not None
                             or db.execute(
                                 "SELECT 1 FROM backup_items WHERE "
