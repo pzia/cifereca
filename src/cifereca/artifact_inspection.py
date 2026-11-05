@@ -169,6 +169,71 @@ def _validate_epub_package(path: Path) -> str | None:
 
 
 
+_FONT_OBFUSCATION_ALGORITHMS = frozenset((
+    "http://www.idpf.org/2008/embedding",
+    "http://ns.adobe.com/pdf/enc#RC",
+))
+_EPUB_ENCRYPTION_MANIFEST_MAX = 256 * 1024
+
+
+def _epub_encryption_protected(archive: zipfile.ZipFile) -> bool:
+    """Only exact, standard font obfuscation is non-DRM.
+
+    A namespace containing 'xmlenc' is *not* by itself evidence of
+    content DRM. Any unknown/mixed/malformed encryption claim stays
+    protected, including absent method and oversized manifests.
+    """
+    name = "META-INF/encryption.xml"
+    try:
+        info = archive.getinfo(name)
+    except KeyError:
+        return False
+    if info.file_size > _EPUB_ENCRYPTION_MANIFEST_MAX:
+        return True
+    try:
+        with archive.open(info) as stream:
+            raw = stream.read(_EPUB_ENCRYPTION_MANIFEST_MAX + 1)
+    except (RuntimeError, NotImplementedError, OSError, ValueError,
+            zipfile.BadZipFile):
+        return True
+    if len(raw) > _EPUB_ENCRYPTION_MANIFEST_MAX:
+        return True
+    text = raw.decode("utf-8", "ignore").casefold()
+    if "adobe.com/adept" in text or "aes" in text:
+        return True
+    try:
+        root = ElementTree.fromstring(raw)
+    except ElementTree.ParseError:
+        return True
+    if _local_name(root.tag) != "encryption":
+        return True
+    encrypted_nodes = [
+        node for node in root.iter()
+        if _local_name(node.tag) == "encrypteddata"
+    ]
+    if not encrypted_nodes:
+        return True
+    for node in encrypted_nodes:
+        methods = [
+            child for child in node
+            if _local_name(child.tag) == "encryptionmethod"
+        ]
+        if len(methods) != 1:
+            return True
+        method = methods[0]
+        if method.attrib.get("Algorithm") not in _FONT_OBFUSCATION_ALGORITHMS:
+            return True
+    # Do not silently ignore unknown nested encryption declarations.
+    for node in root.iter():
+        if _local_name(node.tag) == "encryptionmethod" and not any(
+            node is child
+            for data in encrypted_nodes for child in data
+            if _local_name(child.tag) == "encryptionmethod"
+        ):
+            return True
+    return False
+
+
 def inspect_artifact_content(
     content: bytes,
     expected_format: str | None = None,
@@ -225,10 +290,7 @@ def inspect_artifact_content(
                 invalid_reason = _validate_epub_archive(archive)
                 if invalid_reason:
                     return ArtifactInspection(actual, False, None, invalid_reason)
-            if "META-INF/encryption.xml" in names:
-                xml = archive.read("META-INF/encryption.xml").decode("utf-8", "ignore").casefold()
-                if "aes" in xml or "xmlenc" in xml or "adobe.com/adept" in xml:
-                    protected = True
+            protected = _epub_encryption_protected(archive)
     except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError):
         return ArtifactInspection(actual, False, None, "invalid_epub")
     return ArtifactInspection(actual, True, protected, None)
@@ -260,12 +322,7 @@ def inspect_artifact(
         protected = False
         try:
             with zipfile.ZipFile(path) as archive:
-                if "META-INF/encryption.xml" in archive.namelist():
-                    xml = archive.read("META-INF/encryption.xml").decode("utf-8", "ignore").casefold()
-                    # Font obfuscation may legitimately remain in readable EPUBs;
-                    # ADEPT/content encryption uses XML Encryption/AES markers.
-                    if "aes" in xml or "xmlenc" in xml or "adobe.com/adept" in xml:
-                        protected = True
+                protected = _epub_encryption_protected(archive)
         except (OSError, zipfile.BadZipFile):
             return ArtifactInspection(actual, False, None, "invalid_epub")
     elif actual == "acsm":
