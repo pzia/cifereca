@@ -121,6 +121,7 @@ def test_eight_kdrm_purchases_get_private_runtime_recipe_not_public_http(tmp_pat
     ]
     calls = ready(session, vault)
     delivered = []
+    emitted_epubs = []
 
     def forbidden(*args, **kwargs):
         pytest.fail("KDRM must not be downloaded as HTTP plaintext")
@@ -138,8 +139,12 @@ def test_eight_kdrm_purchases_get_private_runtime_recipe_not_public_http(tmp_pat
         assert "ContentKeys" not in str(request)
         assert request["format"] == "epub"
         path = Path(request["destination"])
-        path.write_bytes(epub_bytes())
+        # ZIP member timestamps can change across the next clock tick.
+        # Compare the actual runtime bytes, not a freshly rebuilt fixture.
+        emitted = epub_bytes()
+        path.write_bytes(emitted)
         delivered.append(path)
+        emitted_epubs.append(emitted)
         return {"ok": True, "artifact": {"path": str(path), "format": "epub"}}
 
     try:
@@ -151,7 +156,7 @@ def test_eight_kdrm_purchases_get_private_runtime_recipe_not_public_http(tmp_pat
             own_dir.mkdir()
             out = deliver(session, account, product,
                           offer.delivery_offer_id, own_dir, runtime)
-            assert out.path == delivered[-1] and out.path.read_bytes() == epub_bytes()
+            assert out.path == delivered[-1] and out.path.read_bytes() == emitted_epubs[-1]
             assert out.source.scope.identity_id == "identity-A"
             assert out.selected_offer_id == offer.delivery_offer_id
             assert not out.authorizes_publication
