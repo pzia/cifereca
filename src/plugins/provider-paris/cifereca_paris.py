@@ -319,6 +319,9 @@ class ParisProviderSession(ProviderSession):
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
+        # Per-session observation only; no borrower, query or provider result
+        # retained. Helps separate EBOOKS enrichment from ListLoans latency.
+        self._loan_catalog_search_calls = 0
         # Core owns the persistent claim; never reuse one in this session.
         self._borrow_claim_attempts: set[str] = set()
 
@@ -543,6 +546,7 @@ class ParisProviderSession(ProviderSession):
             try:
                 matched: SearchResult | None = None
                 for query in queries[:2]:
+                    self._loan_catalog_search_calls += 1
                     rows = self.client.search_catalog(query, scenario="EBOOKS", result_size=12)
                     if record_id:
                         matched = next((row for row in rows if str(row.record_id) == record_id), None)
@@ -610,6 +614,8 @@ class ParisProviderSession(ProviderSession):
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
         errors: list[dict[str, str]] = []
+        inventory_started = time.perf_counter()
+        catalogue_calls_before = self._loan_catalog_search_calls
         # The two independent private branches MUST address the *same*
         # borrower. Core can mutate an Account while DILICOM is in flight;
         # rereading unique_id for SYRACUSE would make a foreign-account GET
@@ -684,12 +690,19 @@ class ParisProviderSession(ProviderSession):
         for upstream in ("DILICOM", "SYRACUSE"):
             if not scope_current():
                 raise ProviderConfigurationError("account_scope_mismatch")
+            branch_started = time.perf_counter()
+            before_count = len(rows)
+            branch_outcome = "failed"
+            branch_count = 0
             try:
                 rows.extend(self.client.loans(upstream, borrower_id))
+                branch_count = len(rows) - before_count
+                branch_outcome = "returned"
             except Cancelled:
                 # Cooperative cancellation is NOT an unavailable branch.
                 # Stop the second upstream GET and never publish a partial
                 # inventory or synthetic negative-rights evidence.
+                branch_outcome = "cancelled"
                 raise
             except Exception as exc:
                 # Neither branch failure nor sibling success proves an empty
@@ -716,6 +729,26 @@ class ParisProviderSession(ProviderSession):
                     )
                 except Exception:
                     pass
+            finally:
+                # Transport timing is not a completeness or rights certificate.
+                # No borrower, credential, title, request URL or exception data.
+                try:
+                    elapsed = time.perf_counter() - branch_started
+                    if 0 <= elapsed <= 86400:
+                        self.diagnostics.add(
+                            "PERF", "Paris ListLoans",
+                            "ok" if branch_outcome == "returned" else
+                            "warning" if branch_outcome == "cancelled" else "error",
+                            duration_ms=min(600_000, int(elapsed * 1000)),
+                            detail={
+                                "provider": "paris", "upstream": upstream,
+                                "outcome": branch_outcome,
+                                "rows": min(100_000, branch_count),
+                            },
+                            level="detailed",
+                        )
+                except Exception:
+                    pass
             # This check must run OUTSIDE the exception handler: a borrower
             # change is an authorization failure, never merely a partial
             # provider branch failure that permits another private GET.
@@ -737,7 +770,30 @@ class ParisProviderSession(ProviderSession):
             raise ProviderConfigurationError("account_scope_mismatch")
         for loan in rows:
             loan.source_account_id = borrower_id or "primary"
-        return sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
+        result = sorted(rows, key=lambda x: (x.due_at is None, x.due_at or "", x.title.casefold()))
+        # Whole-read transport+optional enrichment cost, not Core freshness.
+        # Per-read EBOOKS delta measures cold vs warm catalog enrichment.
+        try:
+            elapsed = time.perf_counter() - inventory_started
+            if 0 <= elapsed <= 86400:
+                self.diagnostics.add(
+                    "PERF", "Paris loan inventory",
+                    "warning" if errors else "ok",
+                    duration_ms=min(600_000, int(elapsed * 1000)),
+                    detail={
+                        "provider": "paris", "branches_attempted": 2,
+                        "branches_failed": len(errors),
+                        "loans": min(100_000, len(result)),
+                        "ebooks_search_calls": min(
+                            100_000, max(0, self._loan_catalog_search_calls - catalogue_calls_before)
+                        ),
+                        "coverage_attested": False,
+                    },
+                    level="detailed",
+                )
+        except Exception:
+            pass
+        return result
 
     def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
         with self._loan_inventory_lock:
