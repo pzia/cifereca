@@ -144,3 +144,23 @@ def test_typed_archived_remains_archived_not_present(tmp_path):
         assert result["acquisition_authorized"] is False
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("fresh", [False, True])
+def test_historical_archive_flag_cannot_hide_typed_edition(tmp_path, fresh):
+    service, session = _service(tmp_path, [
+        {"product_id": "book-a", "revision_id": "r1",
+         "title": "A", "format": "EPUB"},
+    ])
+    try:
+        _backup(service, "book-a", status="skipped_archived")
+        _typed(service)
+        preview = service.kobo_backup_preview(
+            "vault-1", refresh_manifest=fresh,
+        )
+        assert preview["counts"]["skipped_archived"] == 0
+        assert preview["counts"]["attention_required"] == 1
+        assert preview["counts"]["potentially_missing"] == 0
+        assert preview["acquisition_authorized"] is False
+    finally:
+        service.close()
