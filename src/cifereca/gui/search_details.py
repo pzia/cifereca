@@ -80,7 +80,6 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         extend.add_css_class("suggested-action")
         extend.connect("clicked", lambda _b: self.run_search(True)); actions.append(extend)
         self.search_page.detail.add_actions(actions)
-        self._add_book_notice(self.search_page.detail,item, include_description=False)
         self._add_local_book_actions(self.search_page.detail,item)
         self._add_facets(self.search_page.detail, item, self.search_controls)
         # Local dictionary presentations do not run DetailPanel._decorate.

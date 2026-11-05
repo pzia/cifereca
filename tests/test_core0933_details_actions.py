@@ -44,15 +44,14 @@ def test_repeated_action_decoration_deduplicates_open_and_send_actions():
     assert host.appended == [opening, send]
 
 
-def test_library_group_uses_same_three_column_truncation_contract_as_notice():
+def test_compact_metadata_groups_use_at_most_two_columns():
     tree = ast.parse(gui_source_text(SOURCE))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "_group")
     source = ast.unparse(method)
 
     assert "'Bibliothèque'" in source
-    assert "columns = 2 if title == 'Essentiel' else 3" in source
-    assert "set_max_children_per_line(columns)" in source
+    assert "set_max_children_per_line(2)" in source
     assert "detail_display_value(label, value)" in source
     assert "detail_subtitle_lines(title, display_value)" in source
     assert "set_tooltip_text(label + ' : ' + tooltip_value)" in source
@@ -99,6 +98,9 @@ class _Row:
         self.active = False
         self.suffixes = []
         self.removed = []
+
+    def has_css_class(self, _class):
+        return False
 
     def get_title(self):
         return self.title

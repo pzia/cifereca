@@ -61,12 +61,11 @@ def test_search_and_library_keep_using_same_fichier_local_label():
                           and node.name == method_name)
         source = ast.unparse(method)
         assert "local_book_detail_sections(" in source
-    helper = ast.parse(MAIN.with_name(
-        "local_book_detail_sections.py"
-    ).read_text(encoding="utf-8"))
-    section_owner = ast.unparse(next(
-        node for node in helper.body if isinstance(node, ast.FunctionDef)
-        and node.name == "local_book_detail_sections"
+    from cifereca.gui.local_book_detail_sections import local_book_detail_sections
+
+    sections = dict(local_book_detail_sections(
+        {"identity_id": "alice", "local_path": "/private/books/lecture.epub"},
+        provider_display_name=str, identity_by_id=lambda _: None,
+        sync_status_label=str, availability_label=lambda _: "", language_label=lambda _: "",
     ))
-    assert "'Fichier local'" in section_owner
-    assert "item.get('local_path')" in section_owner
+    assert sections["Bibliothèques et accès"] == [("alice", "Fichier local : lecture.epub")]

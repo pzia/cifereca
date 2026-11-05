@@ -34,17 +34,16 @@ def test_search_local_summary_is_rendered_in_primary_presentation():
     source = _method("_search_selected")
     assert "description = self._book_description(item)" in source
     assert "description=description" in source
-    assert "self._add_book_notice(self.search_page.detail, item, include_description=False)" in source
+    assert "metadata=item.get('metadata')" in source
 
 
 def test_library_summary_is_rendered_before_library_notice_extensions():
     source = _method("_library_selected")
     assert "description = window._book_description(item)" in source
     assert "description=description" in source
-    presentation = source.index("detail.show_presentation")
-    presence = source.index("detail.add_group('Présence / Bibliothèques / Sources'")
-    notice = source.index("window._add_book_notice(detail, item, include_description=False)")
-    assert presentation < presence < notice
+    assert "section_rows=local_book_detail_sections(" in source
+    assert "metadata=item.get('metadata')" in source
+    assert "detail.show_presentation(presentation, description=description)" in source
 
 
 def test_notice_can_skip_summary_to_avoid_duplicate_render():

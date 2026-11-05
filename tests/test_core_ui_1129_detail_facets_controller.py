@@ -34,6 +34,10 @@ class Row(Widget):
         self.title, self.subtitle = title, subtitle
         self.suffix = []
         self.activatable = True
+        self.css_classes = set()
+
+    def has_css_class(self, css_class):
+        return css_class in self.css_classes
 
     def get_title(self):
         return self.title
@@ -116,6 +120,15 @@ def _host(values=(), *, adept=None):
         runner=NS(submit=lambda *a, **kw: None),
     )
     return host, groups
+
+
+def test_essential_metadata_with_typed_actions_keeps_its_attested_value():
+    row = Row("Auteur", "Alice Exemple")
+    row.css_classes.add("detail-metadata-actions")
+    host, groups = _host([("author", "Autre auteur", "autre")])
+    _execute(host, NS(content=row, _subtitle_label=None))
+    assert row.subtitle == "Alice Exemple"
+    assert groups == []
 
 
 def test_extracted_facets_are_headless_and_mainwindow_facade_is_stable():

@@ -20,6 +20,7 @@ class Widget:
     def set_use_markup(self, value): self.use_markup = value
     def set_subtitle(self, value): self.subtitle = value
     def set_subtitle_lines(self, *_): pass
+    def set_size_request(self, *_): pass
     def set_tooltip_text(self, value): self.tooltip = value
     def update_property(self, keys, values): self.accessible_label = values[0]
     def set_expanded(self, *_): pass
@@ -29,6 +30,16 @@ class Widget:
     def add_row(self, item): self.children.append(item)
     def add_suffix(self, item): self.children.append(item)
     def connect(self, name, fn): self.handlers[name] = fn
+
+
+class Grid(Widget):
+    def set_selection_mode(self, *_): pass
+    def set_min_children_per_line(self, *_): pass
+    def set_max_children_per_line(self, *_): pass
+    def set_homogeneous(self, *_): pass
+    def set_column_spacing(self, *_): pass
+    def set_row_spacing(self, *_): pass
+    def insert(self, item, _position): self.children.append(item)
 
 
 class Button(Widget):
@@ -46,20 +57,27 @@ def _group():
     tree = ast.parse(gui_source_text(MAIN))
     panel = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "DetailPanel")
     method = next(x for x in panel.body if isinstance(x, ast.FunctionDef) and x.name == "_group")
+    actions = next(x for x in panel.body if isinstance(x, ast.FunctionDef) and x.name == "_add_metadata_actions")
     clipboard = NS(value=None)
     clipboard.set_content = lambda provider: (setattr(clipboard, "value", provider), True)[1]
     display = NS(get_clipboard=lambda: clipboard)
     env = {
         "Adw": NS(PreferencesGroup=Widget, ExpanderRow=Widget, ActionRow=Widget),
-        "Gtk": NS(Button=Button, AccessibleProperty=NS(LABEL="label")),
+        "Gtk": NS(Button=Button, FlowBox=Grid, SelectionMode=NS(NONE=0), AccessibleProperty=NS(LABEL="label")),
         "Gdk": NS(Display=NS(get_default=lambda: display),
                   ContentProvider=NS(new_for_value=lambda text: text)),
         "detail_display_value": lambda _label, value: (value, value),
         "canonical_book_isbn": canonical_book_isbn,
         "safe_detail_value": safe_detail_value,
     }
-    exec(compile(ast.Module(body=[method], type_ignores=[]), str(MAIN), "exec"), env)
-    return env["_group"], clipboard
+    exec(compile(ast.Module(body=[method, actions], type_ignores=[]), str(MAIN), "exec"), env)
+
+    def render(host, *args, **kwargs):
+        host._observe_detail_width = lambda *_: None
+        host._add_metadata_actions = lambda *values: env["_add_metadata_actions"](host, *values)
+        return env["_group"](host, *args, **kwargs)
+
+    return render, clipboard
 
 
 def test_copy_is_independent_and_search_is_explicit_and_typed():
@@ -80,9 +98,10 @@ def test_copy_is_independent_and_search_is_explicit_and_typed():
     ))
     assert events == [] and clipboard.value is None
     expander = groups[0].children[0]
-    assert len(expander.children) == 4
-    assert all(row.use_markup is False for row in expander.children)
-    buttons = [[x for x in row.children if isinstance(x, Button)] for row in expander.children]
+    rows = expander.children[0].children
+    assert len(rows) == 4
+    assert all(row.use_markup is False for row in rows)
+    buttons = [[x for x in row.children if isinstance(x, Button)] for row in rows]
     assert len(buttons[0]) == 2
     assert len(buttons[2]) == 1  # Date is copy-only
     buttons[0][0].click()
@@ -108,7 +127,7 @@ def test_signed_urls_and_secrets_are_not_copied_or_searched():
         ("Auteur", "Public"),
     ], fields=(NS(kind="all"), NS(kind="author")))
     expander = groups[0].children[0]
-    assert len(expander.children) == 1
+    assert len(expander.children[0].children) == 1
     # The visible count must reflect safe, rendered fields, not raw input rows.
     assert expander.subtitle == "1 champ(s) bibliographiques"
     assert clipboard.value is None
@@ -139,13 +158,14 @@ def test_942_multi_valued_safe_fields_have_exact_visible_count_and_individual_co
     ], fields=fields)
     assert len(groups) == 1
     expander = groups[0].children[0]
-    assert [row.title for row in expander.children] == ["Auteur", "Auteur", "Sujet"]
+    rows = expander.children[0].children
+    assert [row.title for row in rows] == ["Auteur", "Auteur", "Sujet"]
     # A raw source has five rows, but only three are authorized/rendered.
     assert expander.subtitle == "3 champ(s) bibliographiques"
-    assert len(expander.children) == 3
+    assert len(rows) == 3
     buttons = [
         [child for child in row.children if isinstance(child, Button)]
-        for row in expander.children
+        for row in rows
     ]
     assert all(len(row_buttons) == 2 for row_buttons in buttons)
     assert clipboard.value is None and events == []  # no implicit copy/HTTP
@@ -190,7 +210,7 @@ def test_value_names_distinguish_repeated_authors_and_keep_full_copy():
     method(host, "Détail", [("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
                              ("Description", long_value)],
            fields=(NS(kind="author"), NS(kind="author"), NS(kind="copy")))
-    rows = groups[0].children[0].children
+    rows = groups[0].children[0].children[0].children
     names = [row.children[0].accessible_label for row in rows]
     assert names[:2] == ["Copier Auteur : Alice Exemple", "Copier Auteur : Bob Exemple"]
     assert rows[1].children[1].accessible_label == "Rechercher en ligne : Auteur : Bob Exemple"

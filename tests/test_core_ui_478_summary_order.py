@@ -26,9 +26,10 @@ def test_shared_presentation_inserts_summary_after_essential():
     assert "section.title == 'Essentiel'" in source
     assert "self._show_description(description)" in source
 
-    essential = source.index("self._group(section.title, rows)")
+    essential = source.index("essential=essential")
     summary = source.index("self._show_description(description)")
-    assert essential < summary
+    sections = source.index("self._group(section.title, rows)")
+    assert essential < summary < sections
 
 
 def test_search_detail_passes_description_into_shared_presentation():

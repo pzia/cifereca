@@ -169,15 +169,11 @@ def test_multi_identity_provenance_is_deduplicated_and_metadata_is_preserved():
     assert projected[0]["badges"] == []
     sections = dict(projected[0]["section_rows"])
     assert ("Disponibilité", "Disponible") in sections["Essentiel"]
-    assert ("Fichier local", "/tmp/example.epub") in sections["Bibliothèque"]
-    assert ("État acquisition", "") in sections["Bibliothèque"]
-    assert ("Identité", "Alice") in sections["Bibliothèque"]
-    assert events[2] == (
-        "group", "Présence / Bibliothèques / Sources",
-        [("Alice", "Stockage : disk"), ("Bob", "Droit distant : Paris")],
-    )
-    assert [entry[0] for entry in events[3:]] == [
-        "notice", "local", "recommend", "facets", "plugin", "cache",
+    assert sections["Bibliothèques et accès"] == [
+        ("Alice", "Fichier local : EPUB · disk"), ("Bob", "Droit distant : Paris"),
+    ]
+    assert [entry[0] for entry in events[2:]] == [
+        "local", "recommend", "facets", "plugin", "cache",
     ]
     assert events[-1] == ("cache", "library", "book-1")
     window.service.can_download_loan.assert_not_called()
@@ -217,7 +213,7 @@ def test_ambiguous_loan_uses_neutral_catalogue_detail_not_wrong_borrower():
     assert all(entry[0] != "loan" for entry in events)
     assert all(entry[0] != "prepare" for entry in events)
     assert [entry[0] for entry in events] == [
-        "cancel", "presentation", "notice", "local", "recommend", "facets", "plugin", "cache",
+        "cancel", "presentation", "local", "recommend", "facets", "plugin", "cache",
     ]
     window.service.can_download_loan.assert_not_called()
 

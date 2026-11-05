@@ -59,7 +59,7 @@ def test_book_header_is_compact_and_long_text_is_bounded():
 def test_essential_grid_is_two_columns_and_neutral_by_default():
     group = ast.unparse(_method("DetailPanel", "_group"))
     assert "'Essentiel'" in group
-    assert "2 if title == 'Essentiel' else 3" in group
+    assert "grid.set_max_children_per_line(2)" in group
     assert "search_controls" not in group
     assert "detail_subtitle_lines(title, display_value)" in group
 
@@ -139,7 +139,7 @@ def test_library_nominal_acquisition_state_and_single_presence_are_hidden():
         and node.name == "local_book_detail_sections"
     ))
     assert "sync_label == 'À jour'" in projection
-    assert "len(unique_presence) > 1" in source
+    assert "'Bibliothèques et accès'" in projection
 
 
 def test_async_detail_refresh_preserves_logical_action_focus():

@@ -7,6 +7,7 @@ from typing import Any, Iterable
 from ..language import language_label
 from ..book_detail_metadata import detail_metadata_items, safe_detail_value
 from ..plugin_api import DetailField, DetailSection, DocumentLink, UiBookDetailPresentation
+from .book_notice_controller import book_cover_notice_rows
 
 
 def fr_date(value: str | None, with_time: bool = False) -> str:
@@ -132,6 +133,24 @@ def detail_subtitle_lines(section: str, value: object) -> int:
         return 0
     return 1 if section == "Essentiel" else 2
 
+
+def _essential_fields(fields, details):
+    """Add a small sample of attested facts while retaining full detail below."""
+    result = list(fields[:8])
+    shown = {field.label for field in result}
+    for label in ("Auteur", "Série", "Numéro dans la série", "Sujet", "Genre",
+                  "Langue", "Publication", "Année de publication", "ISBN déclaré"):
+        if len(result) >= 8:
+            break
+        if label in shown:
+            continue
+        for source_label, value, kind in details:
+            if source_label in (label, "EPUB · " + label, "Catalogue · " + label):
+                result.append(DetailField(f"essential-{len(result)}", source_label, value, kind))
+                break
+    return tuple(result)
+
+
 def book_detail_presentation(
     *,
     title: str,
@@ -145,6 +164,10 @@ def book_detail_presentation(
     metadata: object = None,
 ) -> UiBookDetailPresentation:
     """Build the neutral book-detail projection used by Core and plugin views."""
+    details = list(detail_metadata_items(metadata))
+    if isinstance(metadata, dict):
+        details.extend(("Image du livre · " + label, value, "copy")
+                       for label, value in book_cover_notice_rows(metadata))
     sections_list: list[DetailSection] = []
     for order, (section_title, section_values) in enumerate(section_rows):
         compact_rows = compact_detail_rows(section_values)
@@ -152,6 +175,8 @@ def book_detail_presentation(
             DetailField(id=f"section-{order}-field-{index}", label=str(label), value=value)
             for index, (label, value) in enumerate(compact_rows)
         )
+        if section_title == "Essentiel":
+            fields = _essential_fields(fields, details)
         if fields:
             sections_list.append(
                 DetailSection(id=f"section-{order}", title=str(section_title), fields=fields, order=order)
@@ -163,7 +188,6 @@ def book_detail_presentation(
         )
         if fields:
             sections_list.append(DetailSection(id="primary", title=group_title, fields=fields, order=0))
-    details = list(detail_metadata_items(metadata))
     # Legacy summaries and loans without bibliographic metadata keep their
     # original shape: the generic helper must not fabricate a new section.
     if metadata is not None:

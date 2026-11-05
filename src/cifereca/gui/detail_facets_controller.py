@@ -45,6 +45,8 @@ def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
         if isinstance(widget, getattr(Adw, "ExpanderRow", ())) and widget.get_title() == "Détail":
             return
         if isinstance(widget, Adw.ActionRow):
+            if widget.has_css_class("detail-metadata-actions"):
+                return
             field = row_fields.get(widget.get_title())
             original_subtitle = getattr(
                 widget,
@@ -102,7 +104,7 @@ def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
                 subtitle.set_visible(False)
                 author_box = window._facet_value_group(authors, "author", controls)
                 author_box.add_css_class("detail-subtitle")
-                parent.append(author_box)
+                parent.insert_child_after(author_box, subtitle)
                 subtitle._cifereca_author_facets = author_box
     if trace is not None:
         trace.record("facets", started)

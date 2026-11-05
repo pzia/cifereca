@@ -125,14 +125,18 @@ class DetailPanel(Gtk.Box):
         subtitle: str | None,
         thumbnail: str | None,
         badges: Iterable[str] = (),
+        *,
+        essential=(),
     ) -> CoverView:
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
-        self._append_content(header)
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        header.add_css_class("detail-heading")
         cover = CoverView(112, 168)
         cover.set_missing_size(40, 60)
+        cover.set_halign(Gtk.Align.START)
+        cover.set_valign(Gtk.Align.START)
         header.append(cover)
         cover.bind_url(self.window.covers, thumbnail, priority=0)
-        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
         header.append(text)
@@ -173,11 +177,63 @@ class DetailPanel(Gtk.Box):
             chip.set_tooltip_text(str(value))
             add_css(chip, "badge")
             badges_box.insert(chip, -1)
-        text.append(badges_box)
+        if badges_box.get_first_child() is not None:
+            text.append(badges_box)
+        essential_grid = None
+        if essential:
+            essential_grid = self._group(
+                "Essentiel", [(field.label, field.value) for field in essential],
+                fields=essential, parent=text,
+            )
+
+        def arrange(width):
+            side_by_side = width >= 400
+            orientation = Gtk.Orientation.HORIZONTAL if side_by_side else Gtk.Orientation.VERTICAL
+            if header.get_orientation() != orientation:
+                header.set_orientation(orientation)
+            if essential_grid is not None and len(essential) > 1:
+                # Budget for the full cover even if its placeholder is smaller.
+                text_width = width - 120 if side_by_side else width
+                columns = 2 if text_width >= 370 else 1
+                if essential_grid.get_min_children_per_line() != columns:
+                    essential_grid.set_min_children_per_line(columns)
+
+        self._observe_detail_width(header, arrange)
+        self._append_content(header)
         return cover
 
 
-    def _group(self, title: str, rows: list[tuple[str, str]], *, fields=()) -> None:
+    def _observe_detail_width(self, widget, arrange):
+        """Reflow mapped content in place, without a continuous frame tick."""
+        clock = handler = last_width = None
+
+        def painted(_clock):
+            nonlocal last_width
+            # The viewport is not widened by a child's minimum request. This
+            # also lets an expanded two-column grid shrink again reliably.
+            width = (self.body_scroll.get_child().get_width()
+                     - self.content.get_margin_start() - self.content.get_margin_end())
+            if width > 0 and width != last_width:
+                last_width = width
+                arrange(width)
+
+        def mapped(_widget):
+            nonlocal clock, handler
+            clock = widget.get_frame_clock()
+            if clock is not None:
+                handler = clock.connect("after-paint", painted)
+                painted(clock)
+
+        def unmapped(_widget):
+            nonlocal clock, handler, last_width
+            if clock is not None and handler is not None:
+                clock.disconnect(handler)
+            clock = handler = last_width = None
+
+        widget.connect("map", mapped)
+        widget.connect("unmap", unmapped)
+
+    def _group(self, title: str, rows: list[tuple[str, str]], *, fields=(), parent=None):
         if title == "Détail":
             # Explicit and local-only. Per-element actions; no network on display.
             group = Adw.PreferencesGroup()
@@ -189,9 +245,14 @@ class DetailPanel(Gtk.Box):
                 self._detail_expanded = bool(widget.get_expanded())
 
             expander.connect("notify::expanded", save_expanded)
-            search = getattr(self.window, "search_books", None)
-            current = getattr(self.window.service, "current_identity", None)
-            identity_id = getattr(current, "identity_id", None)
+            grid = Gtk.FlowBox()
+            grid.add_css_class("detail-fields")
+            grid.set_selection_mode(Gtk.SelectionMode.NONE)
+            grid.set_min_children_per_line(1)
+            grid.set_max_children_per_line(2)
+            grid.set_homogeneous(True)
+            grid.set_column_spacing(8)
+            grid.set_row_spacing(4)
             visible_count = 0
             for index, (label, value) in enumerate(rows):
                 safe_value = safe_detail_value(value)
@@ -209,65 +270,22 @@ class DetailPanel(Gtk.Box):
                 row.set_subtitle_lines(0)
                 row.set_tooltip_text(label + " : " + full_value)
 
-                copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
-                copy.add_css_class("flat")
-                # Name the individual value, including for repeated labels.
-                # Keep spoken text bounded; the clipboard retains all of it.
-                action_value = " ".join(safe_value.split())
-                if len(action_value) > 180:
-                    action_value = action_value[:140] + "…" + action_value[-39:]
-                copy_label = f"Copier {label} : {action_value}"
-                copy.set_tooltip_text(copy_label)
-                copy.update_property([Gtk.AccessibleProperty.LABEL], [copy_label])
-                def copy_one(_button, value=safe_value):
-                    display = Gdk.Display.get_default()
-                    if display is None:
-                        self.window.toast("Presse-papiers indisponible")
-                        return
-                    # Some PyGObject GTK4 bindings lack Clipboard.set_text.
-                    # Keep the provider alive for asynchronous X11/Wayland reads.
-                    provider = Gdk.ContentProvider.new_for_value(value)
-                    self.window._clipboard_provider = provider
-                    if display.get_clipboard().set_content(provider):
-                        self.window.toast("Copié")
-                    else:
-                        self.window.toast("Copie impossible")
-                copy.connect("clicked", copy_one)
-                row.add_suffix(copy)
-
-                query_field = kind if kind in {
-                    "title", "author", "subject", "series", "collection",
-                    "language", "isbn", "all",
-                } else ("all" if kind == "text" else "")
-                query_value = safe_value
-                if query_field == "isbn":
-                    query_value = canonical_book_isbn(query_value)
-                    if not query_value:
-                        query_field = "all"  # Never treat an EAN/invalid ID as ISBN
-                if callable(search) and query_field and 2 <= len(query_value) <= 512:
-                    lookup = Gtk.Button.new_from_icon_name("system-search-symbolic")
-                    lookup.add_css_class("flat")
-                    tooltip = ("Rechercher en ligne dans tous les attributs disponibles"
-                               if query_field == "all" else
-                               "Rechercher en ligne : " + label)
-                    tooltip += " : " + action_value
-                    lookup.set_tooltip_text(tooltip)
-                    lookup.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
-                    lookup.connect(
-                        "clicked",
-                        lambda _button, value=query_value, field=query_field,
-                        identity=identity_id: search(
-                            value, field=field, online=True, identity_id=identity,
-                        ),
-                    )
-                    row.add_suffix(lookup)
-                expander.add_row(row)
+                self._add_metadata_actions(row, label, safe_value, kind)
+                row.set_size_request(210, -1)
+                grid.insert(row, -1)
                 visible_count += 1
             if visible_count:
                 # Count only rows admitted by the safety filter.  A rejected
                 # URL/credential must not leak through the subtitle or an
                 # otherwise empty detail section.
                 expander.set_subtitle(f"{visible_count} champ(s) bibliographiques")
+                expander.add_row(grid)
+                if visible_count > 1:
+                    def arrange(width):
+                        columns = 2 if width >= 490 else 1
+                        if grid.get_min_children_per_line() != columns:
+                            grid.set_min_children_per_line(columns)
+                    self._observe_detail_width(grid, arrange)
                 group.add(expander)
                 self._append_content(group)
             return
@@ -276,12 +294,19 @@ class DetailPanel(Gtk.Box):
         grid = None
         if title in {"Essentiel","Notice","Catalogue","Notice EPUB","Bibliothèque","Catalogue connu","Récupération","Historique","Prêt","Réservation"}:
             grid = Gtk.FlowBox(); grid.set_selection_mode(Gtk.SelectionMode.NONE)
-            columns = 2 if title == "Essentiel" else 3
-            grid.set_min_children_per_line(1); grid.set_max_children_per_line(columns)
-            grid.set_homogeneous(True); grid.set_column_spacing(12); grid.set_row_spacing(8)
+            grid.set_min_children_per_line(1); grid.set_max_children_per_line(2)
+            grid.set_homogeneous(True); grid.set_column_spacing(8); grid.set_row_spacing(4)
             group.add(grid)
-        for label, value in rows:
+        for index, (label, value) in enumerate(rows):
             row = Adw.ActionRow()
+            row.set_use_markup(False)
+            field = fields[index] if index < len(fields) else None
+            if field is not None and field.kind != "text":
+                safe_value = safe_detail_value(value)
+                if not safe_value:
+                    continue
+                self._add_metadata_actions(row, label, safe_value, field.kind)
+                row.add_css_class("detail-metadata-actions")
             display_value, tooltip_value = detail_display_value(label, value)
             row.set_title(label); row.set_subtitle(display_value)
             row.set_subtitle_lines(detail_subtitle_lines(title, display_value) if grid is not None else 0)
@@ -290,7 +315,69 @@ class DetailPanel(Gtk.Box):
                 row.set_size_request(160, -1); grid.insert(row, -1)
             else:
                 group.add(row)
-        self._append_content(group)
+        if parent is None:
+            self._append_content(group)
+        else:
+            parent.append(group)
+        return grid
+
+    def _add_metadata_actions(self, row, label, safe_value, kind):
+        search = getattr(self.window, "search_books", None)
+        current = getattr(self.window.service, "current_identity", None)
+        identity_id = getattr(current, "identity_id", None)
+        copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        copy.add_css_class("flat")
+        # Name the individual value, including for repeated labels.
+        # Keep spoken text bounded; the clipboard retains all of it.
+        action_value = " ".join(safe_value.split())
+        if len(action_value) > 180:
+            action_value = action_value[:140] + "…" + action_value[-39:]
+        copy_label = f"Copier {label} : {action_value}"
+        copy.set_tooltip_text(copy_label)
+        copy.update_property([Gtk.AccessibleProperty.LABEL], [copy_label])
+
+        def copy_one(_button, value=safe_value):
+            display = Gdk.Display.get_default()
+            if display is None:
+                self.window.toast("Presse-papiers indisponible")
+                return
+            # Some PyGObject GTK4 bindings lack Clipboard.set_text.
+            # Keep the provider alive for asynchronous X11/Wayland reads.
+            provider = Gdk.ContentProvider.new_for_value(value)
+            self.window._clipboard_provider = provider
+            if display.get_clipboard().set_content(provider):
+                self.window.toast("Copié")
+            else:
+                self.window.toast("Copie impossible")
+        copy.connect("clicked", copy_one)
+        row.add_suffix(copy)
+
+        query_field = kind if kind in {
+            "title", "author", "subject", "series", "collection",
+            "language", "isbn", "all",
+        } else ("all" if kind == "text" else "")
+        query_value = safe_value
+        if query_field == "isbn":
+            query_value = canonical_book_isbn(query_value)
+            if not query_value:
+                query_field = "all"  # Never treat an EAN/invalid ID as ISBN
+        if callable(search) and query_field and 2 <= len(query_value) <= 512:
+            lookup = Gtk.Button.new_from_icon_name("system-search-symbolic")
+            lookup.add_css_class("flat")
+            tooltip = ("Rechercher en ligne dans tous les attributs disponibles"
+                       if query_field == "all" else
+                       "Rechercher en ligne : " + label)
+            tooltip += " : " + action_value
+            lookup.set_tooltip_text(tooltip)
+            lookup.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
+            lookup.connect(
+                "clicked",
+                lambda _button, value=query_value, field=query_field,
+                identity=identity_id: search(
+                    value, field=field, online=True, identity_id=identity,
+                ),
+            )
+            row.add_suffix(lookup)
 
     def _append_content(self, widget):
         self.content.append(widget)
@@ -431,26 +518,27 @@ class DetailPanel(Gtk.Box):
         self._pending_action_focus_key = self._focused_action_key()
         clear_box(self.content)
         self._clear_actions()
+        sections_started = trace.clock() if trace else None
+        sections = sorted(presentation.sections, key=lambda item: item.order)
+        essential = [field for section in sections if section.title == "Essentiel"
+                     for field in section.fields]
         self._cover_and_title(
             presentation.title,
             presentation.subtitle or None,
             presentation.thumbnail_url,
             presentation.badges,
+            essential=essential,
         )
-        summary_rendered = False
-        sections_started = trace.clock() if trace else None
-        for section in sorted(presentation.sections, key=lambda item: item.order):
+        self._show_description(description)
+        for section in sections:
+            if section.title == "Essentiel":
+                continue
             rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
             if rows:
                 if section.title == "Détail":
                     self._group(section.title, rows, fields=section.fields)
                 else:
                     self._group(section.title, rows)
-            if section.title == "Essentiel":
-                self._show_description(description)
-                summary_rendered = True
-        if not summary_rendered:
-            self._show_description(description)
         if trace is not None:
             trace.record("sections", sections_started)
         link_buttons = []

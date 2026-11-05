@@ -75,7 +75,7 @@ def test_author_subtitle_uses_same_filter_value_buttons():
     source = _method("_add_facets")
     assert "subtitle.set_visible(False)" in source
     assert "window._facet_value_group(authors, 'author', controls)" in source
-    assert "parent.append(author_box)" in source
+    assert "parent.insert_child_after(author_box, subtitle)" in source
 
 
 def test_facet_css_has_explicit_hover_and_focus_states():
