@@ -69,6 +69,7 @@ def test_opening_reason_depends_only_on_live_source_state_not_retired_toggle():
     # disabled and connected/manual-only are distinct diagnostic facts.
     cases = (
         ([], [], "disabled"),
+        ([_account("a", "c")], [], "no_session"),
         ([_account("a", "c")], [_session("c", connected=False)], "no_session"),
         ([_account("a", "c")], [_session("c", backup=False)], "capability_unavailable"),
         ([_account("a", "c", False)], [_session("c")], "source_disabled"),
