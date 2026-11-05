@@ -139,3 +139,11 @@ def test_local_delete_keeps_parent_and_immutable_derived_origin_history(tmp_path
     )
     assert service.storage.artifact_delete_if_unreferenced(derived.artifact_id) is False
     assert service.storage.artifact_delete_if_unreferenced(source.artifact_id) is False
+    # Rebuild after a voluntary local retirement reuses the attested
+    # historical origin without reassigning supplier provenance.
+    restored = broker.execute_transform(
+        TransformRequest(source, "optimize"), control=Control(),
+    )
+    assert restored.artifact_id == derived.artifact_id
+    assert len(_origins(service.storage, derived.artifact_id)) == 1
+    assert len(service.storage.artifact_variants(artifact_id=derived.artifact_id)) == 1
