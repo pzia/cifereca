@@ -107,3 +107,80 @@ def test_safe_projection_rejects_fake_multi_path_counts(pair):
     assert public["classification"] == "ambiguous_match"
     assert public["file_verification"] == "multiple_placements_unverified"
     assert "verified_placement_count" not in public
+
+
+def test_reappeared_file_with_sqlite_missing_state_is_not_claimed_absent(pair):
+    db, root, first, second, account = pair
+    first.write_bytes(BYTES)
+    second.write_bytes(BYTES)
+    with db._lock, db._connect() as sql:
+        sql.execute("UPDATE placements SET state='missing' WHERE path=?", (str(second),))
+    before = db.placements()
+    result, row = _audit(pair)
+    assert row["classification"] == "ambiguous_match"
+    assert row["file_verification"] == "multiple_placements_mixed"
+    assert (
+        row["verified_placement_count"], row["missing_placement_count"],
+        row["unverified_placement_count"],
+    ) == (1, 0, 1)
+    public, = safe_acquisition_audit(result)["rights"]
+    assert public["file_verification"] == "multiple_placements_mixed"
+    assert public["missing_placement_count"] == 0
+    assert public["unverified_placement_count"] == 1
+    assert db.placements() == before  # audit did not silently repair SQLite
+    assert first.read_bytes() == second.read_bytes() == BYTES
+
+
+def test_missing_sqlite_row_remains_missing_when_file_is_actually_gone(pair):
+    db, root, first, second, account = pair
+    second.unlink()
+    with db._lock, db._connect() as sql:
+        sql.execute("UPDATE placements SET state='missing' WHERE path=?", (str(second),))
+    before = db.placements()
+    result, row = _audit(pair)
+    assert row["file_verification"] == "multiple_placements_mixed"
+    assert (
+        row["verified_placement_count"], row["missing_placement_count"],
+        row["unverified_placement_count"],
+    ) == (1, 1, 0)
+    assert db.placements() == before
+    assert first.read_bytes() == BYTES
+
+
+def test_single_reappeared_missing_state_does_not_invent_a_present_placement(pair):
+    db, root, first, second, account = pair
+    with db._lock, db._connect() as sql:
+        sql.execute("DELETE FROM placements WHERE path=?", (str(second),))
+        sql.execute("UPDATE placements SET state='missing' WHERE path=?", (str(first),))
+    before = db.placements()
+    assert len(before) == 1
+    result, row = _audit(pair)
+    assert row["classification"] == "local_unverified"
+    assert row["file_verification"] == "placement_state_unverified"
+    public, = safe_acquisition_audit(result)["rights"]
+    assert public["file_verification"] == "placement_state_unverified"
+    assert db.placements() == before
+    assert first.read_bytes() == BYTES
+
+
+def test_sqlite_missing_symlink_is_never_reclassified_as_restored_book(pair):
+    db, root, first, second, account = pair
+    # A symlink may point to perfectly matching bytes. It is never
+    # physical proof for the missing historical Placement's own inode.
+    second.unlink()
+    second.symlink_to(first)
+    with db._lock, db._connect() as sql:
+        sql.execute("UPDATE placements SET state='missing' WHERE path=?", (str(second),))
+    before = db.placements()
+    result, row = _audit(pair)
+    assert row["classification"] == "ambiguous_match"
+    assert row["file_verification"] == "multiple_placements_mixed"
+    assert (
+        row["verified_placement_count"], row["missing_placement_count"],
+        row["unverified_placement_count"],
+    ) == (1, 0, 1)
+    safe, = safe_acquisition_audit(result)["rights"]
+    assert safe["missing_placement_count"] == 0
+    assert safe["unverified_placement_count"] == 1
+    assert second.is_symlink() and first.read_bytes() == BYTES
+    assert db.placements() == before
