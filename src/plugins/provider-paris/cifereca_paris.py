@@ -761,8 +761,14 @@ class ParisProviderSession(ProviderSession):
         enriched_at = time.perf_counter()
         attempts_token = self._loan_ebooks_attempts.set(0)
         try:
-            for loan in rows:
-                self._enrich_digital_loan_metadata(loan)
+            # #4281: an exact rights.observation snapshot uses the already
+            # scoped ListLoans rows and upstream IDs only. Author, thumbnail
+            # and EBOOKS catalogue lookups cannot attest loan rights, so
+            # omit that optional work on the rights-only critical path.
+            # Inventory/ordinary loan readers retain their descriptive data.
+            if self._loan_read_consumer.get() != "rights_observation":
+                for loan in rows:
+                    self._enrich_digital_loan_metadata(loan)
         finally:
             # Catalogue lookups are optional descriptive calls, never an
             # additional ListLoans read or a proof of current entitlements.
