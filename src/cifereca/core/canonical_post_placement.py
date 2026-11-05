@@ -12,6 +12,7 @@ import sqlite3
 
 from .convergence_verified_presence import _verified_copy
 from .missing_placement_readiness import _physical_absence
+from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 
 _MAX_MATCHES = 64
 
@@ -62,6 +63,12 @@ def verified_post_placement_duplicates(
         # _verified_copy only tests whether the owner directory is in this
         # collection; it separately enforces relative path containment.
         reserved = frozenset((owner_dir,))
+        # A delivery Outbox cannot be a keeper for ordinary cleanup.
+        if ordinary_dedup_path_excluded(
+            target, library_root=library_root, identity_id=identity,
+            owner_directory=owner_dir,
+        ):
+            return ()
         candidates = db.execute(
             "SELECT placement_id,path FROM placements "
             "WHERE identity_id=? AND artifact_id=? AND state='present' "
@@ -83,7 +90,13 @@ def verified_post_placement_duplicates(
         )
     if not valid(target):
         return ()
-    return tuple(other_id for other_id, path in candidates if valid(path))
+    return tuple(
+        other_id for other_id, path in candidates
+        if not ordinary_dedup_path_excluded(
+            path, library_root=library_root, identity_id=identity,
+            owner_directory=owner_dir,
+        ) and valid(path)
+    )
 
 
 def preview_post_placement_supervised_pairs(
