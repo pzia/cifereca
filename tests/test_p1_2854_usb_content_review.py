@@ -146,6 +146,14 @@ def test_pdf_encryption_indication_is_not_mistaken_for_drm_free():
     ("epub", b"broken-archive-data"),
     ("pdf", b"%PDF-1.4 no final marker"),
     ("epub", b"PK" + b"\x00" * 60),
+], ids=[
+    "epub-content-is-pdf",
+    "kepub-content-is-pdf",
+    "fxl-kepub-content-is-pdf",
+    "pdf-content-is-epub",
+    "epub-corrupt-archive",
+    "pdf-truncated-marker",
+    "epub-invalid-zip-header",
 ])
 def test_wrong_format_or_malformed_structure_is_refused(fmt, body):
     values = case(fmt, data=body)
