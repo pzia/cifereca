@@ -393,3 +393,59 @@ def test_normalized_legacy_aliases_are_both_preserved_if_still_in_manifest(
         assert storage.backup_list("opaque-seller") == before
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("invalid_key", [
+    "", "  ", "old\x00item", "old\nitem", "old\ritem", "x" * 1025,
+])
+def test_invalid_historical_sqlite_key_survives_compatibility_prune(
+    tmp_path, invalid_key,
+):
+    # v0.7 SQLite has no item-id CHECK. A provider's valid typed manifest
+    # cannot make these malformed old identifiers safely absent or migrated.
+    store = Storage(tmp_path / "history.sqlite")
+    try:
+        with store._lock, store._connect() as db:
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,title,status,updated_at"
+                ") VALUES(?,?,?,?,?,?)",
+                ("opaque-seller", "card", invalid_key, "Legacy", "complete", 123),
+            )
+        before = store.backup_get("opaque-seller", "card", invalid_key)
+        assert before is not None
+        result = store.backup_prune_missing("opaque-seller", "card", {"current"})
+        assert result == {
+            "pruned": 0, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert store.backup_get("opaque-seller", "card", invalid_key) == before
+        assert store.entitlements() == []
+        assert store.acquisitions(provider_id="opaque-seller") == []
+    finally:
+        store.close()
+
+
+def test_valid_stale_projection_still_prunes_around_unqualified_historical_key(
+    tmp_path,
+):
+    store = Storage(tmp_path / "history.sqlite")
+    try:
+        store.backup_put(_legacy(item="stale"))
+        before_right = store.entitlements()
+        before_ledger = store.acquisitions(provider_id="opaque-seller")
+        with store._lock, store._connect() as db:
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,title,status,updated_at"
+                ") VALUES(?,?,?,?,?,?)",
+                ("opaque-seller", "card", "", "Unknown older item", "complete", 10),
+            )
+        result = store.backup_prune_missing("opaque-seller", "card", {"current"})
+        assert result["pruned"] == 1
+        assert store.backup_get("opaque-seller", "card", "stale") is None
+        assert store.backup_get("opaque-seller", "card", "") is not None
+        assert store.entitlements() == before_right
+        assert store.acquisitions(provider_id="opaque-seller") == before_ledger
+    finally:
+        store.close()
