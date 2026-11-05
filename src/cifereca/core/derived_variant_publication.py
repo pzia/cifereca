@@ -26,6 +26,8 @@ def publish_derived_variant(
     options_fingerprint: str, book_id: str | None,
     warnings: tuple[str, ...] | list[str], facts: dict[str, Any],
     expected_intent_key: str = "", expected_intent_sha256: str = "",
+    expected_parent_stamp: tuple[int, ...] | None = None,
+    expected_output_stamp: tuple[int, ...] | None = None,
 ) -> str:
     """Commit Artifact B, Placement B, OriginLink(derived), recipe and notice.
 
@@ -89,6 +91,21 @@ def publish_derived_variant(
                         (expected_intent_key,),
                     ).fetchone() != (expected_intent_sha256,)):
                 raise DerivedPublicationConflict("derived_variant_intent_mismatch")
+        if expected_intent_key or expected_intent_sha256:
+            # For supervised recovery the exact physical source and output
+            # must STILL be the approved inodes/content while BEGIN IMMEDIATE
+            # holds the writer lock. SQLite metadata alone cannot prove
+            # filesystem content or path identity.
+            from .derived_variant_recovery import _verified_sha
+            if (type(expected_parent_stamp) is not tuple
+                    or type(expected_output_stamp) is not tuple
+                    or not _verified_sha(
+                        parent_path, expected_parent_stamp, parent_sha256,
+                    )
+                    or not _verified_sha(
+                        published_path, expected_output_stamp, output_sha256,
+                    )):
+                raise DerivedPublicationConflict("derived_variant_fs_changed")
         parent = db.execute(
             "SELECT artifact_id,identity_id,path,state FROM placements "
             "WHERE placement_id=?", (parent_placement_id,),
