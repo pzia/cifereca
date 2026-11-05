@@ -9,6 +9,7 @@ import pytest
 from cifereca.core.legacy_backup_migration_inventory import (
     inventory_legacy_kobo_backups,
 )
+from cifereca.core.canonical_publication import _stable
 from tests.test_core_p0_3171_atomic_publication_v14 import register, store
 
 
@@ -208,6 +209,12 @@ def test_checkpoint_syntax_is_never_a_published_origin_or_physical_proof(
             "WHERE provider_id='kobo' AND item_id='book'",
             ("sha256:" + "a" * 64, json.dumps(payload)),
         )
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET acquisition_id=? "
+            "WHERE provider_id='kobo' AND item_id='book'",
+            (_stable("canonical-intake", *payload["source"], payload["offer_id"]),),
+        )
     original = _rows(store)
     result = _report(store)
     assert result["status"] == "complete"
@@ -218,6 +225,34 @@ def test_checkpoint_syntax_is_never_a_published_origin_or_physical_proof(
     assert not path.exists()
     assert "migration_ready" not in result
     assert _rows(store) == original
+
+
+def test_unrelated_operation_is_not_a_completed_receipt_candidate(store, tmp_path):
+    register(store, "A", "kobo", "card-a", account="buyer")
+    path = tmp_path / "never-published.epub"
+    _backup(store, path=path, sha="a" * 64, size=42)
+    source = ["A", "kobo", "card-a", "buyer", "purchases",
+              "book", "purchase", "purchase"]
+    checkpoint = {
+        "schema": "canonical.completed-delivery.v1",
+        "source": source, "offer_id": "expected-offer",
+        "path": str(path), "sha256": "a" * 64,
+        "receipt": "synthetic-receipt", "adept_receipt": "",
+    }
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET acquisition_id=?, status='complete',"
+            "artifact_id=?, metadata_json=? WHERE provider_id='kobo' "
+            "AND item_id='book'",
+            (_stable("canonical-intake", *source, "unrelated-offer"),
+             "sha256:" + "a" * 64, json.dumps(checkpoint)),
+        )
+    before = _rows(store)
+    result = _report(store)
+    assert result["receipt_shape_candidate"] == 0
+    assert result["receipt_unproven"] == 1
+    assert _rows(store) == before
+    assert not path.exists()
 
 
 def test_malformed_duplicate_checkpoint_is_not_a_receipt(store, tmp_path):
