@@ -5,7 +5,12 @@
     "dev-updater",
     "diagnostics-page",
     "literary-criticism",
-    "maintenance-library-audit"
+    "maintenance-library-audit",
+    "provider-bnf-catalogue"
   ],
-  "dependencies": {}
+  "dependencies": {
+    "home-page": [
+      "provider-bnf-catalogue"
+    ]
+  }
 }
