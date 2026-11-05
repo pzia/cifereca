@@ -317,14 +317,18 @@ def test_sync_source_declares_phase_capabilities_without_starting_acquisition(tm
         storage.close()
 
 
-def test_personal_inventory_alone_does_not_invent_a_scheduler_for_other_providers(tmp_path):
+def test_personal_inventory_advertises_schedule_but_never_opts_in_implicitly(tmp_path):
     storage = Storage(tmp_path / "unsupported-schedule.sqlite")
     try:
         broker = fake_broker(storage)
         broker.service._sessions["paris::paris-1"].capabilities.personal_library = True
         source = broker.sources()[0]
         assert "remote_inventory" in source.sync_capabilities
-        assert "scheduled_refresh" not in source.sync_capabilities
+        # #3719: capability is provider-neutral; availability is not consent.
+        assert "scheduled_refresh" in source.sync_capabilities
+        assert broker.inventory_refresh_schedule(source.source_id) == {
+            "mode": "manual", "interval_minutes": 60,
+        }
     finally:
         storage.close()
 

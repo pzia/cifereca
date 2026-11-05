@@ -11,6 +11,7 @@ from .source_context import source_context_epoch
 from dataclasses import replace
 from inspect import getattr_static
 import logging
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -134,21 +135,32 @@ def qualify_selected_offers(
                     or getattr(session, "connected", None) is not True
                     or getattr(session, "_closed", False) is not False
                     or service.sync_source_enabled(account) is not True
-                    or initial_storage.identity_for_connection(
-                        scope.provider_id, scope.credential_id) != scope.identity_id):
+                    or not initial_storage.provider_scope_account_bound(
+                        identity_id=scope.identity_id,
+                        provider_id=scope.provider_id,
+                        credential_id=scope.credential_id,
+                        account_id=scope.account_id,
+                    )):
                 return False
-            connections = initial_storage.provider_connections(
-                identity_id=scope.identity_id)
-            return sum(row.get("provider_id") == scope.provider_id
-                       and row.get("credential_id") == scope.credential_id
-                       and row.get("enabled") is True for row in connections) == 1
+            return True
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
 
     def consent_current(key: SourceKey) -> bool:
         try:
+            # A source-level ON grant is bound to its exact generation, not
+            # merely to the current boolean value. OFF -> ON while a private
+            # selected-offer request is in flight must not let the old Sync
+            # continue reading or accept the returned offer (ABA).
+            if expected_source_policy_revision is not None:
+                from .convergence_execution import _source_policy_generation_current
+                if not _source_policy_generation_current(
+                    initial_storage, scope, expected_source_policy_revision
+                ):
+                    return False
             return consent_still_current(key) is True
         except Exception:
+            # Failed policy reads are not authorization for provider I/O.
             return False
 
     if cancelled():
@@ -186,13 +198,66 @@ def qualify_selected_offers(
             )
         except Cancelled:
             raise
-        except Exception:
-            # Provider preflight is optional. No invented offer, GET, or right
-            # follows a refusal; no raw exception or private URL is logged.
+        except Exception as error:
+            # A selected preflight may refuse BEFORE the provider's own
+            # descriptor instrumentation. Record the *actual* stable code
+            # rather than turning every pending book into a guessed HTTP 403.
+            # Only closed ProviderCapabilityError codes are accepted from the
+            # message; arbitrary upstream error bodies or signed URLs are
+            # never interpreted as a diagnostic classification.
             if not current():
                 raise ValueError("canonical_offer_source_rebound") from None
-            _LOG.warning("TRACE selected offer unavailable provider_id=%s",
-                         scope.provider_id)
+            from ..plugin_api import ProviderCapabilityError
+            reason = "provider_preflight_exception"
+            if type(error) is ProviderCapabilityError:
+                candidate = str(error)
+                if re.fullmatch(r"[a-z][a-z0-9_]{0,95}", candidate):
+                    reason = candidate
+                else:
+                    reason = "provider_capability_refused"
+            # An ImportError may name the missing module or an absent
+            # imported symbol. The provider's complete exception text is not
+            # a stable diagnostic field and may include signed URLs. Capture
+            # only syntactically valid Python names from the exception itself
+            # and the fixed CPython "cannot import name" prefix.
+            import_details = ""
+            if isinstance(error, ImportError):
+                raw_name = error.name
+                import_name = (
+                    raw_name if type(raw_name) is str
+                    and len(raw_name) <= 255
+                    and re.fullmatch(
+                        r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
+                        raw_name,
+                    )
+                    else "unknown"
+                )
+                import_symbol = "unknown"
+                if type(error.msg) is str:
+                    match = re.match(
+                        r"cannot import name '([A-Za-z_][A-Za-z0-9_]{0,127})' "
+                        r"from (?:partially initialized module )?"
+                        r"'([A-Za-z_][A-Za-z0-9_.]{0,255})'",
+                        error.msg,
+                    )
+                    if match:
+                        imported_from = match.group(2)
+                        if (import_name == "unknown" and re.fullmatch(
+                            r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
+                            imported_from,
+                        )):
+                            import_name = imported_from
+                        import_symbol = match.group(1)
+                import_details = (
+                    f" import_name={import_name} import_symbol={import_symbol}"
+                )
+            _LOG.info(
+                "EVENT canonical selected_offer provider_id=%s product_id=%s "
+                "outcome=unknown phase=provider_preflight reason=%s "
+                "exception_type=%s%s",
+                scope.provider_id, key.right_id, reason, type(error).__name__,
+                import_details,
+            )
             continue
         if cancelled():
             raise Cancelled("canonical_offer_preflight_cancelled")
@@ -203,7 +268,14 @@ def qualify_selected_offers(
         if reader_name == "downloadable_selected_offer_snapshot":
             if type(selected) is not ResourceSnapshot:
                 continue
-            selected = as_legacy_rights_snapshot(selected)
+            try:
+                selected = as_legacy_rights_snapshot(selected)
+            except (AttributeError, TypeError, ValueError):
+                # A malformed v2 selected claim is not an admitted offer.
+                # The reader has already returned: reject only this resource,
+                # with no legacy fallback, without aborting unrelated A rows.
+                _LOG.warning("TRACE selected offer code=canonical_selected_v2_invalid")
+                continue
         if (type(selected) is not ProviderRightsSnapshot
                 or selected.scope != scope or selected.branch != snapshot.branch
                 or selected.status not in ("partial", "success")

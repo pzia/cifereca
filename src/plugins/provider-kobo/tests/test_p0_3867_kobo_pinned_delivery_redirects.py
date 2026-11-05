@@ -199,3 +199,63 @@ def test_public_302_exceeding_max_hops_does_not_publish(
         assert list(tmp_path.iterdir()) == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("offered_headers", "forward"), [
+    ({"x-amz-request-payer": "requester"}, True),
+    ({"X-Amz-Request-Payer": "requester"}, True),
+    ({"x-amz-request-payer": "REQUESTER"}, False),
+    ({"x-amz-request-payer": "requester "}, False),
+    ({"Authorization": "Bearer PRIVATE_KOBO_SECRET"}, False),
+    ({"x-amz-request-payer": "requester",
+      "X-Amz-Request-Payer": "REQUESTER"}, False),
+    ({"x-amz-request-payer": "requester",
+      "Authorization": "Bearer PRIVATE_KOBO_SECRET",
+      "Cookie": "session=PRIVATE_KOBO_SECRET",
+      "x-amz-security-token": "PRIVATE_KOBO_SECRET"}, True),
+])
+def test_requester_pays_header_from_exact_kvault_candidate(
+    tmp_path, monkeypatch, offered_headers, forward,
+):
+    """KV's public S3 marker survives redirection; credentials never do.
+
+    The selected offer is freshly revalidated before GET. Only its exact
+    constant requester-pays marker is admitted into the Core's transport;
+    all other supplied headers are ignored, even on the first origin.
+    """
+    session, vault, _broker, account, posts = setup()
+
+    def acquisition(product_id, **options):
+        posts.append((product_id, options))
+        candidate = descriptor(product=product_id)["acquisition"]["candidates"][0]
+        candidate["headers"] = offered_headers
+        return descriptor(product=product_id, candidate=candidate)
+
+    vault.acquisition = acquisition
+    visited = []
+
+    def handler(request):
+        visited.append(request)
+        if str(request.url) == SIGNED:
+            return httpx.Response(302, headers={"Location": PARTNER})
+        assert str(request.url) == PARTNER
+        return httpx.Response(
+            200, content=epub_bytes(),
+            headers={"Content-Type": "application/epub+zip"},
+        )
+
+    fake_public_client(monkeypatch, handler, [])
+    try:
+        offer = admitted(session, account)
+        assert offer.startswith("kobo.descriptor:")
+        received, _ = execute(session, account, offer, tmp_path)
+        assert received.read_bytes() == epub_bytes()
+        assert len(posts) == 2 and len(visited) == 2
+        for request in visited:
+            assert request.headers.get("x-amz-request-payer") == (
+                "requester" if forward else None
+            )
+            for forbidden in ("authorization", "cookie", "x-amz-security-token"):
+                assert forbidden not in request.headers
+    finally:
+        session.close()

@@ -18,6 +18,7 @@ from .convergence_verified_presence import _verified_copy
 from .duplicate_maintenance_guard import candidate_has_active_dependencies_in_db
 from .library_declared_links import DeclarationRejected
 from .missing_placement_readiness import _physical_absence
+from .missing_placement_retirement import _directory_signature
 
 
 def _blocked(reason: str) -> dict[str, object]:
@@ -87,7 +88,9 @@ def preview_missing_placement_relocation(
                     or type(provider) is not str or not provider
                     or type(item) is not str or not item):
                 return _blocked("source_coordinates_unavailable")
-            if _physical_absence(root / directory, old_path) != "absent":
+            profile_signature = _directory_signature(root / directory)
+            if (profile_signature is None
+                    or _physical_absence(root / directory, old_path) != "absent"):
                 return _blocked("old_path_not_verified_absent")
 
             artifact = db.execute(
@@ -135,7 +138,8 @@ def preview_missing_placement_relocation(
             ):
                 return _blocked("candidate_bytes_unverified")
             before = os.stat(candidate, follow_symlinks=False)
-            if not _same_file(candidate_path, before):
+            if (not _same_file(candidate_path, before)
+                    or _directory_signature(root / directory) != profile_signature):
                 return _blocked("candidate_changed")
 
             linked = db.execute(
@@ -154,7 +158,7 @@ def preview_missing_placement_relocation(
             token_payload = [
                 identity_id, placement_id, str(root),
                 int(root_stat.st_dev), int(root_stat.st_ino),
-                directory, old_path, artifact_id, updated, metadata,
+                directory, profile_signature, old_path, artifact_id, updated, metadata,
                 provider, item, candidate, artifact,
                 [int(getattr(before, "st_" + field))
                  for field in ("dev", "ino", "size", "mtime_ns", "ctime_ns")],

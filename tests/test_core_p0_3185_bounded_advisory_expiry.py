@@ -174,3 +174,150 @@ def test_keeper_corrupted_after_initial_hash_cannot_erase_pending_advisory(
     ) is True
     assert store.metadata_get(key) is None
     assert paths[0].read_bytes() == BYTES
+
+
+
+def _pending_candidate_id(store):
+    with store._lock, store._connect() as db:
+        rows = db.execute(
+            "SELECT placement_id FROM placements "
+            "WHERE identity_id='A' AND state='missing'"
+        ).fetchall()
+    assert len(rows) == 1
+    return rows[0][0]
+
+
+def test_advisory_not_expired_if_former_path_now_points_outside_owner(
+    store, tmp_path,
+):
+    root, paths, first, foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    assert paths[2].is_file()
+    # An externally edited/migrated row can claim a path under profile B.
+    # lexists(False) at that path never proved that profile A's duplicate
+    # was retired.
+    forged = paths[2].parent / "not-an-A-book.epub"
+    assert not forged.exists()
+    pending = _pending_candidate_id(store)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE placement_id=?",
+            (str(forged), pending),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == original
+    assert paths[0].read_bytes() == BYTES
+    assert store.placement_get(foreign.placement_id)["state"] == "present"
+
+
+def test_symlinked_former_parent_is_not_proof_of_absence(
+    store, tmp_path,
+):
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    alias = paths[1].parent / "late-alias"
+    alias.symlink_to(paths[2].parent, target_is_directory=True)
+    forged = alias / "unseen.epub"
+    assert not forged.exists()
+    pending = _pending_candidate_id(store)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE placement_id=?",
+            (str(forged), pending),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == original
+    assert alias.is_symlink()
+
+
+def test_missing_former_parent_is_not_verified_leaf_absence(
+    store, tmp_path,
+):
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    missing_parent = paths[1].parent / "deleted-directory"
+    assert not missing_parent.exists()
+    pending = _pending_candidate_id(store)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET path=? WHERE placement_id=?",
+            (str(missing_parent / "unseen.epub"), pending),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == original
+
+
+
+def test_expiry_refuses_original_candidate_while_retirement_tombstone_pending(
+    store, tmp_path,
+):
+    """Missing leaf is not proof that a pending physical cleanup is finalized."""
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    candidate = _pending_candidate_id(store)
+    previous = store.metadata_get(key)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET state='dedup_cleanup_pending' "
+            "WHERE placement_id=?", (candidate,),
+        )
+    assert not paths[1].exists()
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == previous
+    assert store.placement_get(candidate)["state"] == "dedup_cleanup_pending"
+    assert paths[0].read_bytes() == BYTES
+
+    # Simulate an independently completed supervised recovery that has
+    # conclusively disposed of its tombstone. No file needs re-downloading.
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET state='missing' WHERE placement_id=?",
+            (candidate,),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is True
+    assert store.metadata_get(key) is None
+
+
+def test_expiry_refuses_another_unlisted_tombstone_for_same_profile_artifact(
+    store, tmp_path,
+):
+    """A pair-only advisory cannot mark cleanup complete for a third copy."""
+    root, paths, first, _foreign, key = _stale_checkpoint(store, tmp_path)
+    original = store.metadata_get(key)
+    old_path = root / "A" / "another-canonical-copy.pdf"
+    assert old_path.parent.is_dir() and not old_path.exists()
+    third_id = store.placement_put({
+        "identity_id": "A",
+        "artifact_id": first.artifact_id,
+        "path": str(old_path),
+        "provider_id": None,
+        "source_item_id": None,
+        "state": "dedup_cleanup_pending",
+    })
+    before = store.placement_get(third_id)
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is False
+    assert store.metadata_get(key) == original
+    assert store.placement_get(third_id) == before
+    assert paths[0].read_bytes() == BYTES
+
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE placements SET state='missing' WHERE placement_id=?",
+            (third_id,),
+        )
+    assert module.clear_checkpoint_if_no_duplicates(
+        store, library_root=root, placement_id=first.placement_id,
+    ) is True
+    assert store.metadata_get(key) is None
+    assert store.placement_get(third_id)["state"] == "missing"

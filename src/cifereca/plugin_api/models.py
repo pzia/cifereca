@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol, runtime_checkable
 
+from .provider_search_facets import CatalogSearchFacet
+
 PluginState = Literal["disabled", "ready", "blocked", "degraded", "incompatible", "error"]
 ResolutionMode = Literal["priority", "all", "single"]
 InstantiationMode = Literal["multiple", "per_identity", "singleton_public"]
@@ -533,7 +535,7 @@ class LogicalBookArtifacts:
     possessions: tuple[ArtifactPossessionRef, ...] = ()
 
 
-LibraryMutationOperation = Literal["normalize_filename", "move_placement", "delete_duplicate", "canonical_dedup", "replace_cover", "delete_variant", "set_preferred_variant"]
+LibraryMutationOperation = Literal["normalize_filename", "move_placement", "delete_duplicate", "canonical_dedup", "legacy_adopt", "replace_cover", "delete_variant", "set_preferred_variant"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -625,6 +627,7 @@ class CatalogSearchBatch:
         "live", "cached", "partial", "known_catalog_stale",
         "unavailable", "fallback_global",
     ] = "live"
+    response_facets: tuple[CatalogSearchFacet, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -733,6 +736,20 @@ class SyncPhaseState:
 
 
 @dataclass(frozen=True, slots=True)
+class SyncSourceCycleReceipt:
+    """One terminal Core cycle for one exact source and borrower.
+
+    canonical_execution=None means no complete A-to-B evidence was attested.
+    A present all-zero tuple is a real zero-valued canonical observation.
+    The receipt is informational; it cannot authorize a provider operation.
+    """
+    status: str
+    attempted_at: str
+    mode: str
+    canonical_execution: tuple[tuple[str, int], ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SyncSourceRef:
     source_id: str
     identity_id: str
@@ -750,6 +767,7 @@ class SyncSourceRef:
     # synchronization operation. Never imply an acquisition is automatic.
     sync_capabilities: tuple[str, ...] = ()
     phase_states: tuple[SyncPhaseState, ...] = ()
+    last_cycle: SyncSourceCycleReceipt | None = None
 
 
 @dataclass(frozen=True, slots=True)

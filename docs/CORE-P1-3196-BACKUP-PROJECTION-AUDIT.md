@@ -157,3 +157,29 @@ plus un deuxième droit/receipt à compte NULL ni ne contourne un conflit de
 propriétaire préexistant dans le ledger. Si le miroir refuse ce propriétaire,
 la modification de compatibilité est également annulée. Ce correctif ne
 migre pas les doublons historiques et ne retire pas la projection legacy.
+
+
+## Tranche P0 — B canonical sans colonnes fournisseur (05/11/2026)
+
+Un Placement publié par le Core v14 porte intentionnellement
+`provider_id IS NULL` et `source_item_id IS NULL`. Avant cette tranche,
+`audit_backup_projection` comparait ces deux champs aux coordonnées
+historiques de `backup_items` et incrémentait à tort
+`placement_scope_mismatch`, même avec un placement du même profil.
+
+Deux nouveaux compteurs SQL-only distinguent ce cas :
+
+- `canonical_placement_source_unverified` : chemin connu par une ligne
+  Placement du **même profil** et à coordonnées fournisseur absentes.
+  Le propriétaire de la *source* reste inconnu tant que SourceReference et
+  OriginLink exacts ne sont pas vérifiés ; ce n'est ni une attestation de
+  possession ni une preuve de présence physique.
+- `canonical_placement_digest_divergence` : au sein de ces références,
+  empreinte déclarée par la projection historique différente de l'Artifact
+  enregistré sur le Placement. Cette divergence reste un diagnostic, jamais
+  une autorisation de corriger le SHA, de télécharger ou de détruire.
+
+Un `identity_id` différent reste `placement_scope_mismatch` même si le
+Placement est canonique. Aucun chemin/fichier, reçu, compte ou droit n'est
+relié ou modifié par l'audit. Tests : placement B du même profil, SHA opposé,
+placement B d'un autre profil et absence de fichiers physiques.

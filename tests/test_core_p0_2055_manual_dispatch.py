@@ -1,6 +1,6 @@
 """P0 #2055: canonical manual BnF admission, without a real provider POST.
 
-Synthetic Core contracts exercise reader site-check and manual consent,
+Synthetic Core contracts exercise explicit user intent without a site-check popup,
 with durable at-most-once and no real network or lender interaction.
 """
 from dataclasses import replace
@@ -203,17 +203,22 @@ def test_automated_quota_and_entitlement_markers_do_not_gate_manual_attempt(
 
 
 @pytest.mark.parametrize("checked", [False, None, "yes", 1])
-def test_visual_site_check_is_required_without_read_or_checkpoint(tmp_path, checked):
+def test_retired_site_check_keyword_cannot_veto_a_confirmed_manual_request(
+    tmp_path, checked,
+):
     service, session, account, item = setup(tmp_path)
     try:
+        # Legacy callers may supply this obsolete keyword. It has no
+        # authorization or website-attestation meaning after #3121.
         r = manual_bnf_borrow(
             service, item, expected_identity_id="default",
             confirmed=True, site_checked=checked)
-        assert r["status"] == "blocked"
-        assert r["reason_code"] == "borrow_site_check_required"
-        assert session.reads == session.dispatches == []
+        assert r["status"] == "confirmed"
+        assert r["provider_verified"] is True
+        assert session.reads == []
+        assert session.dispatches == [("book-1", "reader")]
         assert service.storage.loan_borrow_state(
-            borrow_claim_key(account, item)) is None
+            borrow_claim_key(account, item))["status"] == "confirmed"
     finally:
         service.close()
 
@@ -327,7 +332,7 @@ def test_inert_ui_visibility_ignores_catalogue_button_without_capability(tmp_pat
         service.close()
 
 
-def test_ui_future_capability_only_offers_dialog_not_permission(tmp_path):
+def test_ui_future_capability_only_offers_action_not_permission(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         assert manual_bnf_borrow_available(service, item) is True

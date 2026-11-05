@@ -34,6 +34,11 @@ from native_capture import pointer
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 
+# Public diagnostic checkpoint names are reviewed *function identifiers*, not
+# supplier metadata or private widget labels. Every new checkpoint requires a
+# deliberate source update; no provider callback can create a public name.
+_PUBLIC_STAGE_CODES = frozenset(["activation","callback_other","search_initial","wait_search","search_detail","expanded_search","verify_tab_order","click_copy","read_clipboard","search_isbn","click_isbn","verify_isbn","library_select","verify_library","begin_owned_book_action","begin_numilog_index_resume","owned_book_select","owned_book_action_visible","owned_book_action_completed","finish","reset_library_detail_for_security_audit","security_detail_expanders","audit_mixed_security_values","audit_mixed_security_values_rendered","audit_all_private_values","audit_all_private_values_rendered","begin_stale_public_detail","stale_public_detail_rendered","component_summaries","component_summary_short","component_summary_six_lines","component_summary_seven_lines","component_expand","component_collapse","component_click_collapse","component_overflow","component_open_overflow","component_click_hidden","component_lists","component_identity","component_identity_rendered"])
+
 TITLE = "Camille, le détail UX"
 METADATA = {
     "authors": ["Alice Exemple", "Bob Exemple"],
@@ -218,8 +223,15 @@ def main():
         save()
         app.quit()
 
-    def later(ms, fn):
+    def later(ms, fn, *, public_stage=None):
         def run():
+            # An inline lambda has __name__ == '<lambda>'. Every lambda in
+            # this synthetic probe supplies a *literal*, reviewed target
+            # function name, never a provider label or free-form exception.
+            name = public_stage if type(public_stage) is str else getattr(fn, "__name__", "")
+            report["public_stage"] = (
+                name if name in _PUBLIC_STAGE_CODES else "callback_other"
+            )
             try:
                 fn()
             except Exception as exc:
@@ -390,7 +402,7 @@ def main():
         # Exercise the native tab order between the two per-value actions.
         device.key("Tab", True)
         device.key("Tab", False)
-        later(100, lambda: verify_tab_order(copy, lookup))
+        later(100, lambda: verify_tab_order(copy, lookup), public_stage="verify_tab_order")
 
     def verify_tab_order(copy, lookup):
         assert lookup.has_focus(), "Tab ne rejoint pas la recherche de la même valeur"
@@ -399,7 +411,7 @@ def main():
         device.key("Tab", False)
         device.key("Shift_L", False)
         report["checks"]["per_value_tab_order"] = True
-        later(100, lambda: click_copy(copy))
+        later(100, lambda: click_copy(copy), public_stage="click_copy")
 
     def click_copy(button):
         assert button.has_focus(), "Focus copie perdu"
@@ -427,7 +439,7 @@ def main():
         search = next((b for k, b in buttons.items() if k.startswith("Rechercher en ligne")), None)
         assert search is not None, "Loupe ISBN absente"
         assert search.grab_focus() is not False
-        later(250, lambda: click_isbn(search))
+        later(250, lambda: click_isbn(search), public_stage="click_isbn")
 
     def click_isbn(button):
         assert button.has_focus(), "Focus recherche perdu"
@@ -502,8 +514,19 @@ def main():
                             obtain=service.obtain_owned_library_item, refresh=window.refresh_library,
                             recent=window.refresh_recent, calls=[], refreshed=[], recents=[],
                             provider=provider, product=product, resume=False)
-        service.storage.provider_connection_put({"provider_id": provider, "credential_id": account.credential_id,
-            "identity_id": owner, "label": label + " fictif ciblé"})
+        # #4289/#3171: this probe fabricates an owned borrower. Register the
+        # exact SQLite (connection, borrower) pair: a connected session plus
+        # provider_connection alone is *not* purchase authority. Never weaken
+        # Core's fail-closed binding check to make a UI fixture pass.
+        connection_id = service.storage.provider_connection_put({
+            "provider_id": provider, "credential_id": account.credential_id,
+            "identity_id": owner, "label": label + " fictif ciblé",
+        })
+        service.storage.provider_account_put({
+            "connection_id": connection_id, "identity_id": owner,
+            "provider_id": provider, "credential_id": account.credential_id,
+            "account_id": account.unique_id, "label": label + " fictif ciblé",
+        })
         service.storage.entitlement_put({"entitlement_id": "gtk-owned-right", "provider_id": provider,
             "credential_id": account.credential_id, "account_id": account.unique_id, "identity_id": owner,
             "item_id": product, "revision_id": "r1", "entitlement_type": "owned", "state": "active",
@@ -622,7 +645,7 @@ def main():
             db.execute("DELETE FROM entitlements WHERE entitlement_id='gtk-owned-right'")
             db.execute("DELETE FROM provider_connections WHERE provider_id=? AND credential_id='gtk-owned-credential'", (owned_action["provider"],))
         if owned_action["provider"] == "kobo":
-            later(160, lambda: begin_owned_book_action("numilog"))
+            later(160, lambda: begin_owned_book_action("numilog"), public_stage="begin_owned_book_action")
             return
         window._library_entries_cache = [dict(entry, key="ux942-library")]
         window._render_library()
@@ -888,7 +911,7 @@ def main():
         toggle = next(w for w in walk(p.content) if isinstance(w, Gtk.Button)
                       and w.get_label() == "Lire la suite")
         component["summary_toggle"] = toggle
-        later(200, lambda: component_expand(toggle))
+        later(200, lambda: component_expand(toggle), public_stage="component_expand")
 
     def component_expand(toggle):
         assert toggle.get_mapped()
@@ -1028,6 +1051,7 @@ def main():
             super().__init__(application_id="org.cifereca.BookDetailUXE2E")
         def do_activate(self):
             nonlocal window, device
+            report["public_stage"] = "activation"
             window = MainWindow(self, core.config, core.library, core.diagnostics)
             if args.geometry_1300:
                 window.set_title("Cifereca geometry E2E 1300")

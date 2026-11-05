@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cifereca.plugin_api import AttentionRequired
 from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 
 from tests.test_core_0984_adept_first_paris_reconcile import setup, stub_adept
@@ -82,36 +83,44 @@ def test_incomplete_origin_evidence_cannot_bypass_revoked_grant(tmp_path, field,
         service.close()
 
 
-def test_explicit_historical_return_freshly_checks_origin_once_and_keeps_file(tmp_path):
+def test_retired_historical_return_cannot_mutate_or_rewrite_provenance(tmp_path):
+    from cifereca.plugin_api import AttentionRequired
+
     service, loan, paris = setup(tmp_path)
     attest_paris_dilicom_complete(paris, credential_id="alice-paris")
     try:
         _attest(service, 'adept-01')
         _reconfigure(service, 'revoke')
         _reconfigure(service, 'rotate')
-        artifact = tmp_path / 'historical.epub'; artifact.write_bytes(b'preserved historical artifact')
+        artifact = tmp_path / 'historical.epub'
+        artifact.write_bytes(b'preserved historical artifact')
         before = artifact.read_bytes()
         tracked = service.storage.acquisition_get('adept-01')
-        metadata = deepcopy(tracked['metadata']); metadata['path'] = str(artifact)
+        metadata = deepcopy(tracked['metadata'])
+        metadata['path'] = str(artifact)
         service.storage.acquisition_put({**tracked, 'metadata': metadata})
+        untouched = service.storage.acquisition_get('adept-01')
         calls = stub_adept(service)
-        first = service.return_loan_prefer_adept(loan)
-        assert first['status'] == 'paris_return_confirmed'
-        second = service.return_loan_prefer_adept(loan)
-        assert second['adobe_return_confirmed'] is True
-        assert calls['mutations'] == 1 and calls['inventory'] >= 2
-        assert paris.posts == 0 and artifact.read_bytes() == before
-        binding = service.storage.acquisition_get('adept-01')['metadata']
+        for _attempt in range(2):
+            with pytest.raises(AttentionRequired) as exc:
+                service.return_loan_prefer_adept(loan)
+            assert exc.value.code == "loan_return_removed"
+        assert calls['mutations'] == 0 and paris.posts == 0
+        assert artifact.read_bytes() == before
+        assert service.storage.acquisition_get('adept-01') == untouched
+        binding = untouched['metadata']
         assert binding['path'] == str(artifact)
         assert binding['adept_binding']['adept_profile_id'] == 'bob-profile'
         assert service.storage.adept_profile_binding_get('identity', 'bob') == 'new-profile'
-        assert service.storage.paris_borrower_adept_binding_get(credential_id='alice-paris', account_id='linked-123') is None
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id='alice-paris', account_id='linked-123',
+        ) is None
     finally:
         service.close()
 
 
 @pytest.mark.parametrize('failure', ['profile_missing', 'inventory_missing', 'inventory_duplicate', 'returned_with_token'])
-def test_stale_historical_proof_never_mutates_without_fresh_exact_inventory(tmp_path, failure):
+def test_stale_historical_proof_cannot_reopen_retired_voluntary_return(tmp_path, failure):
     service, loan, paris = setup(tmp_path)
     try:
         _attest(service, 'adept-01'); _reconfigure(service, 'revoke')
@@ -120,11 +129,16 @@ def test_stale_historical_proof_never_mutates_without_fresh_exact_inventory(tmp_
         row = {'id': 'adobe-loan-01', 'returned': failure == 'returned_with_token',
                'expired': False, 'token_present': True}
         inventory = [] if failure == 'inventory_missing' else ([row, row] if failure == 'inventory_duplicate' else [row])
-        service._kobo_adapter = lambda: SimpleNamespace(loans=lambda profile: {'loans': inventory})
-        service.execute_drm_mutation = lambda request: pytest.fail('fresh proof missing: no DRM mutation')
-        result = service.return_loan_prefer_adept(loan)
-        assert result['adobe_return_confirmed'] is False
+        # Even stale or contradictory runtime evidence cannot reopen the
+        # retired return path. No ADEPT inventory or profile I/O is allowed.
+        before = deepcopy(service.storage.acquisition_get('adept-01'))
+        service._kobo_adapter = lambda: pytest.fail('retired return must not read ADEPT')
+        service.kobo_profiles = lambda: pytest.fail('retired return must not list profiles')
+        service.execute_drm_mutation = lambda request: pytest.fail('no DRM mutation')
+        with pytest.raises(AttentionRequired) as rejected:
+            service.return_loan_prefer_adept(loan)
+        assert rejected.value.code == 'loan_return_removed'
         assert paris.posts == 0
-        assert service.storage.acquisition_get('adept-01')['status'] == 'complete'
+        assert service.storage.acquisition_get('adept-01') == before
     finally:
         service.close()

@@ -13,6 +13,7 @@ import hashlib
 from inspect import getattr_static
 from typing import Callable
 import json
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -30,6 +31,8 @@ from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReferen
 from .canonical_publication import _physical_target, _same_file
 from .convergence_execution import CompletedDelivery
 from .source_convergence import SourceKey
+
+logger = logging.getLogger(__name__)
 
 
 def complete_selected_delivery(
@@ -65,9 +68,25 @@ def complete_selected_delivery(
     # unchanged; only a guarded producer receives a live Core admission
     # callback, which it MUST compose at every external GET hop and chunk.
     guarded_name = "downloadable_selected_delivery_candidate_guarded"
-    guarded = (callable(consent_still_current)
-               and callable(getattr_static(session, guarded_name, None)))
+    runtime_guarded_name = "downloadable_selected_delivery_candidate_runtime_guarded"
+    guarded_reader = getattr_static(session, guarded_name, None)
+    runtime_reader = getattr_static(session, runtime_guarded_name, None)
+    # A declared opt-in with an invalid ABI is not an absent opt-in. Never
+    # silently downgrade its source-revision-pinned GET to an older, unguarded
+    # candidate method when a provider update is incomplete or malformed.
+    # Passive discovery must not evaluate provider properties or issue I/O.
+    if callable(consent_still_current) and any(
+        value is not None and not callable(value)
+        for value in (guarded_reader, runtime_reader)
+    ):
+        raise ValueError("canonical_delivery_guarded_contract_invalid")
+    runtime_guarded = (callable(consent_still_current)
+                       and callable(runtime_reader))
+    guarded = (runtime_guarded or
+               (callable(consent_still_current)
+                and callable(guarded_reader)))
     reader_name = (
+        runtime_guarded_name if runtime_guarded else
         guarded_name if guarded else
         "downloadable_selected_delivery_candidate"
         if getattr_static(session, "downloadable_selected_delivery_candidate", None) is not None
@@ -106,20 +125,12 @@ def complete_selected_delivery(
                 and sum(x is session for x in sessions.values()) == 1
                 and getattr(session, "connected", None) is True
                 and getattr(session, "_closed", False) is False
-                and storage.identity_for_connection(
-                    scope.provider_id, scope.credential_id) == scope.identity_id
-                and sum(
-                    x.get("provider_id") == scope.provider_id
-                    and x.get("credential_id") == scope.credential_id
-                    and x.get("enabled") is True
-                    for x in storage.provider_connections(identity_id=scope.identity_id)
-                ) == 1
-                and sum(
-                    x.get("provider_id") == scope.provider_id
-                    and x.get("credential_id") == scope.credential_id
-                    and x.get("account_id") == scope.account_id
-                    for x in storage.provider_accounts(identity_id=scope.identity_id)
-                ) == 1
+                and storage.provider_scope_account_bound(
+                    identity_id=scope.identity_id,
+                    provider_id=scope.provider_id,
+                    credential_id=scope.credential_id,
+                    account_id=scope.account_id,
+                )
                 and service.sync_source_enabled(account) is True
             )
         except (AttributeError, TypeError, KeyError, ValueError):
@@ -150,14 +161,28 @@ def complete_selected_delivery(
 
     if not current():
         raise ValueError("canonical_delivery_source_rebound")
-    identities = [x for x in storage.identities()
-                  if x.get("identity_id") == scope.identity_id]
-    if len(identities) != 1:
+    directory, exclusive_owner = storage.exact_profile_directory_binding(
+        scope.identity_id,
+    )
+    if directory is None:
         raise ValueError("canonical_delivery_identity_unknown")
-    directory = identities[0].get("directory_name")
-    if (type(directory) is not str or not directory
-            or directory in (".", "..") or "/" in directory or "\\" in directory):
+    if (not directory or directory in (".", "..")
+            or "/" in directory or chr(92) in directory):
         raise ValueError("canonical_delivery_profile_path_invalid")
+
+    def physical_owner_unique() -> bool:
+        # Verify the same exact folder owner after GET and during the
+        # selected delivery, without loading all identities per chunk.
+        try:
+            current_directory, unique = storage.exact_profile_directory_binding(
+                scope.identity_id,
+            )
+            return unique and current_directory == directory
+        except Exception:
+            return False
+
+    if not exclusive_owner or not physical_owner_unique():
+        raise ValueError("canonical_delivery_profile_directory_ambiguous")
 
     # Create a new, isolated private namespace for this one request. Do not
     # adopt pre-existing provider files, matching SHA, old receipts or a
@@ -171,6 +196,77 @@ def complete_selected_delivery(
     attempt.mkdir(mode=0o700)
     created = os.stat(attempt, follow_symlinks=False)
     attempt_inode = (created.st_dev, created.st_ino)
+
+    def attempt_current() -> bool:
+        # A provider callback (or another process) may rename the private
+        # run and place unrelated bytes under the same pathname. The name,
+        # profile root and SHA alone do not prove that THIS Core-created
+        # staging namespace produced the candidate.
+        try:
+            current_attempt = os.stat(attempt, follow_symlinks=False)
+            return (stat.S_ISDIR(current_attempt.st_mode)
+                    and (current_attempt.st_dev, current_attempt.st_ino)
+                        == attempt_inode)
+        except OSError:
+            return False
+
+    # Optional, provider-neutral Core runtime bridge. An adapter may supply
+    # an opaque DRM recipe, but only this live, already-admitted operation
+    # can execute it. Neither the recipe nor the runtime result is persisted
+    # as B. Legacy providers never see this callback.
+    runtime_used = [False]
+    runtime_artifact_path: list[Path | None] = [None]
+    runtime_artifact_digest: list[str | None] = [None]
+    runtime_artifact_stat: list[os.stat_result | None] = [None]
+
+    def execute_selected_runtime(request):
+        if not attempt_current():
+            raise ValueError("canonical_delivery_staging_replaced")
+        if runtime_used[0] or not admission_current():
+            raise ValueError("canonical_delivery_runtime_admission_changed")
+        if (type(request) is not dict or request.get("schema_version") != 2
+                or type(request.get("source")) is not dict
+                or request["source"].get("type") not in ("kobo", "acsm")
+                or type(request.get("destination")) is not str):
+            raise ValueError("canonical_delivery_runtime_recipe_invalid")
+        destination = Path(request["destination"])
+        # No plugin-selected target outside the exact Core-owned attempt.
+        # No overwrite of an already-existing candidate or unrelated file.
+        if (not destination.is_absolute() or destination.parent != attempt
+                or destination.suffix.casefold() not in (".epub", ".pdf")
+                or destination.is_symlink() or destination.exists()
+                or type(request.get("format")) is not str
+                or request["format"].casefold() != destination.suffix[1:].casefold()):
+            raise ValueError("canonical_delivery_runtime_target_invalid")
+        runtime_used[0] = True
+        result = service.execute_acquisition_request(request)
+        if not attempt_current():
+            raise ValueError("canonical_delivery_staging_replaced")
+        if not admission_current():
+            raise ValueError("canonical_delivery_runtime_admission_changed")
+        if (type(result) is not dict or result.get("ok") is not True
+                or type(result.get("artifact")) is not dict
+                or type(result["artifact"].get("path")) is not str):
+            raise ValueError("canonical_delivery_runtime_result_invalid")
+        produced = _physical_target(Path(result["artifact"]["path"]), root, directory)
+        if produced != destination.resolve(strict=True):
+            raise ValueError("canonical_delivery_runtime_artifact_foreign")
+        # A successful runtime call witnesses exactly this produced target,
+        # never any other bytes the plugin might return from the same staging
+        # directory. The proof stays ephemeral and cannot be forged by a DTO.
+        # The provider still controls its callback after the runtime returns.
+        # Bind the proof to the actual bytes and inode produced NOW, not only
+        # to a path that the provider can overwrite before returning a DTO.
+        witnessed = os.stat(produced, follow_symlinks=False)
+        if not stat.S_ISREG(witnessed.st_mode) or witnessed.st_size <= 0:
+            raise ValueError("canonical_delivery_runtime_artifact_invalid")
+        digest = LocalCatalog.sha256(produced)
+        if not _same_file(produced, witnessed):
+            raise ValueError("canonical_delivery_runtime_artifact_changed")
+        runtime_artifact_path[0] = produced
+        runtime_artifact_stat[0] = witnessed
+        runtime_artifact_digest[0] = digest
+        return result
     # The staging namespace belongs to this failed attempt until the Core
     # issues a completed delivery receipt. Failed GET, invalid candidates and
     # rejected ADEPT results must not leave signed ACSM/partial bytes behind.
@@ -179,20 +275,63 @@ def complete_selected_delivery(
     try:
         if not current():
             raise ValueError("canonical_delivery_source_rebound")
+        # A provider may have both direct HTTPS/ACSM offers and DRM-runtime
+        # offers in one account. Mere presence of its runtime method is not
+        # evidence that THIS exact offered resource needs DRM. The optional
+        # route classifier is local, typed and must be bound to the opaque
+        # selected offer; an absent classifier preserves the strict
+        # runtime-required default. A malformed/raising classifier is never
+        # permission to try the unguarded legacy candidate ABI.
+        if runtime_guarded:
+            route_name = "downloadable_selected_delivery_requires_runtime"
+            route_reader = getattr_static(session, route_name, None)
+            if route_reader is not None:
+                if not callable(route_reader):
+                    raise ValueError("canonical_delivery_runtime_route_invalid")
+                try:
+                    required = getattr(session, route_name)(
+                        account, edition_id=source.edition_id,
+                        resource_id=source.right_id, kind=source.kind,
+                        branch=source.branch,
+                        selected_offer_id=offer.delivery_offer_id,
+                    )
+                except Exception:
+                    raise ValueError("canonical_delivery_runtime_route_unavailable") from None
+                if type(required) is not bool:
+                    raise ValueError("canonical_delivery_runtime_route_invalid")
+                if required is False:
+                    if not callable(getattr_static(session, guarded_name, None)):
+                        raise ValueError("canonical_delivery_guarded_route_unavailable")
+                    # Direct HTTPS remains guarded at each transport hop;
+                    # ACSM is independently fulfilled by Core ADEPT below.
+                    # KDRM remains runtime-required by the offer-bound
+                    # classifier, which the provider must verify again.
+                    runtime_guarded = False
+                    reader_name = guarded_name
+                    guarded = True
+                if not current():
+                    raise ValueError("canonical_delivery_source_rebound")
         candidate = getattr(session, reader_name)(
             account, edition_id=source.edition_id,
             **({"resource_id": source.right_id,
                 "selected_offer_id": offer.delivery_offer_id}
-               if reader_name in {"downloadable_selected_delivery_candidate", guarded_name}
+               if reader_name in {"downloadable_selected_delivery_candidate", guarded_name,
+                                  runtime_guarded_name}
                else {"right_id": source.right_id,
                      "delivery_offer_id": offer.delivery_offer_id}),
             kind=source.kind, branch=source.branch,
             target_dir=attempt, explicit_user_action=True,
             **({"admission_current": admission_current} if guarded else {}),
+            **({"execute_runtime": execute_selected_runtime} if runtime_guarded else {}),
         )
         if not current():
             raise ValueError("canonical_delivery_source_rebound_after_get")
-        if reader_name in {"downloadable_selected_delivery_candidate", guarded_name}:
+        if not attempt_current():
+            raise ValueError("canonical_delivery_staging_replaced")
+        if not physical_owner_unique():
+            raise ValueError("canonical_delivery_profile_directory_ambiguous")
+        if reader_name in {"downloadable_selected_delivery_candidate", guarded_name,
+                           runtime_guarded_name}:
             expected = SourceReference(
                 scope, source.branch, source.edition_id, source.right_id, source.kind,
             )
@@ -211,6 +350,18 @@ def complete_selected_delivery(
         received = _physical_target(raw_path, root, directory)
         if not received.is_relative_to(attempt.resolve(strict=True)):
             raise ValueError("canonical_delivery_candidate_outside_staging")
+        # The runtime-guarded producer must execute the Core's one-shot
+        # runtime successfully, then return the SAME physical output. A valid
+        # EPUB/PDF written separately by the plugin is not DRM fulfillment.
+        if runtime_guarded and (runtime_artifact_path[0] is None
+                                or received != runtime_artifact_path[0]):
+            raise ValueError("canonical_delivery_runtime_artifact_mismatch")
+        if runtime_guarded and (
+            runtime_artifact_stat[0] is None
+            or not _same_file(received, runtime_artifact_stat[0])
+            or LocalCatalog.sha256(received) != runtime_artifact_digest[0]
+        ):
+            raise ValueError("canonical_delivery_runtime_artifact_changed")
         if received.stat().st_size <= 0:
             raise ValueError("canonical_delivery_candidate_empty")
         kind = detect_artifact_format(received)
@@ -266,13 +417,37 @@ def complete_selected_delivery(
         if not stat.S_ISREG(before.st_mode) or before.st_size == 0:
             raise ValueError("canonical_delivery_final_not_regular")
         inspection = inspect_artifact(final, strict_structure=False)
-        valid, _ = LocalCatalog._validate(final, kind)
+        valid, catalog_reason = LocalCatalog._validate(final, kind)
         if (not inspection.valid or inspection.media_format != kind
                 or inspection.protected is True or not valid):
+            # P0 #3252: the candidate is cleaned up on this path. Record
+            # the independent validation facts *before* cleanup, without
+            # exposing a temporary file or treating a runtime returncode=0
+            # as evidence that the final EPUB/PDF is usable.
+            logger.warning(
+                "TRACE canonical delivery final rejected "
+                "code=canonical_delivery_final_invalid provider_id=%s "
+                "reader=%s runtime_guarded=%s expected_kind=%s "
+                "inspection_valid=%s inspection_format=%s "
+                "inspection_protected=%s inspection_reason=%s "
+                "catalog_valid=%s catalog_reason=%s",
+                scope.provider_id, reader_name, runtime_guarded, kind,
+                inspection.valid, inspection.media_format, inspection.protected,
+                inspection.reason, valid, catalog_reason,
+            )
             raise ValueError("canonical_delivery_final_invalid")
         digest = LocalCatalog.sha256(final)
+        if (runtime_guarded and (
+            not _same_file(final, runtime_artifact_stat[0])
+            or digest != runtime_artifact_digest[0]
+        )):
+            raise ValueError("canonical_delivery_runtime_artifact_changed")
         if not _same_file(final, before) or not current():
             raise ValueError("canonical_delivery_final_changed")
+        if not attempt_current():
+            raise ValueError("canonical_delivery_staging_replaced")
+        if not physical_owner_unique():
+            raise ValueError("canonical_delivery_profile_directory_ambiguous")
         # This receipt is a Core witness issued AFTER the verified, in-scope
         # candidate callback. It is deliberately distinct from provider A's
         # inventory evidence and signed-offer ID, and contains no private URL.

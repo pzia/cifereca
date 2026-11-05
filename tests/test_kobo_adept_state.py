@@ -5,6 +5,8 @@ from pathlib import Path
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.services import LibraryService
+from cifereca.providers import ProviderConfigurationError
+from cifereca.brokers import RuntimeCapabilitiesBrokerImpl
 from cifereca.storage import Storage
 
 
@@ -112,5 +114,99 @@ def test_status_timeout_is_non_blocking_and_cached_for_ui_calls(tmp_path: Path):
         assert second["contract_version"] == 8
         assert second["probe_timings_ms"]["capabilities"] == 7400
         assert fake.calls == 1
+    finally:
+        service.close()
+
+
+def _kdrm_probe() -> dict:
+    payload = _probe()
+    payload["contract"]["capabilities"].append("download_kobo_delegated")
+    payload["capabilities"]["capabilities"]["download"]["kobo"] = {
+        "available": True, "formats": ["kepub", "epub"],
+        "pinned_delivery_candidate": True,
+        "separate_content_keys_replay": True,
+        "drm": {"KDRM": {"available": True}},
+    }
+    return payload
+
+
+def test_cold_start_missing_plugin_does_not_poison_kdrm_runtime_after_activation(
+    tmp_path: Path,
+):
+    """A UI probe before plugin activation must not block all Kobo purchases."""
+    service = _service(tmp_path)
+
+    class Runtime:
+        required_contract = 8
+        probe_calls = 0
+
+        def available(self):
+            return True
+
+        def probe_core(self):
+            self.probe_calls += 1
+            return _kdrm_probe()
+
+    runtime = Runtime()
+    plugin_ready = False
+
+    def adapter():
+        if not plugin_ready:
+            raise ProviderConfigurationError("not yet activated")
+        return runtime
+
+    service._kobo_adapter = adapter
+    try:
+        cold = service.kobo_adept_state()
+        assert cold["available"] is False
+        assert cold["error"]["code"] == "runtime_plugin_unavailable"
+        # The next normal broker read should not be held hostage by a 60s
+        # cached answer obtained when the provider plugin was still starting.
+        plugin_ready = True
+        broker = RuntimeCapabilitiesBrokerImpl(service)
+        warm = broker.acquisition("kobo")
+        assert warm.available is True
+        assert warm.compatible is True and warm.operational is True
+        assert "kobo_kdrm" in warm.modes
+        assert "kobo_delegated" in warm.modes
+        assert runtime.probe_calls == 1
+        assert broker.acquisition("kobo") == warm
+        assert runtime.probe_calls == 1  # successful probe remains cached
+    finally:
+        service.close()
+
+
+def test_cold_start_missing_cli_does_not_poison_kdrm_runtime_after_install(
+    tmp_path: Path,
+):
+    """Even an installed plugin may initially lack its executable."""
+    service = _service(tmp_path)
+
+    class Runtime:
+        required_contract = 8
+        cli_ready = False
+        probe_calls = 0
+
+        def available(self):
+            return self.cli_ready
+
+        def probe_core(self):
+            self.probe_calls += 1
+            return _kdrm_probe()
+
+        def configured_command(self):
+            return ["<commande configurée ; arguments masqués>"]
+
+    runtime = Runtime()
+    service._kobo_adapter = lambda: runtime
+    try:
+        cold = service.kobo_adept_state()
+        assert cold["available"] is False
+        assert runtime.probe_calls == 0
+        runtime.cli_ready = True
+        warm = RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo")
+        assert warm.available is True
+        assert "kobo_kdrm" in warm.modes
+        assert runtime.probe_calls == 1
     finally:
         service.close()

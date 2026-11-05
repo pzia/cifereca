@@ -278,6 +278,46 @@ class LibraryService:
         from .core.manual_bnf_borrow import manual_bnf_borrow_available
         return manual_bnf_borrow_available(self, item)
 
+    def bnf_borrow_claim_observation(
+        self, item: SearchResult, *, expected_identity_id: str,
+    ):
+        """Read-only status of a prior BnF request for one exact edition.
+
+        This is a diagnostic projection, never a borrow admission. A missing
+        checkpoint does not enable a POST; a consumed checkpoint is never
+        cleared. No provider call, session refresh or account fallback.
+        """
+        from .core.bnf_borrow_claim_observation import (
+            BnfBorrowClaimObservation, observe_bnf_borrow_claim,
+        )
+
+        unavailable = BnfBorrowClaimObservation(
+            "scope_unverified", None, False,
+        )
+        if (type(item) is not SearchResult
+                or type(expected_identity_id) is not str
+                or not expected_identity_id
+                or getattr(getattr(self, "current_identity", None),
+                           "identity_id", None) != expected_identity_id
+                or item.source_provider != "bnf-pret"
+                or item.docbase != "BNF_PRET"
+                or item.medium != "digital"):
+            return unavailable
+        accounts = [
+            a for a in self.accounts
+            if type(a) is Account
+            and a.identity_id == expected_identity_id
+            and a.provider_id == "bnf-pret"
+            and a.credential_id == item.source_credential
+            and a.is_primary is True
+        ]
+        if len(accounts) != 1:
+            return unavailable
+        return observe_bnf_borrow_claim(
+            storage=self.storage, account=accounts[0], item=item,
+            expected_identity_id=expected_identity_id,
+        )
+
     def borrow_bnf_manual(
         self, item: SearchResult, *, expected_identity_id: str,
         confirmed: bool = False, site_checked: bool = False,
@@ -290,6 +330,24 @@ class LibraryService:
             self, item, expected_identity_id=expected_identity_id,
             confirmed=confirmed, site_checked=site_checked,
             expected_context_epoch=expected_context_epoch,
+            expected_account=expected_account,
+        )
+
+    def can_borrow_paris(self, item: SearchResult) -> bool:
+        """Inert Paris action availability, without provider I/O."""
+        from .core.manual_paris_borrow import manual_paris_borrow_available
+        return manual_paris_borrow_available(self, item)
+
+    def borrow_paris_manual(
+        self, item: SearchResult, *, expected_identity_id: str,
+        confirmed: bool = False, expected_context_epoch: int | None = None,
+        expected_account: Account | None = None,
+    ) -> dict[str, object]:
+        """Explicit Paris attempt through the durable Core claim only."""
+        from .core.manual_paris_borrow import manual_paris_borrow
+        return manual_paris_borrow(
+            self, item, expected_identity_id=expected_identity_id,
+            confirmed=confirmed, expected_context_epoch=expected_context_epoch,
             expected_account=expected_account,
         )
 
@@ -505,8 +563,10 @@ class LibraryService:
                     "provider_id": provider_id,
                     "credential_id": credential_id,
                     "label": str(row.get("label") or provider_id),
-                    "enabled": bool(row.get("enabled", True)),
-                    "metadata": {"anonymous": bool(row.get("anonymous", False))},
+                    # Preserve missing-flag legacy activation, but never
+                    # promote truthy malformed values into SQLite consent.
+                    "enabled": row.get("enabled", True) is True,
+                    "metadata": {"anonymous": row.get("anonymous", False) is True},
                 })
 
 
@@ -1602,67 +1662,66 @@ class LibraryService:
         )
 
     def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
-        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
-            return self.return_digital(loan)
-        try:
-            with InterProcessLock(self._return_operation_lock_file(loan)):
-                return self._return_loan_prefer_adept_guarded(loan)
-        except LockBusyError:
-            return {
-                "status": "attention_required", "scope": "adobe_first_paris",
-                "code": "loan_return_busy", "retry": "verification_only",
-            }
+        """Removed voluntary return: reject before lock, scope, storage or runtime."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
+        )
 
     def _return_loan_prefer_adept_guarded(self, loan: Loan) -> dict[str, Any]:
-        """Adobe-first, then Paris inventory; never automatically send PNB POST."""
-        import uuid
-        from .core.loan_return_guard import return_key, return_ref
-        from .core.return_adept_orchestrator import adept_return_key, public_state
-        return return_adept_orchestrator.return_loan_prefer_adept(
-            self, loan, uuid=uuid, return_ref=return_ref,
-            adept_return_key=adept_return_key, public_state=public_state,
-            AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG,
+        """Reject even a direct legacy guarded call before touching dependencies."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
         )
 
     def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
-        """Read-only first inspection; restart recovery never mutates ADEPT."""
-        from .core.return_adept_orchestrator import adept_return_key
+        """Historical return receipt only; NEVER initiate or replay a return.
+
+        Legacy receipts remain consultable across updates. Reading this API
+        does not call Adobe, Paris inventory, or any retired mutation path.
+        """
+        from .core.return_adept_orchestrator import adept_return_key, public_state
         if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
             return {"status": "not_requested", "scope": "adobe_first_paris"}
         try:
             account, _session, _key = self._return_loan_identity(loan)
+            key = adept_return_key(
+                loan.source_provider, loan.source_credential,
+                str(account.unique_id or "primary"), str(loan.id),
+            )
+            row = self.storage.loan_return_state(key)
         except AttentionRequired as exc:
             return {
                 "status": "failed", "scope": "adobe_first_paris",
                 "code": return_adept_orchestrator.return_preflight_code(exc),
+                "retry": "none",
             }
-        key = adept_return_key(
-            loan.source_provider, loan.source_credential,
-            str(account.unique_id or "primary"), str(loan.id),
-        )
-        if self.storage.loan_return_state(key) is None:
+        except (ValueError, TypeError, KeyError):
+            return {
+                "status": "failed", "scope": "adobe_first_paris",
+                "code": "loan_return_borrower_unproven",
+                "retry": "none",
+            }
+        if row is None:
             return {"status": "not_requested", "scope": "adobe_first_paris"}
-        return self.return_loan_prefer_adept(loan)
+        if type(row) is not dict:
+            return {"status": "failed", "scope": "adobe_first_paris", "retry": "none"}
+        return {**public_state(row), "retry": "none"}
 
     def return_digital(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
-        if str(loan.source_provider).lower() != "paris":
-            return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
-        try:
-            with InterProcessLock(self._return_operation_lock_file(loan)):
-                return self._return_digital_guarded(loan, explicit_retry=explicit_retry)
-        except LockBusyError:
-            return {
-                "status": "attention_required", "scope": "provider_pnb_only",
-                "code": "loan_return_busy", "retry": "verification_only",
-            }
-
-    def _return_digital_guarded(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
-        """PNB provider return with an at-most-once POST until verified."""
-        return provider_loan_return.return_digital(
-            self, loan, explicit_retry=explicit_retry, _TRACE_LOG=_TRACE_LOG,
+        """Reject a retired provider return before locks, claims or HTTP."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
         )
 
-
+    def _return_digital_guarded(self, loan: Loan, *, explicit_retry: bool = False) -> dict[str, Any]:
+        """Reject direct legacy provider calls before access to supplier state."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
+        )
 
     def pnb_preferences(self) -> dict[str, Any]:
         return self._session_for_account().digital_preferences(self.current_account)
@@ -1838,7 +1897,12 @@ class LibraryService:
         if source_type == "acsm":
             return dict(self._required_plugin_service("drm.ade").execute(request))
         if source_type == "kobo":
-            return dict(self._required_plugin_service("drm.kobo-kdrm").execute(request))
+            # source.type=kobo is the Kobo-Adept public DRM recipe, NOT an
+            # HTTP-plain candidate. The installed runtime plugin publishes
+            # download_request (schema v2), not a drm.kobo-kdrm plugin ID.
+            # Core owns the selected destination and independent final SHA.
+            runtime = self._required_plugin_service("runtime.kobo-adept")
+            return dict(runtime.download_request(request))
         raise ProviderConfigurationError(f"Type de source d'acquisition non supporté: {source_type or 'unknown'}")
 
     def _originating_adept_profile_id(self, identity_id: str, profile_name: str) -> str | None:
@@ -1981,29 +2045,21 @@ class LibraryService:
         return summary
 
     def adept_return_for_artifact(self, artifact_id: str, identity_id: str) -> dict[str, Any] | None:
-        if not artifact_id or not identity_id:
-            return None
-        for row in self.storage.acquisitions(status="complete"):
-            if row.get("artifact_id") != artifact_id or row.get("identity_id") != identity_id:
-                continue
-            binding = (row.get("metadata") or {}).get("adept_binding") or {}
-            if binding.get("return_available") and binding.get("loan_state") == "active" and self._adept_return_capability():
-                return {"acquisition_id": row["acquisition_id"], "profile_name": binding["adept_profile_name"]}
+        """Retired availability probe: never advertise voluntary ADEPT return."""
         return None
 
     def return_adept_acquisition(self, acquisition_id: str) -> dict[str, Any]:
-        try:
-            with InterProcessLock(acquisition_lock_file()):
-                return self._return_adept_acquisition(acquisition_id)
-        except LockBusyError as exc:
-            raise AttentionRequired("Une acquisition est déjà en cours.", code="acquisition_busy") from exc
+        """Reject a retired ADEPT return before locks, storage or runtime access."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
+        )
 
     def _return_adept_acquisition(self, acquisition_id: str) -> dict[str, Any]:
-        """Explicit return, exact origin/ID, fresh registry before and after CLI."""
-        return adept_acquisition_return.return_adept_acquisition(
-            self, acquisition_id, AttentionRequired=AttentionRequired,
-            ProviderConfigurationError=ProviderConfigurationError,
-            DrmMutationRequest=DrmMutationRequest, time=time,
+        """Also reject direct legacy/private callers, without any side effect."""
+        raise AttentionRequired(
+            "Restitution volontaire retirée de Cifereca.",
+            code="loan_return_removed",
         )
 
     def execute_drm_mutation(self, request: DrmMutationRequest) -> dict[str, Any]:
@@ -2013,6 +2069,14 @@ class LibraryService:
         and return in the following plugin release. Existing acquisition handlers
         remain source-compatible.
         """
+        # P1 #4048: refuse removed voluntary returns before accessing even
+        # a previously installed runtime adapter or its plugin manager.
+        operation = getattr(request, "operation", None)
+        if type(operation) is str and operation.casefold() == "return":
+            raise AttentionRequired(
+                "Restitution volontaire retirée de Cifereca.",
+                code="loan_return_removed",
+            )
         manager = self._plugin_manager
         if manager is None:
             raise AttentionRequired(
@@ -2110,6 +2174,8 @@ class LibraryService:
         core contract+capabilities probe.  ``full=True`` is reserved for explicit
         diagnostics and may additionally inspect status/config/update state.
         """
+        # Cache only a resolved runtime probe. The cheap discovery failures
+        # below must be rechecked after a plugin activation or binary install.
         cache_seconds = 60
         now = time.monotonic()
         if (
@@ -2146,8 +2212,10 @@ class LibraryService:
                 "preferred_contract": 8,
                 "error": {"code": "runtime_plugin_unavailable", "message": "Runtime Kobo-ADEPT indisponible"},
             }
-            self._kobo_adept_state_cache = dict(state)
-            self._kobo_adept_state_cache_at = now
+            # Do not cache a pre-activation missing runtime for 60 seconds.
+            # Plugin activation may finish moments after a startup/UI probe;
+            # the next broker read must be allowed to see the new service.
+            # This check is in-memory and never executes the vendor CLI.
             return state
         available = getattr(adapter, "available", None)
         if callable(available) and not available():
@@ -2160,8 +2228,10 @@ class LibraryService:
                 "configured_command": getattr(adapter, "configured_command", lambda: None)(),
                 "resolved_executable": None, "minimum_supported_contract": 8, "preferred_contract": 8,
             }
-            self._kobo_adept_state_cache = dict(state)
-            self._kobo_adept_state_cache_at = now
+            # Do not cache a pre-activation missing runtime for 60 seconds.
+            # Plugin activation may finish moments after a startup/UI probe;
+            # the next broker read must be allowed to see the new service.
+            # This check is in-memory and never executes the vendor CLI.
             return state
         core_probe = getattr(adapter, "probe_core", None)
         probe = adapter.probe() if full or core_probe is None else core_probe()
@@ -2347,6 +2417,13 @@ class LibraryService:
                     return False
             session = self._session_for_source(item.source_provider, item.source_credential)
             if item.source_provider == "kobo":
+                # #3196: the typed A->B executor supersedes this *legacy*
+                # direct-download action. Retain the existing passive right
+                # admission FIRST: public Kobo catalogue records must not
+                # cause even one session lookup.
+                from .core.canonical_delivery_abi import has_complete_delivery_abi
+                if has_complete_delivery_abi(session):
+                    return False
                 # A verified right still needs an explicit Vault offer and a
                 # working Adept runtime; a local file is never implied.
                 if not hasattr(session, "resolve_acquisition"):
@@ -2594,9 +2671,26 @@ class LibraryService:
             # the lock and calls _execute_kobo_acquisition directly).
             try:
                 with InterProcessLock(acquisition_lock_file()):
+                    # #3196: an exact canonical Kobo source must have ONE
+                    # Core A->B executor, not another GET via the old direct
+                    # writer. Re-resolve the live session under the global
+                    # lock, not a pre-lock capability/selection snapshot.
+                    from .core.canonical_delivery_abi import has_complete_delivery_abi
+                    if has_complete_delivery_abi(
+                        self._session_for_source("kobo", item.source_credential)
+                    ):
+                        raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
                     if _admission is not None:
                         item = _admission()
                         identity = self.identity_for_connection(item.source_provider, item.source_credential)
+                        # The selected source/ABI may change during the
+                        # admission callback. Never trust its earlier result
+                        # as an authorization for the legacy executor.
+                        if (item.source_provider != "kobo"
+                                or has_complete_delivery_abi(
+                                    self._session_for_source("kobo", item.source_credential)
+                                )):
+                            raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
                     target = self._kobo_backup_target_dir(identity.identity_id)
                     candidates = self._kobo_record_candidate_paths(
                         {"item_id": item.record_id, "title": item.title,
@@ -3549,16 +3643,27 @@ class LibraryService:
             )
 
     def _synchronize_account_source_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        """Synchronize one explicit account/source without changing account selection.
-
-        This is the Core-owned primitive used by the public sync broker.  It
-        deliberately isolates one source so disabling or failing a provider does
-        not prevent the other sources from being synchronized.
-        """
-        return sync_coordination._synchronize_account_source_impl(self, account, deep=deep, control=control)
+        """Synchronize one exact account/source without changing account selection."""
+        return sync_coordination._synchronize_account_source_impl(
+            self, account, deep=deep, control=control,
+        )
 
     def synchronize_account_source(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
-        return sync_coordination.synchronize_account_source(self, account, deep=deep, control=control)
+        return sync_coordination.synchronize_account_source(
+            self, account, deep=deep, control=control,
+        )
+
+    def _synchronize_account_source_inventory_impl(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
+        """Core-only, strictly metadata/rights observation; never materialize."""
+        return sync_coordination._synchronize_account_source_impl(
+            self, account, deep=deep, control=control, inventory_only=True,
+        )
+
+    def _synchronize_scheduled_account_inventory(self, account: Account, *, deep: bool = False, control: Any = None) -> dict[str, Any]:
+        """Dedicated scheduled path; never expose inventory-only as public Sync ABI."""
+        return sync_coordination.synchronize_account_source(
+            self, account, deep=deep, control=control, inventory_only=True,
+        )
 
     def preview_library_filename(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str:
         """Return the Core naming policy result without touching the filesystem."""
@@ -3660,8 +3765,12 @@ class LibraryService:
     def _kobo_backup_due(self) -> bool:
         return kobo_backup._kobo_backup_due(self)
 
-    def _kobo_backup_account_due(self, credential_id: str) -> bool:
-        return kobo_backup._kobo_backup_due(self, credential_id=credential_id)
+    def _kobo_backup_account_due(
+        self, credential_id: str, *, interval_minutes: int | None = None,
+    ) -> bool:
+        return kobo_backup._kobo_backup_due(
+            self, credential_id=credential_id, interval_minutes=interval_minutes,
+        )
 
     def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Compatibility entry point for the Kobo local synchronization.

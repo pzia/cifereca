@@ -69,7 +69,7 @@ def test_real_paris_client_dispatches_only_the_requested_catalogue(incoming, exp
     actual = ParisClient("https://example.test", diagnostics=session.diagnostics)
     calls = []
     actual._search_scenario = lambda _q, scenario, _page, _size: (
-        calls.append(scenario) or []
+        calls.append(scenario) or ([], [])
     )
     session.client = actual
     try:

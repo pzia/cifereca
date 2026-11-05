@@ -191,6 +191,14 @@ def download_attested_https(
     physical = Path(os.path.abspath(target.expanduser()))
     if physical.exists() or physical.is_symlink():
         raise ValueError("delivery_target_exists")
+    # Single-use signed URLs must never be consumed when the staging parent
+    # is already absent/symlinked. Pin its physical identity before any GET:
+    # a same-path replacement directory is NOT the selected private stage.
+    initial_fd = _directory_fd(physical)
+    try:
+        initial_stage = os.fstat(initial_fd)
+    finally:
+        os.close(initial_fd)
     visited = set()
     redirects = 0
     current = url
@@ -205,7 +213,15 @@ def download_attested_https(
             per_hop_headers = (
                 request_headers if origin == initial else {
                     key: value for key, value in request_headers.items()
-                    if key.lower() in _SAFE_CROSS_ORIGIN
+                    if (
+                        key.lower() in _SAFE_CROSS_ORIGIN
+                        # KV's fixed S3 requester-pays marker is public and
+                        # non-authenticating. Only its exact constant value
+                        # may survive cross-origin redirects, never an
+                        # arbitrary supplier header or credential.
+                        or (key.lower() == "x-amz-request-payer"
+                            and value == "requester")
+                    )
                 }
             )
             # The transport refuses private/non-global DNS answers at the
@@ -247,6 +263,10 @@ def download_attested_https(
                 # otherwise an unlink/recreate can reuse st_ino instantly.
                 pinned_fd = None
                 try:
+                    current_stage = os.fstat(descriptor)
+                    if ((current_stage.st_dev, current_stage.st_ino)
+                            != (initial_stage.st_dev, initial_stage.st_ino)):
+                        raise ValueError("delivery_staging_changed")
                     file_flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
                                   | getattr(os, "O_NOFOLLOW", 0))
                     handle = os.open(temporary, file_flags, 0o600, dir_fd=descriptor)

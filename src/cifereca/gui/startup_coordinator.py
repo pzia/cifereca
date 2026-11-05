@@ -12,6 +12,27 @@ from .connection_failure_summary import connection_failure_summary
 _TRACE_LOG = logging.getLogger("cifereca")
 
 
+def _record_post_connect_ui_phase(window: Any, phase: str, started: float) -> None:
+    """Record GTK callback time, not Paris/BnF server or worker latency.
+
+    The closed UiPerf vocabulary contains only `provider-connect` and
+    `model_update/render`; never retain identity/account names or provider
+    error payloads. A broken/absent diagnostic recorder is non-blocking.
+    """
+    if getattr(window, "_closed", False):
+        return
+    record = getattr(getattr(window, "ui_perf", None), "record_phase", None)
+    if not callable(record):
+        return
+    try:
+        record(
+            "provider-connect", phase, (time.perf_counter() - started) * 1000,
+            trigger="unspecified", outcome="success",
+        )
+    except Exception:
+        pass
+
+
 def connect_configured_sources(
     window, *, idle_add, timeout_add_seconds=None, source_remove=None,
 ) -> bool:
@@ -33,6 +54,7 @@ def connect_configured_sources(
         if hasattr(window, "dashboard_loading_status"):
             window.dashboard_loading_status.set_visible(False)
         _TRACE_LOG.info("TRACE gui populate-accounts begin")
+        accounts_started = time.perf_counter()
         window._populate_accounts()
         # Providers finish connecting after the Search page was constructed.
         # Update choices on GTK's completion callback, not from a worker.
@@ -49,9 +71,12 @@ def connect_configured_sources(
                 refresh_sync()
         if getattr(window, "_closed", False):
             return
+        _record_post_connect_ui_phase(window, "model_update", accounts_started)
         _TRACE_LOG.info("TRACE gui populate-accounts end")
         _TRACE_LOG.info("TRACE gui populate-loans begin count=%s", len(window.service.last_loans))
+        loans_started = time.perf_counter()
         window._populate_loans(window.service.last_loans)
+        _record_post_connect_ui_phase(window, "render", loans_started)
         _TRACE_LOG.info("TRACE gui populate-loans end")
         connected = len(result.get("connected", []))
         errors = result.get("errors", {}) or {}
@@ -132,9 +157,15 @@ def connect_configured_sources(
         if callable(connect_with_caller)
         else window.service.connect_configured
     )
+    # Startup and plugin activation are not user actions. A failed GTK
+    # completion callback remains recorded in TaskRunner activity/diagnostics,
+    # but must not open an unsolicited modal over the first loaded page.
+    # An explicit reconnect retains its user-origin error presentation.
+    task_origin = "user" if caller_category == "explicit_refresh" else "automatic"
     window.runner.submit(
         "Connexion aux providers…", connect, ok, err, control=control,
         priority=TaskPriority.PROVIDER_SYNC, kind="provider-connect",
+        origin=task_origin,
     )
     return False
 

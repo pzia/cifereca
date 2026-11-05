@@ -92,6 +92,15 @@ def _public_code(error):
     return code if code in _PUBLIC_CODES else 'bnf_reader_failed'
 
 
+def _bnf_core_admission_current(admission_current):
+    """Fail closed on Core revocation; None retains the explicit legacy path."""
+    try:
+        return (admission_current is None or
+                (callable(admission_current) and admission_current() is True))
+    except Exception:
+        return False
+
+
 def _reader_acs4_offer_id(identity_id, credential_id, account_id, loan_id, resource_id):
     """Stable opaque action key; created ONLY after a signed action was seen.
 
@@ -286,6 +295,7 @@ class BnfProviderSession(ProviderSession):
                      record_id=row.resource_id, title=row.title or 'Prêt BnF',
                      author=', '.join(row.authors) or None,
                      thumbnail_url=row.thumbnail_url,
+                     due_at=row.due_at,
                      document_type='Prêt numérique',
                      source_provider=self.provider_id, source_credential=self.credential_id,
                      source_account_id=account.unique_id, identity_id=account.identity_id,
@@ -596,7 +606,34 @@ class BnfProviderSession(ProviderSession):
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
     ):
-        """#3723 v2: stage the *existing* exact ACSM/EPUB path; Core owns SHA."""
+        """Unchanged v2 fallback for explicit/Core callers without a live lease."""
+        return self._downloadable_selected_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id,
+            kind=kind, branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+        )
+
+    def downloadable_selected_delivery_candidate_guarded(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current,
+    ):
+        """#3723: Core source ON generation must remain live during ACSM GET."""
+        if not callable(admission_current) or not _bnf_core_admission_current(admission_current):
+            raise ProviderCapabilityError("bnf_core_admission_revoked")
+        return self._downloadable_selected_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id,
+            kind=kind, branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            admission_current=admission_current,
+        )
+
+    def _downloadable_selected_delivery_candidate(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current=None,
+    ):
+        """Stage one scoped ACSM/EPUB; Core owns SHA and any ADEPT completion."""
         from cifereca.plugin_api import SourceReference, DeliveryCandidate
         # Pin the caller scope *before* the underlying provider performs I/O.
         # A rebind must not manufacture a candidate for the new owner.
@@ -605,14 +642,17 @@ class BnfProviderSession(ProviderSession):
             account, edition_id=edition_id, right_id=resource_id,
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
+            **({"admission_current": admission_current}
+               if admission_current is not None else {}),
         )
         # Compare the mutable caller against the frozen, previously valid
         # scope. Reconstructing ProviderRightsScope *after* GET could itself
         # raise on an empty/invalid account field, bypassing candidate cleanup.
-        if (account.identity_id, account.provider_id,
+        if ((account.identity_id, account.provider_id,
                 account.credential_id, account.unique_id) != (
                 scope.identity_id, scope.provider_id,
-                scope.credential_id, scope.account_id):
+                scope.credential_id, scope.account_id)
+                or not _bnf_core_admission_current(admission_current)):
             try:
                 staged = Path(path)
                 if (staged.parent == Path(target_dir) and staged.is_file()
@@ -684,6 +724,7 @@ class BnfProviderSession(ProviderSession):
     def rights_selected_delivery_candidate(
         self, account, *, edition_id, right_id, kind, branch,
         delivery_offer_id, target_dir, explicit_user_action=False,
+        admission_current=None,
     ):
         """Execute one selected *already owned* loan to a candidate ACSM.
 
@@ -700,6 +741,8 @@ class BnfProviderSession(ProviderSession):
                 or account.provider_id != self.provider_id
                 or account.credential_id != self.credential_id):
             raise ProviderCapabilityError('bnf_selected_delivery_scope_mismatch')
+        if not _bnf_core_admission_current(admission_current):
+            raise ProviderCapabilityError("bnf_core_admission_revoked")
         # Core hands over an already created private staging directory.
         # Reject an invalid or switched final-component symlink BEFORE any
         # authenticated HTML or ACSM GET. Legacy explicit download_digital()
@@ -737,6 +780,8 @@ class BnfProviderSession(ProviderSession):
             # façade. The typed inventory and this preflight share the same
             # guarded private HTML reader, with one activity GET here.
             loans = self._read_live_loans_locked(live)
+            if not _bnf_core_admission_current(admission_current):
+                raise ProviderCapabilityError("bnf_core_admission_revoked")
             if (self._closed or not self.connected or epoch != self._epoch
                     or len(self._accounts) != 1 or self._accounts[0] is not live
                     or (account.identity_id, account.provider_id,
@@ -759,11 +804,14 @@ class BnfProviderSession(ProviderSession):
                 matches[0], live, staging,
                 explicit_user_action=True,
                 expected_offer_id=delivery_offer_id,
+                **({"admission_current": admission_current}
+                   if admission_current is not None else {}),
             )
 
     def download_digital(self, loan: Loan, account: Account, target_dir: Path,
                          *, explicit_user_action: bool = False,
-                         expected_offer_id: str | None = None):
+                         expected_offer_id: str | None = None,
+                         admission_current=None):
         """Explicit candidate ACSM fetch; the automatic Core path stays denied.
 
         The public digital_download capability remains false until the Core
@@ -828,7 +876,8 @@ class BnfProviderSession(ProviderSession):
 
             def scope_current():
                 return (
-                    self.connected is True
+                    _bnf_core_admission_current(admission_current)
+                    and self.connected is True
                     and not self._closed and epoch == self._epoch
                     and (account.provider_id, account.credential_id,
                      account.unique_id, account.identity_id) == account_scope
@@ -846,6 +895,10 @@ class BnfProviderSession(ProviderSession):
                 )
 
             try:
+                # Before even the private activity GET, enforce the same
+                # Core lease later checked at every signed-token HTTPS hop.
+                if not scope_current():
+                    raise ReaderHTTPError('loan_not_observed')
                 # No stale loan can trigger the GET: re-read the exact Web
                 # account and demand the same loan/resource pair right now.
                 try:
@@ -1338,6 +1391,7 @@ class BnfProviderSession(ProviderSession):
                     record_id=row.resource_id, title=row.title or item.title,
                     author=', '.join(row.authors) or None,
                     thumbnail_url=row.thumbnail_url,
+                    due_at=row.due_at,
                     document_type='Prêt numérique', state='active',
                     source_provider=self.provider_id,
                     source_credential=self.credential_id,

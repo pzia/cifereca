@@ -20,6 +20,26 @@ from .vault import KoboVaultError
 _TRACE_LOG = logging.getLogger("cifereca.trace")
 
 
+def _provider_delegation_admitted(session: Any) -> bool:
+    """Consume only a positive provider attestation for this live credential.
+
+    Core cannot infer bearer scopes from a generic Vault capability or the
+    local DRM executable. A provider with an optional freshness probe must
+    recheck its own token/account/session binding before delegated resolution.
+    """
+    if getattr(session, "supports_acquisition_delegation", None) is not True:
+        return False
+    probe = getattr(session, "_delegation_admitted", None)
+    if probe is None:
+        return True
+    if not callable(probe):
+        return False
+    try:
+        return probe() is True
+    except Exception:
+        return False
+
+
 def execute_kobo_acquisition(service: Any, item: SearchResult, target_dir: Path) -> Acquisition:
     """Reconcile a failed Kobo attempt instead of leaving it in flight."""
     started: list[str] = []
@@ -138,10 +158,15 @@ def _execute_kobo_acquisition_impl(
         # This session belongs to one Kobo credential. A denied delegated
         # capability cannot become available for the next item in this run.
         # The provider clears the marker on an explicit reconnection.
-        if mode == "delegated" and getattr(session, "_cifereca_delegation_forbidden", False):
+        if mode == "delegated" and (
+            getattr(session, "_cifereca_delegation_forbidden", False)
+            or not _provider_delegation_admitted(session)
+        ):
             session._cifereca_delegation_attempts_saved = (
                 getattr(session, "_cifereca_delegation_attempts_saved", 0) + 1
             )
+            # Local, non-retryable refusal. Do not call resolve_acquisition
+            # and do not mistake this for a real upstream HTTP 403.
             raise KoboVaultError(
                 "Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)",
                 code="missing_delegation_scope", status_code=403,

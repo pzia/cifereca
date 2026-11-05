@@ -139,8 +139,9 @@ def test_revocation_is_available_without_connection(original):
     row = group.children[0]
     assert "N'autorise aucun téléchargement" in row.subtitle
     assert [button.label for button in row.suffixes] == [
-        "Désactiver les actualisations",
+        "Passer en manuel",
     ]
+    assert "Programmation suspendue" in row.subtitle
     row.suffixes[0].click()
     assert writes == [("exact-route", "manual", 60)]
     assert state["mode"] == "manual" and dialogs == []

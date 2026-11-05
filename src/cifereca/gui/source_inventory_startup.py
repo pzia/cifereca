@@ -11,9 +11,10 @@ from typing import Any
 
 from ..core.source_refresh_policy import source_refresh_due
 from ..task_queue import TaskPriority
+from ..plugin_api import SyncResult
 from .source_inventory_timer import (
-    _MAX_SOURCES, _broker, _configured_identity_ids, _policy,
-    _scheduled_refresh_capable,
+    _MAX_SOURCES, _attested_scheduled_inventory, _broker,
+    _configured_identity_ids, _policy, _scheduled_refresh_capable,
 )
 
 _MAX_STARTUP_IDENTITIES = 64
@@ -110,9 +111,10 @@ def dispatch_after_opening(window: Any) -> bool:
 
     def work():
         failures = 0
+        completed = 0
         for identity_id in identities:
             if getattr(window, "_closed", False) or _broker(window) is not broker:
-                return
+                break
             # The user may have revoked a source policy while this worker
             # was queued. Re-probe the read-only opt-in before delegating;
             # the broker then revalidates exact rights/bindings at I/O.
@@ -124,6 +126,8 @@ def dispatch_after_opening(window: Any) -> bool:
                 )
                 if getattr(receipt, "ok", None) is not True:
                     failures += 1
+                elif _attested_scheduled_inventory(receipt):
+                    completed += 1
             except Exception:
                 # One account's fault does not starve its eligible siblings.
                 # Never reflect signed URLs or private identifiers in tasks.
@@ -132,6 +136,10 @@ def dispatch_after_opening(window: Any) -> bool:
             raise RuntimeError(
                 "Actualisation initiale des notices des comptes indisponible"
             ) from None
+        # The scheduled broker can complete its Core source-sync while this
+        # wrapper returns None; do not label that positive Core evidence as
+        # a cancelled TaskRunner operation. No attempted source => no success.
+        return SyncResult(ok=True) if completed else None
 
     def after_inventory(_result=None):
         # The lock has been released when TaskRunner calls the GTK terminal
@@ -142,15 +150,16 @@ def dispatch_after_opening(window: Any) -> bool:
         materialize(window)
 
     def inventory_failed(_error):
-        # A failed *inventory* task must not silently suppress the normal
-        # feedback or prevent an independently consented Numilog backup.
-        # Never forward the exception: it can embed a signed private URL.
+        # TaskRunner already records this automatic inventory failure.
+        # Do not turn a failed startup worker into an unsolicited modal;
+        # preserve the independently consented backup and show a local hint.
+        # Never forward the exception: it may embed signed provider URLs.
         after_inventory()
-        present = getattr(getattr(window, "runner", None), "present_error", None)
-        if callable(present):
-            present(RuntimeError(
-                "Actualisation initiale des notices des comptes indisponible"
-            ))
+        if getattr(window, "_closed", False) or _broker(window) is not broker:
+            return
+        notify = getattr(window, "toast", None)
+        if callable(notify):
+            notify("Actualisation des notices des comptes à vérifier dans Synchronisation.")
 
     try:
         window.runner.submit(

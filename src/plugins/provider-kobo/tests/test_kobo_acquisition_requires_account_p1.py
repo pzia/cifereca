@@ -79,24 +79,27 @@ def test_direct_acquisition_rejects_unbound_session_without_http(binding, mode):
         session.close()
 
 
-def test_attested_account_keeps_direct_descriptor_and_delegated_requests():
+def test_account_binding_preserves_descriptor_but_not_unattested_delegation():
     session, requests = _session()
     try:
-        for mode in ("descriptor", "delegated"):
-            result = session.resolve_acquisition(
+        # This test fixture installs a verified account but never a
+        # bearer-scoped delegation grant; it cannot use delegated by default.
+        result = session.resolve_acquisition(
+            "book-1", revision_id="revision-1",
+            mode="descriptor", include_acsm=True,
+        )
+        assert result == {
+            "acquisition": {"candidates": [], "status": "no_download"},
+        }
+        with pytest.raises(ProviderError, match="missing_delegation_scope"):
+            session.resolve_acquisition(
                 "book-1", revision_id="revision-1",
-                mode=mode, include_acsm=True,
+                mode="delegated", include_acsm=True,
             )
-            assert result == {
-                "acquisition": {"candidates": [], "status": "no_download"},
-            }
-        assert len(requests) == 2
-        assert all(req.url.path == "/api/v2/library/book-1/acquisition" for req in requests)
-        assert [json.loads(req.content)["mode"] for req in requests] == [
-            "descriptor", "delegated",
-        ]
-        assert all(json.loads(req.content)["revision_id"] == "revision-1"
-                   for req in requests)
+        assert len(requests) == 1
+        assert requests[0].url.path == "/api/v2/library/book-1/acquisition"
+        assert json.loads(requests[0].content)["mode"] == "descriptor"
+        assert json.loads(requests[0].content)["revision_id"] == "revision-1"
     finally:
         session.close()
 

@@ -37,6 +37,11 @@ def _preserved_received_copy(metadata: object, owner: object) -> dict[str, str]:
         kept["file_origin_identity_id"] = origin
     if kind == "local_copy":
         kept["transfer_kind"] = kind
+        # #4291: local inventory scans refresh bytes, not the recipient's
+        # validated transfer storage class. An unrecognized/free-text class
+        # is never propagated, and no class implies a supplier right.
+        if type(origin) is str and metadata.get("storage_class") == "transfer":
+            kept["storage_class"] = "transfer"
     return kept
 
 

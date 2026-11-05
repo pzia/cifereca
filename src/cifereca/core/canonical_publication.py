@@ -113,6 +113,13 @@ def publish_completed_acquisition(
             or (row.state != "active" and row.delivery != "available")
             or snapshot.status not in ("success", "partial")):
         raise ValueError("canonical_active_provider_right_required")
+    # The v2 source-wide ON grant authorizes considering deliverable resources,
+    # not every descriptive right marked "active". A canonical receipt cannot
+    # turn an unknown/refused/archived delivery into a positive offer. Legacy
+    # callers with no v2 policy revision retain their bounded compatibility
+    # route until their admission contract is migrated.
+    if expected_source_policy_revision is not None and not row.delivery_attested:
+        raise ValueError("canonical_source_delivery_offer_required")
     if (type(delivery_receipt_ref) is not str
             or not delivery_receipt_ref or delivery_receipt_ref == row.evidence_ref
             or len(delivery_receipt_ref) > 1024
@@ -178,47 +185,78 @@ def publish_completed_acquisition(
         db.execute("BEGIN IMMEDIATE")
         if context_current is not None and context_current() is not True:
             raise ValueError("canonical_publisher_context_rebound")
+        # Revocation of the source's inventory switch is also a hard fence
+        # for final B publication. Recheck the durable value in THIS SQLite
+        # transaction, after the file hash and before any canonical writes.
+        # A legacy per-right/auto consent may remain ON after the source was
+        # disabled; neither it nor a stale in-memory service flag can bypass
+        # this switch. A missing preference retains the legacy default.
+        from .source_auto_consent_bridge import _source_id
+        from .source_enablement import source_enabled
+        enabled = db.execute(
+            "SELECT value FROM metadata WHERE key=?",
+            ("sync.source.enabled." + _source_id(scope),),
+        ).fetchone()
+        if not source_enabled(enabled[0] if enabled else None):
+            raise ValueError("canonical_publisher_source_disabled")
         # The Core policy guard uses THIS connection, never Storage methods
         # that would re-enter its non-recursive lock. Recheck after hashing.
+        from .source_sync_consent import policy_in_transaction
+        # A caller cannot silently downgrade a configured source-wide policy
+        # to the legacy, revision-less publication path. Check the exact
+        # persisted policy in the same write transaction on *every* B commit.
+        # Only an entirely unset policy may use the historical route.
+        policy = policy_in_transaction(db, scope)
+        if policy.configured and expected_source_policy_revision is None:
+            raise ValueError("canonical_source_policy_revision_required")
         if expected_source_policy_revision is not None:
-            from ..plugin_api.provider_rights_observation import ProviderRightsScope
-            from .source_sync_consent import policy_in_transaction
             if (type(expected_source_policy_revision) is not str
                     or len(expected_source_policy_revision) != 32
                     or any(ch not in "0123456789abcdef"
                            for ch in expected_source_policy_revision)):
                 raise ValueError("canonical_source_policy_revision_invalid")
-            policy = policy_in_transaction(db, ProviderRightsScope(
-                scope.identity_id, scope.provider_id,
-                scope.credential_id, scope.account_id,
-            ))
             if (policy.mode != "on"
                     or policy.revision != expected_source_policy_revision):
                 raise ValueError("canonical_source_policy_revoked")
         if transaction_guard is not None and transaction_guard(db) is not True:
             raise ValueError("canonical_publication_policy_changed")
         # Do not rely on a caller's old account-to-credential binding.
-        owner = db.execute(
-            "SELECT identity_id,enabled FROM provider_connections "
-            "WHERE provider_id=? AND credential_id=?",
+        connections = db.execute(
+            "SELECT connection_id,identity_id,enabled FROM provider_connections "
+            "WHERE provider_id=? AND credential_id=? LIMIT 2",
             (scope.provider_id, scope.credential_id),
-        ).fetchone()
+        ).fetchall()
         registered_profile = db.execute(
             "SELECT directory_name FROM identities WHERE identity_id=?",
             (scope.identity_id,),
         ).fetchone()
-        if (owner != (scope.identity_id, 1)
+        if (len(connections) != 1
+                or connections[0][1:] != (scope.identity_id, 1)
                 or registered_profile != (directory,)):
             raise ValueError("canonical_connection_or_profile_rebound")
+        # A legacy/imported SQLite registry can contain two identities that
+        # resolve to the very same physical library directory. The checked
+        # file hash does not make that shared path safe for either profile.
+        if db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (directory, scope.identity_id),
+        ).fetchone() is not None:
+            raise ValueError("canonical_profile_directory_ambiguous")
         # An authenticated credential may serve several borrower IDs.
         # Require one exact registered account, not a credential-only match
         # or an opportunistic first item. Upstream primary '' is legal.
+        # A credential may expose a large borrower roster. The publisher
+        # must admit only the exact account and never materialize every other
+        # borrower's identifier inside its write transaction.
         account_rows = db.execute(
-            "SELECT account_id FROM provider_accounts "
-            "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-            (scope.identity_id, scope.provider_id, scope.credential_id),
+            "SELECT 1 FROM provider_accounts "
+            "WHERE connection_id=? AND identity_id=? AND provider_id=? "
+            "AND credential_id=? AND account_id=? LIMIT 2",
+            (connections[0][0], scope.identity_id, scope.provider_id,
+             scope.credential_id, scope.account_id),
         ).fetchall()
-        if sum(a[0] == scope.account_id for a in account_rows) != 1:
+        if len(account_rows) != 1:
             raise ValueError("canonical_account_not_registered")
         if not _same_file(target, before):
             raise ValueError("canonical_final_file_changed")

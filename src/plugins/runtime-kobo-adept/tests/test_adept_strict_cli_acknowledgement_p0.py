@@ -28,7 +28,6 @@ OPERATIONS = (
     (["capabilities", "--json"], None),
     (["profile", "list", "--json"], None),
     (["profile", "add", "alice", "--json"], None),
-    (["acsm", "return", "loan", "--json"], None),
     (["download", "request", "-", "--json"], {"source": {"type": "acsm"}}),
     (["download", "request", "-", "--json"], {"source": {"type": "http"}}),
 )

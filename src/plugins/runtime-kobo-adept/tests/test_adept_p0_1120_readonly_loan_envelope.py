@@ -117,7 +117,6 @@ def test_ambiguous_or_incomplete_loan_document_keeps_fail_closed(
     (["loans", "expired", "--profile", PROFILE, "--json"], None, 0),
     (["profile", "add", PROFILE, "--json"], None, 0),
     (["download", "request", "-", "--json"], {"source": {"type": "acsm"}}, 0),
-    (["acsm", "return", "synthetic-id", "--profile", PROFILE, "--json"], None, 0),
     (["loans", "list", "--json"], None, 0),
     (["loans", "list", "--profile", "wrong", "--json", "more"], None, 0),
     (LIST_ARGS, None, 1),

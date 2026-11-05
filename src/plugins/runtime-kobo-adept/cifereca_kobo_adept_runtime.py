@@ -5,13 +5,11 @@ import logging
 import hashlib
 import hmac
 import secrets
-import uuid
 from pathlib import Path
 from datetime import date
 import shutil
 import subprocess
 import time
-import unicodedata
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -279,6 +277,18 @@ class KoboAdeptRuntime:
     def available(self): return bool(shutil.which(self.command[0]))
 
     def run_json(self, args, *, payload=None, timeout=60, max_output_bytes=None):
+        # #4048: the generic CLI entrypoint must not bypass the retired
+        # return_loan/execute(return) API. Reject before a subprocess, path
+        # resolution, diagnostic state, profile or checkpoint can be touched.
+        # No untrusted reference is coerced into text for this gate.
+        if (type(args) in (list, tuple) and args
+                and args[0] == 'acsm'
+                and any(type(part) is str and part.casefold() == 'return'
+                        for part in args[1:])):
+            raise AttentionRequired(
+                'La restitution volontaire ADEPT n’est plus disponible.',
+                code='kobo_adept_drm_mutation_unsupported',
+            )
         started = time.monotonic()
         self.last_run_diagnostic = {
             'operation': operation_family(args),
@@ -605,7 +615,6 @@ class KoboAdeptRuntime:
         payload = self._request_dict(request)
         op = str(payload.get('operation') or '').casefold()
         try:
-            if op == 'return': return self._available('adept', 'loan_return')
             if op == 'fulfill':
                 self._require_download(self._fulfill_payload(payload)); return True
         except UserFacingError: return False
@@ -613,111 +622,11 @@ class KoboAdeptRuntime:
         return False
 
     @staticmethod
-    def _return_binding(payload):
-        metadata = payload.get('metadata')
-        # DrmMutationRequest.loan_id can be a PROVIDER id. Never use it as ADEPT id.
-        # Never call str() or silently strip untrusted identity references:
-        # a forged object/number or a control character must not reach argv.
-        loan = metadata.get('adept_loan_id') if type(metadata) is dict else None
-        profile = metadata.get('adept_profile_name') if type(metadata) is dict else None
-        if any(
-            type(value) is not str
-            or not 1 <= len(value) <= 256
-            or value != value.strip()
-            or value.startswith('-')
-            or any(unicodedata.category(char) in {'Cc', 'Cf', 'Cs'} for char in value)
-            for value in (loan, profile)
-        ):
-            raise AttentionRequired(
-                'Loan ID ADEPT et nom du profil de fulfillment requis.',
-                code='adept_return_binding_required',
-            )
-        return loan, profile
-
-    @staticmethod
     def _fulfill_payload(payload):
         return {'schema_version': 2, 'source': dict(payload.get('source') or {}),
             'destination': payload.get('destination'), 'format': payload.get('media_format') or payload.get('format') or 'epub',
             'profile': (payload.get('metadata') or {}).get('adept_profile_name') or payload.get('profile'),
             'metadata': dict(payload.get('metadata') or {})}
-
-    def return_diagnostic(self):
-        """Bounded phase/proof flags; no profile, loan ID or raw process output."""
-        return dict(getattr(self, '_return_diagnostic', {}))
-
-    def return_loan(self, loan_id, profile):
-        logger = getattr(self.context, 'logger', None) or logging.getLogger('cifereca.plugin.runtime.kobo-adept')
-        started = time.monotonic()
-        trace=uuid.uuid4().hex[:12]
-        self._return_diagnostic = {'phase': 'binding', 'trace_id':trace, 'cli_requested': False, 'cli_confirmed': False}
-        def phase(name, **detail):
-            self._return_diagnostic.update(phase=name, **detail)
-            logger.info('ADEPT return trace=%s phase=%s cli_requested=%s cli_confirmed=%s duration_ms=%s',
-                        trace,name, self._return_diagnostic['cli_requested'], self._return_diagnostic['cli_confirmed'],
-                        int((time.monotonic()-started)*1000))
-        try:
-            phase('binding')
-            loan, name = self._return_binding({'metadata': {'adept_loan_id': loan_id, 'adept_profile_name': profile}})
-            phase('capability_check')
-            if not self._available('adept', 'loan_return'):
-                raise AttentionRequired('Retour ADEPT indisponible.',code='adept_loan_return_unsupported')
-            logger.info('ADEPT return trace=%s binding loan_ref=%s profile_ref=%s executable_ref=%s',trace,
-                        hashlib.sha256(loan.encode()).hexdigest()[:12],hashlib.sha256(name.encode()).hexdigest()[:12],
-                        hashlib.sha256(str(shutil.which(self.command[0]) or self.command[0]).encode()).hexdigest()[:12])
-            phase('cli_dispatch', cli_requested=True)
-            value = self.run_json(['acsm', 'return', loan, '--profile', name, '--json'],timeout=120)
-            process=dict(getattr(self,'last_run_diagnostic',{}) or {})
-            logger.info('ADEPT return trace=%s cli-process exit_code=%s duration_ms=%s stdout_bytes=%s stderr_bytes=%s',trace,
-                        process.get('returncode'),process.get('duration_ms'),process.get('stdout_bytes'),process.get('stderr_bytes'))
-            matches = {'ok_confirmed': value.get('ok') is True,
-                       'operation_matches': value.get('operation') == 'loan_return',
-                       'loan_matches': value.get('loan_id') == loan,
-                       'profile_matches': value.get('profile') == name}
-            phase('response_validation', **matches)
-            if not all(matches.values()):
-                raise KoboAdeptError('Résultat de restitution incohérent.',code='kobo_adept_invalid_response')
-            phase('cli_confirmation', cli_confirmed=True)
-            # The CLI reports dispatch success; contract 1.3 also specifies an
-            # exact returned entry in the originating profile's local registry.
-            # Never let Core persist a returned state before this check.
-            phase('inventory_verification', inventory_confirmed=False)
-            try:
-                inventory = self.loans(name)
-                matches = [row for row in inventory['loans'] if row['id'] == loan]
-            except Exception:
-                # The vendor's exception may embed a signed URL, license XML,
-                # profile or Adobe credentials. Do not chain its traceback
-                # into a user-visible failure or diagnostic record.
-                raise KoboAdeptError(
-                    'Commande de restitution confirmée, mais inventaire ADEPT illisible. '
-                    'Vérifiez le prêt avant toute nouvelle restitution ; le fichier est conservé.',
-                    code='adept_return_verification_unavailable', retryable=False) from None
-            exact=len(matches)==1
-            returned=matches[0].get('returned') if exact else None
-            token_present=matches[0].get('token_present') if exact else None
-            logger.info('ADEPT return trace=%s inventory matches=%s returned=%s token_present=%s',trace,len(matches),returned,token_present)
-            self._return_diagnostic.update(inventory_matches=len(matches),registry_returned=returned,token_present=token_present)
-            if not exact or returned is not True or token_present is not False:
-                raise KoboAdeptError(
-                    'Commande de restitution confirmée, mais état restitué et absence du jeton non confirmés dans ADEPT. '
-                    'Vérifiez le prêt avant toute nouvelle restitution ; le fichier est conservé.',
-                    code='adept_return_not_confirmed', retryable=False)
-            phase('inventory_confirmation', inventory_confirmed=True)
-            return value
-        except Exception as exc:
-            failed_phase = self._return_diagnostic['phase']
-            # Codes originate from structured exceptions, never the raw message.
-            code = getattr(exc, 'code', 'adept_return_failed')
-            safe_codes = {'adept_return_verification_unavailable', 'adept_return_not_confirmed', 'adept_return_binding_required', 'adept_loan_return_unsupported', 'kobo_adept_invalid_response', 'kobo_adept_missing', 'kobo_adept_timeout', 'kobo_adept_launch_error', 'kobo_adept_invalid_json', 'kobo_adept_invalid_utf8', 'kobo_adept_failed'}
-            code = code if type(code) is str and code in safe_codes else 'adept_return_failed'
-            phase('failed', failed_phase=failed_phase, error_code=code[:120])
-            logger.warning('ADEPT return trace=%s failed phase=%s code=%s', trace,failed_phase, code[:120])
-            if self._return_diagnostic['cli_requested']:
-                process=dict(getattr(self,'last_run_diagnostic',{}) or {})
-                logger.warning('ADEPT return trace=%s failure-process exit_code=%s duration_ms=%s stdout_bytes=%s stderr_bytes=%s',trace,process.get('returncode'),process.get('duration_ms'),process.get('stdout_bytes'),process.get('stderr_bytes'))
-            raise
-        finally:
-            self._return_diagnostic['duration_ms'] = int((time.monotonic()-started)*1000)
 
     @staticmethod
     def _qualified_reference(value):
@@ -736,28 +645,6 @@ class KoboAdeptRuntime:
     def execute(self, request):
         payload = self._request_dict(request)
         op = str(payload.get('operation') or '').casefold()
-        if op == 'return':
-            loan, name = self._return_binding(payload)
-            value = self.return_loan(loan, name)
-            # The return path has already confirmed the exact local registry.
-            # Only these four receipt fields are used by the Core to perform
-            # its own fresh post-return inventory verification. An arbitrary
-            # successful vendor JSON may contain secrets/credential objects.
-            if (type(value) is not dict or value.get('ok') is not True
-                    or value.get('operation') != 'loan_return'
-                    or value.get('loan_id') != loan or value.get('profile') != name):
-                raise KoboAdeptError(
-                    'Résultat de restitution ADEPT incohérent.',
-                    code='kobo_adept_invalid_response',
-                )
-            return DrmMutationResult(ok=True, operation='return', metadata={
-                'runtime_result': {
-                    'ok': True, 'operation': 'loan_return',
-                    'loan_id': loan, 'profile': name,
-                },
-                'adept_loan_id': loan, 'adept_profile_name': name,
-                'loan_state': 'returned', 'artifact_preserved': True,
-            })
         if op == 'fulfill':
             value = self.download_request(self._fulfill_payload(payload))
             if type(value) is not dict or value.get('ok') is not True:

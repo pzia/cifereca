@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.runtime.kobo-adept",
-    "version": "1.2.35",
+    "version": "1.2.37",
     "name": "Kobo-Adept Runtime",
     "publisher": "cifereca",
     "plugin_api": ">=1.4,<2"
@@ -14,7 +14,7 @@
       "entrypoint": "cifereca_kobo_adept_runtime:PLUGIN",
       "priority": 100,
       "display_name": "Kobo-Adept Runtime",
-      "description": "Adaptateur contrat v8 / document 1.3 : acquisition, inventaire, restitution et gestion explicite des profils ADEPT.",
+      "description": "Adaptateur contrat v8 / document 1.3 : acquisition, inventaire en lecture seule et gestion explicite des profils ADEPT.",
       "system_requires": [
         {
           "type": "binary",
@@ -46,14 +46,13 @@
           }
         }
       },
-      "version": "1.2.35",
-      "help_text": "Acquiert des fichiers et restitue les prêts ADEPT via Kobo-Adept. Le service expose aussi le cycle de vie explicite des profils : création/provisioning JSON via `profile add`, association d’une liseuse déjà autorisée via `profile associate`, et suppression sans `--force`. Un profil nouvellement créé n’est déclaré prêt qu’après vérification complete/fetch_capable/acsm_fetch_ready. Chaque restitution reste confirmée par l’inventaire local exact avant succès Core.",
+      "version": "1.2.37",
+      "help_text": "Acquiert des fichiers et consulte les prêts ADEPT via Kobo-Adept. Le service expose aussi le cycle de vie explicite des profils : création/provisioning JSON via `profile add`, association d’une liseuse déjà autorisée via `profile associate`, et suppression sans `--force`. Un profil nouvellement créé n’est déclaré prêt qu’après vérification complete/fetch_capable/acsm_fetch_ready. La restitution volontaire ADEPT est retirée : aucune commande acsm return n'est déclenchée par ce plugin. Même le transport CLI générique refuse explicitement les arguments de restitution volontaire avant de lancer Kobo-Adept.",
       "capabilities": [
         "runtime.drm",
         "acquisition.fulfill",
         "loan.inventory",
         "loan.inventory.readonly",
-        "loan.return",
         "adept.profile.provision",
         "adept.profile.associate",
         "adept.profile.remove"
@@ -70,7 +69,7 @@
       "priority": 82,
       "display_name": "Profils Adobe",
       "description": "Création, association et suppression contrôlée des profils ADEPT Kobo-Adept.",
-      "version": "1.2.35",
+      "version": "1.2.37",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "help_text": "Page de gestion Kobo-Adept : la liste et le provisioning passent par le broker public `adept.profiles`. L’association d’une liseuse et la suppression restent des opérations explicites du runtime Kobo-Adept, non exposées par ce broker. Les opérations sont exécutées hors du thread GTK ; aucune suppression forcée n’est utilisée.",
@@ -108,7 +107,7 @@
       "priority": 100,
       "display_name": "Diagnostic Kobo-Adept",
       "description": "Vérification active et expurgée du runtime Kobo-Adept.",
-      "version": "1.2.35",
+      "version": "1.2.37",
       "instantiation": "singleton_public",
       "enabled_by_default": true,
       "help_text": "Expose via cifereca.diagnostics.check/1 un contrôle borné du runtime Kobo-Adept. Seuls la disponibilité, la version de contrat et un booléen de résolution de l’exécutable sont restitués ; aucun chemin, argument, stderr ou secret n’est exposé.",

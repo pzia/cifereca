@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 34)
+        self.assertEqual(len(mod.ALL), 35)
         self.assertIn("maintenance-tools-920", mod.ALL)
         self.assertIn("maintenance-tools-1024", mod.ALL)
         self.assertIn("maintenance-tools-1728", mod.ALL)
@@ -25,6 +25,22 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("book-detail-1300", mod.ALL)
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
+
+    def test_p1_4118_bnf_real_gtk_cover_gate_is_routed_to_producer_and_ui(self):
+        self.assertEqual(mod.BNF_COVERS, ("bnf-covers-1366",))
+        for path in (
+            "e2e/bnf_cover_probe.py",
+            "src/plugins/provider-bnf-pret/cifereca_bnf_pret_web.py",
+            "src/plugins/provider-bnf-pret/cifereca_bnf_pret.py",
+        ):
+            self.assertEqual(mod.select([path]), mod.BNF_COVERS)
+        for path in (
+            "src/cifereca/gui/book_widgets.py",
+            "src/cifereca/gui/cover_loader.py",
+            "src/cifereca/gui/query_model.py",
+            "src/cifereca/gui/main_window.py",
+        ):
+            self.assertIn("bnf-covers-1366", mod.select([path]))
 
     def test_4093_capture_gtk_smoke_is_selected_for_gui_entry_and_probe(self):
         self.assertEqual(
@@ -158,7 +174,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_local_widget(self):
         self.assertEqual(mod.select(["src/cifereca/gui/book_widgets.py"]),
-                         ("search-filter-p0",) + mod.BOOK_DETAIL)
+                         ("search-filter-p0",) + mod.BOOK_DETAIL + mod.BNF_COVERS)
 
     def test_1269_diagnostics_shared_probe_keeps_transitive_consumers(self):
         self.assertEqual(
@@ -176,7 +192,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_1269_query_model_keeps_book_detail_consumers(self):
         selected = mod.select(["src/cifereca/gui/query_model.py"])
-        self.assertEqual(set(selected), set(("search-filter-p0",) + mod.BOOK_DETAIL))
+        self.assertEqual(set(selected), set(("search-filter-p0",) + mod.BOOK_DETAIL + mod.BNF_COVERS))
 
     def test_1269_mainwindow_imports_cover_core_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
@@ -212,6 +228,7 @@ class SelectionTests(unittest.TestCase):
             "gtk-diagnostics-navigation": "diagnostics_navigation_probe.py",
             "gtk-constellations": "constellations_detail_probe.py",
             "gtk-recommendations": "recommendations_detail_probe.py",
+            "gtk-bnf-covers": "bnf_cover_probe.py",
         }
         for scenario, descriptor in runner.SCENARIOS.items():
             filename = entrypoints.get(descriptor.get("runner"))

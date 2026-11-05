@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from cifereca.core.loan_return_guard import return_key
+from cifereca.plugin_api import AttentionRequired
 from tests.test_core_0982_loan_return_reconciliation import _library, _loan, Session
 
 
@@ -44,7 +45,9 @@ def test_inflight_clock_skew_preserves_post_guard_but_unblocks_inventory(
         assert session.checks == (["linked-b"] if should_check else [])
         assert session.posts == []
         # Repeated UI calls never reissue an uncertain return POST.
-        assert service.return_digital(loan)["status"] == outcome["status"]
+        with pytest.raises(AttentionRequired) as err:
+            service.return_digital(loan)
+        assert err.value.code == "loan_return_removed"
         assert session.posts == []
     finally:
         service.close()

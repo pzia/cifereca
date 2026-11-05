@@ -206,7 +206,7 @@ class WebDOMTests(unittest.TestCase):
         result = self.parse_loans(loans(loan(query="?signature=synthetic-private-marker")))
         self.assertNotIn('synthetic-private-marker', repr(result))
         self.assertEqual(result.loans[0].loan_id, 'synthetic-loan')
-        self.assertEqual(set(vars(result.loans[0])), {'loan_id', 'resource_id', 'title', 'authors', 'thumbnail_url'})
+        self.assertEqual(set(vars(result.loans[0])), {'loan_id', 'resource_id', 'title', 'authors', 'thumbnail_url', 'due_at'})
         self.assertEqual(result.loans[0].authors, ())
 
     def test_profile_account_and_session_isolation(self):

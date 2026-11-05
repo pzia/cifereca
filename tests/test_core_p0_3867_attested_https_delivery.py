@@ -484,3 +484,156 @@ def test_revoked_during_final_sha_probe_unlinks_candidate(
             admission_current=lambda: consent["valid"], timeout=5,
         )
     assert list(tmp_path.iterdir()) == []
+
+
+
+@pytest.mark.parametrize("stage_state", ["missing", "symlink"])
+def test_invalid_staging_parent_does_not_consume_signed_get(
+    tmp_path, monkeypatch, stage_state,
+):
+    """A single-use supplier URL must not be fetched before stage admission."""
+    stage = tmp_path / "chosen-private-stage"
+    if stage_state == "symlink":
+        actual = tmp_path / "another-directory"
+        actual.mkdir()
+        stage.symlink_to(actual, target_is_directory=True)
+    seen = []
+    opened = _client(
+        monkeypatch,
+        lambda request: seen.append(str(request.url)) or httpx.Response(
+            200, content=b"unnecessary signed delivery"
+        ),
+    )
+    with pytest.raises(ValueError, match="delivery_staging_unsafe"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=stage / "candidate.epub", timeout=5,
+            admission_current=lambda: True,
+        )
+    assert seen == []
+    assert opened == []  # The network client was never created.
+    assert not (stage / "candidate.epub").exists()
+
+
+def test_replaced_regular_staging_directory_after_get_is_not_publication_scope(
+    tmp_path, monkeypatch,
+):
+    """A same-name directory rebound during GET cannot receive private bytes."""
+    stage = tmp_path / "staging"
+    stage.mkdir()
+    moved = tmp_path / "moved"
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        stage.rename(moved)
+        stage.mkdir()  # Real directory, NOT a symlink: only inode pin detects it.
+        return httpx.Response(200, content=b"private supplier bytes")
+
+    _client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="delivery_staging_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=stage / "received.epub", timeout=5,
+            admission_current=lambda: True,
+        )
+    assert seen == [FIRST]
+    assert list(stage.iterdir()) == []
+    assert list(moved.iterdir()) == []
+
+
+def test_original_private_stage_remains_valid_without_rebind(
+    tmp_path, monkeypatch,
+):
+    stage = tmp_path / "private"
+    stage.mkdir(mode=0o700)
+    _client(monkeypatch, lambda request: httpx.Response(
+        200, content=b"synthetic selected bytes"
+    ))
+    result = delivery.download_attested_https(
+        producer="core.selected.delivery", url=FIRST,
+        target=stage / "received.epub", timeout=5,
+        admission_current=lambda: True,
+    )
+    assert result.path.read_bytes() == b"synthetic selected bytes"
+    assert list(stage.iterdir()) == [result.path]
+
+
+@pytest.mark.parametrize(("marker", "forward"), [
+    ("requester", True),
+    ("REQUESTER", False),
+    ("requester;Authorization=Bearer private", False),
+    ("requester ", False),
+    ("", False),
+])
+def test_only_constant_kobo_requester_pays_marker_crosses_public_redirect(
+    tmp_path, monkeypatch, marker, forward,
+):
+    """A bounded public S3 request header is distinct from authentication.
+
+    Supplier-specific or credential headers never cross origins. A correct
+    public requester-pays switch may be carried across an HTTPS CDN hop.
+    Both endpoints are HTTPX mocks; no Kobo/S3 service is contacted.
+    """
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if str(request.url) == FIRST:
+            return httpx.Response(302, headers={"Location": CDN})
+        assert str(request.url) == CDN
+        return httpx.Response(
+            200, content=b"synthetic selected epub",
+            headers={"Content-Type": "application/epub+zip"},
+        )
+
+    _client(monkeypatch, handler)
+    result = delivery.download_attested_https(
+        producer="core.selected.delivery", url=FIRST,
+        target=tmp_path / "requester-pays.epub", timeout=5,
+        admission_current=lambda: True,
+        headers={
+            "x-amz-request-payer": marker,
+            "Authorization": "Bearer private-original-origin",
+            "Cookie": "user=private-original-origin",
+            "X-Amz-Security-Token": "PRIVATE_SESSION_TOKEN",
+            "Accept": "application/epub+zip",
+        },
+    )
+    assert result.path.read_bytes() == b"synthetic selected epub"
+    assert len(seen) == 2
+    assert seen[0].headers["x-amz-request-payer"] == marker
+    if forward:
+        assert seen[1].headers["x-amz-request-payer"] == "requester"
+    else:
+        assert "x-amz-request-payer" not in seen[1].headers
+    assert seen[1].headers["accept"] == "application/epub+zip"
+    for secret in ("authorization", "cookie", "x-amz-security-token"):
+        assert secret not in seen[1].headers
+
+
+def test_kobo_requester_pays_marker_does_not_bypass_revoked_core_admission(
+    tmp_path, monkeypatch,
+):
+    """A permitted header can never authorize a GET after revocation."""
+    requests = []
+    checks = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        return httpx.Response(307, headers={"Location": CDN})
+
+    def admitted():
+        checks.append(True)
+        return len(checks) <= 2
+
+    _client(monkeypatch, handler)
+    with pytest.raises(ValueError, match="delivery_admission_changed"):
+        delivery.download_attested_https(
+            producer="core.selected.delivery", url=FIRST,
+            target=tmp_path / "blocked.epub", timeout=5,
+            admission_current=admitted,
+            headers={"x-amz-request-payer": "requester"},
+        )
+    assert requests == [FIRST]
+    assert not (tmp_path / "blocked.epub").exists()

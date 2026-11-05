@@ -74,10 +74,13 @@ def test_kobo_unknown_purchase_state_can_still_fetch_exact_offered_epub(
     session, vault, broker, account, posts = setup()
     vault.rows[0].pop("owned")
     transfers = []
+    # ZIP writers stamp each entry with wall time. Rebuilding in the assertion
+    # can differ by one DOS timestamp tick despite identical fetched bytes.
+    payload = epub_bytes()
 
     def handler(request):
         transfers.append((request.method, str(request.url)))
-        return httpx.Response(200, content=epub_bytes(), headers={
+        return httpx.Response(200, content=payload, headers={
             "content-type": "application/epub+zip",
         })
 
@@ -87,7 +90,7 @@ def test_kobo_unknown_purchase_state_can_still_fetch_exact_offered_epub(
         assert observed.rights[0].state == "unknown"
         offer = admitted(session, account)
         path, ref = execute(session, account, offer, tmp_path)
-        assert path.is_file() and path.read_bytes() == epub_bytes()
+        assert path.is_file() and path.read_bytes() == payload
         assert ref == "" and transfers == [("GET", SIGNED)]
         assert len(posts) == 2  # explicit descriptor POST + fresh validation
     finally:
@@ -100,10 +103,11 @@ def test_kobo_private_file_with_owned_false_gets_only_exact_selected_epub(
     session, vault, broker, account, posts = setup()
     vault.rows[0]["owned"] = False
     calls = []
+    payload = epub_bytes()
     fake_public_client(
         monkeypatch,
         lambda req: (calls.append((req.method, str(req.url)))
-                     or httpx.Response(200, content=epub_bytes(),
+                     or httpx.Response(200, content=payload,
                                        headers={"content-type": "application/epub+zip"})),
         [],
     )
@@ -112,7 +116,7 @@ def test_kobo_private_file_with_owned_false_gets_only_exact_selected_epub(
         assert observed.rights[0].state == "unknown"
         offer = admitted(session, account)
         candidate, ref = execute(session, account, offer, tmp_path)
-        assert candidate.is_file() and candidate.read_bytes() == epub_bytes()
+        assert candidate.is_file() and candidate.read_bytes() == payload
         assert ref == "" and calls == [("GET", SIGNED)]
         assert len(posts) == 2  # descriptor admission + fresh revalidation
     finally:

@@ -66,8 +66,37 @@ def test_recent_materialization_to_other_identity_keeps_source():
             assert src.exists()
             assert Path(result["path"]).exists()
             # A folder named kobo is not proof of a Kobo purchase. Copying an
-            # unattested local file to another identity uses the shared area.
-            assert Path(result["path"]).parent == Path(td) / "EBooks" / "alex" / "shared"
+            # Explicit local send is an acquisition of independent bytes, without rights.
+            assert Path(result["path"]).parent == Path(td) / "EBooks" / "alex" / "Acquisitions"
+        finally:
+            service.close()
+
+
+def test_recent_acquisitions_unowned_legacy_only_visible_in_default_identity():
+    # A placement without identity is not a shared entitlement to every
+    # profile. The Library view already assigns this legacy case to default.
+    with tempfile.TemporaryDirectory() as td:
+        service = _service(td)
+        try:
+            root = Path(td) / "EBooks"
+            legacy = root / "legacy" / "Unscoped.epub"
+            alex = root / "alex" / "Owned.epub"
+            _epub(legacy)
+            _epub(alex)
+            service.catalog_scan()
+            placements = {Path(row["path"]): row
+                          for row in service.storage.placements()}
+            assert placements[legacy.resolve()]["identity_id"] in (None, "")
+            assert placements[alex.resolve()]["identity_id"] == "alex"
+
+            default_paths = {Path(row["path"]) for row in
+                             service.recent_acquisitions(identity_id="default")}
+            alex_paths = {Path(row["path"]) for row in
+                          service.recent_acquisitions(identity_id="alex")}
+            assert legacy.resolve() in default_paths
+            assert alex.resolve() not in default_paths
+            assert alex.resolve() in alex_paths
+            assert legacy.resolve() not in alex_paths
         finally:
             service.close()
 
@@ -198,7 +227,7 @@ def test_deep_scan_reuses_hash_when_size_and_mtime_are_unchanged(monkeypatch):
             service.close()
 
 
-def test_recent_acquisitions_enriches_cover_from_active_loan():
+def test_recent_acquisitions_refuses_unattested_active_loan_cover():
     with tempfile.TemporaryDirectory() as td:
         service = _service(td)
         try:
@@ -212,7 +241,9 @@ def test_recent_acquisitions_enriches_cover_from_active_loan():
                 thumbnail_url="https://example.test/cover.jpg", due_at="2099-01-01T00:00:00Z",
             )]
             recent = service.recent_acquisitions(identity_id="default")
-            assert recent[0]["thumbnail_url"] == "https://example.test/cover.jpg"
+            # Matching title/item and profile do not attest the exact borrower
+            # or the provenance of this physical file.
+            assert recent[0]["thumbnail_url"] is None
         finally:
             service.close()
 
@@ -283,8 +314,9 @@ def test_recent_covers_ignore_foreign_or_unscoped_legacy_backup_even_with_matchi
             assert selected["item_id"] == "shared-edition"
             assert selected["thumbnail_url"] is None
 
-            # A canonical entitlement of this profile remains a valid
-            # descriptive cover source; no historical backup is consulted.
+            # A descriptive entitlement from this identity is still not an
+            # OriginLink to the exact physical placement. The positive case
+            # with attested provenance lives in test_core_p0_2797_recent_exact_origin_covers.
             service.storage.entitlement_put({
                 "provider_id": "kobo", "credential_id": "owned-card",
                 "account_id": "owned-account", "identity_id": "default",
@@ -294,7 +326,7 @@ def test_recent_covers_ignore_foreign_or_unscoped_legacy_backup_even_with_matchi
             })
             again = service.recent_acquisitions(identity_id="default")
             chosen = next(x for x in again if x["path"] == str(book))
-            assert chosen["thumbnail_url"] == "https://example.test/owner-cover.jpg"
+            assert chosen["thumbnail_url"] is None
         finally:
             service.close()
 

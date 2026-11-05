@@ -386,7 +386,9 @@ def test_typed_session_without_registered_upstream_account_does_not_break_legacy
             "AND provider_id='seller-a' AND credential_id='card-a'"
         )
     result = synchronize_account_source(service, service.account)
-    assert service.read_calls == 1
+    # The typed inventory is rejected before any private provider GET;
+    # the independent legacy Sync result remains partial, not a crash.
+    assert service.read_calls == 0
     assert result["provider"] == "seller-a"
     assert result["status"] == "partial"
     assert result["canonical_rights"]["status"] == "failed"

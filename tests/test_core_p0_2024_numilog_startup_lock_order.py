@@ -61,6 +61,8 @@ def test_two_due_consents_queue_inventory_then_backup_after_lock_release(monkeyp
 
 def test_failed_inventory_does_not_starve_independently_consented_backup(monkeypatch):
     r, forwarded, presented = make_window(monkeypatch)
+    hints = []
+    r.window.toast = hints.append
     submitted = []
     def submit(label, work, done=None, err=None, **opts):
         submitted.append(NS(work=work, done=done, err=err, options=opts))
@@ -74,11 +76,11 @@ def test_failed_inventory_does_not_starve_independently_consented_backup(monkeyp
         submitted[0].work()
     submitted[0].err(RuntimeError('PRIVATE_SIGNED_URL_AND_COOKIE'))
     assert forwarded == [r.window]
-    assert len(presented) == 1
-    assert str(presented[0]) == (
-        'Actualisation initiale des notices des comptes indisponible'
-    )
-    assert 'PRIVATE_SIGNED_URL_AND_COOKIE' not in str(presented)
+    assert presented == []  # Automatic startup may never open a modal.
+    assert hints == [
+        'Actualisation des notices des comptes à vérifier dans Synchronisation.'
+    ]
+    assert 'PRIVATE_SIGNED_URL_AND_COOKIE' not in str(hints)
 
 
 @pytest.mark.parametrize('change', ['closed', 'rebound'])

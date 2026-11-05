@@ -48,18 +48,23 @@ def test_all_legacy_bnf_logs_use_only_provider_or_loan_coordinates():
             assert isinstance(arg, ast.Attribute)
             assert arg.attr in {"provider_id", "source_provider", "id"}
         if func.attr == "warning":
-            # The private raw trace preserves the exact Python cause.
-            assert any(
-                kw.arg == "exc_info" and isinstance(kw.value, ast.Constant)
-                and kw.value.value is True for kw in node.keywords
-            )
+            # The local receipt-check exception can contain private paths
+            # and signed supplier URLs: keep its historical event template
+            # for diagnostics, but intentionally omit the raw traceback.
+            if "receipt file check failed" in text:
+                assert not node.keywords
+            else:
+                assert any(
+                    kw.arg == "exc_info" and isinstance(kw.value, ast.Constant)
+                    and kw.value.value is True for kw in node.keywords
+                )
         else:
             assert not node.keywords
         checked += 1
     assert checked == 8
 
 
-def test_receipt_local_error_keeps_private_observed_cause_but_not_account_ids(
+def test_receipt_local_error_reports_closed_reason_without_private_cause(
     caplog,
 ):
     private = "OBSERVED_IO_CAUSE_NOT_A_REAL_TOKEN"
@@ -87,7 +92,7 @@ def test_receipt_local_error_keeps_private_observed_cause_but_not_account_ids(
     assert messages == [
         "TRACE bnf auto receipt file check failed provider_id=bnf-pret"
     ]
-    assert private in caplog.text
+    assert private not in caplog.text
     for secret in ("IDENTITY_PRIVATE", "CREDENTIAL_PRIVATE", "ACCOUNT_PRIVATE"):
         assert secret not in caplog.text
 

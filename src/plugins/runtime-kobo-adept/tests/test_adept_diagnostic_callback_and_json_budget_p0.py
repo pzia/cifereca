@@ -94,7 +94,6 @@ def test_reporter_error_never_logs_private_exception_on_vendor_failure(
     ["capabilities", "--json"],
     ["profile", "list", "--json"],
     ["profile", "show", "fake", "--json"],
-    ["acsm", "return", "fake", "--json"],
     ["download", "request", "-", "--json"],
 ])
 def test_unbounded_default_is_rejected_for_every_cli_operation(monkeypatch, command):

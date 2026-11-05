@@ -26,6 +26,7 @@ from diagnostics_support import (
 # Only the GTK presentation pseudonymizes login and password fields.
 # The journal, console, broker and raw exports retain their original values.
 from diagnostics_pseudonyms import DISPLAY_PSEUDONYMS
+from diagnostics_adept_guidance import adept_guidance_for_event
 
 def _readable_raw_export_folder() -> str | None:
     """Prefer a real, browsable local home directory over GTK's stale Recents.
@@ -529,7 +530,7 @@ class DiagnosticsPagePlugin:
         reports_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         for key, title, content in (
             ("journals", "Journaux", journals_tab),
-            ("capture", "Capture", capture_tab),
+            ("capture", "Perfs", capture_tab),
             ("system", "État système", system_tab),
             ("reports", "Rapports et vérifications", reports_tab),
         ):
@@ -1355,6 +1356,16 @@ class DiagnosticsPagePlugin:
                     provenance.set_wrap(True)
                     provenance.set_selectable(True)
                     item.append(provenance)
+                    # Only a Core-published ADEPT v1 machine code yields a
+                    # fixed, human-readable next step. Neither legacy exit 10
+                    # nor vendor error messages can select this help label.
+                    adept_advice = adept_guidance_for_event(row)
+                    if adept_advice:
+                        next_step = Gtk.Label(label=adept_advice, xalign=0)
+                        next_step.set_wrap(True)
+                        next_step.set_selectable(True)
+                        next_step.add_css_class("dim-label")
+                        item.append(next_step)
                     # A closed Core terminal event gets a readable local
                     # coverage/phase summary. Never draw raw provider or
                     # private audit fields in this expedited explanation.

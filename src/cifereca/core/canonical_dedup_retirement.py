@@ -17,6 +17,7 @@ import stat
 
 from .canonical_publication import _same_file
 from .canonical_recovery import _lock_ok
+from .canonical_dedup_exclusions import ordinary_dedup_paths_excluded
 from .convergence_verified_presence import _verified_copy
 from .duplicate_maintenance_guard import (
     candidate_has_active_dependencies,
@@ -87,12 +88,17 @@ def _resolve_exact_completed_checkpoint(
                 candidate_placement_id, keeper_placement_id,
             ])):
         return False
-    present = db.execute(
+    # An unresolved tombstone may still have physical bytes and requires
+    # an independent, explicitly confirmed recovery. Ignoring it merely
+    # because it is not state='present' would falsely settle the only
+    # advisory for this Artifact while an older cleanup remains pending.
+    remaining = db.execute(
         "SELECT placement_id FROM placements WHERE identity_id=? "
-        "AND artifact_id=? AND state='present' LIMIT 2",
+        "AND artifact_id=? AND state IN ('present','dedup_cleanup_pending') "
+        "LIMIT 2",
         (identity_id, artifact_id),
     ).fetchall()
-    if present != [(keeper_placement_id,)]:
+    if remaining != [(keeper_placement_id,)]:
         return False
     return db.execute(
         "DELETE FROM metadata WHERE key=? AND value=?", (key, row[0]),
@@ -178,6 +184,15 @@ def retire_verified_canonical_duplicate(
                     ) or not _same_file(path, before)):
                 raise ValueError("canonical_retire_bytes_changed")
             observations.append((path, before))
+
+        # #4496: the last DB-first mutation boundary must independently
+        # refuse Outbox, even if a caller skips preview or prepares a stale
+        # plan. Both retirement target and surviving keeper are excluded.
+        if ordinary_dedup_paths_excluded(
+            (candidate[0], keeper[0]), library_root=library_root,
+            identity_id=identity_id, owner_directory=owner_dir,
+        ):
+            raise ValueError("canonical_retire_excluded_path")
 
         # Catalogues, backup paths, completed/staged recovery receipts,
         # operational metadata, variants and declarations all veto removal
@@ -312,6 +327,14 @@ def recover_canonical_duplicate_retirement(
                 return CanonicalRetirementResult(True, False, True)
             owner_dir = owner[0]
             registered = frozenset((owner_dir,))
+            # Recovery may unlink bytes from an old tombstone. It is not
+            # ordinary approval and must not erase future delivery Outboxes,
+            # whether the tombstone, keeper, or an intermediate path is there.
+            if ordinary_dedup_paths_excluded(
+                (candidate[0], keeper[0]), library_root=library_root,
+                identity_id=candidate[1], owner_directory=owner_dir,
+            ):
+                return CanonicalRetirementResult(True, False, True)
             keeper_path = Path(keeper[0])
             keeper_stat = os.stat(keeper_path, follow_symlinks=False)
             if (not stat.S_ISREG(keeper_stat.st_mode)

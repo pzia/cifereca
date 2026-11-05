@@ -932,7 +932,7 @@ def test_kobo_personal_manifest_malformed_owned_flag_cannot_create_sqlite_right(
 
 
 @pytest.mark.parametrize("failed_stage", ["status", "account"])
-def test_failed_reconnect_preserves_delegation_denial_until_authenticated_success(failed_stage):
+def test_failed_reconnect_preserves_delegation_denial_without_token_scope_proof(failed_stage):
     """#1350: a failed reconnect must not trigger another forbidden delegated GET."""
     class FakeVault:
         def __init__(self):
@@ -982,8 +982,9 @@ def test_failed_reconnect_preserves_delegation_denial_until_authenticated_succes
         vault.failed_stage = None
         session.connect()
         assert session.connected is True
-        assert session._cifereca_delegation_forbidden is False
-        assert session._cifereca_delegation_attempts_saved == 0
+        # /account alone cannot reauthorize a bearer-scoped delegation.
+        assert session._cifereca_delegation_forbidden is True
+        assert session._cifereca_delegation_attempts_saved == 17
     finally:
         session.close()
 

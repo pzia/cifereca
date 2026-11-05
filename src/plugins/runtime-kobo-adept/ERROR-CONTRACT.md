@@ -1,3 +1,33 @@
+## 1.2.37 — garde ultime sur la commande CLI générique (#4048 P1)
+
+L'ancienne extension pouvait appeler directement `KoboAdeptRuntime.run_json`
+malgré le retrait de la méthode de retour. Les arguments commençant par
+`acsm` et contenant un sous-ordre `return` sont désormais refusés par
+`kobo_adept_drm_mutation_unsupported` **avant tout sous-processus**, diagnostic,
+découverte de profil ou lecture du contenu. Un retour observé dans
+l'inventaire ADEPT historique reste consultable ; le téléchargement et le
+provisioning des profils ne sont pas modifiés.
+
+## 1.2.36 — retrait de la restitution volontaire (#4048 P1)
+
+Le runtime n'annonce plus `loan.return`, `supports(return)` retourne
+`False` et `execute(return)` répond `kobo_adept_drm_mutation_unsupported`
+**avant tout appel subprocess, inventaire ou mutation de stockage**.
+Les méthodes de restitution et de préparation de l'ancien argv
+`acsm return` sont supprimées ; aucune commande de retour n'est possible
+via ce plugin, y compris pour une extension ancienne.
+
+La lecture de l'inventaire, les prêts retournés **observés** dans un
+registre historique, le fulfillment ACSM, les profils et leurs
+opérations de provisioning restent inchangés. Les tests positifs de
+retour obsolètes ont été remplacés par des tests d'absence d'accès
+réseau/CLI ; les tests de confidentialité des receipts de fulfillment
+sont maintenus.
+
+**Cette tranche ne désactive pas les façades mutatrices Core encore
+présentes** : `LibraryService.return_adept_acquisition` et ses
+checkpoints doivent être neutralisés séparément avant tout effet.
+
 ## 1.2.35 — motifs ADEPT 1.3 et retryabilité des inventaires multi-profils (#979 P1)
 
 La CLI fournit déjà une erreur typée et expurgée via `run_json()`,

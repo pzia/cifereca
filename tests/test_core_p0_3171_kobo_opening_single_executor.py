@@ -98,3 +98,78 @@ def test_old_kobo_session_without_canonical_attempt_keeps_legacy_path(
         ) is not None
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("contract", ("downloadable_v2", "rights_v1"))
+def test_on_start_policy_never_schedules_complete_canonical_kobo_session(
+    tmp_path, monkeypatch, contract,
+):
+    """An old ON remains stored but cannot dispatch a second legacy GET."""
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    service, account = _ready_source(tmp_path)
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    source_id = service.sync_source_id(account)
+    original_policy = service.storage.metadata_get(policy_key(source_id))
+    methods = (
+        ("downloadable_resource_snapshot", "downloadable_selected_offer_snapshot",
+         "downloadable_selected_delivery_candidate")
+        if contract == "downloadable_v2" else
+        ("rights_observation_snapshot", "rights_selected_delivery_offer_snapshot",
+         "rights_selected_delivery_candidate")
+    )
+    try:
+        for name in methods:
+            monkeypatch.setattr(
+                session, name, lambda *_args, **_kwargs: pytest.fail(
+                    "policy must inspect ABI statically"
+                ), raising=False,
+            )
+        assert kobo_on_start_sessions(service) == ()
+        assert service.storage.metadata_get(policy_key(source_id)) == original_policy
+        broker = SynchronizationBrokerImpl(service)
+        with pytest.raises(ValueError):
+            broker.set_local_materialization_schedule(source_id, "on_start")
+
+        # A missing/partial source snapshot does not grant a fallback to
+        # a historical backup writer merely because an ON was persisted.
+        # Canonical observation is independent of this scheduler under test.
+        from cifereca.core import canonical_sync_stage
+        monkeypatch.setattr(
+            canonical_sync_stage, "observe_canonical_rights_in_sync",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            sync_coordination, "_run_observed_canonical_convergence",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda *_args, **_kwargs: pytest.fail(
+                "canonical Kobo ABI must not launch legacy on_start"
+            ),
+        )
+        service.opening_sync()
+        assert service.storage.metadata_get(
+            "sync.source.materialization.last_attempt." + source_id
+        ) is None
+    finally:
+        service.close()
+
+
+def test_on_start_partial_abi_keeps_older_kobo_worker_eligible(tmp_path, monkeypatch):
+    service, account = _ready_source(tmp_path)
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    try:
+        monkeypatch.setattr(
+            session, "downloadable_resource_snapshot",
+            lambda *_args, **_kwargs: pytest.fail(
+                "an incomplete ABI is not a provider request"
+            ), raising=False,
+        )
+        assert kobo_on_start_sessions(service) == (session,)
+        assert service.storage.metadata_get(
+            policy_key(service.sync_source_id(account))
+        ) == "1"
+    finally:
+        service.close()

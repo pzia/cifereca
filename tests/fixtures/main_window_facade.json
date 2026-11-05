@@ -430,7 +430,7 @@
     "async": false
   },
   "MainWindow._task_finished": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='task_id', annotation=Name(id='int', ctx=Load())), arg(arg='remaining', annotation=Name(id='int', ctx=Load())), arg(arg='label', annotation=Name(id='str', ctx=Load())), arg(arg='success', annotation=Name(id='bool', ctx=Load())), arg(arg='error', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='task_id', annotation=Name(id='int', ctx=Load())), arg(arg='remaining', annotation=Name(id='int', ctx=Load())), arg(arg='label', annotation=Name(id='str', ctx=Load())), arg(arg='success', annotation=Name(id='bool', ctx=Load())), arg(arg='error', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='business_status', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
     "returns": "Name(id='bool', ctx=Load())",
     "decorators": [],
     "async": false
@@ -1271,12 +1271,6 @@
   },
   "MainWindow._kobo_selected": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
-  "MainWindow._configure_kobo_backup_timer": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[arg(arg='run_now', annotation=Name(id='bool', ctx=Load()))], kw_defaults=[Constant(value=False)], defaults=[])",
     "returns": "Constant(value=None)",
     "decorators": [],
     "async": false

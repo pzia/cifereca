@@ -28,10 +28,15 @@ def connected_core(tmp_path, monkeypatch):
     account.identity_id = "default"
     loan.identity_id = "default"
     service.accounts = [account]
-    service.storage.provider_connection_put({
+    connection = service.storage.provider_connection_put({
         "identity_id": "default", "provider_id": "bnf-pret",
         "credential_id": account.credential_id, "label": "BnF", "enabled": True,
         "metadata": {},
+    })
+    service.storage.provider_account_put({
+        "identity_id": "default", "provider_id": "bnf-pret",
+        "credential_id": account.credential_id, "connection_id": connection,
+        "account_id": account.unique_id, "label": "Fictional borrower",
     })
     service._sessions[service._session_key("bnf-pret", account.credential_id)] = session
     monkeypatch.setattr(services, "acquisition_lock_file", lambda: tmp_path / "acquisition.lock")

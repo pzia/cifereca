@@ -110,11 +110,17 @@ def test_untyped_source_state_flags_never_enable_sync_action(field, bad):
     presented = sync_source_presentation(state)
     assert presented.action_enabled is False
     if field == "enabled":
-        assert presented.activation_label == "Désactivée"
-        assert presented.disabled_reason == "Activez cette source pour la synchroniser."
+        assert presented.activation_label == "Non confirmée"
+        assert presented.sync_label == "Activation non confirmée"
+        assert presented.disabled_reason == (
+            "Activation non confirmée ; actualisez la source avant de synchroniser."
+        )
     elif field == "connected":
-        assert presented.connection_label == "Déconnectée"
-        assert presented.disabled_reason == "Reconnectez ce compte avant de synchroniser."
+        assert presented.connection_label == "Non confirmée"
+        assert presented.disabled_reason == (
+            "Connexion non confirmée ; actualisez cette source avant de synchroniser."
+        )
+        assert "Connexion : Déconnectée" not in presented.summary
     else:
         assert presented.sync_label == "Non prise en charge"
         assert presented.disabled_reason == "Cette source ne fournit pas de synchronisation de données."
@@ -156,3 +162,23 @@ def test_gtk_source_row_never_coerces_malformed_flags_into_actions(
     else:
         # The manual action may be visible but must not be clickable.
         assert row.suffixes[1].sensitive is False
+
+
+@pytest.mark.parametrize("provider", ["paris", "kobo", "future-provider"])
+def test_unverified_connection_is_not_an_offline_or_online_claim(provider):
+    for malformed in (None, "false", 0, 1):
+        view = sync_source_presentation(_source(
+            provider_id=provider, connected=malformed,
+            status="success", last_success="2026-10-08T09:12:00+00:00",
+        ))
+        assert view.connection_label == "Non confirmée"
+        assert "Connexion : Non confirmée" in view.summary
+        assert view.action_enabled is False
+        assert "Reconnectez ce compte" not in view.disabled_reason
+        assert "Connexion non confirmée" in view.disabled_reason
+    # Exact False is a known disconnection, not an unknown connection.
+    offline = sync_source_presentation(_source(
+        provider_id=provider, connected=False,
+    ))
+    assert offline.connection_label == "Déconnectée"
+    assert "Reconnectez ce compte" in offline.disabled_reason

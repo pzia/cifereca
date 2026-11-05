@@ -24,10 +24,30 @@ def policy_key(account: Account) -> str:
 def binding_ready(service, account: Account) -> bool:
     try:
         if (type(account) is not Account or account.provider_id != 'bnf-pret'
+                or (account.unique_id and (
+                    account.unique_id != account.unique_id.strip()
+                    or account.unique_id == (
+                        'bnf-pret:' + account.credential_id + ':primary'
+                    )
+                ))
                 or not service.sync_source_enabled(account)
                 or service.identity_by_id(account.identity_id) is None
                 or service.storage.identity_for_connection(
                     'bnf-pret', account.credential_id) != account.identity_id):
+            return False
+        # The SQLite provider_accounts registry is the durable account
+        # identity for this credential. A connected Python session may stay
+        # alive after the borrower was removed/rebound in SQLite; do not
+        # issue a private ACSM GET in that state.
+        matches = service.storage.provider_accounts(
+            identity_id=account.identity_id,
+        )
+        if sum(
+            row.get('provider_id') == 'bnf-pret'
+            and row.get('credential_id') == account.credential_id
+            and row.get('account_id') == account.unique_id
+            for row in matches
+        ) != 1:
             return False
         session = service._sessions.get(service._session_key('bnf-pret', account.credential_id))
         return (getattr(session, 'connected', None) is True
@@ -102,9 +122,10 @@ def _receipt_local_file_verified(service, account: Account, row: dict, path: Pat
             return False
         return True
     except (OSError, ValueError, TypeError, KeyError):
+        # The caught filesystem/SQL cause may carry a private book path.
         _TRACE_LOG.warning(
             "TRACE bnf auto receipt file check failed provider_id=%s",
-            account.provider_id, exc_info=True,
+            account.provider_id,
         )
         return False
 

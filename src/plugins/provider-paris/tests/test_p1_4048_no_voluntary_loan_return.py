@@ -67,7 +67,7 @@ def test_paris_retired_return_dispatch_falls_back_to_nonmutating_base():
 def test_paris_package_never_advertises_voluntary_return_but_keeps_renewal():
     manifest = json.loads((ROOT / "cifereca-plugin.json").read_text(encoding="utf-8"))
     plugin, = manifest["plugins"]
-    assert plugin["version"] == manifest["package"]["version"] == "1.2.39"
+    assert plugin["version"] == manifest["package"]["version"] == "1.2.41"
     assert "lending.return" not in plugin["capabilities"]
     assert "loan.return" not in plugin["capabilities"]
     assert "sync.loans" in plugin["capabilities"]

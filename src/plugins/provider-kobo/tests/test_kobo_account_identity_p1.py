@@ -108,8 +108,10 @@ def test_connected_account_is_strictly_the_attested_opaque_vault_identifier(acco
         assert len(rows) == 1
         assert rows[0].unique_id == expected
         assert provider.connected is True
-        assert provider._cifereca_delegation_forbidden is False
-        assert provider._cifereca_delegation_attempts_saved == 0
+        # Account identity is authenticated but this fake has no token-scope
+        # introspection. A previous delegated 403 must remain quarantined.
+        assert provider._cifereca_delegation_forbidden is True
+        assert provider._cifereca_delegation_attempts_saved == 12
         assert fake.calls == ["status", "account"]
     finally:
         provider.close()
@@ -172,7 +174,7 @@ def test_existing_credential_cannot_be_rebound_to_a_different_authenticated_acco
         provider.close()
 
 
-def test_reconnect_same_account_after_scope_reauthorization_is_allowed():
+def test_reconnect_same_account_without_scope_introspection_preserves_denial():
     provider, fake = session({"id": "reader-alice", "display_name": "My Kobo"})
     try:
         provider.connect()
@@ -180,15 +182,15 @@ def test_reconnect_same_account_after_scope_reauthorization_is_allowed():
         provider._cifereca_delegation_attempts_saved = 4
         fake.account_data = {"account_id": "reader-alice", "name": "My Kobo"}
         assert provider.connect()[0].unique_id == "reader-alice"
-        assert provider._cifereca_delegation_forbidden is False
-        assert provider._cifereca_delegation_attempts_saved == 0
+        assert provider._cifereca_delegation_forbidden is True
+        assert provider._cifereca_delegation_attempts_saved == 4
         assert len(provider.accounts) == 1
     finally:
         provider.close()
 
 
 @pytest.mark.parametrize("failed_stage", ["status", "account"])
-def test_failed_reconnect_revokes_active_session_without_losing_403_or_account(failed_stage):
+def test_failed_reconnect_keeps_delegation_denial_without_token_scope_proof(failed_stage):
     provider, fake = session({"id": "reader-alice"})
     try:
         assert provider.connect()[0].unique_id == "reader-alice"
@@ -207,7 +209,8 @@ def test_failed_reconnect_revokes_active_session_without_losing_403_or_account(f
         fake.fail_stage = None
         assert provider.connect()[0].unique_id == "reader-alice"
         assert provider.connected is True
-        assert provider._cifereca_delegation_forbidden is False
-        assert provider._cifereca_delegation_attempts_saved == 0
+        # /account alone cannot reauthorize a bearer-scoped delegation.
+        assert provider._cifereca_delegation_forbidden is True
+        assert provider._cifereca_delegation_attempts_saved == 7
     finally:
         provider.close()

@@ -28,6 +28,8 @@ def test_initial_canonical_mirror_matches_legacy_projection(tmp_path):
             "scope_mismatch": 0, "status_divergence": 0,
             "artifact_divergence": 0, "placement_missing": 0,
             "placement_scope_mismatch": 0,
+            "canonical_placement_source_unverified": 0,
+            "canonical_placement_digest_divergence": 0,
             "canonical_scanned": 1,
             "canonical_without_projection": 0,
             "canonical_projection_owner_conflict": 0,
@@ -269,5 +271,72 @@ def test_reverse_audit_accepts_exact_empty_primary_borrower_but_not_null(tmp_pat
         assert result["canonical_scanned"] == 2
         assert result["canonical_projection_owner_conflict"] == 0
         assert result["canonical_projection_scope_unverified"] == 1
+    finally:
+        db.close()
+
+
+def test_canonical_b_path_is_not_a_provider_scope_conflict(tmp_path):
+    """Canonical B deliberately holds no provider/item: attribution is unproven."""
+    db = Storage(tmp_path / "books.sqlite3")
+    path = tmp_path / "synthetic.epub"
+    try:
+        _put(db, path=path, sha="a" * 64)
+        with db._lock, db._connect() as connection:
+            connection.execute(
+                "UPDATE placements SET provider_id=NULL,source_item_id=NULL "
+                "WHERE path=?", (str(path),)
+            )
+        baseline = db.backup_list("kobo")
+        result = audit_backup_projection(db, identity_id="alice")
+        assert result["status"] == "complete"
+        assert result["placement_missing"] == 0
+        assert result["placement_scope_mismatch"] == 0
+        assert result["canonical_placement_source_unverified"] == 1
+        assert result["canonical_placement_digest_divergence"] == 0
+        # No provider proof, no file and no new identity inferred.
+        assert db.backup_list("kobo") == baseline
+        assert not path.exists()
+    finally:
+        db.close()
+
+
+def test_canonical_b_digest_conflict_is_reported_without_ownership_inference(
+    tmp_path,
+):
+    db = Storage(tmp_path / "books.sqlite3")
+    path = tmp_path / "synthetic.epub"
+    try:
+        _put(db, path=path, sha="a" * 64)
+        with db._lock, db._connect() as connection:
+            connection.execute(
+                "UPDATE placements SET provider_id=NULL,source_item_id=NULL,"
+                "artifact_id=? WHERE path=?",
+                ("sha256:" + "b" * 64, str(path)),
+            )
+        report = audit_backup_projection(db, identity_id="alice")
+        assert report["status"] == "complete"
+        assert report["canonical_placement_source_unverified"] == 1
+        assert report["canonical_placement_digest_divergence"] == 1
+        assert report["placement_scope_mismatch"] == 0
+        assert not path.exists()
+    finally:
+        db.close()
+
+
+def test_foreign_owner_of_canonical_path_remains_a_real_scope_mismatch(tmp_path):
+    db = Storage(tmp_path / "books.sqlite3")
+    path = tmp_path / "synthetic.epub"
+    try:
+        _put(db, path=path, sha="a" * 64)
+        with db._lock, db._connect() as connection:
+            connection.execute(
+                "UPDATE placements SET provider_id=NULL,source_item_id=NULL,"
+                "identity_id='bob' WHERE path=?",
+                (str(path),),
+            )
+        report = audit_backup_projection(db, identity_id="alice")
+        assert report["status"] == "complete"
+        assert report["canonical_placement_source_unverified"] == 0
+        assert report["placement_scope_mismatch"] == 1
     finally:
         db.close()

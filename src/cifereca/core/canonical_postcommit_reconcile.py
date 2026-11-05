@@ -17,12 +17,13 @@ from ..paths import acquisition_lock_file
 from .canonical_publication import _stable
 from .canonical_promotion import _profile, _stage_parts, cleanup_published_staging
 from .canonical_recovery import (
-    _path_verified, _scope, _stage_id, _unique_checkpoint_fields,
-    mark_completed_delivery_published,
+    _exact_borrower_bound_in_db, _path_verified, _scope, _stage_id,
+    _unique_checkpoint_fields, mark_completed_delivery_published,
 )
 from .source_convergence import SourceKey
 
 _MAX_RECEIPTS = 512
+_MAX_EXACT_ORIGIN_ROWS = 512
 
 
 def reconcile_committed_staging(
@@ -50,6 +51,10 @@ def reconcile_committed_staging(
     scope = source.scope
     source_id = _stable("source", *_scope(source))
     with storage._lock, storage._connect() as db:
+        # A durable OriginLink and receipt cannot authorize maintenance for a
+        # borrower now attached to another or disabled provider connection.
+        if not _exact_borrower_bound_in_db(db, scope):
+            return False
         placed = db.execute(
             "SELECT p.path,p.identity_id,p.artifact_id,p.state,a.sha256 "
             "FROM placements AS p JOIN artifacts AS a "
@@ -90,10 +95,15 @@ def reconcile_committed_staging(
             "AND s.credential_id=? AND s.account_id=? "
             "AND s.branch_id=? AND s.edition_id=? "
             "AND s.right_id=? AND s.reference_kind=? "
-            "AND s.evidence_kind='provider_response'",
-            (scope.identity_id, placed[2], source_id, *_scope(source)),
+            "AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>'' "
+            "ORDER BY o.origin_link_id LIMIT ?",
+            (scope.identity_id, placed[2], source_id, *_scope(source),
+             _MAX_EXACT_ORIGIN_ROWS + 1),
         ).fetchall()
-        if not links:
+        # One exact Core receipt among an unbounded set of other claims
+        # does not authorize an arbitrary cleanup of historical staging.
+        if not links or len(links) > _MAX_EXACT_ORIGIN_ROWS:
             return False
 
     candidates = []
@@ -200,14 +210,28 @@ def reconcile_committed_staging(
             "WHERE placement_id=?", (placement_id,),
         ).fetchone()
         linked = db.execute(
-            "SELECT 1 FROM origin_links WHERE origin_kind='provider' "
-            "AND identity_id=? AND artifact_id=? "
-            "AND source_reference_id=? AND evidence_ref=? LIMIT 1",
-            (scope.identity_id, placed[2], source_id, proof["receipt"]),
+            "SELECT 1 FROM origin_links AS o "
+            "JOIN source_references AS s "
+            "ON s.source_reference_id=o.source_reference_id "
+            "WHERE o.origin_kind='provider' "
+            "AND o.identity_id=? AND o.artifact_id=? "
+            "AND o.source_reference_id=? AND o.evidence_ref=? "
+            "AND s.identity_id=? AND s.provider_id=? "
+            "AND s.credential_id=? AND s.account_id=? "
+            "AND s.branch_id=? AND s.edition_id=? "
+            "AND s.right_id=? AND s.reference_kind=? "
+            "AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>'' LIMIT 1",
+            (scope.identity_id, placed[2], source_id, proof["receipt"],
+             *_scope(source)),
         ).fetchone()
         if (same != (status, artifact_id, serialized)
                 or placement != (str(final), placed[2], "present")
                 or linked is None
+                # A profile/account may be rebound during the physical hash:
+                # check the same exact borrower again before any journal or
+                # staged-byte maintenance.
+                or not _exact_borrower_bound_in_db(db, scope)
                 or (transaction_guard is not None
                     and transaction_guard(db) is not True)):
             return False

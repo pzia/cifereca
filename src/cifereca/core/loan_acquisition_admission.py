@@ -72,9 +72,26 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             "code": "adept_loan_identity_conflict",
             "reason": "cross_identity_loan", "retry": "explicit_only",
         })
+    # A provider-wide active-right inventory can contain another borrower,
+    # another connection or a different edition of the SAME upstream loan ID.
+    # Loan ID + local identity alone never authorize an entitlement link.
+    # An unknown borrower is not the empty/primary borrower: keep the
+    # acquisition's optional entitlement unbound rather than guess.
+    exact_borrower = loan.source_account_id
     entitlement_rows = [
         row for row in entitlement_inventory
-        if row.get("loan_id") == loan.id and row.get("identity_id") == identity.identity_id
+        if row.get("loan_id") == loan.id
+        and row.get("identity_id") == identity.identity_id
+        and row.get("provider_id") == loan.source_provider
+        and row.get("credential_id") == loan.source_credential
+        and type(exact_borrower) is str
+        and row.get("account_id") == exact_borrower
+        and row.get("item_id") == str(loan.record_id or loan.id)
+        and row.get("entitlement_type") == "loan"
     ]
-    entitlement_id = entitlement_rows[0]["entitlement_id"] if entitlement_rows else None
+    # A duplicate exact right is ambiguous, not a first-row-wins link.
+    entitlement_id = (
+        entitlement_rows[0]["entitlement_id"]
+        if len(entitlement_rows) == 1 else None
+    )
     return AutomaticLoanAdmission(identity=identity, entitlement_id=entitlement_id)

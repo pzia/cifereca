@@ -6,20 +6,26 @@ Matching SHA alone neither authorizes adoption nor deletion of another path.
 from __future__ import annotations
 
 from pathlib import Path
-import os
 import hashlib
 import json
 import sqlite3
 
 from .convergence_verified_presence import _verified_copy
+from .missing_placement_readiness import _physical_absence
+from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 
 _MAX_MATCHES = 64
+_MAX_SCAN_ROWS = 10_000  # Bound raw registrations before exclusion filtering.
 
 
 def verified_post_placement_duplicates(
     storage, *, library_root: Path, placement_id: str,
 ) -> tuple[str, ...]:
-    """Return only same-profile, rehashed placement IDs; never mutate files/SQL."""
+    """Return same-profile, rehashed placement IDs without changing files/SQL.
+
+    More than 64 candidates is *unknown*, not evidence of zero duplicates.
+    Raise a fixed, privacy-safe error before hashing any partial subset.
+    """
     if (not isinstance(library_root, Path) or type(placement_id) is not str
             or not placement_id or storage.schema_version() < 14):
         return ()
@@ -58,13 +64,33 @@ def verified_post_placement_duplicates(
         # _verified_copy only tests whether the owner directory is in this
         # collection; it separately enforces relative path containment.
         reserved = frozenset((owner_dir,))
+        # A delivery Outbox cannot be a keeper for ordinary cleanup.
+        if ordinary_dedup_path_excluded(
+            target, library_root=library_root, identity_id=identity,
+            owner_directory=owner_dir,
+        ):
+            return ()
         candidates = db.execute(
             "SELECT placement_id,path FROM placements "
             "WHERE identity_id=? AND artifact_id=? AND state='present' "
             "AND placement_id<>? ORDER BY placement_id LIMIT ?",
-            (identity, artifact_id, placement_id, _MAX_MATCHES + 1),
+            (identity, artifact_id, placement_id, _MAX_SCAN_ROWS + 1),
         ).fetchall()
-        if not candidates or len(candidates) > _MAX_MATCHES:
+        if len(candidates) > _MAX_SCAN_ROWS:
+            # Never silently take a subset of an unbounded SQLite snapshot.
+            raise ValueError("canonical_dedup_candidates_over_budget")
+        # A registered delivery Outbox is not a cleanable duplicate and must
+        # not consume the ordinary 64-candidate budget. Filter before SHA.
+        candidates = [
+            (other_id, path) for other_id, path in candidates
+            if not ordinary_dedup_path_excluded(
+                path, library_root=library_root, identity_id=identity,
+                owner_directory=owner_dir,
+            )
+        ]
+        if len(candidates) > _MAX_MATCHES:
+            raise ValueError("canonical_dedup_candidates_over_budget")
+        if not candidates:
             # No duplicate => no extra full-file SHA pass on every successful
             # delivery. The publisher has already verified its own bytes.
             return ()
@@ -176,6 +202,44 @@ def checkpoint_post_placement_duplicates_change(
         existing = db.execute(
             "SELECT value FROM metadata WHERE key=?", (key,),
         ).fetchone()
+        if existing is not None:
+            raw = existing[0]
+            if type(raw) is not str or len(raw) > 24 * 1024:
+                raise ValueError("canonical_dedup_checkpoint_unreadable")
+            try:
+                previous = json.loads(
+                    raw, object_pairs_hook=_unique_checkpoint_fields,
+                )
+            except (ValueError, TypeError, RecursionError) as exc:
+                raise ValueError("canonical_dedup_checkpoint_unreadable") from exc
+            if (type(previous) is not dict or set(previous) != {
+                    "schema", "identity_id", "artifact_id", "placement_ids",
+                } or previous["schema"] !=
+                    "canonical.post-placement-dedup-pending.v1"
+                    or previous["identity_id"] != identity
+                    or previous["artifact_id"] != artifact_id
+                    or type(previous["placement_ids"]) is not list
+                    or not 2 <= len(previous["placement_ids"]) <= _MAX_MATCHES + 1
+                    or any(type(pid) is not str or not 0 < len(pid) <= 256
+                           for pid in previous["placement_ids"])
+                    or len(set(previous["placement_ids"])) !=
+                       len(previous["placement_ids"])):
+                raise ValueError("canonical_dedup_checkpoint_unreadable")
+            # A partial physical rehash is NOT proof that a previously
+            # checkpointed copy has been retired. Only the supervised
+            # postcheck/recovery or strict expiry may acknowledge that.
+            # Merge opaque IDs as advisory history, not fresh SHA evidence.
+            all_ids = set(previous["placement_ids"]) | {
+                placement_id, *candidates,
+            }
+            if len(all_ids) > _MAX_MATCHES + 1:
+                raise ValueError("canonical_dedup_checkpoint_over_budget")
+            payload = json.dumps({
+                "schema": "canonical.post-placement-dedup-pending.v1",
+                "identity_id": identity,
+                "artifact_id": artifact_id,
+                "placement_ids": sorted(all_ids),
+            }, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         changed = existing is None or existing[0] != payload
         if changed:
             db.execute(
@@ -254,6 +318,12 @@ def clear_checkpoint_if_no_duplicates(
         if owner is None or type(owner[0]) is not str or not owner[0]:
             return False
         owner_dir = owner[0]
+        if (owner_dir in {".", ".."} or "/" in owner_dir or "\\" in owner_dir):
+            return False
+        # Missing bytes are meaningful only below the exact registered
+        # profile directory, with no symlink in the ancestor chain.
+        # os.path.lexists(path) alone also returns False outside this scope.
+        identity_root = library_root / owner_dir
         if db.execute(
             "SELECT 1 FROM identities WHERE directory_name=? "
             "AND identity_id<>? LIMIT 1",
@@ -277,14 +347,17 @@ def clear_checkpoint_if_no_duplicates(
         former_paths = []
         for pid, candidate_owner, candidate_artifact, state, candidate_path in former:
             if (pid not in former_ids or candidate_owner != identity
-                    or candidate_artifact != artifact or state == "present"
+                    or candidate_artifact != artifact
+                    or state in {"present", "dedup_cleanup_pending"}
                     or type(candidate_path) is not str):
+                # An unfinalized canonical retirement has its OWN durable
+                # tombstone. Missing bytes alone cannot finalize that
+                # recovery or authorize removal of the wider advisory.
                 return False
-            previous = Path(candidate_path)
-            # Missing registered placement is not missing physical bytes.
-            # Preserve the queue until EACH previous pathname is absent.
-            if (not previous.is_absolute() or ".." in previous.parts
-                    or os.path.lexists(previous)):
+            # A missing filename in another profile, under a symlinked
+            # ancestor, or behind an unavailable parent cannot prove that
+            # this identity's duplicate was physically cleaned up.
+            if _physical_absence(identity_root, candidate_path) != "absent":
                 return False
             former_paths.append((pid, candidate_path, state))
         if len(former_paths) != len(former_ids):
@@ -309,14 +382,17 @@ def clear_checkpoint_if_no_duplicates(
             (owner_dir, identity),
         ).fetchone() is not None:
             return False
-        # Never erase a pending marker when a second physical Placement
-        # remains, even if its bytes no longer match the stored artifact SHA.
-        present = db.execute(
+        # Never erase a pending marker when another physical Placement or
+        # unfinalized retirement tombstone remains. An unfinished tombstone
+        # can retain an unlink/recovery obligation even if its leaf is absent.
+        # Do not acknowledge another cleanup's checkpoint from an opening Sync.
+        remaining = db.execute(
             "SELECT placement_id,path,state FROM placements "
-            "WHERE identity_id=? AND artifact_id=? AND state='present'",
+            "WHERE identity_id=? AND artifact_id=? "
+            "AND state IN ('present','dedup_cleanup_pending') LIMIT 2",
             (identity, artifact),
         ).fetchall()
-        if present != [(placement_id, path, "present")]:
+        if remaining != [(placement_id, path, "present")]:
             return False
         for pid, candidate_path, state in former_paths:
             if (db.execute(
@@ -324,7 +400,7 @@ def clear_checkpoint_if_no_duplicates(
                 "AND identity_id=? AND artifact_id=?",
                 (pid, identity, artifact),
             ).fetchone() != (candidate_path, state)
-                    or os.path.lexists(candidate_path)):
+                    or _physical_absence(identity_root, candidate_path) != "absent"):
                 return False
         if db.execute(
             "SELECT 1 FROM placements WHERE placement_id=? "

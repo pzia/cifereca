@@ -14,6 +14,7 @@ from .source_convergence import (
     ConvergencePlan, OriginEvidence, PlacementEvidence, SourceKey,
     plan_convergence,
 )
+from .canonical_recovery import _exact_borrower_bound_in_db
 from ..catalog import LocalCatalog
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
 
@@ -30,7 +31,7 @@ def _verified_copy(
 ) -> bool:
     """Check the *current* regular bytes; SQLite state alone is not proof."""
     if not (type(path_text) is str and path_text and type(sha256) is str
-            and len(sha256) == 64 and type(size) is int and size >= 0):
+            and len(sha256) == 64 and type(size) is int and size > 0):
         return False
     try:
         alias = Path(os.path.abspath(root.expanduser()))
@@ -55,7 +56,10 @@ def _verified_copy(
         # remain untouched; acquisition eligibility is a separate decision.
         if (len(relative.parts) < 2
                 or relative.parts[0] != owner_directory
-                or owner_directory not in registered_directories):
+                or owner_directory not in registered_directories
+                # A poisoned SQLite path such as A/../B/book.pdf has the
+                # right first component but physically belongs to profile B.
+                or any(part == ".." for part in relative.parts)):
             return False
         current = alias
         for part in relative.parts:
@@ -63,7 +67,7 @@ def _verified_copy(
             if current.is_symlink():
                 return False
         resolved = physical.resolve(strict=True)
-        if not resolved.is_relative_to(resolved_root):
+        if not resolved.is_relative_to(resolved_root / owner_directory):
             return False
         before = os.stat(resolved, follow_symlinks=False)
         if not stat.S_ISREG(before.st_mode) or before.st_size != size:
@@ -134,24 +138,16 @@ def plan_existing_verified_presence(
         # _verified_copy checks the exact owner folder as the first path
         # component, and only needs that owner's name in this membership set.
         reserved_dirs = frozenset((owner_dir,)) if owner_dir else frozenset()
-        binding = db.execute(
-            "SELECT identity_id,enabled FROM provider_connections "
-            "WHERE provider_id=? AND credential_id=?",
-            (scope.provider_id, scope.credential_id),
-        ).fetchone()
-        account_bindings = db.execute(
-            "SELECT account_id FROM provider_accounts "
-            "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-            (scope.identity_id, scope.provider_id, scope.credential_id),
-        ).fetchall()
-        bound = (
-            binding == (scope.identity_id, 1)
-            and sum(a[0] == scope.account_id for a in account_bindings) == 1
-        )
+        # Positive local B evidence may suppress a fresh GET. It must
+        # therefore be tied not only to the exact borrower coordinates but
+        # also to the one currently enabled provider connection. A migrated
+        # account row with a foreign connection_id cannot satisfy this A.
+        # Reuse the bounded Core journal guard in this same SQLite snapshot.
+        bound = _exact_borrower_bound_in_db(db, scope)
         origins_raw = db.execute(
             "SELECT o.origin_link_id, o.identity_id, o.evidence_ref,"
             "s.branch_id, s.edition_id, s.right_id, s.reference_kind,"
-            "a.sha256, a.size "
+            "o.artifact_id, a.sha256, a.size "
             "FROM origin_links AS o "
             "JOIN source_references AS s "
             "ON s.source_reference_id=o.source_reference_id "
@@ -160,6 +156,7 @@ def plan_existing_verified_presence(
             "AND s.identity_id=? AND s.provider_id=? AND s.credential_id=? "
             "AND s.account_id=? AND s.branch_id=? "
             "AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>'' "
             "ORDER BY o.origin_link_id LIMIT ?",
             (scope.identity_id, scope.identity_id, scope.provider_id,
              scope.credential_id, scope.account_id, snapshot.branch,
@@ -176,7 +173,7 @@ def plan_existing_verified_presence(
         # must not consume this source's finite verification budget.
         placements_raw = db.execute(
             "SELECT p.placement_id,p.path,p.identity_id,p.state,"
-            "a.sha256,a.size FROM placements AS p "
+            "p.artifact_id,a.sha256,a.size FROM placements AS p "
             "JOIN artifacts AS a ON a.artifact_id=p.artifact_id "
             "WHERE p.identity_id=? AND p.state='present' AND EXISTS ("
             "SELECT 1 FROM origin_links AS o "
@@ -186,7 +183,8 @@ def plan_existing_verified_presence(
             "AND o.origin_kind='provider' AND s.identity_id=? "
             "AND s.provider_id=? AND s.credential_id=? "
             "AND s.account_id=? AND s.branch_id=? "
-            "AND s.evidence_kind='provider_response') "
+            "AND s.evidence_kind='provider_response' "
+            "AND s.evidence_ref<>'') "
             "ORDER BY p.placement_id LIMIT ?",
             (scope.identity_id, scope.identity_id, scope.provider_id,
              scope.credential_id, scope.account_id, snapshot.branch,
@@ -199,12 +197,15 @@ def plan_existing_verified_presence(
     hashes: set[str] = set()
     # A stale or disabled connection is not an admitted current right.
     # Retain its historical SQL rows, but do not report a present entitlement.
-    for link_id, identity_id, evidence_ref, branch, edition, right, kind, sha, size in (
+    for link_id, identity_id, evidence_ref, branch, edition, right, kind, artifact_id, sha, size in (
         origins_raw if bound else ()
     ):
         try:
             key = SourceKey(scope, edition, right, kind, branch)
-            if key not in source_keys or type(evidence_ref) is not str or not evidence_ref:
+            if (key not in source_keys or type(evidence_ref) is not str
+                    or not evidence_ref or type(sha) is not str
+                    or type(size) is not int or size <= 0
+                    or artifact_id != "sha256:" + sha):
                 continue
             origin = OriginEvidence(
                 kind="provider", artifact_sha256=sha, source=key,
@@ -219,8 +220,8 @@ def plan_existing_verified_presence(
 
     placements = []
     if owner_dir and hashes:
-        for placement_id, path, identity, state, sha, size in placements_raw:
-            if sha not in hashes:
+        for placement_id, path, identity, state, artifact_id, sha, size in placements_raw:
+            if sha not in hashes or artifact_id != "sha256:" + sha:
                 continue
             valid = _verified_copy(
                 path, root=library_root, owner_directory=owner_dir,

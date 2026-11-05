@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -1493,6 +1494,87 @@ class Storage:
             )
         else:
             projection_owned = True
+        # #3196: a v0.7 replay may share an acquisition ID with an imported
+        # completed Core journal, or publish a SECOND synthetic ledger row
+        # while a normal canonical-intake stage already owns this source.
+        # Neither path may turn historical backup status/SHA into authority
+        # over the already durable canonical checkpoint.
+        old_id = cls._acquisition_id_for(row)
+        expected = (
+            str(row.get("provider_id") or ""),
+            str(row.get("credential_id") or ""),
+            row.get("account_id"),
+            str(row.get("item_id") or ""),
+            row.get("identity_id"),
+        )
+        checkpoints = db.execute(
+            "SELECT acquisition_id,provider_id,credential_id,account_id,"
+            "item_id,identity_id,status,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id=? OR (provider_id=? AND credential_id=? "
+            "AND item_id=?) ORDER BY acquisition_id LIMIT 1001",
+            (old_id, expected[0], expected[1], expected[3]),
+        ).fetchall()
+        if len(checkpoints) > 1000:
+            raise ValueError("backup_canonical_receipt_scope_budget")
+        completed_canonical_source = False
+        for existing_id, p, credential, account, item, owner, stage_status, raw in checkpoints:
+            if type(raw) is not str:
+                continue
+            # Do not identify a completed Core receipt from raw JSON text
+            # alone: valid JSON may escape the schema key or any characters
+            # in its value (including the canonical marker). Most legacy
+            # metadata is a small {"legacy_status": ...} record, so only
+            # parse objects with a plausible schema key/escape or marker.
+            marker = "canonical.completed-delivery.v1"
+            possible_receipt = (
+                marker in raw or '"schema"' in raw or "\\u" in raw
+            )
+            if not possible_receipt:
+                continue
+            # The canonical marker is NOT a right or local-presence proof.
+            # It only blocks an older writer from mutating canonical facts.
+            if len(raw) > 65536:
+                raise ValueError("backup_canonical_receipt_unreadable")
+
+            def unique_keys(pairs):
+                document = {}
+                for key, value in pairs:
+                    if key in document:
+                        raise ValueError("duplicate_canonical_receipt_key")
+                    document[key] = value
+                return document
+
+            try:
+                receipt = json.loads(raw, object_pairs_hook=unique_keys)
+            except (ValueError, TypeError, RecursionError) as error:
+                raise ValueError("backup_canonical_receipt_unreadable") from error
+            if type(receipt) is not dict:
+                raise ValueError("backup_canonical_receipt_unreadable")
+            if receipt.get("schema") != marker:
+                # An unrelated structured legacy record is not a finished
+                # Core delivery. A stray literal marker elsewhere in JSON,
+                # however, is ambiguous and still fails closed.
+                if marker in raw:
+                    raise ValueError("backup_canonical_receipt_unreadable")
+                continue
+            # A completed-delivery checkpoint with a non-complete ledger
+            # status is contradictory; never let the old writer guess which
+            # state it may overwrite or treat it as confirmed evidence.
+            if stage_status != "complete":
+                raise ValueError("backup_canonical_receipt_status_conflict")
+            stored = (p, credential, account, item, owner)
+            if (stored == expected and type(owner) is str and owner
+                    and type(account) is str):
+                completed_canonical_source = True
+            elif existing_id == old_id:
+                # A reused deterministic ID must never be reassigned to
+                # another account, borrower or book, even via legacy replay.
+                raise ValueError("backup_acquisition_owner_conflict")
+        if completed_canonical_source:
+            # backup_put refreshed only the compatibility projection.
+            # No entitlement, Artifact, Placement, catalogue or acquisition
+            # journal is synthesized from old and possibly stale data.
+            return
         if projection_owned:
             entitlement_cursor = db.execute(
                 "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
@@ -1568,7 +1650,18 @@ class Storage:
         local_path = str(row.get("local_path") or "").strip()
         placement_id = None
         if local_path:
-            placement_id = cls._stable_id("placement", str(Path(local_path).expanduser().resolve()))
+            # Path.resolve() previously rejected embedded NUL. Lexical
+            # normalization must not silently admit a poisoned SQL pathname.
+            if "\x00" in local_path:
+                raise ValueError("backup_legacy_path_invalid")
+            # 0.7 has only a *claim* about this pathname, not permission to
+            # dereference it. Path.resolve() followed a symlink from A into
+            # B, storing a foreign physical pathname under A's identity and
+            # potentially blocking B's later independently verified Placement.
+            # Normalize spelling only; leave actual file/symlink attestation
+            # to the canonical scanner/publisher. No filesystem read here.
+            claimed_path = os.path.abspath(os.path.expanduser(local_path))
+            placement_id = cls._stable_id("placement", claimed_path)
             # A physical pathname is unique across canonical placements.
             # Only an untouched, unverified legacy placeholder may be refreshed.
             # A canonical scan/publication (including missing/invalid history)
@@ -1605,7 +1698,7 @@ class Storage:
                 "catalog_guard.metadata_json IS NOT ? OR catalog_guard.local_state<>'local' "
                 "OR catalog_guard.identity_id IS NOT ? OR catalog_guard.provider_id IS NOT ? "
                 "OR catalog_guard.item_id IS NOT ?))",
-                (placement_id, artifact_id, str(Path(local_path).expanduser().resolve()), row.get("identity_id"), row.get("provider_id"),
+                (placement_id, artifact_id, claimed_path, row.get("identity_id"), row.get("provider_id"),
                  row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp,
                  cls._json_dump({"imported_from": "backup_items"}),
                   cls._json_dump({"imported_from": "backup_items"}),
@@ -1978,7 +2071,19 @@ class Storage:
             ).fetchall()
             stale = [
                 (item_id, path) for item_id, path in rows
-                if str(item_id or "") not in seen
+                # The admitted manifest IDs were stripped above. Apply the
+                # same normalization to historical SQLite keys for membership
+                # only: otherwise a still-seen legacy " book " is deleted
+                # while the manifest contains "book". Keep the original key
+                # unchanged for the exact DELETE below. Unlike current
+                # manifest IDs, old SQLite keys may be empty, overlong or
+                # contain control characters. Those rows have no admissible
+                # manifest counterpart: preserve them for explicit migration
+                # review instead of interpreting non-membership as absence.
+                if (type(item_id) is str and bool(item_id.strip())
+                    and len(item_id) <= 1024
+                    and not any(c in item_id for c in "\x00\r\n")
+                    and item_id.strip() not in seen)
             ]
             local_preserved = 0
             for item_id, path in stale:
@@ -2067,6 +2172,33 @@ class Storage:
             row["metadata"] = self._json_load(row.pop("metadata_json"))
             out.append(row)
         return out
+
+    def exact_profile_directory_binding(self, identity_id: str) -> tuple[str | None, bool]:
+        """Read exact profile folder and its ownership in one SQL snapshot.
+
+        Never enumerate or deserialize unrelated profiles. Corrupt stores
+        with duplicate physical folders fail closed despite missing indexes.
+        """
+        if (type(identity_id) is not str or not identity_id
+                or len(identity_id) > 1024
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in identity_id)):
+            return None, False
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN")
+            rows = db.execute(
+                "SELECT directory_name FROM identities "
+                "WHERE identity_id=? LIMIT 2", (identity_id,),
+            ).fetchall()
+            if len(rows) != 1:
+                return None, False
+            directory = rows[0][0]
+            if type(directory) is not str:
+                return None, False
+            owners = db.execute(
+                "SELECT identity_id FROM identities "
+                "WHERE directory_name=? LIMIT 2", (directory,),
+            ).fetchall()
+            return directory, len(owners) == 1 and owners[0][0] == identity_id
 
     def identity_get(self, identity_id: str) -> dict[str, Any] | None:
         return next((row for row in self.identities() if row["identity_id"] == identity_id), None)
@@ -2514,6 +2646,46 @@ class Storage:
             row=dict(zip(columns,record)); row["enabled"]=bool(row["enabled"]); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
         return out
 
+    def provider_scope_account_bound(
+        self, *, identity_id: str, provider_id: str,
+        credential_id: str, account_id: str,
+    ) -> bool:
+        """One exact connected owner and borrower, read in one SQLite snapshot.
+
+        Called by Core before private selected-offer and content GETs (often
+        per network chunk). Never enumerate unrelated account metadata and
+        never turn a missing/disabled/rebound connection into permission.
+        The upstream primary borrower may have an empty ID.
+        """
+        values = (identity_id, provider_id, credential_id, account_id)
+        if (any(type(v) is not str or len(v) > 1024
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in v)
+                for v in values)
+                or not identity_id or not provider_id or not credential_id):
+            return False
+        with self._lock, self._connect() as db:
+            # Both cardinality checks must use the same read snapshot:
+            # a concurrent owner rebind cannot mix an old connection with
+            # a newly registered borrower.
+            db.execute("BEGIN")
+            connections = db.execute(
+                "SELECT connection_id,identity_id,enabled "
+                "FROM provider_connections WHERE provider_id=? "
+                "AND credential_id=? LIMIT 2",
+                (provider_id.lower(), credential_id),
+            ).fetchall()
+            if (len(connections) != 1
+                    or connections[0][1:] != (identity_id, 1)):
+                return False
+            borrowers = db.execute(
+                "SELECT 1 FROM provider_accounts WHERE connection_id=? "
+                "AND identity_id=? AND provider_id=? AND credential_id=? "
+                "AND account_id=? LIMIT 2",
+                (connections[0][0], identity_id, provider_id.lower(),
+                 credential_id, account_id),
+            ).fetchall()
+            return len(borrowers) == 1
+
     def identity_for_connection(self, provider_id: str, credential_id: str) -> str | None:
         with self._lock, self._connect() as db:
             row = db.execute(
@@ -2711,6 +2883,133 @@ class Storage:
             )
         return device_id
 
+    def device_usb_binding_declare(
+        self, *, identity_id: str, device_id: str, label: str,
+        usb_fingerprint: str, enabled: bool = False,
+    ) -> str:
+        """Declare one local USB reader; never mount or write to the device.
+
+        Device fingerprints are *claimed* local configuration identifiers.
+        They become evidence of physical presence only after a separate,
+        exact-volume USB scan. A prior device owner/fingerprint cannot be
+        silently replaced by a Settings save, and intents are never moved.
+        """
+        if any(
+            type(value) is not str or not 1 <= len(value) <= 128
+            or value != value.strip() or not value.isprintable()
+            for value in (identity_id, device_id)
+        ):
+            raise ValueError("invalid USB device or identity identifier")
+        if (type(usb_fingerprint) is not str
+                or not 8 <= len(usb_fingerprint) <= 128
+                or any(char not in "abcdefghijklmnopqrstuvwxyz"
+                       "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-"
+                       for char in usb_fingerprint)):
+            raise ValueError("invalid USB volume fingerprint")
+        if (type(label) is not str or not 1 <= len(label.strip()) <= 120
+                or label != label.strip() or not label.isprintable()):
+            raise ValueError("invalid USB device label")
+        if type(enabled) is not bool:
+            raise ValueError("USB device enabled must be explicit boolean")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM identities WHERE identity_id=?",
+                (identity_id,),
+            ).fetchone() is None:
+                raise ValueError("USB device identity not configured")
+            rows = db.execute(
+                "SELECT device_id,identity_id,metadata_json FROM device_bindings"
+            ).fetchall()
+            existing = None
+            for stored_id, stored_identity, stored_json in rows:
+                metadata = self._json_load(stored_json)
+                if type(metadata) is not dict:
+                    if stored_id == device_id:
+                        raise ValueError("existing USB binding metadata invalid")
+                    continue
+                stored_fingerprint = metadata.get("usb_fingerprint")
+                if stored_id == device_id:
+                    existing = (stored_identity, stored_fingerprint)
+                elif (type(stored_fingerprint) is str
+                      and stored_fingerprint.casefold() == usb_fingerprint.casefold()):
+                    raise ValueError("USB volume already bound to another device")
+            if existing is not None:
+                if existing != (identity_id, usb_fingerprint):
+                    raise ValueError("USB device rebind requires explicit unlink")
+                # Preserve historical target/metadata and every placement;
+                # changing a label/activation cannot refresh device evidence.
+                db.execute(
+                    "UPDATE device_bindings SET label=?,enabled=?,updated_at=? "
+                    "WHERE device_id=? AND identity_id=?",
+                    (label, int(enabled), now, device_id, identity_id),
+                )
+                return device_id
+            db.execute(
+                "INSERT INTO device_bindings("
+                "device_id,identity_id,label,enabled,metadata_json,"
+                "created_at,updated_at,target_directory"
+                ") VALUES(?,?,?,?,?,?,?,?)",
+                (device_id, identity_id, label, int(enabled),
+                 self._json_dump({"usb_fingerprint": usb_fingerprint}),
+                 now, now, "Books/Cifereca"),
+            )
+            return device_id
+
+    def device_usb_reader_formats_set(
+        self, *, identity_id: str, device_id: str,
+        usb_fingerprint: str, supported_formats: tuple[str, ...],
+    ) -> str:
+        """Persist a reader's *declared* formats for its exact bound volume.
+
+        These are manually asserted capabilities, NOT proof of actual
+        hardware, readable content, DRM-free bytes, transfer permission or
+        USB presence. Empty formats revoke the declaration. Reconfiguration
+        never alters enabled, existing intentions, paths or observations.
+        """
+        from .core.device_usb_variant_review import _SUFFIX
+
+        if (any(type(value) is not str or not value
+                or value != value.strip() for value in
+                (identity_id, device_id, usb_fingerprint))
+                or type(supported_formats) is not tuple
+                or len(supported_formats) > len(_SUFFIX)
+                or any(type(value) is not str or value not in _SUFFIX
+                       for value in supported_formats)
+                or len(set(supported_formats)) != len(supported_formats)):
+            raise ValueError("USB reader format declaration invalid")
+        if (not 8 <= len(usb_fingerprint) <= 128
+                or any(char not in
+                       "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                       "0123456789._:-" for char in usb_fingerprint)):
+            raise ValueError("USB reader volume fingerprint invalid")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT identity_id,metadata_json FROM device_bindings "
+                "WHERE device_id=?", (device_id,),
+            ).fetchone()
+            if row is None or row[0] != identity_id:
+                raise ValueError("USB reader format owner changed")
+            metadata = self._json_load(row[1])
+            if (type(metadata) is not dict
+                    or metadata.get("usb_fingerprint") != usb_fingerprint):
+                raise ValueError("USB reader format volume changed")
+            changed = dict(metadata)
+            if supported_formats:
+                changed["reader_formats"] = list(supported_formats)
+            else:
+                changed.pop("reader_formats", None)
+            if changed != metadata:
+                db.execute(
+                    "UPDATE device_bindings SET metadata_json=?,updated_at=? "
+                    "WHERE device_id=? AND identity_id=?",
+                    (self._json_dump(changed), now, device_id, identity_id),
+                )
+        return device_id
+
     def device_binding_get(self, device_id: str) -> dict[str, Any] | None:
         rows = [row for row in self.device_bindings() if row.get("device_id") == str(device_id)]
         return rows[0] if rows else None
@@ -2759,6 +3058,166 @@ class Storage:
                  row.get("last_observed_at"), self._json_dump(row.get("metadata")), now, now),
             )
         return placement_id
+
+    def device_usb_intent_set(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+        desired_state: str,
+    ) -> str:
+        """Store a user-declared USB intention; never touch device/files.
+
+        The exact binding, any previous intent and the local artifact scope
+        are checked under one SQLite writer transaction. This operation is
+        NOT a USB-transfer permission or an observation of device presence.
+        Existing observation, managed receipts and relative paths are kept
+        byte-for-byte, rather than overwritten by a stale GTK form snapshot.
+        """
+        if any(
+            type(value) is not str or not value or value != value.strip()
+            for value in (identity_id, device_id, artifact_id)
+        ):
+            raise ValueError("device intent requires exact nonempty identifiers")
+        if type(desired_state) is not str or desired_state not in ("keep", "remove"):
+            raise ValueError("device intent must be keep or remove")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT identity_id FROM device_bindings WHERE device_id=?",
+                (device_id,),
+            ).fetchone()
+            if binding is None or binding[0] != identity_id:
+                raise ValueError("device intent requires exact bound identity")
+            current = db.execute(
+                "SELECT device_placement_id,metadata_json FROM device_placements "
+                "WHERE device_id=? AND artifact_id=?",
+                (device_id, artifact_id),
+            ).fetchone()
+            if current is not None:
+                # Older placements have no origin identity. A reassigned
+                # device must never silently make its old intentions belong
+                # to a new profile, even when the artifact SHA is shared.
+                metadata = self._json_load(current[1])
+                if type(metadata) is not dict or metadata.get("intent_identity_id") != identity_id:
+                    raise ValueError("device intent owner is unproven")
+                db.execute(
+                    "UPDATE device_placements SET desired_state=?,updated_at=? "
+                    "WHERE device_id=? AND artifact_id=?",
+                    (desired_state, now, device_id, artifact_id),
+                )
+                return str(current[0])
+            if desired_state == "remove":
+                # No Cifereca-managed prior intent: a fresh declaration must
+                # not authorize deletion of arbitrary existing device books.
+                raise ValueError("cannot remove an unmanaged device artifact")
+            # Local ownership must come from an exact active placement, never
+            # a globally shared artifact_id or a catalogue/remote right.
+            owned = db.execute(
+                "SELECT 1 FROM placements WHERE artifact_id=? "
+                "AND identity_id=? AND state='present' LIMIT 1",
+                (artifact_id, identity_id),
+            ).fetchone()
+            if owned is None:
+                raise ValueError("device intent requires local identity placement")
+            placement_id = self._stable_id("device-placement", device_id, artifact_id)
+            db.execute(
+                "INSERT INTO device_placements("
+                "device_placement_id,device_id,artifact_id,desired_state,"
+                "observed_state,target_relative_path,last_observed_at,"
+                "metadata_json,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (placement_id, device_id, artifact_id, "keep", "unknown",
+                 None, None, self._json_dump({"intent_identity_id": identity_id}),
+                 now, now),
+            )
+            return placement_id
+
+    def device_usb_target_set(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+        target_relative_path: str,
+    ) -> str:
+        """Pin the destination of an *existing* USB keep intention only.
+
+        This is purely declarative, not filesystem I/O or a delivery claim.
+        A planned destination is immutable once set: changing it later would
+        risk orphaning a prior device file or its managed-write receipt.
+        An explicit migration/reconciliation must own that later operation.
+        """
+        from .core.device_usb_preview import _relative
+
+        if any(
+            type(value) is not str or not value or value != value.strip()
+            for value in (identity_id, device_id, artifact_id)
+        ):
+            raise ValueError("device target requires exact identifiers")
+        if not _relative(target_relative_path):
+            raise ValueError("device target relative path invalid")
+        # Reject filesystem-sensitive names even before mounting. The Core
+        # must never write a hidden Windows/FAT reserved special name on USB.
+        reserved = {"CON", "PRN", "AUX", "NUL"}
+        reserved.update(f"{prefix}{number}" for prefix in ("COM", "LPT")
+                        for number in range(1, 10))
+        for component in target_relative_path.split("/"):
+            if (component.endswith((".", " "))
+                    or len(component.encode("utf-8")) > 255
+                    or any(char in '<>:"|?*' for char in component)
+                    or component.split(".")[0].upper() in reserved):
+                raise ValueError("device target filesystem name invalid")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            binding = db.execute(
+                "SELECT identity_id,target_directory FROM device_bindings "
+                "WHERE device_id=?", (device_id,),
+            ).fetchone()
+            if binding is None or binding[0] != identity_id:
+                raise ValueError("device target requires exact bound identity")
+            managed = binding[1]
+            if (type(managed) is not str or not _relative(managed)
+                    or not target_relative_path.startswith(managed + "/")):
+                raise ValueError("device target outside managed directory")
+            current = db.execute(
+                "SELECT device_placement_id,desired_state,"
+                "target_relative_path,observed_state,last_observed_at,metadata_json "
+                "FROM device_placements WHERE device_id=? AND artifact_id=?",
+                (device_id, artifact_id),
+            ).fetchone()
+            if current is None:
+                raise ValueError("device target requires an existing intention")
+            (placement_id, desired, existing_path, observed_state,
+             last_observed_at, raw_metadata) = current
+            metadata = self._json_load(raw_metadata)
+            if (type(metadata) is not dict
+                    or metadata.get("intent_identity_id") != identity_id):
+                raise ValueError("device target intent owner is unproven")
+            if type(existing_path) is str:
+                if existing_path != target_relative_path:
+                    raise ValueError("device target migration requires supervision")
+                return str(placement_id)
+            if existing_path is not None:
+                raise ValueError("device target original path invalid")
+            if desired != "keep":
+                raise ValueError("device target requires a keep intention")
+            if (observed_state != "unknown"
+                    or last_observed_at is not None
+                    or metadata != {"intent_identity_id": identity_id}):
+                raise ValueError("device target has prior observation")
+            rows = db.execute(
+                "SELECT target_relative_path FROM device_placements "
+                "WHERE device_id=? AND artifact_id<>?",
+                (device_id, artifact_id),
+            ).fetchall()
+            for (other,) in rows:
+                if (type(other) is str
+                        and other.casefold() == target_relative_path.casefold()):
+                    raise ValueError("device target path already reserved")
+            # The choice cannot change observed_state, last_observed_at or
+            # any opaque receipt/provider metadata from previous workers.
+            db.execute(
+                "UPDATE device_placements SET target_relative_path=?,"
+                "updated_at=? WHERE device_id=? AND artifact_id=?",
+                (target_relative_path, now, device_id, artifact_id),
+            )
+            return str(placement_id)
 
     def device_placement_get(self, device_id: str, artifact_id: str) -> dict[str, Any] | None:
         rows = self.device_placements(device_id=device_id, artifact_id=artifact_id)
@@ -3289,6 +3748,14 @@ class Storage:
 
     def acquisition_put(self, item: dict[str, Any], *, insert_only: bool = False) -> str:
         row = dict(item)
+        # SQLite's TEXT affinity silently coerces int/bool account markers
+        # to digit strings. After that conversion the reader cannot tell
+        # an untrusted numeric value from a legitimate borrower barcode.
+        # Reject the invalid type BEFORE any INSERT/UPSERT or owner check;
+        # preserve None for historical unknown and "" for Paris primary.
+        if (row.get("account_id") is not None
+                and type(row["account_id"]) is not str):
+            raise ValueError("acquisition_account_scope_invalid")
         now = int(row.get("updated_at") or time.time())
         acquisition_id = str(row.get("acquisition_id") or self._stable_id(
             "acquisition", row.get("entitlement_id"), row.get("provider_id"), row.get("credential_id"), row.get("item_id")

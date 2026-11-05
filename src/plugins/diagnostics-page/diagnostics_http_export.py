@@ -1,6 +1,8 @@
 """HTTP Trace private export controller, using only the public broker."""
 from __future__ import annotations
 
+from datetime import datetime
+
 
 class HTTPTraceExport:
     """Own a button, confirmation and native chooser for one page lifetime."""
@@ -80,7 +82,10 @@ class HTTPTraceExport:
                 chooser.set_current_folder(self.gio.File.new_for_path(folder))
             except Exception:
                 pass
-        chooser.set_current_name("cifereca-echanges-http.zip")
+        chooser.set_current_name(
+            "cifereca-echanges-http-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+            + ".zip"
+        )
         self.chooser = chooser
         chooser.connect("response", self.chose_file)
         chooser.show()

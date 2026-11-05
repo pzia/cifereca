@@ -27,6 +27,7 @@ from cifereca_paris_trace import (
 )
 from cifereca.plugin_api import (
     AccountOptionField,
+    BorrowerScopedOptionField,
     CredentialField,
     ProviderCapabilities,
     ProviderSearchCapabilities,
@@ -44,6 +45,15 @@ from cifereca.plugin_api import (
 )
 
 _TRACE_LOG = logging.getLogger("cifereca")
+
+
+def _paris_core_admission_current(admission_current):
+    """A revoked/raising Core lease cannot authorize a selected PNB GET."""
+    try:
+        return (admission_current is None or
+                (callable(admission_current) and admission_current() is True))
+    except Exception:
+        return False
 
 
 def _pnb_direct_url_observed(raw: object, *, client: object) -> bool:
@@ -83,6 +93,47 @@ def _paris_pnb_offer_id(scope, edition_id: str, right_id: str) -> str:
     parts = (scope.identity_id, scope.provider_id, scope.credential_id,
              scope.account_id, edition_id, right_id, "dilicom:pnb-direct/1")
     return "paris.pnb:" + hashlib.sha256(chr(31).join(parts).encode("utf-8")).hexdigest()
+
+
+def _paris_loan_branch_coverage(rows, upstream, medium, failed):
+    """Qualify one successful scoped ListLoans read, independently of files."""
+    def partial(reason):
+        return LoanBranchCoverage(
+            upstream=upstream.casefold(), medium=medium,
+            completeness="partial", reason_code=reason,
+        )
+
+    if upstream in failed:
+        return partial("branch_unavailable")
+    seen = set()
+    legacy = False
+    for row in rows:
+        if row.provider not in ("DILICOM", "SYRACUSE"):
+            return partial("invalid_response")
+        if row.provider != upstream:
+            continue
+        if row.medium != medium:
+            return partial("invalid_response")
+        if type(row.raw) is not dict or not row.raw:
+            # A legacy/custom client may supply descriptive Loan objects,
+            # but cannot attest provider identifiers or negative absence.
+            legacy = True
+            continue
+        identifiers = (row.raw.get("Id") or row.raw.get("HoldingId"),
+                       row.raw.get("RecordId"))
+        if any(type(value) not in (str, int) or not 1 <= len(str(value)) <= 1024
+               or any(c in str(value) for c in ("\x00", "\r", "\n"))
+               for value in identifiers):
+            return partial("invalid_response")
+        loan_id, record_id = map(str, identifiers)
+        if row.id != loan_id or row.record_id != record_id or loan_id in seen:
+            return partial("invalid_response")
+        seen.add(loan_id)
+    return LoanBranchCoverage(
+        upstream=upstream.casefold(), medium=medium,
+        completeness="unknown" if legacy else "complete",
+        pagination_complete=None if legacy else True,
+    )
 
 
 
@@ -129,7 +180,36 @@ DESCRIPTOR = ProviderDescriptor(
         AccountOptionField("base_url", "URL du portail",
                            default="https://bibliotheques.paris.fr",
                            legacy_config_key="base_url"),
+        # #4065: these values apply to the PRIMARY Paris borrower ONLY.
+        # Never inherit either value on a linked reader account: that requires
+        # an independently identified borrower-specific setting and UI.
+        AccountOptionField(
+            "manual_loan_limit_primary_digital",
+            "Compte principal · maximum personnel de prêts numériques",
+            default="4", value_type="unsigned_integer", min_value=0, max_value=99,
+            help_text="4 par défaut · DILICOM seulement. Plafond renseigné par vous, "
+                      "sans effet sur les droits réels, l'emprunt ou la synchronisation. "
+                      "Ne s'applique pas aux comptes lecteurs liés.",
+        ),
+        AccountOptionField(
+            "manual_loan_limit_primary_physical",
+            "Compte principal · maximum personnel de prêts physiques",
+            default="4", value_type="unsigned_integer", min_value=0, max_value=99,
+            help_text="4 par défaut · SYRACUSE seulement. Plafond renseigné par vous, "
+                      "distinct du quota officiel et sans effet sur la prolongation. "
+                      "Ne s'applique pas aux comptes lecteurs liés.",
+        ),
     ),
+    borrower_scoped_options=(BorrowerScopedOptionField(
+        key="manual_loan_limits_linked",
+        label="Plafond personnel du compte lié",
+        branches=(("digital", "Numérique · DILICOM"),
+                  ("physical", "Physique · SYRACUSE")),
+        default="4", min_value=0, max_value=99,
+        help_text="Indication locale uniquement. Les comptes liés sont séparés "
+                  "du principal et les deux branches ne se cumulent pas ; "
+                  "aucune incidence sur les droits de prêt ou la synchronisation.",
+    ),),
 )
 
 
@@ -236,9 +316,28 @@ class ParisProviderSession(ProviderSession):
         self._loan_branch_failures: ContextVar[frozenset[str] | None] = ContextVar(
             "paris_loan_branch_failures", default=None,
         )
+        # #4281: measurement-only provenance. No loan/rights cache or
+        # additional provider request may be created from these counters.
+        self._loan_read_consumer: ContextVar[str] = ContextVar(
+            "paris_loan_read_consumer", default="loans",
+        )
+        self._loan_ebooks_attempts: ContextVar[int | None] = ContextVar(
+            "paris_loan_ebooks_attempts", default=None,
+        )
+        # Only the synchronous Core opening-rights projection may install
+        # an exact typed inventory in this task. No cross-call rights cache.
+        self._same_cycle_rights_inventory: ContextVar[LoanInventorySnapshot | None] = ContextVar(
+            "paris_same_cycle_rights_inventory", default=None,
+        )
+        # Tiny one-shot proof that Core's defensive copy stems from THIS
+        # session's latest completed typed read, not a different borrower,
+        # account instance or older session. Never retain loan rows here.
+        self._last_typed_loan_marker = None
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
+        # Core owns the persistent claim; never reuse one in this session.
+        self._borrow_claim_attempts: set[str] = set()
 
     @staticmethod
     def _account_unusable_reason(summary: dict[str, Any]) -> str | None:
@@ -272,6 +371,12 @@ class ParisProviderSession(ProviderSession):
             return self._connect_locked()
 
     def _connect_locked(self) -> list[Account]:
+        # A new authentication attempt replaces the previous session's
+        # authority even if login, summary or credential validation fails.
+        # Never leave stale accounts usable after a refused reconnect.
+        # Successful connection publishes its fresh accounts at the end.
+        self.connected = False
+        self._accounts = []
         username = str(self.credentials.get("username") or "").strip()
         password = str(self.credentials.get("password") or "")
         if not username or not password:
@@ -455,6 +560,9 @@ class ParisProviderSession(ProviderSession):
             try:
                 matched: SearchResult | None = None
                 for query in queries[:2]:
+                    attempts = self._loan_ebooks_attempts.get()
+                    if attempts is not None:
+                        self._loan_ebooks_attempts.set(attempts + 1)
                     rows = self.client.search_catalog(query, scenario="EBOOKS", result_size=12)
                     if record_id:
                         matched = next((row for row in rows if str(row.record_id) == record_id), None)
@@ -518,6 +626,9 @@ class ParisProviderSession(ProviderSession):
         Both loans() and the typed snapshot reuse the same GETs; only the
         typed snapshot may attest branch coverage. No mutable v1 error facade.
         """
+        # A new private inventory request supersedes any previously offered
+        # same-cycle observation, including before a provider failure.
+        self._last_typed_loan_marker = None
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
@@ -596,14 +707,21 @@ class ParisProviderSession(ProviderSession):
         for upstream in ("DILICOM", "SYRACUSE"):
             if not scope_current():
                 raise ProviderConfigurationError("account_scope_mismatch")
+            started = time.perf_counter()
+            stage_status = "success"
+            stage_rows = 0
             try:
-                rows.extend(self.client.loans(upstream, borrower_id))
+                branch_rows = self.client.loans(upstream, borrower_id)
+                stage_rows = len(branch_rows)
+                rows.extend(branch_rows)
             except Cancelled:
+                stage_status = "cancelled"
                 # Cooperative cancellation is NOT an unavailable branch.
                 # Stop the second upstream GET and never publish a partial
                 # inventory or synthetic negative-rights evidence.
                 raise
             except Exception as exc:
+                stage_status = "failed"
                 # Neither branch failure nor sibling success proves an empty
                 # inventory. Keep the compatibility code and attach only the
                 # separately typed HTTP/transport reason when attested.
@@ -628,6 +746,17 @@ class ParisProviderSession(ProviderSession):
                     )
                 except Exception:
                     pass
+            finally:
+                # One measurement per actual upstream attempt. A failed or
+                # cancelled branch is not a complete, empty loan inventory.
+                _TRACE_LOG.info(
+                    "TRACE paris list-loans timing phase=branch consumer=%s"
+                    " upstream=%s identity_id=%s credential_id=%s borrower_id=%s"
+                    " status=%s duration_ms=%s loans=%s",
+                    self._loan_read_consumer.get(), upstream, borrower_scope[1],
+                    borrower_scope[3], borrower_id, stage_status,
+                    max(0, int((time.perf_counter() - started) * 1000)), stage_rows,
+                )
             # This check must run OUTSIDE the exception handler: a borrower
             # change is an authorization failure, never merely a partial
             # provider branch failure that permits another private GET.
@@ -641,8 +770,30 @@ class ParisProviderSession(ProviderSession):
                 "Bibliothèques de Paris : inventaires DILICOM et SYRACUSE indisponibles"
             ) from None
         rows = self._decorate(rows, self.provider_id, self.credential_id)
-        for loan in rows:
-            self._enrich_digital_loan_metadata(loan)
+        enriched_at = time.perf_counter()
+        attempts_token = self._loan_ebooks_attempts.set(0)
+        try:
+            # #4281: an exact rights.observation snapshot uses the already
+            # scoped ListLoans rows and upstream IDs only. Author, thumbnail
+            # and EBOOKS catalogue lookups cannot attest loan rights, so
+            # omit that optional work on the rights-only critical path.
+            # Inventory/ordinary loan readers retain their descriptive data.
+            if self._loan_read_consumer.get() != "rights_observation":
+                for loan in rows:
+                    self._enrich_digital_loan_metadata(loan)
+        finally:
+            # Catalogue lookups are optional descriptive calls, never an
+            # additional ListLoans read or a proof of current entitlements.
+            attempts = self._loan_ebooks_attempts.get()
+            self._loan_ebooks_attempts.reset(attempts_token)
+            _TRACE_LOG.info(
+                "TRACE paris list-loans timing phase=metadata consumer=%s"
+                " identity_id=%s credential_id=%s borrower_id=%s"
+                " loans=%s ebooks_attempted=%s duration_ms=%s",
+                self._loan_read_consumer.get(), borrower_scope[1],
+                borrower_scope[3], borrower_id, len(rows), attempts,
+                max(0, int((time.perf_counter() - enriched_at) * 1000)),
+            )
         # Persist the exact borrower on each loan. Paris uses the empty string
         # for the primary account, which must not be confused with "unknown".
         if not scope_current():
@@ -653,14 +804,36 @@ class ParisProviderSession(ProviderSession):
 
     def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
         with self._loan_inventory_lock:
-            return self._snapshot_for_account(account)
+            token = self._loan_read_consumer.set("loan_inventory")
+            try:
+                snapshot = self._snapshot_for_account(account)
+                # The Core adapter makes defensive copies. Keep only a
+                # short marker and the live Account object's identity, not
+                # a second LoanInventorySnapshot or a persistent rights cache.
+                matches = [
+                    live for live in self._accounts if type(live) is Account
+                    and LoanInventoryScope.for_account(live) == snapshot.scope
+                ]
+                if (snapshot.status == "success"
+                        and snapshot.observed_at
+                        and snapshot.branch_claims_complete("dilicom", "digital")
+                        and snapshot.branch_claims_complete("syracuse", "physical")
+                        and len(matches) == 1):
+                    self._last_typed_loan_marker = (
+                        snapshot.observed_at, snapshot.scope, id(matches[0]),
+                        id(self._accounts), getattr(self, "_epoch", None),
+                    )
+                return snapshot
+            finally:
+                self._loan_read_consumer.reset(token)
 
     def _snapshot_for_account(self, account: Account) -> LoanInventorySnapshot:
-        """One scoped legacy read with separate DILICOM/SYRACUSE evidence.
+        """One scoped read; each qualified ListLoans branch is complete.
 
-        Neither legacy Paris upstream currently attests pagination/exhaustive
-        absence. Consequently even an all-successful read claims UNKNOWN
-        completeness, never proof that a missing loan was returned.
+        The official endpoint returns the current whole list, including zero
+        loans. HTTP/shape/pagination failures are rejected by the client;
+        malformed or ambiguous row IDs cannot certify absent loans here.
+        No local file or ADEPT success is inferred from this certificate.
         """
         # A borrower may be passed as an Account copy by the Core; choose
         # the unique live account by its scoped values, but then pin that
@@ -725,11 +898,7 @@ class ParisProviderSession(ProviderSession):
             for row in rows
         )
         branches = tuple(
-            LoanBranchCoverage(
-                upstream=upstream.casefold(), medium=medium,
-                completeness="partial" if upstream in failed else "unknown",
-                reason_code="branch_unavailable" if upstream in failed else None,
-            )
+            _paris_loan_branch_coverage(normalized, upstream, medium, failed)
             for upstream, medium in (
                 ("DILICOM", "digital"), ("SYRACUSE", "physical")
             )
@@ -737,9 +906,12 @@ class ParisProviderSession(ProviderSession):
         return LoanInventorySnapshot(
             scope=LoanInventoryScope.for_account(account),
             loans=normalized,
-            status="partial" if failed else "success",
+            status="partial" if any(b.completeness == "partial" for b in branches) else "success",
             branches=branches,
-            reason_code="branch_unavailable" if failed else None,
+            observed_at=datetime.now(timezone.utc).isoformat(),
+            reason_code=("branch_unavailable" if failed else
+                         "invalid_response" if any(b.reason_code == "invalid_response"
+                                                   for b in branches) else None),
         )
 
     def rights_observation_snapshot(self, account: Account) -> ProviderRightsSnapshot:
@@ -807,7 +979,27 @@ class ParisProviderSession(ProviderSession):
             bound = original[0] if len(original) == 1 else None
             if bound is None:
                 raise ProviderConfigurationError("account_scope_mismatch")
-            inventory = self._snapshot_for_account(account)
+            same_cycle = self._same_cycle_rights_inventory.get()
+            if same_cycle is not None:
+                # The prior read was authenticated and normalized through the
+                # Core typed inventory adapter in the *same* source Sync phase.
+                # Consume only the exact complete two-branch immutable
+                # envelope. Never fetch a sibling account or silently use
+                # a partial/foreign batch to infer absent rights.
+                self._same_cycle_rights_inventory.set(None)
+                if (type(same_cycle) is not LoanInventorySnapshot
+                        or same_cycle.scope != LoanInventoryScope.for_account(account)
+                        or same_cycle.status != "success"
+                        or not same_cycle.branch_claims_complete("dilicom", "digital")
+                        or not same_cycle.branch_claims_complete("syracuse", "physical")):
+                    raise ProviderCapabilityError("paris_same_cycle_inventory_unverified")
+                inventory = same_cycle
+            else:
+                token = self._loan_read_consumer.set("rights_observation")
+                try:
+                    inventory = self._snapshot_for_account(account)
+                finally:
+                    self._loan_read_consumer.reset(token)
             scope = inventory.scope
             # A succeeded SYRACUSE response cannot turn a failed DILICOM
             # read into an empty but apparently successful rights branch.
@@ -883,26 +1075,55 @@ class ParisProviderSession(ProviderSession):
                         account.provider_id, account.credential_id) != scope_key
                     or core_owner_binding() != owner_binding):
                 raise ProviderConfigurationError("account_scope_mismatch")
+            # ListLoans is one authenticated, non-paginated DILICOM inventory
+            # response for this exact borrower. Successful consultation is
+            # complete by default for *observations*, including zero loans.
+            # A missing upstream branch, invalid/misclassified card or
+            # duplicate right ID must keep this evidence partial. Physical
+            # SYRACUSE errors are independent and cannot erase a successful
+            # DILICOM read. This claim never authorizes negative rights or
+            # a return: LoanInventorySnapshot's stricter completeness stays
+            # unchanged until its separate legacy return semantics are retired.
+            dilicom_branches = [
+                branch for branch in inventory.branches
+                if branch.upstream == "dilicom" and branch.medium == "digital"
+            ]
+            digital_candidates = [
+                loan for loan in inventory.loans
+                if loan.provider == "DILICOM" or loan.medium == "digital"
+            ]
+            complete = (
+                type(inventory) is LoanInventorySnapshot
+                and inventory.status in ("success", "partial")
+                and len(dilicom_branches) == 1
+                and dilicom_branches[0].reason_code is None
+                and not dilicom_failed
+                and not ambiguous_right_ids
+                and len(rights_by_id) == len(digital_candidates)
+                and all(
+                    loan.provider == "DILICOM" and loan.medium == "digital"
+                    for loan in digital_candidates
+                )
+            )
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
                     scope.identity_id, scope.provider_id,
                     scope.credential_id, scope.account_id,
                 ),
                 rights=tuple(rights_by_id.values()),
-                status="failed" if dilicom_failed else "partial",
-                coverage="unknown" if dilicom_failed else "partial",
-                pagination_complete=False, branch="dilicom",
+                status=("failed" if dilicom_failed else
+                        "success" if complete else "partial"),
+                coverage=("unknown" if dilicom_failed else
+                          "complete" if complete else "partial"),
+                pagination_complete=bool(complete), branch="dilicom",
                 observed_at=observed, snapshot_ref="paris.dilicom.listloans",
             )
 
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
 
-    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
-        # An unsupported field/scope is a new failed attempt, not a reason
-        # to keep a previous partial Syracuse branch warning visible.
-        self.last_search_warnings = []
-        self.last_search_response_facets = []
+    @staticmethod
+    def _search_arguments(query: str, scope: str, page: int, field: str) -> tuple[str, str]:
         # Syracuse search is a general text query. Do not advertise an
         # author/ISBN/subject restriction that the upstream client ignores.
         if type(field) is not str or field.strip().casefold() != "all":
@@ -925,7 +1146,13 @@ class ParisProviderSession(ProviderSession):
         # The public capability validator accepts case/whitespace variants,
         # but ParisClient dispatches exact tokens. Pass the validated scope
         # rather than implicitly widening " DIGITAL " to all catalogues.
-        scope = scope.strip().casefold()
+        return query, scope.strip().casefold()
+
+    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        # An unsupported field/scope is a new failed attempt.
+        self.last_search_warnings = []
+        self.last_search_response_facets = []
+        query, scope = self._search_arguments(query, scope, page, field)
         try:
             rows = self._decorate(
                 self.client.search(query, scope, page),
@@ -939,6 +1166,41 @@ class ParisProviderSession(ProviderSession):
                 dict(facet) for facet in getattr(self.client, "last_search_response_facets", ())
             ]
 
+    def search_with_response_facets(
+        self, query: str, scope: str = "all", *, field: str = "all",
+        content_types: tuple[str, ...] = (),
+    ):
+        # Import the optional contract only when a compatible Core invokes it.
+        from cifereca.plugin_api import (
+            CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
+        )
+
+        self.last_search_warnings = []
+        self.last_search_response_facets = []
+        query, scope = self._search_arguments(query, scope, 0, field)
+        try:
+            rows, facets, warnings = self.client.search_response(query, scope)
+        except Exception:
+            self.last_search_warnings = list(self.client.last_search_warnings)
+            raise
+        self.last_search_warnings = warnings
+        self.last_search_response_facets = [dict(facet) for facet in facets]
+        projected = tuple(
+            CatalogSearchFacet(
+                facet["scenario"], facet["page"], facet["field"], facet["label"],
+                tuple(CatalogSearchFacetValue(**value) for value in facet["values"])
+                if facet["values_schema"] == "label_count_selected_v1" else None,
+            )
+            for facet in facets
+        )
+        return ProviderSearchResponse(
+            [_project_paris_acquisition_formats(item) for item in self._decorate(
+                rows, self.provider_id, self.credential_id
+            )],
+            projected,
+            partial=bool(warnings),
+        )
+
     def acquisition_offers(self, item: SearchResult) -> AcquisitionOfferSet:
         return _paris_acquisition_offer_set(item)
 
@@ -949,19 +1211,24 @@ class ParisProviderSession(ProviderSession):
         return detail
 
     def borrow(self, item: SearchResult, account: Account) -> Loan:
-        """Create a real Paris PNB loan using the captured official redirect flow.
+        """A legacy call has no persistent claim for the mutating redirect."""
+        raise ProviderCapabilityError("paris_borrow_claim_required")
 
-        The captured contract is valid for the primary account only.  Paris uses
-        the empty upstream UID for that account; linked/delegated accounts remain
-        intentionally rejected until their mutation flow is captured.
+    def borrow_explicit_with_claim(
+        self, item: SearchResult, account: Account, *,
+        admission, claimed_receipt, confirmed=False, core_scope_current=None,
+    ) -> Loan:
+        """Manual PNB attempt under the same public claim ABI as BnF.
+
+        Core must persist the exact claim before calling this method. Sync
+        never calls it; an unavailable ACSM does not disprove an observed loan.
         """
-        uid = "" if account.is_primary or not account.unique_id else account.unique_id
-        loan = self.client.borrow_digital(item, uid)
-        loan.source_provider = self.provider_id
-        loan.source_credential = self.credential_id
-        loan.source_account_id = account.unique_id or "primary"
-        self._enrich_digital_loan_metadata(loan)
-        return loan
+        from cifereca_paris_borrow import borrow_with_claim
+        return borrow_with_claim(
+            self, item, account, admission=admission,
+            claimed_receipt=claimed_receipt, confirmed=confirmed,
+            core_scope_current=core_scope_current,
+        )
 
     def renew(self, loan: Loan, account: Account) -> dict[str, Any]:
         # Provider-side defense: even a direct plugin call must never POST
@@ -1013,6 +1280,51 @@ class ParisProviderSession(ProviderSession):
         from cifereca.plugin_api import from_legacy_rights_snapshot
         return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
 
+    def downloadable_resource_snapshot_from_loan_inventory(
+        self, account, *, loan_inventory,
+    ):
+        """#4281: project the *same* exact completed loan read in opening Sync.
+
+        Called only by the Core scoped lease. Never a durable cache: the
+        ContextVar is restored even when validation/rights projection fails.
+        All existing broker/owner/account and PNB-offer checks run unchanged.
+        Ordinary rights, selected-offer, borrow and content delivery remain
+        independently fresh, including after an upstream mutation.
+        """
+        if (type(account) is not Account
+                or type(loan_inventory) is not LoanInventorySnapshot
+                or loan_inventory.scope != LoanInventoryScope.for_account(account)
+                or loan_inventory.status != "success"
+                or not loan_inventory.branch_claims_complete("dilicom", "digital")
+                or not loan_inventory.branch_claims_complete("syracuse", "physical")):
+            raise ProviderCapabilityError("paris_same_cycle_inventory_unverified")
+        from cifereca.plugin_api import from_legacy_rights_snapshot
+        with self._loan_inventory_lock:
+            marker = self._last_typed_loan_marker
+            # Consume before rights projection, including on rejection. A
+            # replay can never use this token, and independent rights reads
+            # still perform two fresh ListLoans calls.
+            self._last_typed_loan_marker = None
+            matching = [
+                live for live in self._accounts if type(live) is Account
+                and LoanInventoryScope.for_account(live) == loan_inventory.scope
+            ]
+            if (marker is None or len(matching) != 1
+                    or marker != (
+                        loan_inventory.observed_at, loan_inventory.scope,
+                        id(matching[0]), id(self._accounts),
+                        getattr(self, "_epoch", None),
+                    )
+                    or self.connected is not True):
+                raise ProviderCapabilityError("paris_same_cycle_inventory_stale")
+            token = self._same_cycle_rights_inventory.set(loan_inventory)
+            try:
+                return from_legacy_rights_snapshot(
+                    self.rights_observation_snapshot(account)
+                )
+            finally:
+                self._same_cycle_rights_inventory.reset(token)
+
     def downloadable_selected_offer_snapshot(
         self, account, *, edition_id, resource_id, kind, branch,
         explicit_user_action=False,
@@ -1031,7 +1343,34 @@ class ParisProviderSession(ProviderSession):
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
     ):
-        """#3723 v2: stage the *existing* exact ACSM/EPUB path; Core owns SHA."""
+        """Compatibility v2 candidate; explicit/legacy callers remain unchanged."""
+        return self._downloadable_selected_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id, kind=kind,
+            branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+        )
+
+    def downloadable_selected_delivery_candidate_guarded(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current,
+    ):
+        """Core revocation fence for the whole selected Paris PNB transfer."""
+        if not callable(admission_current) or not _paris_core_admission_current(admission_current):
+            raise ProviderCapabilityError("paris_core_admission_revoked")
+        return self._downloadable_selected_delivery_candidate(
+            account, edition_id=edition_id, resource_id=resource_id, kind=kind,
+            branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            admission_current=admission_current,
+        )
+
+    def _downloadable_selected_delivery_candidate(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current=None,
+    ):
+        """Stage the exact provider candidate, never a Core receipt or B."""
         from cifereca.plugin_api import SourceReference, DeliveryCandidate
         # Pin the caller scope *before* the underlying provider performs I/O.
         # A rebind must not manufacture a candidate for the new owner.
@@ -1040,14 +1379,17 @@ class ParisProviderSession(ProviderSession):
             account, edition_id=edition_id, right_id=resource_id,
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
+            **({"admission_current": admission_current}
+               if admission_current is not None else {}),
         )
         # Compare the mutable caller against the frozen, previously valid
         # scope. Reconstructing ProviderRightsScope *after* GET could itself
         # raise on an empty/invalid account field, bypassing candidate cleanup.
-        if (account.identity_id, account.provider_id,
+        if ((account.identity_id, account.provider_id,
                 account.credential_id, account.unique_id) != (
                 scope.identity_id, scope.provider_id,
-                scope.credential_id, scope.account_id):
+                scope.credential_id, scope.account_id)
+                or not _paris_core_admission_current(admission_current)):
             try:
                 staged = Path(path)
                 if (staged.parent == Path(target_dir) and staged.is_file()
@@ -1096,6 +1438,7 @@ class ParisProviderSession(ProviderSession):
         self, account: Account, *, edition_id: str, right_id: str,
         kind: str, branch: str, delivery_offer_id: str,
         target_dir, explicit_user_action: bool = False,
+        admission_current=None,
     ) -> tuple[Path, str]:
         """Reobserve the exact PNB link, then stage a file via the guarded GET.
 
@@ -1113,6 +1456,8 @@ class ParisProviderSession(ProviderSession):
                 or any(c not in "0123456789abcdef"
                        for c in delivery_offer_id[len("paris.pnb:"):])):
             raise ProviderCapabilityError("paris_candidate_not_admitted")
+        if not _paris_core_admission_current(admission_current):
+            raise ProviderCapabilityError("paris_core_admission_revoked")
         directory = Path(target_dir)
         try:
             if (not directory.is_dir() or directory.is_symlink()
@@ -1140,6 +1485,8 @@ class ParisProviderSession(ProviderSession):
             # the live loan card and owner *again* around the PNB token GET.
             with self._loan_inventory_lock:
                 inventory = self._snapshot_for_account(account)
+                if not _paris_core_admission_current(admission_current):
+                    raise ProviderCapabilityError("paris_core_admission_revoked")
                 candidates = []
                 for loan in inventory.loans:
                     if (type(loan) is not Loan or loan.provider != "DILICOM"
@@ -1169,6 +1516,8 @@ class ParisProviderSession(ProviderSession):
                     expected_right_id=right_id,
                     expected_identity_id=account.identity_id,
                     selected_stage_fd=stage_fd,
+                    **({"admission_current": admission_current}
+                       if admission_current is not None else {}),
                 )
 
         finally:
@@ -1179,6 +1528,7 @@ class ParisProviderSession(ProviderSession):
         expected_right_id: str | None = None,
         expected_identity_id: str | None = None,
         selected_stage_fd: int | None = None,
+        admission_current=None,
     ) -> tuple[Path, str]:
         """Existing-loan delivery only: exact live Paris borrower and loan.
 
@@ -1246,7 +1596,8 @@ class ParisProviderSession(ProviderSession):
 
             def scope_current():
                 return (
-                    self.connected is True
+                    _paris_core_admission_current(admission_current)
+                    and self.connected is True
                     and (account.unique_id, account.identity_id,
                          account.provider_id, account.credential_id,
                          account.is_primary) == scope
@@ -1336,6 +1687,8 @@ class ParisProviderSession(ProviderSession):
                 delivery_loan, account, target_dir,
                 scope_guard=scope_current, borrower_uid=borrower_uid,
                 selected_stage_fd=selected_stage_fd,
+                **({"stream_admission_current": scope_current}
+                   if admission_current is not None else {}),
             )
             # A signed PNB URL is transient secret transport evidence, NOT a
             # SourceReference or Core delivery receipt. Keep the old tuple
@@ -1347,7 +1700,8 @@ class ParisProviderSession(ProviderSession):
     def _download_digital_scoped_impl(self, loan: Loan, account: Account,
                                       target_dir: Path, *, scope_guard=None,
                                       borrower_uid=None,
-                                      selected_stage_fd=None) -> tuple[Path, str]:
+                                      selected_stage_fd=None,
+                                      stream_admission_current=None) -> tuple[Path, str]:
         """Network + validated staging, guarded by download_digital in service."""
         def ensure_scope():
             if scope_guard is not None and not scope_guard():
@@ -1415,11 +1769,20 @@ class ParisProviderSession(ProviderSession):
             book_id, public_site(url),
         )
         current = url
+        visited_urls: set[str] = set()
         for hop in range(12):
             ensure_scope()
             self.client._validate_pnb_redirect_url(current)
+            if current in visited_urls:
+                # The signed URL may carry borrower tokens: do not re-GET or log it.
+                raise ProviderConfigurationError("Boucle de redirections PNB détectée")
+            visited_urls.add(current)
             hop_started = time.monotonic()
-            response = self.client._get_pnb_response(current)
+            response = self.client._get_pnb_response(
+                current,
+                **({"admission_current": stream_admission_current}
+                   if stream_admission_current is not None else {}),
+            )
             ensure_scope()
             self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             if response.status_code not in {301,302,303,307,308}: break

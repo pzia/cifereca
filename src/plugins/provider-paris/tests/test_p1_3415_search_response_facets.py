@@ -1,17 +1,16 @@
-"""P1 #3415: response-page Syracuse facets are not record metadata or filters.
-
-MockTransport only. No account, scraping, loan, acquisition or rights.
-The nested FacetList *item* schema has not been observed and is NOT parsed.
-"""
+"""P1 #3415: descriptive Syracuse facets on the exact response page."""
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, current_thread
 
 import httpx
 import pytest
 
 from cifereca_paris_bibliography import project_search_response_facets
 from cifereca_paris_client import ParisClient, ParisSearchUnavailable
+from cifereca_paris import ParisProviderSession
 
 
 def _facet(field="Subj", label="Sujets", *, values=None, **extra):
@@ -31,6 +30,10 @@ def _response(scenario, *facets):
                 "Resource": {
                     "RscId": "synthetic-" + scenario,
                     "RscBase": "DILICOM" if scenario == "EBOOKS" else "SYRACUSE",
+                    # The response descriptors are page-scoped; positive
+                    # medium evidence belongs to each fixture record.
+                    "Type": "Livre numérique" if scenario == "EBOOKS" else "Livre",
+                    "Frmt": "MONE" if scenario == "EBOOKS" else "MONO",
                     "Ttl": "Synthetic book",
                 },
             }],
@@ -46,6 +49,63 @@ def _client(responder):
         transport=httpx.MockTransport(responder), trust_env=False,
     )
     return client
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_concurrent_searches_return_their_own_page_facets_and_coverage(partial):
+    def respond(request):
+        query = json.loads(request.content)["query"]
+        text = query["QueryString"]
+        scenario = query["ScenarioCode"]
+        if partial and text == "Première" and scenario == "EBOOKS":
+            return httpx.Response(503)
+        result = _response(scenario, _facet(label=f"{text} {scenario}", values=[
+            {"Label": text, "Count": 7, "IsSelected": False},
+        ]))
+        result["d"]["Results"][0]["Resource"]["Ttl"] = text
+        return httpx.Response(200, json=result)
+
+    client = _client(respond)
+    session = ParisProviderSession(
+        credential_id="synthetic", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = client
+    paused = Event()
+    resume = Event()
+    original_timed = client._timed
+
+    def timed(category, operation, action):
+        result = original_timed(category, operation, action)
+        if current_thread().name.startswith("first-search") and operation == "search CATALOGUE":
+            paused.set()
+            assert resume.wait(5)
+        return result
+
+    client._timed = timed
+    try:
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="first-search") as executor:
+            first = executor.submit(session.search_with_response_facets, "Première")
+            try:
+                assert paused.wait(5)
+                second = session.search_with_response_facets("Seconde", "digital")
+            finally:
+                resume.set()
+            first = first.result(timeout=5)
+        assert [item.title for item in first.results] == ["Première"] * (1 if partial else 2)
+        assert [item.title for item in second.results] == ["Seconde"]
+        expected = [("CATALOGUE", 0, "Première CATALOGUE")]
+        if not partial:
+            expected.append(("EBOOKS", 0, "Première EBOOKS"))
+        assert [(facet.scenario, facet.page, facet.label) for facet in first.facets] == expected
+        assert [facet.label for facet in second.facets] == ["Seconde EBOOKS"]
+        assert first.partial is partial and second.partial is False
+        assert first.facets[0].values[0].count == 7
+        assert second.facets[0].filter_capability == "unverified"
+        assert all("search_response_facets" not in item.metadata for item in first.results)
+    finally:
+        session.close()
 
 
 @pytest.mark.parametrize("scenario", ("CATALOGUE", "EBOOKS"))

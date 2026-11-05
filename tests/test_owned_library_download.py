@@ -220,3 +220,41 @@ def test_two_independent_rights_remain_ambiguous_even_with_backup_mirror(
     })
     assert case.service.owned_library_download_target(case.entry) is None
     assert case.calls == []
+
+
+@pytest.mark.parametrize("contract", ("downloadable_v2", "rights_v1"))
+@pytest.mark.parametrize("phase", ("before_preview", "after_target"))
+def test_canonical_kobo_contract_cannot_fall_back_to_legacy_library_get(
+    case, monkeypatch, contract, phase,
+):
+    """A one-book UI target is not an escape hatch from the unique Core A->B."""
+    target = None
+    if phase == "after_target":
+        target = case.service.owned_library_download_target(case.entry)
+        assert target is not None
+    before_rights = case.service.storage.entitlements(provider_id="kobo")
+    before_acquisitions = case.service.storage.acquisitions()
+    before_placements = case.service.storage.placements()
+    methods = (
+        ("downloadable_resource_snapshot", "downloadable_selected_offer_snapshot",
+         "downloadable_selected_delivery_candidate")
+        if contract == "downloadable_v2" else
+        ("rights_observation_snapshot", "rights_selected_delivery_offer_snapshot",
+         "rights_selected_delivery_candidate")
+    )
+    for method in methods:
+        monkeypatch.setattr(
+            case.session, method,
+            lambda *_args, **_kwargs: pytest.fail(
+                "legacy Library action must not inspect or call canonical delivery"
+            ),
+            raising=False,
+        )
+    assert case.service.owned_library_download_target(case.entry) is None
+    if target is not None:
+        with pytest.raises(OwnedDownloadRejected, match="owned_download_unavailable"):
+            case.service.obtain_owned_library_item(target)
+    assert not case.calls and not case.session.resolve_calls
+    assert case.service.storage.entitlements(provider_id="kobo") == before_rights
+    assert case.service.storage.acquisitions() == before_acquisitions
+    assert case.service.storage.placements() == before_placements

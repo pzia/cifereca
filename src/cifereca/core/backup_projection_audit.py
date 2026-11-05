@@ -29,6 +29,10 @@ def audit_backup_projection(
         "scope_mismatch": 0, "status_divergence": 0,
         "artifact_divergence": 0, "placement_missing": 0,
         "placement_scope_mismatch": 0,
+        # A v14 physical Placement intentionally has no provider/item owner.
+        # Its local path alone cannot bind it to a v0.7 credential/account.
+        "canonical_placement_source_unverified": 0,
+        "canonical_placement_digest_divergence": 0,
         # Reverse coverage: canonical acquisitions absent from the legacy
         # mirror are NOT missing rights or a reason to recreate a v0.7 row.
         "canonical_scanned": 0, "canonical_without_projection": 0,
@@ -142,13 +146,28 @@ def audit_backup_projection(
                             result["artifact_divergence"] += 1
                     if type(path) is str and path:
                         p = db.execute(
-                            "SELECT identity_id,provider_id,source_item_id "
-                            "FROM placements WHERE path=? LIMIT 1",
+                            "SELECT identity_id,provider_id,source_item_id,"
+                            "artifact_id FROM placements WHERE path=? LIMIT 1",
                             (path,),
                         ).fetchone()
                         if p is None:
                             result["placement_missing"] += 1
-                        elif tuple(p) != (owner, provider, item):
+                        elif p[:3] == (owner, provider, item):
+                            # Historical provider/item projection, not a
+                            # physical hash verification or attested right.
+                            pass
+                        elif p[:3] == (owner, None, None):
+                            # Canonical B explicitly moved provider ownership
+                            # to SourceReferences + OriginLinks. Treating its
+                            # null columns as a legacy scope conflict is
+                            # misleading, but its path still proves no source.
+                            result["canonical_placement_source_unverified"] += 1
+                            if (type(sha) is str and len(sha) == 64
+                                    and all(c in "0123456789abcdef"
+                                            for c in sha.lower())
+                                    and p[3] != "sha256:" + sha.lower()):
+                                result["canonical_placement_digest_divergence"] += 1
+                        else:
                             result["placement_scope_mismatch"] += 1
                 result["scanned"] = len(rows)
                 result["status"] = "complete"

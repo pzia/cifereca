@@ -323,6 +323,188 @@ _SYNC_PHASE_CAPTIONS = (
 )
 
 
+def sync_source_cycle_headline(source: object) -> str:
+    """Two independent, bounded last-run signals, without pretending receipt.
+
+    The generic broker supplies phase enums only. They are not an inventory
+    coverage certificate, a Core placement receipt or a provider quota.
+    A malformed or duplicate phase cannot replace an actionable failure with
+    a historical success. Never render provider-supplied error text.
+    """
+    entries = getattr(source, "phase_states", ())
+    if type(entries) not in (tuple, list) or not 1 <= len(entries) <= 8:
+        return ""
+    known = {
+        "success": "réussie", "partial": "partielle",
+        "failed": "échec", "materialization_failed": "échec",
+        "blocked": "bloquée", "busy": "déjà en cours",
+        "attention_required": "action nécessaire",
+        "interrupted": "interrompue", "cancelled": "annulée",
+        # Core already exposes these closed materialization stop causes in the
+        # phase detail; the short headline must not erase them as "unknown".
+        "source_changed": "source modifiée",
+        "source_disabled": "source désactivée",
+        "source_disconnected": "source déconnectée",
+        "running": "en cours", "idle": "non exécutée",
+        "not_supported": "non disponible",
+    }
+    allowed = {"discover_rights", "offer", "fetch", "materialize", "placement"}
+    phases: dict[str, str] = {}
+    duplicate: set[str] = set()
+    for row in entries:
+        name = getattr(row, "phase", None)
+        if type(name) is not str or name not in allowed:
+            continue
+        raw = getattr(row, "status", None)
+        state = known.get(raw) if type(raw) is str else None
+        if name in phases:
+            duplicate.add(name)
+        else:
+            phases[name] = state or "non confirmée"
+
+    remote = "non confirmée" if "discover_rights" in duplicate else phases.get("discover_rights")
+    # A successful offer phase is only a stage outcome. It does not prove
+    # that any individual offer was selected or that bytes were fetched.
+    # Missing phase stays missing: it is not evidence of "no offer".
+    offer = "non confirmée" if "offer" in duplicate else phases.get("offer")
+    # Show the most severe local step, not the first success. In particular,
+    # fetch=failed + placement=success MUST retain the failed fetch. A
+    # materialize=not_supported marker cannot certify successful acquisition.
+    # A verified OFFER is still upstream evidence, never a local file.
+    local_names = ("fetch", "placement", "materialize")
+    local = [(key, ("non confirmée" if key in duplicate else phases[key]))
+             for key in local_names if key in phases]
+    severity = (
+        "échec", "bloquée", "action nécessaire", "interrompue", "partielle",
+        "source modifiée", "source désactivée", "source déconnectée",
+        "annulée", "non confirmée", "déjà en cours", "en cours",
+        "non exécutée", "réussie", "non disponible",
+    )
+    local_status = next((value for value in severity
+                         if any(state == value for _, state in local)), None)
+    parts = []
+    if remote is not None:
+        parts.append("Inventaire distant : " + remote)
+    if offer is not None:
+        parts.append(
+            "Offres de livraison : " + offer
+            + (" (étape seulement)" if offer == "réussie" else "")
+        )
+    if local_status is not None:
+        # A green stage is not proof that files were placed and hashed.
+        parts.append("Livraison locale : " + local_status +
+                     (" (étape seulement)" if local_status == "réussie"
+                      and phases.get("placement") != "réussie" else ""))
+    return " · ".join(parts)
+
+
+def sync_source_last_cycle_summary(source: object) -> str:
+    """Render only an exact scoped Core terminal receipt, not log heuristics.
+
+    No receipt or unverified counters => no invented file count. The source
+    status/phase projection remains the authority for current attention;
+    this is explicitly a *historical terminal* of one targeted cycle.
+    """
+    from ..plugin_api import SyncSourceCycleReceipt
+    from ..core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+
+    receipt = getattr(source, "last_cycle", None)
+    if type(receipt) is not SyncSourceCycleReceipt:
+        return ""
+    status_labels = {
+        "success": "Réussi", "partial": "Partiel", "failed": "Échec",
+        "busy": "Déjà en cours", "skipped": "Non exécuté",
+    }
+    mode_labels = {"manual": "manuel", "scheduled": "programmé"}
+    if (type(receipt.status) is not str
+            or receipt.status not in status_labels
+            or type(receipt.mode) is not str
+            or receipt.mode not in mode_labels
+            or type(receipt.attempted_at) is not str):
+        return ""
+    stamp = _timestamp_label(receipt.attempted_at)
+    if not stamp:
+        return ""
+    headline = (
+        "Dernier cycle ciblé ("
+        + mode_labels[receipt.mode] + ", " + stamp + ") : "
+        + status_labels[receipt.status]
+    )
+    counts = receipt.canonical_execution
+    if counts is None:
+        return headline + "\nRésultats de réception locale : non attestés"
+    if (type(counts) is not tuple
+            or len(counts) != len(CANONICAL_EXECUTION_STATUSES)
+            or any(type(pair) is not tuple or len(pair) != 2
+                   or type(pair[0]) is not str or type(pair[1]) is not int
+                   for pair in counts)):
+        return headline + "\nRésultats de réception locale : non attestés"
+    values = dict(counts)
+    if (len(values) != len(CANONICAL_EXECUTION_STATUSES)
+            or set(values) != set(CANONICAL_EXECUTION_STATUSES)
+            or any(type(values[name]) is not int
+                   or not 0 <= values[name] <= 1_000_000
+                   for name in CANONICAL_EXECUTION_STATUSES)):
+        return headline + "\nRésultats de réception locale : non attestés"
+    labels = (
+        ("present_attested", "présents attestés"),
+        ("downloaded", "téléchargés"),
+        ("pending", "en attente"),
+        ("blocked", "bloqués"),
+        ("failed", "échecs"),
+        ("recovered", "récupérés"),
+        ("cancelled", "annulés"),
+        ("skipped_archived", "archivés ignorés"),
+        ("inactive", "inactifs"),
+    )
+    return headline + "\nRéception locale : " + " · ".join(
+        name + " " + str(values[key]) for key, name in labels
+    )
+
+
+def sync_source_cycle_pulse(source: object) -> str:
+    """Compact, *historical* A-to-B outcome for a two-line source card.
+
+    Only a complete Core-count receipt may produce numbers. No zero fallback
+    or implication that the targeted cycle describes the opening global run.
+    """
+    from ..plugin_api import SyncSourceCycleReceipt
+    from ..core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+
+    receipt = getattr(source, "last_cycle", None)
+    if (type(receipt) is not SyncSourceCycleReceipt
+            or not sync_source_last_cycle_summary(source)):
+        return ""
+    counts = receipt.canonical_execution
+    if (type(counts) is not tuple
+            or len(counts) != len(CANONICAL_EXECUTION_STATUSES)
+            or any(type(pair) is not tuple or len(pair) != 2
+                   or type(pair[0]) is not str or type(pair[1]) is not int
+                   for pair in counts)):
+        return ""
+    values = dict(counts)
+    if (len(values) != len(CANONICAL_EXECUTION_STATUSES)
+            or set(values) != set(CANONICAL_EXECUTION_STATUSES)
+            or any(not 0 <= values[key] <= 1_000_000
+                   for key in CANONICAL_EXECUTION_STATUSES)):
+        return ""
+    labels = (
+        ("pending", "en attente"), ("failed", "en échec"),
+        ("blocked", "bloqués"), ("downloaded", "téléchargés"),
+        ("present_attested", "présents attestés"), ("recovered", "récupérés"),
+        ("cancelled", "annulés"),
+    )
+    displayed = [
+        str(values[key]) + " " + caption for key, caption in labels
+        if values[key] > 0
+    ]
+    if not displayed:
+        return "Dernier cycle ciblé : 0 réception locale attestée"
+    # Short on-screen line; the full nine-field canonical evidence remains in
+    # the tooltip. Put pending/errors before successful file observations.
+    return "Dernier cycle ciblé : " + " · ".join(displayed[:3])
+
+
 def sync_source_phase_summary(source: object) -> str:
     """Present only Core-enumerated phase states, never provider diagnostics.
 
@@ -336,7 +518,8 @@ def sync_source_phase_summary(source: object) -> str:
         "idle": "Jamais exécutée", "running": "En cours",
         "success": "Réussie", "partial": "Partielle",
         "failed": "Échec", "cancelled": "Annulée",
-        "blocked": "Bloquée", "attention_required": "Action nécessaire",
+        "blocked": "Bloquée", "busy": "Déjà en cours",
+        "attention_required": "Action nécessaire",
         "interrupted": "Interrompue", "unknown": "État inconnu",
         "not_supported": "Non prise en charge",
         "materialization_failed": "Indisponible",
@@ -535,6 +718,11 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
     """
     if getattr(source, "sync_capable", None) is not True:
         return None
+    # A voluntarily OFF source has no active sync failure. Its old run and
+    # phase states remain inspectable as history, but may not add a red alert
+    # to the current identity's dashboard. Unknown enabled != explicit OFF.
+    if getattr(source, "enabled", None) is False:
+        return None
     # Each candidate is a fixed UI label. Phase and status values are used
     # solely as dictionary keys; arbitrary upstream data never becomes text.
     candidates: list[tuple[str, str]] = []
@@ -556,6 +744,7 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
             "failed": ("error", "échec — action nécessaire"),
             "materialization_failed": ("error", "échec — action nécessaire"),
             "blocked": ("error", "bloqué — action nécessaire"),
+            "busy": ("warning", "déjà en cours"),
             "attention_required": ("warning", "action nécessaire"),
             "interrupted": ("warning", "interrompu"),
             "partial": ("warning", "résultat partiel"),
@@ -599,6 +788,8 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
         candidates.append(("error", "Synchronisation : échec — action nécessaire"))
     elif status in {"blocked", "attention_required"}:
         candidates.append(("warning", "Synchronisation : action nécessaire"))
+    elif status == "busy":
+        candidates.append(("warning", "Synchronisation : déjà en cours"))
     elif status == "interrupted":
         # A non-finished run needs visibility even without provider details
         # or a phase projection. It must never launch a retry automatically.
@@ -627,15 +818,28 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
 
 
 def sync_source_presentation(source: object, *, canonical: bool = False) -> SyncSourcePresentation:
-    enabled = getattr(source, "enabled", None) is True
-    connected = getattr(source, "connected", None) is True
+    raw_enabled = getattr(source, "enabled", None)
+    enabled = raw_enabled is True
+    raw_connected = getattr(source, "connected", None)
+    connected = raw_connected is True
     capable = getattr(source, "sync_capable", None) is True
     # Preserve stable action labels for non-Kobo sources; the GTK row and
     # task label provide the disambiguated provider presentation (#980).
     label = _safe_sync_source_label(source)
 
-    activation = "Activée" if enabled else "Désactivée"
-    connection = "Connectée" if connected else "Déconnectée"
+    activation = (
+        "Activée" if raw_enabled is True else
+        "Désactivée" if raw_enabled is False else
+        "Non confirmée"
+    )
+    # Broker boolean flags require exact typing. Unknown/malformed does not
+    # attest a disconnected account; show a neutral state without allowing a
+    # source action or deriving any provider-specific reconnection policy.
+    connection = (
+        "Connectée" if raw_connected is True else
+        "Déconnectée" if raw_connected is False else
+        "Non confirmée"
+    )
 
     # Use the same closed, phase-aware severity projection for the primary
     # status text and its attention icon. A failed local GET/placement phase
@@ -651,9 +855,15 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
 
     if not capable:
         sync_label = "Non prise en charge"
+    elif raw_enabled is False:
+        sync_label = "Désactivée · aucune synchronisation attendue"
     elif alert is not None and alert[0] == "error":
         # Failed/blocked Core phases win over source-wide historical success.
         sync_label = "Échec"
+    elif raw_enabled is not True:
+        # Missing/malformed activation is not evidence that a source is OFF,
+        # nor permission to show a historical success as current state.
+        sync_label = "Activation non confirmée"
     elif status == "running":
         sync_label = "En cours…"
     elif status == "partial":
@@ -668,6 +878,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         sync_label = prefix + (f" · {last_attempt}" if last_attempt else "")
     elif status == "blocked":
         sync_label = "Bloquée"
+    elif status == "busy":
+        sync_label = "Déjà en cours"
     elif status == "attention_required":
         sync_label = "Action nécessaire"
     elif status == "cancelled":
@@ -679,6 +891,12 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     elif status not in {"ok", "success", "idle"}:
         # Never convert an unknown/invalid terminal state into an old success.
         sync_label = "État non confirmé"
+    elif alert is not None and alert[0] == "warning":
+        # A success/idle source snapshot can still contain a positive Core
+        # phase warning (partial offer, duplicate phase, blocked step), or a
+        # current disconnect. A historical success must not be the primary
+        # status while a current non-fatal anomaly requires investigation.
+        sync_label = "État à vérifier"
     elif last_success:
         sync_label = f"Dernier succès {last_success}"
     elif last_attempt:
@@ -692,9 +910,17 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     if not capable:
         disabled_reason = "Cette source ne fournit pas de synchronisation de données."
     elif not enabled:
-        disabled_reason = "Activez cette source pour la synchroniser."
+        disabled_reason = (
+            "Source désactivée ; synchronisation manuelle indisponible."
+            if raw_enabled is False
+            else "Activation non confirmée ; actualisez la source avant de synchroniser."
+        )
     elif not connected:
-        disabled_reason = "Reconnectez ce compte avant de synchroniser."
+        disabled_reason = (
+            "Reconnectez ce compte avant de synchroniser."
+            if raw_connected is False else
+            "Connexion non confirmée ; actualisez cette source avant de synchroniser."
+        )
     else:
         disabled_reason = ""
 
@@ -703,9 +929,22 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         f"Activation : {activation} · Connexion : {connection}\n"
         f"Synchronisation : {sync_label}"
     )
+    cycle_headline = sync_source_cycle_headline(source)
     phase_summary = sync_source_phase_summary(source)
+    last_cycle_summary = sync_source_last_cycle_summary(source)
+    if getattr(source, "enabled", None) is False and capable:
+        # Never erase the previous attempt or success. Clearly label the old
+        # Core phase records as historical rather than current actionable UI.
+        if last_attempt:
+            summary += f"\nDernier essai avant désactivation : {last_attempt}"
+        if cycle_headline or phase_summary:
+            summary += "\nHistorique du dernier cycle avant désactivation :"
+    if cycle_headline:
+        summary += "\n" + cycle_headline
     if phase_summary:
         summary += "\n" + phase_summary
+    if last_cycle_summary:
+        summary += "\n" + last_cycle_summary
     if sync_source_informational_partial(source):
         summary += (
             "\nCouverture incomplète des notices et droits ; "
@@ -750,7 +989,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     # Previous success is historical context, not the current run's state.
     if (status in {"partial", "error", "failed", "blocked",
                    "attention_required", "cancelled", "interrupted", "skipped"}
-            or (alert is not None and alert[0] == "error")
+            or raw_enabled is not True
+            or (alert is not None and alert[0] in {"error", "warning"})
             or status not in {"ok", "success", "idle"}) and last_success:
         summary += f"\nDernier succès confirmé : {last_success}"
     if not action_enabled:

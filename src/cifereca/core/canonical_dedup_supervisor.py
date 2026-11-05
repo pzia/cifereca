@@ -26,6 +26,19 @@ from .convergence_verified_presence import _verified_copy
 Action = Literal["preview", "commit", "recover"]
 
 
+def _ordinary_cleanup_enabled() -> bool:
+    """#4496: no ordinary duplicate deletion before the keeper-policy decision.
+
+    This fixed internal hold cannot be switched on by a plugin, a persisted
+    preference, a restored plan, or even a direct confirmed Core call. The
+    historical deletion mechanics remain tested in dedicated synthetic tests
+    using a local monkeypatch; this is not a product configuration flag.
+    Recovery of already durable tombstones stays independently available.
+    """
+    return False
+
+
+
 @dataclass(frozen=True, slots=True)
 class SupervisedCanonicalDedup:
     action: Action
@@ -163,6 +176,10 @@ def supervise_canonical_duplicate(
 
     if confirmed is not True or not _lock_ok(shared_lock):
         raise ValueError("canonical_supervisor_confirmation_and_lock_required")
+    # Preview and explicit recovery remain functional. The ordinary commit
+    # must not infer which copy to retain from placement IDs before #4496.
+    if action == "commit" and not _ordinary_cleanup_enabled():
+        return report("blocked", "ordinary_cleanup_suspended")
     kwargs = {
         "library_root": library_root,
         "candidate_placement_id": candidate_placement_id,

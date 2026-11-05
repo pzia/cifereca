@@ -12,6 +12,10 @@ from pathlib import Path
 import sqlite3
 from typing import Literal
 
+from ..plugin_api.provider_rights_observation import ProviderRightsScope
+from .canonical_recovery import _stage_id
+from .canonical_dedup_receipt_relink import _completed_receipt_source_proven_in_db
+from .source_convergence import SourceKey
 from .canonical_dedup_preview import preview_canonical_duplicate
 from .duplicate_maintenance_guard import (
     _mentions_exact_path, canonical_metadata_mentions_path,
@@ -174,14 +178,16 @@ def plan_verified_canonical_reference_migration(
                     unverified += 1
                     continue
                 connection = db.execute(
-                    "SELECT identity_id,enabled FROM provider_connections "
+                    "SELECT connection_id,identity_id,enabled "
+                    "FROM provider_connections "
                     "WHERE provider_id=? AND credential_id=?",
                     (provider, cred),
                 ).fetchone()
-                accounts = db.execute(
-                    "SELECT account_id FROM provider_accounts "
-                    "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-                    (owner, provider, cred),
+                account_connections = db.execute(
+                    "SELECT connection_id FROM provider_accounts "
+                    "WHERE identity_id=? AND provider_id=? AND credential_id=? "
+                    "AND account_id=? LIMIT 2",
+                    (owner, provider, cred, account),
                 ).fetchall()
                 evidence = db.execute(
                     "SELECT COUNT(*) FROM source_references s "
@@ -189,32 +195,37 @@ def plan_verified_canonical_reference_migration(
                     "o.source_reference_id=s.source_reference_id "
                     "WHERE s.identity_id=? AND s.provider_id=? "
                     "AND s.credential_id=? AND s.account_id=? "
-                    "AND s.edition_id=? AND o.origin_kind='provider' "
+                    "AND s.edition_id=? AND s.evidence_kind='provider_response' "
+                    "AND o.origin_kind='provider' "
                     "AND o.identity_id=? AND o.artifact_id=? "
                     "AND o.evidence_ref IS NOT NULL AND o.evidence_ref!=''",
                     (owner, provider, cred, account, item, owner, artifact),
                 ).fetchone()[0]
-                if (connection == (owner, 1)
-                        and sum(row[0] == account for row in accounts) == 1
+                if (connection is not None
+                        and connection[1:] == (owner, 1)
+                        and account_connections == [(connection[0],)]
                         and evidence > 0):
                     backup += 1
                 else:
                     unverified += 1
 
             ledger_rows = db.execute(
-                "SELECT identity_id,artifact_id,status,metadata_json "
+                "SELECT acquisition_id,identity_id,provider_id,credential_id,"
+                "account_id,item_id,artifact_id,status,metadata_json "
                 "FROM acquisition_ledger LIMIT ?",
                 (_MAX_LEDGER + 1,),
             ).fetchall()
             if len(ledger_rows) > _MAX_LEDGER:
                 return plan("blocked", "dependency_budget")
-            for identity, linked_artifact, status, raw in ledger_rows:
+            for (record_id, identity, provider, credential, account,
+                 item, linked_artifact, status, raw) in ledger_rows:
                 try:
                     payload = _read(raw)
                 except (ValueError, TypeError, RecursionError):
                     return plan("blocked", "dependency_unreadable")
                 if not _mentions_exact_path(payload, path):
                     continue
+                exact = False
                 if (identity == owner and linked_artifact == artifact
                         and status == "complete"
                         and payload.get("schema") == _COMPLETED
@@ -223,8 +234,31 @@ def plan_verified_canonical_reference_migration(
                         and not any(_mentions_exact_path(value, path)
                                     for key, value in payload.items()
                                     if key != "path")):
-                    # Still subject to canonical receipt/SourceKey validation
-                    # in the destructive supervisor; counting isn't proof.
+                    try:
+                        coords = payload["source"]
+                        if type(coords) is list and len(coords) == 8:
+                            scope = ProviderRightsScope(*coords[:4])
+                            source = SourceKey(
+                                scope, coords[5], coords[6], coords[7],
+                                coords[4],
+                            )
+                            exact = (
+                                (identity, provider, credential, account, item)
+                                == (scope.identity_id, scope.provider_id,
+                                    scope.credential_id, scope.account_id,
+                                    source.edition_id)
+                                and record_id == _stage_id(
+                                    source, payload["offer_id"],
+                                )
+                                and _completed_receipt_source_proven_in_db(
+                                    db, source=source, artifact_id=artifact,
+                                    receipt=payload["receipt"],
+                                    adept_receipt=payload["adept_receipt"],
+                                )
+                            )
+                    except (ValueError, TypeError, IndexError, KeyError):
+                        exact = False
+                if exact:
                     receipts += 1
                 else:
                     unverified += 1

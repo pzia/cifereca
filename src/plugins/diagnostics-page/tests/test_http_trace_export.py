@@ -1,11 +1,14 @@
 """Execute the export controller: consent, Trace gates, lifetime and errors."""
 from concurrent.futures import Future
+from datetime import datetime as RealDateTime
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+import diagnostics_http_export as http_export
 from diagnostics_http_export import HTTPTraceExport
 
 
@@ -104,8 +107,41 @@ def open_chooser(s):
     s.export.clicked(s.button)
     dialog = s.export.chooser
     assert dialog.parent is s.button.root and dialog.modal
-    assert dialog.name == 'cifereca-echanges-http.zip'
+    assert re.fullmatch(r'cifereca-echanges-http-\d{8}-\d{6}\.zip', dialog.name)
     return dialog
+
+
+def test_filename_uses_local_click_time_and_refreshes_on_each_open(setup, monkeypatch):
+    class FrozenDateTime:
+        instants = [
+            RealDateTime(2026, 11, 3, 23, 59, 59),
+            RealDateTime(2026, 11, 4, 0, 0, 0),
+        ]
+
+        @classmethod
+        def now(cls):
+            return cls.instants.pop(0)
+
+    monkeypatch.setattr(http_export, "datetime", FrozenDateTime)
+    s = setup
+    # Construction and first confirmation must not consume the time.
+    assert len(FrozenDateTime.instants) == 2
+    s.export.clicked(s.button)
+    assert s.export.chooser is None
+    assert len(FrozenDateTime.instants) == 2
+    s.export.clicked(s.button)
+    first = s.export.chooser
+    assert first.name == "cifereca-echanges-http-20261103-235959.zip"
+    assert first.folder == str(s.tmp)
+    s.export.chose_file(first, 0)  # Cancel: no write or worker.
+    assert first.destroyed and s.export.chooser is None
+    s.broker.export_http_trace.assert_not_called()
+    second = open_chooser(s)
+    assert second.name == "cifereca-echanges-http-20261104-000000.zip"
+    assert second.folder == str(s.tmp)
+    assert len(FrozenDateTime.instants) == 0
+    s.export.chose_file(second, 0)
+    assert not hasattr(s.tasks, "fn")
 
 
 def test_trace_off_disables_button_and_revokes_confirmation(setup):

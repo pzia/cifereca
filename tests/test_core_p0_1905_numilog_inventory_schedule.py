@@ -24,9 +24,14 @@ def _numilog(tmp_path):
     session.credential_id = account.credential_id
     session.capabilities.direct_download = True  # not inventory consent
     service._sessions = {"numilog::fake-numilog-credential": session}
-    service.storage.provider_connection_put({
+    connection_id = service.storage.provider_connection_put({
         "identity_id": "alice", "provider_id": "numilog",
         "credential_id": account.credential_id, "enabled": True,
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection_id, "identity_id": "alice",
+        "provider_id": "numilog", "credential_id": account.credential_id,
+        "account_id": account.unique_id,
     })
     service.identity_by_id = lambda identifier: (
         NS(identity_id=identifier) if identifier in {"alice", "bob"} else None
@@ -110,6 +115,40 @@ def test_numilog_damaged_inventory_clock_blocks_automatic_retry(tmp_path):
         assert "SECRET" not in repr(phase)
         assert broker.synchronize_scheduled_inventory("alice", "startup").facts["attempted"] == 0
         assert calls == []
+    finally:
+        service.storage.close()
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    (" TrUe ", True), (" YES ", True), (" On ", True),
+    ("0", False), (" 0 ", False), ("on_start", False),
+])
+def test_numilog_inventory_scheduler_matches_core_source_switch(
+    tmp_path, raw, expected,
+):
+    service, account, _, calls = _numilog(tmp_path)
+    try:
+        broker = SynchronizationBrokerImpl(service)
+        sid = broker._source_id(account)
+        service.storage.metadata_set("sync.source.enabled." + sid, raw)
+        # This scheduling test rig uses a constant-True sync_source_enabled
+        # stub. Supply the production shared decoder for this parity case
+        # instead of asserting that the test stub reads persisted metadata.
+        from cifereca.core.source_enablement import source_enabled
+        service.sync_source_enabled = lambda _account: source_enabled(
+            service.storage.metadata_get("sync.source.enabled." + sid)
+        )
+        assert service.sync_source_enabled(account) is expected
+        assert broker._enabled(sid) is expected
+        assert numilog_inventory_source_eligible(service, account) is expected
+        if expected:
+            broker.set_inventory_refresh_schedule(sid, "on_start")
+            assert broker.synchronize_scheduled_inventory("alice", "startup").facts["attempted"] == 1
+            assert len(calls) == 1
+        else:
+            with pytest.raises(ValueError, match="not eligible"):
+                broker.set_inventory_refresh_schedule(sid, "on_start")
+            assert calls == []
     finally:
         service.storage.close()
 
@@ -255,9 +294,14 @@ def test_numilog_is_scoped_to_each_consented_identity_not_all_accounts(tmp_path)
             capabilities=NS(personal_library=True, direct_download=True),
         )
         service._sessions["numilog::fake-bob-credential"] = second_session
-        service.storage.provider_connection_put({
+        second_connection = service.storage.provider_connection_put({
             "identity_id": "bob", "provider_id": "numilog",
             "credential_id": second.credential_id, "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": second_connection, "identity_id": "bob",
+            "provider_id": "numilog", "credential_id": second.credential_id,
+            "account_id": second.unique_id,
         })
         broker = SynchronizationBrokerImpl(service)
         first_sid, second_sid = broker._source_id(account), broker._source_id(second)

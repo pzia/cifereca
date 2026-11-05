@@ -18,7 +18,9 @@ import stat
 
 from ..catalog import LocalCatalog
 from .canonical_publication import _physical_target, _same_file
-from .canonical_recovery import _path_verified, _stage_id
+from .canonical_recovery import (
+    _exact_borrower_bound_in_db, _path_verified, _stage_id,
+)
 from .source_convergence import SourceKey
 
 
@@ -38,15 +40,59 @@ def _stage_parts(physical: Path, profile: Path) -> tuple[str, ...] | None:
     return parts
 
 
+def _readable_epub_target_name(stream, *, opaque_name: str) -> str:
+    """Stable human prefix from *verified own copy*; receipt hash remains exact.
+
+    This helper runs only after a complete, fsynced, SHA-checked copy is in
+    Core's private directory. A damaged/encrypted EPUB keeps its opaque name.
+    Bibliographic metadata is descriptive, never a supplier authorization.
+    """
+    try:
+        from ..epub_metadata import inspect_epub
+        from .transfer_storage_policy import transfer_readable_filename
+
+        inspected = inspect_epub(stream, metadata_only=True)
+        if inspected.get("epub_status") != "ok":
+            return opaque_name + ".epub"
+        metadata = inspected.get("epub_metadata")
+        if type(metadata) is not dict:
+            return opaque_name + ".epub"
+        title = metadata.get("title")
+        authors = metadata.get("authors")
+        author = authors[0] if type(authors) is list and authors else None
+        if type(title) is not str or not title.strip():
+            return opaque_name + ".epub"
+        # Include the entire original 256-bit receipt discriminator: two
+        # same-title acquisitions must never alias one another's path.
+        readable = transfer_readable_filename(
+            Path("received.epub"), title=title, author=author,
+        )
+        prefix = Path(readable).stem
+        prefix = prefix.encode("utf-8")[:120].decode("utf-8", "ignore").rstrip(" .-")
+        if not prefix:
+            return opaque_name + ".epub"
+        return prefix + " - " + opaque_name + ".epub"
+    except (OSError, ValueError, TypeError, RuntimeError, KeyError):
+        return opaque_name + ".epub"
+
+
 def _profile(storage, root: Path, source: SourceKey) -> tuple[Path, Path]:
+    registered = storage.identities()
     matches = [
-        x.get("directory_name") for x in storage.identities()
+        x.get("directory_name") for x in registered
         if x.get("identity_id") == source.scope.identity_id
     ]
     if (len(matches) != 1 or type(matches[0]) is not str
             or not matches[0] or matches[0] in (".", "..")
             or "/" in matches[0] or "\\" in matches[0]):
         raise ValueError("canonical_promotion_profile_unknown")
+    # Both pre-commit promotion and post-commit cleanup may touch physical
+    # bytes. An imported registry with two owners for one directory cannot
+    # authorize either action, regardless of matching SHA/account receipts.
+    if sum(
+        row.get("directory_name") == matches[0] for row in registered
+    ) != 1:
+        raise ValueError("canonical_promotion_profile_ambiguous")
     canonical_root = Path(os.path.abspath(root.expanduser()))
     profile = canonical_root.resolve() / matches[0]
     if (canonical_root.is_symlink() or profile.is_symlink()
@@ -140,6 +186,19 @@ def promote_completed_delivery(
         except OSError:
             return False
 
+    def physical_owner_current() -> bool:
+        # _profile() proved uniqueness before an expensive read/copy. An
+        # unrelated SQLite writer may rebind that directory while bytes are
+        # streamed. Repeat the exact physical ownership check before
+        # advertising a final path; never rely only on its old SHA.
+        try:
+            checked_root, checked_profile = _profile(
+                storage, library_root, source,
+            )
+            return checked_root == root and checked_profile == profile
+        except (ValueError, OSError):
+            return False
+
     def own_entry(name: str) -> bool:
         if made is None:
             return False
@@ -177,6 +236,31 @@ def promote_completed_delivery(
             raise ValueError("canonical_promotion_sha_mismatch")
         if not directory_current() or not own_entry(temporary):
             raise ValueError("canonical_promotion_destination_changed")
+        if not physical_owner_current():
+            raise ValueError("canonical_promotion_profile_rebound")
+        if suffix == ".epub":
+            # Name from the exact *copied* bytes, never an unrelated provider
+            # catalogue title or an unverified URL. The receipt discriminator
+            # keeps crash recovery deterministic and prevents same-title
+            # collisions. Legacy opaque final names still win above.
+            staged_fd = os.open(
+                temporary, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=dir_fd,
+            )
+            with os.fdopen(staged_fd, "rb") as staged:
+                target = destination_dir / _readable_epub_target_name(
+                    staged, opaque_name=name,
+                )
+            if target.exists() or target.is_symlink():
+                try:
+                    return _path_verified(
+                        storage, root=root, source=source, path=target,
+                        final_sha256=completed.final_sha256,
+                    )
+                except (ValueError, OSError) as exc:
+                    raise ValueError(
+                        "canonical_promotion_destination_conflict"
+                    ) from exc
         # A no-replace hardlink is an atomic namespace promotion. No other
         # thread can ever open a partially written final file; a foreign
         # final target is never overwritten or adopted by filename alone.
@@ -196,6 +280,8 @@ def promote_completed_delivery(
         if (not directory_current() or not own_entry(target.name)
                 or not _same_file(original, before)):
             raise ValueError("canonical_promotion_destination_changed")
+        if not physical_owner_current():
+            raise ValueError("canonical_promotion_profile_rebound")
         # Staging remains untouched until the Core B transaction commits.
         return verified
     except Exception:
@@ -275,6 +361,11 @@ def cleanup_published_staging(
     or another SQLite reference). Callers must not report successful physical
     reconciliation when the defensive dependency check retains the bytes.
     """
+    # A completed receipt belongs to one exact SourceKey, not merely to the
+    # same physical profile/account or Artifact hash. Do not erase the private
+    # staging of a different right even if the caller is otherwise bound.
+    if type(source) is not SourceKey or getattr(completed, "source", None) != source:
+        return False
     root, profile = _profile(storage, library_root, source)
     # A missing old receipt file is not a reason to revoke a committed B.
     try:
@@ -288,6 +379,19 @@ def cleanup_published_staging(
     # Never delete if the namespace has been replaced or redirected.
     if attempt.is_symlink() or not attempt.is_dir():
         return False
+    # Capture the selected physical directory BEFORE the bounded SQLite
+    # dependency scan. A regular directory or symlink can replace its name
+    # while SQLite is locked; the old absolute-path rmtree could then erase
+    # another profile's run with the same random-looking basename.
+    base = profile / ".canonical-delivery"
+    try:
+        base_initial = os.stat(base, follow_symlinks=False)
+        run_initial = os.stat(attempt, follow_symlinks=False)
+        if (not stat.S_ISDIR(base_initial.st_mode)
+                or not stat.S_ISDIR(run_initial.st_mode)):
+            return False
+    except OSError:
+        return False
     # A Core delivery attempt is private, but legacy import/index tools may
     # still have registered another physical or operational reference under
     # it. Never turn those rows into dangling paths as a cleanup side effect.
@@ -299,6 +403,26 @@ def cleanup_published_staging(
     marker = str(attempt)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        # The registry can change after _profile() resolved the folder.
+        # A shared or rebound directory must never be recursively deleted,
+        # even when no legacy SQL row references the staging attempt.
+        scope = source.scope
+        registered = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (scope.identity_id,),
+        ).fetchone()
+        aliased = db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (profile.name, scope.identity_id),
+        ).fetchone()
+        if registered != (profile.name,) or aliased is not None:
+            return False
+        # This is the final SQLite read/physical-delete boundary, including
+        # direct cleanup callers. A former buyer with the same receipt/SHA
+        # must not erase staging after its connection was disabled or rebound.
+        if not _exact_borrower_bound_in_db(db, scope):
+            return False
         for table, column in (
             ("placements", "path"),
             ("backup_items", "local_path"),
@@ -322,11 +446,38 @@ def cleanup_published_staging(
             current_operation=current_operation,
         ):
             return False
-        # Preserve the original receipt until B is already committed (caller
-        # contract), but only remove a private run with no other registered
-        # consumer. Any error leaves the staging bytes in place.
-        shutil.rmtree(attempt)
-        return True
+        # Pin the actual owner namespace, not the absolute pathname:
+        # a symlink or same-path directory substituted while dependencies
+        # were read cannot redirect a recursive removal across profiles.
+        # shutil.rmtree's fd-relative implementation refuses a symlink run.
+        flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                 | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            parent_fd = os.open(base, flags)
+        except OSError:
+            return False
+        try:
+            parent_now = os.fstat(parent_fd)
+            parent_visible = os.stat(base, follow_symlinks=False)
+            run_now = os.stat(
+                parts[1], dir_fd=parent_fd, follow_symlinks=False,
+            )
+            for before, after in (
+                (base_initial, parent_now), (base_initial, parent_visible),
+                (run_initial, run_now),
+            ):
+                if (not stat.S_ISDIR(after.st_mode)
+                        or (before.st_dev, before.st_ino)
+                        != (after.st_dev, after.st_ino)):
+                    return False
+            # No absolute path reaches the recursive deleter. After this
+            # check a parent rename still leaves parent_fd on OUR namespace.
+            shutil.rmtree(parts[1], dir_fd=parent_fd)
+            return True
+        except (OSError, ValueError):
+            return False
+        finally:
+            os.close(parent_fd)
 
 
 __all__ = ["promote_completed_delivery", "cleanup_published_staging"]

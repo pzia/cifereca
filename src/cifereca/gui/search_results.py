@@ -234,15 +234,23 @@ def _render_search_results(self) -> int:
     }
     for key, item in remote_rows:
         if key not in filtered: continue
-        content_type = self.service.content_type_for(item)
-        if item.medium == "physical":
-            medium = "Physique"
-        elif item.medium == "unknown" and not file_format(item.format):
-            medium = "Support indéterminé"
-        elif content_type == "audiobook":
-            medium = "Livre audio"
+        # #4276: the versioned documentary evidence takes precedence over
+        # historical book-only labels, without inventing rights or formats.
+        from cifereca.document_classification import DocumentClassification
+        from cifereca.core.document_filter import search_medium_label
+        classification = getattr(item, "document_classification", None)
+        if isinstance(classification, DocumentClassification):
+            medium = search_medium_label(classification)
         else:
-            medium = "Livre numérique"
+            content_type = self.service.content_type_for(item)
+            if item.medium == "physical":
+                medium = "Physique"
+            elif item.medium == "unknown" and not file_format(item.format):
+                medium = "Support indéterminé"
+            elif content_type == "audiobook":
+                medium = "Livre audio"
+            else:
+                medium = "Livre numérique"
         source = self.service.provider_display_name(item.source_provider)
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
         extras: list[str] = list(_stale_catalog_provenance(item.metadata)) if stale_known else []
@@ -327,12 +335,16 @@ def _update_search_count(self, shown: int) -> None:
     noun = "résultat" if count == 1 else "résultats"
     scope = "Connu" if self._search_mode == "local" else "Étendu"
     suffix, tooltip = "", ""
-    if self._search_mode == "global" and getattr(self, "search_controls", None) is not None:
+    response_facets = getattr(self, "_search_response_facets", None)
+    if getattr(self, "search_controls", None) is not None:
         state = self.search_controls.state()
         identity = getattr(self.service, "current_identity", None)
         context = (state.text, state.field, state.scope,
                    getattr(identity, "identity_id", None))
-        if getattr(self, "_online_source_context", None) == context:
+        if response_facets is not None:
+            response_facets.refresh(context, state.providers)
+        if (self._search_mode == "global"
+                and getattr(self, "_online_source_context", None) == context):
             from cifereca.gui.search_batch_feedback import safe_source_statuses
             suffix, tooltip = safe_source_statuses(
                 getattr(self, "_online_source_statuses", None)

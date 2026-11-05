@@ -166,3 +166,69 @@ def test_pending_queue_over_budget_returns_no_unverified_pair_ids(pending_rig):
     assert reviewed.candidates == ()
     assert reviewed.unverified_count == 0
     assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_pending_review_many_unrelated_profiles_keeps_one_exact_owner(
+    pending_rig,
+):
+    storage, _root, paths, pubs, _snapshot, _lock = pending_rig
+    with storage._lock, storage._connect() as db:
+        db.executemany(
+            "INSERT INTO identities(identity_id,directory_name,label,"
+            "created_at,updated_at) VALUES(?,?,?,?,?)",
+            [
+                (f"synthetic-{i:05d}", f"folder-{i:05d}", "Synthetic", 1, 1)
+                for i in range(1500)
+            ],
+        )
+    result = review_pending_canonical_cleanups(storage, identity_id="A")
+    assert result.status == "reviewed"
+    assert result.recovery_candidates == 1
+    assert result.unverified_count == 0
+    assert result.candidates[0].candidate_placement_id == pubs[1].placement_id
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_pending_review_over_budget_registry_returns_no_claims(
+    pending_rig,
+):
+    """Even one valid pending row cannot scan unlimited other identities."""
+    from cifereca.core.canonical_dedup_pending_review import _MAX_PROFILES
+
+    storage, _root, paths, pubs, _snapshot, _lock = pending_rig
+    original = storage.placement_get(pubs[1].placement_id)
+    with storage._lock, storage._connect() as db:
+        existing = db.execute("SELECT COUNT(*) FROM identities").fetchone()[0]
+        db.executemany(
+            "INSERT INTO identities(identity_id,directory_name,label,"
+            "created_at,updated_at) VALUES(?,?,?,?,?)",
+            [
+                (f"over-{i:05d}", f"over-folder-{i:05d}", "Synthetic", 1, 1)
+                for i in range(_MAX_PROFILES + 1 - existing)
+            ],
+        )
+    result = review_pending_canonical_cleanups(storage, identity_id="A")
+    assert result.status == "over_budget"
+    assert result.recovery_candidates == 0
+    assert result.unverified_count == 0
+    assert storage.placement_get(pubs[1].placement_id) == original
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+@pytest.mark.parametrize("invalid_folder", (".", "..", "A/foreign", "A\\foreign"))
+def test_pending_review_rejects_malformed_profile_folder(
+    pending_rig, invalid_folder,
+):
+    storage, _root, paths, pubs, _snapshot, _lock = pending_rig
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "UPDATE identities SET directory_name=? WHERE identity_id='A'",
+            (invalid_folder,),
+        )
+    result = review_pending_canonical_cleanups(storage, identity_id="A")
+    assert result.status == "partial"
+    assert result.unverified_count == 1
+    assert result.candidates == ()
+    assert storage.placement_get(pubs[1].placement_id)["state"] == "dedup_cleanup_pending"
+    assert all(path.read_bytes() == BYTES for path in paths)
+

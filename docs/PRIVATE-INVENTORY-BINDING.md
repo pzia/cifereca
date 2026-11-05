@@ -50,3 +50,14 @@ métadonnées historiques sont conservés par leurs adaptateurs existants.
 les changements en cours de lecture, l’ambiguïté des comptes/sessions, les
 ajouts de sessions, la désactivation et l’annulation. Les suites historiques
 de miroir Kobo/Numilog et l’intégration réelle restent à exécuter en CI.
+
+## Rattachement SQLite exact du compte (P0 #3719 / #3171)
+
+Le garde commun contrôle désormais **aussi** l'existence d'un seul compte
+emprunteur `provider_accounts` associé à la connexion active, au profil,
+au provider et à l'identifiant upstream exact, via
+`Storage.provider_scope_account_bound` dans un instantané SQLite. La simple
+connexion avec un compte en mémoire ne suffit plus à lire un inventaire privé.
+L'identifiant primaire amont vide reste admis s'il est réellement enregistré.
+La revérification après `library()` refuse une suppression ou réaffectation
+SQLite survenue pendant le GET. Aucun droit ni téléchargement n'est créé.

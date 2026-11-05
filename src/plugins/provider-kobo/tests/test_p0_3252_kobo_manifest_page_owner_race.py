@@ -102,7 +102,12 @@ def test_kobo_stable_real_vault_pagination_still_reads_two_pages(reader):
             assert [(x.edition_id, x.kind) for x in result.rights] == [
                 ("book-1", "purchase"), ("book-2", "purchase"),
             ]
-            assert result.status == result.coverage == "partial"
+            # The real Vault reader has attested its terminal second page
+            # with no rejected/ambiguous purchase: the user's complete-
+            # inventory policy applies to this exact current borrower.
+            assert result.status == "success"
+            assert result.coverage == "complete"
+            assert result.pagination_complete is True
             assert not result.authorizes_negative_reconciliation
         else:
             result = getattr(session, reader)()

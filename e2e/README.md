@@ -42,6 +42,23 @@ Les variables d'environnement dont le nom contient `token`, `password`, `secret`
 `authorization` ou `cookie` sont masquées dans les logs, ainsi que les formes
 inline usuelles `token=...`, `password:...`, etc.
 
+## Recette P1 #4118 — couvertures BnF en GTK réel, hors ligne
+
+`python3 e2e/run.py --scenario bnf-covers-1366` exécute le vrai
+`MainWindow` GTK/XTEST (1366×900) avec le parseur catalogue BnF et le
+projecteur `BnfProviderSession` réels, sans authentification ni réseau externe.
+Un `httpx.MockTransport` rend deux PNG synthétiques de couleurs distinctes,
+rattachés par le parseur à deux ressources exactes ; une troisième notice
+est dépourvue de couverture.
+
+Le scénario vérifie les deux images décodées dans la **liste Recherche**,
+leur restitution dans le **Détail** des deux livres, un placeholder pour
+la notice sans image, **exactement deux GET image simulés** et le partage
+du cache entre Recherche et Détail. Les captures `01` à `04` et le
+rapport `screen.json` n'incluent aucun identifiant, chemin, token ou
+réponse fournisseur privée. La recette ne prouve **ni** disponibilité
+effective du CDN public Feedbooks, **ni** état d'un compte BnF installé.
+
 ## Scénario de référence
 
 `startup` valide un parcours minimal mais réel : lancement de CIFERECA avec le

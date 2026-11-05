@@ -1,6 +1,15 @@
 """Safety regressions for source-scoped library maintenance."""
 import shutil
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _allow_legacy_cleanup_mechanics(monkeypatch):
+    """Exercise the historical SQLite/FS safeguards without production enablement."""
+    from cifereca.core import canonical_dedup_supervisor
+    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
+                        lambda: True)
+
 from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
 from cifereca.plugin_api import Conflict, LibraryMutationRequest
 from tests.test_core041_artifact_authority import make_service

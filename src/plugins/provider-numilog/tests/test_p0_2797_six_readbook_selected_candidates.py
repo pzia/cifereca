@@ -27,7 +27,7 @@ def setup_six():
     observed = session.downloadable_resource_snapshot(account)
     resources = observed.resources
     assert len(resources) == 6
-    assert observed.status == "partial"
+    assert observed.status == "success"  # Complete official MesLivres inventory.\n    assert observed.coverage == "complete"\n    assert observed.authorizes_negative_reconciliation is False
     assert not observed.authorizes_acquisition
     assert all(x.capability.offer_id == "" for x in resources)
     assert all(x.source.scope.identity_id == "identity-A" for x in resources)

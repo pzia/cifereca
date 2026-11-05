@@ -109,6 +109,8 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         lambda detail: self._apply_search_detail(selected_id, item, detail, context=context),
         lambda exc: self._search_detail_error(selected_id, item, exc, context=context),
         priority=TaskPriority.METADATA, kind="holdings",
+        # Selection-triggered metadata is passive; callback failures are diagnostic.
+        origin="automatic",
     )
 
 
@@ -185,4 +187,5 @@ def _load_known_detail(self: SearchDetailHost, item):
     context = self._search_detail_request_context()
     self.runner.submit("Disponibilités…", lambda: self.service.holdings(item, self._last_search_query, force=False),
         lambda detail: self._apply_search_detail(selected, item, detail, context=context),
-        priority=TaskPriority.USER_ACTION, kind="holdings")
+        priority=TaskPriority.USER_ACTION, kind="holdings",
+        origin="user")

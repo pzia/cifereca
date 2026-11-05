@@ -206,3 +206,70 @@ def test_only_orphan_path_does_not_use_linked_catalogue_route(rig):
     storage, root, old, new, pid, artifact, payload, lockpath = rig
     assert plan(rig)["reason"] == "no_linked_catalogue"
     assert storage.placement_get(pid)["state"] == "missing"
+
+
+
+def test_linked_detachment_refuses_replaced_profile_directory_after_preview(
+    rig, tmp_path,
+):
+    import shutil
+
+    storage, root, old, new, pid, artifact, payload, _lockpath = rig
+    catalogue(rig)
+    token = plan(rig)["plan_token"]
+    before_placement = storage.placement_get(pid)
+    before_catalogue = storage.catalog_entry_get("catalogue:original")
+    owner = root / "alice"
+    moved = tmp_path / "original-alice"
+    root_ino = root.stat().st_ino
+    owner.rename(moved)
+    (owner / "kobo").mkdir(parents=True)
+    try:
+        result = commit(rig, token)
+        assert result == {"status": "blocked", "reason": "stale_plan"}
+        assert root.stat().st_ino == root_ino
+        assert storage.placement_get(pid) == before_placement
+        assert storage.catalog_entry_get("catalogue:original") == before_catalogue
+    finally:
+        shutil.rmtree(owner)
+        moved.rename(owner)
+    assert commit(rig, token)["status"] == "retired"
+    assert new.read_bytes() == payload
+
+
+def test_linked_detachment_detects_profile_swap_inside_sql_commit(
+    rig, tmp_path, monkeypatch,
+):
+    import shutil
+    from cifereca.core import missing_placement_catalogue_detachment as module
+
+    storage, root, old, new, pid, artifact, payload, _lockpath = rig
+    catalogue(rig)
+    token = plan(rig)["plan_token"]
+    before_placement = storage.placement_get(pid)
+    before_catalogue = storage.catalog_entry_get("catalogue:original")
+    owner = root / "alice"
+    moved = tmp_path / "alice-at-commit"
+    real = module._directory_signature
+    calls = []
+
+    def replace_on_final_probe(path):
+        calls.append(path)
+        if len(calls) == 2:
+            owner.rename(moved)
+            (owner / "kobo").mkdir(parents=True)
+        return real(path)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_directory_signature", replace_on_final_probe)
+            result = commit(rig, token)
+        assert result == {"status": "blocked", "reason": "filesystem_changed"}
+        assert storage.placement_get(pid) == before_placement
+        assert storage.catalog_entry_get("catalogue:original") == before_catalogue
+    finally:
+        if moved.exists():
+            shutil.rmtree(owner)
+            moved.rename(owner)
+    assert commit(rig, token)["status"] == "retired"
+    assert new.read_bytes() == payload

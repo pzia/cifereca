@@ -24,11 +24,15 @@ from .canonical_promotion import (
     _profile, _stage_parts, cleanup_published_staging, promote_completed_delivery,
 )
 from .canonical_recovery import (
-    _path_verified, _scope, _stage_id, _unique_checkpoint_fields,
+    _exact_borrower_bound_in_db, _path_verified, _scope, _stage_id,
+    _unique_checkpoint_fields,
 )
 from .source_convergence import SourceKey
 
 _LOG = logging.getLogger("cifereca")
+# A damaged/imported SQLite may contain arbitrarily many claims to one A.
+# Bound the receipt comparison *before* loading rows into Python.
+_MAX_EXACT_ORIGIN_ROWS = 512
 
 
 def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
@@ -46,18 +50,11 @@ def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
             or row[2] != "sha256:" + row[4]
             or type(row[5]) is not int or row[5] <= 0):
         raise ValueError("canonical_stock_placement_unverified")
-    owner = db.execute(
-        "SELECT identity_id,enabled FROM provider_connections "
-        "WHERE provider_id=? AND credential_id=?",
-        (scope.provider_id, scope.credential_id),
-    ).fetchone()
-    accounts = db.execute(
-        "SELECT account_id FROM provider_accounts WHERE identity_id=? "
-        "AND provider_id=? AND credential_id=?",
-        (scope.identity_id, scope.provider_id, scope.credential_id),
-    ).fetchall()
-    if (owner != (scope.identity_id, 1)
-            or sum(x[0] == scope.account_id for x in accounts) != 1):
+    # The caller already owns the Core Storage transaction. Reuse the exact,
+    # bounded connection+borrower proof from the completed-delivery journal:
+    # an unrelated account roster or a stale foreign connection is not an
+    # authorization to promote historical staging bytes.
+    if not _exact_borrower_bound_in_db(db, scope):
         raise ValueError("canonical_stock_account_unbound")
     references = db.execute(
         "SELECT o.evidence_ref FROM origin_links AS o "
@@ -68,11 +65,18 @@ def _record(db: sqlite3.Connection, source: SourceKey, placement_id: str):
         "AND s.identity_id=? AND s.provider_id=? AND s.credential_id=? "
         "AND s.account_id=? AND s.branch_id=? "
         "AND s.edition_id=? AND s.right_id=? "
-        "AND s.reference_kind=? AND s.evidence_kind='provider_response'",
+        "AND s.reference_kind=? AND s.evidence_kind='provider_response' "
+        "AND s.evidence_ref<>'' "
+        "ORDER BY o.origin_link_id LIMIT ?",
         (row[2], scope.identity_id, scope.identity_id, scope.provider_id,
          scope.credential_id, scope.account_id, source.branch,
-         source.edition_id, source.right_id, source.kind),
+         source.edition_id, source.right_id, source.kind,
+         _MAX_EXACT_ORIGIN_ROWS + 1),
     ).fetchall()
+    if len(references) > _MAX_EXACT_ORIGIN_ROWS:
+        # A truncated link set might exclude the only genuine receipt.
+        # Do not pick an arbitrary one or promote unbounded provenance.
+        raise ValueError("canonical_stock_receipt_missing_or_ambiguous")
     if not references:
         raise ValueError("canonical_stock_exact_origin_missing")
 
@@ -233,6 +237,21 @@ def repair_exact_published_staging(
         raise ValueError("canonical_stock_consent_changed")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        # The physical profile directory was resolved before copying bytes.
+        # An imported or concurrently rebound registry can map this same
+        # directory to another identity. In that case, a staging repair must
+        # never rewrite the Placement (even when all SHA/receipt facts match).
+        owner_directory = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (source.scope.identity_id,),
+        ).fetchone()
+        foreign_owner = db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (profile.name, source.scope.identity_id),
+        ).fetchone()
+        if owner_directory != (profile.name,) or foreign_owner is not None:
+            raise ValueError("canonical_stock_profile_ambiguous")
         current, confirmed = _record(db, source, placement_id)
         if current != original or confirmed != proof:
             raise ValueError("canonical_stock_evidence_changed")

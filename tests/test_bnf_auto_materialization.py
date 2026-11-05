@@ -193,3 +193,38 @@ def test_auto_bnf_rejects_mutated_loan_before_get(
     result = materialize(service, account, loan)
     assert result["status"] == "attention_required"
     assert downloaded == []
+
+
+
+@pytest.mark.parametrize("binding_change", ["account_deleted", "borrower_rebound"])
+def test_automatic_bnf_loan_never_gets_when_sql_account_disappears(
+    connected_core, binding_change,
+):
+    """An unchanged live BnF session does not override the SQL borrower."""
+    service, session, account, loan, _state, downloaded = connected_core
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    assert broker.set_bnf_auto_download(sid, True)
+    assert enabled(service, account) is True
+    with service.storage._lock, service.storage._connect() as db:
+        if binding_change == "account_deleted":
+            db.execute(
+                "DELETE FROM provider_accounts WHERE identity_id=? "
+                "AND provider_id='bnf-pret' AND credential_id=?",
+                (account.identity_id, account.credential_id),
+            )
+        else:
+            db.execute(
+                "UPDATE provider_accounts SET account_id='other-borrower' "
+                "WHERE identity_id=? AND provider_id='bnf-pret' "
+                "AND credential_id=?",
+                (account.identity_id, account.credential_id),
+            )
+    assert session.connected and session.accounts[0] is account
+    assert not enabled(service, account)
+    assert materialize(service, account, loan) == {"status": "skipped"}
+    assert downloaded == []
+    assert service.storage.acquisitions(provider_id="manual") == []
+    assert service.storage.metadata_get(
+        "sync.source.bnf_auto." + sid,
+    ) == "1"  # historical ON stays auditable, never silently transferred

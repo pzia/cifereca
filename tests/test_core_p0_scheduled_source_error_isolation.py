@@ -29,6 +29,13 @@ def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
                 ("alice", "kobo", "vault-alice"),
             ).fetchall()
             assert len(stale) == 1
+            # Retire the synthetic borrower's row as well: a detached
+            # provider_account remains subject to Kobo's unique-owner rule.
+            db.execute(
+                "DELETE FROM provider_accounts WHERE identity_id=? "
+                "AND provider_id=? AND credential_id=?",
+                ("alice", "kobo", "vault-alice"),
+            )
             db.execute(
                 "DELETE FROM provider_connections WHERE identity_id=? "
                 "AND provider_id=? AND credential_id=?",
@@ -44,9 +51,14 @@ def test_scheduled_inventory_state_write_exception_is_scoped_to_one_account(
             provider_id=second_provider, credential_id="vault-second",
             connected=True, capabilities=NS(personal_library=True, backup=False),
         )
-        service.storage.provider_connection_put({
+        second_connection = service.storage.provider_connection_put({
             "identity_id": "alice", "provider_id": second_provider,
             "credential_id": "vault-second", "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": second_connection, "identity_id": other.identity_id,
+            "provider_id": other.provider_id, "credential_id": other.credential_id,
+            "account_id": other.unique_id,
         })
         broker = SynchronizationBrokerImpl(service)
         for account in service.accounts:
@@ -138,9 +150,14 @@ def test_cancellation_is_not_swallowed_or_followed_by_sibling_refresh(
             provider_id="numilog", credential_id="vault-other",
             connected=True, capabilities=NS(personal_library=True, backup=False),
         )
-        service.storage.provider_connection_put({
+        second_connection = service.storage.provider_connection_put({
             "identity_id": "alice", "provider_id": "numilog",
             "credential_id": "vault-other", "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": second_connection, "identity_id": second.identity_id,
+            "provider_id": second.provider_id, "credential_id": second.credential_id,
+            "account_id": second.unique_id,
         })
         broker = SynchronizationBrokerImpl(service)
         for current in (account, second):
@@ -149,14 +166,17 @@ def test_cancellation_is_not_swallowed_or_followed_by_sibling_refresh(
             )
 
         visited = []
-        def interrupt(self, source_id, request=None, control=None):
+        def interrupt(self, source_id, request=None, control=None, *, inventory_only=False):
+            # Scheduled work retains cancellation through the private broker
+            # path, never through the public source Sync ABI.
+            assert inventory_only is True
             visited.append(source_id)
             if failure == "raised_cancelled":
                 raise Cancelled("cancelled by user")
             control.cancel()
             return SyncResult(ok=True, changed=1)
 
-        monkeypatch.setattr(SynchronizationBrokerImpl, "synchronize_source", interrupt)
+        monkeypatch.setattr(SynchronizationBrokerImpl, "_synchronize_source_impl", interrupt)
         control = _CancelControl()
         with pytest.raises(Cancelled):
             broker.synchronize_scheduled_inventory("alice", "startup", control=control)

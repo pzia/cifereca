@@ -58,11 +58,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "acquisition": {"acsm_retention_days": 7},
     "library": {"directory": "~/EBooks"},
-    "kobo_backup": {
-        "enabled": False,
-        "interval_minutes": 60,
-        "directory": "",
-        "format": "epub",
-        "display_profile": "Android",
-    },
+    # Retired global Kobo backup settings are intentionally absent from new
+    # configurations. Config.load() still retains legacy user-supplied keys
+    # verbatim for bounded rollback; no old flag grants source consent.
 }

@@ -2597,21 +2597,38 @@ def main() -> int:
             next_step = kobo_download_running if phase == "cancel-running" else kobo_download_finished
         button = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
                       and str(node.get_label()).replace("_", "") == label)
-        # GTK can report a modal as mapped before its button has real X11
-        # coordinates. A (-5, -5) XTEST click was observed before an unintended
-        # Kobo materialization in two separate CI runs. Never send that click.
-        try:
-            target = device[0].widget_point(button) if button.get_mapped() else (-1, -1)
-        except RuntimeError:
-            target = (-1, -1)
-        if target[0] < 0 or target[1] < 0:
+        # GTK can mark the dialog mapped while its response buttons are
+        # still moving. A positive X11 coordinate is not enough: at 1600px
+        # the old center-of-widget XTEST click could reach the *other*
+        # response. Verify the GTK hit-test in the modal's own allocation
+        # before generating a genuine pointer/button event; never substitute
+        # dialog.response() or skip the no-acquisition cancellation assertion.
+        target = None
+        if button.get_mapped() and button.get_sensitive():
+            ok, bounds = button.compute_bounds(dialog)
+            if ok and bounds.get_width() > 2 and bounds.get_height() > 2:
+                x = bounds.get_x() + bounds.get_width() / 2
+                y = bounds.get_y() + bounds.get_height() / 2
+                hit = dialog.pick(x, y, Gtk.PickFlags.DEFAULT)
+                while hit is not None and hit is not button:
+                    hit = hit.get_parent()
+                if hit is button:
+                    try:
+                        target = device[0].window_point(dialog, x, y)
+                    except RuntimeError:
+                        pass
+        if target is None:
             assert monotonic() < f["download_deadline"], (
-                "Kobo confirmation button has no on-screen XTEST coordinates"
+                "Kobo confirmation response not hit-testable at XTEST target"
             )
             later(80, kobo_download_dialog)
             return
         capture("03k-kobo-explicit-source-confirmation-" + phase)
-        report["pointer_actions"].append(device[0].click_widget(button))
+        device[0].click(*target)
+        report["pointer_actions"].append({
+            "widget": button.get_name(), "x": target[0], "y": target[1],
+            "source": "XTEST pointer/button events · GTK modal hit-test",
+        })
         f["download_deadline"] = monotonic() + 6
         later(120, next_step)
 

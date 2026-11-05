@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from .source_enablement import source_enabled
+
 _SCHEMA = "cifereca.source-refresh-policy/1"
 _SOURCE_ID = re.compile(r"sync:[0-9a-f]{24}\Z")
 _MODES = frozenset({"manual", "on_start", "periodic"})
@@ -174,7 +176,10 @@ def inventory_source_eligible(service: Any, account: Any) -> bool:
         from ..brokers import SynchronizationBrokerImpl
         source_id = SynchronizationBrokerImpl._source_id(account)
         enabled = service.storage.metadata_get("sync.source.enabled." + source_id)
-        if enabled is not None and enabled not in {"1", "true", "yes", "on"}:
+        # The scheduler must interpret this persisted switch exactly as
+        # LibraryService and the public Sync broker do. A stored malformed
+        # value remains OFF; only a missing legacy preference defaults ON.
+        if not source_enabled(enabled):
             return False
 
         sessions = [

@@ -59,12 +59,14 @@ def append_source_sync_consent_controls(window: Any, broker: Any, source: Any, s
         if sync_action_scope_current(window, scope):
             window._refresh_sync_page()
 
+    # AST-isolated GTK harnesses compile this widget function on its own.
+    # Resolve the pure, provider-neutral formatter inside that function.
+    from cifereca.gui.sync_source_controls_overview import sync_file_consent_subtitle
     if configured and state['valid']:
-        row.set_subtitle(
-            ('Activé : la synchronisation peut recevoir les fichiers disponibles de ce compte. '
-             if enabled else 'Désactivé : aucune nouvelle livraison automatique pour ce compte. ')
-            + 'Les fichiers déjà reçus sont conservés.'
-        )
+        row.set_subtitle(sync_file_consent_subtitle(
+            enabled=enabled,
+            available=source.enabled is True and source.connected is True,
+        ))
         toggle = Gtk.Switch()
         toggle.set_active(enabled)
         toggle.set_sensitive(bool(enabled or (supported and source.enabled)))

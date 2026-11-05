@@ -40,6 +40,28 @@ from ..models import Account, Loan
 from ..providers import ProviderConfigurationError
 
 
+def _record_opening_observation_timing(detail: dict, phase: str, started: float) -> None:
+    """Aggregate scoped Core phase wall time; NOT provider HTTP request counts.
+
+    A phase invocation can be a no-op, include local work, or execute multiple
+    supplier calls. Export only bounded numeric counters with closed phase
+    names, never borrower identifiers or provider-controlled payloads.
+    Broken optional measurement must not change Sync outcomes.
+    """
+    if phase not in ("loan_inventory", "canonical_resources"):
+        return
+    try:
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if not 0 <= elapsed_ms <= 86_400_000:
+            return
+        phases = detail.setdefault("source_observation_timing", {})
+        row = phases.setdefault(phase, {"attempts": 0, "elapsed_ms": 0})
+        row["attempts"] = min(1_000_000, row["attempts"] + 1)
+        row["elapsed_ms"] = min(86_400_000, row["elapsed_ms"] + elapsed_ms)
+    except Exception:
+        pass
+
+
 def _sync_loan_inventory_observation(self, account: Account, session: Any):
     """Read exactly once, preserving v1 Core normalization until migration.
 
@@ -69,7 +91,7 @@ def _sync_loan_inventory_observation(self, account: Account, session: Any):
     return None, self._loans_for_account(account, force=True)
 
 
-def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
+def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False, control: Any=None, inventory_only: bool=False) -> dict[str, Any]:
     """Synchronize one explicit account/source without changing account selection.
 
     This is the Core-owned primitive used by the public sync broker.  It
@@ -156,7 +178,8 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             # rejected it. Never poison subsequent cache reads with that batch.
             _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
-        if account.provider_id == 'bnf-pret' and not source_consent_configured(self, account):
+        if (not inventory_only and account.provider_id == 'bnf-pret'
+                and not source_consent_configured(self, account)):
             from .bnf_auto_materialization import enabled, materialize
             if enabled(self, account):
                 # One private bounded inventory per source batch, not one
@@ -306,7 +329,9 @@ def _run_observed_canonical_convergence(
             candidate_session = None
         if candidate_session is not None and any(
             callable(getattr_static(candidate_session, name, None))
-            for name in ("downloadable_selected_delivery_candidate",
+            for name in ("downloadable_selected_delivery_candidate_runtime_guarded",
+                         "downloadable_selected_delivery_candidate_guarded",
+                         "downloadable_selected_delivery_candidate",
                          "rights_selected_delivery_candidate")
         ):
             from .canonical_selected_delivery import complete_selected_delivery
@@ -335,7 +360,11 @@ def _run_observed_canonical_convergence(
         from .source_sync_consent import read_policy
         source_policy = read_policy(self.storage, admitted_snapshots[0].scope)
         if source_policy.configured and source_policy.mode != "on":
-            return {status: (1 if status == "pending" else 0)
+            # A revoked/invalid whole-source policy withholds every observed
+            # resource. Never invent one pending item for an empty inventory.
+            # This is pure accounting: no selected offers or provider GET.
+            withheld = len(admitted_snapshots[0].rights)
+            return {status: (withheld if status == "pending" else 0)
                     for status in ("downloaded", "recovered", "present_attested",
                                    "pending", "blocked", "failed", "cancelled",
                                    "skipped_archived", "inactive")}
@@ -442,9 +471,11 @@ def _run_observed_canonical_convergence(
         return counts
 
 
-def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None) -> dict[str, Any]:
+def synchronize_account_source(self, account: Account, *, deep: bool=False, control: Any=None, inventory_only: bool=False) -> dict[str, Any]:
     from .public_provider_diagnostics import registered_public_provider_id
     from ..plugin_api import Cancelled
+    if type(inventory_only) is not bool:
+        raise ValueError("invalid_inventory_only_mode")
     started = time.monotonic()
     timings: dict[str, int] = {}
 
@@ -486,7 +517,14 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         if not callable(source_batch):
                             raise ProviderConfigurationError("source_inventory_batch_invalid")
                         locks.enter_context(source_batch(account))
-                result = self._synchronize_account_source_impl(account, deep=deep, control=control)
+                # Only Core's dedicated scheduled entry point can select the
+                # inventory implementation; public LibraryService signatures
+                # remain unchanged. No mutable ambient "inventory mode".
+                implementation = (
+                    self._synchronize_account_source_inventory_impl
+                    if inventory_only else self._synchronize_account_source_impl
+                )
+                result = implementation(account, deep=deep, control=control)
                 if result.get("status") != "skipped":
                     # #3171: one optional typed A read and verified B plan
                     # within the existing source Sync's acquisition lock.
@@ -501,10 +539,16 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
 
                     admitted_epoch = source_context_epoch(self)
                     admitted_snapshots = []
-                    canonical = observe_canonical_rights_in_sync(
-                        self, account, cancelled=cancelled_for_rights,
-                        snapshot_sink=admitted_snapshots.append,
-                    )
+                    # #4281: the first typed loan inventory and the second
+                    # canonical rights/resources observation have distinct
+                    # costs. Keep both reads fresh; measure their wall time
+                    # independently without treating elapsed time as an HTTP
+                    # request count, and without altering their admission.
+                    with measure("canonical_resources_ms"):
+                        canonical = observe_canonical_rights_in_sync(
+                            self, account, cancelled=cancelled_for_rights,
+                            snapshot_sink=admitted_snapshots.append,
+                        )
                     if canonical is not None:
                         result["canonical_rights"] = canonical
                         if canonical["status"] != "success":
@@ -512,12 +556,18 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                             # complete refresh or of any negative right.
                             result["status"] = "partial"
 
-                    counts = _run_observed_canonical_convergence(
-                        self, account, admitted_snapshots,
-                        admitted_epoch=admitted_epoch, sync_lease=sync_lease,
-                        cancelled_for_rights=cancelled_for_rights,
+                    # Scheduled discover/rights refresh must not run any
+                    # selected-offer, content GET, ADEPT or canonical B work.
+                    # This restriction is independent of a source's ON policy.
+                    counts = (None if inventory_only else
+                        _run_observed_canonical_convergence(
+                            self, account, admitted_snapshots,
+                            admitted_epoch=admitted_epoch, sync_lease=sync_lease,
+                            cancelled_for_rights=cancelled_for_rights,
+                        )
                     )
-                    if (counts is None and canonical is not None
+                    if (not inventory_only and counts is None
+                            and canonical is not None
                             and canonical.get("pending", 0) > 0):
                         # An optional delivery ABI may be absent. Its absence
                         # cannot turn the known unsatisfied A→B plan into PASS.
@@ -662,8 +712,11 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     scheduled_accounts = [
         a for a in eligible_accounts if a.credential_id in scheduled_credentials
     ]
-    if not legacy_enabled and not scheduled:
-        reason = "disabled"
+    # #3198: only current source/session facts determine the opening state.
+    # Historical kobo_backup.enabled is exposed separately for rollback,
+    # never as a source-wide OFF decision or acquisition permission.
+    if not kobo and not any(a.provider_id == "kobo" for a in self.accounts):
+        reason = "disabled"  # No configured account and no active session.
     elif not connected:
         reason = "no_session"
     elif not capable:
@@ -979,9 +1032,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # Preserve legacy positive normalization while typed
                     # snapshots carry coverage; neither allows unproven
                     # negative rights changes or a second provider read.
-                    snapshot, account_loans = _sync_loan_inventory_observation(
-                        self, account, session,
-                    )
+                    try:
+                        snapshot, account_loans = _sync_loan_inventory_observation(
+                            self, account, session,
+                        )
+                    finally:
+                        _record_opening_observation_timing(
+                            detail, "loan_inventory", loan_started,
+                        )
                     logger.info(
                         "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
@@ -1103,9 +1161,24 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     from .canonical_sync_stage import observe_canonical_rights_in_sync
                     admitted_epoch = source_context_epoch(self)
                     admitted_snapshots = []
-                    canonical = observe_canonical_rights_in_sync(
-                        self, account, snapshot_sink=admitted_snapshots.append,
-                    )
+                    rights_started = time.monotonic()
+                    try:
+                        # A typed, exact, complete loan read may be projected
+                        # into canonical rights *within this single account's
+                        # opening phase* if its provider explicitly supports
+                        # a read-only projection. No state survives this with,
+                        # and independent loan/borrow/download reads stay fresh.
+                        from .same_cycle_loan_inventory import opening_scoped_loan_inventory
+                        with opening_scoped_loan_inventory(
+                            self, account, session, snapshot,
+                        ):
+                            canonical = observe_canonical_rights_in_sync(
+                                self, account, snapshot_sink=admitted_snapshots.append,
+                            )
+                    finally:
+                        _record_opening_observation_timing(
+                            detail, "canonical_resources", rights_started,
+                        )
                     if canonical is not None:
                         rights_detail = detail.setdefault("canonical_rights", {
                             "sources": 0, "observed": 0,
@@ -1521,7 +1594,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 "partial", "attention_required", "fresh_cache_partial", "cancelled",
             } else "fresh_cache" if batch_status == "fresh_cache" else "started"
         )
-    elif kobo_decision["status"] == "manual_only":
+    elif (kobo_decision["status"] == "manual_only"
+          and kobo_decision["persisted_enabled"] is True):
+        # Keep the historical compatibility summary exactly as before:
+        # legacy OFF publishes no `kobo` batch, even though the source
+        # diagnostic correctly says manual_only. No source permission here.
         # A formerly enabled global toggle never licenses new downloads.
         kobo_summary = {"status": "manual_only", "skipped": True}
     for field in ("manifest_items", "owned", "archived", "downloadable",

@@ -311,3 +311,145 @@ def test_duplicate_policy_fields_deny_delivery_and_require_cas_repair(source, fi
     assert repaired['valid'] and not repaired['enabled']
     assert repaired['revision'] != state['revision']
 
+
+
+
+@pytest.mark.parametrize("resource_count", [0, 2, 4])
+def test_source_off_reports_exact_number_of_withheld_resources(
+    source, resource_count,
+):
+    service, db, _root, calls, _broker = source
+    original = service.resource_snapshot
+    sample = original.resources[0]
+    resources = tuple(
+        replace(sample, source=replace(
+            sample.source,
+            edition_id="off-edition-" + str(index),
+            resource_id="off-resource-" + str(index),
+        ))
+        for index in range(resource_count)
+    )
+    service.resource_snapshot = replace(original, resources=resources)
+    off = change(source, False)
+    assert off["configured"] and not off["enabled"]
+    result = synchronize_account_source(service, service.account)
+    execution = result["canonical_execution"]
+    assert execution["pending"] == resource_count
+    assert execution["downloaded"] == 0
+    assert execution["recovered"] == 0
+    assert execution["blocked"] == 0
+    assert calls == []  # Not even a selected-offer preflight.
+    assert db.placements() == []
+
+
+
+@pytest.mark.parametrize('invalid', ['false', 'true', 0, 1, None, [], {}])
+def test_internal_source_toggle_rejects_nonboolean_without_any_mutation(source, invalid):
+    service, db, _root, calls, broker = source
+    on = change(source, True)
+    sid = broker._source_id(service.account)
+    preference_key = broker._preference_key(sid)
+    assert db.metadata_get(preference_key) is None
+    with pytest.raises(ValueError, match='invalid_source_sync_toggle'):
+        policy.set_source_enabled(service, service.account, invalid, preference_key)
+    assert db.metadata_get(preference_key) is None
+    assert broker.source_sync_consent(sid) == on
+    assert calls == []
+
+
+def test_internal_source_toggle_cannot_update_foreign_or_policy_metadata(source):
+    service, db, _root, calls, broker = source
+    on = change(source, True)
+    sid = broker._source_id(service.account)
+    scope = policy.scope_for_account(service.account)
+    foreign = 'sync.source.enabled.sync:foreign-source-not-the-bound-account'
+    local_pref = broker._preference_key(sid)
+    policy_row = policy.policy_key(scope)
+    before_policy = db.metadata_get(policy_row)
+    assert before_policy is not None
+    for wrong_key in (foreign, policy_row, '', None):
+        with pytest.raises(ValueError, match=(
+            'invalid_source_sync_toggle' if wrong_key is None
+            else 'source_sync_toggle_scope_mismatch'
+        )):
+            policy.set_source_enabled(service, service.account, False, wrong_key)
+    assert db.metadata_get(foreign) is None
+    assert db.metadata_get(local_pref) is None
+    assert db.metadata_get(policy_row) == before_policy
+    assert broker.source_sync_consent(sid) == on
+    assert calls == []
+
+
+@pytest.mark.parametrize("variant", ("guarded", "runtime_guarded"))
+def test_source_consent_accepts_guarded_only_v2_delivery_without_legacy_get(
+    source, variant,
+):
+    """A provider need not expose an unguarded content endpoint for Core Sync."""
+    service, db, root, calls, broker = source
+    del service.session.downloadable_selected_delivery_candidate
+    service.session.rights_selected_delivery_candidate = (
+        lambda *_args, **_kwargs: pytest.fail("unguarded legacy GET called")
+    )
+    captured_admission = []
+
+    def execute_runtime(request):
+        assert request["schema_version"] == 2
+        assert request["source"]["type"] == "kobo"
+        assert request["format"] == "pdf"
+        destination = request["destination"]
+        from pathlib import Path
+        Path(destination).write_bytes(BYTES)
+        return {"ok": True, "artifact": {"path": destination}}
+
+    service.execute_acquisition_request = execute_runtime
+
+    def selected_candidate(account, *, edition_id, resource_id, kind,
+                           branch, selected_offer_id, target_dir,
+                           explicit_user_action, admission_current,
+                           **extra):
+        assert explicit_user_action is True
+        assert account is service.account
+        assert (edition_id, resource_id, kind, branch) == (
+            service.source.edition_id, service.source.right_id,
+            service.source.kind, service.source.branch,
+        )
+        assert selected_offer_id == "offer-" + resource_id
+        assert admission_current() is True
+        calls.append("guarded")
+        path = target_dir / "received.pdf"
+        if variant == "runtime_guarded":
+            assert set(extra) == {"execute_runtime"}
+            extra["execute_runtime"]({
+                "schema_version": 2,
+                "source": {"type": "kobo", "provider": "synthetic"},
+                "destination": str(path),
+                "format": "pdf",
+            })
+        else:
+            assert extra == {}
+            path.write_bytes(BYTES)
+        captured_admission.append(admission_current)
+        return DeliveryCandidate(
+            service.resource_snapshot.resources[0].source,
+            selected_offer_id, path,
+        )
+
+    method = ("downloadable_selected_delivery_candidate_runtime_guarded"
+              if variant == "runtime_guarded"
+              else "downloadable_selected_delivery_candidate_guarded")
+    setattr(service.session, method, selected_candidate)
+
+    sid = broker._source_id(service.account)
+    assert broker.source_sync_consent(sid)["supported"] is True
+    assert change(source, True)["enabled"] is True
+    first = synchronize_account_source(service, service.account)["canonical_execution"]
+    assert first["downloaded"] == 1
+    assert first["failed"] == first["pending"] == 0
+    assert calls == ["offer", "guarded"]
+    assert refs(db)[1] == 1 and len(db.placements()) == 1
+    assert all(not lease() for lease in captured_admission)
+
+    second = synchronize_account_source(service, service.account)["canonical_execution"]
+    assert second["present_attested"] == 1 and second["downloaded"] == 0
+    assert calls == ["offer", "guarded"]
+    assert refs(db)[1] == 1 and len(db.placements()) == 1

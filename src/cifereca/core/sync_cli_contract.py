@@ -86,20 +86,60 @@ def require_unique_sync_account(accounts: list[Any], **selectors: str) -> Any:
         raise SyncSelectionError("account_ambiguous")
     return selected[0]
 
+# Existing Core source-sync and A→B envelopes; values stay closed and bounded.
+_SYNC_CODES = frozenset({
+    "source_disabled", "operation_busy", "source_not_found",
+    "source_sync_partial", "source_sync_failed", "source_sync_cancelled",
+    "account_ambiguous", "cancelled", "sync_unavailable",
+    "invalid_sync_result",
+})
+_RIGHTS_STATES = frozenset({"success", "partial", "failed", "schema_unavailable"})
+_RIGHTS_COUNTS = (
+    "observed", "attested_active", "source_references_changed",
+    "present_attested", "pending", "skipped_archived",
+)
+
+
 def safe_sync_result(result: object) -> dict[str, object]:
-    """Bound machine-readable status, not untrusted provider payload."""
-    if not isinstance(result, dict):
+    """Project only known Core statuses, A observation and A→B counts."""
+    if type(result) is not dict:
         return {"status": "failed", "code": "invalid_sync_result"}
     status = result.get("status")
-    if status not in ("success", "partial", "failed", "busy", "skipped", "cancelled", "complete"):
+    if type(status) is not str or status not in (
+        "success", "partial", "failed", "busy", "skipped", "cancelled", "complete"
+    ):
         status = "failed"
     summary: dict[str, object] = {"status": status}
-    for key in ("downloaded", "completed", "scanned", "unchanged", "pending", "errors"):
+    for key in (
+        "downloaded", "completed", "scanned", "unchanged", "pending",
+        "errors", "loans", "library", "files_materialized",
+    ):
         value = result.get(key)
         if type(value) is int and 0 <= value <= 1_000_000:
             summary[key] = value
-    reason = result.get("reason")
-    if reason in ("source_disabled", "operation_busy", "source_not_found",
-                  "source_sync_partial", "cancelled"):
+    reason = result.get("code", result.get("reason"))
+    if type(reason) is str and reason in _SYNC_CODES:
         summary["code"] = reason
+
+    rights = result.get("canonical_rights")
+    if type(rights) is dict:
+        projected: dict[str, object] = {}
+        if type(rights.get("status")) is str and rights["status"] in _RIGHTS_STATES:
+            projected["status"] = rights["status"]
+        for key in _RIGHTS_COUNTS:
+            value = rights.get(key)
+            if type(value) is int and 0 <= value <= 1_000_000:
+                projected[key] = value
+        if projected:
+            summary["canonical_rights"] = projected
+
+    execution = result.get("canonical_execution")
+    if type(execution) is dict:
+        from .diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+        if (set(execution) == set(CANONICAL_EXECUTION_STATUSES)
+                and all(type(execution[key]) is int and 0 <= execution[key] <= 1_000_000
+                        for key in CANONICAL_EXECUTION_STATUSES)):
+            summary["canonical_execution"] = {
+                key: execution[key] for key in CANONICAL_EXECUTION_STATUSES
+            }
     return summary

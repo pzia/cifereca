@@ -1,8 +1,7 @@
-"""Explicit BnF new-loan consent (#2055): GTK orchestration, no provider calls.
+"""Single-click BnF/Paris manual borrowing; all admission belongs to Core.
 
-Only the Core dispatcher may mutate a BnF loan. The legacy borrow() handler
-must never be used for this source. This controller has no provider import
-and does not handle cookies, CSRF, receipt HTML, or ADEPT material.
+The historical BnF module name is kept for existing callers. Neither source
+may use the legacy borrow() path. No provider protocol or ADEPT runs here.
 """
 from __future__ import annotations
 
@@ -10,23 +9,25 @@ from copy import copy
 from ..models import Account, SearchResult
 
 
-def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
-    """Offer consent only for a published, Core-admissible BnF action.
+def _present_manual_borrow(window, item, control, *, TaskPriority,
+                           provider_id, label, available, dispatch, expected_account=None):
+    """Submit only a user-clicked, published and Core-admissible loan action.
 
-    A confirmed borrow request represents the reader's site-checked
-    intention to attempt a transaction; the lender decides quota and rights.
+    No second dialog or separate website attestation is required (#3121).
+    The provider still decides quota and rights; Core guards one exact POST.
     """
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
-            or item.source_provider != "bnf-pret"
-            or not window.service.can_borrow_bnf(item)):
+            or item.source_provider != provider_id
+            or not available(item)):
         return
     try:
         session, candidates = window._eligible_borrow_accounts(item)
         if len(candidates) != 1:
             return
         account = candidates[0]
-        if type(account) is not Account or account.is_primary is not True:
+        if (type(account) is not Account or account.is_primary is not True
+                or (expected_account is not None and account is not expected_account)):
             return
         if sum(candidate is account for candidate in window.service.accounts) != 1:
             return
@@ -64,9 +65,9 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
                             "identity_id", None) == identity_id
                 and window.service._account_context_epoch == core_epoch
                 and session.connected is True
-                and session._epoch == source_epoch
+                and getattr(session, "_epoch", None) == source_epoch
                 and window.service._session_for_source(
-                    "bnf-pret", account.credential_id) is session
+                    provider_id, account.credential_id) is session
                 and sum(row is account for row in window.service.accounts) == 1
                 and (account.identity_id, account.provider_id,
                      account.credential_id, account.unique_id,
@@ -78,102 +79,113 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
         except Exception:
             return False
 
-    # Show the selected account alias in the local dialog, never in logs.
-    # Collapse control/newline whitespace to avoid breaking native GTK labels.
-    account_name = (
-        " ".join(account.display_name.split())[:80]
-        if type(account.display_name) is str else ""
-    ) or "Compte BnF connecté"
-    dialog = Adw.MessageDialog.new(
-        window, "Emprunter ce livre à la BnF ?",
-        f"Compte : {account_name}. "
-        f"Livre : {' '.join(item.title.split())[:140] if type(item.title) is str else 'notice sélectionnée'}. "
-        "Vérifiez sur pret.bnf.fr que ce livre est indiqué comme empruntable "
-        "pour votre compte avant de confirmer. La BnF peut refuser "
-        "la transaction selon le quota ou les droits. "
-        "Un seul envoi sera effectué. "
-        "En cas de résultat incertain, consultez Mes emprunts avant toute "
-        "nouvelle démarche. Le téléchargement ACSM reste une action distincte.",
-    )
-    dialog.add_response("cancel", "Annuler")
-    dialog.add_response("borrow", "J’ai vérifié sur BnF et je confirme")
-    submitted = False
+    # The explicit click on "Emprunter" is the sole user gesture. Avoid a
+    # second confirmation dialog and prevent repeated queued requests even if
+    # a click arrives before TaskRunner can disable the control.
+    if getattr(window, "_manual_borrow_pending", None) is not None:
+        return
+    token = object()
+    window._manual_borrow_pending = token
 
-    def on_response(_dialog, response):
-        nonlocal submitted
-        if response != "borrow" or submitted:
-            return
-        if not current() or not window.service.can_borrow_bnf(selected):
+    def release_pending():
+        if getattr(window, "_manual_borrow_pending", None) is token:
+            window._manual_borrow_pending = None
+
+    def submit_once():
+        if not current() or not available(selected):
+            release_pending()
             window.show_error(
                 "Le compte ou le livre a changé. Sélectionnez de nouveau "
-                "la notice avant toute demande.", "Emprunt BnF",
+                "la notice avant toute demande.", f"Emprunt {label}",
             )
             return
-        submitted = True
 
         def work():
-            if not current() or not window.service.can_borrow_bnf(selected):
+            if not current() or not available(selected):
                 return {"status": "blocked", "reason_code": "borrow_scope_changed"}
-            return window.service.borrow_bnf_manual(
+            return dispatch(
                 selected, expected_identity_id=identity_id,
-                confirmed=True, site_checked=True,
+                confirmed=True,
                 expected_context_epoch=core_epoch,
                 expected_account=account,
             )
 
         def done(result):
+            release_pending()
             if not current():
                 return
             if (type(result) is dict and result.get("status") == "confirmed"
                     and result.get("provider_verified") is True):
-                window._activity_result("Prêt BnF actif vérifié dans Mes emprunts")
+                window._activity_result(f"Prêt {label} actif vérifié dans Mes emprunts")
                 window.refresh_loans(True)
             elif type(result) is dict and result.get("status") == "unsupported":
                 window.show_error(
-                    "L’emprunt BnF n’est pas disponible pour ce compte.",
-                    "Emprunt BnF",
+                    f"L’emprunt {label} n’est pas disponible pour ce compte.",
+                    f"Emprunt {label}",
                 )
             elif (type(result) is dict and result.get("status") == "blocked"
                     and result.get("reason_code") == "borrow_not_submitted"):
                 window.show_error(
-                    "Aucune demande de prêt n’a été envoyée à la BnF : "
-                    "la fiche ou la confirmation n’est plus exploitable. "
-                    "Vérifiez le livre sur pret.bnf.fr avant une nouvelle "
+                    f"Aucune demande de prêt n’a été envoyée à {label} : "
+                    "la fiche ou l'action n'est plus exploitable. "
+                    "Vérifiez le livre sur le portail avant une nouvelle "
                     "demande volontaire.",
-                    "Emprunt BnF",
+                    f"Emprunt {label}",
                 )
             elif type(result) is dict and result.get("status") == "blocked":
                 window.show_error(
-                    "La demande BnF n’a pas été admise dans ce contexte. "
+                    f"La demande {label} n’a pas été admise dans ce contexte. "
                     "Aucun nouvel emprunt n’est confirmé.",
-                    "Emprunt BnF",
+                    f"Emprunt {label}",
                 )
             else:
                 window.show_error(
-                    "Le résultat de la demande BnF est incertain. "
-                    "Vérifiez Mes emprunts ou le portail BnF. "
+                    f"Le résultat de la demande {label} est incertain. "
+                    f"Vérifiez Mes emprunts ou le portail {label}. "
                     "Cifereca ne répétera pas automatiquement la demande.",
-                    "Emprunt BnF",
+                    f"Emprunt {label}",
                 )
 
         def failed(_error):
+            release_pending()
             if current():
                 # Never print arbitrary provider exceptions containing URLs
                 # or account-specific server data in the GTK modal.
                 window.show_error(
-                    "La demande BnF n’a pas pu être vérifiée. Consultez "
+                    f"La demande {label} n’a pas pu être vérifiée. Consultez "
                     "Mes emprunts avant de réessayer sur le portail.",
-                    "Emprunt BnF",
+                    f"Emprunt {label}",
                 )
 
-        window.runner.submit(
-            "Demande de prêt BnF…", work, done, failed,
-            control=control, priority=TaskPriority.USER_ACTION,
-            kind="borrow",
-        )
+        try:
+            window.runner.submit(
+                f"Demande de prêt {label}…", work, done, failed,
+                control=control, priority=TaskPriority.USER_ACTION,
+                kind="borrow",
+            )
+        except Exception:
+            release_pending()
+            raise
 
-    dialog.connect("response", on_response)
-    dialog.present()
+    submit_once()
 
 
-__all__ = ["present_bnf_borrow"]
+def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
+    _present_manual_borrow(
+        window, item, control, TaskPriority=TaskPriority,
+        provider_id="bnf-pret", label="BnF",
+        available=window.service.can_borrow_bnf,
+        dispatch=window.service.borrow_bnf_manual,
+    )
+
+
+def present_paris_borrow(window, item, control, *, Adw, TaskPriority, account=None):
+    _present_manual_borrow(
+        window, item, control, TaskPriority=TaskPriority,
+        provider_id="paris", label="Paris",
+        available=window.service.can_borrow_paris,
+        dispatch=window.service.borrow_paris_manual, expected_account=account,
+    )
+
+
+__all__ = ["present_bnf_borrow", "present_paris_borrow"]

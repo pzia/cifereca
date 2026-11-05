@@ -127,3 +127,46 @@ def test_exact_origin_with_too_many_physical_copies_aborts_unverified_plan(
         _plan(store, snap, tmp_path)
     assert store.placements() == before
     assert original.read_bytes() == BYTES
+
+
+def test_persisted_source_without_positive_proof_cannot_satisfy_b(
+    store, tmp_path,
+):
+    """The provider OriginLink is insufficient if source A lost its evidence.
+
+    Imported or damaged SQLite can retain stable SourceReference/OriginLink
+    IDs and a SHA-perfect physical Placement while losing the provider's
+    actual observation proof. The read-only plan must not suppress delivery.
+    """
+    _source, snapshot, publication, physical = _setup(store, tmp_path)
+    before = store.placements()
+    with store._lock, store._connect() as db:
+        original, = db.execute(
+            "SELECT evidence_ref FROM source_references "
+            "WHERE source_reference_id=?",
+            (publication.source_reference_id,),
+        ).fetchone()
+        assert original
+        db.execute(
+            "UPDATE source_references SET evidence_ref='' "
+            "WHERE source_reference_id=?",
+            (publication.source_reference_id,),
+        )
+
+    decision, = _plan(store, snapshot, tmp_path).decisions
+    assert not decision.provider_satisfied
+    assert decision.placement_ids == ()
+    assert store.placements() == before
+    assert physical.read_bytes() == BYTES
+
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE source_references SET evidence_ref=? "
+            "WHERE source_reference_id=?",
+            (original, publication.source_reference_id),
+        )
+    restored, = _plan(store, snapshot, tmp_path).decisions
+    assert restored.provider_satisfied
+    assert restored.placement_ids == (publication.placement_id,)
+    assert store.placements() == before
+    assert physical.read_bytes() == BYTES

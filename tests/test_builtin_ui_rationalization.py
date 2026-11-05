@@ -54,6 +54,7 @@ def test_builtin_pages_keep_routes_groups_and_library_action():
         "dashboard",
         "search",
         "library",
+        "readers",
         "recent",
         "loans",
         "history",

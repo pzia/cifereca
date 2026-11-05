@@ -2,9 +2,9 @@
 
 No live HTTP, login, loan mutation, download or private account is used.
 """
-from types import SimpleNamespace
-
 import pytest
+
+from cifereca_paris_normalize import normalize_search_result
 
 from cifereca_paris_client import ParisClient, ParisError, ParisSearchUnavailable
 
@@ -18,6 +18,25 @@ class Diagnostics:
 
     def add(self, *args, **kwargs):
         self.rows.append({"args": args, "kwargs": kwargs})
+
+
+def public_result(item_id: str, *, digital: bool):
+    """Real typed SearchResult instead of an incomplete route-only stub."""
+    result = normalize_search_result(
+        {
+            "Resource": {
+                "RscId": item_id,
+                "RscBase": "DILICOM" if digital else "SYRACUSE",
+                "Type": "Livre numérique" if digital else "Livre",
+                "Frmt": "MONE" if digital else "MONO",
+                "Ttl": "Livre public",
+            },
+        },
+        "EBOOKS" if digital else "CATALOGUE",
+    )
+    assert result is not None
+    result.id = item_id  # keep assertions on the original synthetic identity.
+    return result
 
 
 def make_client():
@@ -34,7 +53,7 @@ def test_recovered_syracuse_retry_does_not_export_exception_message():
         sizes.append(result_size)
         if result_size == 50:
             raise ParisError(SECRET)
-        return [SimpleNamespace(id="public-1", title="Livre public")]
+        return [public_result("public-1", digital=True)], []
 
     client._search_scenario = scenario
     try:
@@ -66,7 +85,7 @@ def test_partial_public_results_preserved_without_exporting_private_error():
     def scenario(_query, name, _page, _size):
         if name == "EBOOKS":
             raise ParisError(SECRET)
-        return [SimpleNamespace(id="public-only", title="Livre public")]
+        return [public_result("public-only", digital=False)], []
 
     client._search_scenario = scenario
     try:

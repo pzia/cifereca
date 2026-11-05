@@ -350,3 +350,27 @@ def test_registered_profile_symlink_child_refused_before_sql(store, tmp_path):
     with pytest.raises(ValueError, match="canonical_profile_symlink"):
         publish(store, root, link / "book.pdf", source, snap)
     assert rows(store) == (0, 0, 0, 0)
+
+
+
+def test_publisher_checks_exact_borrower_with_large_sibling_account_roster(store, tmp_path):
+    """A credential's siblings cannot grant another account or force an unbounded read."""
+    key, snapshot = new_source(account="buyer-A")
+    for index in range(80):
+        register(store, "A", "seller", "card-A", account=f"sibling-{index}")
+    path = target(tmp_path, "A")
+    root = tmp_path / "EBooks"
+    with pytest.raises(ValueError, match="canonical_account_not_registered"):
+        publish(store, root, path, key, snapshot)
+    assert rows(store) == (0, 0, 0, 0)
+    register(store, "A", "seller", "card-A", account="buyer-A")
+    result = publish(store, root, path, key, snapshot)
+    assert result.changed is True
+    assert rows(store) == (1, 1, 1, 1)
+    assert publish(store, root, path, key, snapshot).changed is False
+    with store._lock, store._connect() as db:
+        exact = db.execute(
+            "SELECT account_id FROM source_references WHERE source_reference_id=?",
+            (result.source_reference_id,),
+        ).fetchone()
+    assert exact == ("buyer-A",)

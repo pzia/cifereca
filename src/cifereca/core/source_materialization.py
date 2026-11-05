@@ -22,6 +22,7 @@ from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..plugin_api import SyncResult
 from . import kobo_backup
+from .canonical_delivery_abi import has_complete_delivery_abi
 from .kobo_local_audit import _read_hash_within
 from .kobo_local_reconciliation import _roots, _within
 
@@ -105,6 +106,12 @@ def _source(broker, source_id):
     session = sessions[0]
     _require(session.connected, "source_disconnected")
     _require(bool(getattr(session.capabilities, "backup", False)), "not_supported")
+    # #3196: a fully typed Core provider must never dispatch a second Kobo
+    # acquisition through the legacy, backup_items-authoritative worker.
+    # Check on BOTH preview and execution, including an ABI added after a
+    # confirmation token was issued.
+    _require(not has_complete_delivery_abi(session),
+             "canonical_source_delivery_active")
     session_accounts = session.accounts
     _require(len(session_accounts) == 1 and session_accounts[0].unique_id == account.unique_id, "ambiguous_account")
     _require(sum(a.provider_id == "kobo" and a.credential_id == account.credential_id

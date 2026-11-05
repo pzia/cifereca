@@ -14,6 +14,7 @@ import stat
 from .canonical_publication import _same_file
 from .convergence_verified_presence import _verified_copy
 from .duplicate_maintenance_guard import candidate_has_active_dependencies_in_db
+from .canonical_dedup_exclusions import ordinary_dedup_paths_excluded
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +134,15 @@ def preview_canonical_duplicate(
                         ) or not _same_file(path, before)):
                     return report("blocked", "physical_evidence_changed")
                 observations.append((path, before))
+
+            # #4496: after the existing physical checks (which preserve the
+            # historical physical_evidence_changed reason for symlink/ABA),
+            # an attested Outbox is neither a keeper nor a retiree.
+            if ordinary_dedup_paths_excluded(
+                (candidate[0], keeper[0]), library_root=library_root,
+                identity_id=candidate[1], owner_directory=owner_dir,
+            ):
+                return report("blocked", "excluded_path")
 
             # Count the exact references for human-readable diagnostics.
             # A generic/unknown path elsewhere still prevents retirement.

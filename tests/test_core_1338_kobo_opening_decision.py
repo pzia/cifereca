@@ -12,7 +12,7 @@ from tests.test_kobo_sync_modes import _service, _neutralize_unrelated_sync_work
 @pytest.mark.parametrize(
     "enabled,connected,capable,source_enabled,due,expected",
     [
-        (False, True, True, True, True, "disabled"),
+        (False, True, True, True, True, "manual_only"),
         (True, False, True, True, True, "no_session"),
         (True, True, False, True, True, "capability_unavailable"),
         (True, True, True, False, True, "source_disabled"),
@@ -102,7 +102,7 @@ def test_opening_records_one_sanitized_summary_on_partial(tmp_path, monkeypatch)
         service.close()
 
 
-def test_opening_disabled_still_reports_decision_without_backup(tmp_path, monkeypatch):
+def test_opening_manual_only_still_reports_decision_without_backup(tmp_path, monkeypatch):
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
@@ -115,13 +115,13 @@ def test_opening_disabled_still_reports_decision_without_backup(tmp_path, monkey
         )
         result = service._opening_sync_locked(deep=False)
         assert result["kobo"] is None
-        assert result["kobo_decision"]["status"] == "disabled"
+        assert result["kobo_decision"]["status"] == "manual_only"
         assert len([row for row in service.diagnostics.snapshot()
                     if row["operation"] == "automatic backup decision"]) == 1
     finally:
         service.close()
 
-def test_disabled_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeypatch):
+def test_manual_only_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeypatch):
     """A second offline process still explains items=0, not 'no error'."""
     from cifereca.core.kobo_backup import safe_kobo_backup_report
 
@@ -130,10 +130,10 @@ def test_disabled_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeypatc
         _neutralize_unrelated_sync_work(service, monkeypatch)
         service.config.set("kobo_backup.enabled", False)
         result = service._opening_sync_locked(deep=False)
-        assert result["kobo_decision"]["status"] == "disabled"
+        assert result["kobo_decision"]["status"] == "manual_only"
         assert service.storage.backup_list(provider_id="kobo") == []
         raw = service.storage.metadata_get("kobo_backup_opening_decision_v1")
-        assert json.loads(raw)["status"] == "disabled"
+        assert json.loads(raw)["status"] == "manual_only"
         assert "vault" not in raw.lower()
     finally:
         service.close()
@@ -142,11 +142,11 @@ def test_disabled_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeypatc
     try:
         persisted = other.kobo_backup_diagnostic()
         assert persisted["items"] == 0
-        assert persisted["opening_decision"]["status"] == "disabled"
+        assert persisted["opening_decision"]["status"] == "manual_only"
         assert persisted["opening_decision"]["persisted_enabled"] is False
         shared = safe_kobo_backup_report(persisted)
         assert shared["items"] == 0
-        assert shared["opening_decision"]["status"] == "disabled"
+        assert shared["opening_decision"]["status"] == "manual_only"
         assert "vault" not in json.dumps(shared).lower()
     finally:
         other.close()
@@ -193,7 +193,7 @@ def test_kobo_autobackup_opt_in_must_be_literal_boolean(tmp_path, monkeypatch, m
         monkeypatch.setattr(service, "_sync_kobo_backup_locked",
                             lambda progress=None: pytest.fail("unconsented download"))
         response = service._opening_sync_locked(deep=False)
-        assert response["kobo_decision"]["status"] == "disabled"
+        assert response["kobo_decision"]["status"] == "manual_only"
         assert response["kobo_decision"]["persisted_enabled"] is False
     finally:
         service.close()

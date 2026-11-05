@@ -271,7 +271,6 @@ def test_report_preserves_existing_provenance_performance_and_provider_state():
     assert report.text.startswith("cifereca vtest-version")
     for snippet in (
         'transport: "httpx local direct"',
-        'base_url: "https://paris.example.invalid"',
         'ui: "GTK4/libadwaita"',
         'cover_pipeline: {"covers": 2}',
         'history_cover_search: {"history": 3}',
@@ -285,10 +284,19 @@ def test_report_preserves_existing_provenance_performance_and_provider_state():
     assert [event[0] for event in calls] == ["status", "project", "journal"]
 
 
-def test_report_falls_back_to_config_base_url_without_paris_helper():
+def test_generic_settings_preview_never_reads_legacy_paris_endpoint():
+    """Unknown providers work even when no legacy Config API is available."""
     host, args, calls, report = make_context(paris_url=False)
+
+    class NoLegacyConfig:
+        def __getattribute__(self, name):
+            raise AssertionError("Settings preview queried legacy config: " + name)
+
+    host.config = NoLegacyConfig()
     refresh_settings_diagnostics(host, **args)
-    assert 'base_url: "https://config.example.invalid"' in report.text
+    assert "base_url:" not in report.text
+    assert 'providers: {"source": "ready"}' in report.text
+    assert [event[0] for event in calls] == ["status", "project", "journal"]
 
 
 def test_no_plugin_activation_or_background_job_in_refresh_path():

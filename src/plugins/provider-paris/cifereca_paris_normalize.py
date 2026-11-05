@@ -1,7 +1,9 @@
 from __future__ import annotations
 from cifereca.plugin_api import description_text, description_element
 from cifereca_paris_formats import projection
-from cifereca_paris_bibliography import project_observed_resource_facets
+from cifereca_paris_bibliography import (
+    project_observed_resource_facets, project_attested_search_series,
+)
 import html
 import re
 import uuid
@@ -100,15 +102,26 @@ def normalize_search_result(raw: dict[str, Any], scenario: str) -> SearchResult 
         return None
     docbase = str(resource["RscBase"])
     record_id = str(resource["RscId"])
-    digital, content_type, media_format, metadata = projection(resource, raw, scenario, docbase)
+    medium, content_type, media_format, metadata, classification = projection(
+        resource, raw, scenario, docbase,
+    )
     # Resource-level fields observed in Syracuse JSON: no additional GET or
     # implied server-side filtering, ownership, edition or reader-age claim.
     metadata.update(project_observed_resource_facets(resource, scenario))
+    # The per-result Search HTML can attest a linked series only for this
+    # particular notice. Keep its lower-confidence provenance separate from
+    # Resource fields; never overwrite verified subject/tag evidence.
+    series = project_attested_search_series(raw, scenario)
+    if series:
+        metadata["series"] = series["series"]
+        metadata.setdefault("bibliography_evidence", {}).update(
+            series["bibliography_evidence"]
+        )
     return SearchResult(
         id=f"{docbase}:{record_id}",
         record_id=record_id,
         docbase=docbase,
-        medium="digital" if digital else "physical",
+        medium=medium,
         title=str(resource.get("Ttl") or "Sans titre"),
         author=strip_html(resource.get("Crtr")),
         type=str(resource.get("Type")) if resource.get("Type") is not None else None,
@@ -121,6 +134,7 @@ def normalize_search_result(raw: dict[str, Any], scenario: str) -> SearchResult 
         scenario=scenario,
         content_type=content_type,
         metadata=metadata,
+        document_classification=classification,
     )
 
 

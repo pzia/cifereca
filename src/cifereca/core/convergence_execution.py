@@ -73,6 +73,13 @@ def _check_post_placement_duplicates(storage, *, library_root: Path,
             clear_checkpoint_if_no_duplicates(
                 storage, library_root=library_root, placement_id=placement_id,
             )
+    except ValueError as exc:
+        # Overflow is an incomplete maintenance inventory, not proof that
+        # there are zero duplicates. Leave all checkpoints and B untouched.
+        code = ("canonical_dedup_over_budget"
+                if str(exc) == "canonical_dedup_candidates_over_budget"
+                else "canonical_dedup_probe_failed")
+        _LOG.warning("TRACE convergence code=%s", code)
     except Exception:
         # A separate maintenance failure cannot turn verified B into a failed
         # acquisition, revoke its OriginLink or authorize re-download.
@@ -241,20 +248,16 @@ def execute_admitted_convergence(
         if not current_memory():
             return False
         try:
-            if (service.storage.identity_for_connection(
-                    scope.provider_id, scope.credential_id,
-            ) != scope.identity_id
-                    or service.sync_source_enabled(account) is not True):
-                return False
-            connections = service.storage.provider_connections(
-                identity_id=scope.identity_id,
-            )
-            return sum(
-                conn.get("provider_id") == scope.provider_id
-                and conn.get("credential_id") == scope.credential_id
-                and conn.get("enabled") is True
-                for conn in connections
-            ) == 1
+            # The global Sync must recheck the exact borrower, enabled
+            # owner and source switch before every candidate/receipt. Do not
+            # enumerate all registered accounts for every book or HTTP chunk.
+            return (service.sync_source_enabled(account) is True
+                    and service.storage.provider_scope_account_bound(
+                        identity_id=scope.identity_id,
+                        provider_id=scope.provider_id,
+                        credential_id=scope.credential_id,
+                        account_id=scope.account_id,
+                    ))
         except (AttributeError, TypeError, ValueError, KeyError):
             return False
 
@@ -352,10 +355,52 @@ def execute_admitted_convergence(
                     if type(exc) is ValueError else "canonical_stock_repair_deferred"
                 )
                 _LOG.warning("TRACE convergence code=%s", code)
-                results.append(ConvergenceOutcome(key, "failed", code))
-                continue
-            if decision.placement_ids:
-                trace.emit(key, "stock_recovery", "ok" if repaired else "miss")
+                # Stock/staging repair is post-B maintenance. A failure is
+                # NOT evidence that the already-published provider OriginLink
+                # or its file has vanished. Conversely the earlier B probe
+                # may be stale if the repair observed changed physical bytes.
+                # Re-attest this exact source after failure; never report a
+                # positive presence on the strength of the old plan alone.
+                try:
+                    from dataclasses import replace
+                    fresh = plan_existing_verified_presence(
+                        initial_storage, replace(
+                            snapshot, rights=(row,), status="partial",
+                            coverage="partial", pagination_complete=False,
+                        ), library_root=library_root,
+                    )
+                    still_present = (
+                        len(fresh.decisions) == 1
+                        and fresh.decisions[0].source == key
+                        and fresh.decisions[0].provider_satisfied
+                    )
+                    if still_present:
+                        # #3909: a historical Placement INSIDE the Core
+                        # .canonical-delivery staging tree is not final B.
+                        # However, another independently hashed final copy
+                        # under the *same exact provider source* remains B
+                        # even if the old staging receipt is unrepairable.
+                        # A staging-only source must still fail closed.
+                        still_present = False
+                        for pid in fresh.decisions[0].placement_ids:
+                            found = initial_storage.placement_get(pid)
+                            if (type(found) is dict
+                                    and type(found.get("path")) is str
+                                    and ".canonical-delivery" not in Path(
+                                        found["path"]
+                                    ).parts):
+                                still_present = True
+                                break
+                except Exception:
+                    still_present = False
+                if not still_present:
+                    results.append(ConvergenceOutcome(key, "failed", code))
+                    continue
+                # Verified B survives: log deferred repair but continue
+                # checking optional postcommit maintenance without a GET.
+            else:
+                if decision.placement_ids:
+                    trace.emit(key, "stock_recovery", "ok" if repaired else "miss")
             # A crash *after* B but before marking the journal or removing
             # staging bypasses the normal recovery path on every later Sync:
             # the verified OriginLink already makes this source satisfied.
@@ -567,16 +612,13 @@ def execute_admitted_convergence(
             trace.emit(key, phase, "failed")
             results.append(ConvergenceOutcome(key, "cancelled", "delivery_cancelled"))
             break
-        except Exception:
+        except Exception as error:
             trace.emit(key, phase, "failed")
-            # A transport/ACSM exception may contain signed URLs, tokens
-            # or subscriber identifiers. Neither the message nor traceback
-            # crosses the Core log boundary; the outcome stays fail-closed.
-            _LOG.warning("TRACE convergence code=canonical_%s_failed", phase)
-            # A logged generic delivery/commit failure hid post-GET failures
-            # that already have a durable recovery receipt. Use only fixed
-            # phase codes: arbitrary provider exceptions may carry tokens,
-            # private file paths, subscriber IDs and signed URLs.
+            # The local canonical journal retains the actual exception and
+            # exact source coordinates (#3132). A fixed public reason alone
+            # cannot explain a runtime success without a usable Artifact.
+            # Logging never retries delivery or changes the closed UI result.
+            trace.failure(key, phase, error)
             results.append(ConvergenceOutcome(
                 key, "failed", {
                     "recovery": "canonical_recovery_failed",

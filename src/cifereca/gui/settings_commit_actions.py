@@ -50,6 +50,14 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             row["option_fields"] = {
                 key: widget.get_text() for key, widget in editor.get("option_fields", {}).items()
             }
+            row["scoped_option_fields"] = {
+                key: {
+                    borrower: {medium: widget.get_text()
+                               for medium, widget in branch_fields.items()}
+                    for borrower, branch_fields in borrowers.items()
+                }
+                for key, borrowers in editor.get("scoped_option_fields", {}).items()
+            }
             accounts.append(row)
         values = {
             "identities": identities, "accounts": accounts,
@@ -74,6 +82,15 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
         if not page_lifetime.alive or getattr(self, "_closed", False):
             return False
         if settings_committer.pending:
+            return False
+        if getattr(download_settings, "invalid_saved_snapshot", False) is True:
+            # The editor intentionally rendered malformed historical values
+            # blank rather than str()-coercing them into commands or paths.
+            # Do not commit the blank widgets over the original configuration.
+            self.show_error(
+                "Réglages de téléchargement historiques invalides : "
+                "corrigez le fichier de configuration, puis rechargez les paramètres."
+            )
             return False
         try:
             draft = build_settings_draft(
@@ -123,7 +140,9 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
                 reporter(message)
             else:
                 self.toast(message, 5)
-            self._configure_kobo_backup_timer(run_now=False)
+            # Source refresh timers follow per-source broker policies. Saving
+            # unrelated Settings must never touch the retired global Kobo timer
+            # or use a historical global bit as a scheduling authority.
             refresh_text()
             settings_state.commit(staged_settings_revisions)
             track_all_settings_widgets()

@@ -1,11 +1,11 @@
-# BnF Prêt P0 #2055 — emprunt manuel après vérification visuelle
+# BnF Prêt #2055/#3121 — emprunt manuel en un clic
 
-## Décision produit du 01/11/2026
+## Décision produit du 03/11/2026 (remplace la confirmation du 01/11)
 
-L'utilisateur **vérifie sur https://pret.bnf.fr** que le livre numérique
-**exact** paraît empruntable pour son compte, puis retourne dans Cifereca,
-sélectionne la même notice et confirme dans un dialogue dédié :
-« J’ai vérifié sur BnF et je confirme ».
+Le clic volontaire sur **« Emprunter »** dans la fiche exacte suffit à
+demander un nouveau prêt. **Aucun second dialogue et aucune attestation
+« J’ai vérifié sur BnF »** ne sont exigés. Cela ne constitue pas une preuve
+de droit ou de disponibilité : le fournisseur reste décisionnaire.
 
 Cifereca n'impose **pas** un veto sur quatre marqueurs non qualifiés :
 Pass actif, quota restant, exemplaires positifs, permission générale.
@@ -22,7 +22,7 @@ Le détail de notice affiche la **section d'emprunt BnF** même si le
 libellé catalogue est `Inconnue`, `Indisponible` ou vide ; cela ne rend
 pas le bouton actif pour autant. Celui-ci dépend exclusivement de
 `can_borrow_bnf` (capacité, session, compte et claim), puis du geste
-humain de vérification sur le portail et de la confirmation dédiée.
+humain de clic sur l'action exacte « Emprunter ». 
 Les autres prêteurs conservent leur condition d'affichage
 `availability == "Empruntable"` et les stores commerciaux restent
 exclus. Tests purs dans
@@ -36,17 +36,17 @@ exclus. Tests purs dans
    bail Core valide et aucune tentative antérieure enregistrée.
    **Aucune requête HTTP pour afficher le bouton**. L'état d'un
    livre pris sur le portail n'est pas déduit du résultat catalogue.
-2. `gui/bnf_borrow_controller.py` montre le titre et le compte
-   sélectionnés, rappelle de vérifier **visuellement** l'empruntabilité sur
-   le portail officiel avant toute demande, et indique la possibilité
-   de refus pour quota/droits. Un seul choix positif atteste
-   `site_checked=True` **et** `confirmed=True` pour ce geste concret.
-   Annuler ou fermer = aucune tâche. La confirmation reste attachée
-   à l'instance de compte, à la notice, aux générations d'identité,
-   de sélection, à la session et aux epochs. Toute mutation révoque.
+2. `gui/bnf_borrow_controller.py` reçoit **uniquement le clic explicite**
+   sur la notice sélectionnée et soumet une tâche unique, sans dialogue.
+   Un deuxième clic avant la fin de la tâche ne soumet rien.
+   Le geste est figé sur l'instance du compte, la notice, les générations
+   d'identité et de sélection, la session et les epochs. Toute mutation
+   de contexte invalide la tâche avant POST.
 3. `service.borrow_bnf_manual` appelle **uniquement**
-   `core.manual_bnf_borrow`. Les deux booléens sont obligatoirement
-   du type `True` et la demande est limitée à
+   `core.manual_bnf_borrow`. Seul `confirmed is True` atteste la demande
+   explicite ; le paramètre historique `site_checked` est toléré pour
+   compatibilité mais **ignoré**, sans être envoyé par la GUI.
+   La demande est limitée à
    `source_provider=bnf-pret` / `docbase=BNF_PRET` / `medium=digital`
    / même compte primaire. Le Core recontrôle l'identité, la
    capability réelle du PluginManager et de la session et le
@@ -56,7 +56,7 @@ exclus. Tests purs dans
    pas une déclaration de droit positif. Ne pas appeler
    `assess_lending_action(permission_attested=True)` : ce contrat
    générique exige une preuve d'entitlement *machine*, que la simple
-   vérification visuelle ne fournit pas. Aucune ouverture ni
+   action utilisateur ne fournit pas. Aucune ouverture ni
    synchronisation planifiée ne peut obtenir cette admission.
 5. Le Core réserve atomiquement **un seul**
    `Storage.loan_borrow_claim_once` par identité/compte/édition.
@@ -84,7 +84,7 @@ exclus. Tests purs dans
    à l'opération exacte et à l'état `request_sent/not_checked`.
    Le retour `borrow_not_submitted` n'affirme aucun droit et
    ne provoque aucun retry automatique ; un nouvel essai exige
-   un nouveau contrôle visuel et une nouvelle confirmation humaine.
+   un nouveau clic humain sur la fiche exacte.
 9. **Une fois le transport POST invoqué**, le provider ne peut plus
    émettre `BorrowRequestNotSubmitted` ; timeout, refus 4xx/5xx,
    réponse ambiguë, contexte modifié ou inventaire incomplet
@@ -97,7 +97,7 @@ exclus. Tests purs dans
 ## Protection de la voie générique
 
 La capability BnF `ProviderCapabilities.borrow=True` et le manifeste
-`acquisition.borrow` rendent **la confirmation dédiée** visible
+`acquisition.borrow` rendent **l'action dédiée « Emprunter »** visible
 pour une session admissible. La méthode legacy `BnfProviderSession.borrow`
 refuse toujours par `bnf_borrow_requires_core_dispatch` sans aucun I/O.
 `MainWindow.borrow_search_item` intercepte BnF AVANT l'ancien

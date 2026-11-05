@@ -10,6 +10,7 @@ class Pages:
             ("dashboard", "Accueil", "view-dashboard-symbolic", "usage"),
             ("search", "Recherche", "system-search-symbolic", "usage"),
             ("library", "Bibliothèque", "accessories-dictionary-symbolic", "usage"),
+            ("readers", "Liseuses", "drive-removable-media-symbolic", "usage"),
             ("recent", "Récents", "document-open-recent-symbolic", "usage"),
             ("loans", "Emprunts", "folder-documents-symbolic", "usage"),
             ("history", "Historique", "document-open-recent-symbolic", "usage"),

@@ -4,6 +4,9 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 
+from cifereca.models import Loan
+from cifereca.core.loan_source_identity import loan_source_key
+
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controller.py"
 
@@ -11,7 +14,7 @@ SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controlle
 def _method(name: str):
     tree = ast.parse(SOURCE.read_text())
     fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
-    ns = {}
+    ns = {"Loan": Loan, "loan_source_key": loan_source_key}
     exec(compile(ast.Module(body=[fn], type_ignores=[]), str(SOURCE), "exec"), ns)
     return ns[name]
 
@@ -29,9 +32,14 @@ class _Detail:
 
 
 def _loan(**overrides):
-    values = dict(id="loan-1", source_provider="paris", source_credential="card", source_account_id="account")
+    values = dict(
+        id="loan-1", provider="DILICOM", medium="digital",
+        record_id="edition", title="Fixture", identity_id="alice",
+        source_provider="paris", source_credential="card",
+        source_account_id="account",
+    )
     values.update(overrides)
-    return SimpleNamespace(**values)
+    return Loan(**values)
 
 
 def test_refresh_replaces_displayed_loan_with_fresh_instance():
@@ -40,9 +48,14 @@ def test_refresh_replaces_displayed_loan_with_fresh_instance():
     detail = _Detail()
     populated = []
     toasts = []
+    service = SimpleNamespace(last_loans=[])
+    def populate(rows):
+        populated.append(rows)
+        service.last_loans = list(rows)
     host = SimpleNamespace(
+        service=service,
         _displayed_loan=previous,
-        _populate_loans=lambda rows: populated.append(rows),
+        _populate_loans=populate,
         loan_page=SimpleNamespace(detail=detail),
         toast=lambda message: toasts.append(message),
     )
@@ -59,9 +72,11 @@ def test_refresh_replaces_displayed_loan_with_fresh_instance():
 def test_refresh_clears_detail_when_provider_no_longer_lists_loan():
     previous = _loan()
     detail = _Detail()
+    service = SimpleNamespace(last_loans=[])
     host = SimpleNamespace(
+        service=service,
         _displayed_loan=previous,
-        _populate_loans=lambda rows: None,
+        _populate_loans=lambda rows: setattr(service, "last_loans", list(rows)),
         loan_page=SimpleNamespace(detail=detail),
         toast=lambda message: None,
     )
@@ -82,9 +97,11 @@ def test_refresh_matches_full_provider_loan_identity_not_title_only():
     wrong_account = _loan(id="same", source_account_id="account-b")
     fresh = _loan(id="same", source_account_id="account-a")
     detail = _Detail()
+    service = SimpleNamespace(last_loans=[])
     host = SimpleNamespace(
+        service=service,
         _displayed_loan=previous,
-        _populate_loans=lambda rows: None,
+        _populate_loans=lambda rows: setattr(service, "last_loans", list(rows)),
         loan_page=SimpleNamespace(detail=detail),
         toast=lambda message: None,
     )

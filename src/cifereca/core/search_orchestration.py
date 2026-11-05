@@ -12,6 +12,7 @@ import json
 import inspect
 import logging
 import re
+import unicodedata
 from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
@@ -19,7 +20,10 @@ from queue import Queue, Empty, Full
 from typing import Any, Callable
 from ..models import ItemDetail, SearchResult
 from ..providers import ProviderSearchCapabilities, ProviderSession
-from ..plugin_api import ProviderSearchEvent, ProviderSearchStream
+from ..plugin_api import (
+    CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchEvent,
+    ProviderSearchResponse, ProviderSearchStream, ProviderSearchWithFacets,
+)
 from ..core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
 
 
@@ -774,7 +778,52 @@ def _search_result_scope_key(row: SearchResult) -> tuple[str, str, str, str, str
     )
 
 
-def _search_provider_session(self, session: ProviderSession, query: str, scope: str, *, field: str='all', content_types: tuple[str, ...]=(), facade_type) -> tuple[list[SearchResult], list[str], str, str]:
+def _valid_facet_text(value: object) -> bool:
+    return (
+        type(value) is str and 1 <= len(value) <= 160 and bool(value.strip())
+        and not any(unicodedata.category(char) in {"Cc", "Cf", "Cs"} for char in value)
+    )
+
+
+def _validated_response_facets(facets: object) -> tuple[CatalogSearchFacet, ...]:
+    if type(facets) is not tuple or len(facets) > 64:
+        return ()
+    accepted = []
+    seen: set[tuple[str, int, str]] = set()
+    for facet in facets:
+        if (type(facet) is not CatalogSearchFacet
+                or not all(_valid_facet_text(text) for text in (
+                    facet.scenario, facet.field, facet.label
+                ))
+                or type(facet.page) is not int or not 0 <= facet.page < 2**31):
+            continue
+        key = (facet.scenario, facet.page, facet.field.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        values = facet.values
+        if values is not None and (
+            type(values) is not tuple or not 1 <= len(values) <= 64
+            or any(
+                type(value) is not CatalogSearchFacetValue
+                or not _valid_facet_text(value.label)
+                or type(value.count) is not int or not 0 <= value.count < 2**63
+                or type(value.is_selected) is not bool
+                or (value.display_label is not None
+                    and not _valid_facet_text(value.display_label))
+                for value in values
+            )
+        ):
+            facet = replace(facet, values=None)
+        accepted.append(facet)
+    return tuple(accepted)
+
+
+def _search_provider_session(
+    self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
+    content_types: tuple[str, ...] = (), facade_type,
+    response_facets: list[CatalogSearchFacet] | None = None,
+) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
     This is deliberately safe to run in parallel with *other* provider sessions;
@@ -803,32 +852,39 @@ def _search_provider_session(self, session: ProviderSession, query: str, scope: 
         if attempt > 0 and primary_ok:
             break
         try:
-            try:
-                import inspect
-                parameters = inspect.signature(session.search).parameters
-                kwargs = {"field": effective_field}
-                if "content_types" in parameters:
-                    kwargs["content_types"] = tuple(content_types or ())
-                session_rows = session.search(variant, provider_scope, **kwargs)
-            except TypeError as exc:
-                if "field" not in str(exc) or "unexpected keyword" not in str(exc):
-                    raise
-                session_rows = session.search(variant, provider_scope)
+            if attempt == 0 and response_facets is not None:
+                response = session.search_with_response_facets(
+                    variant, provider_scope, field=effective_field,
+                    content_types=tuple(content_types or ()),
+                )
+                if type(response) is not ProviderSearchResponse:
+                    raise TypeError("Invalid provider search response")
+                session_rows = response.results
+                partial_failure = response.partial is True
+                response_facets.extend(_validated_response_facets(response.facets))
+            else:
+                try:
+                    parameters = inspect.signature(session.search).parameters
+                    kwargs = {"field": effective_field}
+                    if "content_types" in parameters:
+                        kwargs["content_types"] = tuple(content_types or ())
+                    session_rows = session.search(variant, provider_scope, **kwargs)
+                except TypeError as exc:
+                    if "field" not in str(exc) or "unexpected keyword" not in str(exc):
+                        raise
+                    session_rows = session.search(variant, provider_scope)
+                concrete = getattr(session, "client", None)
+                partial_failure = any(
+                    bool(getattr(source, "last_search_warnings", None))
+                    for source in (session, concrete)
+                )
             for raw_row in session_rows:
                 row = _provider_search_row(raw_row)
                 key = _search_result_scope_key(row)
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
-            concrete = getattr(session, "client", None)
-            partial_failure = False
-            for source in (session, concrete):
-                for warning in list(getattr(source, "last_search_warnings", []) or []):
-                    # Provider-owned strings may contain signed URLs,
-                    # cookies or a private title; the public batch only
-                    # exposes a fixed partial-result reason.
-                    warnings.append(f"{session.descriptor.display_name}: résultats partiels")
-                    partial_failure = True
             if partial_failure:
+                warnings.append(f"{session.descriptor.display_name}: résultats partiels")
                 break
             if attempt == 0 and provider_rows:
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100
@@ -1114,6 +1170,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 cancelled = True
                 break
             entry = self.registry.virtual_entry(session.provider_id)
+            response_facets: list[CatalogSearchFacet] = []
             if (
                 entry is not None
                 and "catalog.search.stream" in entry.capabilities
@@ -1128,12 +1185,18 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     publish=publish_from_provider, cancelled=request_cancelled,
                     control=control,
                 )
+            elif on_batch is not None and isinstance(session, ProviderSearchWithFacets):
+                future = executor.submit(
+                    _search_provider_session, self, session, query, scope,
+                    field=field, content_types=tuple(content_types or ()), facade_type=type(self),
+                    response_facets=response_facets,
+                )
             else:
                 future = executor.submit(
                     self._search_provider_session, session, query, scope,
                     field=field, content_types=tuple(content_types or ()),
                 )
-            futures[future] = (session, time.monotonic())
+            futures[future] = (session, time.monotonic(), response_facets)
         pending = set(futures)
         while pending:
             if request_cancelled():
@@ -1156,7 +1219,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             if not done:
                 continue
             for future in done:
-                session, provider_started = futures[future]
+                session, provider_started, response_facets = futures[future]
                 try:
                     provider_rows, provider_warnings, error_code, error_message = future.result()
                 except Exception as exc:
@@ -1233,6 +1296,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                             provider_rows, provider_warnings, error_code,
                             stale_attested=stale_attested,
                         ),
+                        response_facets=tuple(response_facets) if not error_code else (),
                     ))
                 if control is not None and callable(getattr(control, "report", None)):
                     try:
@@ -1322,48 +1386,78 @@ def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, f
     )
 
 
-def _numilog_public_catalog_url(value: Any, *, cover: bool = False) -> str | None:
-    """Never persist a store delivery, signed query, or private account URL.
+def _numilog_public_catalog_url(
+    value: Any, *, cover: bool = False, evidence: str | None = None,
+) -> str | None:
+    """Keep only public HTTPS links qualified by their producing plugin.
 
-    This is defense in depth after the provider's own public-book validation:
-    no remote request is made, and unknown notices/covers are omitted rather
-    than converting private account pages into persisted public links.
+    Numilog's public product hosts and path grammar belong to the Numilog
+    adapter, which emits the closed evidence marker after checking the actual
+    owned-card link. Core does not maintain a vendor-host allowlist and never
+    infers an acquisition URL from a catalogue notice. For older mirrored
+    cover fields the adapter has already verified public image origins; Core
+    retains its independent structural, query-free HTTP(S) protection.
     """
     from urllib.parse import urlsplit
+    import ipaddress
+
     if type(value) is not str or not 0 < len(value) <= 512:
         return None
-    if value != value.strip() or any(c.isspace() or ord(c) < 32 for c in value):
-        return None
-    if "\\" in value:
+    if (value != value.strip() or "\\" in value
+            or any(c.isspace() or ord(c) < 33 or ord(c) == 127
+                   for c in value)):
         return None
     try:
         parsed = urlsplit(value)
-        if (parsed.scheme != "https" or parsed.username or parsed.password
-                or parsed.fragment or parsed.port not in (None, 443)
-                or any(x in {".", ".."} for x in parsed.path.split("/"))):
+        host = (parsed.hostname or "").casefold()
+        if (parsed.scheme != "https" or parsed.username is not None
+                or parsed.password is not None or parsed.fragment
+                or parsed.port not in (None, 443)
+                or not parsed.path.startswith("/") or "%" in parsed.path
+                or any(part in {".", ".."} for part in parsed.path.split("/"))
+                or host.endswith(".") or len(host) > 253
+                or host.endswith((".localhost", ".local", ".internal",
+                                  ".home.arpa", ".invalid", ".test", ".example"))
+                or host in {"localhost", "metadata.google.internal"}
+                or len(host.split(".")) < 2
+                or any(re.fullmatch(
+                    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label,
+                ) is None for label in host.split("."))):
+            return None
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
             return None
         if cover:
-            if parsed.hostname not in {
-                "www.numilog.com", "services.numilog.com",
-                "www.edenlivres.fr", "storage.googleapis.com",
-                "couverture.numilog.com",
-            } or parsed.query:
-                return None
-        else:
-            if parsed.hostname != "www.numilog.com":
-                return None
-            official = re.fullmatch(
-                r"/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.ebook",
-                parsed.path, flags=re.I,
-            )
-            legacy = re.fullmatch(
-                r"/(?:livres|ebooks)/[A-Za-z0-9][A-Za-z0-9._-]{0,100}",
-                parsed.path, flags=re.I,
-            )
-            if not (official or legacy) or parsed.query not in ("", "ref=library"):
-                return None
+            return value if not parsed.query else None
+        # An acquisition artifact or fulfillment token is never a product
+        # notice, regardless of which provider-qualified source produced
+        # the original public URL marker. No supplier host/path grammar.
+        if parsed.path.casefold().endswith((
+            ".acsm", ".lcpl", ".epub", ".pdf", ".zip",
+        )):
+            return None
+        # A public product link is qualified by the producing Numilog
+        # adapter's private-card parser. A raw SearchResult without this
+        # evidence may not persist an arbitrary private/download URL.
+        if evidence not in {
+            "numilog.library_title_link",
+            "numilog.public_search_product_card",
+        }:
+            return None
+        # The public search card has no authenticated-library legacy query.
+        # The optional ref=library belongs only to the exact private-card
+        # title link checked separately by the provider adapter.
+        allowed_queries = (
+            ("", "ref=library") if evidence == "numilog.library_title_link"
+            else ("",)
+        )
+        if parsed.query not in allowed_queries:
+            return None
         return value
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
         return None
 
 
@@ -1575,7 +1669,9 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             if row.source_provider == "numilog" else row.thumbnail_url
         )
         product_url = (
-            _numilog_public_catalog_url(row.friendly_url)
+            _numilog_public_catalog_url(
+                row.friendly_url, evidence=raw_meta.get("public_url_evidence"),
+            )
             if row.source_provider == "numilog" else row.friendly_url
         )
         upserts.append({

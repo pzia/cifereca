@@ -58,24 +58,54 @@ def persist_attested_source_references(
         db.execute("BEGIN IMMEDIATE")
         if context_current is not None and context_current() is not True:
             raise ValueError("canonical_rights_source_rebound")
-        binding = db.execute(
-            "SELECT identity_id,enabled FROM provider_connections "
-            "WHERE provider_id=? AND credential_id=?",
+        # Never load the complete credential roster into Python. A large
+        # account list must neither slow A publication nor let a disconnected
+        # or re-bound borrower contribute new SourceReference evidence.
+        connections = db.execute(
+            "SELECT connection_id,identity_id,enabled "
+            "FROM provider_connections WHERE provider_id=? AND credential_id=? "
+            "LIMIT 2",
             (scope.provider_id, scope.credential_id),
-        ).fetchone()
-        accounts = db.execute(
-            "SELECT account_id FROM provider_accounts "
-            "WHERE identity_id=? AND provider_id=? AND credential_id=?",
-            (scope.identity_id, scope.provider_id, scope.credential_id),
         ).fetchall()
         profile = db.execute(
-            "SELECT directory_name FROM identities WHERE identity_id=?",
+            "SELECT directory_name FROM identities WHERE identity_id=? LIMIT 2",
             (scope.identity_id,),
         ).fetchall()
-        if (binding != (scope.identity_id, 1)
+        if (len(connections) != 1
+                or connections[0][1:] != (scope.identity_id, 1)
                 or len(profile) != 1
-                or type(profile[0][0]) is not str or not profile[0][0]
-                or sum(a[0] == scope.account_id for a in accounts) != 1):
+                or type(profile[0][0]) is not str or not profile[0][0]):
+            raise ValueError("canonical_rights_core_binding_changed")
+        # A corrupt/imported registry can duplicate one physical directory
+        # across identities despite the current UNIQUE index. Reject the
+        # entire positive A batch before writing source references; an exact
+        # account binding alone cannot establish an exclusive profile owner.
+        if db.execute(
+            "SELECT 1 FROM identities WHERE directory_name=? "
+            "AND identity_id<>? LIMIT 1",
+            (profile[0][0], scope.identity_id),
+        ).fetchone() is not None:
+            raise ValueError("canonical_rights_core_binding_changed")
+        exact_accounts = db.execute(
+            "SELECT 1 FROM provider_accounts "
+            "WHERE connection_id=? AND identity_id=? AND provider_id=? "
+            "AND credential_id=? AND account_id=? LIMIT 2",
+            (connections[0][0], scope.identity_id, scope.provider_id,
+             scope.credential_id, scope.account_id),
+        ).fetchall()
+        if len(exact_accounts) != 1:
+            raise ValueError("canonical_rights_core_binding_changed")
+        # The source may be disabled after the private inventory's final
+        # in-memory check but before this transaction. Check the same durable
+        # switch as Sync inside BEGIN IMMEDIATE, without recursively calling
+        # Storage or consulting a stale boolean from a provider callback.
+        from .source_auto_consent_bridge import _source_id
+        from .source_enablement import source_enabled
+        enabled = db.execute(
+            "SELECT value FROM metadata WHERE key=?",
+            ("sync.source.enabled." + _source_id(scope),),
+        ).fetchone()
+        if not source_enabled(enabled[0] if enabled else None):
             raise ValueError("canonical_rights_core_binding_changed")
         for row in admitted:
             coords = (

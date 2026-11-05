@@ -19,6 +19,7 @@ from ..core.covers import candidate as cover_candidate, resolve_cover
 from ..models import HistoryItem, Loan, SearchResult
 from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
+from .local_placement_open_guard import scoped_existing_placement_path
 
 
 def refresh_history(self, force: bool=False) -> list[HistoryItem]:
@@ -326,6 +327,31 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
     return url or default_url, status
 
 
+def _openable_scoped_placement(self, placement: dict[str, Any], *,
+                               identity_id: str) -> bool:
+    """A recorded 'present' is not proof that this profile can open the file.
+
+    Reuse the already loaded Placement, not an N+1 SQLite placement_get.
+    Only a real local file or a validated local bundle is shown as usable;
+    missing mounts or foreign/symlink paths remain stored for reconciliation.
+    """
+    placement_id = placement.get("placement_id")
+    if type(placement_id) is not str or not placement_id:
+        return False
+    try:
+        path = scoped_existing_placement_path(
+            self, placement, identity_id=identity_id,
+        )
+        if path.is_dir():
+            # A directory is not a book unless the existing Core bundle
+            # opener validates its playlist and physical scope.
+            self.local_book_path(placement_id, identity_id=identity_id)
+            return True
+        return path.is_file()
+    except (ProviderConfigurationError, OSError, ValueError, RuntimeError):
+        return False
+
+
 def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -> list[dict[str, Any]]:
     """Return recent local materializations, newest first.
 
@@ -334,19 +360,58 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
     must never be queried to decorate a current placement.
     """
     identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-    entries = {str(x.get("placement_id")): x for x in self.storage.catalog_entries() if x.get("placement_id")}
-    loan_by_key: dict[tuple[str, str, str | None], Loan] = {}
+    # A recent-acquisitions view belongs to one profile, never a union.
+    # Unscoped v0.7 local placements belong only to the default identity,
+    # exactly as in library_entries(); SQLite ownership remains unchanged.
+    if not identity_id:
+        return []
+    default_identity_id = self.identities[0].identity_id if self.identities else None
+    # A catalogue row is descriptive metadata, not a physical ownership
+    # proof. Keep every possible row until its Placement owner and Artifact
+    # are known; dict-by-placement would silently select a foreign row.
+    entries_by_placement: dict[str, list[dict[str, Any]]] = {}
+    for candidate in self.storage.catalog_entries():
+        if candidate.get("placement_id"):
+            entries_by_placement.setdefault(
+                str(candidate["placement_id"]), [],
+            ).append(candidate)
+    # Remote covers can identify a borrower's private book. A provider/item
+    # pair (even within one profile) is not evidence that its loan or purchase
+    # belongs to this local Artifact. Only an exact Core provider OriginLink
+    # joins remote cover metadata to a present placement.
+    origin_scopes: dict[tuple[str, str], set[tuple[str, str, str, str, str]]] = {}
+    for artifact, owner, provider, credential, account, edition, kind in (
+        _verified_provider_origin_coordinates(
+            self.storage, identity_id=identity_id, with_kind=True,
+        )
+    ):
+        origin_scopes.setdefault((owner, artifact), set()).add(
+            (provider, credential, account, edition, kind)
+        )
+    loans_by_scope: dict[tuple[str, str, str, str, str], Loan] = {}
     for loan in self.last_loans:
         try:
-            loan_identity = loan.identity_id or self.identity_for_connection(loan.source_provider, loan.source_credential).identity_id
+            loan_identity = loan.identity_id or self.identity_for_connection(
+                loan.source_provider, loan.source_credential,
+            ).identity_id
         except Exception:
             loan_identity = loan.identity_id
-        loan_by_key[(loan.source_provider, str(loan.record_id or loan.id), loan_identity)] = loan
-    entitlements_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        # None is an unknown borrower, not the empty primary-account ID.
+        if type(loan.source_account_id) is not str or not loan_identity:
+            continue
+        loans_by_scope[(
+            loan_identity, loan.source_provider, loan.source_credential,
+            loan.source_account_id, str(loan.record_id or loan.id),
+        )] = loan
+    entitlements_by_scope: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for entitlement in self.storage.entitlements():
-        entitlements_by_key.setdefault(
-            (str(entitlement.get("provider_id") or ""), str(entitlement.get("item_id") or "")), []
-        ).append(entitlement)
+        key = (
+            entitlement.get("identity_id"), entitlement.get("provider_id"),
+            entitlement.get("credential_id"), entitlement.get("account_id"),
+            entitlement.get("item_id"),
+        )
+        if all(type(value) is str for value in key):
+            entitlements_by_scope.setdefault(key, []).append(entitlement)
     rows: list[dict[str, Any]] = []
     for placement in sorted(
         self.storage.placements(),
@@ -355,12 +420,47 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
     ):
         if placement.get("state") != "present":
             continue
-        if identity_id and placement.get("identity_id") not in {identity_id, None, ""}:
+        placement_identity = placement.get("identity_id") or default_identity_id
+        if placement_identity != identity_id:
             continue
-        entry = entries.get(str(placement.get("placement_id"))) or {}
+        # #2847: a stale SQLite 'present' is not an accessible local book.
+        # This view is read-only; unavailable mounts stay in reconciliation.
+        if not _openable_scoped_placement(
+            self, placement, identity_id=identity_id,
+        ):
+            continue
+        # A migrated or corrupt catalogue may point a different profile's
+        # private title/cover at a valid local Placement. A matching ID alone
+        # does not give the catalogue row authority over that Placement.
+        # Unscoped v0.7 descriptive rows are visible to the default profile
+        # only, matching the historical unowned Placement rule above.
+        eligible = [
+            candidate for candidate in entries_by_placement.get(
+                str(placement.get("placement_id")), (),
+            )
+            if (
+                candidate.get("identity_id") == placement_identity
+                or (
+                    candidate.get("identity_id") in (None, "")
+                    and placement_identity == default_identity_id
+                )
+            )
+            and (
+                not candidate.get("artifact_id")
+                or candidate.get("artifact_id") == placement.get("artifact_id")
+            )
+        ]
+        # More than one owner-matching candidate remains ambiguous: never
+        # choose whichever metadata row happened to be loaded last.
+        entry = eligible[0] if len(eligible) == 1 else {}
         metadata = dict(entry.get("metadata") or {})
+        # #2797: recent["path"] is the scoped Placement, but the attached
+        # catalogue metadata could otherwise disclose a foreign/stale path.
+        # Do not invent a new metadata key for older local catalogues.
+        if "path" in metadata:
+            metadata["path"] = str(placement.get("path") or "")
         provider_id = str(placement.get("provider_id") or entry.get("provider_id") or "local")
-        row_identity = placement.get("identity_id") or identity_id
+        row_identity = placement_identity
         item_id = str(entry.get("item_id") or placement.get("source_item_id") or "")
         cover_candidates = []
         embedded = cover_candidate(
@@ -384,32 +484,30 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             )
             if public:
                 cover_candidates.append(public)
-        if item_id:
-            loan_candidates = [
-                loan_by_key.get((provider_id, item_id, row_identity)),
-                loan_by_key.get((provider_id, item_id, None)),
-            ]
-            loan = next((value for value in loan_candidates if value is not None), None)
-            if loan is None:
-                loan = next((
-                    value for (p, i, _identity), value in loan_by_key.items()
-                    if p == provider_id and i == item_id and (not row_identity or _identity == row_identity)
-                ), None)
+        for source_provider, credential, borrower, edition, source_kind in origin_scopes.get(
+            (row_identity, str(placement.get("artifact_id") or "")), ()
+        ):
+            scope_key = (row_identity, source_provider, credential, borrower, edition)
+            # A real provider loan cannot decorate a purchase-only OriginLink
+            # (and vice versa), even within the same account and edition.
+            loan = loans_by_scope.get(scope_key) if source_kind == "loan" else None
             if loan is not None:
                 value = cover_candidate(
                     loan.thumbnail_url, tier="origin", source="loan",
-                    evidence_id=f"{provider_id}:{item_id}", evidence_strength=90,
+                    evidence_id=f"{source_provider}:{edition}", evidence_strength=90,
                 )
                 if value:
                     cover_candidates.append(value)
-            for entitlement in entitlements_by_key.get((provider_id, item_id), []):
-                if row_identity and entitlement.get("identity_id") not in {row_identity, None, ""}:
+            for entitlement in entitlements_by_scope.get(scope_key, ()):
+                entitlement_kind = entitlement.get("entitlement_type")
+                if not ((source_kind == "purchase" and entitlement_kind == "owned")
+                        or (source_kind == "loan" and entitlement_kind == "loan")):
                     continue
                 emeta = dict(entitlement.get("metadata") or {})
                 value = cover_candidate(
                     emeta.get("cover_url") or emeta.get("thumbnail_url"),
                     tier="origin", source="entitlement",
-                    evidence_id=str(entitlement.get("entitlement_id") or f"{provider_id}:{item_id}"),
+                    evidence_id=str(entitlement.get("entitlement_id") or f"{source_provider}:{edition}"),
                     evidence_strength=80,
                 )
                 if value:
@@ -440,12 +538,26 @@ def local_book_path(self, placement_id: str, *, identity_id: str) -> Path:
     if not owner and self.identities:owner=self.identities[0].identity_id
     if not row or owner!=identity_id or row.get('state')!='present':
         raise ProviderConfigurationError('Fichier local absent ou hors de cette identité')
-    path=Path(str(row.get('path') or '')).expanduser().resolve()
+    from .local_placement_open_guard import scoped_existing_placement_path
+    try:
+        path=scoped_existing_placement_path(self, row, identity_id=identity_id)
+    except (OSError, ValueError, RuntimeError) as exc:
+        # Fail closed on foreign/symlinked/inaccessible files. Never return
+        # the private stored path or upstream exception to a launcher.
+        raise ProviderConfigurationError('Fichier local absent ou hors de cette identité') from exc
     if path.is_dir():
         try:manifest=load_bundle_manifest(path,verify=True)
         except BundleError as exc:raise ProviderConfigurationError('Bundle local invalide') from exc
         if not manifest.playlist:raise ProviderConfigurationError('Ce bundle ne possède pas de fichier à ouvrir')
-        target=(path/manifest.playlist).resolve()
+        playlist=Path(manifest.playlist)
+        if playlist.is_absolute() or '..' in playlist.parts:
+            raise ProviderConfigurationError('Playlist locale invalide')
+        current=path
+        for part in playlist.parts:
+            current=current/part
+            if current.is_symlink():
+                raise ProviderConfigurationError('Playlist locale invalide')
+        target=current.resolve()
         if path not in target.parents:raise ProviderConfigurationError('Playlist locale invalide')
         path=target
     if not path.is_file():raise ProviderConfigurationError('Le fichier local a disparu')
@@ -518,16 +630,34 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
 def local_placements_for_sources(self, identity_id):
     """One snapshot for search; only unique acquisition-attested placements."""
     artifacts = {}
+    borrower_scopes = {}
     for row in self.storage.acquisitions(status='complete'):
         if row.get('identity_id') != identity_id or not row.get('artifact_id'): continue
         key = (row.get('provider_id'), row.get('credential_id'), str(row.get('item_id') or ''))
         artifacts.setdefault(key, set()).add(row['artifact_id'])
+        # Search's old three-coordinate key has no borrower/account field.
+        # Two exact completed receipts for different accounts are NOT a
+        # unique binding for an arbitrary public result, even if both
+        # receipts happen to reference the same Artifact and one Placement.
+        account = row.get('account_id')
+        borrower_scopes.setdefault(key, set()).add(
+            (type(account).__name__, account) if type(account) in (str, type(None))
+            else ("invalid", None)
+        )
     placements = {}
     for row in self.storage.placements():
         if row.get('identity_id') == identity_id and row.get('state') == 'present':
             placements.setdefault(row.get('artifact_id'), []).append(row)
     linked = {}
     for key, ids in artifacts.items():
+        # An identical SHA is not proof that one borrower's completed
+        # acquisition can decorate another borrower's catalogue result.
+        accounts = borrower_scopes.get(key, ())
+        # An ill-typed legacy account marker (SQLite permits int/bool) is
+        # not an attested borrower, even if it is the only ledger receipt.
+        # Keep None for the unchanged legacy unknown-account compatibility
+        # path and "" for Paris's explicit primary borrower.
+        if len(accounts) != 1 or ("invalid", None) in accounts: continue
         rows = [row for artifact_id in ids for row in placements.get(artifact_id, [])]
         if len(rows) != 1: continue
         try: self.local_book_path(rows[0]['placement_id'], identity_id=identity_id)
@@ -540,12 +670,14 @@ def catalog_entries(self, *, state: str | None=None) -> list[dict[str, Any]]:
     return LocalCatalog(self.storage, self.library_dir()).entries(state=state)
 
 
-def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
+def _verified_provider_origin_coordinates(storage, *, identity_id: str | None,
+                                          with_kind: bool = False):
     """Read canonical provider provenance scoped to a *present* placement.
 
     A shared Artifact SHA is not proof that a different profile or provider
-    owns a resource. Only an OriginLink to an exact SourceReference authorizes
-    a source facet; this projection performs no file or rights mutation.
+    owns a resource. Only a completed provider OriginLink with a nonempty
+    Core delivery receipt and a provider-response SourceReference can add a
+    source facet; this projection performs no file or rights mutation.
     """
     from sqlite3 import Error as SqliteError
 
@@ -555,29 +687,46 @@ def _verified_provider_origin_coordinates(storage, *, identity_id: str | None):
         with storage._lock, storage._connect() as db:
             rows = db.execute(
                 "SELECT DISTINCT p.artifact_id,p.identity_id,s.provider_id,"
-                "s.credential_id,s.account_id,s.edition_id "
+                "s.credential_id,s.account_id,s.edition_id,s.reference_kind "
                 "FROM placements p "
+                # A historical OriginLink remains for audit even if imported
+                # Artifact metadata are corrupt. It must not become a live
+                # supplier facet or fold a remote possession onto B when the
+                # Artifact's content identifier/size cannot attest B.
+                "JOIN artifacts a ON a.artifact_id=p.artifact_id "
+                "AND a.artifact_id='sha256:'||a.sha256 AND a.size>0 "
+                "AND length(a.sha256)=64 "
+                "AND a.sha256 NOT GLOB '*[^0-9a-f]*' "
                 "JOIN origin_links o ON o.artifact_id=p.artifact_id "
                 "AND o.identity_id=p.identity_id "
                 "JOIN source_references s "
                 "ON s.source_reference_id=o.source_reference_id "
                 "AND s.identity_id=o.identity_id "
                 "WHERE p.state='present' AND o.origin_kind='provider' "
+                "AND s.evidence_kind='provider_response' "
+                "AND o.evidence_ref IS NOT NULL AND o.evidence_ref<>'' "
+                "AND s.evidence_ref IS NOT NULL AND s.evidence_ref<>'' "
                 + ("AND p.identity_id=? " if identity_id else "")
                 + "ORDER BY p.identity_id,p.artifact_id,s.provider_id,"
-                "s.credential_id,s.account_id,s.edition_id",
+                "s.credential_id,s.account_id,s.edition_id,s.reference_kind LIMIT 100001",
                 (identity_id,) if identity_id else (),
             ).fetchall()
     except (SqliteError, AttributeError):
         # Legacy fixtures and earlier DB schemas cannot attest canonical
         # provenance. Do not infer associations from a title or a shared SHA.
         return ()
+    if len(rows) > 100_000:
+        # A truncated join could silently turn an ambiguous multi-source
+        # Artifact into a falsely unique (and thus attachable) right. Fail
+        # closed for every facet instead of projecting a partial source set.
+        return ()
     return tuple(
-        (artifact, owner, provider, credential, account, edition)
-        for artifact, owner, provider, credential, account, edition in rows
+        (artifact, owner, provider, credential, account, edition, kind)
+        if with_kind else (artifact, owner, provider, credential, account, edition)
+        for artifact, owner, provider, credential, account, edition, kind in rows
         if all(type(field) is str and field for field in (
             artifact, owner, provider, credential, edition,
-        )) and type(account) is str
+        )) and type(account) is str and kind in ("purchase", "loan")
     )
 
 
@@ -701,6 +850,13 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         placement_identity = placement.get("identity_id") or default_identity_id
         if identity_id and placement_identity != identity_id:
             continue
+        # #2797/#2847: even a second Placement for an otherwise usable
+        # Artifact can be a stale path or a corrupt cross-profile binding.
+        # Do not expose its filename/storage target as a local library facet.
+        if not _openable_scoped_placement(
+            self, placement, identity_id=placement_identity,
+        ):
+            continue
         placements_by_artifact.setdefault(str(placement.get("artifact_id") or ""), []).append(placement)
 
     def placement_view(row: dict[str, Any]) -> dict[str, Any]:
@@ -740,6 +896,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         # compatibility path; we cannot silently invent a Placement for them.
         metadata = dict(row.get("metadata") or {})
         placement_id = str(row.get("placement_id") or "")
+        scoped_local_path = None
         if placement_id or metadata.get("imported_from") == "backup_items":
             if not placement_id or not any(
                 str(p.get("placement_id") or "") == placement_id
@@ -750,9 +907,17 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
             if not owner:
                 continue
             try:
-                self.local_book_path(placement_id, identity_id=owner)
+                scoped_local_path = self.local_book_path(
+                    placement_id, identity_id=owner,
+                )
             except ProviderConfigurationError:
                 continue
+            # The catalogue is descriptive, never a path ownership proof.
+            # A stale/foreign metadata.path must not override a physically
+            # checked Placement, nor leak into the returned metadata. Keep
+            # this optional descriptive key absent when originally absent.
+            if "path" in metadata:
+                metadata["path"] = str(scoped_local_path)
         item_id = str(row.get("item_id") or artifact_id or row.get("catalog_entry_id"))
         artifact = artifacts.get(artifact_id, {})
         sha256 = str(artifact.get("sha256") or "")
@@ -762,7 +927,8 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         key = f"artifact:{canonical}" if not canonical.startswith("source:") else canonical
         local_keys[(row.get('placement_id'), artifact_id)] = key
         local_artifact_keys[(row_identity or default_identity_id, artifact_id)] = key
-        metadata = dict(row.get("metadata") or {})
+        # Keep the scoped metadata.path normalized above; re-reading the raw
+        # catalogue here would reintroduce an arbitrary foreign path.
         all_placements = [placement_view(p) for p in placements_by_artifact.get(artifact_id, ())]
         current_placement = next((p for p in placements_by_artifact.get(artifact_id, ()) if str(p.get("placement_id") or "") == str(row.get("placement_id") or "")), None)
         existing = merged.get(key)
@@ -797,7 +963,10 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 "author": row.get("author"), "provider_id": provider_id, "providers": [provider_id],
                 "identity_id": row_identity or default_identity_id, "identity_ids": [row_identity or default_identity_id] if (row_identity or default_identity_id) else [],
                 "item_id": item_id, "source_refs": [source_ref], "state": "local", "local": True,
-                "local_path": metadata.get("path") or (current_placement or {}).get("path"),
+                "local_path": (
+                    str(scoped_local_path) if scoped_local_path is not None
+                    else metadata.get("path") or (current_placement or {}).get("path")
+                ),
                 "media_format": artifact.get("media_format") or row.get("media_format"),
                 "artifact_kind": metadata.get("artifact_kind") or artifact.get("kind") or "file",
                 "bundle_members": metadata.get("bundle_members") or [], "playlist": metadata.get("playlist"),
@@ -823,9 +992,11 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     # Canonical OriginLinks enrich the *existing* local Artifact card.
     # Never use a title, mere SHA equality, or an unscoped provider/item ID to
     # attribute a purchase to a credential. Unresolved sources stay distinct.
-    exact_aliases: dict[tuple[str, str, str, str, str], set[str]] = {}
-    for artifact_id, owner, provider, credential, account, edition in (
-        _verified_provider_origin_coordinates(self.storage, identity_id=identity_id)
+    exact_aliases: dict[tuple[str, str, str, str, str, str], set[str]] = {}
+    for artifact_id, owner, provider, credential, account, edition, kind in (
+        _verified_provider_origin_coordinates(
+            self.storage, identity_id=identity_id, with_kind=True,
+        )
     ):
         local_key = local_artifact_keys.get((owner, artifact_id))
         if local_key is None:
@@ -885,7 +1056,7 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         if source_ref not in entry.setdefault("source_refs", []):
             entry["source_refs"].append(source_ref)
         exact_aliases.setdefault(
-            (owner, provider, credential, account, edition), set(),
+            (owner, provider, credential, account, edition, kind), set(),
         ).add(local_key)
 
     # Multiple Artifacts for the same exact source cannot be disambiguated by
@@ -933,7 +1104,15 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
             str(entitlement.get("credential_id") or ""),
             str(entitlement.get("account_id") or ""), item_id,
         )
-        canonical_key = exact_source_alias.get(exact_scope)
+        # Match an exact provider SourceReference kind, not only borrower
+        # and edition. Licences without a typed purchase/loan attestation stay
+        # remote until an explicit mapping is available.
+        canonical_kind = (
+            "purchase" if entitlement_type == "owned"
+            else "loan" if entitlement_type == "loan" else None
+        )
+        typed_scope = (*exact_scope, canonical_kind) if canonical_kind else None
+        canonical_key = exact_source_alias.get(typed_scope)
         if canonical_key is None:
             # Display-only compatibility for a completed, exact-account
             # receipt with SHA-verified local bytes; no unverified catalogue
@@ -946,12 +1125,22 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                     entitlement, entitlement_identity,
                 )
             )
-        if provider_id == 'bnf-pret' and entitlement_type == 'loan':
+        if (provider_id == 'bnf-pret' and entitlement_type == 'loan'
+                and exact_source_alias.get(typed_scope) is None):
+            # A legacy manual-import display hint must never override an
+            # exact canonical provider OriginLink for this borrower/edition.
+            # Different physical Artifacts remain separate; only the loan
+            # possession follows its strongest actual provenance proof.
             canonical_key = bnf_links.get((entitlement_identity, entitlement.get('credential_id'),
                                            entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
         existing = merged.get(canonical_key, {})
         meta = dict(entitlement.get("metadata") or {})
-        loan = loans_by_key.get((provider_id, str(entitlement.get("credential_id") or ""), entitlement.get("account_id"), item_id))
+        # An active loan may share the same edition/account as an owned right;
+        # its title, cover and format must not decorate a purchase possession.
+        loan = (loans_by_key.get((
+            provider_id, str(entitlement.get("credential_id") or ""),
+            entitlement.get("account_id"), item_id,
+        )) if entitlement_type == "loan" else None)
         loan_extra = dict((loan.raw or {}).get("_cifereca") or {}) if loan is not None and isinstance((loan.raw or {}).get("_cifereca"), dict) else {}
         title = str(meta.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
         author = meta.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")

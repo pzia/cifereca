@@ -51,6 +51,7 @@ def test_real_sync_measures_nested_intervals_without_changing_result(tmp_path, m
         assert {key: fields[key] for key in timing.TIMING_FIELDS if key in fields} == {
             "lock_acquire_ms": 2, "locked_work_ms": 26, "loan_refresh_ms": 5,
             "library_read_ms": 7, "catalog_mirror_ms": 3, "catalog_scan_ms": 11,
+            "canonical_resources_ms": 0,
         }
         assert public_log_fields(log_message(fields)) == fields
         assert "PRIVATE" not in json.dumps(fields)
@@ -154,3 +155,84 @@ def test_public_schema_rejects_malformed_timing(value):
     assert public_fields({**fields, "PRIVATE_phase_ms": 1}) == {}
     assert public_fields({**fields, "phase": "start", "status": "running",
                           "code": "source_sync_started", "lock_acquire_ms": 0}) == {}
+
+
+@pytest.mark.parametrize("canonical_ms", [0, 9, 73])
+def test_source_sync_separates_typed_loan_and_canonical_observation_wall_time(
+    tmp_path, monkeypatch, canonical_ms,
+):
+    """Two distinct real Core phase invocations, no extra provider read.
+
+    The clock is entirely synthetic: these durations are not claims about
+    Paris latency, BnF latency or the number of HTTP requests.
+    """
+    from cifereca.core import canonical_sync_stage
+
+    service = _service(tmp_path)
+    now = [0]
+    monkeypatch.setattr(timing, "monotonic_ns", lambda: now[0])
+    try:
+        account, session, _ = setup_source(service, monkeypatch, tmp_path)
+        session.capabilities.loans = True
+        observed = []
+
+        def loan_read(*_args, **_kwargs):
+            observed.append("loan_inventory")
+            now[0] += 5_000_000
+            return []
+
+        def canonical_read(_service, _account, *, cancelled, snapshot_sink):
+            observed.append("canonical_resources")
+            assert cancelled() is False
+            assert callable(snapshot_sink)
+            now[0] += canonical_ms * 1_000_000
+            return None
+
+        monkeypatch.setattr(service, "_loans_for_account", loan_read)
+        monkeypatch.setattr(
+            canonical_sync_stage, "observe_canonical_rights_in_sync",
+            canonical_read,
+        )
+        service.synchronize_account_source(account)
+        fields = terminal(service)
+        assert observed == ["loan_inventory", "canonical_resources"]
+        assert fields["loan_refresh_ms"] == 5
+        assert fields["canonical_resources_ms"] == canonical_ms
+        assert fields["locked_work_ms"] >= 5 + canonical_ms
+        assert timing._CURRENT.get() is None
+    finally:
+        service.close()
+
+
+def test_failed_canonical_observation_is_still_timed_without_new_retry(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core import canonical_sync_stage
+
+    service = _service(tmp_path)
+    now = [0]
+    monkeypatch.setattr(timing, "monotonic_ns", lambda: now[0])
+    try:
+        account, _, _ = setup_source(service, monkeypatch, tmp_path)
+        error = RuntimeError("PRIVATE SOURCE ERROR")
+        calls = []
+
+        def fail(*_args, **_kwargs):
+            calls.append(1)
+            now[0] += 12_000_000
+            raise error
+
+        monkeypatch.setattr(
+            canonical_sync_stage, "observe_canonical_rights_in_sync", fail,
+        )
+        with pytest.raises(RuntimeError) as observed:
+            service.synchronize_account_source(account)
+        assert observed.value is error
+        assert calls == [1]
+        fields = terminal(service)
+        assert fields["canonical_resources_ms"] == 12
+        assert fields["status"] == "failed"
+        assert "PRIVATE SOURCE ERROR" not in json.dumps(fields)
+        assert timing._CURRENT.get() is None
+    finally:
+        service.close()

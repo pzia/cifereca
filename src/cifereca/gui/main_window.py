@@ -59,6 +59,7 @@ from . import shell_layout_controller
 from . import shell_body_controller
 from . import plugin_book_action_controller, book_action_context_controller, loans_controller, sync_controller, search_results, search_details, search_controller, library_refresh, navigation_controller, task_activity_adapter, book_notice_controller, book_recommendation_controller, list_facet_controller, shell_page_controller, library_navigation, detail_facets_controller, header_action_controller, plugin_reload_controller, library_render_controller, recent_detail_controller, library_detail_controller, library_page_controller, local_book_action_controller
 from . import shell_header_controller
+from . import reader_page_controller
 from .search_state import SearchStateField
 from .settings_lifetime import SettingsPageLifetime
 from . import settings_page, standalone_settings_controller
@@ -344,10 +345,15 @@ class MainWindow(Adw.ApplicationWindow):
     def _task_progress_for_task(self, task_id: int, label: str) -> bool:
         return task_activity_adapter.task_progress(self, label, task_id=task_id)
 
-    def _task_finished(self, task_id: int, remaining: int, label: str, success: bool, error: str | None) -> bool:
+    def _task_finished(
+        self, task_id: int, remaining: int, label: str,
+        success: bool, error: str | None, business_status: str | None = None,
+    ) -> bool:
         if getattr(self, '_closed', False):
             return False
-        return task_activity_adapter.task_finished(self, task_id, remaining, label, success, error)
+        return task_activity_adapter.task_finished(
+            self, task_id, remaining, label, success, error, business_status,
+        )
 
     @staticmethod
     def _functional_error_message(message: str) -> str:
@@ -475,6 +481,7 @@ class MainWindow(Adw.ApplicationWindow):
             lambda: collect_cached_book_details(services, book, identity_id=identity_id),
             done, lambda _exc: None,
             priority=TaskPriority.METADATA, kind="detail-cache",
+            origin="automatic",
         )
 
     def _add_nav_row(self, route: str, label: str, icon_name: str) -> None:
@@ -1256,6 +1263,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.runner.submit(
             "Chargement de l'historique…", lambda: self.service.refresh_history(force=force), done, control=control,
             priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="history",
+            origin="user" if control is not None else "automatic",
         )
 
     def _history_book_row(self, x: HistoryItem) -> BookListItem:
@@ -1303,6 +1311,16 @@ class MainWindow(Adw.ApplicationWindow):
     def _build_library_page(self) -> MasterDetailPage:
         return library_page_controller.build_library_page(
             self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
+        )
+
+    def _build_readers_page(self) -> MasterDetailPage:
+        return reader_page_controller.build_readers_page(
+            self, Gtk=Gtk, MasterDetailPage=MasterDetailPage,
+        )
+
+    def _render_readers(self) -> None:
+        return reader_page_controller.render_readers(
+            self, Gtk=Gtk, BookListItem=BookListItem,
         )
 
     @staticmethod
@@ -1549,9 +1567,6 @@ class MainWindow(Adw.ApplicationWindow):
     def _kobo_selected(self, row: BookListItem | None) -> None:
         self._library_selected(row)
 
-    def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
-        return sync_controller._configure_kobo_backup_timer(self, run_now=run_now)
-
     def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
         return sync_controller.run_kobo_backup(self, manual, control)
 
@@ -1607,10 +1622,10 @@ class MainWindow(Adw.ApplicationWindow):
                 else:
                     self.show_error(detail, "Téléchargement non terminé")
                 return
-            # ADEPT binding is useful for recovery, but return is retired (#4048).
-            # Never advertise voluntary return after a successful download.
-            suffix = "" if result.get("adept_return_available") else " · liaison ADEPT indisponible : voir le détail"
-            result_message = "Livre récupéré" + suffix
+            # #4048: a retired voluntary-return capability cannot qualify
+            # successful book acquisition or invent a missing ADEPT binding.
+            # The branch above already checked the exact acquisition result.
+            result_message = "Livre récupéré"
             reporter = getattr(self, "_activity_result", None)
             if callable(reporter):
                 reporter(result_message)
@@ -1627,6 +1642,8 @@ class MainWindow(Adw.ApplicationWindow):
         # and explicit consent at the time of the actual attempt.
         if getattr(item, "source_provider", None) == "bnf-pret":
             return self.service.can_borrow_bnf(item)
+        if getattr(item, "source_provider", None) == "paris":
+            return self.service.can_borrow_paris(item)
         try:
             # The button must reflect the same exact borrower-account scope
             # enforced by the click handler, not just a provider capability.
@@ -1666,6 +1683,12 @@ class MainWindow(Adw.ApplicationWindow):
             from .bnf_borrow_controller import present_bnf_borrow
             present_bnf_borrow(
                 self, item, control, Adw=Adw, TaskPriority=TaskPriority,
+            )
+            return
+        if getattr(item, "source_provider", None) == "paris":
+            from .bnf_borrow_controller import present_paris_borrow
+            present_paris_borrow(
+                self, item, control, Adw=Adw, TaskPriority=TaskPriority, account=account,
             )
             return
         try:

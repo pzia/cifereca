@@ -470,3 +470,35 @@ def test_unrelated_registered_session_does_not_block_own_delivery(rig, coordinat
     assert result[0].status == "downloaded"
     assert service.calls == 1
     assert rows(service.storage) == (1, 1, 1, 1)
+
+
+
+@pytest.mark.parametrize("rebind", ["removed", "other_borrower"])
+def test_executor_rejects_stale_sql_borrower_before_any_delivery(
+    rig, rebind,
+):
+    service, account, source, snapshot, root, lock_path = rig
+    with service.storage._lock, service.storage._connect() as sql:
+        if rebind == "removed":
+            sql.execute(
+                "DELETE FROM provider_accounts WHERE identity_id='A' "
+                "AND provider_id='seller-a' AND credential_id='card-A'"
+            )
+        else:
+            sql.execute(
+                "UPDATE provider_accounts SET account_id='different-buyer' "
+                "WHERE identity_id='A' AND provider_id='seller-a' "
+                "AND credential_id='card-A'"
+            )
+    called = []
+    def should_not_get(*_args):
+        called.append("GET")
+        pytest.fail("No delivery when SQL borrower was rebound")
+
+    with pytest.raises(ValueError, match="convergence_session_rebound"):
+        run(
+            service, account, snapshot, root, lock_path,
+            {source}, should_not_get,
+        )
+    assert called == []
+    assert rows(service.storage) == (0, 0, 0, 0)

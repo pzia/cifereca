@@ -1,8 +1,8 @@
-"""P0 #3909: one-run, opaque, fail-closed Core delivery phase diagnostics.
+"""Core delivery phase diagnostics; never evidence or admission.
 
-This is a logging envelope, NOT evidence or admission. Never serialize a
-SourceKey, offer ID, Account, URL, filename, digest, token or exception.
-The HMAC key is random per executor invocation and never leaves memory.
+Status events keep their existing run/item correlation and closed enums.
+Failures additionally retain the exact source and original exception in the
+local raw journal (#3132), separate from the public structured outcome.
 """
 from __future__ import annotations
 
@@ -45,11 +45,11 @@ _REASONS = frozenset({
 
 
 class CanonicalFlowTrace:
-    """Public-safe TRACE correlation; neither persistent nor reversible.
+    """Correlated phase events plus the observed raw failure cause.
 
-    A different random key per Sync makes a right's opaque reference unusable
-    across runs. Only fixed phases/statuses and allowlisted reasons get logged.
-    Log subsystem failure cannot prevent a Core acquisition or B commit.
+    Opaque run/item handles are stable only within one invocation. A failure
+    also records source coordinates so it can be diagnosed across retries.
+    Diagnostic failure cannot prevent a Core acquisition or B commit.
     """
 
     def __init__(self) -> None:
@@ -69,6 +69,34 @@ class CanonicalFlowTrace:
             key.kind,
         ], ensure_ascii=True, separators=(",", ":")).encode("ascii")
         return hmac.new(self._salt, coordinates, hashlib.sha256).hexdigest()[:24]
+
+    def failure(self, key: SourceKey, phase: str, error: Exception) -> None:
+        """Keep the actual failing phase, source and chained exception locally.
+
+        No additional HTTP/auth capture or export is performed. Structured
+        terminal outcomes remain closed codes; the raw journal is governed
+        by the same permissions/export confirmation as all other diagnostics.
+        """
+        try:
+            if (type(key) is not SourceKey or phase not in _PHASES
+                    or not isinstance(error, Exception)):
+                return
+            scope = key.scope
+            _LOG.warning(
+                "TRACE convergence code=canonical_%s_failed run_ref=%s "
+                "item_ref=%s phase=%s identity_id=%s provider_id=%s "
+                "credential_id=%s account_id=%s branch=%s edition_id=%s "
+                "right_id=%s kind=%s error=%s",
+                phase, self.run_ref, self.item_ref(key), phase,
+                scope.identity_id, scope.provider_id, scope.credential_id,
+                scope.account_id, key.branch, key.edition_id, key.right_id,
+                key.kind, error,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+        except Exception:
+            # Diagnostic storage/formatting cannot become a second failed
+            # delivery, replace the original result or trigger a new GET.
+            pass
 
     def emit(self, key: SourceKey, phase: str, code: str, *,
              reason: str = "") -> None:

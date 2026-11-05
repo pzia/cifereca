@@ -11,7 +11,7 @@ import ipaddress
 import re
 from html.parser import HTMLParser
 from importlib import metadata
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Iterable, Callable
 from urllib.parse import quote, urljoin, urlparse, unquote
 import httpx
@@ -23,6 +23,10 @@ from cifereca_paris_trace import (
 )
 from cifereca_paris_normalize import normalize_history, normalize_item_detail, normalize_loan, normalize_search_result
 from cifereca_paris_bibliography import project_search_response_facets
+
+# A selected public HTTPS supplier must not fill memory with an unbounded
+# body (including a 200 HTML/login/error response instead of an ACSM).
+_MAX_PNB_PUBLIC_BODY_BYTES = 128 * 1024 * 1024
 
 _BORROW_TRACE=contextvars.ContextVar('paris_borrow_trace',default='none')
 class _ParisTrace(logging.LoggerAdapter):
@@ -107,6 +111,7 @@ PARIS_LOAN_ERROR_CODES = frozenset({
     "paris_loans_json_shape_invalid",
     "paris_loans_transport_timeout",
     "paris_loans_transport_failed",
+    "paris_loans_pagination_incomplete",
 })
 
 
@@ -155,7 +160,6 @@ class ParisClient:
         # SearchService facets belong to a single response page, never a
         # SearchResult or a proved server filtering capability.
         self.last_search_response_facets: list[dict[str, Any]] = []
-        self._last_scenario_facet_observation: tuple[str, int, list[dict[str, Any]]] | None = None
         self.last_pairing_errors: list[dict[str, str]] = []
         self.last_history_errors: list[dict[str, str]] = []
         self.last_pnb_borrow: dict[str, Any] = {"phase": "idle"}
@@ -470,6 +474,25 @@ class ParisClient:
             rows = envelope["Loans"]
             if type(rows) is not list or any(type(row) is not dict for row in rows):
                 raise ParisError("paris_loans_inventory_shape_invalid")
+            # The active-loan list is authoritative only after the actual
+            # read finishes. Do not promote an explicitly unfinished page to
+            # complete rights coverage (including an empty first page).
+            # This reader has no attested continuation protocol: refuse the
+            # branch instead of guessing another URL or replaying a request.
+            for paging in (data, envelope):
+                unfinished = any(
+                    key in paging and paging[key] is not None
+                    and paging[key] is not False
+                    for key in ("HasMore", "HasMorePages")
+                ) or any(
+                    key in paging and paging[key] not in (None, "", 0)
+                    for key in ("NextPage", "Next", "ContinuationToken")
+                )
+                total = paging.get("TotalCount")
+                if (unfinished or ("TotalCount" in paging and (
+                        type(total) is not int or total < 0 or total != len(rows)))):
+                    raise ParisLoanListError("paris_loans_pagination_incomplete",
+                                             status=r.status_code)
             return [normalize_loan(row, provider) for row in rows]
         return self._timed("API", f"loans {provider}", work)
 
@@ -559,9 +582,9 @@ class ParisClient:
             "Url": f"{self.base_url}/search.aspx?SC={scenario}&QUERY={encoded}&QUERY_LABEL=#/Search/(query:(InitialSearch:!t,Page:{page},PageRange:3,QueryString:'{encoded}',ResultSize:{result_size},ScenarioCode:{scenario},SearchContext:0,SearchLabel:''))",
         }
 
-    def _search_scenario(self, query: str, scenario: str, page: int, result_size: int) -> list[SearchResult]:
-        # Clear before every network attempt, including failed fallback paths.
-        self._last_scenario_facet_observation = None
+    def _search_scenario(
+        self, query: str, scenario: str, page: int, result_size: int,
+    ) -> tuple[list[SearchResult], list[dict[str, Any]]]:
         body = {"query": self._search_query(query, scenario, page, result_size), "sst": 4}
         r = self.client.post(
             f"{self.base_url}{SEARCH_PATH}",
@@ -576,11 +599,12 @@ class ParisClient:
         if r.status_code in {401, 403, 408, 429} or r.status_code >= 500:
             r.raise_for_status()
         data = self._json(r, f"search {scenario}")
-        self._last_scenario_facet_observation = (
-            scenario, page, project_search_response_facets(data, scenario, page)
-        )
         rows = ((data.get("d") or {}).get("Results") or [])
-        return [x for x in (normalize_search_result(raw, scenario) for raw in rows if isinstance(raw, dict)) if x]
+        results = [
+            item for raw in rows if isinstance(raw, dict)
+            if (item := normalize_search_result(raw, scenario)) is not None
+        ]
+        return results, project_search_response_facets(data, scenario, page)
 
     def search_catalog(self, query: str, scenario: str = "CATALOGUE", page: int = 0, result_size: int = 20) -> list[SearchResult]:
         """Recherche un seul catalogue sans modifier l'état de recherche UI.
@@ -595,10 +619,16 @@ class ParisClient:
         size = max(1, min(int(result_size), 50))
         return self._timed(
             "CATALOG", f"history cover search {scenario}",
-            lambda: self._search_scenario(query, scenario, page, size),
+            lambda: self._search_scenario(query, scenario, page, size)[0],
         )
 
     def search(self, query: str, scope: str = "all", page: int = 0) -> list[SearchResult]:
+        rows, _facets, _warnings = self.search_response(query, scope, page)
+        return rows
+
+    def search_response(
+        self, query: str, scope: str = "all", page: int = 0,
+    ) -> tuple[list[SearchResult], list[dict[str, Any]], list[str]]:
         """Recherche tolérante aux défaillances d'un des deux catalogues.
 
         Les requêtes très larges pouvaient demander ``ResultSize=-1`` et provoquer
@@ -609,17 +639,17 @@ class ParisClient:
         """
         scenarios = ["EBOOKS"] if scope == "digital" else ["CATALOGUE"] if scope == "physical" else ["CATALOGUE", "EBOOKS"]
         out: list[SearchResult] = []
-        seen: set[str] = set()
+        positions: dict[str, int] = {}
         self.last_search_warnings = []
         self.last_search_response_facets = []
+        warnings: list[str] = []
+        facets: list[dict[str, Any]] = []
         failures: list[tuple[str, Exception]] = []
         successful_scenarios = 0
 
         for scenario in scenarios:
-            rows: list[SearchResult] | None = None
-            self._last_scenario_facet_observation = None
             try:
-                rows = self._timed(
+                rows, branch_facets = self._timed(
                     "CATALOG", f"search {scenario}",
                     lambda scenario=scenario: self._search_scenario(query, scenario, page, 50),
                 )
@@ -631,14 +661,13 @@ class ParisClient:
                     level="detailed",
                 )
                 try:
-                    self._last_scenario_facet_observation = None
-                    rows = self._timed(
+                    rows, branch_facets = self._timed(
                         "CATALOG", f"search {scenario} fallback",
                         lambda scenario=scenario: self._search_scenario(query, scenario, page, 20),
                     )
                 except Exception as second_exc:
                     failures.append((scenario, second_exc))
-                    self.last_search_warnings.append(
+                    warnings.append(
                         "Catalogue numérique momentanément indisponible" if scenario == "EBOOKS" else "Catalogue physique momentanément indisponible"
                     )
                     continue
@@ -657,28 +686,89 @@ class ParisClient:
                     warning = caption + " : accès refusé"
                 else:
                     warning = caption + " momentanément indisponible"
-                self.last_search_warnings.append(warning)
+                warnings.append(warning)
                 continue
 
-            # Facets are a descriptor of this successfully returned branch
-            # and *page*, not any particular book nor the whole catalogue.
-            capture = self._last_scenario_facet_observation
-            if (capture is not None and capture[0] == scenario
-                    and capture[1] == page):
-                self.last_search_response_facets.extend(capture[2])
+            facets.extend(branch_facets)
             # An empty result from an available catalogue is still a
             # successful search, not evidence that every route failed.
             successful_scenarios += 1
-            for item in rows or []:
-                if item.id not in seen:
-                    seen.add(item.id)
-                    out.append(item)
+            for item in rows:
+                # Scenario is a search *route*, not positive per-item medium.
+                # A CATALOGUE page can contain DILICOM ebooks; an EBOOKS
+                # page can also contain a physical Syracuse record.
+                if scope in {"physical", "digital"} and item.medium != scope:
+                    continue
+                initial = dict(item.metadata or {})
+                provenances = initial.get("search_scenarios")
+                if type(provenances) not in (tuple, list):
+                    provenances = ()
+                provenances = tuple(
+                    name for name in provenances
+                    if type(name) is str and name in {"CATALOGUE", "EBOOKS"}
+                )
+                if scenario not in provenances:
+                    provenances += (scenario,)
+                initial["search_scenarios"] = list(dict.fromkeys(provenances))
+                if item.id not in positions:
+                    positions[item.id] = len(out)
+                    out.append(replace(item, metadata=initial))
+                    continue
+                # One exact record can be seen through both search routes.
+                # Keep *both* sightings rather than attributing ownership,
+                # file receipt or publication to the first successful route.
+                pos = positions[item.id]
+                previous = out[pos]
+                metadata = dict(previous.metadata or {})
+                paths = metadata.get("search_scenarios")
+                paths = list(paths) if type(paths) in (list, tuple) else []
+                metadata["search_scenarios"] = list(dict.fromkeys(
+                    [name for name in paths + list(provenances)
+                     if type(name) is str and name in {"CATALOGUE", "EBOOKS"}]
+                ))
+                # Contradictory factual classifications of the SAME ID
+                # must not silently choose one as proof of physical/digital.
+                def documentary_facts(row):
+                    # Provider wording, capitalization and raw source-code
+                    # provenance are not classification *differences*.
+                    # Compare the four closed attested axes, never raw_code.
+                    from cifereca.plugin_api import DocumentClassification
+                    proof = row.document_classification
+                    if type(proof) is not DocumentClassification:
+                        return None
+                    return (
+                        tuple(
+                            (getattr(proof, axis).status, getattr(proof, axis).value)
+                            for axis in (
+                                "medium", "document_kind",
+                                "material_format", "digital_format",
+                            )
+                        ),
+                        proof.offered_file_formats,
+                    )
+
+                same_classification = (
+                    documentary_facts(previous) == documentary_facts(item)
+                    and previous.medium == item.medium
+                )
+                if same_classification:
+                    out[pos] = replace(previous, metadata=metadata)
+                else:
+                    from cifereca.plugin_api import DocumentClassification
+                    metadata["document_kind"] = "unknown"
+                    metadata["document_medium"] = "unknown"
+                    out[pos] = replace(
+                        previous, medium="unknown", content_type="unknown",
+                        document_classification=DocumentClassification(),
+                        metadata=metadata,
+                    )
 
         if failures and successful_scenarios:
-            self.last_search_warnings = [
-                "partial_results : " + warning
-                for warning in self.last_search_warnings
-            ]
+            warnings = ["partial_results : " + warning for warning in warnings]
+        # Preserve the last-call diagnostics for compatibility. The return
+        # value uses the local collector even if another call completes now.
+        self.last_search_warnings = warnings
+        self.last_search_response_facets = facets
         if failures and not successful_scenarios:
             # No public stale fallback on a verified 401/403, even when
             # another branch had a timeout. Inspect httpx's numeric response
@@ -707,7 +797,7 @@ class ParisClient:
             # Do not chain raw Syracuse errors (which can contain the
             # request URL, personal cookies, or provider response text).
             raise error
-        return out
+        return out, facets, warnings
 
     def _holdings_payload(self, docbase: str, record_id: str, scenario: str, search_terms: str = "") -> dict[str, Any]:
         """Return the raw GetListHoldings payload.
@@ -950,16 +1040,69 @@ class ParisClient:
         )
 
     def _get_pnb_response(self, url, **kwargs):
-        # Only the configured Paris portal may receive authenticated cookies.
-        # A signed 3xx can name any public HTTPS CDN; use the Core public-peer
-        # transport with a fresh empty cookie jar on EVERY foreign hop.
-        # Never route SSO/private POSTs through this content-only branch.
+        # Only Paris receives authenticated cookies. External signed redirects
+        # use Core's public, peer-pinned transport with no private headers.
+        # A selected canonical acquisition may additionally pass its live,
+        # revocable admission lease; legacy callers still use the same API.
+        admission_current = kwargs.pop("admission_current", None)
+
+        def require_admission():
+            if admission_current is None:
+                return
+            try:
+                if callable(admission_current) and admission_current() is True:
+                    return
+            except Exception:
+                pass
+            raise ParisError("Paris PNB Core admission revoked")
+
+        require_admission()
         self._validate_pnb_redirect_url(url)
         host = (urlparse(url).hostname or "").casefold()
         base_host = (urlparse(self.base_url).hostname or "").casefold()
+
+        def bounded_response(response):
+            if response.status_code != 200:
+                payload = b""
+            else:
+                declared = response.headers.get("content-length")
+                if declared is not None:
+                    try:
+                        size = int(declared)
+                    except (TypeError, ValueError):
+                        raise ParisError("Taille de réponse PNB invalide") from None
+                    if not 0 <= size <= _MAX_PNB_PUBLIC_BODY_BYTES:
+                        raise ParisError("Réponse HTTPS PNB trop volumineuse")
+                chunks = bytearray()
+                iterator = iter(response.iter_bytes(chunk_size=64 * 1024))
+                while True:
+                    # Check BEFORE pulling the next network chunk, not after
+                    # accepting its bytes. OFF→ON still invalidates this lease.
+                    require_admission()
+                    try:
+                        chunk = next(iterator)
+                    except StopIteration:
+                        break
+                    require_admission()
+                    if len(chunks) + len(chunk) > _MAX_PNB_PUBLIC_BODY_BYTES:
+                        raise ParisError("Réponse HTTPS PNB trop volumineuse")
+                    chunks.extend(chunk)
+                payload = bytes(chunks)
+            require_admission()
+            return httpx.Response(
+                response.status_code, headers=response.headers,
+                content=payload, request=response.request,
+            )
+
         try:
             if host == base_host:
-                return self.client.get(url, follow_redirects=False, **kwargs)
+                if admission_current is None:
+                    # Preserve historical/manual semantics and custom
+                    # transports for callers without a canonical Core lease.
+                    return self.client.get(url, follow_redirects=False, **kwargs)
+                with self.client.stream("GET", url,
+                                        follow_redirects=False, **kwargs) as response:
+                    return bounded_response(response)
             headers = dict(kwargs.get("headers") or {})
             for name in list(headers):
                 if name.casefold() not in {"accept", "accept-language", "user-agent"}:
@@ -967,17 +1110,21 @@ class ParisClient:
             with HTTPX_TRANSPORT.public_client(
                 producer="provider.paris.pnb.delivery", timeout=self.timeout,
             ) as public:
-                return public.get(url, headers=headers, follow_redirects=False)
+                # Redirect/error bodies never become candidate content.
+                with public.stream("GET", url, headers=headers,
+                                   follow_redirects=False) as response:
+                    return bounded_response(response)
         except (httpx.InvalidURL, httpx.RemoteProtocolError):
             # HTTPX can embed a signed Location or request URL in exception
             # messages, even when follow_redirects=False. Never journal it.
             raise ParisRedirectError(public_site(url)) from None
-        except httpx.RequestError:
-            # Includes signed URL/nonce on transport failure; expose only a
-            # closed, retryable reason instead of a private traceback.
+        except httpx.HTTPError:
+            # Includes stream/decode and signed URL/nonce failures; expose
+            # only a closed, retryable reason instead of a private traceback.
             raise ParisError("Transport HTTPS PNB indisponible") from None
 
-    def _resolve_pnb_loan_to_acsm(self, href: str, *, max_redirects: int = 12) -> str:
+    def _resolve_pnb_loan_to_acsm(self, href: str, *, max_redirects: int = 12,
+                                  admission_current=None) -> str:
         """Follow the official signed PNB redirect chain and stop before ACSM GET."""
         current = urljoin(self.base_url + "/", href)
         base_host = (urlparse(self.base_url).hostname or "").casefold()
@@ -990,8 +1137,16 @@ class ParisClient:
             "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.7",
             "Referer": f"{self.base_url}/numerique/",
         }
+        visited_urls: set[str] = set()
         for hop in range(max_redirects):
+            if admission_current is not None and admission_current() is not True:
+                raise ParisError("paris_borrow_scope_changed")
             self._validate_pnb_redirect_url(current)
+            if current in visited_urls:
+                # Never replay a signed supplier URL in a redirect cycle.
+                # The URL can contain a bearer token: never echo it.
+                raise ParisError("Boucle de redirections PNB détectée")
+            visited_urls.add(current)
             parsed = urlparse(current)
             _TRACE_LOG.info(
                 "TRACE paris pnb-loan redirect-request hop=%s site=%s",
@@ -1005,7 +1160,13 @@ class ParisClient:
                     key: value for key, value in navigation_headers.items()
                     if key.casefold() in {"accept", "accept-language", "user-agent"}
                 })
-            response = self._get_pnb_response(current, headers=hop_headers)
+            response = self._get_pnb_response(
+                current, headers=hop_headers,
+                **({"admission_current": admission_current}
+                   if admission_current is not None else {}),
+            )
+            if admission_current is not None and admission_current() is not True:
+                raise ParisError("paris_borrow_scope_changed")
             self._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
             location = response.headers.get("location") or ""
             _TRACE_LOG.info(
@@ -1018,6 +1179,13 @@ class ParisClient:
                 )
             if not location:
                 raise ParisError("Parcours PNB interrompu: redirection sans en-tête Location")
+            # urljoin() discards CR, LF and TAB in raw Location values.
+            # Do not silently rewrite a supplier-signed redirect into a
+            # different request. Reject before URL parsing or another GET.
+            if (type(location) is not str or len(location) > 16384
+                    or any(ord(c) < 33 or ord(c) == 127 or c == chr(92)
+                           or c.isspace() for c in location)):
+                raise ParisRedirectError("invalid")
             next_url = urljoin(str(response.url), location)
             self._validate_pnb_redirect_url(next_url)
             next_parsed = urlparse(next_url)

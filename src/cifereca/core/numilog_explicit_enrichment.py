@@ -6,6 +6,8 @@ already isolated Numilog provider method, not an edition matcher.
 """
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from cifereca.models import SearchResult
 from cifereca.plugin_api import ProviderCapabilityError
 
@@ -57,9 +59,21 @@ def can_enrich_numilog_result(item: object) -> bool:
     if not isinstance(item, SearchResult):
         return False
     url = getattr(item, "friendly_url", None)
-    if (type(url) is not str
-            or not url.startswith("https://www.numilog.com/")
-            or "?" in url or "#" in url):
+    # This is only a UI hint. Core must not encode Numilog's hostname:
+    # the provider independently attests the product URL before any GET.
+    # Keep a generic syntactic HTTPS gate to avoid advertising malformed links.
+    if (type(url) is not str or not url or len(url) > 16384
+            or any(ord(char) < 33 or ord(char) == 127 or ord(char) == 92 for char in url)):
+        return False
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.port not in (None, 443)
+                or not parsed.path or parsed.path == "/"
+                or parsed.query or parsed.fragment):
+            return False
+    except ValueError:
         return False
     if item.source_provider == "numilog":
         return (item.owned is True

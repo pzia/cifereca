@@ -39,7 +39,9 @@ def test_historical_global_flag_never_authorizes_startup_download(
         if deep:
             monkeypatch.setattr(service, "catalog_scan", lambda **_kwargs: {"scanned": 0})
         result = service._opening_sync_locked(deep=deep)
-        expected = "manual_only" if legacy_enabled else "disabled"
+        # The retired global flag affects only the legacy report, not the
+        # canonical source opening decision; both remain unconsented.
+        expected = "manual_only"
         assert result["kobo_decision"]["status"] == expected
         assert result["kobo_decision"]["scheduled_kobo"] == 0
         assert result["kobo"] == ({"status": "manual_only", "skipped": True}
@@ -339,3 +341,50 @@ def test_three_identities_have_independent_default_manual_and_explicit_on_start(
     assert [s.credential_id for s in kobo_on_start_sessions(service)] == ["vault-c"]
     # A legacy global bit has no policy key and can never authorize Alice.
     assert "vault-a" not in [s.credential_id for s in kobo_on_start_sessions(service)]
+
+
+
+@pytest.mark.parametrize(("first_id", "rebound_id"), [
+    ("", "kobo:vault:primary"),
+    ("", "  "),
+    ("original", " original "),
+])
+def test_legacy_on_start_never_transfers_between_aliased_borrower_ids(
+    tmp_path, monkeypatch, first_id, rebound_id,
+):
+    """Exactly one connected account is insufficient when the old SID aliases."""
+    service = _service(tmp_path)
+    try:
+        service.accounts[0] = replace(service.accounts[0], unique_id=first_id)
+        _enable_on_start(service)
+        original = service.accounts[0]
+        broker = SynchronizationBrokerImpl(service)
+        old_sid = broker._source_id(original)
+        assert service.storage.metadata_get(policy_key(old_sid)) == "1"
+        assert len(kobo_on_start_sessions(service)) == 1
+
+        rebound = replace(original, unique_id=rebound_id)
+        service.accounts[0] = rebound
+        assert broker._source_id(rebound) == old_sid
+        assert len(service.accounts) == 1  # not a simultaneous-collision case
+        assert service.sync_source_enabled(rebound) is True
+        assert kobo_on_start_sessions(service) == ()
+        with pytest.raises(ValueError):
+            broker.set_local_materialization_schedule(old_sid, "on_start")
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda *_a, **_kw: pytest.fail(
+                "rebound Kobo account cannot inherit old startup acquisition"
+            ),
+        )
+        service.config.set("kobo_backup.enabled", True)
+        service._opening_sync_locked(deep=False)
+        assert service.storage.metadata_get(policy_key(old_sid)) == "1"
+
+        # The previous source can still be recovered explicitly; we do not
+        # silently rewrite or destroy its historical preference.
+        service.accounts[0] = original
+        assert len(kobo_on_start_sessions(service)) == 1
+    finally:
+        service.close()

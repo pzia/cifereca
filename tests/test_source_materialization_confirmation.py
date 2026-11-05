@@ -79,6 +79,72 @@ def _dump(case):
         return "\n".join(case.service.storage._connect().iterdump())
 
 
+@pytest.mark.parametrize("contract", ["downloadable_v2", "rights_v1"])
+def test_typed_core_delivery_abi_blocks_legacy_confirmation_before_any_io(
+    case, monkeypatch, contract,
+):
+    """A canonical source cannot also acquire via backup_items legacy Core."""
+    methods = (
+        ("downloadable_resource_snapshot", "downloadable_selected_offer_snapshot",
+         "downloadable_selected_delivery_candidate")
+        if contract == "downloadable_v2" else
+        ("rights_observation_snapshot", "rights_selected_delivery_offer_snapshot",
+         "rights_selected_delivery_candidate")
+    )
+    before = _dump(case)
+    for name in methods:
+        monkeypatch.setattr(
+            case.target, name,
+            lambda *_args, **_kwargs: pytest.fail("canonical ABI must not be called here"),
+            raising=False,
+        )
+    blocked = case.broker.prepare_local_materialization(case.source)
+    assert blocked.facts["status"] == "canonical_source_delivery_active"
+    assert not blocked.ok and "confirmation_token" not in blocked.facts
+    assert _dump(case) == before and not case.downloaded
+    assert not any(case.calls.values())
+
+
+@pytest.mark.parametrize("contract", ["downloadable_v2", "rights_v1"])
+def test_legacy_confirmation_is_invalidated_when_core_abi_appears(
+    case, monkeypatch, contract,
+):
+    """Never dispatch a stale legacy token after the provider gained Core A->B."""
+    token = _prepare(case)
+    before = _dump(case)
+    methods = (
+        ("downloadable_resource_snapshot", "downloadable_selected_offer_snapshot",
+         "downloadable_selected_delivery_candidate")
+        if contract == "downloadable_v2" else
+        ("rights_observation_snapshot", "rights_selected_delivery_offer_snapshot",
+         "rights_selected_delivery_candidate")
+    )
+    for name in methods:
+        monkeypatch.setattr(
+            case.target, name,
+            lambda *_args, **_kwargs: pytest.fail("canonical ABI must not be called here"),
+            raising=False,
+        )
+    result = case.broker.materialize_source(case.source, token)
+    assert not result.ok and result.facts["status"] == "canonical_source_delivery_active"
+    assert _dump(case) == before
+    assert not case.downloaded and case.calls["vault-2"] == 1
+    assert not any(s.resolve_calls for s in case.sessions)
+
+
+def test_partial_canonical_abi_does_not_disable_legacy_compatibility(case, monkeypatch):
+    monkeypatch.setattr(
+        case.target, "downloadable_resource_snapshot",
+        lambda *_args: pytest.fail("partial canonical ABI must never be called"),
+        raising=False,
+    )
+    token = _prepare(case)
+    assert case.calls["vault-2"] == 1 and not case.downloaded
+    result = case.broker.materialize_source(case.source, token)
+    assert result.ok and result.changed == 2
+    assert len(case.downloaded) == 2
+
+
 def test_prepare_then_confirm_is_exactly_one_account_and_replay_cannot_download(case):
     before = _dump(case)
     token = _prepare(case)

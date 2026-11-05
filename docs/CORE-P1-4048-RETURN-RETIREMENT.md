@@ -11,26 +11,55 @@ Cette décision **ne concerne pas** la lecture de l'inventaire et des états
 historiques « rendu », « expiré », « clos ». Elle n'interdit pas à un
 fournisseur d'expirer naturellement un prêt.
 
-**État de migration, à vérifier avant release :**
-- [#4056](https://github.com/pzia/cifereca/pull/4056) : boutons de
-  restitution retirés des fiches et des facettes, fusionné.
-- [#4067](https://github.com/pzia/cifereca/pull/4067) : switch
-  `experimental_actions` retiré, fusionné ; la valeur ancienne ne
-  constitue pas une autorisation.
-- [#4059](https://github.com/pzia/cifereca/pull/4059) : retrait
-  Core/Plugins en **draft**, **non livré** ; ne pas interpréter son code
-  comme déjà présent sur `main`.
-- Tranche Paris `provider-paris` 1.2.39 : `return_loan=False`, suppression de `ParisProviderSession.return_digital` et de `ParisClient.return_digital_loan` (plus aucun `ReturnDigitalLoan` dans le package). Les appels hérités à `ProviderSession.return_digital` refusent sans accès réseau. **Les façades Core anciennes peuvent encore écrire un checkpoint avant ce refus : leur neutralisation antérieure à toute mutation reste obligatoire.**
+**État fonctionnel au 03/11/2026 : terminé, [#4048](https://github.com/pzia/cifereca/issues/4048) fermé.**
 
-La clôture de #4048 est interdite sans fusion des contrats mutationnels
-et les trois validations CI du commit exact.
+Le retrait a été livré par tranches ciblées, sans intégrer la PR brouillon
+[#4059](https://github.com/pzia/cifereca/pull/4059) (102 fichiers, gelée) :
+
+- GUI : [#4056](https://github.com/pzia/cifereca/pull/4056)
+  et [#4181](https://github.com/pzia/cifereca/pull/4181) suppriment les actions,
+  façades et callbacks de restitution ; le switch
+  `experimental_actions` a été retiré par
+  [#4067](https://github.com/pzia/cifereca/pull/4067).
+- Paris PNB : [#4200](https://github.com/pzia/cifereca/pull/4200) retire
+  `return_digital_loan`, la route `ReturnDigitalLoan` et la capacité déclarée.
+- ADEPT : [#4210](https://github.com/pzia/cifereca/pull/4210) retire le
+  broker public, [#4214](https://github.com/pzia/cifereca/pull/4214) les
+  commandes dédiées de restitution, et
+  [#4222](https://github.com/pzia/cifereca/pull/4222) interdit également
+  `run_json(["acsm", "return", ...])` avant tout sous-processus.
+- Core : [#4319](https://github.com/pzia/cifereca/pull/4319) refuse
+  `execute_drm_mutation("return")` avant résolution d'un plugin ;
+  [#4344](https://github.com/pzia/cifereca/pull/4344), squash
+  `68333c04b509c09fa2746835a9930f5a5388bac7`, neutralise
+  `return_digital`, `return_loan_prefer_adept`,
+  `return_adept_acquisition`, leurs alias privés et les helpers
+  mutateurs directs à la première instruction, sans claim ni I/O.
+
+**Validation du lot Core terminal (#4344, HEAD
+`eab02c318f768ecd036a5cad92ed637e5d3c2b78`) :**
+[PR CI Core + Plugins](https://github.com/pzia/cifereca/actions/runs/41691133545)
+SUCCESS et [installation/rollback](https://github.com/pzia/cifereca/actions/runs/41691133569)
+SUCCESS. Les actions GTK avaient déjà été testées dans les PR CoreUI
+antérieures (dont #4181, E2E GTK SUCCESS) ; **aucune nouvelle exécution E2E
+GTK du commit #4344 n'est revendiquée**, car son diff ne modifie pas l'IHM.
+
+Les anciennes clés `return_available` et les receipts de restitution dans
+la **provenance historique** ADEPT restent lisibles ; ils ne réactivent ni
+bouton, ni capability publique ni voie de mutation. L'observation des prêts
+expirés/rendus, la réconciliation read-only et le fulfillment ADEPT demeurent
+distincts des retours volontaires supprimés.
+
+La clôture de #4048 est **fonctionnelle et non destructive** ; une
+prochaine évolution de schéma ou un nettoyage de libellés inertes ne doit
+jamais réintroduire une possibilité de retour.
 
 ## Inventaire des frontières d'exécution à éliminer
 
 | Couche | Entrée historique | Sortie exigée |
 | --- | --- | --- |
 | GUI | `confirm_return`, `_return_loan`, `_return_loan_pnb`, `return_adept_from_detail` | Absence de commande et de tâche |
-| Broker ADEPT | `AdeptLoanBrokerImpl.return_acquisition` | Aucun appel service |
+| Broker ADEPT | `AdeptLoanBrokerImpl.return_acquisition` | **Retiré du protocole public et de l'implémentation** (#4048) ; rapprochement, choix et rattachement préservés |
 | Core | `return_digital`, `return_loan_prefer_adept`, `return_adept_acquisition` | Pas de verrou, claim, lecture ou mutation |
 | Reprise | `verify_loan_return` après ancien checkpoint | Ne **jamais** relancer le retour |
 | DRM | `execute_drm_mutation(operation="return")` | Refus avant découverte de plugin |

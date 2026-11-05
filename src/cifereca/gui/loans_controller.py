@@ -14,7 +14,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw
 
 from ..models import Loan
-from ..core.loan_source_identity import loan_source_key
+from ..core.loan_source_identity import loan_source_key, unambiguous_loan_rows
 from .book_widgets import BookListItem
 from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_due_presentation, loan_medium_counts, loan_row_metadata
 from .master_detail import MasterDetailPage
@@ -22,6 +22,7 @@ from .query_controls import MultiSelect
 from .task_runner import TaskPriority
 from .loan_renewal_feedback import loan_renewal_feedback
 from .detail_model import fr_date
+from . import history_language_projection
 
 
 def _build_loans_page(self) -> MasterDetailPage:
@@ -69,6 +70,10 @@ def _populate_loans(self, rows: list[Loan]) -> None:
     identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
     rows = [row for row in rows if type(row) is Loan
             and identity_id is not None and row.identity_id == identity_id]
+    # A duplicated exact SourceKey cannot render two actionable rows backed
+    # by a dict holding only the last card. Identical replays display once;
+    # conflicting cards are not promoted into the click/renew/download model.
+    rows = list(unambiguous_loan_rows(rows))
     self.service.last_loans = rows
     # The same upstream loan can be visible under two Paris credentials.
     # Preserve both source-bound rows instead of overwriting by loan.id.
@@ -94,14 +99,20 @@ def _render_loans(self) -> None:
             button.set_label(f"{label} · {counts.get(key, 0)}")
     ranked_rows: list[tuple[tuple[int, int], BookListItem]] = []
     wanted_languages = set(self.loan_languages.values()) if hasattr(self, 'loan_languages') else set()
+    display_loans = []
     for loan in all_loans:
         if self.loan_filter != "all" and loan.medium != self.loan_filter:
             continue
-        raw = dict(loan.raw or {})
-        meta = dict(raw.get('_cifereca') or {}) if isinstance(raw.get('_cifereca'), dict) else raw
-        loan_languages = self._known_item_languages(loan.source_provider, loan.record_id or loan.id, meta)
-        if wanted_languages and not loan_languages.intersection(wanted_languages):
-            continue
+        display_loans.append(loan)
+    if wanted_languages and display_loans:
+        # The old per-loan _known_item_languages lookup read the entire
+        # SQLite catalogue on GTK even without a language filter. Reuse one
+        # fresh, local snapshot only for an actual filtered render.
+        display_loans = history_language_projection.loan_rows_with_languages(
+            display_loans, wanted_languages,
+            self.service.storage.catalog_entries(),
+        )
+    for loan in display_loans:
         due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
         subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
         # BnF (and other providers) can supply a verified author on the
@@ -170,6 +181,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         control=control,
         priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.ACTIVE_LOAN,
         kind="loans",
+        origin="user" if control is not None else "automatic",
     )
 
 
@@ -177,8 +189,16 @@ def _loans_refreshed(self, rows):
     displayed=getattr(self, '_displayed_loan', None)
     self._populate_loans(rows)
     if displayed:
-        fresh=next((r for r in rows if (r.id,r.source_provider,r.source_credential,r.source_account_id)==
-                    (displayed.id,displayed.source_provider,displayed.source_credential,displayed.source_account_id)),None)
+        # A weak (id, provider, credential, account) lookup could rebind an
+        # open detail after refresh to another backend, record or medium.
+        # Resolve only from the same current-identity-filtered snapshot that
+        # _populate_loans installed for the visible loan rows.
+        key = loan_source_key(displayed)
+        matches = [
+            loan for loan in getattr(self.service, "last_loans", ())
+            if type(loan) is Loan and loan_source_key(loan) == key
+        ]
+        fresh = matches[0] if len(matches) == 1 else None
         self._displayed_loan=fresh
         if fresh:self.loan_page.detail.show_loan(fresh)
         else:self.loan_page.detail.empty(

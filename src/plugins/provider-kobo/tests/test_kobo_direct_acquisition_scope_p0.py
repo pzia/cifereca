@@ -8,6 +8,25 @@ from cifereca.plugin_api import ProviderError
 from tests.test_kobo_manifest_policy_p1 import FakeVault, session_with_vault
 
 
+def _synthetic_attested_delegate(session):
+    """Install the verified-connect state for legacy direct-POST fence tests.
+
+    The full bearer/public/runtime handshake is independently checked by
+    test_p0_3252_delegation_token_scope.py.
+    """
+    from types import SimpleNamespace as NS
+    from cifereca_kobo import _vault_token_fingerprint
+    session.client.token = "SYNTHETIC_TEST_BEARER"
+    session.runtime_capabilities = NS(acquisition=lambda _p: NS(
+        available=True, compatible=True, operational=True,
+        modes=("kobo_kdrm",),
+    ))
+    session.supports_acquisition_delegation = True
+    session._delegation_bound_client = session.client
+    session._delegation_bound_generation = session._personal_binding_generation
+    session._delegation_token_fingerprint = _vault_token_fingerprint(session.client)
+
+
 @pytest.mark.parametrize("access", (
     "denied", "forbidden", "requires_scope", "disabled", "unavailable",
 ))
@@ -58,7 +77,9 @@ def test_delegated_denial_does_not_block_independent_descriptor_path():
         assert result["acquisition"]["mode"] == "descriptor"
         assert calls == [("edition-1", {
             "revision_id": None, "mode": "descriptor",
-            "display_profile": None, "include_acsm": None,
+            # Disabling the optional Adobe export is explicit even when
+            # the current provider has no ADEPT runtime/capability.
+            "display_profile": None, "include_acsm": False,
         })]
     finally:
         session.close()
@@ -71,6 +92,7 @@ def test_connected_account_without_denial_can_use_delegated_mode():
         calls.append((product_id, kwargs["mode"])) or {"ok": True}
     )
     session = session_with_vault(vault)
+    _synthetic_attested_delegate(session)
     try:
         assert session.resolve_acquisition("edition-1", mode="delegated") == {"ok": True}
         assert calls == [("edition-1", "delegated")]
@@ -88,6 +110,7 @@ def test_one_accounts_delegated_denial_never_blocks_other_accounts():
             calls[_index].append((product_id, kwargs["mode"])) or {"ok": True}
         )
         sessions.append(session_with_vault(vault, account_id=f"reader-{index}"))
+        _synthetic_attested_delegate(sessions[-1])
     try:
         sessions[1]._cifereca_delegation_forbidden = True
         with pytest.raises(ProviderError, match="délégation indisponible"):
@@ -118,6 +141,7 @@ def test_first_direct_delegated_403_is_remembered_and_next_request_is_offline():
 
     vault.acquisition = denied
     session = session_with_vault(vault)
+    _synthetic_attested_delegate(session)
     try:
         with pytest.raises(ProviderError):
             session.resolve_acquisition("edition-a", mode="delegated")
@@ -144,6 +168,7 @@ def test_non_403_direct_error_does_not_poison_delegated_capability(status):
 
     vault.acquisition = fail
     session = session_with_vault(vault)
+    _synthetic_attested_delegate(session)
     try:
         for _ in range(2):
             with pytest.raises(KoboVaultError):
@@ -168,6 +193,7 @@ def test_descriptor_403_does_not_poison_delegated_scope():
 
     vault.acquisition = respond
     session = session_with_vault(vault)
+    _synthetic_attested_delegate(session)
     try:
         with pytest.raises(KoboVaultError):
             session.resolve_acquisition("edition", mode="descriptor")
@@ -193,6 +219,7 @@ def test_kobo_acquisition_inflight_rebind_cannot_publish_old_descriptor_or_denia
 
     vault = FakeVault([])
     session = session_with_vault(vault)
+    _synthetic_attested_delegate(session)
     broker = NS(owner="identity-A")
     broker.accounts = lambda identity_id=None: [
         NS(provider_id="kobo", account_id="alice", identity_id=broker.owner,

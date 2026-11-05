@@ -128,3 +128,48 @@ def test_paris_pnb_revocation_during_candidate_does_not_publish(source):
     assert source_sync_consent.read_policy(
         db, source_sync_consent.scope_for_account(service.account)
     ).mode == "off"
+
+
+
+def test_paris_pnb_failed_one_loan_does_not_block_next_or_repeat_valid_get(source):
+    """An ADEPT-like per-loan failure must not starve other active PNB loans.
+
+    This Core v2 fixture is fully offline; no real Adobe profile is touched.
+    """
+    service, db, root, calls, broker = _paris(source)
+    first, = service.resource_snapshot.resources
+    second = replace(first, source=replace(
+        first.source, edition_id="pnb-edition-2",
+        resource_id="pnb-loan-2",
+    ), right=None)
+    service.resource_snapshot = replace(
+        service.resource_snapshot, resources=(first, second),
+    )
+    original = service.session.downloadable_selected_delivery_candidate
+
+    def flaky(account, *, edition_id, **kwargs):
+        if edition_id == "pnb-edition-1":
+            raise ValueError("synthetic ADEPT receipt rejected")
+        return original(account, edition_id=edition_id, **kwargs)
+
+    service.session.downloadable_selected_delivery_candidate = flaky
+    assert _change(broker, service.account, True)["enabled"] is True
+
+    first_sync = synchronize_account_source(service, service.account)
+    assert first_sync["status"] == "partial"
+    assert first_sync["canonical_execution"]["failed"] == 1
+    assert first_sync["canonical_execution"]["downloaded"] == 1
+    assert db.entitlements() == []
+    assert len(db.placements()) == 1
+    path = Path(db.placements()[0]["path"])
+    assert path.read_bytes() == BYTES and path.parent == root / "A" / "Acquisitions"
+    assert calls == ["offer", "offer", "delivery"]
+
+    previous_placements = db.placements()
+    again = synchronize_account_source(service, service.account)
+    assert again["canonical_execution"]["failed"] == 1
+    assert again["canonical_execution"]["present_attested"] == 1
+    assert again["canonical_execution"]["downloaded"] == 0
+    assert db.placements() == previous_placements
+    assert path.read_bytes() == BYTES
+    assert calls == ["offer", "offer", "delivery", "offer"]

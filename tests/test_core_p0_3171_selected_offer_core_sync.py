@@ -6,6 +6,7 @@ authorize itself, or publish an origin without independent completed delivery.
 from __future__ import annotations
 
 from dataclasses import replace
+import logging
 
 import pytest
 
@@ -289,3 +290,172 @@ def test_generic_unavailable_is_not_retried_or_misclassified_as_archived(rig):
     counts = result["canonical_execution"]
     assert counts["pending"] == 1 and counts["skipped_archived"] == 0
     assert counts["failed"] == 0 and downloads == []
+
+
+
+@pytest.mark.parametrize("change", ["removed", "rebound"])
+def test_selected_offer_refuses_credential_with_unregistered_sql_borrower(
+    rig, change,
+):
+    """A current session object is not proof that Core still owns its account."""
+    from cifereca.core.canonical_selected_offers import qualify_selected_offers
+    from cifereca.locking import InterProcessLock
+
+    service, storage, root = rig
+    _enabled(service, root)
+    provider_reads = []
+    service.session.rights_selected_delivery_offer_snapshot = (
+        lambda *_a, **_kw: provider_reads.append(True) or _selected(service)
+    )
+    with storage._lock, storage._connect() as sql:
+        if change == "removed":
+            sql.execute(
+                "DELETE FROM provider_accounts WHERE identity_id='A' "
+                "AND provider_id='seller-a' AND credential_id='card-a'"
+            )
+        else:
+            sql.execute(
+                "UPDATE provider_accounts SET account_id='another-borrower' "
+                "WHERE identity_id='A' AND provider_id='seller-a' "
+                "AND credential_id='card-a'"
+            )
+    with InterProcessLock(root.parent / "state" / "acquisition.lock") as lock:
+        with pytest.raises(ValueError, match="canonical_offer_source_rebound"):
+            qualify_selected_offers(
+                service, service.account, service.session, service.snapshot,
+                admitted_epoch=service._source_context_epoch,
+                shared_lock=lock, library_root=root,
+                persisted_consent=frozenset({service.source}),
+                consent_still_current=lambda _source: True,
+            )
+    assert provider_reads == []
+    assert storage.placements() == []
+
+
+@pytest.mark.parametrize(("exception", "expected_reason"), [
+    ("scope", "kobo_selected_offer_owner_changed"),
+    ("untrusted", "provider_capability_refused"),
+    ("upstream", "provider_preflight_exception"),
+])
+def test_selected_offer_rejection_emits_actual_reason_without_forged_http_403(
+    rig, caplog, exception, expected_reason,
+):
+    """One exact selected source; classification cannot infer a Vault POST.
+
+    The provider can refuse before its own EVENT, as the 8 pending Kobo
+    examples did. The Core event distinguishes a local refusal from an
+    actual HTTP error, without leaking arbitrary provider exception text.
+    """
+    from cifereca.plugin_api import ProviderCapabilityError
+
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+    errors = {
+        "scope": ProviderCapabilityError("kobo_selected_offer_owner_changed"),
+        "untrusted": ProviderCapabilityError(
+            "Bearer PRIVATE_SECRET https://private.example/token",
+        ),
+        "upstream": RuntimeError("HTTP 403 Bearer PRIVATE_SECRET"),
+    }
+    attempts = []
+    def selected(_account, **options):
+        attempts.append(options)
+        raise errors[exception]
+    service.session.rights_selected_delivery_offer_snapshot = selected
+
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        result = synchronize_account_source(service, service.account)
+
+    assert result["canonical_execution"]["pending"] == 1
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert len(attempts) == 1 and downloads == []
+    assert db.placements() == [] and refs(db)[1] == 0
+    entries = [
+        record.getMessage() for record in caplog.records
+        if "EVENT canonical selected_offer " in record.getMessage()
+    ]
+    assert len(entries) == 1
+    assert "phase=provider_preflight" in entries[0]
+    assert "outcome=unknown" in entries[0]
+    assert f"reason={expected_reason}" in entries[0]
+    assert f"product_id={service.source.right_id}" in entries[0]
+    assert "Bearer" not in entries[0]
+    assert "PRIVATE_SECRET" not in entries[0]
+    assert "HTTP 403" not in entries[0]
+    assert "delegated_http_403" not in entries[0]
+
+
+@pytest.mark.parametrize(("error", "expected_module", "expected_symbol"), [
+    (
+        ImportError(
+            "cannot import name 'kdrm_runtime_ready' from "
+            "'cifereca_kobo_delivery_offer' (/tmp/PRIVATE_TOKEN)",
+            name="cifereca_kobo_delivery_offer",
+        ),
+        "cifereca_kobo_delivery_offer", "kdrm_runtime_ready",
+    ),
+    (
+        ModuleNotFoundError(
+            "No module named 'cifereca_kobo_kdrm'; Bearer PRIVATE_TOKEN",
+            name="cifereca_kobo_kdrm",
+        ),
+        "cifereca_kobo_kdrm", "unknown",
+    ),
+    (
+        ImportError(
+            "cannot import name 'ProviderRightsSnapshot' from "
+            "'cifereca.plugin_api' (/tmp/PRIVATE_TOKEN)",
+        ),
+        "cifereca.plugin_api", "ProviderRightsSnapshot",
+    ),
+    (
+        ImportError(
+            "cannot import name 'scoped_kdrm_source' from partially "
+            "initialized module 'cifereca_kobo_kdrm' "
+            "(most likely due to circular import; Bearer PRIVATE_TOKEN)",
+            name="cifereca_kobo_kdrm",
+        ),
+        "cifereca_kobo_kdrm", "scoped_kdrm_source",
+    ),
+    (
+        ImportError(
+            "Bearer PRIVATE_TOKEN https://example.invalid/?sig=PRIVATE_TOKEN",
+            name="Bearer PRIVATE_TOKEN",
+        ),
+        "unknown", "unknown",
+    ),
+])
+def test_preflight_importerror_logs_module_symbol_without_free_text_or_get(
+    rig, caplog, error, expected_module, expected_symbol,
+):
+    """The exact import failure survives Core preflight, without changing A/B."""
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+    attempts = []
+
+    def selected(_account, **kwargs):
+        attempts.append(kwargs)
+        raise error
+
+    service.session.rights_selected_delivery_offer_snapshot = selected
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        result = synchronize_account_source(service, service.account)
+
+    assert result["canonical_execution"]["pending"] == 1
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert len(attempts) == 1
+    assert downloads == [] and db.placements() == [] and refs(db)[1] == 0
+    entries = [
+        record.getMessage() for record in caplog.records
+        if "EVENT canonical selected_offer " in record.getMessage()
+    ]
+    assert len(entries) == 1
+    event = entries[0]
+    assert "phase=provider_preflight" in event
+    assert "reason=provider_preflight_exception" in event
+    assert f"exception_type={type(error).__name__}" in event
+    assert f"import_name={expected_module}" in event
+    assert f"import_symbol={expected_symbol}" in event
+    assert "PRIVATE_TOKEN" not in event
+    assert "Bearer" not in event
+    assert "https://" not in event

@@ -61,9 +61,9 @@ def test_real_packages_publish_the_same_provider_id_version_and_lending_api(
     assert plugin["type"] == "provider.library"
     assert plugin["version"] == info["package"]["version"]
     # Keep requirements aligned with each real provider manifest.
-    # Paris requires declarative account options >=1.4.3; BnF's typed
+    # Paris now requires numeric account options >=1.4.5; BnF's typed
     # pre-POST non-submission requires 1.4.4; typed BnF Settings fields 1.4.5.
-    expected_api = ">=1.4.3,<2" if provider == "paris" else ">=1.4.5,<2"
+    expected_api = ">=1.4.6,<2" if provider == "paris" else ">=1.4.5,<2"
     assert info["package"]["plugin_api"] == expected_api
     assert "sync.loans" in plugin["capabilities"]
     assert descriptor.state == "ready" and descriptor.id == provider

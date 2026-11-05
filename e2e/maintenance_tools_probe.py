@@ -226,6 +226,9 @@ def exercise_native_transfer(*, parent, Gtk, Adw, device, until, report, capture
         recipients = [p for p in service.storage.placements() if p['identity_id'] == 'bob']
         assert len(recipients) == 1
         received = Path(recipients[0]['path'])
+        assert received == (
+            source.parents[2] / 'bob' / 'Acquisitions' / 'Synthetic native transfer.pdf'
+        )
         assert received.read_bytes() == source.read_bytes()
         assert (source.stat().st_dev, source.stat().st_ino) != (
             received.stat().st_dev, received.stat().st_ino)

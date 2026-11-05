@@ -240,3 +240,123 @@ def test_verified_copy_inside_target_profile_remains_positive_after_path_moves(
             (str(nested), str(original)),
         )
     assert plan(store, snapshot, tmp_path)[0].provider_satisfied
+
+
+
+def test_dotdot_sqlite_path_cannot_attest_bytes_from_another_profile(store, tmp_path):
+    """Profile A/../B is not an A placement, even with A's valid OriginLink."""
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    register(store, "B", "another", "card-B")
+    own = target(tmp_path, "A")
+    foreign = target(tmp_path, "B")
+    publish(store, tmp_path / "EBooks", own, source, snapshot)
+    assert plan(store, snapshot, tmp_path)[0].state == "present_attested"
+
+    # Historical/poisoned DB keeps A's true origin, identity and SHA, but
+    # rewrites only the pathname through a parent component into profile B.
+    own.unlink()
+    disguised = tmp_path / "EBooks" / "A" / ".." / "B" / foreign.name
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE placements SET path=? WHERE path=?", (
+            str(disguised), str(own),
+        ))
+    decisions = plan(store, snapshot, tmp_path)
+    assert len(decisions) == 1
+    assert decisions[0].provider_satisfied is False
+    assert decisions[0].state != "present_attested"
+    assert foreign.read_bytes() == BYTES
+    # Storage.placement_for_path() deliberately canonicalizes its argument,
+    # so inspect the poisoned *raw* SQLite pathname for this regression.
+    with store._lock, store._connect() as db:
+        saved = db.execute(
+            "SELECT identity_id FROM placements WHERE path=?", (str(disguised),),
+        ).fetchone()
+    assert saved == ("A",)
+
+
+def test_verified_copy_never_accepts_lexical_escape_from_owner_directory(tmp_path):
+    from hashlib import sha256
+    from cifereca.core.convergence_verified_presence import _verified_copy
+    root = tmp_path / "EBooks"
+    own = root / "A" / "book.pdf"
+    other = root / "B" / "book.pdf"
+    own.parent.mkdir(parents=True)
+    other.parent.mkdir(parents=True)
+    own.write_bytes(BYTES)
+    other.write_bytes(BYTES)
+    opts = dict(root=root, owner_directory="A",
+                registered_directories=frozenset({"A"}),
+                size=len(BYTES), sha256=sha256(BYTES).hexdigest())
+    assert _verified_copy(str(own), **opts) is True
+    assert _verified_copy(str(root / "A" / ".." / "B" / "book.pdf"), **opts) is False
+    assert _verified_copy(str(root / "A" / ".." / ".." / "EBooks" / "B" / "book.pdf"), **opts) is False
+
+
+
+def test_verified_presence_exact_borrower_amid_sibling_accounts(store, tmp_path):
+    """A large credential roster grants neither cross-borrower proof nor absence."""
+    source, snapshot = new_source(account="buyer-A")
+    for index in range(80):
+        register(store, "A", "seller", "card-A", account=f"sibling-{index}")
+    # Another borrower on the same credential cannot attest this A source.
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied is False
+    register(store, "A", "seller", "card-A", account="buyer-A")
+    path = target(tmp_path, "A")
+    publish(store, tmp_path / "EBooks", path, source, snapshot)
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied is True
+
+    # The historical OriginLink and SHA survive a borrower registry change,
+    # but they cease to satisfy the now-disconnected account.
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE provider_accounts SET account_id='replaced-borrower' "
+            "WHERE identity_id='A' AND provider_id='seller' "
+            "AND credential_id='card-A' AND account_id='buyer-A'"
+        )
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied is False
+    assert path.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("poisoned_artifact", ("empty_bytes", "sha_rebound"))
+def test_corrupt_artifact_evidence_does_not_suppress_real_delivery(
+    store, tmp_path, poisoned_artifact,
+):
+    """A historical B row must not attest zero bytes or a mismatched SHA ID."""
+    from hashlib import sha256
+
+    source, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    published = publish(store, tmp_path / "EBooks", path, source, snapshot)
+    assert plan(store, snapshot, tmp_path)[0].provider_satisfied is True
+
+    if poisoned_artifact == "empty_bytes":
+        changed = b""
+    else:
+        changed = b"%PDF-1.7\\nReplaced bytes with mismatched database artifact ID\\n"
+    path.write_bytes(changed)
+    with store._lock, store._connect() as db:
+        # Current v14 production rejects this corruption at its SQL trigger.
+        # Simulate an imported/previously corrupted database explicitly by
+        # disabling that guard IN THIS THROWAWAY TEST DB only. The presence
+        # reader must still fail closed when faced with persisted bad rows.
+        db.execute("DROP TRIGGER trg_artifact_linked_sha_update")
+        db.execute(
+            "UPDATE artifacts SET sha256=?,size=? WHERE artifact_id=?",
+            (sha256(changed).hexdigest(), len(changed), published.artifact_id),
+        )
+    # Source and provenance history survive; corrupted Artifact metadata
+    # is not an attestation of a usable, correctly identified local delivery.
+    before = store.placements()
+    decisions = plan(store, snapshot, tmp_path)
+    assert len(decisions) == 1
+    assert decisions[0].provider_satisfied is False
+    assert decisions[0].state != "present_attested"
+    assert store.placements() == before
+    assert path.read_bytes() == changed
+    with store._lock, store._connect() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM origin_links WHERE artifact_id=?",
+            (published.artifact_id,),
+        ).fetchone() == (1,)

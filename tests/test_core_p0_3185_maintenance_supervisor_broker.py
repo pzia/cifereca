@@ -8,6 +8,19 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+@pytest.fixture(autouse=True)
+def _enable_legacy_dedup_test_path(monkeypatch):
+    """Retain synthetic tests of the OLD Core retirement engine only.
+
+    Production is suspended by #4496. This file exercises pre-existing
+    SQLite/FS crash-recovery invariants under an explicit test-only monkeypatch.
+    New acceptance tests of the default safety hold never use this fixture.
+    """
+    from cifereca.core import canonical_dedup_supervisor
+    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
+                        lambda: True)
+
+
 
 from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
 from cifereca.plugin_api import Conflict, LibraryMutationRequest

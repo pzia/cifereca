@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncPhaseState, SyncSourceRef
+from cifereca.plugin_api import AccountRef, AdeptProfileRef, AttentionRequired, HealthCheckResult, RuntimeAcquisitionCapabilities, SyncRequest, SyncResult, SyncPhaseState, SyncSourceCycleReceipt, SyncSourceRef
 from .artifact_runtime import ArtifactExecutionBrokerImpl, LibraryReadBrokerImpl, LibraryMaintenanceBrokerImpl, ArtifactRoutingBrokerImpl
 from .cache_runtime import CacheBrokerImpl
 from .task_runtime import TaskBrokerImpl
@@ -234,7 +234,7 @@ class SynchronizationBrokerImpl:
         # Never relay a signed provider URL or private path under another
         # public field merely because the error field was redacted.
         if state.get("status", "") not in (
-            _SYNC_PUBLIC_STATUSES | {"", "idle", "running", "cancelled", "interrupted"}
+            _SYNC_PUBLIC_STATUSES | {"", "idle", "running", "busy", "cancelled", "interrupted"}
         ):
             state["status"] = "unknown"
         for name in ("last_attempt", "last_success",
@@ -247,14 +247,56 @@ class SynchronizationBrokerImpl:
                     state["inventory_status"] = "unknown"
                 state[name] = sanitized
         if state.get("inventory_status", "") not in {
-            "", "running", "success", "partial", "failed", "unknown",
+            "", "running", "busy", "success", "partial", "failed", "unknown",
         }:
             state["inventory_status"] = "unknown"
         if state.get("scope", "") not in {"", "manual", "opening", "scheduled"}:
             state["scope"] = ""
+        terminal = self._closed_last_cycle(value.get("last_cycle"))
+        if terminal is not None:
+            state["last_cycle"] = terminal
         if legacy:
             self._set_state(source_id, state)
         return state
+
+    @classmethod
+    def _closed_last_cycle(cls, value: object) -> dict[str, Any] | None:
+        """Only a complete, bounded v1 Core terminal can reach a source row.
+
+        Absent counters mean unattested, not zero. Malformed nested metadata
+        cannot leak supplier text or fabrications into the read-only view.
+        """
+        if type(value) is not dict or set(value) not in (
+            {"schema", "status", "attempted_at", "mode"},
+            {"schema", "status", "attempted_at", "mode", "canonical_execution"},
+        ):
+            return None
+        if (type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["status"]) is not str
+                or value["status"] not in {"success", "partial", "failed", "busy", "skipped"}
+                or type(value["mode"]) is not str
+                or value["mode"] not in {"manual", "scheduled"}):
+            return None
+        instant = cls._safe_phase_timestamp(value.get("attempted_at"))
+        if not instant:
+            return None
+        safe = {
+            "schema": 1, "status": value["status"],
+            "attempted_at": instant, "mode": value["mode"],
+        }
+        if "canonical_execution" in value:
+            from .core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+            counts = value["canonical_execution"]
+            if (type(counts) is not dict
+                    or set(counts) != set(CANONICAL_EXECUTION_STATUSES)
+                    or any(type(counts.get(name)) is not int
+                           or not 0 <= counts[name] <= 1_000_000
+                           for name in CANONICAL_EXECUTION_STATUSES)):
+                return None
+            safe["canonical_execution"] = {
+                name: counts[name] for name in CANONICAL_EXECUTION_STATUSES
+            }
+        return safe
 
     def _set_state(self, source_id: str, value: dict[str, Any]) -> None:
         self.service.storage.metadata_set(
@@ -321,13 +363,10 @@ class SynchronizationBrokerImpl:
         raw_status = state.get("status")
         inventory_status = {
             "ok": "success", "success": "success",
-            "running": "running", "partial": "partial",
+            "running": "running", "busy": "busy", "partial": "partial",
             "error": "failed", "failed": "failed",
         }.get(raw_status, "idle")
-        if (
-            getattr(account, "provider_id", None) in {"kobo", "numilog"}
-            and "remote_inventory" in sync_caps
-        ):
+        if "remote_inventory" in sync_caps:
             # Opening sync may refresh loans, without reading the private
             # store inventory. It cannot attest discover/rights freshness.
             inventory_status = state.get("inventory_status", "idle") or "idle"
@@ -465,11 +504,41 @@ class SynchronizationBrokerImpl:
             and callable(getattr_static(session, "download_digital", None))
         ):
             declared_sync_caps.append("loan_auto_materialization")
-        # Core owns real startup/periodic inventory dispatch for these stores.
-        # Availability is not consent: policies still default to manual and
-        # the scheduler revalidates exact source/account/session before I/O.
-        if provider_id in {"kobo", "numilog"} and "personal_library" in source_caps:
+        # Scheduled inventory is a provider-neutral declared capability.
+        # It remains explicit opt-in and never grants content acquisition.
+        # Exact source/account/session binding is checked before provider I/O.
+        if "personal_library" in source_caps:
             declared_sync_caps.append("scheduled_refresh")
+        last_cycle = self._closed_last_cycle(state.get("last_cycle"))
+        receipt = (
+            SyncSourceCycleReceipt(
+                status=last_cycle["status"],
+                attempted_at=last_cycle["attempted_at"],
+                mode=last_cycle["mode"],
+                canonical_execution=(
+                    tuple(last_cycle["canonical_execution"].items())
+                    if "canonical_execution" in last_cycle else None
+                ),
+            ) if last_cycle is not None else None
+        )
+        if receipt is not None:
+            # An empty primary borrower and a literal upstream account named
+            # "provider:credential:primary" may hash to the same legacy ID.
+            # The existing enablement guard refuses that ambiguous source;
+            # never expose *either* borrower's private per-cycle counters
+            # through a shared status key, even when Sync remains OFF.
+            owner_count = 0
+            for candidate in (getattr(self.service, "accounts", ()) or ()):
+                try:
+                    if self._source_id(candidate) == source_id:
+                        owner_count += 1
+                except Exception:
+                    owner_count = 2
+                    break
+                if owner_count > 1:
+                    break
+            if owner_count != 1:
+                receipt = None
         return SyncSourceRef(
             source_id=source_id,
             identity_id=account_ref.identity_id,
@@ -485,6 +554,7 @@ class SynchronizationBrokerImpl:
             error=str(state.get("error") or ""),
             sync_capabilities=tuple(declared_sync_caps),
             phase_states=self._phase_states(account, state, tuple(declared_sync_caps)),
+            last_cycle=receipt,
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
@@ -511,9 +581,23 @@ class SynchronizationBrokerImpl:
             with self._numilog_consent_plans.lock:
                 self._numilog_consent_plans.entries.clear()
         else:
-            self.service.storage.metadata_set(
-                self._preference_key(source_id), "1" if enabled else "0",
-            )
+            # Legacy Kobo/BnF acquisition consent has a pinned generation
+            # distinct from this source enablement preference. Advance that
+            # existing generation atomically with each source ON/OFF change,
+            # so OFF->ON cannot revive an in-flight legacy GET. Unknown
+            # inventory-only providers have no legacy acquisition generation.
+            from .core.source_auto_consent_bridge import _consent_generation_key
+            from .core.source_sync_consent import scope_for_account
+            revision_key = _consent_generation_key(scope_for_account(account))
+            if revision_key is not None:
+                self.service.storage.metadata_set_with_revision(
+                    self._preference_key(source_id),
+                    "1" if enabled else "0", revision_key,
+                )
+            else:
+                self.service.storage.metadata_set(
+                    self._preference_key(source_id), "1" if enabled else "0",
+                )
         self._notify()
         return self._ref(account)
 
@@ -547,7 +631,7 @@ class SynchronizationBrokerImpl:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
             raise ValueError("unknown sync source") from None
-        if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+        if "personal_library" not in _account_ref(self.service, account).capabilities:
             raise ValueError("inventory refresh schedule not supported")
         policy = load_source_refresh_schedule(self.service.storage, source_id)
         return {"mode": policy.mode, "interval_minutes": policy.interval_minutes}
@@ -558,7 +642,7 @@ class SynchronizationBrokerImpl:
         """Explicit per-source metadata/rights consent; no provider call.
 
         Neither this method nor its stored policy authorizes acquisition.
-        Only an exact, enabled, connected Kobo/Numilog source can be opted in.
+        Only an exact, enabled, connected personal-library source can opt in.
         An ineligible source may still have its schedule disabled manually.
         """
         from .core.source_refresh_policy import (
@@ -570,7 +654,7 @@ class SynchronizationBrokerImpl:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
             raise ValueError("unknown sync source") from None
-        if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+        if "personal_library" not in _account_ref(self.service, account).capabilities:
             raise ValueError("inventory refresh schedule not supported")
         if policy.mode != "manual" and not inventory_source_eligible(
             self.service, account,
@@ -586,7 +670,7 @@ class SynchronizationBrokerImpl:
     def synchronize_scheduled_inventory(
         self, identity_id: str, trigger: str, *, control: Any = None,
     ) -> SyncResult:
-        """Dispatch due Kobo/Numilog *inventory* refreshes for one explicit identity.
+        """Dispatch due personal-library *inventory* refreshes for one identity.
 
         A scheduler may call this at startup or on its periodic tick; this
         method does not install timers or silently enroll any accounts.
@@ -626,7 +710,7 @@ class SynchronizationBrokerImpl:
             # A cancelled batch must not start work for another account.
             if control is not None and callable(getattr(control, "check_cancelled", None)):
                 control.check_cancelled()
-            if getattr(account, "provider_id", None) not in {"kobo", "numilog"}:
+            if "personal_library" not in _account_ref(self.service, account).capabilities:
                 continue
             source_id = self._source_id(account)
             # Unknown/duplicate source references and invalid source state
@@ -645,11 +729,7 @@ class SynchronizationBrokerImpl:
                     and not self._safe_phase_timestamp(state["last_attempt"])
                 ):
                     continue
-                is_private_inventory = getattr(account, "provider_id", None) in {"kobo", "numilog"}
-                inventory_status = (
-                    state.get("inventory_status", "idle") if is_private_inventory
-                    else state.get("status", "idle")
-                )
+                inventory_status = state.get("inventory_status", "idle")
                 if inventory_status not in {
                     "idle", "running", "success", "partial", "failed",
                     "error", "ok", "",
@@ -659,10 +739,7 @@ class SynchronizationBrokerImpl:
                 # global writer lock. Even a due inventory must not race it.
                 if state.get("status") == "running":
                     inventory_status = "running"
-                inventory_last_attempt = (
-                    state.get("inventory_last_attempt", "") if is_private_inventory
-                    else state.get("last_attempt", "")
-                )
+                inventory_last_attempt = state.get("inventory_last_attempt", "")
                 policy = load_source_refresh_schedule(
                     self.service.storage, source_id,
                 )
@@ -697,8 +774,9 @@ class SynchronizationBrokerImpl:
                     self._scheduled_inventory_requested.add(source_id)
             attempted += 1
             try:
-                result = self.synchronize_source(
+                result = self._synchronize_source_impl(
                     source_id, SyncRequest(identity_id=identity_id), control,
+                    inventory_only=True,
                 )
             except Cancelled:
                 # Cancellation is a lifecycle signal, not a provider fault.
@@ -1113,6 +1191,11 @@ class SynchronizationBrokerImpl:
         )
 
     def synchronize_source(self, source_id: str, request: SyncRequest | None = None, control: Any = None) -> SyncResult:
+        """Public plugin broker API: explicit source synchronization may acquire B."""
+        return self._synchronize_source_impl(source_id, request, control)
+
+    def _synchronize_source_impl(self, source_id: str, request: SyncRequest | None = None, control: Any = None, *, inventory_only: bool = False) -> SyncResult:
+        """Internal scheduler dispatch: inventory_only strictly forbids A→B."""
         try:
             account = self._find_account(source_id)
         except (ValueError, TypeError):
@@ -1120,6 +1203,10 @@ class SynchronizationBrokerImpl:
             # string (possibly a credential or URL) into broker error output.
             return SyncResult(ok=False, warnings=("unknown sync source",),
                               facts={"reason": "unknown_source"})
+        # Only the scheduler uses this restrictive internal dispatch. A normal
+        # source Sync still performs its independently consented A→B work.
+        if type(inventory_only) is not bool:
+            return SyncResult(ok=False, facts={"reason": "invalid_request"})
         # The source_id is a stable digest of the exact identity/provider/
         # credential/account tuple. An explicit request must not override any
         # coordinate or silently broaden one-account work to other identities.
@@ -1173,31 +1260,59 @@ class SynchronizationBrokerImpl:
                               facts={"reason": "not_supported"})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
+
+        def terminal_cycle(status: str, execution: object = None) -> None:
+            """Publish with source status in the *same* SQLite metadata write.
+
+            Only the already-validated complete Core execution envelope can
+            become counters. An absent envelope is not evidence of zero.
+            """
+            payload = {
+                "schema": 1, "status": status,
+                "attempted_at": now,
+                "mode": "scheduled" if inventory_only else "manual",
+            }
+            if type(execution) is dict:
+                payload["canonical_execution"] = dict(execution)
+            state["last_cycle"] = payload
+
         # Keep the previous private-inventory evidence when a provider
         # rejects work after the broker's initial enabled/connection check.
         previous_inventory = {
             key: state[key] for key in ("inventory_last_attempt", "inventory_status")
             if key in state
         }
-        state.update(last_attempt=now, status="running", error="", scope="manual",
+        state.update(last_attempt=now, status="running", error="",
+                     scope="scheduled" if inventory_only else "manual",
                      identity_id=str(getattr(account, "identity_id", "") or ""))
-        # Only a real private-store library operation starts this clock. A
-        # generic opening/loan operation must not refresh or throttle it.
-        refreshes_private_inventory = (
-            getattr(account, "provider_id", None) in {"kobo", "numilog"}
-            and "personal_library" in current.capabilities
-        )
+        # Only a declared private-library inventory operation starts this
+        # clock. A loan-only operation must not refresh or throttle it.
+        refreshes_private_inventory = "personal_library" in current.capabilities
         if refreshes_private_inventory:
             state.update(inventory_last_attempt=now, inventory_status="running")
         self._set_state(source_id, state); self._notify()
         try:
-            result = self.service.synchronize_account_source(
-                account, deep=bool(request.deep), control=control,
-            )
+            # A scheduled refresh is not a public source Sync: only its
+            # dedicated Core implementation can guarantee no delivery B.
+            # Absence of that internal entry point must fail closed.
+            if inventory_only:
+                scheduled = getattr(
+                    self.service, "_synchronize_scheduled_account_inventory", None,
+                )
+                if not callable(scheduled):
+                    raise ValueError("scheduled_inventory_only_unavailable")
+                result = scheduled(
+                    account, deep=bool(request.deep), control=control,
+                )
+            else:
+                result = self.service.synchronize_account_source(
+                    account, deep=bool(request.deep), control=control,
+                )
             # A provider result may include private account identifiers,
             # diagnostic details and free-text errors. Only publish bounded
             # counters and known status/reason codes to plugins and GTK.
             if not isinstance(result, dict):
+                terminal_cycle("failed")
                 state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
                 if refreshes_private_inventory:
                     state["inventory_status"] = "failed"
@@ -1210,6 +1325,7 @@ class SynchronizationBrokerImpl:
                 # but before the underlying service starts remote inventory.
                 # Skipped is not proof of a successful refresh and must not
                 # mint last_success or advance the private inventory clock.
+                terminal_cycle("skipped")
                 state.update(status="skipped", error="")
                 if refreshes_private_inventory:
                     for key in ("inventory_last_attempt", "inventory_status"):
@@ -1226,6 +1342,20 @@ class SynchronizationBrokerImpl:
                 if type(result.get(name)) is int and 0 <= result[name] <= 1_000_000
             }
             changed = sum(facts.values())
+            # Preserve only the exact Core A→B execution envelope in the
+            # typed business receipt. It is observation, never permission
+            # to GET, deduplicate or publish a file. Reject partial/malformed
+            # envelopes rather than fabricating absent failures or zeroes.
+            from .core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+            execution = result.get("canonical_execution")
+            if (type(execution) is dict
+                    and set(execution) == set(CANONICAL_EXECUTION_STATUSES)
+                    and all(type(execution[name]) is int
+                            and 0 <= execution[name] <= 1_000_000
+                            for name in CANONICAL_EXECUTION_STATUSES)):
+                facts["canonical_execution"] = {
+                    name: execution[name] for name in CANONICAL_EXECUTION_STATUSES
+                }
             # Review-required books are NOT modifications and must not
             # inflate SyncResult.changed. Expose only a bounded aggregate,
             # never candidate paths, titles, loan IDs or personal metadata.
@@ -1250,6 +1380,10 @@ class SynchronizationBrokerImpl:
                           or bool(result.get("attention_required"))
                           or bool(result.get("warnings")))
             if incomplete:
+                terminal_cycle(
+                    "failed" if outcome in {"failed", "error"} else "partial",
+                    None if invalid_status else facts.get("canonical_execution"),
+                )
                 facts["reason"] = "invalid_response" if invalid_status else "source_partial"
                 state.update(status="partial", error="Synchronisation partielle")
                 if refreshes_private_inventory:
@@ -1258,6 +1392,7 @@ class SynchronizationBrokerImpl:
                 return SyncResult(ok=False, changed=changed,
                                   warnings=("synchronisation partielle",), facts=facts)
             success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            terminal_cycle("success", facts.get("canonical_execution"))
             state.update(last_success=success_at, status="ok", error="")
             if refreshes_private_inventory:
                 state.update(
@@ -1265,13 +1400,33 @@ class SynchronizationBrokerImpl:
                 )
             self._set_state(source_id, state); self._notify()
             return SyncResult(ok=True, changed=changed, facts=facts)
-        except Exception:
-            state.update(status="error", error=_SYNC_PUBLIC_FAILURE)
+        except Exception as exc:
+            # The Core source-sync lock reports an observed operation_busy
+            # through ProviderConfigurationError chained from LockBusyError.
+            # Do not parse arbitrary provider messages or mark an unattempted
+            # delivery as a network failure.
+            from .locking import LockBusyError
+            from .providers import ProviderConfigurationError
+            busy = (isinstance(exc, ProviderConfigurationError)
+                    and isinstance(exc.__cause__, LockBusyError))
+            terminal_cycle("busy" if busy else "failed")
+            state.update(
+                status="busy" if busy else "error",
+                error="" if busy else _SYNC_PUBLIC_FAILURE,
+            )
             if refreshes_private_inventory:
-                state["inventory_status"] = "failed"
+                state["inventory_status"] = "busy" if busy else "failed"
             self._set_state(source_id, state); self._notify()
-            return SyncResult(ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
-                              facts={"reason": "source_unavailable"})
+            return (
+                SyncResult(
+                    ok=False, warnings=("Synchronisation déjà en cours",),
+                    facts={"status": "busy", "reason": "operation_busy"},
+                )
+                if busy else SyncResult(
+                    ok=False, warnings=(_SYNC_PUBLIC_FAILURE,),
+                    facts={"reason": "source_unavailable"},
+                )
+            )
 
     def synchronize(self, request: SyncRequest, control: Any = None) -> SyncResult:
         # An omitted identity must never turn a nominal "Sync" into an
@@ -1510,7 +1665,7 @@ class AdeptProfileBrokerImpl:
 
 @dataclass(slots=True)
 class AdeptLoanBrokerImpl:
-    """Public facade over Core ADEPT binding and confirmed-return orchestration."""
+    """Public facade over ADEPT binding and read-only loan reconciliation."""
 
     service: Any
 
@@ -1539,10 +1694,6 @@ class AdeptLoanBrokerImpl:
             str(profile_id),
             str(adept_loan_id),
         )
-
-    def return_acquisition(self, acquisition_id: str):
-        return self.service.return_adept_acquisition(str(acquisition_id))
-
 
 @dataclass(slots=True)
 class DiagnosticsBrokerImpl:

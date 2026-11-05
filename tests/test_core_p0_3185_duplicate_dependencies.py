@@ -10,6 +10,15 @@ import shutil
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _allow_legacy_cleanup_mechanics(monkeypatch):
+    """Exercise the historical SQLite/FS safeguards without production enablement."""
+    from cifereca.core import canonical_dedup_supervisor
+    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
+                        lambda: True)
+
+
 from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
 from cifereca.core.library_declared_links import _PREFIX
 from cifereca.plugin_api import Conflict, LibraryMutationRequest

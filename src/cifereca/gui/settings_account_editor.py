@@ -8,11 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from .borrower_scoped_options import linked_borrower_choices
+from .settings_loan_observation import loan_cache_observations
+
 
 def build_provider_account_editor(
     *, data: dict[str, Any], provider_id: str, account_id: str,
     descriptor: Any, configured_identities: list[dict[str, Any]],
     accounts_container: Any, config: Any, Gtk: Any, Adw: Any,
+    observed_borrowers: Any = (), observed_loans: Any = (),
 ) -> tuple[dict[str, Any], Any]:
     """Create descriptor-driven provider rows and return (editor, delete button)."""
     group = Adw.PreferencesGroup(); group.set_title(f"{descriptor.display_name} — {account_id}"); accounts_container.append(group)
@@ -39,6 +43,7 @@ def build_provider_account_editor(
     raw_options = data.get("options", {})
     invalid_saved_snapshot = (
         type(raw_credentials) is not dict or type(raw_options) is not dict
+        or ("enabled" in data and type(data["enabled"]) is not bool)
     )
     # An existing, declared TEXT value that is not actually text must not be
     # rendered as blank/default and then overwritten by an unrelated Save.
@@ -73,21 +78,38 @@ def build_provider_account_editor(
     for field in getattr(descriptor, "account_options", ()):
         entry = Adw.PasswordEntryRow() if field.secret else Adw.EntryRow()
         entry.set_title(field.label)
-        fallback = None
-        if field.legacy_config_key:
-            # Preserve historical provider-level overrides before global defaults.
-            provider_option = getattr(config, "provider_option", None)
-            if callable(provider_option):
-                fallback = provider_option(provider_id, field.key, None)
-            if not fallback and hasattr(config, "get"):
-                fallback = config.get(field.legacy_config_key)
-        # Missing optional text has no value; never persist a synthesized "None".
-        default = field.default if type(field.default) is str else ""
-        selected = next(
-            (value for value in (options.get(field.key), fallback, default)
-             if type(value) is str and value),
-            "",
-        )
+        if field.key in options:
+            # Explicitly persisted empty strings are intentional. Never
+            # resurrect a retired global/provider default over an existing
+            # per-account value during an unrelated Settings save.
+            stored = options[field.key]
+            selected = stored if type(stored) is str else ""
+            # A malformed stored value is separately flagged above, so an
+            # unrelated save cannot replace it with a plausible default.
+        else:
+            fallback = None
+            if field.legacy_config_key and existing:
+                # Unscoped legacy values belong to historical account editors
+                # only. A new connection must use its descriptor default,
+                # never inherit another account's former global setting.
+                provider_option = getattr(config, "provider_option", None)
+                if callable(provider_option):
+                    # A legacy value belongs to one exact connection. With
+                    # no credential_id, Config.provider_option reads the
+                    # provider's *first* account and could silently copy its
+                    # endpoint into another (or a newly created) account.
+                    fallback = provider_option(
+                        provider_id, field.key, None, credential_id=account_id,
+                    )
+                if not fallback and hasattr(config, "get"):
+                    fallback = config.get(field.legacy_config_key)
+            # Missing optional text has no value; never display "None".
+            default = field.default if type(field.default) is str else ""
+            selected = next(
+                (value for value in (fallback, default)
+                 if type(value) is str and value),
+                "",
+            )
         entry.set_text(selected)
         group.add(entry)
         option_fields[field.key] = entry
@@ -97,18 +119,64 @@ def build_provider_account_editor(
             note.set_title(field.label)
             note.set_subtitle(help_text)
             group.add(note)
+    # Declarative borrower-specific fields consume only accounts previously
+    # observed by Core; opening Settings never connects, inventories or GETs.
+    # Persisted borrower keys remain available for offline re-editing.
+    scoped_option_fields: dict[str, dict[str, dict[str, Any]]] = {}
+    for spec in getattr(descriptor, "borrower_scoped_options", ()):
+        scoped_option_fields[spec.key] = {}
+        stored = options.get(spec.key, {})
+        try:
+            borrowers = linked_borrower_choices(
+                stored, spec, observed_borrowers,
+                provider_id=provider_id, credential_id=account_id,
+                identity_id=chosen_owner,
+            )
+        except ValueError:
+            invalid_saved_snapshot = True
+            borrowers = ()
+        for borrower, label in borrowers:
+            branch_fields = {}
+            for medium, branch_name in spec.branches:
+                entry = Adw.EntryRow()
+                entry.set_title(f"{spec.label} · {label} · {branch_name}")
+                saved = stored.get(borrower, {}).get(medium) if type(stored) is dict else None
+                entry.set_text(saved if type(saved) is str else spec.default)
+                group.add(entry)
+                branch_fields[medium] = entry
+            scoped_option_fields[spec.key][borrower] = branch_fields
+        if borrowers and type(getattr(spec, "help_text", None)) is str and spec.help_text:
+            note = Adw.ActionRow()
+            note.set_title(spec.label)
+            note.set_subtitle(spec.help_text)
+            group.add(note)
     account_note = getattr(descriptor, "account_note", None)
     if option_fields and account_note:
         note = Adw.ActionRow()
         note.set_title(account_note[0])
         note.set_subtitle(account_note[1])
         group.add(note)
+    # Settings projects positive local observations only. Existing loans may
+    # belong to other identities or credentials; never infer a provider quota,
+    # a zero-loan account or a remaining allowance from this cached list.
+    # The text is read-only and never participates in the settings draft.
+    if getattr(getattr(descriptor, "capabilities", None), "loans", None) is True:
+        for title, subtitle in loan_cache_observations(
+            provider_id=provider_id, credential_id=account_id,
+            identity_id=chosen_owner, observed_borrowers=observed_borrowers,
+            cached_loans=observed_loans,
+        ):
+            observation = Adw.ActionRow()
+            observation.set_title(title)
+            observation.set_subtitle(subtitle)
+            group.add(observation)
     delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette source de la configuration")
     delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
     editor = {
         "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
         "label": label_row, "identity": identity_row, "fields": fields,
         "option_fields": option_fields,
+        "scoped_option_fields": scoped_option_fields,
         "original_options": options, "original_credentials": credentials,
         "original_account": dict(data),
         "invalid_saved_snapshot": invalid_saved_snapshot,

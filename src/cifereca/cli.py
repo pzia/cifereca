@@ -461,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
             report_library_root = None
             report_started_at = None
             report_events = []
+            report_core_events = []
             report_active_phase = None
             try:
                 if a.username or a.account:
@@ -584,7 +585,14 @@ def main(argv: list[str] | None = None) -> int:
                     if report_account is not None:
                         report_active_phase = "sync"
                         report_events.append({"phase": "sync", "status": "started"})
-                    raw = service.synchronize_account_source(account)
+                    if report_account is not None:
+                        from .core.sync_report import collect_source_sync_core_events
+                        # The in-memory observer is scoped to this exact
+                        # synchronous invocation and exact selected provider.
+                        with collect_source_sync_core_events(account.provider_id) as report_core_events:
+                            raw = service.synchronize_account_source(account)
+                    else:
+                        raw = service.synchronize_account_source(account)
                     result = {"provider": account.provider_id,
                               "identity": account.identity_id,
                               **safe_sync_result(raw)}
@@ -689,7 +697,7 @@ def main(argv: list[str] | None = None) -> int:
                         a.report, account=report_account, run_ref=report_ref,
                         before=report_before, after=report_after,
                         result=result, started_at=report_started_at, exit_code=code,
-                        cli_events=report_events,
+                        cli_events=report_events, core_events=report_core_events,
                     )
                     result["report"] = "created"
                 except Exception:
@@ -1005,15 +1013,27 @@ def main(argv: list[str] | None = None) -> int:
                     "plan": kobo_manual_reconciliation_plan(result),
                 }
         elif a.cmd == "kobo-resume-preview":
-            if a.refresh_manifest:
-                # Only explicit --refresh-manifest may contact the Kobo
-                # provider; the default preview uses persisted local state.
-                service.connect_kobo_preview(a.credential)
-            result = service.kobo_backup_preview(
-                a.credential,
-                refresh_manifest=a.refresh_manifest,
-                verify_local_files=a.verify_files,
-            )
+            try:
+                if a.refresh_manifest:
+                    # Only explicit --refresh-manifest may contact the Kobo
+                    # provider; offline preview uses persisted local state.
+                    service.connect_kobo_preview(a.credential)
+                result = service.kobo_backup_preview(
+                    a.credential,
+                    refresh_manifest=a.refresh_manifest,
+                    verify_local_files=a.verify_files,
+                )
+            except Exception:
+                # Diagnostic CLI boundary: provider responses, private paths,
+                # signed URLs and tokens must not escape as a traceback.
+                # No fallback to another identity or credential is allowed.
+                result = {
+                    "status": "unavailable",
+                    "code": "kobo_preview_unavailable",
+                    "preview_only": True,
+                    "acquisition_authorized": False,
+                }
+                exit_code = 2
         elif a.cmd == "kobo-resume":
             # The targeted provider session is connected only after explicit
             # download consent. Never connect Paris or other Kobo credentials.

@@ -26,7 +26,8 @@ def test_library_work_keeps_explicit_cover_scan_policy_and_identity(scan, covers
     host.service.catalog_scan.assert_not_called()
     host.service.library_entries.assert_not_called()
     assert request.kwargs == {
-        "control": control, "priority": TaskPriority.USER_ACTION, "kind": "library",
+        "control": control, "priority": TaskPriority.USER_ACTION,
+        "kind": "library", "origin": "user",
     }
     assert request.work() == [{"identity_id": "alice"}]
     host.service.library_entries.assert_called_once_with(
@@ -43,8 +44,21 @@ def test_background_refresh_keeps_normal_priority_and_no_control(name, kind):
     host = _harness()
     getattr(host, name)()
     assert host.runner.requests[-1].kwargs == {
-        "control": None, "priority": TaskPriority.NORMAL, "kind": kind,
+        "control": None, "priority": TaskPriority.NORMAL,
+        "kind": kind, "origin": "automatic",
     }
+
+
+@pytest.mark.parametrize("method,kind", [
+    ("refresh_library", "library"), ("refresh_recent", "recent"),
+])
+def test_explicit_library_or_recent_refresh_keeps_user_origin(method, kind):
+    host = _harness()
+    getattr(host, method)(control=object())
+    request = host.runner.requests[-1]
+    assert request.kwargs["origin"] == "user"
+    assert request.kwargs["kind"] == kind
+    assert request.kwargs["priority"] == TaskPriority.USER_ACTION
 
 
 def test_facades_forward_caller_arguments_without_replacing_controls(monkeypatch):

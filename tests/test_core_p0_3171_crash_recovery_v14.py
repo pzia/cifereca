@@ -477,3 +477,93 @@ def test_oversized_staged_journal_never_blocks_fresh_authorized_get(
     assert resumed[0].status == "downloaded"
     assert service.calls == 2
     assert rows(service.storage) == (1, 1, 1, 1)
+
+
+@pytest.mark.parametrize("journal_status", ("canonical_receipt_staged", "complete"))
+def test_inconsistent_journal_artifact_never_replays_staged_delivery(
+    rig, monkeypatch, journal_status,
+):
+    """A valid file hash cannot authorize replay of a corrupted SQL receipt."""
+    service, account, source, snapshot, root, lock_path = rig
+    original = force_failure_once(monkeypatch)
+    first = run(service, account, snapshot, root, lock_path, {source},
+                fake_delivery(service, root))
+    assert first[0].status == "failed"
+    assert service.calls == 1
+    with service.storage._lock, service.storage._connect() as db:
+        (record_id,) = db.execute(
+            "SELECT acquisition_id FROM acquisition_ledger "
+            "WHERE acquisition_id LIKE 'canonical-intake:%'"
+        ).fetchone()
+        db.execute(
+            "UPDATE acquisition_ledger SET status=?,artifact_id=? "
+            "WHERE acquisition_id=?",
+            (journal_status, "sha256:" + "f" * 64, record_id),
+        )
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", original,
+    )
+    resumed = run(service, account, snapshot, root, lock_path, {source},
+                  fake_delivery(service, root))
+    assert resumed[0].status == "downloaded"
+    assert service.calls == 2
+    assert rows(service.storage) == (1, 1, 1, 1)
+    status, artifact_id, metadata = journal(service.storage)[0]
+    assert status == "complete"
+    assert artifact_id == "sha256:" + json.loads(metadata)["sha256"]
+
+
+def test_complete_journal_with_matching_artifact_remains_recoverable(rig):
+    from cifereca.core.canonical_recovery import recover_completed_delivery
+
+    service, account, source, snapshot, root, lock_path = rig
+    first = run(service, account, snapshot, root, lock_path, {source},
+                fake_delivery(service, root))
+    assert first[0].status == "downloaded"
+    assert journal(service.storage)[0][0] == "complete"
+    with InterProcessLock(lock_path) as lease:
+        completed = recover_completed_delivery(
+            service.storage, source=source,
+            offer_id=snapshot.rights[0].delivery_offer_id,
+            library_root=root, shared_lock=lease,
+        )
+    assert completed is not None
+    assert completed.final_sha256 == journal(service.storage)[0][1][7:]
+    assert service.calls == 1
+    assert rows(service.storage) == (1, 1, 1, 1)
+
+
+def test_fresh_retry_repairs_staged_artifact_pointer_before_next_crash(
+    rig, monkeypatch,
+):
+    service, account, source, snapshot, root, lock_path = rig
+    original = force_failure_once(monkeypatch)
+    assert run(service, account, snapshot, root, lock_path, {source},
+               fake_delivery(service, root))[0].status == "failed"
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "UPDATE acquisition_ledger SET artifact_id=? "
+            "WHERE acquisition_id LIKE 'canonical-intake:%'",
+            ("sha256:" + "f" * 64,),
+        )
+
+    # The previous journal is poisoned: the retry must GET again. Inject
+    # another crash after its *new* receipt is committed, before publication.
+    assert run(service, account, snapshot, root, lock_path, {source},
+               fake_delivery(service, root))[0].status == "failed"
+    assert service.calls == 2
+    staged, artifact_id, _ = journal(service.storage)[0]
+    assert staged == "canonical_receipt_staged"
+    assert artifact_id is None
+
+    # No third GET: the repaired, exact checkpoint survives a second crash.
+    monkeypatch.setattr(
+        convergence_execution, "publish_completed_acquisition", original,
+    )
+    recovered = run(
+        service, account, snapshot, root, lock_path, {source},
+        lambda *_: pytest.fail("repaired staged receipt must avoid another GET"),
+    )
+    assert recovered[0].status == "recovered"
+    assert service.calls == 2
+    assert rows(service.storage) == (1, 1, 1, 1)

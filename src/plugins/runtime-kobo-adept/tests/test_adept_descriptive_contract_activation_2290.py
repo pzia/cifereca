@@ -101,7 +101,6 @@ def test_read_only_contract_version_too_old_still_fails(monkeypatch):
     (["capabilities", "--json"], None),
     (["profile", "add", "alice", "--json"], None),
     (["profile", "remove", "alice", "--json"], None),
-    (["acsm", "return", "loan", "--json"], None),
     (["download", "request", "-", "--json"], {"source": {"type": "acsm"}}),
 ])
 def test_descriptive_contract_shape_cannot_acknowledge_other_commands(

@@ -68,7 +68,7 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
     if not contributed:
         contributed = list(fallback)
     # Management pages remain reachable to recover from broken/disabled UI.
-    contributed += [p for p in fallback if p.route in {"plugins", "settings"} and all(x.route != p.route for x in contributed)]
+    contributed += [p for p in fallback if p.route in {"plugins", "settings", "readers"} and all(x.route != p.route for x in contributed)]
     # Retired product route: older installed UI plugins cannot resurrect it.
     # Filter before invoking an untrusted factory to prevent bookings I/O.
     resolved = [page for page in resolve_pages(contributed) if page.route != "bookings"]
@@ -108,7 +108,7 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
             )
             if not is_current():
                 return
-            recovery = next((p for p in fallback if p.route == page.route and p.route in {"plugins", "settings"}), None)
+            recovery = next((p for p in fallback if p.route == page.route and p.route in {"plugins", "settings", "readers"}), None)
             if recovery is None:
                 continue
             widget = recovery.factory(host)
@@ -162,6 +162,7 @@ def build_standard_page(window, route, *, Gtk, PluginManagerPage):
     builders = {"dashboard": window._build_dashboard_page, "loans": window._build_loans_page,
                 "search": window._build_search_page, "history": window._build_history_page,
                 "library": window._build_library_page,
+                "readers": window._build_readers_page,
                 "recent": window._build_recent_page, "sync": window._build_sync_page,
                 "tools": window._build_tools_page, "settings": window._build_settings_page,
                 "plugins": lambda: PluginManagerPage(window, window.plugin_manager, window._plugins_changed)

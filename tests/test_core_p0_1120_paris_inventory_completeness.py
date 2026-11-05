@@ -10,6 +10,7 @@ from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 import json
 
 import pytest
+from cifereca.plugin_api import AttentionRequired
 
 from tests.test_core_0982_loan_return_reconciliation import (
     _library, _loan, Session,
@@ -41,27 +42,18 @@ class HostileUpstream:
     {"upstream": "SYRACUSE", "error": PRIVATE},
     [{"upstream": "SYRACUSE"}, {"upstream": "DILICOM"}],
 ])
-def test_pnb_return_verifier_requires_complete_digital_upstream(
-    tmp_path, errors,
-):
+def test_retired_pnb_return_never_checks_or_coerces_inventory(tmp_path, errors):
     session = Session([])
     session.last_loan_errors = errors
     service = _library(tmp_path, session=session)
     loan = _loan()
     try:
-        first = service.return_digital(loan)
-        assert first["status"] == "verification_unavailable"
-        assert first["provider_inventory_verified"] is False
-        assert first["verification"] == "unavailable"
-        assert first["retry"] == "verification_first"
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b"]
-        assert PRIVATE not in json.dumps(first)
-        # Recovery is read-only and may not re-send a previously accepted POST.
-        second = service.verify_return_digital(loan)
-        assert second["status"] == "verification_unavailable"
-        assert session.posts == [(loan.id, "linked-b")]
-        assert session.checks == ["linked-b", "linked-b"]
+        with pytest.raises(AttentionRequired) as err:
+            service.return_digital(loan)
+        assert err.value.code == "loan_return_removed"
+        assert session.posts == session.checks == []
+        assert service.loan_return_state(loan) is None
+        assert PRIVATE not in str(err.value)
     finally:
         service.close()
 
@@ -89,22 +81,21 @@ def test_adobe_first_paris_inventory_verification_has_identical_guard(
         service.close()
 
 
-def test_typed_dilicom_proof_is_independent_from_syracuse_failure(tmp_path):
+def test_typed_dilicom_inventory_stays_readable_but_no_pnb_mutation(tmp_path):
     session = Session([])
     session.last_loan_errors = [{"upstream": "SYRACUSE", "error": PRIVATE}]
     attest_paris_dilicom_complete(session, credential_id="paris-a")
     service = _library(tmp_path, session=session)
     loan = _loan()
     try:
-        result = service.return_digital(loan)
-        assert result["status"] == "provider_return_confirmed"
-        assert result["verification"] == "provider_absent"
-        assert result["provider_inventory_verified"] is True
-        assert len(session.posts) == 1
-        assert session.checks == ["linked-b"]
-        assert PRIVATE not in json.dumps(result)
+        with pytest.raises(AttentionRequired) as err:
+            service.return_digital(loan)
+        assert err.value.code == "loan_return_removed"
+        assert session.posts == session.checks == []
+        assert service.loan_return_state(loan) is None
     finally:
         service.close()
+
     second_root = tmp_path / "other"
     second_root.mkdir()
     service2, loan2, paris2 = adept_setup(second_root)

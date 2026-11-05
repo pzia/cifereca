@@ -433,6 +433,7 @@ class NumilogSession(ProviderSession):
             seen_pages = set()
             seen_items = set()
             ambiguous_rights = set()
+            all_pages_attested = True
             for page_index in range(100):
                 if not read_scope_current():
                     raise ProviderCapabilityError(
@@ -462,10 +463,12 @@ class NumilogSession(ProviderSession):
                     self._session_event('library_redirect')
                     raise ProviderError('Numilog : session expirée ; reconnecter le compte')
                 structural = {} if include_delivery else None
+                inventory_evidence = {} if rights_observation else None
                 page_rows,next_url = parse_library_page(
                     text,final_url,cover_origins=self.allowed_origins,
                     delivery_evidence=include_delivery,
                     delivery_diagnostics=structural,
+                    inventory_diagnostics=inventory_evidence,
                     delivery_selector=(
                         (lambda row: self._id(row) == delivery_record_id)
                         if include_delivery else None
@@ -475,6 +478,11 @@ class NumilogSession(ProviderSession):
                         if enrichment_record_id is not None else None
                     ),
                 )
+                if rights_observation:
+                    all_pages_attested = (
+                        all_pages_attested
+                        and inventory_evidence.get('complete') is True
+                    )
                 if include_delivery:
                     # Fixed enum + bounded numeric structure only; enough to
                     # distinguish an out-of-card JS object from a bound one,
@@ -514,7 +522,12 @@ class NumilogSession(ProviderSession):
                             if (row['lid'], row['variant']) not in ambiguous_rights
                         ]
                     self._diag('pagination bibliothèque',pages=page_index+1,items=len(rows))
-                    return rows
+                    # This page chain reached its official end without a
+                    # provider/network failure. Keep the distinction between
+                    # a complete private inventory and rows excluded as
+                    # ambiguous: discarded editions MUST keep coverage partial.
+                    # The legacy library() API still returns only its list.
+                    return (rows, all_pages_attested and not ambiguous_rights) if rights_observation else rows
                 url=next_url
             raise ProviderError('Numilog : bibliothèque trop paginée (>100 pages)')
         except ParseError as exc:
@@ -636,7 +649,18 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : propriétaire unique non attesté pour les achats'
                 )
-            rows = self._rows(rights_observation=True)
+            observed_page_chain = self._rows(rights_observation=True)
+            # Only the real bounded MesLivres reader can attest that every
+            # page was consumed. Legacy/testing readers returning a bare list
+            # remain conservative. A successful HTTP 200 alone cannot certify
+            # that every upstream row was valid.
+            if (type(observed_page_chain) is tuple
+                    and len(observed_page_chain) == 2
+                    and type(observed_page_chain[0]) is list
+                    and type(observed_page_chain[1]) is bool):
+                rows, pagination_attested = observed_page_chain
+            else:
+                rows, pagination_attested = observed_page_chain, False
             # Strict authenticated MesLivres: duplicates are ambiguous for
             # rights, unlike legacy library display deduplication.
             if (
@@ -688,16 +712,20 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : identité propriétaire modifiée ; observations arrêtées'
                 )
-            # MesLivres pages are bounded and duplicate rows are discarded
-            # by _rows(): do NOT claim an exhaustive entitlement snapshot.
+            # Coverage describes this successfully consulted official
+            # MesLivres inventory, NEVER physical acquisitions or permission
+            # to infer removed rights. A duplicate card, bad upstream row or
+            # incomplete page chain prevents a complete observation.
+            complete = pagination_attested and len(observations) == len(rows)
             return ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
                     caller_scope[0], 'numilog', self.credential_id,
                     expected_account,
                 ),
                 rights=tuple(observations),
-                status='partial', coverage='partial',
-                pagination_complete=False, branch='meslivres',
+                status='success' if complete else 'partial',
+                coverage='complete' if complete else 'partial',
+                pagination_complete=complete, branch='meslivres',
                 observed_at=observed, snapshot_ref='numilog.meslivres',
             )
 
@@ -767,7 +795,10 @@ class NumilogSession(ProviderSession):
             if len(selected) != 1:
                 # A page failure or missing edition cannot revoke earlier
                 # ownership, but it cannot claim any executable offer.
-                return replace(base, rights=(original,))
+                return replace(
+                    base, rights=(original,), status='partial',
+                    coverage='partial', pagination_complete=False,
+                )
             offer_id = _numilog_selected_offer_id(
                 account.identity_id, account.credential_id, account.unique_id,
                 right_id, selected[0], self.library_url,
@@ -777,7 +808,13 @@ class NumilogSession(ProviderSession):
                 delivery='available' if offer_id else 'unknown',
                 delivery_offer_id=offer_id,
             )
-            return replace(base, rights=(qualified,))
+            # A preflight examines ONE exact purchase, even when its initial
+            # MesLivres inventory covered every page. It must never turn the
+            # selected slice into a claim of complete branch-wide coverage.
+            return replace(
+                base, rights=(qualified,), status='partial',
+                coverage='partial', pagination_complete=False,
+            )
 
     def downloadable_resource_snapshot(self, account):
         """#3252 v2: positive-only authenticated resources, not legal rights."""

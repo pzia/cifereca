@@ -21,6 +21,7 @@ from .duplicate_maintenance_guard import (
 )
 from .library_declared_links import DeclarationRejected
 from .missing_placement_readiness import _physical_absence
+from .missing_placement_retirement import _directory_signature
 from .missing_placement_relocation_preview import (
     _blocked, preview_missing_placement_relocation,
 )
@@ -70,7 +71,9 @@ def _validated_evidence(db, *, root: Path, identity_id: str,
             or type(provider) is not str or not provider
             or type(item) is not str or not item):
         return _blocked("source_coordinates_unavailable"), None
-    if _physical_absence(root / directory, old_path) != "absent":
+    profile_signature = _directory_signature(root / directory)
+    if (profile_signature is None
+            or _physical_absence(root / directory, old_path) != "absent"):
         return _blocked("old_path_not_verified_absent"), None
     artifact = db.execute(
         "SELECT sha256,size FROM artifacts WHERE artifact_id=?", (artifact_id,),
@@ -108,7 +111,8 @@ def _validated_evidence(db, *, root: Path, identity_id: str,
         return _blocked("candidate_bytes_unverified"), None
     before = os.stat(candidate, follow_symlinks=False)
     from .canonical_publication import _same_file
-    if not _same_file(candidate_path, before):
+    if (not _same_file(candidate_path, before)
+            or _directory_signature(root / directory) != profile_signature):
         return _blocked("candidate_changed"), None
 
     linked = db.execute(
@@ -129,7 +133,8 @@ def _validated_evidence(db, *, root: Path, identity_id: str,
     root_stat = root.stat()
     envelope = [
         identity_id, placement_id, str(root), int(root_stat.st_dev),
-        int(root_stat.st_ino), directory, old_path, artifact_id, updated,
+        int(root_stat.st_ino), directory, profile_signature,
+        old_path, artifact_id, updated,
         metadata, provider, item, candidate, artifact,
         [int(getattr(before, "st_" + field))
          for field in ("dev", "ino", "size", "mtime_ns", "ctime_ns")],
@@ -141,6 +146,7 @@ def _validated_evidence(db, *, root: Path, identity_id: str,
     return {"status": "verified", "token": token}, (
         old_path, artifact_id, provider, item, metadata, updated, artifact,
         directory, directories, int(root_stat.st_dev), int(root_stat.st_ino),
+        profile_signature,
     )
 
 
@@ -197,7 +203,8 @@ def relocate_missing_placement(
                     db.rollback()
                     return _blocked("stale_plan")
                 (old_path, artifact_id, provider, item, metadata, updated,
-                 artifact, directory, directories, dev, ino) = evidence
+                 artifact, directory, directories, dev, ino,
+                 profile_signature) = evidence
 
                 # A legacy backup's path requires separate source/receipt
                 # attestation (#3185). Never silently migrate its account.
@@ -286,7 +293,8 @@ def relocate_missing_placement(
                 if (int(current_root.st_dev), int(current_root.st_ino)) != (dev, ino):
                     db.rollback()
                     return _blocked("root_changed")
-                if (_physical_absence(root / directory, old_path) != "absent"
+                if (_directory_signature(root / directory) != profile_signature
+                        or _physical_absence(root / directory, old_path) != "absent"
                         or not _verified_copy(
                             str(candidate_path), root=root,
                             owner_directory=directory,

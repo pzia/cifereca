@@ -92,9 +92,9 @@ def test_paris_0_1_n_attested_digital_loans_are_positive_only(digital):
                     "identity-A", "paris", "card-A", "reader-A",
                 )
         assert result.branch == "dilicom"
-        assert result.status == result.coverage == "partial"
-        assert result.pagination_complete is False
-        assert not result.claims_complete_branch
+        assert result.status == "success" and result.coverage == "complete"
+        assert result.pagination_complete is True
+        assert result.claims_complete_branch
         assert not result.authorizes_negative_reconciliation
         assert not result.authorizes_mutation
         assert [(r.right_id, r.edition_id) for r in result.rights] == [
@@ -399,7 +399,8 @@ def test_paris_empty_primary_borrower_matches_credential_scoped_core_account_ref
         assert [(r.right_id, r.edition_id) for r in observed.rights] == [
             ("primary-loan", "primary-edition"),
         ]
-        assert observed.status == observed.coverage == "partial"
+        assert observed.status == "success" and observed.coverage == "complete"
+        assert observed.pagination_complete is True
         assert not observed.authorizes_negative_reconciliation
         assert client.calls == [("DILICOM", ""), ("SYRACUSE", "")]
     finally:
@@ -447,13 +448,15 @@ def test_paris_branch_failure_preserves_exact_rights_observation_status(failed_b
             assert report.coverage == "unknown"
             assert report.rights == ()
         else:
-            assert report.status == "partial"
-            assert report.coverage == "partial"
+            # The physical branch is independent of the successfully
+            # consulted DILICOM loan list: only that rights branch is complete.
+            assert report.status == "success"
+            assert report.coverage == "complete"
             assert [(x.right_id, x.edition_id) for x in report.rights] == [
                 ("digital-loan", "edition-digital"),
             ]
         assert report.branch == "dilicom"
-        assert report.pagination_complete is False
+        assert report.pagination_complete is (failed_branch != "DILICOM")
         assert report.authorizes_negative_reconciliation is False
         assert report.authorizes_mutation is False
         assert client.calls == [
@@ -535,5 +538,57 @@ def test_paris_rights_wrong_credential_or_mixed_v1_v2_refuses_before_get(refs):
         with pytest.raises(ProviderCapabilityError, match="paris_rights_owner_unverified"):
             session.rights_observation_snapshot(account)
         assert client.calls == []
+    finally:
+        session.close()
+
+
+def test_qualified_inventory_and_rights_coverage_do_not_authorize_mutation():
+    """Both readers attest scope/coverage; Core still owns every transition."""
+    session, account, client = fixture(digital=(
+        upstream("loan-1", "edition-1"),
+    ))
+    try:
+        inventory = session.loan_inventory_snapshot(account)
+        assert inventory.status == "success"
+        assert inventory.branch_claims_complete("dilicom", "digital") is True
+        rights = session.rights_observation_snapshot(account)
+        assert rights.status == "success" and rights.coverage == "complete"
+        assert rights.pagination_complete is True
+        assert rights.authorizes_negative_reconciliation is False
+        assert rights.authorizes_mutation is False
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("fault", ["missing_dilicom", "wrong_medium"])
+def test_paris_missing_or_misclassified_digital_branch_stays_partial(fault):
+    session, account, client = fixture(digital=(
+        upstream("loan-1", "edition-1"),
+    ))
+    original = session._snapshot_for_account
+
+    def altered_snapshot(borrower):
+        result = original(borrower)
+        if fault == "missing_dilicom":
+            return replace(result, branches=tuple(
+                b for b in result.branches if b.upstream != "dilicom"
+            ))
+        assert len(result.loans) == 1
+        return replace(result, loans=(replace(result.loans[0], medium="physical"),))
+
+    session._snapshot_for_account = altered_snapshot
+    try:
+        report = session.rights_observation_snapshot(account)
+        assert report.status == "partial"
+        assert report.coverage == "partial"
+        assert report.pagination_complete is False
+        assert report.authorizes_negative_reconciliation is False
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
     finally:
         session.close()

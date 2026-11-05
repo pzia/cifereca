@@ -111,17 +111,22 @@ def relink_canonical_duplicate_backup_paths(
                     or size != artifact[1]):
                 raise ValueError("canonical_backup_relink_unattested_projection")
             connection = db.execute(
-                "SELECT identity_id,enabled FROM provider_connections "
+                "SELECT connection_id,identity_id,enabled "
+                "FROM provider_connections "
                 "WHERE provider_id=? AND credential_id=?",
                 (provider, credential),
             ).fetchone()
-            accounts = db.execute(
-                "SELECT account_id FROM provider_accounts WHERE "
-                "identity_id=? AND provider_id=? AND credential_id=?",
-                (identity, provider, credential),
+            # Borrower coordinates alone are insufficient in an imported
+            # SQLite file: the account row must be owned by THIS enabled
+            # provider_connection, not by a different credential's row.
+            account_connections = db.execute(
+                "SELECT connection_id FROM provider_accounts "
+                "WHERE identity_id=? AND provider_id=? AND credential_id=? "
+                "AND account_id=? LIMIT 2",
+                (identity, provider, credential, account),
             ).fetchall()
-            if (connection != (identity, 1)
-                    or sum(a[0] == account for a in accounts) != 1):
+            if (connection is None or connection[1:] != (identity, 1)
+                    or account_connections != [(connection[0],)]):
                 raise ValueError("canonical_backup_relink_account_rebound")
             # A source reference with exact identity/account/edition must
             # already own an independent provider-origin publication of THIS
@@ -132,7 +137,8 @@ def relink_canonical_duplicate_backup_paths(
                 "o.source_reference_id=s.source_reference_id "
                 "WHERE s.identity_id=? AND s.provider_id=? "
                 "AND s.credential_id=? AND s.account_id=? "
-                "AND s.edition_id=? AND o.origin_kind='provider' "
+                "AND s.edition_id=? AND s.evidence_kind='provider_response' "
+                "AND o.origin_kind='provider' "
                 "AND o.identity_id=? AND o.artifact_id=? "
                 "AND o.evidence_ref IS NOT NULL AND o.evidence_ref!=''",
                 (identity, provider, credential, account, item,

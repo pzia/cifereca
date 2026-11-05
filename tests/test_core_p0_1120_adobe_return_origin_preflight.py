@@ -102,35 +102,27 @@ def test_real_core_facade_refuses_before_checkpoint_or_adobe(
             loan.source_provider, loan.source_credential, "linked-123", loan.id,
         )
         assert service.storage.loan_return_state(key) is None
-        result = service.return_loan_prefer_adept(loan)
-        assert result == {
-            "status": expected_status, "scope": "adobe_first_paris",
-            "retry": expected_retry,
-        }
+        with pytest.raises(Exception) as failure:
+            service.return_loan_prefer_adept(loan)
+        assert getattr(failure.value, "code", None) == "loan_return_removed"
         assert service.storage.loan_return_state(key) is None
         assert paris.posts == 0
     finally:
         service.close()
 
 
-def test_refusal_helpers_are_called_before_claim_and_have_no_mutations():
+def test_legacy_orchestrator_is_inert_and_pure_origin_helpers_remain_pure():
     path = (Path(__file__).resolve().parents[1] /
             "src/cifereca/core/return_adept_orchestrator.py")
     tree = ast.parse(path.read_text(encoding="utf-8"))
     handler = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                    and n.name == "return_loan_prefer_adept")
-    names = {ast.unparse(n.func): n.lineno
-             for n in ast.walk(handler) if isinstance(n, ast.Call)
-             and ast.unparse(n.func) in {
-                 "return_adept_origin_preflight.missing_acquisition_outcome",
-                 "return_adept_origin_preflight.unready_to_return_outcome",
-                 "self.storage.loan_return_claim",
-                 "self.return_adept_acquisition",
-             }}
-    assert (names["return_adept_origin_preflight.missing_acquisition_outcome"]
-            < names["return_adept_origin_preflight.unready_to_return_outcome"]
-            < names["self.storage.loan_return_claim"]
-            < names["self.return_adept_acquisition"])
+    assert isinstance(handler.body[1], ast.Raise)
+    assert "loan_return_removed" in ast.unparse(handler.body[1])
+    calls = {ast.unparse(n.func) for n in ast.walk(handler)
+             if isinstance(n, ast.Call)}
+    assert calls == {"AttentionRequired"}
+
     helper_path = path.parent / "return_adept_origin_preflight.py"
     helper_tree = ast.parse(helper_path.read_text(encoding="utf-8"))
     calls = {ast.unparse(n.func) for n in ast.walk(helper_tree)

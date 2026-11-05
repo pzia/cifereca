@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import logging
 
 import pytest
 
+from cifereca.artifact_inspection import ArtifactInspection
 from cifereca.catalog import LocalCatalog
 from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
@@ -343,8 +345,10 @@ def test_account_unregistered_after_selected_offer_blocks_candidate_get(rig):
     service.session.rights_selected_delivery_candidate = (
         lambda *_a, **_kw: pytest.fail("no GET after SQL account unbinding")
     )
-    result = synchronize_account_source(service, service.account)
-    assert result["canonical_execution"]["downloaded"] == 0
+    # The stronger selected-offer gate now rejects the entire stale account
+    # lease immediately after preflight, instead of merely blocking B later.
+    with pytest.raises(ValueError, match="canonical_offer_source_rebound"):
+        synchronize_account_source(service, service.account)
     assert refs(db)[1] == 0 and db.placements() == []
 
 
@@ -500,3 +504,60 @@ def test_symlinked_final_directory_refuses_promotion_then_recovers_without_get(
     assert second["canonical_execution"]["recovered"] == 1
     assert gets == ["signed-right-offer"]
     assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
+
+
+@pytest.mark.parametrize(
+    "inspection_ok, inspection_format, protected, catalog_ok, catalog_reason",
+    [
+        (False, "pdf", None, True, None),
+        (True, "epub", None, True, None),
+        (True, "pdf", True, True, None),
+        (True, "pdf", None, False, "invalid_pdf_header"),
+    ],
+)
+def test_p0_3252_final_verdict_captures_all_four_checks_before_cleanup(
+    rig, monkeypatch, caplog, inspection_ok, inspection_format,
+    protected, catalog_ok, catalog_reason,
+):
+    # Synthetic selected candidate only. A failed final validator must not
+    # create a Core receipt, publish bytes or retain rejected staging.
+    service, db, root = rig
+    _prepare(service)
+    service.session.rights_selected_delivery_candidate = _native
+    monkeypatch.setattr(
+        "cifereca.core.canonical_selected_delivery.inspect_artifact",
+        lambda _path, *, strict_structure: ArtifactInspection(
+            inspection_format, inspection_ok, protected,
+            None if inspection_ok else "synthetic_invalid",
+        ),
+    )
+    monkeypatch.setattr(
+        LocalCatalog, "_validate",
+        staticmethod(lambda _path, _kind: (catalog_ok, catalog_reason)),
+    )
+    with caplog.at_level(
+        logging.WARNING, logger="cifereca.core.canonical_selected_delivery",
+    ):
+        outcome = synchronize_account_source(service, service.account)
+    assert outcome["canonical_execution"]["failed"] == 1
+    assert db.placements() == [] and refs(db)[1] == 0
+    assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
+    observed = [
+        r.getMessage() for r in caplog.records
+        if r.getMessage().startswith("TRACE canonical delivery final rejected ")
+    ]
+    assert len(observed) == 1
+    verdict = observed[0]
+    assert "code=canonical_delivery_final_invalid" in verdict
+    assert "reader=rights_selected_delivery_candidate" in verdict
+    assert "runtime_guarded=False" in verdict
+    assert "expected_kind=pdf" in verdict
+    for key, value in (
+        ("inspection_valid", inspection_ok),
+        ("inspection_format", inspection_format),
+        ("inspection_protected", protected),
+        ("inspection_reason", None if inspection_ok else "synthetic_invalid"),
+        ("catalog_valid", catalog_ok),
+        ("catalog_reason", catalog_reason),
+    ):
+        assert f"{key}={value}" in verdict

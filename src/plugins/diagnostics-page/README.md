@@ -99,10 +99,10 @@ Le plugin n’effectue aucun réaudit, mutation, transfert ou accès réseau.
 
 ## 0.1.12 — Journaux et capture dans Diagnostics (#2139)
 
-Journaux est l’onglet d’arrivée. Capture regroupe démarrer, arrêter,
-actualiser et enregistrer les mesures JSON locales ; État système et
-Rapports et vérifications gardent les autres outils. Une lecture de Capture
-ne démarre rien. La capture Core partagée continue à la navigation ; seule
+Journaux est l’onglet d’arrivée. Dans Perfs, on peut démarrer ou arrêter la
+capture, actualiser les mesures locales et les enregistrer en JSON. État système
+et Rapports et vérifications gardent les autres outils. La capture démarre
+sur action explicite et continue pendant la navigation. Seule
 l’action Arrêter ou la fermeture du Core la termine. Un ancien Core sans
 UiPerformanceHost indique son indisponibilité, sans import privé.
 L’export explicite utilise le même sélecteur local et l’écriture asynchrone

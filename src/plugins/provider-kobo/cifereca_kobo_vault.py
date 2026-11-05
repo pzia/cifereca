@@ -141,7 +141,7 @@ class KoboVaultClient:
         if not isinstance(code, str):
             return None
         allowed = {
-            "archived_book", "insufficient_scope", "forbidden",
+            "archived_book", "revision_mismatch", "insufficient_scope", "forbidden",
             "invalid_token", "invalid_api_token", "unauthorized",
         }
         return code if code in allowed else None
@@ -194,6 +194,14 @@ class KoboVaultClient:
             elif status == 409 and provider_code == "archived_book":
                 code = "archived_book"
                 message = "livre archivé : téléchargement ignoré (HTTP 409)"
+            elif status == 409 and provider_code == "revision_mismatch":
+                # KVault v2.3.3 rejects a stale revision before resolving any
+                # delivery candidate. Never treat this as an archive or retry
+                # the same source revision without fresh provider evidence.
+                code, message = (
+                    "revision_mismatch",
+                    "révision Kobo demandée différente de la version publiée (HTTP 409)",
+                )
             elif status == 409:
                 code, message = "conflict", "conflit de ressource (HTTP 409)"
             elif status == 429:
@@ -219,6 +227,14 @@ class KoboVaultClient:
         # /status is public in Provider API v2.2+ (courant v2.3.3, api_version=2.3). ``authenticated`` is retained
         # only as a compatibility escape hatch for older v2 deployments.
         return self._json("GET", "/status", authenticated=authenticated)
+
+    def authenticated_capabilities(self) -> dict[str, Any]:
+        """Request /status with this client's bearer, never anonymous metadata.
+
+        The response still needs explicit token-scoped grants: the global
+        capability list alone cannot attest acquisition delegation.
+        """
+        return self.status(authenticated=True)
 
     def account(self) -> dict[str, Any]:
         payload = self._json("GET", "/account")

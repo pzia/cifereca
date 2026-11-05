@@ -332,3 +332,120 @@ def test_missing_registered_source_is_not_negative_evidence_for_a_right(tmp_path
         assert _right(storage) == before
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("manifest", [
+    {"book"}, ["book"], (" book ",),
+])
+def test_historical_padded_item_key_is_not_pruned_when_manifest_still_sees_it(
+    tmp_path, manifest,
+):
+    # The v0.7 SQLite PK preserves the raw item_id, but the admitted
+    # manifest strips IDs. A still-present " book " was previously deleted.
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy(item=" book "))
+        before_projection = storage.backup_get("opaque-seller", "card", " book ")
+        before_rights = storage.entitlements(provider_id="opaque-seller")
+        before_ledger = storage.acquisitions(provider_id="opaque-seller")
+        result = storage.backup_prune_missing("opaque-seller", "card", manifest)
+        assert result == {
+            "pruned": 0, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert storage.backup_get("opaque-seller", "card", " book ") == before_projection
+        assert storage.entitlements(provider_id="opaque-seller") == before_rights
+        assert storage.acquisitions(provider_id="opaque-seller") == before_ledger
+    finally:
+        storage.close()
+
+
+def test_padded_legacy_key_is_removed_only_if_missing_from_normalized_manifest(
+    tmp_path,
+):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy(item=" book "))
+        before_rights = storage.entitlements(provider_id="opaque-seller")
+        before_ledger = storage.acquisitions(provider_id="opaque-seller")
+        result = storage.backup_prune_missing("opaque-seller", "card", {"other"})
+        assert result["pruned"] == 1
+        assert storage.backup_get("opaque-seller", "card", " book ") is None
+        # The prune still never revokes its canonical history.
+        assert storage.entitlements(provider_id="opaque-seller") == before_rights
+        assert storage.acquisitions(provider_id="opaque-seller") == before_ledger
+    finally:
+        storage.close()
+
+
+def test_normalized_legacy_aliases_are_both_preserved_if_still_in_manifest(
+    tmp_path,
+):
+    # Two distinct v0.7 PKs can spell the same Kobo product ID. This prune
+    # must not choose which source receipt to destroy as a side effect.
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy(item="book"))
+        storage.backup_put(_legacy(item=" book "))
+        before = storage.backup_list("opaque-seller")
+        result = storage.backup_prune_missing("opaque-seller", "card", {"book"})
+        assert result["pruned"] == 0
+        assert storage.backup_list("opaque-seller") == before
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("invalid_key", [
+    "", "  ", "old\x00item", "old\nitem", "old\ritem", "x" * 1025,
+])
+def test_invalid_historical_sqlite_key_survives_compatibility_prune(
+    tmp_path, invalid_key,
+):
+    # v0.7 SQLite has no item-id CHECK. A provider's valid typed manifest
+    # cannot make these malformed old identifiers safely absent or migrated.
+    store = Storage(tmp_path / "history.sqlite")
+    try:
+        with store._lock, store._connect() as db:
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,title,status,updated_at"
+                ") VALUES(?,?,?,?,?,?)",
+                ("opaque-seller", "card", invalid_key, "Legacy", "complete", 123),
+            )
+        before = store.backup_get("opaque-seller", "card", invalid_key)
+        assert before is not None
+        result = store.backup_prune_missing("opaque-seller", "card", {"current"})
+        assert result == {
+            "pruned": 0, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert store.backup_get("opaque-seller", "card", invalid_key) == before
+        assert store.entitlements() == []
+        assert store.acquisitions(provider_id="opaque-seller") == []
+    finally:
+        store.close()
+
+
+def test_valid_stale_projection_still_prunes_around_unqualified_historical_key(
+    tmp_path,
+):
+    store = Storage(tmp_path / "history.sqlite")
+    try:
+        store.backup_put(_legacy(item="stale"))
+        before_right = store.entitlements()
+        before_ledger = store.acquisitions(provider_id="opaque-seller")
+        with store._lock, store._connect() as db:
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,title,status,updated_at"
+                ") VALUES(?,?,?,?,?,?)",
+                ("opaque-seller", "card", "", "Unknown older item", "complete", 10),
+            )
+        result = store.backup_prune_missing("opaque-seller", "card", {"current"})
+        assert result["pruned"] == 1
+        assert store.backup_get("opaque-seller", "card", "stale") is None
+        assert store.backup_get("opaque-seller", "card", "") is not None
+        assert store.entitlements() == before_right
+        assert store.acquisitions(provider_id="opaque-seller") == before_ledger
+    finally:
+        store.close()

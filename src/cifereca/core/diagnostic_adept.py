@@ -11,6 +11,10 @@ OPERATIONS = frozenset({"download request", "acsm return", "profile list", "prof
                         "loans list", "loans expired", "contract", "capabilities", "status",
                         "other", "unknown"})
 ERROR_CODES = frozenset({
+    # Kobo-ADEPT contract 1.3 §4. These are machine codes already qualified
+    # by the installed runtime, NOT text parsed from libgourou/Adobe output.
+    "invalid_acsm", "profile_not_found", "adept_profile_required",
+    "adept_profile_error", "adept_profile_incompatible",
     "adept_error", "adept_license_already_fulfilled_by_another_user",
     "profile_missing", "invalid_profile", "kobo_adept_failed", "kobo_adept_missing",
     "kobo_adept_timeout", "kobo_adept_launch_error", "kobo_adept_invalid_json",

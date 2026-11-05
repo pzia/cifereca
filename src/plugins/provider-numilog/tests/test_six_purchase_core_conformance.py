@@ -384,3 +384,68 @@ def test_revoke_then_reenable_during_delivery_cannot_revive_old_sync(
         assert db.execute(
             "SELECT count(*) FROM origin_links WHERE origin_kind='provider'"
         ).fetchone()[0] == 3
+
+
+
+def test_six_real_numilog_adapter_candidates_recover_after_physical_files_move(
+    purchases, synchronize, tmp_path,
+):
+    """P0 #2797: old SHA/OriginLinks cannot suppress GET after the bytes move.
+
+    Actual installed Numilog adapter, source consent, Core sync/publication,
+    private HTTPX and ADEPT boundary; all supplier payloads are synthetic.
+    """
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    service, session, account, snapshot, keys, paths, urls, gets, root, kind, runtime_calls = purchases
+    for key, path in zip(keys, paths):
+        attest(service, snapshot, key, path, root)
+    originals = {path: path.read_bytes() for path in paths}
+    first = synchronize(service, account)
+    assert first["present_attested"] == 6
+    assert first["downloaded"] == 0
+    assert content_gets(gets, urls) == []
+
+    # Keep SQLite unchanged and preserve moved bytes *outside* the library.
+    # Previously published provider receipts must no longer be considered B.
+    parked = tmp_path / "previous-numilog-physical-files"
+    parked.mkdir()
+    for i, path in enumerate(paths):
+        path.rename(parked / f"old-{i}.epub")
+    assert not any(path.exists() for path in paths)
+    assert len(service.storage.placements()) == 6
+
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
+    enabled = broker.set_source_sync_consent(
+        sid, enabled=True, expected_revision=None,
+    )
+    assert enabled["enabled"] is True
+    assert broker.canonical_acquisition_choices(sid) == ()
+
+    repaired = synchronize(service, account)
+    assert repaired["downloaded"] == 6
+    assert repaired["present_attested"] == 0
+    assert repaired["failed"] == repaired["blocked"] == repaired["pending"] == 0
+    assert content_gets(gets, urls) == urls
+    assert len(runtime_calls) == (6 if kind == "acsm" else 0)
+
+    placed = [Path(p["path"]) for p in service.storage.placements()
+              if Path(p["path"]).is_file()]
+    assert len(placed) == 6
+    assert all(path.parent == root / "hugues" / "Acquisitions"
+               for path in placed)
+    assert {hashlib.sha256(path.read_bytes()).hexdigest() for path in placed} == {
+        hashlib.sha256(blob).hexdigest() for blob in originals.values()
+    }
+    assert len(list(parked.iterdir())) == 6
+    assert {hashlib.sha256(p.read_bytes()).hexdigest() for p in parked.iterdir()} == {
+        hashlib.sha256(blob).hexdigest() for blob in originals.values()
+    }
+
+    # No second GET/re-fulfillment and all six sources are physically attested.
+    again = synchronize(service, account)
+    assert again["present_attested"] == 6
+    assert again["downloaded"] == again["failed"] == again["pending"] == 0
+    assert content_gets(gets, urls) == urls
+    assert len(runtime_calls) == (6 if kind == "acsm" else 0)

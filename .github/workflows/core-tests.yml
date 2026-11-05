@@ -53,16 +53,21 @@ jobs:
             --event "$GITHUB_EVENT_NAME" --before "$BEFORE_SHA" \
             --head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT"
 
+      # The path filter must retain README deletions; status-aware selection
+      # skips only unnecessary Python installation and tests for A/M.
       - uses: actions/setup-python@v6
+        if: steps.scope.outputs.core_mode != 'skip'
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pyproject.toml
 
       - name: Install Core test dependencies
+        if: steps.scope.outputs.core_mode != 'skip'
         run: python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
 
       - name: Run Core tests
+        if: steps.scope.outputs.core_mode != 'skip'
         env:
           CORE_TEST_MODE: ${{ steps.scope.outputs.core_mode }}
           CORE_TEST_TARGETS: ${{ steps.scope.outputs.core_targets }}

@@ -156,3 +156,25 @@ def test_missing_preview_has_no_side_effects_and_no_private_path(case):
                           "source_references", "metadata")
         )
     assert after == before
+
+
+@pytest.mark.parametrize("error_type", [sqlite3.OperationalError, sqlite3.DatabaseError])
+def test_sqlite_read_failure_blocks_without_disclosing_private_error(
+    case, monkeypatch, error_type,
+):
+    """An unavailable/corrupt snapshot cannot certify physical retirement."""
+    store, _root, missing, pid = case
+    private_error = f"private account SECRET from {missing}"
+
+    def unavailable_connection():
+        raise error_type(private_error)
+
+    monkeypatch.setattr(store, "_connect", unavailable_connection)
+    output = _plan(case)
+    assert output == {
+        "status": "blocked", "reason": "evidence_unavailable",
+        "catalogue_rows": 0, "requires_confirmation": True,
+    }
+    assert private_error not in repr(output)
+    assert str(missing) not in repr(output)
+    assert "SECRET" not in repr(output)

@@ -13,7 +13,7 @@ def _methods(*names):
     tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     selected = [node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name in names]
-    ns = {"Gtk": NS(Button=object)}
+    ns = {"Gtk": NS(Button=object), "current_detail_trace": lambda: None}
     exec(compile(ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])), str(MAIN), "exec"), ns)
     return [ns[name] for name in names]
 

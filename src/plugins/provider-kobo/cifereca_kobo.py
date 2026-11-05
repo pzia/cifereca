@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from contextlib import contextmanager
@@ -23,12 +24,60 @@ _UNSET_PERSONAL_IDENTITY = object()  # None is a legitimate legacy identity.
 # Only protocol metadata with a known public vocabulary may reach diagnostics.
 # The public /status endpoint is still an untrusted HTTP response.
 _PUBLIC_VAULT_CAPABILITIES = frozenset({
-    "catalog_search", "library_search", "library", "acquisition",
+    # KVault Provider API v2.3.3 (pzia/KVault/src/worker.js): public
+    # /status advertises ALL capabilities, including token-restricted ones.
+    "catalog_search", "library_search", "library_manifest",
+    "acquisition_info", "acquisition_drm_metadata",
+    "acquisition_display_profiles", "acquisition_acsm_export",
+    "acquisition_library_sync", "acquisition_delegation",
+    # Compatibility with older v2 provider facades.
+    "library", "acquisition",
 })
 _PUBLIC_ACQUISITION_ACCESS = frozenset({
     "configured", "unknown", "available", "disabled", "unavailable",
-    "denied", "forbidden", "requires_scope",
+    "denied", "forbidden", "requires_scope", "not_configured",
 })
+
+
+def _authenticated_delegate_scope(status: Any) -> bool:
+    """Read KVault's EFFECTIVE token capabilities from authenticated /status.
+
+    KVault v2.3.3 does not return token_scopes/scopes. With a bearer, its
+    capabilities are filtered by hasApiScope(token, capability.scope).
+    Anonymous /status advertises ALL capabilities and must never be used as
+    authorization. Only connect() supplies this helper with an authenticated
+    response, bound to the live client/token/generation. capability_details
+    describes server features, not a user's token grants.
+    """
+    if type(status) is not dict:
+        return False
+    capabilities = status.get("capabilities")
+    if (type(capabilities) is not list
+            or any(type(value) is not str for value in capabilities)
+            or "acquisition_delegation" not in capabilities
+            or not ({"acquisition_info", "acquisition"} & set(capabilities))):
+        return False
+    # A scoped token alone is insufficient if no Kobo credentials are
+    # available on the server to resolve the delegated recipe.
+    if status.get("acquisition_access") != "configured":
+        return False
+    # Future explicit scope claims can only narrow, never expand, the
+    # current capability grant. Ignore unfiltered capability_details.
+    for field in ("token_scopes", "scopes"):
+        if field in status:
+            values = status[field]
+            if (type(values) is not list
+                    or any(type(value) is not str for value in values)
+                    or "kobo.acquisition.delegate" not in values):
+                return False
+    return True
+
+
+def _vault_token_fingerprint(client: Any) -> bytes | None:
+    """Bind a positive grant to the bearer without duplicating a secret."""
+    token = getattr(client, "token", None)
+    return (hashlib.sha256(token.encode("utf-8")).digest()
+            if type(token) is str and token else None)
 
 
 def _vault_public_version(value: Any) -> str:
@@ -259,6 +308,38 @@ class KoboSession(ProviderSession):
         self.display_profile = profile if profile in {"Android", "Desktop"} else "Android"
         self.supports_acquisition_display_profile = False
         self.supports_acquisition_acsm = False
+        self.supports_acquisition_delegation = False
+        self._delegation_bound_client = None
+        self._delegation_bound_generation = None
+        self._delegation_token_fingerprint = None
+        self._cifereca_delegation_forbidden = False
+        self._cifereca_delegation_attempts_saved = 0
+
+    def _delegation_runtime_ready(self) -> bool:
+        """Check actual executable runtime modes, not declared names alone."""
+        try:
+            caps = self.runtime_capabilities.acquisition("kobo")
+            return (
+                caps.available is True and caps.compatible is True
+                and caps.operational is True
+                and type(caps.modes) in (tuple, list, set, frozenset)
+                and any(mode in caps.modes
+                        for mode in ("kobo_delegated", "kobo_kdrm"))
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return False
+
+    def _delegation_admitted(self) -> bool:
+        """Never reuse an attestation after reconnect/token/runtime changes."""
+        return (
+            self.supports_acquisition_delegation is True
+            and self.connected is True
+            and self._delegation_bound_client is self.client
+            and self._delegation_bound_generation == self._personal_binding_generation
+            and self._delegation_token_fingerprint is not None
+            and self._delegation_token_fingerprint == _vault_token_fingerprint(self.client)
+            and self._delegation_runtime_ready()
+        )
 
     def _diagnostic(self, *args: Any, **kwargs: Any) -> None:
         try:
@@ -274,10 +355,19 @@ class KoboSession(ProviderSession):
         # binding as provenance, but never keep the session ACTIVE on failure.
         # The delegated-scope denial is preserved until a verified success.
         self.connected = False
+        # Pin the credential across public status, /account and the optional
+        # bearer-scoped status. A token swap mid-handshake must not combine
+        # another owner's account with a new bearer grant.
+        connecting_client = self.client
+        connecting_token_fingerprint = _vault_token_fingerprint(self.client)
         self.capability_names = set()
         self.capability_details = {}
         self.supports_acquisition_acsm = False
         self.supports_acquisition_display_profile = False
+        self.supports_acquisition_delegation = False
+        self._delegation_bound_client = None
+        self._delegation_bound_generation = None
+        self._delegation_token_fingerprint = None
         self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
         status = self.client.status(authenticated=False)
         self.api_version = _vault_public_version(status.get("api_version") or status.get("version"))
@@ -327,13 +417,21 @@ class KoboSession(ProviderSession):
             else None
         )
         runtime_modes = set(getattr(runtime, "modes", ()) or ())
-        vault_acquisition = "acquisition" in self.capability_names
+        # KVault v2.3.3 calls the read-only offer route acquisition_info.
+        # Older provider facades used the generic acquisition identifier.
+        vault_acquisition = bool(
+            self.capability_names & {"acquisition_info", "acquisition"}
+        )
         self.supports_acquisition_acsm = (
             vault_acquisition and "adobe_adept" in runtime_modes
+            and ("acquisition" in self.capability_names
+                 or "acquisition_acsm_export" in self.capability_names)
         )
         self.supports_acquisition_display_profile = (
             vault_acquisition
             and bool(runtime_modes & {"kobo_delegated", "kobo_kdrm"})
+            and ("acquisition" in self.capability_names
+                 or "acquisition_display_profiles" in self.capability_names)
         )
         account = self.client.account()
         account_id = _vault_account_id(account)
@@ -360,11 +458,52 @@ class KoboSession(ProviderSession):
                 "reconfiguration explicite requise"
             )
         display = _vault_account_label(account)
-        # Reauthorization only takes effect after a *validated* authenticated
-        # account identity, not when connect() was merely invoked. A malformed
-        # /account response must not clear a prior delegated-scope denial.
-        self._cifereca_delegation_forbidden = False
-        self._cifereca_delegation_attempts_saved = 0
+        # /status is public by default. A second authenticated status view
+        # must contain an EXPLICIT token scope before allowing delegation.
+        # A Vault without this optional introspection retains its ordinary
+        # inventory, descriptor, ACSM and direct-HTTP routes, not delegation.
+        authenticated_status: dict[str, Any] = {}
+        scoped_read = getattr(self.client, "authenticated_capabilities", None)
+        if callable(scoped_read):
+            try:
+                observed = scoped_read()
+                if type(observed) is dict:
+                    authenticated_status = observed
+            except ProviderError:
+                # The optional scope probe must not deny ordinary library
+                # access; it fails closed for delegated requests only.
+                pass
+        # /status without a bearer always reports acquisition_access=unknown
+        # on KVault v2.3.3. The bearer-scoped view is authoritative for the
+        # currently configured credential and supports actionable diagnostics.
+        access = authenticated_status.get("acquisition_access")
+        if type(access) is str and access in _PUBLIC_ACQUISITION_ACCESS:
+            self.acquisition_access = access
+        delegation_details = self.capability_details.get("acquisition_delegation", {})
+        self.supports_acquisition_delegation = (
+            self.client is connecting_client
+            and connecting_token_fingerprint is not None
+            and connecting_token_fingerprint == _vault_token_fingerprint(self.client)
+            and vault_acquisition
+            and "acquisition_delegation" in self.capability_names
+            and delegation_details.get("available") is not False
+            and delegation_details.get("enabled") is not False
+            and _authenticated_delegate_scope(authenticated_status)
+            and self._delegation_runtime_ready()
+        )
+        if self.supports_acquisition_delegation:
+            token_fingerprint = _vault_token_fingerprint(self.client)
+            if token_fingerprint is None:
+                self.supports_acquisition_delegation = False
+            else:
+                self._delegation_bound_client = self.client
+                self._delegation_bound_generation = self._personal_binding_generation
+                self._delegation_token_fingerprint = token_fingerprint
+        # Only a new positive bearer-scope proof clears a prior delegated
+        # HTTP 403. An authenticated account alone is not reauthorization.
+        if self.supports_acquisition_delegation:
+            self._cifereca_delegation_forbidden = False
+            self._cifereca_delegation_attempts_saved = 0
         self.connected = True
         self._accounts = [Account(
             display_name=display,
@@ -394,6 +533,10 @@ class KoboSession(ProviderSession):
         self._personal_binding_generation += 1
         self.connected = False
         self.client.close()
+        self.supports_acquisition_delegation = False
+        self._delegation_bound_client = None
+        self._delegation_bound_generation = None
+        self._delegation_token_fingerprint = None
         self.backup_manifest_policy = classify_personal_manifest((), account_id=None)
 
     def cover_url(self, item: dict[str, Any]) -> str | None:
@@ -700,6 +843,7 @@ class KoboSession(ProviderSession):
             "upstream_id": upstream_id, "bound_identity": bound.identity_id,
             "caller": account, "scope": scope, "broker": broker,
             "owner": owner, "rows": None, "rejections": (),
+            "pagination_complete": False,
         }
         token = self._source_inventory_batch.set(batch)
         try:
@@ -856,6 +1000,14 @@ class KoboSession(ProviderSession):
             self._check_source_inventory_batch(batch, bound_account, generation, account_id)
             batch["rows"] = tuple(deepcopy(rows))
             batch["rejections"] = tuple(self.last_library_rejections)
+            # A cached personal manifest may be replayed only in this
+            # source Sync. Preserve its original pagination proof together
+            # with the cached data, not a mutable later client-side flag.
+            batch["pagination_complete"] = (
+                isinstance(self.client, KoboVaultClient)
+                and self.client.last_manifest_pagination_complete is True
+                and self.client.last_manifest_page_attempts > 0
+            )
         return rows
 
     def _rights_owner_snapshot(self, expected_account: str):
@@ -1027,13 +1179,34 @@ class KoboSession(ProviderSession):
             raise ProviderCapabilityError(
                 "Kobo-Vault : propriétaire modifié pendant la lecture"
             )
+        # Vault's official page reader records its own successful final
+        # cursor. An injected/legacy manifest client has no such proof.
+        # One rejected/foreign/ambiguous record prevents a false exhaustive
+        # rights projection. Account/profile and generation were rechecked
+        # above; a full inventory neither revokes absent rights nor grants a
+        # GET of content.
+        batch = self._source_inventory_batch.get()
+        page_chain_complete = (
+            batch.get("pagination_complete") is True
+            if batch is not None and batch.get("rows") is not None
+            else (
+                isinstance(self.client, KoboVaultClient)
+                and self.client.last_manifest_pagination_complete is True
+                and self.client.last_manifest_page_attempts > 0
+            )
+        )
+        complete = (
+            page_chain_complete and not self.last_library_rejections
+            and len(observed_rights) == len(results)
+        )
         return ProviderRightsSnapshot(
             scope=ProviderRightsScope(
                 caller_scope[0], "kobo", self.credential_id, account_id,
             ),
             rights=tuple(observed_rights),
-            status="partial", coverage="partial",
-            pagination_complete=False, branch="personal_manifest",
+            status="success" if complete else "partial",
+            coverage="complete" if complete else "partial",
+            pagination_complete=complete, branch="personal_manifest",
             observed_at=observed, snapshot_ref="kobo.personal_manifest",
         )
 
@@ -1049,7 +1222,11 @@ class KoboSession(ProviderSession):
         is returned, never the payload or those URLs.
         """
         from dataclasses import replace
-        from cifereca_kobo_delivery_offer import exact_kobo_offer_id
+        from cifereca_kobo_delivery_offer import (
+            exact_kobo_offer_id, kdrm_runtime_ready,
+            kdrm_delegated_runtime_ready,
+        )
+        from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
         if (explicit_user_action is not True
                 or type(right_id) is not str
@@ -1109,20 +1286,154 @@ class KoboSession(ProviderSession):
         if (right is None or right.provider_attested is not True):
             raise ProviderCapabilityError("kobo_delivery_offer_right_unobserved")
         if right.delivery == "unavailable":
+            # A known archive is not a rejected HTTP offer or a KDRM error.
+            _TRACE_LOG.info(
+                "EVENT kobo selected_offer product_id=%s outcome=unavailable "
+                "reason=archived_no_acquisition", right_id,
+            )
             # Keep the exact positive purchase, but do not POST a descriptor
             # for a manifest-attested archive (#514).
-            return replace(baseline, rights=(right,))
+            return replace(
+                baseline, rights=(right,), status="partial",
+                coverage="partial", pagination_complete=False,
+            )
         # Exactly one POST for the exact attested product, after an explicit
         # selection. Do not fall back to delegated mode on a descriptor 403.
-        payload = self.resolve_acquisition(
-            right_id, mode="descriptor", include_acsm=True,
-        )
+        try:
+            payload = self.resolve_acquisition(
+                right_id, mode="descriptor", include_acsm=True,
+            )
+        except (KoboVaultError, ProviderCapabilityError, ProviderError) as error:
+            # This is the ACTUAL selected descriptor failure. Status is
+            # included only when the upstream exception actually supplied it.
+            # The KV 2.3.3 acquisition route distinguishes archive from
+            # stale revision. Keep ONLY the closed typed 409 reason, never the
+            # upstream response text, token, product revision or signed link.
+            # A generic conflict remains generic rather than guessing.
+            status = getattr(error, "status_code", None)
+            code = getattr(error, "code", None)
+            error_code = (
+                code if isinstance(error, KoboVaultError)
+                and type(status) is int and status == 409
+                and type(code) is str
+                and code in {"archived_book", "revision_mismatch", "conflict"}
+                else "not_applicable"
+            )
+            if error_code == "archived_book":
+                # The authenticated, exact-account descriptor is fresher
+                # evidence of *delivery unavailability* than a manifest
+                # snapshot that still reports the product as unarchived.
+                # Do not revoke the purchase, authorize a fallback or create
+                # a content GET. A new selection can re-check after restore.
+                if not scope_current():
+                    raise ProviderCapabilityError(
+                        "kobo_delivery_offer_owner_changed"
+                    ) from None
+                _TRACE_LOG.info(
+                    "EVENT kobo selected_offer product_id=%s phase=descriptor "
+                    "outcome=unavailable reason=archived_http_409_no_acquisition "
+                    "http_status=409 error_code=archived_book", right_id,
+                )
+                return replace(
+                    baseline, rights=(replace(
+                        right, delivery="unavailable", delivery_offer_id="",
+                        delivery_unavailable_reason="archived",
+                    ),), status="partial", coverage="partial",
+                    pagination_complete=False,
+                )
+            _TRACE_LOG.info(
+                "EVENT kobo selected_offer product_id=%s phase=descriptor "
+                "outcome=error error_type=%s http_status=%s error_code=%s",
+                right_id, type(error).__name__, status, error_code,
+            )
+            raise
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+        kdrm_ready = kdrm_runtime_ready(self)
+        kdrm_legacy_ready = kdrm_delegated_runtime_ready(self)
+        qualification_diagnostic = {}
         offer_id = exact_kobo_offer_id(
             payload, identity_id=identity_id, credential_id=self.credential_id,
             account_id=account_id, product_id=right_id,
+            kdrm_runtime_ready=kdrm_ready,
+            kdrm_delegated_ready=kdrm_legacy_ready,
+            diagnostic=qualification_diagnostic,
         )
+        qualified_reason = (
+            "descriptor_offer_attested" if offer_id else
+            "descriptor_candidate_unqualified"
+        )
+        delegated_resolver_called = False
+        # Only the ONE descriptor candidate that reproduces the exact
+        # runtime offer may be used for the delegated ContentKeys replay.
+        # Vault can return an earlier, non-pinned content_access_book KDRM
+        # candidate alongside the supported library_sync candidate. Taking
+        # the first KDRM entry would reject the valid pinned route.
+        # Conversely, a selected plain/ACSM offer must not invoke delegated
+        # just because an unrelated KDRM candidate is also advertised.
+        if offer_id.startswith("kobo.runtime:"):
+            described = payload["acquisition"]["candidates"]
+            pinned = [
+                row for row in described
+                if type(row) is dict and row.get("handling") == "kobo_kdrm"
+                and exact_kobo_offer_id(
+                    {**payload, "acquisition": {
+                        **payload["acquisition"], "candidates": [row],
+                    }},
+                    identity_id=identity_id, credential_id=self.credential_id,
+                    account_id=account_id, product_id=right_id,
+                    kdrm_runtime_ready=kdrm_ready,
+                    kdrm_delegated_ready=kdrm_legacy_ready,
+                ) == offer_id
+            ]
+            if len(pinned) != 1:
+                offer_id = ""
+                qualified_reason = "pinned_candidate_ambiguous"
+            else:
+                try:
+                    delegated_resolver_called = True
+                    delegated = self.resolve_acquisition(
+                        right_id, mode="delegated", include_acsm=False,
+                    )
+                    if not scope_current():
+                        raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+                    source = scoped_kdrm_source(
+                        delegated, pinned[0], product_id=right_id,
+                        account_id=account_id, identity_id=identity_id,
+                        credential_id=self.credential_id,
+                        kdrm_delegated_ready=kdrm_legacy_ready,
+                    )
+                    if source is None:
+                        offer_id = ""
+                        qualified_reason = "delegated_recipe_unusable"
+                    else:
+                        qualified_reason = "kdrm_recipe_attested"
+                except ProviderCapabilityError as error:
+                    if not scope_current():
+                        raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
+                    offer_id = ""
+                    qualified_reason = (
+                        "delegation_scope_unattested"
+                        if str(error) == "missing_delegation_scope"
+                        else "delegation_capability_refused"
+                    )
+                except KoboVaultError as error:
+                    if not scope_current():
+                        raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
+                    offer_id = ""
+                    qualified_reason = (
+                        "delegated_http_403" if error.status_code == 403
+                        else "delegated_upstream_failed"
+                    )
+                except ProviderError:
+                    if not scope_current():
+                        raise ProviderCapabilityError("kobo_delivery_offer_owner_changed") from None
+                    offer_id = ""
+                    qualified_reason = (
+                        "delegation_quarantined_after_previous_403"
+                        if getattr(self, "_cifereca_delegation_forbidden", False)
+                        else "delegated_provider_failed"
+                    )
         qualified = replace(
             right,
             delivery="available" if offer_id else "unknown",
@@ -1133,7 +1444,44 @@ class KoboSession(ProviderSession):
         # not publish an old owner's otherwise valid offer snapshot.
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
-        return replace(baseline, rights=(qualified,))
+        # Only record observed selection facts. A missing executable offer
+        # is not proof of an HTTP 403 or of a failed Kobo-Adept download.
+        acquisition = payload.get("acquisition") if type(payload) is dict else None
+        candidates = acquisition.get("candidates") if type(acquisition) is dict else None
+        count = len(candidates) if type(candidates) is list else 0
+        kdrm_present = (
+            any(type(row) is dict and row.get("handling") == "kobo_kdrm"
+                for row in candidates) if type(candidates) is list else False
+        )
+        # Rejection attributes come from the SAME admission pass. The closed
+        # value categories never include signed links or delegated payloads.
+        detail = ""
+        if qualified_reason == "descriptor_candidate_unqualified":
+            detail = (
+                " qualification_reason=%s eligible_candidate_count=%s "
+                "candidate_source=%s candidate_media_format=%s "
+                "candidate_source_format=%s"
+            ) % (
+                qualification_diagnostic.get("qualification_reason", "unknown"),
+                qualification_diagnostic.get("eligible_candidate_count", "unknown"),
+                qualification_diagnostic.get("candidate_source", "not_applicable"),
+                qualification_diagnostic.get("candidate_media_format", "not_applicable"),
+                qualification_diagnostic.get("candidate_source_format", "not_applicable"),
+            )
+        _TRACE_LOG.info(
+            "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
+            "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
+            "delegated_resolver_called=%s%s",
+            right_id, "available" if offer_id else "unknown",
+            qualified_reason, count, kdrm_present, kdrm_ready,
+            delegated_resolver_called, detail,
+        )
+        # One exact purchase preflight is never a branch-wide manifest,
+        # even when the preceding Vault inventory was fully attested.
+        return replace(
+            baseline, rights=(qualified,), status="partial",
+            coverage="partial", pagination_complete=False,
+        )
 
     def downloadable_resource_snapshot(self, account):
         """#3252 v2: positive-only authenticated resources, not legal rights."""
@@ -1199,7 +1547,7 @@ class KoboSession(ProviderSession):
     def downloadable_selected_delivery_candidate_guarded(
         self, account, *, edition_id, resource_id, kind, branch,
         selected_offer_id, target_dir, explicit_user_action=False,
-        admission_current,
+        admission_current, execute_runtime=None,
     ):
         """Core #3171 opt-in: exact v2 candidate with live revocable consent.
 
@@ -1226,6 +1574,7 @@ class KoboSession(ProviderSession):
             kind=kind, branch=branch, delivery_offer_id=selected_offer_id,
             target_dir=target_dir, explicit_user_action=explicit_user_action,
             admission_current=admission_current,
+            runtime_execute=execute_runtime,
         )
         try:
             current = (
@@ -1253,6 +1602,49 @@ class KoboSession(ProviderSession):
             ),
             selected_offer_id=selected_offer_id,
             path=Path(path), provider_hint=hint,
+        )
+
+    def downloadable_selected_delivery_requires_runtime(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id,
+    ):
+        """Local Core route selector bound to an exact, revalidated offer.
+
+        No supplier I/O, entitlement inference or permission is issued here.
+        The later selected-candidate reader independently rehashes the live
+        descriptor. A KDRM candidate cannot masquerade as direct HTTPS merely
+        by supplying a direct-route token.
+        """
+        if (type(account) is not Account
+                or account.provider_id != self.provider_id
+                or account.credential_id != self.credential_id
+                or type(resource_id) is not str or not resource_id
+                or edition_id != resource_id or kind != "purchase"
+                or branch != "personal_manifest"
+                or type(selected_offer_id) is not str
+                or not any(
+                    selected_offer_id.startswith(prefix)
+                    and len(selected_offer_id) == len(prefix) + 64
+                    and all(c in "0123456789abcdef"
+                            for c in selected_offer_id[len(prefix):])
+                    for prefix in ("kobo.descriptor:", "kobo.runtime:")
+                )):
+            raise ProviderCapabilityError("kobo_candidate_route_unconfirmed")
+        return selected_offer_id.startswith("kobo.runtime:")
+
+    def downloadable_selected_delivery_candidate_runtime_guarded(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current, execute_runtime,
+    ):
+        """Optional Core runtime callback; no plugin-managed runtime service."""
+        if not callable(execute_runtime):
+            raise ProviderCapabilityError("kobo_candidate_runtime_unavailable")
+        return self.downloadable_selected_delivery_candidate_guarded(
+            account, edition_id=edition_id, resource_id=resource_id,
+            kind=kind, branch=branch, selected_offer_id=selected_offer_id,
+            target_dir=target_dir, explicit_user_action=explicit_user_action,
+            admission_current=admission_current, execute_runtime=execute_runtime,
         )
 
     def rights_selected_delivery_offer_snapshot(
@@ -1333,7 +1725,7 @@ class KoboSession(ProviderSession):
     def rights_selected_delivery_candidate(
         self, account, *, edition_id, right_id, kind, branch,
         delivery_offer_id, target_dir, explicit_user_action=False,
-        admission_current=None,
+        admission_current=None, runtime_execute=None,
     ):
         """Optional Core #3171 selected-candidate ABI; never a final receipt.
 
@@ -1348,6 +1740,7 @@ class KoboSession(ProviderSession):
             target_dir=target_dir,
             explicit_user_action=explicit_user_action,
             admission_current=admission_current,
+            runtime_execute=runtime_execute,
         )
 
     def backup_manifest(self) -> list[dict[str, Any]]:
@@ -1579,8 +1972,13 @@ class KoboSession(ProviderSession):
         # Brokerless direct legacy requests without this option are intact.
         if expected_offer_id is not None:
             if (type(expected_offer_id) is not str
-                    or not expected_offer_id.startswith("kobo.descriptor:")
-                    or len(expected_offer_id) != len("kobo.descriptor:") + 64
+                    or not any(
+                        expected_offer_id.startswith(prefix)
+                        and len(expected_offer_id) == len(prefix) + 64
+                        and all(c in "0123456789abcdef"
+                                for c in expected_offer_id[len(prefix):])
+                        for prefix in ("kobo.descriptor:", "kobo.runtime:")
+                    )
                     or type(expected_identity_id) is not str
                     or not expected_identity_id
                     or mode != "descriptor"
@@ -1593,15 +1991,18 @@ class KoboSession(ProviderSession):
         # authorized descriptor/ACSM path.
         if self.acquisition_access in _SCOPE_DENIED:
             raise ProviderError("Kobo-Vault : acquisition indisponible pour ce compte")
-        if (
-            type(mode) is str and mode.casefold() == "delegated"
-            and getattr(self, "_cifereca_delegation_forbidden", False) is True
-        ):
-            raise ProviderError("Kobo-Vault : délégation indisponible pour ce compte")
+        if type(mode) is str and mode.casefold() == "delegated":
+            if getattr(self, "_cifereca_delegation_forbidden", False) is True:
+                raise ProviderError("Kobo-Vault : délégation indisponible pour ce compte")
+            if not self._delegation_admitted():
+                raise ProviderCapabilityError("missing_delegation_scope")
         profile = display_profile if self.supports_acquisition_display_profile else None
         if self.supports_acquisition_display_profile and profile is None:
             profile = self.display_profile
-        acsm = include_acsm if self.supports_acquisition_acsm else None
+        # KVault defaults include_acsm to TRUE if omitted. Opting out is
+        # always allowed, even when no Adobe runtime is installed: selected
+        # KDRM replay must not trigger speculative get_download_link lookups.
+        acsm = include_acsm if self.supports_acquisition_acsm else False
         try:
             result = client.acquisition(
                 product_id,
@@ -1613,10 +2014,15 @@ class KoboSession(ProviderSession):
             ensure_acquisition_scope()
             if expected_offer_id is not None:
                 from cifereca_kobo_delivery_offer import exact_kobo_offer_id
+                from cifereca_kobo_delivery_offer import (
+                    kdrm_runtime_ready, kdrm_delegated_runtime_ready,
+                )
                 current = exact_kobo_offer_id(
                     result, identity_id=expected_identity_id,
                     credential_id=self.credential_id,
                     account_id=account_id, product_id=product_id,
+                    kdrm_runtime_ready=kdrm_runtime_ready(self),
+                    kdrm_delegated_ready=kdrm_delegated_runtime_ready(self),
                 )
                 if current != expected_offer_id:
                     raise ProviderCapabilityError("kobo_delivery_offer_changed")
@@ -1710,6 +2116,7 @@ class KoboSession(ProviderSession):
             "vault_release": self.vault_release or None,
             "display_profile": self.display_profile if self.supports_acquisition_display_profile else None,
             "acsm_export": self.supports_acquisition_acsm,
+            "delegation_available": self._delegation_admitted(),
             "manifest_materialization_policy": {
                 "schema": self.backup_manifest_policy["schema"],
                 "status": self.backup_manifest_policy["status"],

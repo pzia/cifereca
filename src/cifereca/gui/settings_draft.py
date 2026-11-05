@@ -10,6 +10,10 @@ from typing import Any
 
 from ..identities.directory_selection import directory_choice
 from .llm_settings import LLMSettingsError, normalize_llm_settings
+from .borrower_scoped_options import (
+    MAX_BORROWERS, _valid_borrower_id, decimal_limit,
+    validate_saved_borrower_limits,
+)
 
 
 class SettingsValidationError(ValueError):
@@ -193,6 +197,32 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             raise SettingsValidationError(
                 'Données du compte fournisseur invalides : recharger les paramètres.'
             )
+        # An existing untyped ON/OFF value is not a deliberate user toggle.
+        # Refuse a stale GTK draft instead of rewriting a malformed persisted
+        # flag as False during an unrelated Settings save. Legacy *missing*
+        # flags retain their historical compatibility.
+        original_account = editor.get('original_account')
+        # Never copy opaque provider metadata from a *different* connection
+        # if a stale GTK editor was rebound or duplicated. A new row has no
+        # historical snapshot; an existing one must match exact account ID
+        # and provider. Preserve legacy provider casing only.
+        if (type(original_account) is dict and (
+                ('id' in original_account
+                 and original_account['id'] != account_id)
+                or ('provider' in original_account
+                    and (type(original_account['provider']) is not str
+                         or original_account['provider'].casefold()
+                         != provider_id.casefold())))):
+            raise SettingsValidationError(
+                'Origine du compte fournisseur incohérente : recharger les paramètres.'
+            )
+        if (type(original_account) is dict
+                and original_account.get('id') == account_id
+                and 'enabled' in original_account
+                and type(original_account['enabled']) is not bool):
+            raise SettingsValidationError(
+                'Activation historique invalide : recharger les paramètres.'
+            )
         # A plugin may change its descriptor after Settings was opened.
         # Refuse stale or untyped snapshots rather than dropping a credential,
         # coercing an activation flag, or raising an unhandled KeyError.
@@ -303,7 +333,20 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                     raise SettingsValidationError(f'Valeur hors limites : {field.label}')
                 value = raw_value
             elif value_type == 'text':
-                value = raw_value.strip() or fallback
+                # An option explicitly stored on an existing account can be
+                # intentionally empty. The GTK editor preserves that blank;
+                # do not resurrect a retired global or descriptor default on
+                # an unrelated save (or when an optional field is cleared).
+                # New accounts still receive the declared default when blank.
+                original_account = editor.get('original_account')
+                existing_option = (
+                    type(original_account) is dict
+                    and original_account.get('id') == editor['id']
+                    and field.key in original_options
+                )
+                value = raw_value.strip()
+                if not value and not existing_option:
+                    value = fallback
             else:
                 raise SettingsValidationError(f'Type d’option non pris en charge : {field.label}')
             if field.required is True and editor['enabled'] is True and not value:
@@ -322,6 +365,51 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 if not legacy_unchanged:
                     raise SettingsValidationError(f'Option obligatoire : {field.label}')
             options[field.key] = value
+        # Nested, borrower-keyed numeric preferences remain strictly
+        # advisory. Never flatten linked accounts into a connection-wide
+        # quota or convert a bad saved snapshot to a plausible default.
+        scoped_fields = editor.get('scoped_option_fields', {})
+        if type(scoped_fields) is not dict:
+            raise SettingsValidationError(
+                'Préférences par emprunteur invalides : recharger les paramètres.'
+            )
+        for spec in getattr(descriptor, 'borrower_scoped_options', ()):
+            try:
+                previous = validate_saved_borrower_limits(
+                    original_options.get(spec.key, {}), spec
+                )
+            except ValueError:
+                raise SettingsValidationError(
+                    'Préférences d’emprunteur historiques invalides : recharger les paramètres.'
+                ) from None
+            submitted = scoped_fields.get(spec.key, {})
+            if type(submitted) is not dict or len(submitted) > MAX_BORROWERS:
+                raise SettingsValidationError(
+                    'Préférences par emprunteur invalides : recharger les paramètres.'
+                )
+            allowed = {medium for medium, _label in spec.branches}
+            merged = dict(previous)
+            for borrower_id, branch_values in submitted.items():
+                if (not _valid_borrower_id(borrower_id)
+                        or type(branch_values) is not dict
+                        or set(branch_values) != allowed):
+                    raise SettingsValidationError(
+                        'Périmètre de préférence emprunteur invalide.'
+                    )
+                normalized = {}
+                for medium, value in branch_values.items():
+                    if not decimal_limit(value, spec):
+                        raise SettingsValidationError(
+                            'Plafond personnel invalide : entier décimal de 0 à 99 requis.'
+                        )
+                    normalized[medium] = value
+                merged[borrower_id] = {
+                    **previous.get(borrower_id, {}), **normalized,
+                }
+            if len(merged) > MAX_BORROWERS:
+                raise SettingsValidationError('Nombre de lecteurs liés invalide.')
+            if submitted or spec.key in original_options:
+                options[spec.key] = merged
         identity_text = editor.get('identity')
         if type(identity_text) is not str:
             raise SettingsValidationError('Identité de compte fournisseur invalide : recharger les paramètres.')
@@ -334,6 +422,39 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 and original_for_identity.get('id') == editor['id']):
             raise SettingsValidationError(
                 'Identité du compte fournisseur vide : sélectionnez explicitement une identité.'
+            )
+        if (type(original_for_identity) is dict
+                and original_for_identity.get('id') == editor['id']
+                and type(original_for_identity.get('identity_id')) is str
+                and original_for_identity['identity_id'] != selected_identity
+                and any(
+                    editor.get('scoped_option_fields', {}).get(spec.key)
+                    or original_options.get(spec.key)
+                    for spec in getattr(descriptor, 'borrower_scoped_options', ())
+                )):
+            raise SettingsValidationError(
+                'Déplacer un compte avec des plafonds de lecteurs liés '
+                'nécessite une nouvelle connexion explicite.'
+            )
+        # A changed public login can represent another remote borrower while
+        # reusing the local credential row ID. Never carry previously scoped
+        # linked-reader preferences across that ownership boundary. Secret
+        # password rotation alone does not change the borrower identity.
+        if (type(original_for_identity) is dict
+                and original_for_identity.get('id') == editor['id']
+                and any(
+                    original_options.get(spec.key)
+                    for spec in getattr(descriptor, 'borrower_scoped_options', ())
+                )
+                and any(
+                    field.secret is not True
+                    and field.key in original_credentials
+                    and original_credentials.get(field.key) != credentials.get(field.key)
+                    for field in descriptor.credential_fields
+                )):
+            raise SettingsValidationError(
+                'Changer l’identifiant de connexion avec des plafonds de '
+                'lecteurs liés nécessite un nouveau compte fournisseur.'
             )
         account_identity_id = selected_identity or saved_identities[0]['id']
         if account_identity_id not in identity_ids:

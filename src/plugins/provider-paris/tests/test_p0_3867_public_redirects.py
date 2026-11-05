@@ -150,3 +150,287 @@ def test_malformed_host_never_raises_unredacted_parser_exception(invalid):
             client._validate_pnb_redirect_url(invalid)
     finally:
         client.close()
+
+
+def test_signed_supplier_redirect_cycle_stops_before_third_get(monkeypatch):
+    """A replay of the original signed URL is forbidden even below hop limit."""
+    client = ParisClient("https://bibliotheques.paris.fr")
+    calls = []
+
+    def respond(url, **_kwargs):
+        calls.append(url)
+        assert len(calls) <= 2, "redirect cycle must not repeat a signed GET"
+        target = FOREIGN if url == START else START
+        return httpx.Response(
+            302, headers={"Location": target},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(client, "_get_pnb_response", respond)
+    try:
+        with pytest.raises(Exception, match="Boucle de redirections PNB") as error:
+            client._resolve_pnb_loan_to_acsm(START)
+        assert calls == [START, FOREIGN]
+        assert "ticket=" not in str(error.value)
+        assert "key=" not in str(error.value)
+    finally:
+        client.close()
+
+
+def test_paris_selected_delivery_redirect_cycle_never_publishes(tmp_path, monkeypatch):
+    """The selected-right staging path must enforce the same no-replay rule."""
+    from types import SimpleNamespace as NS
+
+    from cifereca.plugin_api import ProviderConfigurationError
+    from tests.test_p0_3252_paris_download_scope import SIGNED, prepare
+
+    session, account, loan, client, calls = prepare(tmp_path, monkeypatch)
+    foreign = "https://new-delivery.example/file?token=SYNTHETIC_SECRET"
+
+    def respond(url):
+        calls.append(url)
+        assert len(calls) <= 2, "selected candidate must not repeat a signed GET"
+        return NS(
+            status_code=307, url=url,
+            headers={"location": foreign if url == SIGNED else SIGNED},
+        )
+
+    client._get_pnb_response = respond
+    try:
+        with pytest.raises(ProviderConfigurationError, match="Boucle de redirections PNB") as error:
+            session.download_digital(loan, account, tmp_path)
+        assert calls == [SIGNED, foreign]
+        assert "SYNTHETIC_SECRET" not in str(error.value)
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
+
+
+def test_public_supplier_200_is_bounded_while_preserving_candidate_bytes(monkeypatch):
+    client = ParisClient("https://bibliotheques.paris.fr")
+    from cifereca_paris_client import _MAX_PNB_PUBLIC_BODY_BYTES
+    public_requests = []
+
+    def factory(*, producer, timeout):
+        def respond(request):
+            public_requests.append(request)
+            return httpx.Response(
+                200, headers={"Content-Type": "application/vnd.adobe.adept+xml"},
+                content=b"<fulfillment>synthetic</fulfillment>",
+            )
+        return httpx.Client(transport=httpx.MockTransport(respond), trust_env=False)
+
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        response = client._get_pnb_response(FOREIGN)
+        assert response.status_code == 200
+        assert response.content == b"<fulfillment>synthetic</fulfillment>"
+        assert str(response.url) == FOREIGN
+        assert len(public_requests) == 1
+        assert _MAX_PNB_PUBLIC_BODY_BYTES == 128 * 1024 * 1024
+    finally:
+        client.close()
+
+
+def test_public_supplier_rejects_oversize_stream_without_leaking_signed_url(monkeypatch):
+    import cifereca_paris_client as module
+    client = ParisClient("https://bibliotheques.paris.fr")
+    signed = "https://new-supplier.example/file.acsm?token=PRIVATE_SIGNATURE"
+
+    def factory(*, producer, timeout):
+        return httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=b"X" * 17)
+        ), trust_env=False)
+
+    monkeypatch.setattr(module, "_MAX_PNB_PUBLIC_BODY_BYTES", 16)
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        with pytest.raises(module.ParisError, match="trop volumineuse") as error:
+            client._get_pnb_response(signed)
+        assert "PRIVATE_SIGNATURE" not in str(error.value)
+        assert "new-supplier.example" not in str(error.value)
+    finally:
+        client.close()
+
+
+def test_public_supplier_refuses_announced_oversize_before_reading_body(monkeypatch):
+    import cifereca_paris_client as module
+    client = ParisClient("https://bibliotheques.paris.fr")
+    seen = []
+
+    class MustNotRead(httpx.SyncByteStream):
+        def __iter__(self):
+            seen.append("read")
+            raise AssertionError("oversized response body must not be consumed")
+        def close(self):
+            pass
+
+    def factory(*, producer, timeout):
+        return httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, headers={"Content-Length": "17"}, stream=MustNotRead(),
+            )
+        ), trust_env=False)
+
+    monkeypatch.setattr(module, "_MAX_PNB_PUBLIC_BODY_BYTES", 16)
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        with pytest.raises(module.ParisError, match="trop volumineuse"):
+            client._get_pnb_response(FOREIGN)
+        assert seen == []
+    finally:
+        client.close()
+
+
+def test_public_supplier_redirect_body_is_never_read(monkeypatch):
+    client = ParisClient("https://bibliotheques.paris.fr")
+    seen = []
+
+    class MustNotRead(httpx.SyncByteStream):
+        def __iter__(self):
+            seen.append("read")
+            raise AssertionError("redirect body must not be consumed")
+        def close(self):
+            pass
+
+    def factory(*, producer, timeout):
+        return httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                307, headers={"Location": FINAL}, stream=MustNotRead(),
+            )
+        ), trust_env=False)
+
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    try:
+        response = client._get_pnb_response(FOREIGN)
+        assert response.status_code == 307
+        assert response.headers["location"] == FINAL
+        assert response.content == b""
+        assert seen == []
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("malformed_location", [
+    "https://cdn.example/file.acsm\rPRIVATE",
+    "https://cdn.example/file.acsm\nPRIVATE",
+    "https://cdn.example/file.acsm\tPRIVATE",
+    "https://cdn.example/file.acsm\\\\PRIVATE",
+    "https://cdn.example/file.acsm#FRAGMENT",
+])
+def test_raw_signed_location_refused_before_urljoin_or_second_get(
+    monkeypatch, malformed_location,
+):
+    # HTTP response headers from untrusted suppliers must never be repaired
+    # by urllib before they are authorized as the next signed GET.
+    from types import SimpleNamespace
+    client = ParisClient("https://bibliotheques.paris.fr")
+    calls = []
+
+    def respond(url, **_kwargs):
+        calls.append(url)
+        assert calls == [START]
+        return SimpleNamespace(
+            status_code=302, url=START,
+            headers={"location": malformed_location},
+        )
+
+    monkeypatch.setattr(client, "_get_pnb_response", respond)
+    monkeypatch.setattr(client, "_pnb_trace_response", lambda *_a, **_kw: None)
+    try:
+        with pytest.raises(ParisRedirectError) as error:
+            client._resolve_pnb_loan_to_acsm(START)
+        assert calls == [START]
+        assert "PRIVATE" not in str(error.value)
+        assert "FRAGMENT" not in str(error.value)
+    finally:
+        client.close()
+
+
+def test_same_origin_relative_location_still_valid(monkeypatch):
+    client = ParisClient("https://bibliotheques.paris.fr")
+    calls = []
+    relative = "/numerique/another-hop"
+
+    def respond(url, **_kwargs):
+        calls.append(url)
+        return httpx.Response(
+            302, headers={
+                "location": relative if len(calls) == 1 else FINAL,
+            }, request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(client, "_get_pnb_response", respond)
+    try:
+        assert client._resolve_pnb_loan_to_acsm(START) == FINAL
+        assert calls == [
+            START,
+            "https://bibliotheques.paris.fr/numerique/another-hop",
+        ]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("signed_url", (FOREIGN, START))
+def test_guarded_paris_pnb_stream_stops_when_core_lease_revoked_mid_body(
+    monkeypatch, signed_url,
+):
+    from cifereca_paris_client import ParisError
+    client = ParisClient("https://bibliotheques.paris.fr")
+    live = [True]
+    seen = []
+
+    class RevokingBody(httpx.SyncByteStream):
+        def __iter__(self):
+            seen.append("first-chunk")
+            live[0] = False
+            yield b"A" * (64 * 1024)
+            seen.append("forbidden-second-chunk")
+            yield b"not-allowed"
+        def close(self):
+            pass
+
+    def supplier(request):
+        seen.append("request")
+        return httpx.Response(
+            200, headers={"Content-Type": "application/vnd.adobe.adept+xml"},
+            stream=RevokingBody(),
+        )
+
+    def factory(*, producer, timeout):
+        return httpx.Client(
+            transport=httpx.MockTransport(supplier),
+            trust_env=False, follow_redirects=False,
+        )
+
+    monkeypatch.setattr(HTTPX_TRANSPORT, "public_client", factory)
+    if signed_url == START:
+        # The authenticated same-origin hop must also be streamed under
+        # a live Core lease rather than using eager, uncancellable get().
+        client.client.close()
+        client.client = httpx.Client(
+            transport=httpx.MockTransport(supplier),
+            trust_env=False, follow_redirects=False,
+        )
+    try:
+        with pytest.raises(ParisError, match="Core admission revoked"):
+            client._get_pnb_response(
+                signed_url, admission_current=lambda: live[0],
+            )
+        assert seen == ["request", "first-chunk"]
+    finally:
+        client.close()
+
+
+def test_guarded_paris_pnb_refuses_revoked_lease_before_any_https_request(monkeypatch):
+    from cifereca_paris_client import ParisError
+    client = ParisClient("https://bibliotheques.paris.fr")
+    monkeypatch.setattr(
+        HTTPX_TRANSPORT, "public_client",
+        lambda **_kwargs: pytest.fail("revoked Core must not construct HTTP client"),
+    )
+    try:
+        with pytest.raises(ParisError, match="Core admission revoked"):
+            client._get_pnb_response(FOREIGN, admission_current=lambda: False)
+    finally:
+        client.close()

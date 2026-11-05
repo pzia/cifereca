@@ -37,13 +37,26 @@ Les images de recommandations et les URLs non admissibles restent inconnues.
 Recette GTK de deux cartes/détails à couvertures réellement affichées toujours
 requise avant fermeture de #4118.
 
+## Échéances réelles BnF — P1 #4146 (version 0.3.29)
+
+L'activité privée officielle `/my_profile/activity` contient une échéance
+dans chaque carte `js-loan` validée par prêt/ressource : un unique
+`article.js-loan__content .details-content__body > .time-remaining`
+avec « Votre prêt expirera le » et un unique `strong` de date française.
+Le parseur traduit cette **date calendaire locale attestée** en ISO-8601
+sans fuseau/offset inventé, et projette `Loan.due_at` en liste et détail
+génériques. Les dates absentes, ambiguës, invalides ou étrangères à la
+carte restent `None` ; aucun prêt n'est clôturé par cette seule date.
+Aucune lecture de jeton ACSM, mutation ou nouvelle opération réseau.
+Le DOM privé ne figure ni dans GitHub ni dans les tests.
+
 ## Installer et essayer
 
 Depuis la branche contenant cette version :
 
 ```bash
 python scripts/package-plugin.py src/plugins/provider-bnf-pret --out dist
-cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.28.zip --replace
+cifereca-cli plugin install dist/cifereca-plugin-provider-bnf-pret-0.3.29.zip --replace
 cifereca-cli plugin enable provider.bnf-pret
 ```
 
@@ -63,33 +76,40 @@ sans cette clé reste inchangée : la valeur 4 affichée ne crée pas
 de nouveau droit. Le schéma déclaratif nécessite **Core Plugin API 1.4.5** ;
 la version du package 0.3.27 refuse son installation sur une API antérieure.
 
-## Emprunt BnF Prêt manuel après vérification visuelle (#2055, 0.3.26)
+## Emprunt BnF Prêt sur clic explicite unique (#2055/#3121, 0.3.26)
 
 **Compatibilité :** le signal typé `BorrowRequestNotSubmitted` exige Core Plugin API **1.4.4**. Mettre à jour le Core avant le plugin 0.3.26 ; les corrections de recherche `/resources?q=…` introduites dans 0.3.23 restent en place.
 
-**Arbitrage du 01/11/2026 :** l'utilisateur vérifie sur **pret.bnf.fr**
-que le titre numérique exact semble empruntable pour son compte avant de
-confirmer le même titre/compte dans Cifereca. La BnF peut refuser la
-transaction selon le Pass, le quota ou la disponibilité. La lecture
-machine des marqueurs de quota n'est **pas un prérequis P0** :
-elle est suivie dans **[#4063 P2](https://github.com/pzia/cifereca/issues/4063)**.
+**Arbitrage du 03/11/2026 — P1 #3121, remplaçant celui du 01/11 :**
+le clic explicite sur **« Emprunter »** dans la fiche numérique BnF
+constitue **l'unique demande volontaire**. Cifereca n'impose ni
+double confirmation, ni popup « J’ai vérifié sur BnF », ni vérification
+préalable de **pret.bnf.fr**. La BnF conserve la décision effective de
+Pass, quota et disponibilité ; le clic n'est pas une preuve de droit.
+La lecture machine informative des quotas reste en
+**[#4063 P2](https://github.com/pzia/cifereca/issues/4063)**.
 
 Le manifeste publie `acquisition.borrow` et le descripteur
 `ProviderCapabilities.borrow=True`, pour la **seule confirmation
 manuelle CoreUI dédiée**. La méthode générique
 `ProviderSession.borrow` demeure verrouillée
 (`bnf_borrow_requires_core_dispatch`) et refuse AVANT I/O.
-Le parcours Core peut uniquement être appelé après
-`confirmed=True` **et** `site_checked=True`, sur la notice/identité
-exactes avec bail valide et un reçu SQLite de tentative durable.
+Le contrôleur CoreUI appelle le Core avec `confirmed=True` pour
+attester **le clic utilisateur unique**. L'argument historique
+`site_checked` est accepté mais **ignoré** par le Core ; il ne peut
+plus bloquer ou autoriser le prêt. La notice/l'identité exactes,
+le bail courant et un claim SQLite de tentative durable restent requis.
 
 Transaction : lecture fraîche activité → fiche exacte → lien/bouton unique non
 désactivé → GET confirmation/formulaire/CSRF → sur formulaire média, relecture
 d'activité intermédiaire → un POST d'activation sans redirect/retry →
 relecture d'activité et corrélation du prêt actif.
-`HTTP 200` seul n'est pas une confirmation. **Dès l'appel au transport GET média ou POST**, tout refus HTTP, timeout ou résultat incertain conserve le verrou durable ; aucun deuxième envoi de mutation, même après redémarrage. L'utilisateur vérifie son compte BnF. **Avant tout GET média et avant tout POST**, si le provider atteste une défaillance de lecture de l'activité ou de la fiche, le Core libère le verrou uniquement par CAS sur l'opération exacte (`borrow_not_submitted`). Aucune relance automatique : nouvelle vérification visuelle et nouvelle confirmation requises. Aucun téléchargement ACSM/ADEPT implicite et aucune création de prêt depuis la synchronisation.
+`HTTP 200` seul n'est pas une confirmation. **Dès l'appel au transport GET média ou POST**, tout refus HTTP, timeout ou résultat incertain conserve le verrou durable ; aucun deuxième envoi de mutation, même après redémarrage. L'utilisateur vérifie son compte BnF. **Avant tout GET média et avant tout POST**, si le provider atteste une défaillance de lecture de l'activité ou de la fiche, le Core libère le verrou uniquement par CAS sur l'opération exacte (`borrow_not_submitted`). Aucune relance automatique : un nouveau geste volontaire est possible
+uniquement si le Core a explicitement attesté `borrow_not_submitted`
+et libéré le claim ; après une tentative incertaine, consulter
+« Mes emprunts »/le portail BnF, sans réémettre la mutation. Aucun téléchargement ACSM/ADEPT implicite et aucune création de prêt depuis la synchronisation.
 
-**Formulaire BnF observé en octobre 2026 :** la fiche peut présenter `<form method=get action=/media/{opaque}/loans_confirmation>` avec `_resource_id`, `notify`, `email` et `<button type=submit class=button-borrow>`, au lieu d'un lien `<a href=...>`. Un bouton de réservation `button-booking` ne permet jamais d'emprunter. Le parseur valide exclusivement cette forme GET/route et ses trois champs bornés, avec correspondance exacte `_resource_id`, puis le POST `/media/{même opaque}/loans_activation` sous l'admission Core existante. **Retour terrain du 01/11 à 21:47 :** l'action du POST réel conserve dans sa query les trois champs `_resource_id`, `notify`, `email` du GET de confirmation, alors que son corps contient seulement le CSRF caché. La version 0.3.25 rejetait cette query avec `borrow_url_refused`, après GET 200 et sans POST ; 0.3.26 exige désormais une **égalité stricte des trois paires** entre les deux étapes, sans répétition, substitution ni paramètres supplémentaires. Le champ `authenticity_token` est transmis exclusivement par le POST observé. **Attention :** le GET de confirmation peut être mutateur ; la tentative du 01/11 demeure verrouillée, aucune relance automatique ni réarmement de son claim. Les tests 0.3.26 restent synthétiques et l'emprunt réellement confirmé reste à recetter. Le GET de confirmation est traité **conservativement comme une mutation possible** : aucun GET depuis `borrow_preflight` ; après validation humaine, son transport consomme le claim et aucun réarmement automatique n'est permis sur timeout ou résultat incertain. Une relecture de prêts actifs après GET interdit un second POST si le prêt cible apparaît déjà. Une seconde relecture après POST atteste l'état réel, sans que HTTP 200 seul suffise. L'archive Browser Recorder du 31/10 documente GET confirmation 200 → POST activation 200 → GET activité 200, mais ses octets privés ne sont pas versionnés dans le dépôt ; les nouvelles fixtures sont purement synthétiques et cette PR ne vaut pas recette transactionnelle réelle.
+**Formulaire BnF observé en octobre 2026 :** la fiche peut présenter `<form method=get action=/media/{opaque}/loans_confirmation>` avec `_resource_id`, `notify`, `email` et `<button type=submit class=button-borrow>`, au lieu d'un lien `<a href=...>`. Un bouton de réservation `button-booking` ne permet jamais d'emprunter. Le parseur valide exclusivement cette forme GET/route et ses trois champs bornés, avec correspondance exacte `_resource_id`, puis le POST `/media/{même opaque}/loans_activation` sous l'admission Core existante. **Retour terrain du 01/11 à 21:47 :** l'action du POST réel conserve dans sa query les trois champs `_resource_id`, `notify`, `email` du GET de confirmation, alors que son corps contient seulement le CSRF caché. La version 0.3.25 rejetait cette query avec `borrow_url_refused`, après GET 200 et sans POST ; 0.3.26 exige désormais une **égalité stricte des trois paires** entre les deux étapes, sans répétition, substitution ni paramètres supplémentaires. Le champ `authenticity_token` est transmis exclusivement par le POST observé. **Attention :** le GET de confirmation peut être mutateur ; la tentative du 01/11 demeure verrouillée, aucune relance automatique ni réarmement de son claim. Les tests 0.3.26 restent synthétiques et l'emprunt réellement confirmé reste à recetter. Le GET de confirmation est traité **conservativement comme une mutation possible** : aucun GET depuis `borrow_preflight` ; après le clic explicite unique, son transport consomme le claim et aucun réarmement automatique n'est permis sur timeout ou résultat incertain. Une relecture de prêts actifs après GET interdit un second POST si le prêt cible apparaît déjà. Une seconde relecture après POST atteste l'état réel, sans que HTTP 200 seul suffise. L'archive Browser Recorder du 31/10 documente GET confirmation 200 → POST activation 200 → GET activité 200, mais ses octets privés ne sont pas versionnés dans le dépôt ; les nouvelles fixtures sont purement synthétiques et cette PR ne vaut pas recette transactionnelle réelle.
 
 Le badge HTML générique `.lb_unavailable` est purement informatif lorsqu'un lien d'emprunt unique et actif est présent sur la fiche exacte. Lien absent, désactivé ou ambigu, confirmation / CSRF incorrect ou édition discordante restent bloquants avant POST.
 

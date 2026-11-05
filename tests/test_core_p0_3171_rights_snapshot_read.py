@@ -16,11 +16,21 @@ STAMP = "2026-10-28T08:00:00+00:00"
 
 
 class FakeStorage:
-    def __init__(self, owners):
+    def __init__(self, owners, bound_accounts=()):
         self.owners = owners
+        self.bound_accounts = set(bound_accounts)
 
     def identity_for_connection(self, provider, credential):
         return self.owners.get((provider, credential))
+
+    def provider_scope_account_bound(
+        self, *, identity_id, provider_id, credential_id, account_id,
+    ):
+        return (
+            self.owners.get((provider_id, credential_id)) == identity_id
+            and (identity_id, provider_id, credential_id, account_id)
+            in self.bound_accounts
+        )
 
 
 class ProviderSession:
@@ -64,9 +74,71 @@ def rig(provider="provider-alpha", *, owner="A", credential="cred-A",
         _source_context_epoch=1,
         accounts=[account],
         _sessions={(provider, credential): session},
-        storage=FakeStorage({(provider, credential): owner}),
+        sync_source_enabled=lambda selected: selected is account,
+        storage=FakeStorage(
+            {(provider, credential): owner},
+            {(owner, provider, credential, buyer)},
+        ),
     )
     return service, account, session
+
+
+@pytest.mark.parametrize("change", ["missing", "sibling_only", "foreign_owner"])
+def test_deleted_or_reassigned_sql_borrower_blocks_first_private_get(change):
+    service, account, session = rig()
+    if change == "missing":
+        service.storage.bound_accounts.clear()
+    elif change == "sibling_only":
+        service.storage.bound_accounts.clear()
+        service.storage.bound_accounts.add((
+            "A", "provider-alpha", "cred-A", "other-borrower",
+        ))
+    else:
+        service.storage.owners[("provider-alpha", "cred-A")] = "B"
+        service.storage.bound_accounts.clear()
+        service.storage.bound_accounts.add((
+            "B", "provider-alpha", "cred-A", "buyer-A",
+        ))
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and result.rights == ()
+    assert session.calls == 0
+
+
+def test_sql_borrower_removed_during_private_read_discards_entire_batch():
+    service, account, session = rig()
+
+    def revoke(_account):
+        service.storage.bound_accounts.clear()
+        return ProviderSession(
+            session.provider_id, session.credential_id,
+        ).rights_observation_snapshot(account)
+
+    session.reader = revoke
+    result = read_account_rights_snapshot(service, account)
+    assert session.calls == 1
+    assert result.status == "failed" and result.rights == ()
+    assert result.coverage == "unknown"
+    assert not result.authorizes_mutation
+
+
+def test_sql_borrower_removed_between_pages_prevents_next_private_get():
+    service, account, session = rig()
+    calls = []
+    first = ProviderSession(
+        session.provider_id, session.credential_id,
+    ).rights_observation_snapshot(account)
+
+    def paged(_account, *, resume_cursor=""):
+        calls.append(resume_cursor)
+        if resume_cursor:
+            pytest.fail("no private continuation after SQL borrower revocation")
+        service.storage.bound_accounts.clear()
+        return replace(first, resume_cursor="cursor-after-first")
+
+    session.rights_observation_snapshot = paged
+    result = read_account_rights_snapshot(service, account)
+    assert result.status == "failed" and result.rights == ()
+    assert calls == [""]
 
 
 @pytest.mark.parametrize("provider", ["provider-alpha", "provider-beta"])
@@ -226,17 +298,52 @@ def test_provider_cancelled_exception_is_distinct_from_provider_failure(caplog):
     assert "rights snapshot read failed" not in caplog.text
 
 
-def test_raw_original_failure_is_logged_and_status_is_closed(caplog):
-    service, account, session = rig()
+def test_provider_failure_logs_closed_reason_without_private_values(caplog):
+    service, account, session = rig(
+        provider="provider-private", owner="PRIVATE_IDENTITY",
+        credential="PRIVATE_CREDENTIAL", buyer="PRIVATE_BORROWER",
+    )
+    signed = "https://delivery.example.invalid/PRIVATE_SIGNED?key=SECRET"
     session.reader = lambda _: (_ for _ in ()).throw(
-        ValueError("synthetic-provider-error?url=/exact-route&status=403")
+        ValueError("provider failure: " + signed)
     )
     with caplog.at_level("WARNING", logger="cifereca"):
         result = read_account_rights_snapshot(service, account)
     assert result.status == "failed" and result.rights == ()
-    assert "synthetic-provider-error?url=/exact-route&status=403" in caplog.text
-    assert "account_id=buyer-A" in caplog.text
+    assert "rights snapshot read failed code=provider_error" in caplog.text
+    assert "reader_kind=rights_observation_snapshot" in caplog.text
+    for secret in (
+        signed, "PRIVATE_IDENTITY", "PRIVATE_CREDENTIAL", "PRIVATE_BORROWER",
+        "PRIVATE_SIGNED", "SECRET", "provider failure:",
+    ):
+        assert secret not in caplog.text
     assert session.calls == 1
+
+
+def test_pagination_failure_keeps_positive_prefix_and_redacts_provider_error(caplog):
+    service, account, session = rig()
+    private_error = "https://supplier.example.invalid/SIGNED?secret=PRIVATE_TOKEN"
+    observed = ProviderSession(
+        session.provider_id, session.credential_id,
+    ).rights_observation_snapshot(account)
+
+    def paged(selected, *, resume_cursor=""):
+        if resume_cursor:
+            raise RuntimeError(private_error)
+        assert selected is account
+        return replace(observed, resume_cursor="PRIVATE_CURSOR")
+
+    session.rights_observation_snapshot = paged
+    with caplog.at_level("WARNING", logger="cifereca"):
+        result = read_account_rights_snapshot(service, account)
+    assert result.status == result.coverage == "partial"
+    assert len(result.rights) == 1
+    assert result.resume_cursor == "PRIVATE_CURSOR"
+    assert "TRACE rights pagination code=page_unavailable" in caplog.text
+    assert private_error not in caplog.text
+    assert "PRIVATE_TOKEN" not in caplog.text
+    assert "PRIVATE_CURSOR" not in caplog.text
+    assert "buyer-A" not in caplog.text
 
 
 def test_bounded_positive_cardinality_zero_and_n():

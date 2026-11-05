@@ -255,6 +255,10 @@ def _card(card, source_url, rank, page_index):
         'isbn_digital': None, 'isbn_print': None, 'language': None,
         'author_roles': None, 'age_range': None,
         'warnings': warnings,
+        # The public search parser has already required one unique,
+        # supplier-qualified product card and validated its exact title link.
+        # This is NOT an owned purchase, an entitlement or a delivery offer.
+        'public_url_evidence': 'numilog.public_search_product_card',
     }
     selectors = {
         'title': 'a.TitleBook', 'authors': 'a.Author', 'publisher': '.product_meta .LabelInfos[Éditeur]',

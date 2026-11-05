@@ -6,9 +6,17 @@ External plugins should import from this package only.  Internal modules such as
 
 from cifereca.http_trace import HTTPX_TRANSPORT, TraceHTTPTransport, TraceAsyncHTTPTransport, TraceHTTPClient, TraceAsyncHTTPClient
 from .context import PluginContext
+from cifereca.document_classification import (
+    DOCUMENT_CLASSIFICATION_CONTRACT, ClassificationEvidence,
+    DocumentClassification, classification_for_search_result,
+)
 from cifereca.install_paths import prefer_downloads_for_save
 from .provider_collection import (ProviderCollection, ProviderCollectionSnapshot, VirtualProviderEntry, ProviderCollectionValidationError, validate_provider_collection_snapshot)
 from .provider_search_stream import ProviderSearchEvent, ProviderSearchStream
+from .provider_search_facets import (
+    CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
+    ProviderSearchWithFacets,
+)
 from .capability_matrix import (
     CAPABILITY_MATRIX_CONTRACT, CapabilityEvidence, CapabilityMatrix,
     declared_provider_matrix,
@@ -55,7 +63,7 @@ from .models import (
     UiActionContribution, UiPageContribution, UiPageHost, UiPerformanceHost, UiSearchNavigationHost, UiIdentityHost, UiIdentityViewHost, UiMasterDetailHost, UiBookMasterDetailView, UiBookListEntry, UiBookDetailAction, DocumentLink, UiBookDetailPresentation, UiPageActionHost, UiPageProvider, UiTitlebarProvider, WidgetCatalog,
     ResolvedPluginService, Provenance, YouthAgeKind, YouthAgeRange, BookRef, BookReferenceRecommendationService, DetailField, DetailSection, CachedBookDetail, BookDetailCacheEnricher, BookDetailCacheNotifier, FacetTag, ArtifactFormat, ArtifactRef, ArtifactVariant,
     ArtifactPlacementRef, ArtifactPossessionRef, LogicalBookArtifacts, LibraryMutationOperation, LibraryMutationRequest, LibraryMutationPlan, LibraryMutationResult,
-    ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CatalogueSourceCapability, ReleaseInstallationSnapshot, ReleaseUpdatePreview, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncPhaseState, SyncSourceRef, AdeptProfileRef, RuntimeAcquisitionCapabilities,
+    ArtifactRouteRequest, ArtifactRouteTarget, ArtifactRoutePlan, ArtifactTransferResult, CatalogSearchBatch, CatalogSearchSummary, CatalogueSourceCapability, ReleaseInstallationSnapshot, ReleaseUpdatePreview, CacheNamespaceInfo, CachePurgeResult, ActionStatistics, SyncRequest, SyncResult, AccountRef, SyncPhaseState, SyncSourceCycleReceipt, SyncSourceRef, AdeptProfileRef, RuntimeAcquisitionCapabilities,
     MaintenanceToolInfo, MaintenanceContext, MaintenancePlan, MaintenanceResult, MaintenanceTool,
     TransformCapability, TransformRequest, TransformPlan, TransformResult, ArtifactInputLease, ArtifactOutputLease, TaskControl, TaskHandle, TransportService, CatalogServiceFactory, HealthCheckResult, DiagnosticsCheckProvider, DocumentTransformer,
     UiActionContext, UiBookListHost, UiBookDetailHost, UiFacetHost, UiActionHost, UiBookNavigationHost, UiLoadedSearchNoticeHost, UiKnownSearchNoticeHost, UiPluginManagementHost,
@@ -104,6 +112,8 @@ __all__ = [
     "LendingActionAdmission", "assess_lending_action", "LendingActionStatus",
     "LendingActionOutcome",
     "ProviderSearchEvent", "ProviderSearchStream",
+    "CatalogSearchFacet", "CatalogSearchFacetValue", "ProviderSearchResponse",
+    "ProviderSearchWithFacets",
     "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix", "project_existing_capabilities",
     "RIGHTS_OBSERVATION_CONTRACT", "ProviderRightsScope", "ProviderRightObservation", "ProviderRightsSnapshot",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",
@@ -118,7 +128,7 @@ __all__ = [
     "ResolvedPluginService", "Provenance", "YouthAgeKind", "YouthAgeRange", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "CachedBookDetail", "BookDetailCacheEnricher", "BookDetailCacheNotifier", "FacetTag",
     "ArtifactFormat", "ArtifactRef", "ArtifactVariant", "ArtifactPlacementRef", "ArtifactPossessionRef", "LogicalBookArtifacts",
     "LibraryMutationOperation", "LibraryMutationRequest", "LibraryMutationPlan", "LibraryMutationResult",
-    "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CatalogueSourceCapability", "ReleaseInstallationSnapshot", "ReleaseUpdatePreview", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncPhaseState", "SyncSourceRef", "AdeptProfileRef", "RuntimeAcquisitionCapabilities",
+    "ArtifactRouteRequest", "ArtifactRouteTarget", "ArtifactRoutePlan", "ArtifactTransferResult", "CatalogSearchBatch", "CatalogSearchSummary", "CatalogueSourceCapability", "ReleaseInstallationSnapshot", "ReleaseUpdatePreview", "CacheNamespaceInfo", "CachePurgeResult", "ActionStatistics", "SyncRequest", "SyncResult", "AccountRef", "SyncPhaseState", "SyncSourceCycleReceipt", "SyncSourceRef", "AdeptProfileRef", "RuntimeAcquisitionCapabilities",
     "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult", "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "CatalogServiceFactory", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiKnownSearchNoticeHost", "UiPluginManagementHost",
@@ -132,7 +142,7 @@ __all__ = [
     "bundle_search_values", "load_bundle_manifest", "write_bundle_manifest",
     "BundleRecipeError", "BundleTrack", "BundleAcquisitionRecipe", "normalize_audio_format", "validate_audio_bundle_manifest", "document_links", "book_ref_from_row", "BookAccessFact", "book_access_facts", "CachedBookDetailContribution", "collect_cached_book_details", "subscribe_cached_book_detail_changes", "youth_age_from_label", "youth_age_matches",
     "Account", "Booking", "HistoryItem", "Holding", "ItemDetail", "Loan", "Medium", "SearchResult",
-    "AccountOptionField", "CredentialField", "ProviderCapabilities", "ProviderSearchCapabilities", "ProviderCapabilityError",
+    "AccountOptionField", "BorrowerScopedOptionField", "CredentialField", "ProviderCapabilities", "ProviderSearchCapabilities", "ProviderCapabilityError",
     "ProviderConfigurationError", "ProviderDescriptor", "ProviderError",
     "ProviderPlugin", "ProviderSession",
 ]
@@ -141,7 +151,7 @@ __all__ = [
 # through plugin_api so external provider packages never import core internals.
 from cifereca.models import Account, Booking, HistoryItem, Holding, ItemDetail, Loan, Medium, SearchResult
 from cifereca.providers.base import (
-    AccountOptionField, CredentialField, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderConfigurationError,
+    AccountOptionField, BorrowerScopedOptionField, CredentialField, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderConfigurationError,
     ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession,
 )
 

@@ -23,9 +23,14 @@ def _setup(service, *, credential="vault-fictional", identity="alice", bind=True
     )
     service.accounts = [account]
     if bind:
-        service.storage.provider_connection_put({
+        connection_id = service.storage.provider_connection_put({
             "provider_id": "kobo", "credential_id": credential,
             "identity_id": identity, "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": connection_id, "identity_id": identity,
+            "provider_id": "kobo", "credential_id": credential,
+            "account_id": account.unique_id,
         })
 
     def library():

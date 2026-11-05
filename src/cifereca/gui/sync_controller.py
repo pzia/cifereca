@@ -75,6 +75,37 @@ def _build_sync_page(self):
     self._sync_attention_icon = alert_icon
     self._sync_attention_text = alert_text
     heading.append(alert_row)
+    # The fixed warning banner navigates to an actual, currently visible
+    # source row. It never invokes a Sync command or exposes opaque IDs.
+    jump = self.action_button("Voir les points à vérifier", "go-down-symbolic")
+    jump.set_tooltip_text(
+        "Atteindre successivement les comptes en erreur ou avertissement, "
+        "sans lancer de synchronisation."
+    )
+    jump.set_visible(False)
+    alert_row.append(jump)
+    self._sync_attention_jump_button = jump
+    self._sync_attention_targets = []
+    self._sync_attention_cursor = 0
+    self._sync_attention_scope = None
+    self._sync_scroll = scroll
+
+    def jump_to_attention(_button):
+        scope = getattr(self, "_sync_attention_scope", None)
+        if (getattr(self, "_sync_page_token", None) is not page_token
+                or scope is None or not sync_action_scope_current(self, scope)):
+            return
+        from cifereca.gui.sync_attention_navigation import (
+            next_sync_attention_target, focus_sync_attention_target,
+        )
+        target, position = next_sync_attention_target(
+            getattr(self, "_sync_attention_targets", ()),
+            getattr(self, "_sync_attention_cursor", 0),
+        )
+        if target is not None and focus_sync_attention_target(scroll, target):
+            self._sync_attention_cursor = position
+
+    jump.connect("clicked", jump_to_attention)
     add_sync_action(heading, refresh)
     add_sync_action(heading, all_now)
     root.append(sync_action_row(heading))
@@ -152,6 +183,12 @@ def _refresh_sync_page(self) -> None:
     all_now = getattr(self, "_sync_all_button", None)
     summary = getattr(self, "_sync_summary", None)
     alert_row = getattr(self, "_sync_attention_row", None)
+    self._sync_attention_targets = []
+    self._sync_attention_cursor = 0
+    self._sync_attention_scope = None
+    jump = getattr(self, "_sync_attention_jump_button", None)
+    if jump is not None:
+        jump.set_visible(False)
     if alert_row is not None:
         # Reset before all early returns (no broker, no identity, stale scope).
         alert_row.set_visible(False)
@@ -184,6 +221,7 @@ def _refresh_sync_page(self) -> None:
             xalign=0,
         ))
         return
+    self._sync_attention_scope = scope
     # A failed or malformed broker enumeration must not crash the entire
     # Synchronisation page or masquerade as an empty, healthy inventory.
     def sources_unavailable():
@@ -254,11 +292,14 @@ def _refresh_sync_page(self) -> None:
     row_titles = sync_source_row_labels(rows)
     actionable = any(item.action_enabled for item in presentations)
     if summary is not None:
+        # Also imported in the standalone AST-based GTK controller harness.
+        from cifereca.gui.sync_source_controls_overview import sync_axes_dashboard_summary
         summary.set_label(
             f"{len(rows)} source(s) · "
             f"{sum(item.action_enabled for item in presentations)} synchronisable(s) maintenant"
             + (f" · {len(unavailable_paris)} connexion(s) Paris configurée(s) non disponibles"
                if unavailable_paris else "")
+            + "\n" + sync_axes_dashboard_summary(rows, broker)
         )
     if alert_row is not None:
         # Never use provider diagnostics or source labels in the global
@@ -272,6 +313,8 @@ def _refresh_sync_page(self) -> None:
         )
         infos = sum(alert is not None and alert[0] == "info" for alert in alerts)
         if errors or warnings:
+            if jump is not None:
+                jump.set_visible(True)
             self._sync_attention_icon.set_from_icon_name(
                 "dialog-error-symbolic" if errors else "dialog-warning-symbolic"
             )
@@ -305,19 +348,39 @@ def _refresh_sync_page(self) -> None:
         declared capability snapshot is metadata-only and identity-scoped.
         No switch, network request, sync job or download is created here.
         """
+        from cifereca.gui.sync_catalogue_overview import sync_catalogue_overview
+
+        def set_catalogue_summary(snapshot):
+            # Some legacy inline provider panels also use 'summary' as a
+            # local variable for a typed status dictionary. Never close over
+            # that mutable loop binding instead of the actual GTK label.
+            header = getattr(self, "_sync_summary", None)
+            if (header is not None
+                    and callable(getattr(header, "set_label", None))
+                    and callable(getattr(header, "get_label", None))
+                    and sync_action_scope_current(self, scope)):
+                # Only a closed, read-only capability count is shown. Never
+                # invent a catalogue-refresh control from search support.
+                header.set_label(header.get_label() + "\n"
+                                 + sync_catalogue_overview(snapshot))
+
         reader = getattr(self.service, "catalogue_source_capabilities", None)
         if not callable(reader):
+            set_catalogue_summary(None)
             return
         try:
             raw = reader(identity_id=scope.identity_id)
         except Exception:
             # A plugin/provider diagnostic can contain signed URLs, so do
             # not echo it. Personal-library sync cards remain available.
+            set_catalogue_summary(None)
             return
         if not sync_action_scope_current(self, scope):
             return
         if type(raw) not in (list, tuple) or len(raw) > 128:
+            set_catalogue_summary(None)
             return
+        set_catalogue_summary(raw)
         catalogues = []
         for item in raw:
             provider = getattr(item, "provider_id", None)
@@ -427,6 +490,11 @@ def _refresh_sync_page(self) -> None:
                 row.add_suffix(reconnect)
             group.add(row)
             box.append(group)
+            if notice.state in {
+                "not_connected", "plugin_missing", "plugin_unavailable",
+                "invalid_configuration",
+            }:
+                self._sync_attention_targets.append(("warning", row))
 
     if not rows:
         if not unavailable_paris:
@@ -472,6 +540,8 @@ def _refresh_sync_page(self) -> None:
             alert = sync_source_attention(source)
             if alert is not None:
                 severity, message = alert
+                if severity in {"error", "warning"}:
+                    self._sync_attention_targets.append((severity, row))
                 icon = Gtk.Image.new_from_icon_name(
                     "dialog-error-symbolic" if severity == "error"
                     else "dialog-information-symbolic" if severity == "info"
@@ -482,11 +552,70 @@ def _refresh_sync_page(self) -> None:
                 add_css(icon, severity)
                 row.add_prefix(icon)
             # Keep the full phase/account evidence below the prominent line.
-            row.set_subtitle(
-                (alert[1] + "\n" if alert is not None else "")
-                + presentation.summary
+            # The two policy controls are independent of the source ON/OFF
+            # switch and of the last-run delivery result. Read only the
+            # existing Core broker state; never infer a server quota or a
+            # catalogue-sync capability from a source label.
+            from cifereca.gui.sync_source_controls_overview import (
+                sync_source_controls_overview,
             )
-            row.set_subtitle_lines(0)
+            control_overview = sync_source_controls_overview(source, broker)
+            # Preserve the existing first-line provider identity contract
+            # (including accessible name and old GTK consumers), while
+            # placing the two settings immediately under that fixed heading.
+            display_summary = presentation.summary
+            if control_overview:
+                head, separator, remainder = display_summary.partition("\n")
+                display_summary = (
+                    head + "\n" + control_overview
+                    + ("\n" + remainder if separator else "")
+                )
+            # Preserve the full evidence for the optional disclosure, but
+            # show no more than two lines in the account header. This keeps
+            # the problem and its next step ahead of diagnostic phase text.
+            from cifereca.gui.sync_source_card_guidance import (
+                sync_source_card_guidance,
+            )
+            next_step = sync_source_card_guidance(source, alert)
+            # #3416: the full typed Core receipt stays in the hover/focus
+            # summary. Show its compact counts without hiding a current
+            # warning, guidance or disabled-source state.
+            from cifereca.gui.sync_view import sync_source_cycle_pulse
+            pulse = (
+                sync_source_cycle_pulse(source)
+                if getattr(source, "enabled", None) is True else ""
+            )
+            if pulse and alert is None and not next_step:
+                head, separator, remainder = display_summary.partition("\n")
+                display_summary = (
+                    head + "\n" + pulse
+                    + ("\n" + remainder if separator else "")
+                )
+            elif pulse:
+                next_step = pulse + (" · " + next_step if next_step else "")
+            if getattr(source, "enabled", None) is False:
+                # The previous failed/partial run remains in the tooltip but
+                # must not dominate the collapsed card of a voluntarily OFF
+                # account or contribute to active attention counts.
+                connection = (
+                    "Connectée" if getattr(source, "connected", None) is True
+                    else "Déconnectée"
+                )
+                row.set_subtitle(
+                    "Synchronisation : désactivée · aucune synchronisation attendue\n"
+                    f"Connexion : {connection} · dernier cycle au survol si disponible."
+                )
+            else:
+                row.set_subtitle(
+                    (alert[1] + "\n" if alert is not None else "")
+                    + (next_step + "\n" if next_step else "")
+                    + display_summary
+                )
+            row.set_subtitle_lines(2)
+            # Full closed-state details remain available on hover/focus,
+            # without inserting a new child into any source card. Legacy
+            # GTK and E2E consumers rely on the existing controls' order.
+            row.set_tooltip_text(presentation.summary)
         else:
             # An account row without sync capability is NOT evidence of a
             # public catalogue, much less an exhaustively refreshable one.
@@ -1607,7 +1736,34 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     def ok(summary: dict[str, Any]) -> None:
         if getattr(self, "_closed", False):
             return
-        self._render_dashboard(); self._populate_loans(self.service.last_loans); self.refresh_library(False); self.refresh_recent()
+        from time import perf_counter
+
+        def record_gtk_phase(phase: str, started: float) -> None:
+            # This callback runs on GTK. Count only the local model/render
+            # cost, not provider HTTP, background Core work, or async Library
+            # refreshes scheduled below. UiPerfMonitor bounds the samples.
+            record = getattr(getattr(self, "ui_perf", None), "record_phase", None)
+            if not callable(record):
+                return
+            try:
+                record(
+                    "opening-sync", phase, (perf_counter() - started) * 1000,
+                    trigger=("user" if control is not None else
+                             "maintenance" if deep else "automatic"),
+                    outcome="success",
+                )
+            except Exception:
+                # Optional performance capture may never break Sync delivery.
+                pass
+
+        started = perf_counter()
+        self._render_dashboard()
+        record_gtk_phase("model_update", started)
+        started = perf_counter()
+        self._populate_loans(self.service.last_loans)
+        record_gtk_phase("render", started)
+        self.refresh_library(False)
+        self.refresh_recent()
         acquisitions = sum(int(x.get("new_acquisitions") or 0) for x in summary.get("identities", []))
         attention = sum(int(x.get("attention_required") or 0) for x in summary.get("identities", []))
         errors = sum(int(x.get("errors") or 0) for x in summary.get("identities", []))
@@ -1659,24 +1815,6 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
 
 # Reader/storage targets are provided by storage.target plugins.
 # The first 0.9.2 prototype intentionally has no brand-specific reader UI.
-
-
-def _configure_kobo_backup_timer(self, *, run_now: bool = False) -> None:
-    """Retire the legacy GUI timer without launching a second Kobo batch.
-
-    Opening synchronization has its own Core coordination and acquisition lock.
-    A GUI idle callback must never start another global backup, including
-    after a settings save or a delayed startup event. The interval is retained
-    only for backwards-compatible configuration reads (#1346).
-    """
-    if getattr(self, "_closed", False):
-        return
-    if self._kobo_backup_timer_id is not None:
-        try:
-            GLib.source_remove(self._kobo_backup_timer_id)
-        except Exception:
-            pass
-        self._kobo_backup_timer_id = None
 
 
 def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:

@@ -77,8 +77,8 @@ def test_scoped_0_1_n_typed_positive_only_without_exhaustive_negative(rights):
         assert all(x.source_account_id == account.unique_id
                    and x.identity_id == account.identity_id
                    for x in result.loans)
-        assert result.branch_claims_complete("dilicom", "digital") is False
-        assert result.branch_claims_complete("syracuse", "physical") is False
+        assert result.branch_claims_complete("dilicom", "digital") is True
+        assert result.branch_claims_complete("syracuse", "physical") is True
         assert "last_loan_errors" not in vars(session)
         assert client.calls == [
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),

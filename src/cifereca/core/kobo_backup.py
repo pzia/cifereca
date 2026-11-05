@@ -5,6 +5,7 @@ negotiated kobo-adept contract. State is owned by the service facade."""
 from __future__ import annotations
 
 from .source_context import source_context_epoch
+from .canonical_delivery_abi import has_complete_delivery_abi
 
 import time
 import os
@@ -370,8 +371,17 @@ def kobo_backup_preview(
                     for row in session.accounts
                 ) == account_scopes
                 and (
-                    len(accounts) != 1 or account_scopes[0][:3]
-                    == (identity_id, "kobo", credential_id)
+                    len(accounts) != 1
+                    or (
+                        # Kobo's plugin Account historically defaults to
+                        # identity_id="default" even when the exact Core
+                        # credential belongs to a named identity. A legacy
+                        # model default is not evidence of a source switch.
+                        # Require provider+credential on the live Account,
+                        # and independently pin the binding in SQLite below.
+                        account_scopes[0][1:3] == ("kobo", credential_id)
+                        and account_scopes[0][0] in (identity_id, "default")
+                    )
                 )
                 and self.storage.identity_for_connection(
                     "kobo", credential_id,
@@ -898,11 +908,22 @@ def _kobo_source_summaries(self) -> list[dict[str, Any]]:
     summaries.sort(key=lambda row: row["source_id"])
     return summaries
 
-def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
-    try:
-        interval_minutes = max(1, int(self.config.get("kobo_backup.interval_minutes", 60) or 60))
-    except (TypeError, ValueError):
-        interval_minutes = 60
+def _kobo_backup_due(
+    self, *, credential_id: str | None = None,
+    interval_minutes: int | None = None,
+) -> bool:
+    # Manual/legacy callers retain their historical configuration. The
+    # explicit on_start scheduler passes its pinned exact-source interval,
+    # so a late change to the retired global value cannot change that scope.
+    if interval_minutes is None:
+        try:
+            interval_minutes = max(
+                1, int(self.config.get("kobo_backup.interval_minutes", 60) or 60)
+            )
+        except (TypeError, ValueError):
+            interval_minutes = 60
+    elif type(interval_minutes) is not int or not 60 <= interval_minutes <= 30 * 24 * 60:
+        return False  # Invalid explicit source cadence must fail closed.
     # A new account cannot inherit another account's fresh checkpoint.
     raw = None
     if credential_id is not None:
@@ -1082,6 +1103,21 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # The confirmed broker path already refreshed/validated this exact manifest
     # under the acquisition lock. Never broaden it with another provider read,
     # a global catalogue scan, remnant recovery or authoritative pruning.
+    # #3196: the direct/manual and on-start legacy APIs must not become a
+    # second writer for any connected Kobo session with the complete Core
+    # A->B delivery contract. Refuse before scanning the library, calling
+    # ADEPT, persisting backup_items, or fetching a provider manifest.
+    # An unscoped batch containing mixed old/new sessions fails closed as
+    # a whole; no unrelated account is silently admitted.
+    if any(
+        getattr(session, "connected", False) is True
+        and getattr(session, "provider_id", None) == "kobo"
+        and (credential_id is None
+             or getattr(session, "credential_id", None) == credential_id)
+        and has_complete_delivery_abi(session)
+        for session in self._sessions.values()
+    ):
+        raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
     confirmed = confirmed_manifest is not None
     if confirmed:
         if credential_id is None or source_guard is None or item_guard is None:

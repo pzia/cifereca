@@ -3,6 +3,7 @@
 Run under the repository headless GTK runtime. No supplier or private account.
 """
 from pathlib import Path
+import re
 import os
 import stat
 import sys
@@ -101,14 +102,16 @@ def test_real_diagnostics_native_http_export(tmp_path, monkeypatch):
         spin_until(lambda:chooser.get_current_folder() is not None)
         chooser.emit('response',Gtk.ResponseType.CANCEL)
         assert controller.chooser is None and broker.exports==0
-        assert not (tmp_path/'cifereca-echanges-http.zip').exists()
+        assert not list(tmp_path.glob('cifereca-echanges-http-*.zip'))
 
         button.emit('clicked')
         button.emit('clicked')
         chooser=controller.chooser
-        target=tmp_path/'cifereca-echanges-http.zip'
         spin_until(lambda:chooser.get_file() is not None
-                   and chooser.get_file().get_path()==str(target))
+                   and chooser.get_file().get_path() is not None)
+        target=Path(chooser.get_file().get_path())
+        assert target.parent == tmp_path
+        assert re.fullmatch(r'cifereca-echanges-http-\d{8}-\d{6}\.zip', target.name)
         chooser.emit('response',Gtk.ResponseType.ACCEPT)
         spin_until(target.exists)
         assert broker.exports==1 and stat.S_IMODE(target.stat().st_mode)==0o600

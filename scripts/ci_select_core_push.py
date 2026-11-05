@@ -75,6 +75,10 @@ def select_push(
             if any(ch in path for ch in "\n\r\t") or not _safe_path(path):
                 return *full, "shared-or-ambiguous-path"
             paths.append(path)
+        # Only status-validated A/M README changes may skip Core pytest.
+        if paths and all(path == "e2e/README.md" for path in paths):
+            return "skip", "", "e2e-readme-only"
+
         # ci-select-core-tests.py checks consumers of changed test modules
         # (including dynamic imports / pytest_plugins) and returns "full" if
         # any are found. Do not scan the same repository a second time here.

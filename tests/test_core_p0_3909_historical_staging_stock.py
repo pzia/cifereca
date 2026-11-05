@@ -67,6 +67,52 @@ def _legacy_placement(rig, monkeypatch):
     return service, db, root, old, gets
 
 
+def test_stock_repair_requires_positive_persisted_source_observation(
+    rig, monkeypatch,
+):
+    """A durable receipt and SHA alone cannot repair a revoked source proof."""
+    from cifereca.core import canonical_staging_stock as stock
+
+    service, db, root, staged, gets = _legacy_placement(rig, monkeypatch)
+    placement = db.placements()[0]
+    with db._lock, db._connect() as sql:
+        source_ref, original = sql.execute(
+            "SELECT source_reference_id,evidence_ref FROM source_references "
+            "WHERE provider_id=? AND identity_id=?",
+            (service.source.scope.provider_id, service.source.scope.identity_id),
+        ).fetchone()
+        assert original
+        # Validate the same legitimate historical receipt before corrupting A.
+        row, proof = stock._record(sql, service.source, placement["placement_id"])
+        assert row[0] == str(staged)
+        assert proof["schema"] == "canonical.completed-delivery.v1"
+        sql.execute(
+            "UPDATE source_references SET evidence_ref='' "
+            "WHERE source_reference_id=?", (source_ref,),
+        )
+
+    with db._lock, db._connect() as sql:
+        with pytest.raises(ValueError, match="canonical_stock_exact_origin_missing"):
+            stock._record(sql, service.source, placement["placement_id"])
+    assert staged.read_bytes() == BYTES
+    assert db.placements()[0] == placement
+    assert gets == ["signed-right-offer"]
+
+    # Restoring the very same provider proof permits normal non-destructive
+    # recovery: the earlier refusal did not damage SQLite or staged bytes.
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE source_references SET evidence_ref=? "
+            "WHERE source_reference_id=?", (original, source_ref),
+        )
+        restored, _proof = stock._record(
+            sql, service.source, placement["placement_id"],
+        )
+    assert restored[0] == str(staged)
+    assert staged.read_bytes() == BYTES
+    assert gets == ["signed-right-offer"]
+
+
 def test_stock_relocated_under_same_placement_and_origin_without_second_get(
     rig, monkeypatch,
 ):
@@ -103,6 +149,60 @@ def test_stock_relocated_under_same_placement_and_origin_without_second_get(
     assert third["canonical_execution"]["present_attested"] == 1
     assert gets == ["signed-right-offer"]
     assert db.placements()[0]["path"] == str(final)
+
+
+def test_stock_refuses_unbounded_exact_provider_origin_claims(
+    rig, monkeypatch,
+):
+    """More than 512 same-source OriginLinks cannot select a receipt by order.
+
+    A damaged/imported journal may carry one genuine Core receipt and
+    arbitrarily many nonmatching provider claims to the same SHA. Do not
+    promote or discard historical staging bytes until provenance is bounded.
+    """
+    service, db, root, old, gets = _legacy_placement(rig, monkeypatch)
+    before = db.placements()[0]
+    with db._lock, db._connect() as sql:
+        origin = sql.execute(
+            "SELECT identity_id,artifact_id,source_reference_id,"
+            "created_at,updated_at FROM origin_links "
+            "WHERE origin_kind='provider' LIMIT 1",
+        ).fetchone()
+        assert origin is not None
+        sql.executemany(
+            "INSERT INTO origin_links("
+            "origin_link_id,origin_kind,identity_id,artifact_id,"
+            "source_reference_id,evidence_ref,created_at,updated_at"
+            ") VALUES(?,?,?,?,?,?,?,?)",
+            [
+                (f"untrusted-provider-claim-{i}", "provider",
+                 origin[0], origin[1], origin[2], f"not-core-receipt-{i}",
+                 origin[3], origin[4])
+                for i in range(512)
+            ],
+        )
+    # 512 unrelated links plus the original legitimate one exceed the
+    # bounded receipt window. No arbitrary SELECT ordering may decide B.
+    refused = synchronize_account_source(service, service.account)
+    assert refused["canonical_execution"]["failed"] == 1
+    assert refused["canonical_execution"]["recovered"] == 0
+    assert refused["canonical_execution"]["downloaded"] == 0
+    assert gets == ["signed-right-offer"]
+    assert db.placements()[0] == before
+    assert old.read_bytes() == BYTES
+    assert not list((root / "A" / "Acquisitions").glob("*"))
+
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "DELETE FROM origin_links "
+            "WHERE origin_link_id LIKE 'untrusted-provider-claim-%'",
+        )
+    resumed = synchronize_account_source(service, service.account)
+    assert resumed["canonical_execution"]["recovered"] == 1
+    assert resumed["canonical_execution"]["downloaded"] == 0
+    assert gets == ["signed-right-offer"]
+    assert Path(db.placements()[0]["path"]).parent == root / "A" / "Acquisitions"
+    assert not old.exists()
 
 
 def test_stock_missing_exact_checkpoint_preserves_bytes_and_requires_review(
@@ -207,3 +307,65 @@ def test_stock_repairs_valid_B_even_if_postcommit_intake_flag_was_lost(
             "WHERE acquisition_id LIKE 'canonical-intake:%'",
         ).fetchone()
     assert status == ("complete", "sha256:" + SHA)
+
+
+
+@pytest.mark.parametrize("mutation", ["second_owner", "original_owner_rebound"])
+def test_owner_registry_changed_after_final_hash_blocks_stock_sql_relink(
+    rig, monkeypatch, mutation,
+):
+    """A completed staging Placement cannot be moved into a rebounded folder."""
+    from cifereca.core import canonical_staging_stock as stock
+
+    service, storage, root, old, gets = _legacy_placement(rig, monkeypatch)
+    prior_placement = dict(storage.placements()[0])
+    if mutation == "second_owner":
+        storage.identity_put({
+            "identity_id": "B", "directory_name": "B", "label": "B",
+        })
+        with storage._lock, storage._connect() as db:
+            db.execute("DROP INDEX uq_identity_directory_name")
+
+    real_verify = stock._path_verified
+    mutated = []
+
+    def verify_then_rebind(*args, **kwargs):
+        verified = real_verify(*args, **kwargs)
+        if (not mutated and Path(kwargs["path"]).parent.name == "Acquisitions"):
+            with storage._lock, storage._connect() as db:
+                if mutation == "second_owner":
+                    db.execute(
+                        "UPDATE identities SET directory_name='A' "
+                        "WHERE identity_id='B'"
+                    )
+                else:
+                    db.execute(
+                        "UPDATE identities SET directory_name='rebound' "
+                        "WHERE identity_id='A'"
+                    )
+            mutated.append(True)
+        return verified
+
+    monkeypatch.setattr(stock, "_path_verified", verify_then_rebind)
+    outcome = synchronize_account_source(service, service.account)
+    assert outcome["canonical_execution"]["failed"] == 1
+    assert mutated == [True]
+    assert storage.placements()[0] == prior_placement
+    assert old.read_bytes() == BYTES
+    assert gets == ["signed-right-offer"]  # no second supplier GET
+    assert len(list((root / "A" / "Acquisitions").glob("*.pdf"))) == 1
+
+    # The final file can be reused after repairing the registry. No staged
+    # file is lost and no new authentication or remote delivery is needed.
+    with storage._lock, storage._connect() as db:
+        if mutation == "second_owner":
+            db.execute("UPDATE identities SET directory_name='B' WHERE identity_id='B'")
+        else:
+            db.execute(
+                "UPDATE identities SET directory_name='A' WHERE identity_id='A'"
+            )
+    monkeypatch.setattr(stock, "_path_verified", real_verify)
+    restored = synchronize_account_source(service, service.account)
+    assert restored["canonical_execution"]["recovered"] == 1
+    assert gets == ["signed-right-offer"]
+    assert Path(storage.placements()[0]["path"]).parent == root / "A" / "Acquisitions"

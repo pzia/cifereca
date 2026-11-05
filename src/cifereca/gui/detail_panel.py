@@ -19,7 +19,8 @@ from .book_widgets import CoverView
 from .action_widgets import AdaptiveActionBar
 from .query_model import result_row
 from ..plugin_api import UiBookDetailPresentation, document_links
-from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate
+from .detail_selection_perf import current_detail_trace
+from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate, search_detail_support_label
 from .action_widgets import clear_box, add_css
 from .loan_download_status import loan_download_unavailable_message
 from .loan_view import loan_due_detail_value
@@ -354,6 +355,8 @@ class DetailPanel(Gtk.Box):
     def _actions(self, buttons: list[Gtk.Button]) -> None:
         if not buttons:
             return
+        trace = current_detail_trace()
+        started = trace.clock() if trace else None
         current = getattr(self, '_action_buttons', None)
         if current is None:
             current = []
@@ -408,6 +411,8 @@ class DetailPanel(Gtk.Box):
                     button.grab_focus()
                     self._pending_action_focus_key = ''
                     break
+        if trace is not None:
+            trace.record("actions", started)
 
     def show_presentation(
         self,
@@ -420,6 +425,8 @@ class DetailPanel(Gtk.Box):
         When present, the editorial summary is kept in the primary reading
         flow: immediately after Essentiel and before bibliographic sections.
         """
+        trace = current_detail_trace()
+        started = trace.clock() if trace else None
         self._cancel_meta_request()
         self._pending_action_focus_key = self._focused_action_key()
         clear_box(self.content)
@@ -431,6 +438,7 @@ class DetailPanel(Gtk.Box):
             presentation.badges,
         )
         summary_rendered = False
+        sections_started = trace.clock() if trace else None
         for section in sorted(presentation.sections, key=lambda item: item.order):
             rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
             if rows:
@@ -443,6 +451,8 @@ class DetailPanel(Gtk.Box):
                 summary_rendered = True
         if not summary_rendered:
             self._show_description(description)
+        if trace is not None:
+            trace.record("sections", sections_started)
         link_buttons = []
         self._rendered_document_urls = set()
         for link in presentation.links:
@@ -459,6 +469,8 @@ class DetailPanel(Gtk.Box):
             self._rendered_document_urls.add(uri)
         if link_buttons:
             self._actions(link_buttons)
+        if trace is not None:
+            trace.record("render", started)  # Inclusive of nested sections/actions.
 
     def show_summary(
         self,
@@ -692,8 +704,7 @@ class DetailPanel(Gtk.Box):
         self._decorate(item)
 
     def show_search(self, item: SearchResult, loading: bool = False) -> None:
-        content_type = self.window.service.content_type_for(item)
-        medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
+        medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
@@ -833,8 +844,7 @@ class DetailPanel(Gtk.Box):
         self._append_content(group)
 
     def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
-        content_type = self.window.service.content_type_for(item)
-        medium = "Livre audio" if content_type == "audiobook" else ("Numérique" if item.medium == "digital" else "Physique")
+        medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
@@ -883,14 +893,38 @@ class DetailPanel(Gtk.Box):
                 self._actions([borrow])
             else:
                 row = Adw.ActionRow()
-                row.set_title("Emprunt requis avant téléchargement")
-                row.set_subtitle(
-                    "Une demande BnF existe déjà pour ce livre, ou le compte "
-                    "actif n’est pas admissible. Consultez Mes emprunts."
+                row.set_title(
+                    "État de la demande d’emprunt"
+                    if item.source_provider == "bnf-pret"
+                    else "Emprunt requis avant téléchargement"
+                )
+                explanation = (
+                    "Une demande BnF existe peut-être déjà pour ce livre, "
+                    "ou le compte actif n’est pas admissible. "
+                    "Consultez Mes emprunts."
                     if item.source_provider == "bnf-pret"
                     else "Emprunt indisponible pour l’identité et le compte "
                          "actifs, ou non pris en charge par cette source."
                 )
+                if item.source_provider == "bnf-pret":
+                    # #4082: bounded local SQLite observation, NOT a provider
+                    # fetch or a new permission. No result is cached across
+                    # identities, accounts, editions or detail renderings.
+                    from .bnf_borrow_claim_status import bnf_borrow_claim_message
+                    observer = getattr(
+                        self.window.service, "bnf_borrow_claim_observation", None,
+                    )
+                    current = getattr(self.window.service, "current_identity", None)
+                    identity_id = getattr(current, "identity_id", None)
+                    if callable(observer) and type(identity_id) is str and identity_id:
+                        try:
+                            observation = observer(
+                                item, expected_identity_id=identity_id,
+                            )
+                        except Exception:
+                            observation = None
+                        explanation = bnf_borrow_claim_message(observation) or explanation
+                row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)
         elif item.source_provider == "kobo" and item.owned:

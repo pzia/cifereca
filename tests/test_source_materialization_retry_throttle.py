@@ -10,6 +10,8 @@ class Storage:
         self.clock = clock
 
     def metadata_get(self, key):
+        if key.startswith("sync.source.materialization.retry_minutes."):
+            return None  # Compatibility path before the first scoped attempt.
         assert key.startswith("sync.source.materialization.last_attempt.")
         return self.clock
 
@@ -18,7 +20,7 @@ def service(clock, checkpoint_due=True):
     return SimpleNamespace(
         storage=Storage(clock),
         kobo_backup_interval_minutes=lambda: 30,
-        _kobo_backup_account_due=lambda credential: checkpoint_due,
+        _kobo_backup_account_due=lambda credential, *, interval_minutes=None: checkpoint_due,
     )
 
 
@@ -36,8 +38,12 @@ def test_checkpoint_is_due_after_attempt_interval():
     with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \
          patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
          patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
-        assert on_start_due(service("8000"), ACCOUNT) is True
-        assert on_start_due(service("8000", checkpoint_due=False), ACCOUNT) is False
+        # #3198: a legacy 30-minute preference no longer shortens the
+        # conservative 60-minute minimum for source-scoped startup retries.
+        assert on_start_due(service("8000"), ACCOUNT) is False
+        assert on_start_due(service("6500"), ACCOUNT) is False
+        assert on_start_due(service("6000"), ACCOUNT) is True
+        assert on_start_due(service("6000", checkpoint_due=False), ACCOUNT) is False
 
 
 def test_no_checkpoint_first_attempt_remains_due():

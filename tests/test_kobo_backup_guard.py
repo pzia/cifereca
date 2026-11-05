@@ -129,11 +129,16 @@ def _service(tmp_path: Path):
         Storage(tmp_path / "db.sqlite3"),
         Diagnostics(level="detailed"),
     )
-    service.storage.provider_connection_put({
+    connection_id = service.storage.provider_connection_put({
         "identity_id": "alice",
         "provider_id": "kobo",
         "credential_id": "vault-1",
         "label": "Kobo",
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection_id, "identity_id": "alice",
+        "provider_id": "kobo", "credential_id": "vault-1",
+        "account_id": "account",
     })
 
     descriptor = ProviderDescriptor(

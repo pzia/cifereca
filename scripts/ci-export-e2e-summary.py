@@ -167,6 +167,80 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
         return {}
 
 
+
+# The only public book-detail diagnostic values are reviewed fixed callback
+# identifiers; a supplier title, DOM text, error or Python exception cannot
+# be uploaded even when the raw E2E report contains it.
+_BOOK_DETAIL_STAGES = frozenset({
+    "activation",
+    "callback_other",
+    "search_initial",
+    "wait_search",
+    "search_detail",
+    "expanded_search",
+    "verify_tab_order",
+    "click_copy",
+    "read_clipboard",
+    "search_isbn",
+    "click_isbn",
+    "verify_isbn",
+    "library_select",
+    "verify_library",
+    "begin_owned_book_action",
+    "begin_numilog_index_resume",
+    "owned_book_select",
+    "owned_book_action_visible",
+    "owned_book_action_completed",
+    "finish",
+    "reset_library_detail_for_security_audit",
+    "security_detail_expanders",
+    "audit_mixed_security_values",
+    "audit_mixed_security_values_rendered",
+    "audit_all_private_values",
+    "audit_all_private_values_rendered",
+    "begin_stale_public_detail",
+    "stale_public_detail_rendered",
+    "component_summaries",
+    "component_summary_short",
+    "component_summary_six_lines",
+    "component_summary_seven_lines",
+    "component_expand",
+    "component_collapse",
+    "component_click_collapse",
+    "component_overflow",
+    "component_open_overflow",
+    "component_click_hidden",
+    "component_lists",
+    "component_identity",
+    "component_identity_rendered",
+})
+
+
+def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
+    """Expose the last *closed* GUI callback stage, never raw failure data."""
+    if scenario not in {
+        "book-detail-1300", "book-detail-1366", "book-detail-1600",
+    }:
+        return {}
+    root = source.resolve().parent / scenario
+    nested = root / scenario
+    report = nested / "screen.json"
+    try:
+        if any(path.is_symlink() for path in (root, nested, report)):
+            return {}
+        if not report.is_file() or report.stat().st_size > MAX_BYTES:
+            return {}
+        data = json.loads(report.read_text(encoding="utf-8"))
+        if type(data) is not dict:
+            return {}
+        last = data.get("public_stage")
+        if type(last) is str and last in _BOOK_DETAIL_STAGES:
+            return {"book_detail_last_stage": last}
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
+        pass
+    return {}
+
+
 def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
     """Share *only* a constant reached step from the synthetic GTK recipe.
 
@@ -361,6 +435,7 @@ def safe_summary(source: Path) -> dict:
         # messages, personal paths, URLs, JSON/JSONL, logs, pixels and images.
         if code != 0:
             row.update(_failed_diagnostic(source, scenario))
+            row.update(_failed_book_detail_checkpoint(source, scenario))
             row.update(_failed_maintenance_checkpoint(source, scenario))
             row.update(_native_abort_diagnosis(source, scenario, code))
         rows.append(row)

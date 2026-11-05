@@ -1,8 +1,7 @@
-"""P0 #3171: canonical Sync failures must not export secrets through Core logs.
+"""Core failure contracts on synthetic SQLite/providers and injected errors.
 
-This suite uses only synthetic SQLite/providers/bytes and injected failures.
-The closed reason code is sufficient for diagnostics; a provider exception,
-signed delivery URL, consent token or borrower identifier is never logged.
+Delivery exceptions belong in the local raw journal (#3132), while structured
+outcomes remain closed. Other legacy diagnostics retain their current scope.
 """
 from __future__ import annotations
 
@@ -88,7 +87,7 @@ def test_consent_revalidation_exception_never_leaks_or_allows_get(
     _logged_code(caplog, "canonical_consent_lookup_failed")
 
 
-def test_delivery_error_remains_failed_without_private_exception(
+def test_delivery_error_keeps_raw_cause_and_closed_public_outcome(
     executor_rig, caplog,
 ):
     service, account, source, snapshot, root, lock_path = executor_rig
@@ -99,7 +98,13 @@ def test_delivery_error_remains_failed_without_private_exception(
     assert len(result) == 1 and result[0].status == "failed"
     assert result[0].reason == "canonical_delivery_failed"
     assert rows(service.storage) == (0, 0, 0, 0)
-    _logged_code(caplog, "canonical_delivery_failed")
+    records = [r for r in caplog.records
+               if "TRACE convergence code=canonical_delivery_failed" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].exc_info[0] is RuntimeError
+    assert str(records[0].exc_info[1]) == PRIVATE
+    assert PRIVATE in caplog.text
+    assert PRIVATE not in repr(result)
 
 
 def test_postcommit_catalog_projection_failure_keeps_origin_and_hides_error(

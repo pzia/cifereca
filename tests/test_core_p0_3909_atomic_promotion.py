@@ -149,3 +149,59 @@ def test_fsync_failure_after_link_withdraws_final_and_keeps_staging(
     assert second["canonical_execution"]["recovered"] == 1
     assert requests == ["signed-right-offer"]
     assert Path(db.placements()[0]["path"]).read_bytes() == BYTES
+
+
+
+@pytest.mark.parametrize("change_at", ["before_link", "after_link"])
+def test_promotion_never_leaves_final_file_after_identity_folder_rebound(
+    rig, monkeypatch, change_at,
+):
+    """A registry rewrite during a large file copy is not a publishing grant."""
+    service, db, root, requests = _drive(rig)
+    real_fsync = os.fsync
+    real_link = os.link
+    changed = []
+
+    def reassign():
+        if changed:
+            return
+        with db._lock, db._connect() as sql:
+            sql.execute(
+                "UPDATE identities SET directory_name='rebound' "
+                "WHERE identity_id='A'"
+            )
+        changed.append(True)
+
+    def mutate_during_flush(fd):
+        if (change_at == "before_link" and not changed
+                and list(_destination(root).glob(".canonical-promote-*.part"))):
+            reassign()
+        return real_fsync(fd)
+
+    def mutate_during_link(source, target, **kwargs):
+        linked = real_link(source, target, **kwargs)
+        if (change_at == "after_link" and not changed
+                and str(source).startswith(".canonical-promote-")):
+            reassign()
+        return linked
+
+    with monkeypatch.context() as patch:
+        patch.setattr(promotion.os, "fsync", mutate_during_flush)
+        patch.setattr(promotion.os, "link", mutate_during_link)
+        first = synchronize_account_source(service, service.account)
+    assert first["canonical_execution"]["failed"] == 1
+    assert changed == [True]
+    assert db.placements() == []
+    assert list(_destination(root).iterdir()) == []
+    staged = list((root / "A" / ".canonical-delivery").glob("run-*/received.pdf"))
+    assert len(staged) == 1 and staged[0].read_bytes() == BYTES
+    assert requests == ["signed-right-offer"]
+
+    # Repair the original identity registry: the same admitted receipt
+    # resumes without another provider GET or adopting foreign files.
+    with db._lock, db._connect() as sql:
+        sql.execute("UPDATE identities SET directory_name='A' WHERE identity_id='A'")
+    second = synchronize_account_source(service, service.account)
+    assert second["canonical_execution"]["recovered"] == 1
+    assert requests == ["signed-right-offer"]
+    assert Path(db.placements()[0]["path"]).read_bytes() == BYTES

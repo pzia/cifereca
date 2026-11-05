@@ -186,9 +186,14 @@ def test_explicit_kobo_account_sync_materializes_right_without_download(tmp_path
             library=lambda: (calls.append("library") or [_row()]),
         )
         service.accounts = [account]
-        service.storage.provider_connection_put({
+        connection_id = service.storage.provider_connection_put({
             "identity_id": account.identity_id, "provider_id": "kobo",
             "credential_id": account.credential_id, "enabled": True,
+        })
+        service.storage.provider_account_put({
+            "connection_id": connection_id, "identity_id": account.identity_id,
+            "provider_id": "kobo", "credential_id": account.credential_id,
+            "account_id": account.unique_id,
         })
         service._sessions[service._session_key("kobo", account.credential_id)] = session
         monkeypatch.setattr(service, "_acquire_personal_library_item",
@@ -209,9 +214,14 @@ def test_opening_mirror_reuses_one_shot_kobo_personal_manifest(tmp_path, monkeyp
     """A generator of attested owned books must feed rights AND catalog once."""
     service = _service(tmp_path)
     credential = "vault-alice"
-    service.storage.provider_connection_put({
+    connection_id = service.storage.provider_connection_put({
         "identity_id": "alice", "provider_id": "kobo",
         "credential_id": credential, "label": "Owned Kobo",
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection_id, "identity_id": "alice",
+        "provider_id": "kobo", "credential_id": credential,
+        "account_id": "acc-personal",
     })
     account = Account(
         provider_id="kobo", credential_id=credential,
@@ -256,9 +266,14 @@ def test_explicit_sync_reuses_one_shot_kobo_personal_manifest(tmp_path, monkeypa
         library=lambda: (calls.append("library") or one_shot),
     )
     service.accounts = [account]
-    service.storage.provider_connection_put({
+    connection_id = service.storage.provider_connection_put({
         "identity_id": account.identity_id, "provider_id": "kobo",
         "credential_id": account.credential_id, "enabled": True,
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection_id, "identity_id": account.identity_id,
+        "provider_id": "kobo", "credential_id": account.credential_id,
+        "account_id": account.unique_id,
     })
     service._sessions[service._session_key("kobo", account.credential_id)] = session
     try:
