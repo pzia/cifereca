@@ -82,7 +82,7 @@ def test_inflight_scope_or_new_read_invalidates_one_shot_inventory(alter):
             # A newer source request makes earlier evidence stale.
             next_inventory = read_loan_inventory(session, account)
             assert next_inventory.status == "success"
-        with pytest.raises((ProviderCapabilityError, Exception)):
+        with pytest.raises(ProviderCapabilityError, match="paris_same_cycle_inventory_stale"):
             session.downloadable_resource_snapshot_from_loan_inventory(
                 account, loan_inventory=loan_inventory,
             )
