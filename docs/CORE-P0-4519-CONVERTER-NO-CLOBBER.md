@@ -17,6 +17,12 @@ même lorsqu'il n'existe qu'un seul Placement SQLite. Le contexte du source (Pla
 fichier et du répertoire) est épinglé dans les deux leases, puis revalidé
 avant publication. Les octets du source sont à nouveau hashés.
 
+Le Placement source doit également appartenir au profil **actif** du
+service (`current_identity.identity_id`). L'absence d'identité active
+ou la demande de B pour un Artifact uniquement présent chez A entraîne
+`artifact_source_identity_mismatch`, avant accès au fichier. Un changement
+de profil pendant la transformation est recontrôlé avant le commit.
+
 L'ancien cache de variantes est toujours une table par SHA mondial :
 un cache sans Placement physique dans l'identité source sélectionnée
 ne peut donc pas satisfaire la requête ; un cache dont le Placement
