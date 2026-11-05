@@ -398,6 +398,69 @@ def sync_source_cycle_headline(source: object) -> str:
     return " · ".join(parts)
 
 
+def sync_source_last_cycle_summary(source: object) -> str:
+    """Render only an exact scoped Core terminal receipt, not log heuristics.
+
+    No receipt or unverified counters => no invented file count. The source
+    status/phase projection remains the authority for current attention;
+    this is explicitly a *historical terminal* of one targeted cycle.
+    """
+    from ..plugin_api import SyncSourceCycleReceipt
+    from ..core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+
+    receipt = getattr(source, "last_cycle", None)
+    if type(receipt) is not SyncSourceCycleReceipt:
+        return ""
+    status_labels = {
+        "success": "Réussi", "partial": "Partiel", "failed": "Échec",
+        "busy": "Déjà en cours", "skipped": "Non exécuté",
+    }
+    mode_labels = {"manual": "manuel", "scheduled": "programmé"}
+    if (type(receipt.status) is not str
+            or receipt.status not in status_labels
+            or type(receipt.mode) is not str
+            or receipt.mode not in mode_labels
+            or type(receipt.attempted_at) is not str):
+        return ""
+    stamp = _timestamp_label(receipt.attempted_at)
+    if not stamp:
+        return ""
+    headline = (
+        "Dernier cycle ciblé ("
+        + mode_labels[receipt.mode] + ", " + stamp + ") : "
+        + status_labels[receipt.status]
+    )
+    counts = receipt.canonical_execution
+    if counts is None:
+        return headline + "\\nRésultats de réception locale : non attestés"
+    if (type(counts) is not tuple
+            or len(counts) != len(CANONICAL_EXECUTION_STATUSES)
+            or any(type(pair) is not tuple or len(pair) != 2
+                   for pair in counts)):
+        return headline + "\\nRésultats de réception locale : non attestés"
+    values = dict(counts)
+    if (len(values) != len(CANONICAL_EXECUTION_STATUSES)
+            or set(values) != set(CANONICAL_EXECUTION_STATUSES)
+            or any(type(values[name]) is not int
+                   or not 0 <= values[name] <= 1_000_000
+                   for name in CANONICAL_EXECUTION_STATUSES)):
+        return headline + "\\nRésultats de réception locale : non attestés"
+    labels = (
+        ("present_attested", "présents attestés"),
+        ("downloaded", "téléchargés"),
+        ("pending", "en attente"),
+        ("blocked", "bloqués"),
+        ("failed", "échecs"),
+        ("recovered", "récupérés"),
+        ("cancelled", "annulés"),
+        ("skipped_archived", "archivés ignorés"),
+        ("inactive", "inactifs"),
+    )
+    return headline + "\\nRéception locale : " + " · ".join(
+        name + " " + str(values[key]) for key, name in labels
+    )
+
+
 def sync_source_phase_summary(source: object) -> str:
     """Present only Core-enumerated phase states, never provider diagnostics.
 
@@ -824,6 +887,7 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
     )
     cycle_headline = sync_source_cycle_headline(source)
     phase_summary = sync_source_phase_summary(source)
+    last_cycle_summary = sync_source_last_cycle_summary(source)
     if getattr(source, "enabled", None) is False and capable:
         # Never erase the previous attempt or success. Clearly label the old
         # Core phase records as historical rather than current actionable UI.
@@ -835,6 +899,8 @@ def sync_source_presentation(source: object, *, canonical: bool = False) -> Sync
         summary += "\n" + cycle_headline
     if phase_summary:
         summary += "\n" + phase_summary
+    if last_cycle_summary:
+        summary += "\\n" + last_cycle_summary
     if sync_source_informational_partial(source):
         summary += (
             "\nCouverture incomplète des notices et droits ; "
