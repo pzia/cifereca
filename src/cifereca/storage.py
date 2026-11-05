@@ -1493,6 +1493,56 @@ class Storage:
             )
         else:
             projection_owned = True
+        # #3196: the deterministic v0.7 acquisition ID can still refer to
+        # a canonically completed delivery on imported or migrated databases.
+        # A fresh compatibility retry must update only backup_items, NEVER
+        # downgrade that durable receipt's status or Artifact. The usual
+        # canonical stage ID is different, but old/migrated ledgers cannot
+        # safely rely on the ID prefix alone.
+        prior = db.execute(
+            "SELECT provider_id,credential_id,account_id,item_id,"
+            "identity_id,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id=?",
+            (cls._acquisition_id_for(row),),
+        ).fetchone()
+        if prior is not None and type(prior[5]) is str and (
+            "canonical.completed-delivery.v1" in prior[5]
+        ):
+            # A malformed checkpoint with the canonical marker is not a
+            # reason to fall back to the old writer. Refuse it atomically,
+            # including duplicate JSON keys and oversized documents.
+            if len(prior[5]) > 65536:
+                raise ValueError("backup_canonical_receipt_unreadable")
+
+            def unique_keys(pairs):
+                document = {}
+                for key, value in pairs:
+                    if key in document:
+                        raise ValueError("duplicate_canonical_receipt_key")
+                    document[key] = value
+                return document
+
+            try:
+                receipt = json.loads(prior[5], object_pairs_hook=unique_keys)
+            except (ValueError, TypeError, RecursionError) as error:
+                raise ValueError("backup_canonical_receipt_unreadable") from error
+            if (type(receipt) is not dict
+                    or receipt.get("schema") != "canonical.completed-delivery.v1"):
+                raise ValueError("backup_canonical_receipt_unreadable")
+            expected = (
+                str(row.get("provider_id") or ""),
+                str(row.get("credential_id") or ""),
+                row.get("account_id"),
+                str(row.get("item_id") or ""),
+                row.get("identity_id"),
+            )
+            if (prior[:5] != expected or type(expected[4]) is not str
+                    or not expected[4]):
+                raise ValueError("backup_acquisition_owner_conflict")
+            # Only the 0.7 projection has been refreshed by backup_put;
+            # no entitlement, Artifact, Placement or acquisition journal is
+            # rewritten from an unauthenticated historical row.
+            return
         if projection_owned:
             entitlement_cursor = db.execute(
                 "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
