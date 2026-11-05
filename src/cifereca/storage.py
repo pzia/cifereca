@@ -4879,6 +4879,10 @@ class Storage:
                 ("acquisition_ledger", "artifact_id"),
                 ("artifact_variants", "source_artifact_id"),
                 ("artifact_variants", "artifact_id"),
+                # Historical derived origins survive local variant deletion;
+                # their source/child Artifacts must remain addressable.
+                ("origin_links", "artifact_id"),
+                ("origin_links", "parent_artifact_id"),
             ):
                 if db.execute(
                     f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1",

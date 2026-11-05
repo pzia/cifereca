@@ -229,7 +229,10 @@ def test_multi_placement_deletion_is_refused_before_any_partial_transaction(
             "variant": True, "source_artifact_id": source.artifact_id,
         },
     })
-    with pytest.raises(Conflict, match="placements multiples"):
+    # A second copy with a different provenance is now rejected already
+    # by the exact variant/source scope guard (#4520), before the more
+    # general multiple-placement check. Both errors prohibit any unlink.
+    with pytest.raises(Conflict, match="placements multiples|Variante et source non indépendantes"):
         broker.run(plan, Control())
     assert path.is_file() and second.is_file()
     assert service.storage.placement_get(placement["placement_id"]) is not None
