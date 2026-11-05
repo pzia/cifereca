@@ -222,3 +222,52 @@ def test_canonical_checkpoint_with_incomplete_status_blocks_legacy_replay(
         storage.backup_put(_backup(status="complete", sha="b" * 64))
     assert _snapshot(storage) == before
     assert storage.backup_get("kobo", "synthetic-vault", "synthetic-book") == projection
+
+
+@pytest.mark.parametrize("escape", ["schema_value", "schema_key", "both"])
+def test_json_escaped_completed_checkpoint_still_blocks_legacy_replay(
+    storage, escape,
+):
+    # A JSON serializer/import may escape the schema key, marker, or both.
+    # Literal-substring detection alone missed valid canonical checkpoints.
+    raw_key = r"\u0073chema" if escape in ("schema_key", "both") else "schema"
+    raw_marker = (
+        r"\u0063anonical.completed-delivery.v1"
+        if escape in ("schema_value", "both")
+        else "canonical.completed-delivery.v1"
+    )
+    _promote_synthetic_receipt(
+        storage, '{"' + raw_key + '":"' + raw_marker + '"}',
+    )
+    original = _snapshot(storage)
+    storage.backup_put(_backup(status="acquiring", sha="b" * 64))
+    assert _snapshot(storage) == original
+    assert storage.backup_get(
+        "kobo", "synthetic-vault", "synthetic-book"
+    )["status"] == "acquiring"
+    assert storage.artifact_get("sha256:" + "b" * 64) is None
+
+
+def test_escaped_duplicate_schema_rolls_back_without_legacy_authority(storage):
+    _promote_synthetic_receipt(
+        storage,
+        r'{"schema":"legacy","\u0073chema":"canonical.completed-delivery.v1"}',
+    )
+    original = _snapshot(storage)
+    projection = storage.backup_get("kobo", "synthetic-vault", "synthetic-book")
+    with pytest.raises(ValueError, match="backup_canonical_receipt_unreadable"):
+        storage.backup_put(_backup(status="complete", sha="b" * 64))
+    assert _snapshot(storage) == original
+    assert storage.backup_get(
+        "kobo", "synthetic-vault", "synthetic-book"
+    ) == projection
+
+
+def test_other_versioned_schema_does_not_suppress_legacy_recovery(storage):
+    # A structurally valid non-canonical schema remains a compatibility row.
+    _promote_synthetic_receipt(storage, '{"schema":"legacy.v0.7"}')
+    storage.backup_put(_backup(status="acquiring"))
+    assert _ledger(storage)[6] == "acquiring"
+    assert storage.backup_get(
+        "kobo", "synthetic-vault", "synthetic-book"
+    )["status"] == "acquiring"
