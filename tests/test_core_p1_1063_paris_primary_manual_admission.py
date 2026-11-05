@@ -51,7 +51,7 @@ def test_two_sources_need_selection_and_selected_one_is_only_borrower(tmp_path):
         assert not service.can_borrow_paris(item)
         outcome = attempt(service, account, item)
         assert (outcome["status"], outcome["reason_code"]) == (
-            "blocked", "borrow_scope_unverified",
+            "blocked", "borrow_scope_changed",
         )
         assert not state["calls"]
         assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
