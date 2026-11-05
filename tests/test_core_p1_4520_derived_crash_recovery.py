@@ -462,3 +462,22 @@ def test_successful_publish_does_not_unlink_replaced_receipt(
         assert service.storage.artifact_variants()
     finally:
         service.storage.close()
+
+
+def test_recreated_source_with_identical_bytes_does_not_establish_causality(
+    tmp_path,
+):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        root = tmp_path / "library"
+        original_path = root / "Book.epub"
+        saved_bytes = original_path.read_bytes()
+        original_path.unlink()
+        original_path.write_bytes(saved_bytes)
+        observed = review_pending_derived_receipts(service, identity_id="id1")
+        assert observed[0]["status"] == "manual_review"
+        assert service.storage.artifact_variants() == []
+        assert original_path.read_bytes() == saved_bytes
+    finally:
+        service.storage.close()
