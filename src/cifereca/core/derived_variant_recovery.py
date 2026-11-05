@@ -76,6 +76,7 @@ def _safe_unlink_receipt(path: Path) -> None:
 
 
 def write_pending_derived_receipt(staged: Path, published: Path, *,
+                                  stage_dir_fd: int,
                                   source_path: Path, source_artifact_id: str,
                                   source_sha256: str, source_placement_id: str,
                                   identity_id: str, output_sha256: str,
@@ -92,10 +93,18 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
             or published.parent != source_path.parent):
         raise ValueError("derived_receipt_scope_unverified")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(staged, flags)
+    # Use the already pinned O_DIRECTORY descriptor from the publisher:
+    # a renamed staging parent can never redirect a receipt into another
+    # profile's path after the preliminary pathname checks.
+    if not stat.S_ISDIR(os.fstat(stage_dir_fd).st_mode):
+        raise ValueError("derived_receipt_staging_changed")
+    fd = os.open(staged.name, flags, dir_fd=stage_dir_fd)
     try:
         st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns) != _stamp(staged):
+        named = os.stat(staged.name, dir_fd=stage_dir_fd, follow_symlinks=False)
+        if not stat.S_ISREG(st.st_mode) or (
+            st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
+        ) != (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns):
             raise ValueError("derived_receipt_staging_changed")
         os.fsync(fd)
         proof = [st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns]
@@ -121,8 +130,8 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
     if len(raw) > MAX_BYTES:
         raise ValueError("derived_receipt_too_large")
     journal = staged.parent / ("pending-" + secrets.token_hex(16) + ".json")
-    fd = os.open(journal, os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                 | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    fd = os.open(journal.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                 | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=stage_dir_fd)
     try:
         with os.fdopen(fd, "wb", closefd=True) as file:
             file.write(raw)
@@ -131,12 +140,7 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
     except Exception:
         _safe_unlink_receipt(journal)
         raise
-    dir_fd = os.open(staged.parent, os.O_RDONLY | os.O_DIRECTORY
-                     | getattr(os, "O_NOFOLLOW", 0))
-    try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
+    os.fsync(stage_dir_fd)
     return journal
 
 
