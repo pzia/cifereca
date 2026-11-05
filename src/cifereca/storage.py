@@ -1508,7 +1508,7 @@ class Storage:
         )
         checkpoints = db.execute(
             "SELECT acquisition_id,provider_id,credential_id,account_id,"
-            "item_id,identity_id,metadata_json FROM acquisition_ledger "
+            "item_id,identity_id,status,metadata_json FROM acquisition_ledger "
             "WHERE acquisition_id=? OR (provider_id=? AND credential_id=? "
             "AND item_id=?) ORDER BY acquisition_id LIMIT 1001",
             (old_id, expected[0], expected[1], expected[3]),
@@ -1516,7 +1516,7 @@ class Storage:
         if len(checkpoints) > 1000:
             raise ValueError("backup_canonical_receipt_scope_budget")
         completed_canonical_source = False
-        for existing_id, p, credential, account, item, owner, raw in checkpoints:
+        for existing_id, p, credential, account, item, owner, stage_status, raw in checkpoints:
             if (type(raw) is not str
                     or "canonical.completed-delivery.v1" not in raw):
                 continue
@@ -1541,6 +1541,11 @@ class Storage:
             if (type(receipt) is not dict
                     or receipt.get("schema") != "canonical.completed-delivery.v1"):
                 raise ValueError("backup_canonical_receipt_unreadable")
+            # A completed-delivery checkpoint with a non-complete ledger
+            # status is contradictory; never let the old writer guess which
+            # state it may overwrite or treat it as confirmed evidence.
+            if stage_status != "complete":
+                raise ValueError("backup_canonical_receipt_status_conflict")
             stored = (p, credential, account, item, owner)
             if (stored == expected and type(owner) is str and owner
                     and type(account) is str):
