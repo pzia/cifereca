@@ -862,6 +862,11 @@ class TransformRequest:
     capability_id: str
     profile_plugin_id: str | None = None
     options: Mapping[str, object] = field(default_factory=dict)
+    # #4520: immutable coordinates of the physical source whose bytes the
+    # transformer is permitted to read. A global Artifact SHA is not enough.
+    # Legacy calls omit both and are admitted only with ONE exact placement.
+    identity_id: str | None = None
+    placement_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
