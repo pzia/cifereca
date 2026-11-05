@@ -149,13 +149,19 @@ def inventory_legacy_kobo_backups(
                 # Only a uniquely enabled connection and the EXACT borrower
                 # count as a current binding; borrower '' is valid if stored.
                 connections = db.execute(
-                    "SELECT connection_id FROM provider_connections "
-                    "WHERE provider_id='kobo' AND credential_id=? "
-                    "AND identity_id=? AND enabled=1 LIMIT 2",
-                    (credential, owner),
+                    "SELECT connection_id,identity_id,enabled "
+                    "FROM provider_connections "
+                    "WHERE provider_id='kobo' AND credential_id=? LIMIT 3",
+                    (credential,),
                 ).fetchall()
-                if len(connections) != 1:
+                account_bound = False
+                if (len(connections) != 1
+                        or connections[0][1:] != (owner, 1)):
                     report["account_unbound"] += 1
+                    if len(connections) > 1 or any(
+                        binding[1] != owner for binding in connections
+                    ):
+                        report["account_conflicting"] += 1
                 else:
                     borrowers = db.execute(
                         "SELECT 1 FROM provider_accounts WHERE "
@@ -164,9 +170,11 @@ def inventory_legacy_kobo_backups(
                         "AND account_id=? LIMIT 2",
                         (connections[0][0], owner, credential, account),
                     ).fetchall()
-                    if len(borrowers) != 1:
+                    account_bound = len(borrowers) == 1
+                    if not account_bound:
                         report["account_unbound"] += 1
 
+                path_shared = False
                 if path:
                     # The backup PK omits owner/account; a reused physical
                     # path anywhere is never a unique scope for migration.
@@ -178,6 +186,7 @@ def inventory_legacy_kobo_backups(
                     ).fetchone()
                     if collisions:
                         report["path_shared"] += 1
+                        path_shared = True
 
                 ledger = db.execute(
                     "SELECT acquisition_id,status,identity_id,account_id,"
@@ -201,8 +210,7 @@ def inventory_legacy_kobo_backups(
                 # OriginLink, stage ID, rights or permission to mutate.
                 candidate = (
                     len(ledger) == 1
-                    and len(connections) == 1
-                    and report["account_unbound"] >= 0  # no global inference
+                    and account_bound and not path_shared
                     and type(path) is str and bool(path)
                     and type(digest) is str and len(digest) == 64
                     and all(char in _SHA for char in digest)
