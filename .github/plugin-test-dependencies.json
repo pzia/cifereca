@@ -4,6 +4,7 @@
     "constellations",
     "dev-updater",
     "diagnostics-page",
+    "ebooksgratuits",
     "literary-criticism",
     "maintenance-library-audit",
     "provider-bnf-catalogue",
@@ -12,6 +13,7 @@
   ],
   "dependencies": {
     "home-page": [
+      "ebooksgratuits",
       "provider-bnf-catalogue",
       "provider-gallica",
       "provider-gutenberg"
