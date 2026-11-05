@@ -1575,18 +1575,28 @@ class Storage:
             # No entitlement, Artifact, Placement, catalogue or acquisition
             # journal is synthesized from old and possibly stale data.
             return
-        # #3196 W1: a typed SourceReference may exist before canonical
+        # #3196 W1: a typed Kobo SourceReference may exist before canonical
         # download/receipt, and the historical backup PK has no account or
         # branch. The 0.7 writer may refresh its raw compatibility row, but
         # cannot generate or update a parallel right, acquisition or local
         # placement for an edition now owned by the canonical Core. Match the
         # provider/credential/edition exactly; an alternate borrower is
         # ambiguous, not authority to replay a legacy row.
-        if db.execute(
-            "SELECT 1 FROM source_references WHERE provider_id=? "
-            "AND credential_id=? AND edition_id=? LIMIT 1",
-            (expected[0], expected[1], expected[3]),
-        ).fetchone() is not None:
+        if (
+            expected[0] == "kobo"
+            # On a v2/v0.7 migration snapshot, _mirror_backup_row runs
+            # *before* source_references exists. Keep legacy migration
+            # replayable; only test a table known to exist.
+            and (not migration or db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='source_references' LIMIT 1"
+            ).fetchone() is not None)
+            and db.execute(
+                "SELECT 1 FROM source_references WHERE provider_id='kobo' "
+                "AND credential_id=? AND edition_id=? LIMIT 1",
+                (expected[1], expected[3]),
+            ).fetchone() is not None
+        ):
             return
         if projection_owned:
             entitlement_cursor = db.execute(
