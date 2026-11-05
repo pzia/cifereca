@@ -316,6 +316,14 @@ class ParisProviderSession(ProviderSession):
         self._loan_branch_failures: ContextVar[frozenset[str] | None] = ContextVar(
             "paris_loan_branch_failures", default=None,
         )
+        # #4281: measurement-only provenance. No loan/rights cache or
+        # additional provider request may be created from these counters.
+        self._loan_read_consumer: ContextVar[str] = ContextVar(
+            "paris_loan_read_consumer", default="loans",
+        )
+        self._loan_ebooks_attempts: ContextVar[int | None] = ContextVar(
+            "paris_loan_ebooks_attempts", default=None,
+        )
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
@@ -543,6 +551,9 @@ class ParisProviderSession(ProviderSession):
             try:
                 matched: SearchResult | None = None
                 for query in queries[:2]:
+                    attempts = self._loan_ebooks_attempts.get()
+                    if attempts is not None:
+                        self._loan_ebooks_attempts.set(attempts + 1)
                     rows = self.client.search_catalog(query, scenario="EBOOKS", result_size=12)
                     if record_id:
                         matched = next((row for row in rows if str(row.record_id) == record_id), None)
@@ -684,14 +695,21 @@ class ParisProviderSession(ProviderSession):
         for upstream in ("DILICOM", "SYRACUSE"):
             if not scope_current():
                 raise ProviderConfigurationError("account_scope_mismatch")
+            started = time.perf_counter()
+            stage_status = "success"
+            stage_rows = 0
             try:
-                rows.extend(self.client.loans(upstream, borrower_id))
+                branch_rows = self.client.loans(upstream, borrower_id)
+                stage_rows = len(branch_rows)
+                rows.extend(branch_rows)
             except Cancelled:
+                stage_status = "cancelled"
                 # Cooperative cancellation is NOT an unavailable branch.
                 # Stop the second upstream GET and never publish a partial
                 # inventory or synthetic negative-rights evidence.
                 raise
             except Exception as exc:
+                stage_status = "failed"
                 # Neither branch failure nor sibling success proves an empty
                 # inventory. Keep the compatibility code and attach only the
                 # separately typed HTTP/transport reason when attested.
@@ -716,6 +734,17 @@ class ParisProviderSession(ProviderSession):
                     )
                 except Exception:
                     pass
+            finally:
+                # One measurement per actual upstream attempt. A failed or
+                # cancelled branch is not a complete, empty loan inventory.
+                _TRACE_LOG.info(
+                    "TRACE paris list-loans timing phase=branch consumer=%s"
+                    " upstream=%s identity_id=%s credential_id=%s borrower_id=%s"
+                    " status=%s duration_ms=%s loans=%s",
+                    self._loan_read_consumer.get(), upstream, borrower_scope[1],
+                    borrower_scope[3], borrower_id, stage_status,
+                    max(0, int((time.perf_counter() - started) * 1000)), stage_rows,
+                )
             # This check must run OUTSIDE the exception handler: a borrower
             # change is an authorization failure, never merely a partial
             # provider branch failure that permits another private GET.
@@ -729,8 +758,24 @@ class ParisProviderSession(ProviderSession):
                 "Bibliothèques de Paris : inventaires DILICOM et SYRACUSE indisponibles"
             ) from None
         rows = self._decorate(rows, self.provider_id, self.credential_id)
-        for loan in rows:
-            self._enrich_digital_loan_metadata(loan)
+        enriched_at = time.perf_counter()
+        attempts_token = self._loan_ebooks_attempts.set(0)
+        try:
+            for loan in rows:
+                self._enrich_digital_loan_metadata(loan)
+        finally:
+            # Catalogue lookups are optional descriptive calls, never an
+            # additional ListLoans read or a proof of current entitlements.
+            attempts = self._loan_ebooks_attempts.get()
+            self._loan_ebooks_attempts.reset(attempts_token)
+            _TRACE_LOG.info(
+                "TRACE paris list-loans timing phase=metadata consumer=%s"
+                " identity_id=%s credential_id=%s borrower_id=%s"
+                " loans=%s ebooks_attempted=%s duration_ms=%s",
+                self._loan_read_consumer.get(), borrower_scope[1],
+                borrower_scope[3], borrower_id, len(rows), attempts,
+                max(0, int((time.perf_counter() - enriched_at) * 1000)),
+            )
         # Persist the exact borrower on each loan. Paris uses the empty string
         # for the primary account, which must not be confused with "unknown".
         if not scope_current():
@@ -741,7 +786,11 @@ class ParisProviderSession(ProviderSession):
 
     def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
         with self._loan_inventory_lock:
-            return self._snapshot_for_account(account)
+            token = self._loan_read_consumer.set("loan_inventory")
+            try:
+                return self._snapshot_for_account(account)
+            finally:
+                self._loan_read_consumer.reset(token)
 
     def _snapshot_for_account(self, account: Account) -> LoanInventorySnapshot:
         """One scoped read; each qualified ListLoans branch is complete.
@@ -894,7 +943,11 @@ class ParisProviderSession(ProviderSession):
             bound = original[0] if len(original) == 1 else None
             if bound is None:
                 raise ProviderConfigurationError("account_scope_mismatch")
-            inventory = self._snapshot_for_account(account)
+            token = self._loan_read_consumer.set("rights_observation")
+            try:
+                inventory = self._snapshot_for_account(account)
+            finally:
+                self._loan_read_consumer.reset(token)
             scope = inventory.scope
             # A succeeded SYRACUSE response cannot turn a failed DILICOM
             # read into an empty but apparently successful rights branch.
