@@ -18,7 +18,8 @@ _SHA = set("0123456789abcdef")
 _KEYS = (
     "scanned", "status_complete", "status_acquiring",
     "status_reconcile_required", "status_skipped_archived", "status_other",
-    "revision_unrecorded", "account_unbound", "account_conflicting",
+    "revision_unrecorded", "item_id_unqualified",
+    "account_unbound", "account_conflicting",
     "ledger_absent", "ledger_scope_conflicting", "ledger_ambiguous",
     "path_unrecorded", "digest_unrecorded", "path_shared",
     "receipt_shape_candidate", "receipt_unproven",
@@ -135,6 +136,18 @@ def inventory_legacy_kobo_backups(
 
                 if type(revision) is not str or not revision:
                     report["revision_unrecorded"] += 1
+                # The v0.7 SQLite primary key accepts identifiers a typed
+                # Kobo manifest cannot uniquely address. The newer legacy
+                # prune preserves those rows for review; the migration
+                # inventory must count them and never describe their ledger
+                # as a candidate for canonical publication/recovery.
+                item_id_qualified = (
+                    type(item) is str and bool(item.strip())
+                    and item == item.strip() and len(item) <= 1024
+                    and not any(c in item for c in "\x00\r\n")
+                )
+                if not item_id_qualified:
+                    report["item_id_unqualified"] += 1
                 if type(path) is not str or not path:
                     report["path_unrecorded"] += 1
                 if (type(digest) is not str or len(digest) != 64
@@ -144,7 +157,7 @@ def inventory_legacy_kobo_backups(
 
                 valid_source = (type(owner) is str and owner == identity_id
                                 and type(credential) is str and bool(credential)
-                                and type(item) is str and bool(item)
+                                and item_id_qualified
                                 and type(account) is str)
                 if not valid_source:
                     report["account_unbound"] += 1

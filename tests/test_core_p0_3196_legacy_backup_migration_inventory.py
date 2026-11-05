@@ -236,3 +236,47 @@ def test_malformed_duplicate_checkpoint_is_not_a_receipt(store, tmp_path):
     report = _report(store)
     assert report["receipt_shape_candidate"] == 0
     assert report["receipt_unproven"] == 1
+
+
+@pytest.mark.parametrize("unqualified", [
+    "", "  ", " book ", "bad\x00id", "bad\nid", "bad\rid",
+    "x" * 1025,
+])
+def test_inventory_counts_unqualified_legacy_item_ids_without_migration(
+    store, unqualified,
+):
+    # SQLite 0.7 has no item-ID CHECK. A valid remote manifest cannot
+    # reconstruct a unique canonical SourceKey for these historical rows.
+    register(store, "A", "kobo", "card-a", account="buyer")
+    _backup(store, item="clean")
+    with store._lock, store._connect() as db:
+        db.execute(
+            "INSERT INTO backup_items("
+            "provider_id,credential_id,item_id,title,status,updated_at,"
+            "identity_id,account_id,revision_id"
+            ") VALUES(?,?,?,?,?,?,?,?,?)",
+            ("kobo", "card-a", unqualified, "Opaque legacy", "complete",
+             1, "A", "buyer", "r1"),
+        )
+    before = _rows(store)
+    report = _report(store)
+    assert report["status"] == "complete"
+    assert report["scanned"] == 2
+    assert report["item_id_unqualified"] == 1
+    assert report["account_unbound"] == 1
+    assert report["receipt_shape_candidate"] == 0
+    assert report["receipt_unproven"] == 2
+    assert unqualified not in repr(report) or not unqualified
+    assert _report(store) == report
+    assert _rows(store) == before
+
+
+def test_inventory_qualified_ids_have_no_unqualified_counter(store):
+    register(store, "A", "kobo", "card-a", account="buyer")
+    _backup(store, item="normal")
+    before = _rows(store)
+    report = _report(store)
+    assert report["item_id_unqualified"] == 0
+    assert report["account_unbound"] == 0
+    assert report["scanned"] == 1
+    assert _rows(store) == before

@@ -19,6 +19,12 @@ reprise vérifiées.
 - Décompte des lignes `complete`, `acquiring/pending_acquisition`,
   `reconcile_required`, `skipped_archived` et états inconnus ; révisions,
   chemins, empreintes manquants, collision exacte de `local_path`.
+- `item_id_unqualified` compte les identifiants historiques sans correspondance
+  sûre avec le contrat fournisseur (`item_id` vide, espacé en bordure,
+  NUL/CR/LF ou supérieur à 1 024 caractères). Leur conservation pendant le
+  prune 0.7 ne les rend **pas** candidats à la migration. Ils restent
+  `receipt_unproven` et sont comptés `account_unbound` par précaution,
+  même si la connexion du compte est valide. Aucun identifiant brut n'est exporté.
 - Contrôle de la connexion **actuellement active** et de son emprunteur
   explicite ; le compte Kobo vide n'est admis que s'il est enregistré
   exactement comme tel. Les autres identités/credentials sont opposables.
