@@ -94,3 +94,35 @@ def test_multi_candidate_recovery_without_previous_path_survives_empty_manifest(
             assert (first.read_bytes(), second.read_bytes()) == original_bytes
     finally:
         service.close()
+
+
+def test_missing_local_reconciliation_is_not_erased_by_empty_manifest(
+    tmp_path, monkeypatch,
+):
+    service = _service(tmp_path, manifest=[])
+    try:
+        service.storage.backup_put({
+            "provider_id": "kobo", "credential_id": "vault-1",
+            "identity_id": "default", "account_id": "account",
+            "item_id": "historical-edition", "revision_id": "old-revision",
+            "title": "Historical missing download", "format": "EPUB",
+            "status": "reconcile_required", "local_path": None,
+            "error": "historical receipt: unresolved local copy",
+        })
+        monkeypatch.setattr(
+            service, "_execute_kobo_acquisition",
+            lambda *_args, **_kwargs: pytest.fail(
+                "manifest absence must not authorize a repeat download"
+            ),
+        )
+        before = service.storage.backup_get("kobo", "vault-1", "historical-edition")
+        for _ in range(2):
+            summary = service.sync_kobo_backup()
+            assert summary["downloaded"] == 0
+            assert summary["legacy_pruned"] == 0
+            assert summary["reconcile_pending"] >= 1
+            assert service.storage.backup_get(
+                "kobo", "vault-1", "historical-edition",
+            ) == before
+    finally:
+        service.close()
