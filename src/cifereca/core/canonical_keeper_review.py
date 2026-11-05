@@ -21,6 +21,7 @@ _MAX_ROWS = 4096
 _MAX_COPIES = 64
 _SHA_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _HEX_NAME = re.compile(r"(?:sha256[-_])?[0-9a-f]{64}\Z", re.I)
+_RECEIPT_SUFFIX = re.compile(r"[0-9a-f]{64}\Z")
 _CLASSIFIED = frozenset(("Livres", "BD-Manga", "Livres audio", "Documents"))
 
 
@@ -47,9 +48,12 @@ def _rank(path: Path, owner: Path) -> tuple[int, int]:
     relative = path.relative_to(owner)
     if path.suffix.casefold() not in (".epub", ".pdf"):
         raise ValueError("keeper_format_unranked")
-    pieces = path.stem.split(" - ")
+    # Assess the human part of a canonical publication name separately.
+    prefix, _, suffix = path.stem.rpartition(" - ")
+    has_receipt_suffix = bool(prefix and _RECEIPT_SUFFIX.fullmatch(suffix))
+    pieces = (prefix if has_receipt_suffix else path.stem).split(" - ")
     readable = (
-        len(pieces) >= 2 and len(pieces) <= 5
+        (1 if has_receipt_suffix else 2) <= len(pieces) <= 5
         and all(0 < len(item.strip()) <= 180 and item == item.strip()
                 and not _HEX_NAME.fullmatch(item) for item in pieces)
         and len(path.stem) <= 250

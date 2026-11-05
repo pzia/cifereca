@@ -1,6 +1,8 @@
 """#4496: keeper preference is advisory, SHA/profile verified, never destructive."""
 from __future__ import annotations
 
+import pytest
+
 from cifereca.core.canonical_keeper_review import review_canonical_keeper
 from tests.test_core_p0_3171_atomic_publication_v14 import (
     BYTES, SHA, new_source, publish, register, rows, store, target,
@@ -56,6 +58,32 @@ def test_named_acquisition_beats_unnamed_classified_path(store, tmp_path):
     result = check(store, root)
     assert result.status == "review_required"
     assert result.keeper_placement_id == pair[0].placement_id
+
+
+@pytest.mark.parametrize("prefix", ["Livre", "Autrice - Livre", "Autrice - Saga - 2 - Livre"])
+def test_readable_name_with_receipt_suffix_beats_opaque_copy(store, tmp_path, prefix):
+    receipt = "a" * 64
+    root, pair = setup_copies(store, tmp_path, (
+        f"Acquisitions/{prefix} - {receipt}.pdf",
+        f"Livres/Auteur/{SHA}.pdf",
+    ))
+    before = rows(store)
+    result = check(store, root)
+    assert result.status == "review_required"
+    assert result.keeper_placement_id == pair[0].placement_id
+    assert result.candidate_placement_ids == (pair[1].placement_id,)
+    assert result.executable is False
+    assert rows(store) == before
+
+
+def test_two_hash_components_do_not_count_as_a_readable_name(store, tmp_path):
+    root, pair = setup_copies(store, tmp_path, (
+        f"Acquisitions/{SHA} - {'a' * 64}.pdf",
+        "Acquisitions/Autrice - Livre.pdf",
+    ))
+    result = check(store, root)
+    assert result.status == "review_required"
+    assert result.keeper_placement_id == pair[1].placement_id
 
 
 def test_equal_rank_is_ambiguous_not_decided_by_placement_id(store, tmp_path):
