@@ -150,6 +150,26 @@ def _manifest(session):
 
 
 def _evidence(service, account, manifest):
+    # #3196 D2: a confirmation covering an edition already represented by
+    # Core must not advertise the backup_items worker as an executor, even
+    # while the provider ABI remains partial. The v0.7 source scope lacks
+    # borrower/branch, so one typed edition blocks the whole legacy batch.
+    # Match raw Kobo IDs exactly as the W2 manifest admission does. This
+    # is read-only and rechecked against the live DB at confirmation.
+    item_ids = {
+        str(row.get("product_id") or row.get("id") or "").strip()
+        for row in manifest
+    }
+    with service.storage._lock, service.storage._connect() as db:
+        typed = db.execute(
+            "SELECT edition_id FROM source_references WHERE "
+            "provider_id='kobo' AND credential_id=? LIMIT 10001",
+            (account.credential_id,),
+        ).fetchall()
+    if len(typed) > 10000:
+        raise _Rejected("evidence_budget_exhausted")
+    _require(not any(edition in item_ids for (edition,) in typed),
+             "canonical_source_delivery_active")
     reasons = {}
     preview = kobo_backup.kobo_backup_preview(
         service, account.credential_id, refresh_manifest=True,
