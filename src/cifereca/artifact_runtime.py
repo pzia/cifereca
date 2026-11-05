@@ -266,13 +266,15 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
                 final_info = os.stat(candidate, dir_fd=parent_fd, follow_symlinks=False)
                 current_stage = os.stat(staged.name, dir_fd=stage_fd,
                                         follow_symlinks=False)
+                # Creating/removing a hardlink legitimately changes inode
+                # ctime; compare the stable content-bearing fields instead.
                 signature = lambda info: (
-                    info.st_dev, info.st_ino, info.st_size,
-                    info.st_mtime_ns, info.st_ctime_ns,
+                    info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
                 )
                 if (not stat.S_ISREG(final_info.st_mode)
                         or signature(final_info) != signature(stage_info)
                         or signature(current_stage) != signature(stage_info)
+                        or sha256_file(source_parent / candidate) != sha256
                         or _variant_directory_stamp(source_parent) != directory_stamp):
                     raise Conflict("Variante ou répertoire changé",
                                    code="artifact_variant_publish_race")
@@ -423,9 +425,24 @@ class ArtifactExecutionBrokerImpl:
         if lease.source.artifact_id != source.artifact_id:
             raise Conflict("Le lease de sortie ne correspond pas à la source", code="artifact_lease_source_mismatch")
         path = lease.path
-        if not path.is_file():
-            raise NotFound("Le transformer n'a produit aucun fichier", code="artifact_output_missing")
-        actual_sha = sha256_file(path); actual_size = path.stat().st_size
+        if _variant_file_stamp(path) is None:
+            raise NotFound("Le transformer n'a produit aucun fichier régulier",
+                           code="artifact_output_missing")
+        stage_stamp = _variant_file_stamp(path)
+        actual_sha = sha256_file(path)
+        actual_size = path.stat().st_size
+        if _variant_file_stamp(path) != stage_stamp:
+            raise Conflict("Staging de variante modifié", code="artifact_variant_output_changed")
+        source_placement = self._source_placement(source)
+        source_path = Path(str(source_placement["path"]))
+        if (lease.source_path != source_path
+                or lease.source_placement_id != str(source_placement.get("placement_id") or "")
+                or lease.source_identity_id != source_placement["identity_id"]
+                or _variant_directory_stamp(source_path.parent) != lease.source_directory_stamp
+                or _variant_file_stamp(source_path) != lease.source_stamp
+                or sha256_file(source_path) != source.sha256
+                or _variant_file_stamp(source_path) != lease.source_stamp):
+            raise Conflict("Source de variante remplacée", code="artifact_source_changed")
         if result.sha256 and actual_sha != result.sha256:
             raise Conflict("Checksum de transformation invalide", code="artifact_output_checksum_mismatch")
         if result.size_bytes and actual_size != int(result.size_bytes):
@@ -444,22 +461,34 @@ class ArtifactExecutionBrokerImpl:
             profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
         )
         if existing:
-            artifact = _artifact_ref(self.service.storage, str(existing.get("artifact_id") or ""), book_id=source.book_id)
-            path.unlink(missing_ok=True); lease.active = False
-            if artifact is not None: return artifact
-        source_placement = self._source_placement(source)
-        source_path = Path(str(source_placement.get("path"))).resolve()
+            artifact = _artifact_ref(
+                self.service.storage, str(existing.get("artifact_id") or ""),
+                book_id=source.book_id,
+                identity_id=lease.source_identity_id,
+            )
+            if artifact is not None:
+                try:
+                    self.input_lease(artifact)
+                except (Conflict, NotFound, OSError, ValueError):
+                    artifact = None
+            if artifact is not None:
+                path.unlink(missing_ok=True); lease.active = False
+                return artifact
         proposed = Path(str(result.proposed_filename or lease.proposed_filename or "")).name
         if not proposed:
             suffix = "." + str(result.output_format.format or lease.output_format.format or source_path.suffix.lstrip(".")).lstrip(".")
             proposed = f"{source_path.stem} [{lease.variant_kind or 'variant'}]{suffix}"
         suffix = Path(proposed).suffix or ("." + str(result.output_format.format or lease.output_format.format or "bin").lstrip("."))
         stem = Path(proposed).stem or source_path.stem
-        final = source_path.parent / (stem + suffix)
-        if final.exists() and sha256_file(final) != actual_sha:
-            final = source_path.parent / f"{stem}-{actual_sha[:8]}{suffix}"
-        final.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(path, final)
+        if (source_path.parent != path.parent.parent.parent
+                or _variant_file_stamp(path) != stage_stamp
+                or _variant_file_stamp(source_path) != lease.source_stamp
+                or _variant_directory_stamp(source_path.parent) != lease.source_directory_stamp):
+            raise Conflict("Staging ou source déplacé", code="artifact_variant_scope_changed")
+        final = _publish_variant_exclusive(
+            path, source_path.parent, basename=stem + suffix,
+            sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
+        )
         lease.active = False
         now = int(time.time())
         artifact_id = f"sha256:{actual_sha}"
@@ -560,6 +589,7 @@ class ArtifactExecutionBrokerImpl:
                     self.service.storage,
                     str(existing.get("artifact_id") or ""),
                     book_id=request.source.book_id,
+                    identity_id=identity_id,
                 )
                 if cached is not None:
                     try:
@@ -595,7 +625,16 @@ class ArtifactExecutionBrokerImpl:
             variant_kind=request.capability_id or "derived",
         )
         try:
+            # The transformer may move or swap the original after plan.
+            # The lease pins both path and current physical inode.
+            if (destination.source_placement_id != source_lease.source_placement_id
+                    or destination.source_identity_id != source_lease.source_identity_id
+                    or destination.source_path != source_lease.path
+                    or destination.source_stamp != source_lease.source_stamp
+                    or destination.source_directory_stamp != source_lease.source_directory_stamp):
+                raise Conflict("Source changée pendant le plan", code="artifact_source_changed")
             result = transformer.transform(request, source_lease, destination, control)
+            control.check_cancelled()
             committed = self.commit_variant(
                 source=request.source,
                 destination=destination,
