@@ -239,3 +239,30 @@ prend **pas** en charge les ZIP `sync run --report` ou `--trace-export` :
 ces formats ont un contrat indépendant. En contexte sans Core installé,
 un analyseur spécialisé peut conserver son lecteur historique autonome et
 les mêmes codes d'erreur ; ne pas forcer l'import de GTK ou de la configuration.
+
+## #3252 — qualification fiable de la couverture du diagnostic Kobo privé
+
+Commande locale : `python -m cifereca.core.kobo_final_verdict_summary CHEMIN-PRIVE.zip`.
+Le rapport retourne uniquement des **compteurs et statuts fermés**, jamais
+des événements, identités, chemins ou noms de rotations. Les occurrences
+d'erreur ne constituent pas un nombre de titres distincts.
+
+La couverture `available/empty/partial/unknown` est dérivée **uniquement du
+`manifest.json` du ZIP journal v1 validé**, non de
+`cifereca-journal-brut.json` : les événements bruts ne contiennent pas ces
+attributs et ne peuvent pas s'auto-attester. Un ZIP mono-JSON historique,
+sans manifeste, donne systématiquement `journal_coverage=unknown`, même
+s'il contient des clés du même nom. Une rotation absente, un journal actif
+manquant ou `coverage=partial` donnent `partial` ; l'absence de rejet
+instrumenté est alors `no_evidence_partial_coverage`. En aucun cas
+`historical_completeness_attested` ne passe à vrai : la fenêtre retenue
+ne prouve pas toutes les acquisitions anciennes.
+
+L'API publique standard `read_raw_journal_zip(path)` retourne toujours
+le **JSON brut inchangé**. L'option Core explicite
+`include_manifest_coverage=True` retourne séparément un couple
+`(events_document, marker)` sans noms de rotation ; elle ne modifie ni le
+format de l'archive ni les garanties de SHA, taille et comptage. Tests
+d'intégration : ZIP v1 et anciens mono-JSON synthétiques, prétendue
+couverture injectée dans le brut, manifestes mal formés, digest altéré
+et absence de fuite dans la sortie.

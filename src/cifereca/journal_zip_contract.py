@@ -93,13 +93,20 @@ def read_raw_journal_zip(
     path: Path, *, allow_legacy: bool = True,
     max_json_bytes: int = MAX_READER_JSON_BYTES,
     max_events: int = MAX_READER_EVENTS,
-) -> dict:
+    include_manifest_coverage: bool = False,
+) -> dict | tuple[dict, dict | None]:
     """Read and integrity-check a v1 daily ZIP (or historical single JSON ZIP).
 
     Never extract ZIP entries, follow embedded paths, call Core or initiate
-    network I/O. Returns the raw journal unchanged; the caller must redact
-    its own *reports* and must never republish this raw payload by default.
+    network I/O. The default return is the raw journal unchanged. Diagnostic
+    callers may explicitly request a (raw, coverage_metadata) pair; the
+    coverage metadata comes ONLY from the validated daily ZIP's manifest,
+    never from untrusted event JSON, and is None for legacy single-file ZIPs.
+    No rotation filenames or unrelated manifest fields are returned.
+    The caller must redact its own reports and never republish raw events.
     """
+    if type(include_manifest_coverage) is not bool:
+        raise JournalZipError("journal_limits_invalid")
     if (type(max_json_bytes) is not int or not 2 <= max_json_bytes <= MAX_READER_JSON_BYTES
             or type(max_events) is not int or not 0 <= max_events <= MAX_READER_EVENTS):
         raise JournalZipError("journal_limits_invalid")
@@ -150,4 +157,27 @@ def read_raw_journal_zip(
         raise JournalZipError("too_many_events")
     if manifest is not None and len(document["events"]) != manifest["event_count"]:
         raise JournalZipError("journal_event_count_mismatch")
+    if include_manifest_coverage:
+        # Avoid republishing private rotation names; the bound manifest
+        # provides only a closed marker for whether gaps were declared.
+        declared = manifest.get("coverage") if manifest is not None else None
+        missing = (manifest.get("active_log_missing")
+                   if manifest is not None else None)
+        coverage = (
+            {
+                "coverage": (
+                    declared if type(declared) is str
+                    and declared in ("available", "empty", "partial") else None
+                ),
+                "rotation_gaps_present": (
+                    bool(manifest["rotation_gaps"])
+                    if type(manifest.get("rotation_gaps")) is list else None
+                ),
+                "active_log_missing": (
+                    missing if type(missing) is bool else None
+                ),
+            }
+            if manifest is not None else None
+        )
+        return document, coverage
     return document
