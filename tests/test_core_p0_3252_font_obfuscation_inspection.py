@@ -48,6 +48,8 @@ def _epub(encryption: str | None) -> bytes:
     (ENVELOPE.format(data=_entry(FONT) + _entry("urn:unknown")), True),
     (ENVELOPE.format(data="<enc:EncryptedData/>"), True),
     (ENVELOPE.format(data=_entry(FONT) + "<enc:EncryptionMethod Algorithm='urn:other'/>"), True),
+    (ENVELOPE.format(data=_entry(FONT) + "<enc:EncryptedKey/>"), True),
+    (ENVELOPE.format(data=_entry(FONT) + "<enc:KeyInfo/>"), True),
     ("<encryption", True),
     ("<encryption/>", True),
     ("<invalid>" + _entry(FONT) + "</invalid>", True),
