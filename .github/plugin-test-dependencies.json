@@ -7,11 +7,13 @@
     "literary-criticism",
     "maintenance-library-audit",
     "provider-bnf-catalogue",
+    "provider-gallica",
     "provider-gutenberg"
   ],
   "dependencies": {
     "home-page": [
       "provider-bnf-catalogue",
+      "provider-gallica",
       "provider-gutenberg"
     ]
   }
