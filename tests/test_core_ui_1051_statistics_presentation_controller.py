@@ -31,6 +31,7 @@ def _stats(**updates):
         "remote_owned_rights": 3,
         "formats": {"epub": 9, "pdf": 3},
         "sources": {"Z": 5, "A": 7},
+        "local_books_without_provider_origin": 2,
         "epub_covers": {"embedded": 8, "none": 4},
     }
     values.update(updates)
@@ -117,7 +118,8 @@ def test_detail_preserves_order_french_labels_and_sorted_group_values():
         "Sources de prêts observées : 2",
         "Droits d’achat distants actifs : 3",
         "Formats : epub 9, pdf 3",
-        "Sources locales : A 7, Z 5",
+        "Origines fournisseur attestées : A 7, Z 5",
+        "Origine non attestée : 2",
         "Couvertures EPUB : embedded 8, none 4",
         "Inventaire des fichiers issu du dernier scan ; prêts de bibliothèque issus des dernières réponses, "
         "éventuellement partielles. Les livres achetés en ligne ne sont pas des emprunts ni des fichiers locaux. "
@@ -134,8 +136,14 @@ def test_zero_loans_are_known_in_detailed_dialog_not_unknown():
 def test_empty_format_source_and_cover_buckets_are_explicit():
     lines = statistics_lines(_stats(formats={}, sources={}, epub_covers={}))
     assert "Formats : —" in lines
-    assert "Sources locales : —" in lines
+    assert "Origines fournisseur attestées : aucune" in lines
     assert "Couvertures EPUB : —" in lines
+
+
+def test_unavailable_provenance_is_not_reported_as_zero():
+    lines = statistics_lines(_stats(sources={}, local_books_without_provider_origin=None))
+    assert "Origines fournisseur attestées : — (non déterminé)" in lines
+    assert not any(line.startswith("Origine non attestée") for line in lines)
 
 
 def test_action_counts_follow_original_order_and_default_to_zero():

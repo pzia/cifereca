@@ -6,9 +6,12 @@ from __future__ import annotations
 import time
 import json
 import hashlib
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import asdict
+from sqlite3 import Error as SqliteError
 from typing import Any
+
+from .library_projection import _read_provider_origin_coordinates
 
 
 def action_statistics(self, identity_id: str, *, window_seconds: int=2592000):
@@ -28,19 +31,44 @@ def action_statistics(self, identity_id: str, *, window_seconds: int=2592000):
     )
 
 
+def _provider_origin_statistics(storage, identity_id: str) -> tuple[dict[str, int], int | None]:
+    """Count persisted provider proofs and uncovered local artifacts in one snapshot."""
+    if not identity_id:
+        return {}, None
+    try:
+        with storage._lock, storage._connect() as db:
+            db.execute("BEGIN")
+            origins = _read_provider_origin_coordinates(db, identity_id=identity_id)
+            if origins is None:
+                return {}, None
+            local_artifacts = {
+                artifact_id for artifact_id, in db.execute(
+                    "SELECT DISTINCT p.artifact_id FROM placements p "
+                    "JOIN artifacts a ON a.artifact_id=p.artifact_id "
+                    "WHERE p.identity_id=? AND p.state='present'", (identity_id,),
+                )
+            }
+    except (SqliteError, AttributeError):
+        return {}, None
+    by_provider = defaultdict(set)
+    for artifact_id, _, provider, *_ in origins:
+        by_provider[provider].add(artifact_id)
+        local_artifacts.discard(artifact_id)
+    return {provider: len(ids) for provider, ids in by_provider.items()}, len(local_artifacts)
+
+
 def identity_statistics(self, identity_id, *, window_seconds: int=2592000):
     """Persisted inventory facts only; no scan, authentication or download."""
     placements=[r for r in self.storage.placements(state='present') if r.get('identity_id')==identity_id]
     artifacts={r['artifact_id']:r for r in self.storage.artifacts()}
     ids={r['artifact_id'] for r in placements if r['artifact_id'] in artifacts}
-    formats=Counter();sources=Counter();covers=Counter()
+    formats=Counter();covers=Counter()
     for aid in ids:
         artifact=artifacts[aid];formats[str(artifact.get('media_format') or 'unknown')]+=1
         meta=artifact.get('metadata') or {}
         if artifact.get('media_format') in {'epub','kepub'}:
             covers['extracted' if meta.get('epub_cover') else str(meta.get('epub_cover_status') or 'not_inspected')]+=1
-    for provider in {r.get('provider_id') or 'local' for r in placements}:
-        sources[provider]=len({r['artifact_id'] for r in placements if (r.get('provider_id') or 'local')==provider})
+    sources, without_provider_origin = _provider_origin_statistics(self.storage, identity_id)
     try:observations=json.loads(self.storage.metadata_get('loan_statistics:'+str(identity_id)) or '{}')
     except (ValueError,TypeError):observations={}
     if not isinstance(observations,dict):observations={}
@@ -53,7 +81,8 @@ def identity_statistics(self, identity_id, *, window_seconds: int=2592000):
     return {'identity_id':identity_id,'local_books':len(ids),'local_placements':len(placements),'local_files':sum((r.get('metadata') or {}).get('artifact_kind')!='bundle' for r in placements),
             'known_loans':len(loan_keys) if selected else None,'loan_sources_observed':len(selected),
             'loans_observed_at':min((r.get('observed_at') for r in selected),default=None) if all(isinstance(r.get('observed_at'),int) for r in selected) else None,
-            'remote_owned_rights':len(owned),'formats':dict(formats),'sources':dict(sources),'epub_covers':dict(covers),
+            'remote_owned_rights':len(owned),'formats':dict(formats),'sources':sources,'epub_covers':dict(covers),
+            'local_books_without_provider_origin':without_provider_origin,
             'actions':asdict(self.action_statistics(identity_id, window_seconds=window_seconds)),
             'scope':'persisted_inventory_last_observed_provider_loans_and_action_window'}
 
