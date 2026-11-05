@@ -16,10 +16,12 @@ def _primary(identity, credential, *, primary=True):
                    credential_id=credential, unique_id="", is_primary=primary)
 
 
-def _status(connections, accounts, *, profile="reader-a", identity="alice"):
+def _status(connections, accounts, *, profile="reader-a", identity="alice",
+            selected=None):
     return normal_paris_adept_status(
         identity_id=identity, connections=connections,
         accounts=accounts, profile_id=profile,
+        primary_connection_id=selected,
     )
 
 
@@ -142,3 +144,63 @@ def test_non_text_borrower_identity_never_matches_textual_identity():
     )
     assert _status([connection], [bogus], identity="17")["reason"] == "missing_primary_account"
     assert _status([connection], [_primary("17", "paris-a")], identity="17")["status"] == "ready"
+
+def test_explicit_primary_connection_disambiguates_two_accounts_without_fallback():
+    rows = [_connection("alice", "paris-a"), _connection("alice", "paris-b")]
+    accounts = [_primary("alice", "paris-a"), _primary("alice", "paris-b")]
+    selected = _status(rows, accounts, selected="paris-b")
+    assert selected["status"] == "ready"
+    assert selected["adept_profile_id"] == "reader-a"
+    assert _status(rows, accounts)["reason"] == "multiple_paris_connections"
+    # Rebinding/disable of the chosen connection never selects the other.
+    assert _status([rows[0], dict(rows[1], enabled=False)],
+                   accounts, selected="paris-b")["reason"] == (
+        "primary_paris_connection_missing"
+    )
+    assert _status(rows, [_primary("alice", "paris-a")],
+                   selected="paris-b")["reason"] == "missing_primary_account"
+    assert _status(rows, accounts, selected="not-configured")["status"] == "to_verify"
+
+
+def test_invalid_duplicate_or_cross_identity_selected_connection_is_never_ready():
+    rows = [_connection("alice", "paris-a"), _connection("alice", "paris-a")]
+    primary = [_primary("alice", "paris-a")]
+    assert _status(rows, primary, selected="paris-a")["reason"] == (
+        "primary_paris_connection_duplicate"
+    )
+    for invalid in (True, 3, [], "", " paris-a ", "paris-b"):
+        status = _status(rows[:1], primary, selected=invalid)
+        assert status["status"] != "ready"
+    assert _status([_connection("bob", "paris-a")], primary,
+                   selected="paris-a")["status"] != "ready"
+
+
+def test_service_facade_honours_persisted_choice_without_modifying_grants(tmp_path):
+    service, _ = service_with_linked_borrower(tmp_path)
+    try:
+        service.storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "paris",
+            "credential_id": "alice-secondary", "label": "Paris secondaire",
+        })
+        service.accounts.append(_primary("alice", "alice-secondary"))
+        assert service.normal_paris_adept_status("alice")["reason"] == (
+            "multiple_paris_connections"
+        )
+        service.config.upsert_identity({
+            "id": "alice", "label": "Alice", "directory_name": "alice",
+            "primary_paris_connection_id": "alice-paris",
+        })
+        assert service.normal_paris_adept_status("alice")["status"] == "ready"
+        # No exceptional grant or historic origin is created by the choice.
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123"
+        ) is None
+        service.config.upsert_identity({
+            "id": "alice", "label": "Alice", "directory_name": "alice",
+            "primary_paris_connection_id": "offline",
+        })
+        assert service.normal_paris_adept_status("alice")["reason"] == (
+            "primary_paris_connection_missing"
+        )
+    finally:
+        service.close()
