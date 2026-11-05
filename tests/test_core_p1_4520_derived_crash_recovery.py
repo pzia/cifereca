@@ -204,3 +204,41 @@ def test_changed_source_refuses_recovery_without_tampering_with_orphan(tmp_path)
         assert service.storage.artifact_variants() == []
     finally:
         service.storage.close()
+
+
+def test_receipt_symlink_is_never_followed_or_promoted(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        receipt = next(stage.glob("pending-*.json"))
+        outside = tmp_path / "original-receipt.json"
+        outside.write_bytes(receipt.read_bytes())
+        receipt.unlink()
+        receipt.symlink_to(outside)
+        observed = review_pending_derived_receipts(
+            service, identity_id="id1", commit=True,
+        )
+        assert observed[0]["status"] == "manual_review"
+        assert outside.exists()
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
+
+
+def test_receipt_forged_output_size_is_not_recoverable(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        import json
+        receipt = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        record = json.loads(receipt.read_text())
+        record["output_size"] += 1
+        receipt.write_text(json.dumps(record), encoding="utf-8")
+        observed = review_pending_derived_receipts(service, identity_id="id1")
+        assert observed[0]["status"] == "manual_review"
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
