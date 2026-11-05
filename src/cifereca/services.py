@@ -596,11 +596,28 @@ class LibraryService:
                 "paris_label": None,
                 "adept_profile_id": None,
             }
+        saved = self.config.identity(identity_id) or {}
+        selected = saved.get("primary_paris_connection_id")
+        connections = self.storage.provider_connections(identity_id=identity_id)
+        if selected is not None:
+            # A retired/disabled config login can still have a legacy SQLite
+            # provider_connections row. An explicit choice needs BOTH a live
+            # local configuration owner and the durable observed connection.
+            candidates = [row for row in self.config.provider_accounts()
+                          if type(row.get("id")) is str
+                          and row["id"] == selected
+                          and type(row.get("provider")) is str
+                          and row["provider"].casefold() == "paris"
+                          and row.get("identity_id") == identity_id
+                          and row.get("enabled", True) is True]
+            if len(candidates) != 1:
+                connections = []
         return normal_paris_adept_status(
             identity_id=identity_id,
-            connections=self.storage.provider_connections(identity_id=identity_id),
+            connections=connections,
             accounts=self.accounts,
             profile_id=self.storage.adept_profile_binding_get("identity", identity_id),
+            primary_connection_id=selected,
         )
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:

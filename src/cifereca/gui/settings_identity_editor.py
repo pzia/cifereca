@@ -58,6 +58,17 @@ def build_identity_settings_editor(
     vo_row.add_suffix(vo_switch)
     group.add(vo_row)
 
+    primary_row = Adw.EntryRow()
+    primary_row.set_title("Connexion Paris principale (ID de source)")
+    saved_primary = data.get("primary_paris_connection_id", "")
+    primary_row.set_text(saved_primary if type(saved_primary) is str else "")
+    primary_row.set_tooltip_text(
+        "ID exact du compte Paris dans Sources, pour cette identité. "
+        "Laissez vide uniquement si une seule connexion Paris active existe. "
+        "Aucun compte ou profil ADEPT ne sera choisi automatiquement en cas d'ambiguïté."
+    )
+    group.add(primary_row)
+
     adept_row = Adw.EntryRow()
     adept_row.set_title("Profil ADE lié à cette identité (optionnel)")
     adept_row.set_text(adept_profile)
@@ -90,6 +101,7 @@ def build_identity_settings_editor(
         "group": group, "id": id_row, "label": label_row,
         "directory": directory_row, "languages": languages_row,
         "prefer_vo": vo_switch, "adept_profile": adept_row,
+        "primary_paris_connection_id": primary_row,
         "deleted": False,
     }
     return editor, choose_directory, choose_adept, delete_button

@@ -16,6 +16,7 @@ def normal_paris_adept_status(
     connections: Iterable[Mapping[str, Any]],
     accounts: Iterable[Any],
     profile_id: str | None,
+    primary_connection_id: str | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic local-only UI status, never an Adobe decision."""
     # Configuration IDs are opaque strings. Coercing malformed booleans or
@@ -41,12 +42,30 @@ def normal_paris_adept_status(
         and row["credential_id"].strip()
     ]
     if not rows:
+        if primary_connection_id is not None:
+            response.update(status="to_verify", reason="primary_paris_connection_missing")
         return response
-    if len(rows) != 1:
-        response.update(status="to_verify", reason="multiple_paris_connections")
-        return response
-
-    connection = rows[0]
+    # An explicitly designated source never falls back to another Paris
+    # login when its credential disappears, is disabled, or changes owner.
+    if primary_connection_id is not None:
+        if (type(primary_connection_id) is not str
+                or not primary_connection_id.strip()
+                or primary_connection_id != primary_connection_id.strip()):
+            response.update(status="to_verify", reason="primary_paris_connection_invalid")
+            return response
+        selected = [row for row in rows
+                    if row["credential_id"] == primary_connection_id]
+        if len(selected) != 1:
+            response.update(status="to_verify", reason=(
+                "primary_paris_connection_missing" if not selected
+                else "primary_paris_connection_duplicate"))
+            return response
+        connection = selected[0]
+    else:
+        if len(rows) != 1:
+            response.update(status="to_verify", reason="multiple_paris_connections")
+            return response
+        connection = rows[0]
     response["paris_label"] = str(connection.get("label") or "Paris")
     profile = profile_id.strip() if type(profile_id) is str else ""
     if not profile:

@@ -1668,3 +1668,67 @@ def test_missing_option_in_old_editor_never_grants_or_invents_a_quota(editor):
     editor[1]["accounts"] = [row]
     result = validate(editor, descriptors={"bnf-pret": provider})
     assert "manual_loan_limit" not in result.data["providers"]["accounts"][0]["options"]
+
+def test_paris_primary_selection_is_exact_scoped_and_roundtrips(editor):
+    config, values = editor
+    values["identities"][0]["primary_paris_connection_id"] = "paris-main"
+    values["accounts"] = [
+        account("paris", account_id="paris-main"),
+        account("paris", account_id="paris-secondary"),
+    ]
+    before = deepcopy(config.data)
+    draft = validate(editor, descriptors={"paris": descriptor("paris")})
+    assert draft.data["identities"][0]["primary_paris_connection_id"] == "paris-main"
+    assert len(draft.data["providers"]["accounts"]) == 2
+    assert config.data == before
+    assert not config.path.exists()
+
+
+@pytest.mark.parametrize("invalid_case", (
+    "unbound", "wrong_identity", "disabled", "wrong_provider", "duplicate",
+))
+def test_paris_primary_rejects_stale_or_cross_identity_account(editor, invalid_case):
+    config, values = editor
+    values["identities"][0]["primary_paris_connection_id"] = "paris-main"
+    first = account("paris", account_id="paris-main")
+    second = account("paris", account_id="paris-secondary")
+    if invalid_case == "unbound":
+        first["id"] = "unrelated"
+    if invalid_case == "wrong_identity":
+        values["identities"].append(dict(
+            id="bob", label="Bob", directory="bob", adept_profile="",
+            languages="fr", prefer_vo=False,
+        ))
+        first["identity"] = "bob"
+    if invalid_case == "disabled":
+        first["enabled"] = False
+    if invalid_case == "wrong_provider":
+        first["provider"] = "other"
+    if invalid_case == "duplicate":
+        second["id"] = "paris-main"
+    values["accounts"] = [first, second]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError):
+        validate(editor, descriptors={
+            "paris": descriptor("paris"), "other": descriptor("other"),
+        })
+    assert config.data == before
+    assert not config.path.exists()
+
+
+def test_untyped_persisted_primary_id_never_becomes_a_plausible_saved_binding(editor):
+    config, values = editor
+    config.set("identities", [{
+        "id": "alice", "directory_name": "alice",
+        "primary_paris_connection_id": True,
+    }])
+    values["identities"][0]["primary_paris_connection_id"] = ""
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="historique invalide"):
+        validate(editor)
+    assert config.data == before
+
+
+def test_empty_primary_remains_optional_for_single_connection_legacy(editor):
+    draft = validate(editor)
+    assert "primary_paris_connection_id" not in draft.data["identities"][0]
