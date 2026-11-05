@@ -1649,7 +1649,14 @@ class Storage:
         local_path = str(row.get("local_path") or "").strip()
         placement_id = None
         if local_path:
-            placement_id = cls._stable_id("placement", str(Path(local_path).expanduser().resolve()))
+            # 0.7 has only a *claim* about this pathname, not permission to
+            # dereference it. Path.resolve() followed a symlink from A into
+            # B, storing a foreign physical pathname under A's identity and
+            # potentially blocking B's later independently verified Placement.
+            # Normalize spelling only; leave actual file/symlink attestation
+            # to the canonical scanner/publisher. No filesystem read here.
+            claimed_path = os.path.abspath(os.path.expanduser(local_path))
+            placement_id = cls._stable_id("placement", claimed_path)
             # A physical pathname is unique across canonical placements.
             # Only an untouched, unverified legacy placeholder may be refreshed.
             # A canonical scan/publication (including missing/invalid history)
@@ -1686,7 +1693,7 @@ class Storage:
                 "catalog_guard.metadata_json IS NOT ? OR catalog_guard.local_state<>'local' "
                 "OR catalog_guard.identity_id IS NOT ? OR catalog_guard.provider_id IS NOT ? "
                 "OR catalog_guard.item_id IS NOT ?))",
-                (placement_id, artifact_id, str(Path(local_path).expanduser().resolve()), row.get("identity_id"), row.get("provider_id"),
+                (placement_id, artifact_id, claimed_path, row.get("identity_id"), row.get("provider_id"),
                  row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp,
                  cls._json_dump({"imported_from": "backup_items"}),
                   cls._json_dump({"imported_from": "backup_items"}),
