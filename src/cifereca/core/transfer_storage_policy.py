@@ -42,8 +42,8 @@ def transfer_readable_filename(
     def component(value: object) -> str:
         if type(value) is not str:
             return ""
-        value = re.sub(r"[\\x00-\\x1f\\x7f/\\\\]+", " ", value)
-        value = re.sub(r"\\s+", " ", value).strip(" .-")
+        value = re.sub(r"[\x00-\x1f\x7f/\\]+", " ", value)
+        value = re.sub(r"\s+", " ", value).strip(" .-")
         return value[:96].rstrip(" .-")
 
     title_text = component(title)
@@ -51,7 +51,7 @@ def transfer_readable_filename(
     suffix = source_path.suffix
     # Suffix is the witnessed *file's* extension, not an inferred codec from
     # an upstream bibliographic Frmt.
-    suffix = suffix if len(suffix) <= 16 and re.fullmatch(r"\\.[A-Za-z0-9]+", suffix) else ""
+    suffix = suffix if len(suffix) <= 16 and re.fullmatch(r"\.[A-Za-z0-9]+", suffix) else ""
     if title_text:
         stem = f"{author_text} - {title_text}" if author_text else title_text
     else:
