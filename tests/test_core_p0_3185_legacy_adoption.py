@@ -17,7 +17,7 @@ from tests.test_core_p0_3185_canonical_backup_relink import (
 from tests.test_core_p0_3185_legacy_scope_review import _mark_legacy
 from tests.test_core_p0_3719_prepare_duplicate import _journal, _catalogue
 from tests.test_core_p0_3171_atomic_publication_v14 import (
-    BYTES, rows,
+    BYTES, rows, store,
 )
 
 
