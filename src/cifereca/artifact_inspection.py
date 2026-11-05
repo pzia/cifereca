@@ -184,6 +184,10 @@ def _epub_encryption_protected(archive: zipfile.ZipFile) -> bool:
     protected, including absent method and oversized manifests.
     """
     name = "META-INF/encryption.xml"
+    # A second manifest can hide a protected declaration behind an innocent
+    # last entry: never exempt a duplicated ZIP member in non-strict mode.
+    if sum(info.filename == name for info in archive.infolist()) > 1:
+        return True
     try:
         info = archive.getinfo(name)
     except KeyError:
@@ -207,9 +211,14 @@ def _epub_encryption_protected(archive: zipfile.ZipFile) -> bool:
         return True
     if _local_name(root.tag) != "encryption":
         return True
-    # An additional encrypted-key or key-info declaration is *not* just
-    # font obfuscation, even beside an otherwise valid font method.
-    if any(_local_name(node.tag) in {"encryptedkey", "keyinfo"}
+    # Additional keys, raw cipher values or unknown XML declarations are
+    # not proven to be standard font obfuscation. Fail closed.
+    allowed_nodes = {
+        "encryption", "encrypteddata", "encryptionmethod",
+        "cipherdata", "cipherreference", "encryptionproperties",
+        "encryptionproperty",
+    }
+    if any(_local_name(node.tag) not in allowed_nodes
            for node in root.iter()):
         return True
     encrypted_nodes = [
