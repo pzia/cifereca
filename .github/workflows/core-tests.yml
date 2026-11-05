@@ -64,7 +64,13 @@ jobs:
 
       - name: Install Core test dependencies
         if: steps.scope.outputs.core_mode != 'skip'
-        run: python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
+        run: |
+          python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
+          # The exhaustive suite was validated with two file-scoped workers
+          # in PR CI (#4558); small selected scopes keep their direct runner.
+          if [[ "${{ steps.scope.outputs.core_mode }}" == "full" ]]; then
+            python -m pip install --disable-pip-version-check "pytest-xdist>=3.6,<4"
+          fi
 
       - name: Run Core tests
         if: steps.scope.outputs.core_mode != 'skip'
@@ -78,4 +84,8 @@ jobs:
             echo "Empty test selection: refusing to skip the Core suite" >&2
             exit 1
           fi
-          python -m pytest -q --durations=10 "${selected[@]}"
+          if [[ "$CORE_TEST_MODE" == "full" ]]; then
+            python -m pytest -q --durations=10 -n 2 --dist=loadfile "${selected[@]}"
+          else
+            python -m pytest -q --durations=10 "${selected[@]}"
+          fi

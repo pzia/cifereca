@@ -8,7 +8,16 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 FILE = Path(__file__).resolve().parents[1] / "src/plugins/diagnostics-page/diagnostics_explorer.py"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_diagnostics_imports(monkeypatch):
+    # Import from the real package location in every pytest worker. Relying
+    # on other tests to mutate sys.path works only under sequential ordering.
+    monkeypatch.syspath_prepend(str(FILE.parent))
 
 
 def _explorer():
