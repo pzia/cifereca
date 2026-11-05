@@ -14,7 +14,7 @@ from cifereca.core.canonical_dedup_retirement import (
     retire_verified_canonical_duplicate,
 )
 from cifereca.locking import InterProcessLock
-from cifereca.plugin_api import LibraryMutationRequest
+from cifereca.plugin_api import Conflict, LibraryMutationPlan, LibraryMutationRequest
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows, store
 from tests.test_core_p0_3185_canonical_backup_relink import rig
 from tests.test_core_p0_3185_maintenance_supervisor_broker import broker_for
@@ -74,13 +74,17 @@ def test_public_canonical_broker_cannot_bypass_default_supervisor_hold(
         keep_placement_id=pubs[0].placement_id,
         options={"action": "commit", "confirmed": True},
     )
-    planned = broker.plan(request)
-    assert planned.destructive
-    outcome = broker.run(planned)
-    assert outcome.ok is False
-    assert outcome.changed == 0
-    assert outcome.facts["status"] == "blocked"
-    assert outcome.facts["reason"] == "ordinary_cleanup_suspended"
+    # A fresh plan and a restored plan both refuse before choosing a keeper.
+    with pytest.raises(Conflict, match="suspendu") as exc:
+        broker.plan(request)
+    assert exc.value.code == "ordinary_cleanup_suspended"
+    stale = LibraryMutationPlan(
+        "canonical_dedup", "Ancien plan confirmé", request,
+        destructive=True, facts={"action": "commit", "reason": "active_references"},
+    )
+    with pytest.raises(Conflict, match="suspendu") as exc:
+        broker.run(stale)
+    assert exc.value.code == "ordinary_cleanup_suspended"
     assert rows(storage) == (1, 3, 3, 3)
     assert all(path.read_bytes() == BYTES for path in paths)
 
@@ -118,3 +122,70 @@ def test_suspended_ordinary_commit_does_not_block_existing_tombstone_recovery(
     assert not paths[1].exists()
     assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
     assert rows(storage) == (1, 2, 3, 3)
+
+
+def test_legacy_delete_duplicate_is_suspended_at_plan_and_stale_run(
+    rig, monkeypatch,
+):
+    storage, _root, paths, pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch)
+    request = LibraryMutationRequest(
+        "delete_duplicate", placement_id=pubs[1].placement_id,
+        keep_placement_id=pubs[0].placement_id,
+    )
+    with pytest.raises(Conflict, match="suspendu") as exc:
+        broker.plan(request)
+    assert exc.value.code == "ordinary_cleanup_suspended"
+    cached = LibraryMutationPlan(
+        "delete_duplicate", "Ancien plan de suppression", request,
+        destructive=True,
+    )
+    with pytest.raises(Conflict, match="suspendu") as exc:
+        broker.run(cached)
+    assert exc.value.code == "ordinary_cleanup_suspended"
+    assert rows(storage) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_broker_preview_kept_available_while_ordinary_commit_is_suspended(
+    rig, monkeypatch,
+):
+    storage, _root, paths, pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch)
+    request = LibraryMutationRequest(
+        "canonical_dedup", placement_id=pubs[1].placement_id,
+        keep_placement_id=pubs[0].placement_id,
+        options={"action": "preview"},
+    )
+    review = broker.run(broker.plan(request))
+    assert review.ok
+    assert review.changed == 0
+    assert review.facts["status"] == "preview_ready"
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_suspension_preserves_legacy_adoption_broker(rig, monkeypatch):
+    """The cleanup hold must not remove the independently proven SQL-only adoption."""
+    from tests.test_core_p0_3185_legacy_scope_review import _mark_legacy
+    from tests.test_core_p0_3719_prepare_duplicate import _journal
+    storage, _root, paths, pubs, _lock = rig
+    _mark_legacy(rig)
+    _journal(rig)
+    broker = broker_for(rig, monkeypatch)
+    preview_request = LibraryMutationRequest(
+        "legacy_adopt", placement_id=pubs[1].placement_id,
+        keep_placement_id=pubs[0].placement_id,
+        options={"action": "preview"},
+    )
+    preview = broker.run(broker.plan(preview_request))
+    assert preview.ok and preview.facts["status"] == "review_required"
+    commit_request = LibraryMutationRequest(
+        "legacy_adopt", placement_id=pubs[1].placement_id,
+        keep_placement_id=pubs[0].placement_id,
+        options={"action": "commit", "confirmed": True},
+    )
+    committed = broker.run(broker.plan(commit_request))
+    assert committed.ok and committed.facts["status"] == "migrated"
+    assert committed.facts["removed_file"] is False
+    assert all(path.read_bytes() == BYTES for path in paths)
+    assert storage.placement_get(pubs[1].placement_id)["provider_id"] is None

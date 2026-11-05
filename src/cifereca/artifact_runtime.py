@@ -45,6 +45,27 @@ class _VariantScopeConflict(Conflict):
 
 
 
+def _enforce_ordinary_dedup_hold(request: LibraryMutationRequest) -> None:
+    """P0 #3185: a stored plan, forced plugin or direct broker cannot unlink.
+
+    No preference may override the suspended keeper-policy decision #4496.
+    Non-mutating preview and recovery of an *existing* tombstone are separate
+    operations and remain admitted to their normal Core validations.
+    """
+    operation = request.operation
+    if operation not in ("canonical_dedup", "delete_duplicate"):
+        return
+    action = (_canonical_maintenance_action(request)
+              if operation == "canonical_dedup" else "commit")
+    if action != "commit":
+        return
+    from .core.canonical_dedup_supervisor import _ordinary_cleanup_enabled
+    if not _ordinary_cleanup_enabled():
+        raise _CanonicalDedupConflict(
+            "Nettoyage de doublons suspendu — décision produit #4496",
+            code="ordinary_cleanup_suspended",
+        )
+
 def _canonical_b_pair(row: dict[str, Any] | None, keeper: dict[str, Any] | None) -> bool:
     """The legacy source-scoped deleter cannot retire canonical B placements."""
     return (
@@ -753,6 +774,7 @@ class LibraryMaintenanceBrokerImpl:
 
     def plan(self, request: LibraryMutationRequest) -> LibraryMutationPlan:
         op=request.operation
+        _enforce_ordinary_dedup_hold(request)
         if op == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
@@ -870,6 +892,7 @@ class LibraryMaintenanceBrokerImpl:
 
     def run(self, plan: LibraryMutationPlan, control: TaskControl | None = None) -> LibraryMutationResult:
         request=plan.request
+        _enforce_ordinary_dedup_hold(request)
         if control is not None: control.check_cancelled()
         if request.operation == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)

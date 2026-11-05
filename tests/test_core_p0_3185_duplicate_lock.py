@@ -6,6 +6,19 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _allow_historical_duplicate_mechanics(monkeypatch):
+    """Keep old SQLite/FS failure-mode tests without re-enabling production.
+
+    Current user-facing admission remains suspended by #4496. The only
+    override is a local test monkeypatch on this historical mechanics suite.
+    """
+    from cifereca.core import canonical_dedup_supervisor
+    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
+                        lambda: True)
+
+
 from cifereca import artifact_runtime, paths
 from cifereca.locking import InterProcessLock, LockBusyError
 from cifereca.plugin_api import Conflict
