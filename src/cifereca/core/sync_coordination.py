@@ -712,7 +712,10 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     scheduled_accounts = [
         a for a in eligible_accounts if a.credential_id in scheduled_credentials
     ]
-    if not legacy_enabled and not scheduled:
+    # #3198: only current source/session facts determine the opening state.
+    # Historical kobo_backup.enabled is exposed separately for rollback,
+    # never as a source-wide OFF decision or acquisition permission.
+    if not kobo:
         reason = "disabled"
     elif not connected:
         reason = "no_session"
