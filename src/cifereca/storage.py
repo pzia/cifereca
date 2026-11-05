@@ -1493,6 +1493,72 @@ class Storage:
             )
         else:
             projection_owned = True
+        # #3196: a v0.7 replay may share an acquisition ID with an imported
+        # completed Core journal, or publish a SECOND synthetic ledger row
+        # while a normal canonical-intake stage already owns this source.
+        # Neither path may turn historical backup status/SHA into authority
+        # over the already durable canonical checkpoint.
+        old_id = cls._acquisition_id_for(row)
+        expected = (
+            str(row.get("provider_id") or ""),
+            str(row.get("credential_id") or ""),
+            row.get("account_id"),
+            str(row.get("item_id") or ""),
+            row.get("identity_id"),
+        )
+        checkpoints = db.execute(
+            "SELECT acquisition_id,provider_id,credential_id,account_id,"
+            "item_id,identity_id,status,metadata_json FROM acquisition_ledger "
+            "WHERE acquisition_id=? OR (provider_id=? AND credential_id=? "
+            "AND item_id=?) ORDER BY acquisition_id LIMIT 1001",
+            (old_id, expected[0], expected[1], expected[3]),
+        ).fetchall()
+        if len(checkpoints) > 1000:
+            raise ValueError("backup_canonical_receipt_scope_budget")
+        completed_canonical_source = False
+        for existing_id, p, credential, account, item, owner, stage_status, raw in checkpoints:
+            if (type(raw) is not str
+                    or "canonical.completed-delivery.v1" not in raw):
+                continue
+            # The canonical marker is NOT a right or a local presence
+            # proof. It only prevents the old writer from changing any
+            # canonical facts when it is already present.
+            if len(raw) > 65536:
+                raise ValueError("backup_canonical_receipt_unreadable")
+
+            def unique_keys(pairs):
+                document = {}
+                for key, value in pairs:
+                    if key in document:
+                        raise ValueError("duplicate_canonical_receipt_key")
+                    document[key] = value
+                return document
+
+            try:
+                receipt = json.loads(raw, object_pairs_hook=unique_keys)
+            except (ValueError, TypeError, RecursionError) as error:
+                raise ValueError("backup_canonical_receipt_unreadable") from error
+            if (type(receipt) is not dict
+                    or receipt.get("schema") != "canonical.completed-delivery.v1"):
+                raise ValueError("backup_canonical_receipt_unreadable")
+            # A completed-delivery checkpoint with a non-complete ledger
+            # status is contradictory; never let the old writer guess which
+            # state it may overwrite or treat it as confirmed evidence.
+            if stage_status != "complete":
+                raise ValueError("backup_canonical_receipt_status_conflict")
+            stored = (p, credential, account, item, owner)
+            if (stored == expected and type(owner) is str and owner
+                    and type(account) is str):
+                completed_canonical_source = True
+            elif existing_id == old_id:
+                # A reused deterministic ID must never be reassigned to
+                # another account, borrower or book, even via legacy replay.
+                raise ValueError("backup_acquisition_owner_conflict")
+        if completed_canonical_source:
+            # backup_put refreshed only the compatibility projection.
+            # No entitlement, Artifact, Placement, catalogue or acquisition
+            # journal is synthesized from old and possibly stale data.
+            return
         if projection_owned:
             entitlement_cursor = db.execute(
                 "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
