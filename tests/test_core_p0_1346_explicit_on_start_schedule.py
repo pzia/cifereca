@@ -39,7 +39,9 @@ def test_historical_global_flag_never_authorizes_startup_download(
         if deep:
             monkeypatch.setattr(service, "catalog_scan", lambda **_kwargs: {"scanned": 0})
         result = service._opening_sync_locked(deep=deep)
-        expected = "manual_only" if legacy_enabled else "disabled"
+        # The retired global flag affects only the legacy report, not the
+        # canonical source opening decision; both remain unconsented.
+        expected = "manual_only"
         assert result["kobo_decision"]["status"] == expected
         assert result["kobo_decision"]["scheduled_kobo"] == 0
         assert result["kobo"] == ({"status": "manual_only", "skipped": True}
