@@ -3907,13 +3907,12 @@ class LibraryService:
                         loan_trace_ref(loan, None), trace_ref)
         library_target_dir = self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
         target_dir = self._acquisition_work_dir(identity.identity_id, loan.source_provider, loan.id)
-        cached = None if force_refresh else (
-            # #3121: exact first-offer bytes remain usable even when the
-            # supplier changes/omits its signed URL on a fresh ListLoans.
-            # This is a read of an already-staged file, never a new borrow.
-            acsm_cache.reuse_initial(target_dir, loan, identity.identity_id, account_key)
-            or acsm_cache.reuse(target_dir, loan, identity.identity_id, account_key)
-        )
+        normal_cached = None if force_refresh else acsm_cache.reuse(
+            target_dir, loan, identity.identity_id, account_key)
+        initial_cached = (None if force_refresh or normal_cached is not None
+                          else acsm_cache.reuse_initial(
+                              target_dir, loan, identity.identity_id, account_key))
+        cached = normal_cached or initial_cached
         if cached is not None:
             path, url = cached, loan.ebook_url or ""
             self.diagnostics.add("PNB", "reuse artifact", detail={"loan_ref": trace_ref, "cached": True})
@@ -3929,7 +3928,7 @@ class LibraryService:
         hook_item = loan_download_projection.build_hook_item(
             loan, url, result_factory=SearchResult,
         )
-        if cached is None:
+        if cached is None or initial_cached is not None:
             self.acquisition.run_post_download(hook_item, path, url, target_dir)
             acsm_cache.remember(path, target_dir, loan, identity.identity_id, account_key)
         is_acsm = path.suffix.casefold() == ".acsm"
