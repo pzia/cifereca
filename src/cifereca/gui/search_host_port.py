@@ -21,6 +21,7 @@ class SearchControllerHost(Protocol):
     _remote_search_results: Any
     _online_source_context: Any
     _online_source_statuses: Any
+    _search_response_facets: Any
     _search_mode: Any
 
     def _reset_search_enter(self) -> None: ...
@@ -73,7 +74,8 @@ SEARCH_RUN_CAPABILITIES = frozenset({
     "_populate_local_search", "runner", "search_button", "search_global_button", "_remote_query_key",
     "_remote_search_results", "_search_local_objects", "_online_pending_key",
     "_online_pending_token", "_online_pending_generation",
-    "_online_source_context", "_online_source_statuses", "_populate_search",
+    "_online_source_context", "_online_source_statuses", "_search_response_facets",
+    "_populate_search",
     "show_error",
 })
 

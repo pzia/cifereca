@@ -335,12 +335,16 @@ def _update_search_count(self, shown: int) -> None:
     noun = "résultat" if count == 1 else "résultats"
     scope = "Connu" if self._search_mode == "local" else "Étendu"
     suffix, tooltip = "", ""
-    if self._search_mode == "global" and getattr(self, "search_controls", None) is not None:
+    response_facets = getattr(self, "_search_response_facets", None)
+    if getattr(self, "search_controls", None) is not None:
         state = self.search_controls.state()
         identity = getattr(self.service, "current_identity", None)
         context = (state.text, state.field, state.scope,
                    getattr(identity, "identity_id", None))
-        if getattr(self, "_online_source_context", None) == context:
+        if response_facets is not None:
+            response_facets.refresh(context, state.providers)
+        if (self._search_mode == "global"
+                and getattr(self, "_online_source_context", None) == context):
             from cifereca.gui.search_batch_feedback import safe_source_statuses
             suffix, tooltip = safe_source_statuses(
                 getattr(self, "_online_source_statuses", None)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """P0 #660: replay real Search filters in the running CIFERECA GTK window.
 
-The XTEST input targets the actual GTK widgets. No fake QueryControls, fake
-search service, external account or provider network is used.
+The XTEST input targets the actual GTK widgets and Core search service.
+The online facet stage uses a synthetic provider response.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import subprocess
 import sys
 from time import monotonic
 from threading import Event
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "environnements" / "openai-chat-debian"))
@@ -29,6 +30,9 @@ from PIL import ImageGrab
 from x11_input import X11Input
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
+from cifereca.plugin_api import (
+    CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
+)
 
 
 def main() -> int:
@@ -343,6 +347,71 @@ def main() -> int:
         }
         core.library.search_known_catalog = counted_search
         capture_stage("06-stale-local-reply-ignored")
+        begin_response_facets()
+
+    facet_queries = []
+
+    def begin_response_facets():
+        def search_facets(query, _scope, **_options):
+            facet_queries.append(query)
+            return ProviderSearchResponse([], (
+                CatalogSearchFacet("CATALOGUE", 0, "Subj", "Sujets", (
+                    CatalogSearchFacetValue("Théâtre", 7, False),
+                )),
+                CatalogSearchFacet("EBOOKS", 1, "Kind", "Types"),
+            ))
+
+        core.library._sessions["synthetic-facets"] = SimpleNamespace(
+            provider_id="synthetic-facets", credential_id="fixture", connected=True,
+            descriptor=SimpleNamespace(display_name="Catalogue de test"),
+            capabilities=SimpleNamespace(search=True),
+            search_with_response_facets=search_facets, close=lambda: None,
+        )
+        window.search_controls.entry.set_text("Facettes")
+        assert not window._search_response_facets.get_visible()
+        later(100, lambda: (
+            device.click_widget(window.search_global_button),
+            later(100, wait_response_facets),
+        ))
+
+    def wait_response_facets():
+        button = window._search_response_facets
+        if not button.get_mapped():
+            later(100, wait_response_facets)
+            return
+        assert facet_queries == ["Facettes"]
+        assert window.search_page.store.get_n_items() == 0
+        device.click_widget(button)
+        later(200, check_response_facets)
+
+    def check_response_facets():
+        popover = window._search_response_facets.get_popover()
+        assert popover.get_mapped(), "Le bouton XTEST n’a pas ouvert les facettes"
+        content = popover.get_child().get_child()
+        # GtkScrolledWindow wraps a non-scrollable child in a GtkViewport.
+        if isinstance(content, Gtk.Viewport):
+            content = content.get_child()
+        labels = [item.get_label() for item in content if isinstance(item, Gtk.Label)]
+        assert any("Filtrage distant non vérifié" in label for label in labels)
+        assert "Catalogue de test · CATALOGUE · page 1" in labels
+        assert "Catalogue de test · EBOOKS · page 2" in labels
+        assert "Types · valeurs non vérifiées" in labels
+        expander, = (item for item in content if isinstance(item, Gtk.Expander))
+        device.click_widget(expander)
+        later(200, lambda: check_response_facet_values(expander))
+
+    def check_response_facet_values(expander):
+        assert expander.get_expanded()
+        assert expander.get_child().get_label() == "Théâtre · 7"
+        assert facet_queries == ["Facettes"]
+        capture_stage("07-response-facets", popup=True)
+        window.search_controls.entry.set_text("Autre recherche")
+        later(200, check_response_facets_cleared)
+
+    def check_response_facets_cleared():
+        assert not window._search_response_facets.get_visible()
+        assert facet_queries == ["Facettes"]
+        result["checks"]["response_facets_descriptive_and_scoped"] = True
         finish()
 
     def finish():
