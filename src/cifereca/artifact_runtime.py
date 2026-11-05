@@ -813,7 +813,7 @@ class ArtifactExecutionBrokerImpl:
         pending_receipts: list[Path] = []
 
         def attest_prelink(candidate: Path, stage_fd: int) -> None:
-            receipt = write_pending_derived_receipt(
+            receipt, receipt_sha256 = write_pending_derived_receipt(
                 path, candidate, stage_dir_fd=stage_fd,
                 source_path=source_path,
                 source_artifact_id=source.artifact_id,
@@ -836,7 +836,9 @@ class ArtifactExecutionBrokerImpl:
             )
             # Independent SQLite intent is durable BEFORE link publication.
             # Receipt bytes alone never authorize a later derived OriginLink.
-            register_pending_derived_receipt(self.service.storage, receipt)
+            register_pending_derived_receipt(
+                self.service.storage, receipt, expected_sha256=receipt_sha256,
+            )
             pending_receipts.append(receipt)
 
         final = _publish_variant_exclusive(
