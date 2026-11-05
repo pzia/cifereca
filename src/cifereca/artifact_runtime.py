@@ -222,6 +222,7 @@ def _variant_ref(storage: Any, row: dict[str, Any], *, book_id: str = "",
 
 def _scoped_derived_preference_candidate(
     storage: Any, variant: Mapping[str, Any], identity_id: str,
+    *, source_placement_id: str | None = None,
 ) -> tuple[str, str] | None:
     """One locally derived Placement, not a global SHA/recipe preference.
 
@@ -261,7 +262,9 @@ def _scoped_derived_preference_candidate(
                     or placement_meta.get("source_artifact_id") != sid):
                 return None
             parent_id = placement_meta.get("source_placement_id")
-            if type(parent_id) is not str or not parent_id:
+            if (type(parent_id) is not str or not parent_id
+                    or (source_placement_id is not None
+                        and parent_id != source_placement_id)):
                 return None
             parent = db.execute(
                 "SELECT artifact_id,identity_id,state,path FROM placements "
@@ -891,10 +894,33 @@ class ArtifactExecutionBrokerImpl:
                            code="artifact_variant_staging_changed") from error
 
     def variants(self, source: ArtifactRef) -> tuple[ArtifactVariant, ...]:
-        out=[]
-        for row in self.service.storage.artifact_variants(source_artifact_id=source.artifact_id):
-            variant = _variant_ref(self.service.storage, row, book_id=source.book_id or "")
-            if variant is not None: out.append(variant)
+        """Only locally attributed derivatives of the active source profile."""
+        owner = getattr(getattr(self.service, "current_identity", None),
+                        "identity_id", None)
+        if (type(source) is not ArtifactRef or type(owner) is not str
+                or not owner
+                or (source.identity_id is not None
+                    and source.identity_id != owner)
+                or (source.placement_id is not None
+                    and (source.identity_id != owner
+                         or type(source.placement_id) is not str
+                         or not source.placement_id))):
+            return ()
+        out = []
+        for row in self.service.storage.artifact_variants(
+                source_artifact_id=source.artifact_id):
+            qualified = _scoped_derived_preference_candidate(
+                self.service.storage, row, owner,
+                source_placement_id=source.placement_id,
+            )
+            if qualified is None:
+                continue
+            variant = _variant_ref(
+                self.service.storage, row, book_id=source.book_id or "",
+                identity_id=owner,
+            )
+            if variant is not None:
+                out.append(variant)
         return tuple(out)
 
     def _select_transformer(self, request: TransformRequest, plugin_id: str = "") -> tuple[str, Any]:
