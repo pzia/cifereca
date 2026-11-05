@@ -1741,10 +1741,17 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             })
             emit("reconcile_required", item_id=previous.get("item_id"), title=previous.get("title"), path=str(artifact))
         elif len(candidates) > 1:
+            # #3196 W3: the old local_path is a historical locator, NOT an
+            # assertion that one of these candidates is usable. Clearing it
+            # here made the subsequent manifest prune delete the entire
+            # 0.7 receipt when the edition was no longer listed. Preserve
+            # the original pointer (including an offline path) while the
+            # explicit reconcile_conflict status prohibits automatic reuse.
+            # Never pick a candidate from the mere number/filenames.
             self.storage.backup_put({
                 **previous,
                 "status": "reconcile_conflict",
-                "local_path": None,
+                "local_path": previous.get("local_path"),
                 "updated_at": int(time.time()),
                 "error": (
                     f"{len(candidates)} artefacts locaux candidats détectés ; "
