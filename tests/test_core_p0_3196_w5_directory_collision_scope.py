@@ -84,7 +84,8 @@ def test_exact_local_only_duplicate_still_merges_catalogue_rows(rig):
 
 @pytest.mark.parametrize("conflict", [
     "different_artifact", "other_owner", "legacy_source",
-    "target_source", "catalogue_source", "missing_source",
+    "target_source", "catalogue_source", "catalogue_artifact",
+    "catalogue_not_local", "missing_source",
     "backup_on_old_path", "backup_on_new_path",
 ])
 def test_collision_cannot_erase_unattested_source_or_change_journal(rig, conflict):
@@ -116,6 +117,16 @@ def test_collision_cannot_erase_unattested_source_or_change_journal(rig, conflic
             sql.execute(
                 "UPDATE catalog_entries SET provider_id='kobo',"
                 "item_id='edition-a' WHERE catalog_entry_id='catalogue:old'"
+            )
+        elif conflict == "catalogue_artifact":
+            sql.execute(
+                "UPDATE catalog_entries SET artifact_id=? "
+                "WHERE catalog_entry_id='catalogue:old'", (other,),
+            )
+        elif conflict == "catalogue_not_local":
+            sql.execute(
+                "UPDATE catalog_entries SET local_state='missing' "
+                "WHERE catalog_entry_id='catalogue:old'"
             )
         elif conflict == "missing_source":
             sql.execute(
