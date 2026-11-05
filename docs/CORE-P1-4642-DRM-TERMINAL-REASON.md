@@ -43,7 +43,9 @@ tranche Core** ; ne pas promettre une ventilation du compteur public.
   Les tests de livraison EPUB lisible/idempotente déjà livrés par #4636
   restent les critères positifs.
 
-**Limite terrain :** les trois éditions Kobo historiques ne sont pas
-encore qualifiées par leur nouveau `encryption_profile`. Ce motif
-terminal ne les répare pas, ne fournit pas leurs octets et n'autorise
-ni Sync globale des 522 ni relance des trois `pending`.
+**Limite terrain :** les trois éditions Kobo historiques ont été
+livrées avec succès depuis, et une seconde Sync a confirmé 515 présents et
+0 échec. Leur `encryption_profile` au moment des anciens refus n'est pas
+connu ; cette amélioration n'est **pas** une correction causale de ces
+éditions. Les trois `pending` demeurent des offres distinctes et ne sont
+pas autorisées au téléchargement forcé.
