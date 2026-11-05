@@ -281,3 +281,24 @@ def test_colliding_primary_and_literal_account_ids_cannot_share_cycle_counts(tmp
                        for source in references)
     finally:
         db.close()
+
+
+def test_declared_failed_core_outcome_is_not_relabelled_partial_in_cycle(tmp_path):
+    db = Storage(tmp_path / "failed-result.sqlite3")
+    try:
+        broker = fake_broker(db)
+        sid = broker.sources()[0].source_id
+        broker.service.synchronize_account_source = lambda *_a, **_kw: {
+            "status": "failed",
+            "canonical_execution": _execution(failed=3, pending=2),
+        }
+        result = broker.synchronize_source(sid)
+        assert result.ok is False
+        assert result.facts["status"] == "failed"
+        terminal = broker.sources()[0].last_cycle
+        assert terminal.status == "failed"
+        assert dict(terminal.canonical_execution)["failed"] == 3
+        text = sync_source_last_cycle_summary(broker.sources()[0])
+        assert " : Échec" in text and "échecs 3" in text
+    finally:
+        db.close()
