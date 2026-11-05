@@ -114,7 +114,11 @@ def test_library_read_deduplicates_artifact_and_exposes_placements(tmp_path):
     assert {p.kind for p in view.placements} == {'library'}
 
 
-def test_library_maintenance_normalize_and_delete_duplicate(tmp_path):
+def test_library_maintenance_normalize_and_delete_duplicate(tmp_path, monkeypatch):
+    # Retain the mechanics regression without re-enabling ordinary cleanup.
+    from cifereca.core import canonical_dedup_supervisor
+    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
+                        lambda: True)
     service, source, pid=make_service(tmp_path)
     broker=LibraryMaintenanceBrokerImpl(service)
     plan=broker.plan(LibraryMutationRequest('normalize_filename',placement_id=pid))

@@ -45,6 +45,29 @@ class _VariantScopeConflict(Conflict):
 
 
 
+
+
+def _enforce_ordinary_dedup_hold(request: LibraryMutationRequest) -> None:
+    """P0 #3185: a stored plan, forced plugin or direct broker cannot unlink.
+
+    No preference may override the suspended keeper-policy decision #4496.
+    Non-mutating preview and recovery of an *existing* tombstone are separate
+    operations and remain admitted to their normal Core validations.
+    """
+    operation = request.operation
+    if operation not in ("canonical_dedup", "delete_duplicate"):
+        return
+    action = (_canonical_maintenance_action(request)
+              if operation == "canonical_dedup" else "commit")
+    if action != "commit":
+        return
+    from .core.canonical_dedup_supervisor import _ordinary_cleanup_enabled
+    if not _ordinary_cleanup_enabled():
+        raise _CanonicalDedupConflict(
+            "Nettoyage de doublons suspendu — décision produit #4496",
+            code="ordinary_cleanup_suspended",
+        )
+
 def _canonical_b_pair(row: dict[str, Any] | None, keeper: dict[str, Any] | None) -> bool:
     """The legacy source-scoped deleter cannot retire canonical B placements."""
     return (
@@ -753,6 +776,7 @@ class LibraryMaintenanceBrokerImpl:
 
     def plan(self, request: LibraryMutationRequest) -> LibraryMutationPlan:
         op=request.operation
+        _enforce_ordinary_dedup_hold(request)
         if op == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
@@ -766,37 +790,6 @@ class LibraryMaintenanceBrokerImpl:
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
             return LibraryMutationPlan(op, f"Matérialiser le placement vers l'identité {request.target_identity_id}", request, changes=(request.placement_id, request.target_identity_id))
-        if op == "legacy_adopt":
-            from .core.canonical_legacy_adoption import adopt_verified_legacy_placement
-            action = request.options.get("action", "preview")
-            if type(action) is not str or action not in ("preview", "commit"):
-                raise _CanonicalDedupConflict(
-                    "Action de migration historique invalide",
-                    code="legacy_adoption_invalid_action",
-                )
-            evidence = adopt_verified_legacy_placement(
-                self.service.storage,
-                library_root=_canonical_maintenance_root(self.service),
-                candidate_placement_id=request.placement_id,
-                keeper_placement_id=request.keep_placement_id,
-            )
-            if action == "commit" and evidence.status != "review_required":
-                raise _CanonicalDedupConflict(
-                    "Migration historique non vérifiée",
-                    code="legacy_adoption_unverified",
-                )
-            return LibraryMutationPlan(
-                op,
-                ("Contrôler le placement historique" if action == "preview"
-                 else "Adopter le placement historique après confirmation"),
-                request, destructive=(action == "commit"),
-                changes=(request.placement_id,) if action == "commit" else (),
-                warnings=(("Écriture SQLite confirmée ; aucun fichier supprimé.",)
-                          if action == "commit" else ()),
-                facts={"action": action, "status": evidence.status,
-                       "reason": evidence.reason,
-                       "review_token": evidence.review_token},
-            )
         if op == "canonical_dedup":
             from .core.canonical_dedup_supervisor import supervise_canonical_duplicate
 
@@ -870,6 +863,7 @@ class LibraryMaintenanceBrokerImpl:
 
     def run(self, plan: LibraryMutationPlan, control: TaskControl | None = None) -> LibraryMutationResult:
         request=plan.request
+        _enforce_ordinary_dedup_hold(request)
         if control is not None: control.check_cancelled()
         if request.operation == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)
@@ -1038,66 +1032,6 @@ class LibraryMaintenanceBrokerImpl:
             result=self.service.materialize_to_identity(request.placement_id,str(request.target_identity_id))
             row=self.service.storage.placement_get(str(result.get("placement_id") or ""))
             return LibraryMutationResult(True,1,plan.summary,(_placement_ref(row),) if row else (),facts=result)
-        if request.operation == "legacy_adopt":
-            from .core.canonical_legacy_adoption import adopt_verified_legacy_placement
-            from .locking import InterProcessLock, LockBusyError
-            from .paths import acquisition_lock_file
-
-            action = request.options.get("action", "preview")
-            if (type(action) is not str or action not in ("preview", "commit")
-                    or plan.operation != "legacy_adopt"
-                    or plan.destructive is not (action == "commit")
-                    or type(plan.facts) is not dict
-                    or plan.facts.get("action") != action):
-                raise _CanonicalDedupConflict(
-                    "Plan de migration historique invalide",
-                    code="legacy_adoption_invalid_plan",
-                )
-            root = _canonical_maintenance_root(self.service)
-            kwargs = {
-                "library_root": root,
-                "candidate_placement_id": request.placement_id,
-                "keeper_placement_id": request.keep_placement_id,
-            }
-            if action == "preview":
-                result = adopt_verified_legacy_placement(
-                    self.service.storage, **kwargs,
-                )
-            else:
-                if request.options.get("confirmed") is not True:
-                    raise _CanonicalDedupConflict(
-                        "Confirmation explicite requise",
-                        code="legacy_adoption_confirmation_required",
-                    )
-                try:
-                    if control is not None:
-                        control.check_cancelled()
-                    with InterProcessLock(acquisition_lock_file(), reentrant=True) as lease:
-                        if control is not None:
-                            control.check_cancelled()
-                        result = adopt_verified_legacy_placement(
-                            self.service.storage, **kwargs,
-                            action="commit", confirmed=True, shared_lock=lease,
-                            expected_review_token=plan.facts.get("review_token", ""),
-                        )
-                except LockBusyError as error:
-                    raise _CanonicalDedupConflict(
-                        "Bibliothèque occupée : migration historique indisponible",
-                        code="legacy_adoption_lock_busy",
-                    ) from error
-            return LibraryMutationResult(
-                result.status in ("review_required", "migrated"),
-                int(result.status == "migrated"),
-                "Migration historique non destructive : " + result.status,
-                facts={
-                    "action": action, "status": result.status,
-                    "reason": result.reason,
-                    "completed_path_receipts": result.completed_path_receipts,
-                    "catalogue_references": result.catalogue_references,
-                    "backup_references": result.backup_references,
-                    "removed_file": False,
-                },
-            )
         if request.operation == "canonical_dedup":
             from .core.canonical_dedup_supervisor import supervise_canonical_duplicate
             from .locking import InterProcessLock, LockBusyError
