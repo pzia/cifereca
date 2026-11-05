@@ -51,7 +51,7 @@ def publish_derived_variant(
     placement_id = storage._stable_id("placement", str(published_path))
     origin_id = storage._stable_id(
         "origin", "derived", identity_id, parent_placement_id,
-        artifact_id, recipe_id,
+        placement_id, artifact_id, recipe_id,
     )
     now = int(time.time())
     source_id = str(book_id or parent_artifact_id)
@@ -160,13 +160,27 @@ def publish_derived_variant(
                      "source_artifact_id": parent_artifact_id,
                      "source_placement_id": parent_placement_id}), now, now),
         )
-        db.execute(
-            "INSERT INTO origin_links(origin_link_id,origin_kind,identity_id,"
-            "artifact_id,source_reference_id,evidence_ref,parent_artifact_id,"
-            "metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (origin_id, "derived", identity_id, artifact_id, None,
-             origin_evidence, parent_artifact_id, dumped(origin_meta), now, now),
+        # A user may delete the local derivative but retain its immutable
+        # historical OriginLink. Recreating the exact same bytes in that same
+        # placement must not fail or rewrite the previous source evidence.
+        old_origin = db.execute(
+            "SELECT origin_kind,identity_id,artifact_id,source_reference_id,"
+            "evidence_ref,parent_artifact_id,metadata_json FROM origin_links "
+            "WHERE origin_link_id=?", (origin_id,),
+        ).fetchone()
+        expected_origin = (
+            "derived", identity_id, artifact_id, None, origin_evidence,
+            parent_artifact_id, dumped(origin_meta),
         )
+        if old_origin is None:
+            db.execute(
+                "INSERT INTO origin_links(origin_link_id,origin_kind,identity_id,"
+                "artifact_id,source_reference_id,evidence_ref,parent_artifact_id,"
+                "metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (origin_id, *expected_origin, now, now),
+            )
+        elif old_origin != expected_origin:
+            raise DerivedPublicationConflict("derived_variant_origin_collision")
         if source_catalogue is not None:
             title, author, _source_item, raw_metadata = source_catalogue
             try:
