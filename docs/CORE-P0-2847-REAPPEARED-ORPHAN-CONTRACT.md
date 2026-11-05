@@ -99,3 +99,27 @@ catalogues liés ; l'opération nouvellement ajoutée ne traite **pas** les
 reçus, backups, liens de provenance ou chemins relocalisés. Elle n'active pas
 de nouvelle action GTK sans décision UX séparée. #2847 reste ouvert pour
 les données réellement constatées.
+
+## Tranche complémentaire : retour après indexation réelle du scanner (#2847)
+
+La première implémentation de restauration liée (#4615) ne reconnaissait que
+les métadonnées Placement vides. Or `LocalCatalog.index_path` écrit un
+`Placement` avec `relative_path`, `artifact_kind='file'`, `file_size`
+et `mtime_ns` ; `placements_mark_missing` conserve ces champs.
+Cette incompatibilité rendait les fichiers **normalement indexés** impossibles
+à réactiver via l'opérateur lié, même quand ils revenaient identiques.
+
+La réparation liée accepte maintenant **exactement** cette enveloppe scanner
+(aucune clé supplémentaire) lorsque `relative_path` est égal au chemin
+lexical relatif à la racine configurée, `artifact_kind='file'`, taille
+entière positive identique à l'Artifact, et `mtime_ns` entier positif.
+L'ancien horodatage n'est pas une attestation du fichier revenu : la
+preuve actualisée repose toujours sur `_file_proof` SHA/inode sans suivi de
+symlink et sur le contrôle de profil, catalogue et transaction au commit.
+La restauration orpheline conserve son veto pour toute enveloppe non vide.
+Un bundle ou des métadonnées de droits / fichier partagé restent bloqués.
+
+Aucun nouvel accès fournisseur, aucune mutation de droits et aucune action
+GTK ajoutés. Tests : transition réelle `present → missing` du stockage,
+retour du fichier, restauration de Placement et catalogue exacts, rejets de
+métadonnées étrangères et relecture SHA, idempotence.
