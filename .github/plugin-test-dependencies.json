@@ -1,7 +1,8 @@
 {
   "audited_product_packages": [
     "dev-updater",
-    "literary-criticism"
+    "literary-criticism",
+    "maintenance-library-audit"
   ],
   "dependencies": {}
 }
