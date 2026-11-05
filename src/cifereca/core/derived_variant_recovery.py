@@ -5,6 +5,7 @@ Recovery is explicit (never on startup), bounded and non-destructive.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,32 @@ def _stamp(path: Path) -> tuple[int, int, int, int] | None:
     except OSError:
         pass
     return None
+
+
+def _verified_sha(path: Path, expected_stamp: tuple[int, ...],
+                  expected_sha: str) -> bool:
+    """Hash exactly the O_NOFOLLOW inode, checking fstat before/after read."""
+    if (_stamp(path) != expected_stamp or type(expected_sha) is not str
+            or len(expected_sha) != 64):
+        return False
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            before = os.fstat(fd)
+            signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
+            if not stat.S_ISREG(before.st_mode) or signature(before) != expected_stamp:
+                return False
+            hasher = hashlib.sha256()
+            while chunk := os.read(fd, 1024 * 1024):
+                hasher.update(chunk)
+            after = os.fstat(fd)
+            return (signature(after) == signature(before)
+                    and _stamp(path) == expected_stamp
+                    and hasher.hexdigest() == expected_sha)
+        finally:
+            os.close(fd)
+    except (OSError, ValueError):
+        return False
 
 
 def _directory(path: Path) -> bool:
@@ -114,11 +141,12 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
 
 
 def review_pending_derived_receipts(service: Any, *, identity_id: str,
-                                    commit: bool = False) -> tuple[dict[str, str], ...]:
+                                    commit: bool = False,
+                                    approved_receipt_sha256: str = "") -> tuple[dict[str, str], ...]:
     """Explicit bounded review/recovery. No ambiguous evidence is promoted.
 
-    The journal is NOT a provider right. A caller must explicitly select an
-    existing profile and opt into commit; dry-run is the default.
+    The journal is NOT a provider right. For commit, an operator must approve
+    the SHA256 of the exact reviewed receipt bytes; no unattended bulk replay.
     """
     storage = service.storage
     profile = storage.identity_get(identity_id)
@@ -158,7 +186,9 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
         try:
             if _stamp(journal) is None or journal.stat().st_size > MAX_BYTES:
                 continue
-            data = json.loads(journal.read_bytes())
+            receipt_bytes = journal.read_bytes()
+            receipt_digest = hashlib.sha256(receipt_bytes).hexdigest()
+            data = json.loads(receipt_bytes)
             if (type(data) is not dict or data.get("schema") != SCHEMA
                     or data.get("identity_id") != identity_id):
                 continue
@@ -175,11 +205,11 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                     or len(data["output_sha256"]) != 64
                     or data.get("source_artifact_id") != "sha256:" + data.get("source_sha256", "")):
                 continue
-            from cifereca.library_files import sha256_file
-            if (_stamp(target) != tuple(data["output_stamp"])
-                    or _stamp(source) is None
-                    or sha256_file(target) != data["output_sha256"]
-                    or sha256_file(source) != data["source_sha256"]):
+            source_stamp = _stamp(source)
+            output_stamp = tuple(data["output_stamp"])
+            if (source_stamp is None
+                    or not _verified_sha(target, output_stamp, data["output_sha256"])
+                    or not _verified_sha(source, source_stamp, data["source_sha256"])):
                 continue
             parent = storage.placement_get(data["source_placement_id"])
             if (parent is None or parent.get("identity_id") != identity_id
@@ -194,7 +224,17 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                     outcome["status"] = "already_committed"
                 continue
             outcome["status"] = "recoverable"
+            outcome["sha256"] = receipt_digest
             if not commit:
+                continue
+            if (type(approved_receipt_sha256) is not str
+                    or approved_receipt_sha256 != receipt_digest):
+                outcome["status"] = "approval_required"
+                continue
+            # Exact operator-approved journal, checked again before SQL.
+            if (not _verified_sha(target, output_stamp, data["output_sha256"])
+                    or not _verified_sha(source, source_stamp, data["source_sha256"])):
+                outcome["status"] = "manual_review"
                 continue
             publish_derived_variant(
                 storage, parent_artifact_id=data["source_artifact_id"],
