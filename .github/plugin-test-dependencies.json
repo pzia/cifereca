@@ -1,4 +1,6 @@
 {
-  "audited_product_packages": [],
+  "audited_product_packages": [
+    "literary-criticism"
+  ],
   "dependencies": {}
 }
