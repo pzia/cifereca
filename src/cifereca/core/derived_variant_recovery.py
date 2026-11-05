@@ -86,46 +86,6 @@ def _directory(path: Path) -> bool:
         return False
 
 
-def _safe_unlink_receipt(
-    path: Path, *, expected_sha256: str = "",
-    expected_stamp: tuple[int, int, int, int] | None = None,
-) -> bool:
-    """Best-effort cleanup; refuse substitutions instead of unlinking blindly.
-
-    The directory FD prevents traversal through a swapped staging symlink.
-    The exact receipt bytes and inode are verified immediately before unlink.
-    No path-based cleanup can atomically defeat a malicious concurrent rename;
-    supervised recovery still treats any residue as evidence, not garbage.
-    """
-    if (not _directory(path.parent) or _stamp(path) is None
-            or (expected_stamp is not None
-                and _stamp(path) != expected_stamp)):
-        return False
-    if expected_sha256:
-        if hashlib.sha256(_read_receipt_nofollow(path)).hexdigest() != expected_sha256:
-            return False
-    stamp = _stamp(path)
-    if stamp is None or (expected_stamp is not None
-                         and stamp != expected_stamp):
-        return False
-    fd = os.open(
-        path.parent, os.O_RDONLY | os.O_DIRECTORY
-        | getattr(os, "O_NOFOLLOW", 0),
-    )
-    try:
-        info = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
-        signature = lambda st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
-        if signature(info) != stamp or _stamp(path) != stamp:
-            return False
-        os.unlink(path.name, dir_fd=fd)
-        os.fsync(fd)
-        return True
-    except FileNotFoundError:
-        return False
-    finally:
-        os.close(fd)
-
-
 def write_pending_derived_receipt(staged: Path, published: Path, *,
                                   stage_dir_fd: int,
                                   source_path: Path, source_stamp: tuple[int, ...],
@@ -247,23 +207,6 @@ def _intent_matches(storage: Any, journal: Path, digest: str) -> bool:
         return storage.metadata_get(key) == digest
     except (TypeError, ValueError):
         return False
-
-
-def retire_pending_derived_receipt(
-    storage: Any, journal: Path, *, expected_sha256: str,
-    expected_stamp: tuple[int, int, int, int],
-) -> None:
-    """Never retire an inode other than the one Core created and fsynced."""
-    key = _pending_intent_key(journal)
-    expected = storage.metadata_get(key)
-    if (expected != expected_sha256
-            or not _safe_unlink_receipt(
-                journal, expected_sha256=expected_sha256,
-                expected_stamp=expected_stamp,
-            )):
-        return
-    with storage._lock, storage._connect() as db:
-        db.execute("DELETE FROM metadata WHERE key=? AND value=?", (key, expected))
 
 
 def review_pending_derived_receipts(service: Any, *, identity_id: str,
