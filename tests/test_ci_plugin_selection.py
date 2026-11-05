@@ -106,10 +106,14 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(names, ["downstream", "recommender"])
 
     def test_malformed_recommendations_fail_closed(self):
-        for bad in (None, "unexpected", [None], [{}], [{"plugin": 4}]):
+        for index, bad in enumerate(
+            (None, "unexpected", [None], [{}], [{"plugin": 4}])
+        ):
             with self.subTest(bad=bad):
-                self.add_package("invalid", [
-                    {"id": "service.invalid", "type": "consumer",
+                # Each package name is unique: malformed cases stay in the
+                # graph to demonstrate fail-closed behaviour for all forms.
+                self.add_package(f"invalid-{index}", [
+                    {"id": f"service.invalid-{index}", "type": "consumer",
                      "recommends": bad},
                 ])
                 names, reason = self.names([
@@ -117,7 +121,8 @@ class PluginSelectionTests(unittest.TestCase):
                 ])
                 self.assertEqual(names, [])
                 self.assertTrue(reason.startswith("full:"), reason)
-        # An unknown optional external ID has no in-repo suite to select.
+
+    def test_unknown_recommended_id_does_not_claim_a_local_provider(self):
         self.add_package("external", [
             {"id": "service.external", "type": "consumer",
              "recommends": [{"plugin": "outside.repository"}]},
@@ -125,15 +130,17 @@ class PluginSelectionTests(unittest.TestCase):
         graph, _ = selector.dependency_graph(self.root)
         self.assertEqual(graph["external"], set())
 
-    def test_real_kobo_adept_optional_consumers_are_selected(self):
-        graph, _ = selector.dependency_graph(ROOT)
-        affected = selector.affected_packages({"runtime-kobo-adept"}, graph)
-        self.assertTrue(
-            {"runtime-kobo-adept", "provider-kobo", "provider-paris",
-             "provider-numilog"} <= set(affected),
-        )
-        # Runtime is not yet audited: an isolated product edit must still
-        # run the exhaustive plugin gate, despite its known consumers.
+    def test_real_kobo_optional_ids_do_not_fake_a_runtime_dependency(self):
+        # The three provider manifests recommend drm.ade, while the
+        # in-repository ADEPT package declares runtime.kobo-adept instead.
+        # Treating those distinct plugin IDs as aliases would be unsound.
+        # The runtime package remains UNAUDITED: changing it still selects
+        # the full plugin test suite, covering the optional consumers.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertNotIn("runtime-kobo-adept", audited)
+        self.assertFalse({
+            "provider-kobo", "provider-paris", "provider-numilog",
+        } & set(selector.affected_packages({"runtime-kobo-adept"}, graph)))
         names, reason = selector.select([
             ("M", "src/plugins/runtime-kobo-adept/cifereca_kobo_adept.py"),
         ], ROOT)
