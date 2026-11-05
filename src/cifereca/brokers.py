@@ -521,6 +521,24 @@ class SynchronizationBrokerImpl:
                 ),
             ) if last_cycle is not None else None
         )
+        if receipt is not None:
+            # An empty primary borrower and a literal upstream account named
+            # "provider:credential:primary" may hash to the same legacy ID.
+            # The existing enablement guard refuses that ambiguous source;
+            # never expose *either* borrower's private per-cycle counters
+            # through a shared status key, even when Sync remains OFF.
+            owner_count = 0
+            for candidate in (getattr(self.service, "accounts", ()) or ()):
+                try:
+                    if self._source_id(candidate) == source_id:
+                        owner_count += 1
+                except Exception:
+                    owner_count = 2
+                    break
+                if owner_count > 1:
+                    break
+            if owner_count != 1:
+                receipt = None
         return SyncSourceRef(
             source_id=source_id,
             identity_id=account_ref.identity_id,
