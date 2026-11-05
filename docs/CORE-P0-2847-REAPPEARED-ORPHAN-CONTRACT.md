@@ -52,9 +52,16 @@ from cifereca.core.missing_placement_same_path import (
   ne sont **pas** réactivés ici : ils requièrent un plan de migration des
   références exactes et un contrôle positif de provenance (sans inférence
   depuis ISBN/titre/SHA).
-- L'action Core est prête pour un **futur branchement CoreUI** ; cette PR ne
-  modifie pas l'interface GTK. Aucun opérateur réel n'est exécuté sur
-  l'installation Numilog sans audit local et confirmation ciblée.
+- Le `LocalInspection` CoreUI expose maintenant un cas
+  `stored_path_returned_historical` **uniquement** lorsque le fichier est
+  physiquement constaté présent alors que le Placement SQLite est toujours
+  `missing`. `preview_missing_same_path_restoration(case_key)` ne prend
+  que la clé privée issue du scan complet ; les boutons de retraite ordinaires
+  ne sont pas offerts pour ce cas, et `confirm_missing_repair` reste une
+  seconde action révocable. L'interface GTK ne reçoit pas encore de nouveau
+  bouton : ce raccordement UX sera séparé.
+  Aucun opérateur réel n'est exécuté sur l'installation Numilog sans audit
+  local et confirmation ciblée.
 - Ce cas ne règle pas la compatibilité des déclarations locales **sans
   `placement_id`** : le contrat existant doit être arbitré séparément.
 - #2847 reste P0 ouvert jusqu'à la recette terrain des Placements réellement
