@@ -1115,12 +1115,15 @@ class LibraryReadBrokerImpl:
         for aid in tuple(artifact_ids):
             for v in self.service.storage.artifact_variants(source_artifact_id=aid):
                 vid=str(v.get("artifact_id") or "")
-                if (vid and vid not in artifact_ids and (
-                    identity_id is None or _identity_placements(
-                        self.service.storage, vid, identity_id=identity_id,
-                        default_identity_id=self._default_identity(),
-                    )
-                )):
+                # A placed copy of B does not prove the recipe's derived
+                # origin: manual imports and another profile may share SHA.
+                qualified = (
+                    identity_id is None
+                    or _scoped_derived_preference_candidate(
+                        self.service.storage, v, identity_id,
+                    ) is not None
+                )
+                if vid and vid not in artifact_ids and qualified:
                     artifact_ids.append(vid)
         artifacts=tuple(
             x for x in (
@@ -1133,6 +1136,11 @@ class LibraryReadBrokerImpl:
         variants=[]
         for aid in artifact_ids:
             for row in self.service.storage.artifact_variants(source_artifact_id=aid):
+                if (identity_id is not None
+                        and _scoped_derived_preference_candidate(
+                            self.service.storage, row, identity_id,
+                        ) is None):
+                    continue
                 v=_variant_ref(
                     self.service.storage, row, book_id=logical_id, identity_id=identity_id,
                     default_identity_id=self._default_identity(),
@@ -1185,10 +1193,10 @@ class LibraryReadBrokerImpl:
             # A transformed artifact can belong to another identity even
             # while its source hash exists in both libraries. Do not disclose
             # the other identity's variant by resolving it to a shared source.
-            if identity_id is not None and not _identity_placements(
-                self.service.storage, value, identity_id=identity_id,
-                default_identity_id=self._default_identity(),
-            ):
+            if (identity_id is not None
+                    and _scoped_derived_preference_candidate(
+                        self.service.storage, variant, identity_id,
+                    ) is None):
                 return None
             source=str(variant.get("source_artifact_id") or value)
         entries=[
