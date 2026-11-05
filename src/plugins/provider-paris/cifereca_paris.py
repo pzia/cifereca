@@ -324,6 +324,11 @@ class ParisProviderSession(ProviderSession):
         self._loan_ebooks_attempts: ContextVar[int | None] = ContextVar(
             "paris_loan_ebooks_attempts", default=None,
         )
+        # Only the synchronous Core opening-rights projection may install
+        # an exact typed inventory in this task. No cross-call rights cache.
+        self._same_cycle_rights_inventory: ContextVar[LoanInventorySnapshot | None] = ContextVar(
+            "paris_same_cycle_rights_inventory", default=None,
+        )
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
@@ -949,11 +954,27 @@ class ParisProviderSession(ProviderSession):
             bound = original[0] if len(original) == 1 else None
             if bound is None:
                 raise ProviderConfigurationError("account_scope_mismatch")
-            token = self._loan_read_consumer.set("rights_observation")
-            try:
-                inventory = self._snapshot_for_account(account)
-            finally:
-                self._loan_read_consumer.reset(token)
+            same_cycle = self._same_cycle_rights_inventory.get()
+            if same_cycle is not None:
+                # The prior read was authenticated and normalized through the
+                # Core typed inventory adapter in the *same* source Sync phase.
+                # Consume only the exact complete two-branch immutable
+                # envelope. Never fetch a sibling account or silently use
+                # a partial/foreign batch to infer absent rights.
+                self._same_cycle_rights_inventory.set(None)
+                if (type(same_cycle) is not LoanInventorySnapshot
+                        or same_cycle.scope != LoanInventoryScope.for_account(account)
+                        or same_cycle.status != "success"
+                        or not same_cycle.branch_claims_complete("dilicom", "digital")
+                        or not same_cycle.branch_claims_complete("syracuse", "physical")):
+                    raise ProviderCapabilityError("paris_same_cycle_inventory_unverified")
+                inventory = same_cycle
+            else:
+                token = self._loan_read_consumer.set("rights_observation")
+                try:
+                    inventory = self._snapshot_for_account(account)
+                finally:
+                    self._loan_read_consumer.reset(token)
             scope = inventory.scope
             # A succeeded SYRACUSE response cannot turn a failed DILICOM
             # read into an empty but apparently successful rights branch.
@@ -1233,6 +1254,33 @@ class ParisProviderSession(ProviderSession):
         """#3723 v2: exact source observations, not permission or delivery."""
         from cifereca.plugin_api import from_legacy_rights_snapshot
         return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
+
+    def downloadable_resource_snapshot_from_loan_inventory(
+        self, account, *, loan_inventory,
+    ):
+        """#4281: project the *same* exact completed loan read in opening Sync.
+
+        Called only by the Core scoped lease. Never a durable cache: the
+        ContextVar is restored even when validation/rights projection fails.
+        All existing broker/owner/account and PNB-offer checks run unchanged.
+        Ordinary rights, selected-offer, borrow and content delivery remain
+        independently fresh, including after an upstream mutation.
+        """
+        if (type(account) is not Account
+                or type(loan_inventory) is not LoanInventorySnapshot
+                or loan_inventory.scope != LoanInventoryScope.for_account(account)
+                or loan_inventory.status != "success"
+                or not loan_inventory.branch_claims_complete("dilicom", "digital")
+                or not loan_inventory.branch_claims_complete("syracuse", "physical")):
+            raise ProviderCapabilityError("paris_same_cycle_inventory_unverified")
+        from cifereca.plugin_api import from_legacy_rights_snapshot
+        token = self._same_cycle_rights_inventory.set(loan_inventory)
+        try:
+            return from_legacy_rights_snapshot(
+                self.rights_observation_snapshot(account)
+            )
+        finally:
+            self._same_cycle_rights_inventory.reset(token)
 
     def downloadable_selected_offer_snapshot(
         self, account, *, edition_id, resource_id, kind, branch,
