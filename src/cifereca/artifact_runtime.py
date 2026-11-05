@@ -557,6 +557,82 @@ class ArtifactExecutionBrokerImpl:
         except Exception:
             return ""
 
+    def _scoped_derived_cache(
+        self, *, source: ArtifactRef, source_lease: _InputLease,
+        recipe: dict[str, Any], transformer_id: str,
+        profile_id: str | None, options_fingerprint: str,
+    ) -> ArtifactRef | None:
+        """Require an exact SAME-identity physical child and derived origin.
+
+        A global recipe/SHA or an unrelated Placement of B is never a cache
+        hit. Legacy variants without a per-identity derived OriginLink need
+        conservative migration instead of silently inheriting provenance.
+        """
+        if (recipe.get("source_artifact_id") != source.artifact_id
+                or recipe.get("source_sha256") != source.sha256
+                or recipe.get("transformer_plugin_id") != transformer_id
+                or str(recipe.get("profile_plugin_id") or "") != str(profile_id or "")
+                or str(recipe.get("options_fingerprint") or "") != options_fingerprint
+                or str(recipe.get("transformer_version") or "")
+                   != self._version_for_plugin(transformer_id)
+                or str(recipe.get("profile_version") or "")
+                   != self._version_for_plugin(profile_id)
+                or bool((recipe.get("metadata") or {}).get("stale", False))):
+            return None
+        aid = recipe.get("artifact_id")
+        rid = recipe.get("variant_id")
+        owner = source_lease.source_identity_id
+        if (type(aid) is not str or not aid or aid == source.artifact_id
+                or type(rid) is not str or not rid):
+            return None
+        matches = [row for row in self.service.storage.placements(state="present")
+                   if row.get("artifact_id") == aid and row.get("identity_id") == owner]
+        if len(matches) != 1:
+            return None
+        placement = matches[0]
+        pid = placement.get("placement_id")
+        if type(pid) is not str or not pid:
+            return None
+        try:
+            with self.service.storage._lock, self.service.storage._connect() as db:
+                links = db.execute(
+                    "SELECT evidence_ref,metadata_json FROM origin_links "
+                    "WHERE artifact_id=? AND parent_artifact_id=? "
+                    "AND identity_id=? AND origin_kind='derived' "
+                    "AND source_reference_id IS NULL",
+                    (aid, source.artifact_id, owner),
+                ).fetchall()
+            exact = []
+            for evidence_ref, raw in links:
+                if evidence_ref != "derived:" + rid + ":" + pid:
+                    continue
+                metadata = json.loads(raw)
+                if (type(metadata) is dict
+                        and metadata.get("source_placement_id")
+                            == source_lease.source_placement_id
+                        and metadata.get("source_sha256") == source.sha256
+                        and metadata.get("result_sha256") == aid.removeprefix("sha256:")
+                        and metadata.get("transformer_plugin_id") == transformer_id
+                        and metadata.get("profile_plugin_id") == str(profile_id or "")
+                        and metadata.get("options_fingerprint") == options_fingerprint
+                        and metadata.get("transformer_version")
+                            == self._version_for_plugin(transformer_id)
+                        and metadata.get("profile_version")
+                            == self._version_for_plugin(profile_id)):
+                    exact.append(evidence_ref)
+            if len(exact) != 1:
+                return None
+            cached = _artifact_ref(
+                self.service.storage, aid, book_id=source.book_id,
+                identity_id=owner,
+            )
+            if cached is None:
+                return None
+            self.input_lease(cached, identity_id=owner, placement_id=pid)
+            return cached
+        except (OSError, RuntimeError, TypeError, ValueError, Conflict, NotFound, json.JSONDecodeError):
+            return None
+
     def commit_variant(self, *, source: ArtifactRef, destination: Any, result: TransformResult, transformer_plugin_id: str, profile_plugin_id: str | None = None, options_fingerprint: str = "") -> ArtifactRef:
         lease = self._assert_output_lease(destination)
         if lease.source.artifact_id != source.artifact_id:
