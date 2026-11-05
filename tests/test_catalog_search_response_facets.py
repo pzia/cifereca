@@ -103,6 +103,25 @@ def test_malformed_facet_values_stay_unverified_without_dropping_notices(tmp_pat
         service.close()
 
 
+@pytest.mark.parametrize("partial", [True, False])
+def test_batch_coverage_comes_from_the_same_typed_response(tmp_path, partial):
+    service = _service(tmp_path)
+    session = FacetedSession("faceted")
+    session.last_search_warnings = [] if partial else ["Another request's warning"]
+    session.search_with_response_facets = lambda *args, **kwargs: ProviderSearchResponse(
+        [], (FACET,), partial=partial,
+    )
+    service._sessions = {"faceted": session}
+    try:
+        batches = []
+        service.search_progressive("Exact", force=True, on_batch=batches.append)
+        batch, = batches
+        assert batch.response_facets == (FACET,)
+        assert batch.result_status == ("partial" if partial else "live")
+    finally:
+        service.close()
+
+
 def test_superseded_search_cannot_publish_facets_from_its_response(tmp_path):
     service = _service(tmp_path)
     session = FacetedSession("faceted")

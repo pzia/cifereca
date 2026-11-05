@@ -860,6 +860,7 @@ def _search_provider_session(
                 if type(response) is not ProviderSearchResponse:
                     raise TypeError("Invalid provider search response")
                 session_rows = response.results
+                partial_failure = response.partial is True
                 response_facets.extend(_validated_response_facets(response.facets))
             else:
                 try:
@@ -872,21 +873,18 @@ def _search_provider_session(
                     if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                         raise
                     session_rows = session.search(variant, provider_scope)
+                concrete = getattr(session, "client", None)
+                partial_failure = any(
+                    bool(getattr(source, "last_search_warnings", None))
+                    for source in (session, concrete)
+                )
             for raw_row in session_rows:
                 row = _provider_search_row(raw_row)
                 key = _search_result_scope_key(row)
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
-            concrete = getattr(session, "client", None)
-            partial_failure = False
-            for source in (session, concrete):
-                for warning in list(getattr(source, "last_search_warnings", []) or []):
-                    # Provider-owned strings may contain signed URLs,
-                    # cookies or a private title; the public batch only
-                    # exposes a fixed partial-result reason.
-                    warnings.append(f"{session.descriptor.display_name}: résultats partiels")
-                    partial_failure = True
             if partial_failure:
+                warnings.append(f"{session.descriptor.display_name}: résultats partiels")
                 break
             if attempt == 0 and provider_rows:
                 primary_ok = max(self._search_relevance(query, row) for row in provider_rows) >= 100

@@ -36,14 +36,16 @@ class CatalogSearchFacet:
 class ProviderSearchResponse:
     results: list[SearchResult]
     facets: tuple[CatalogSearchFacet, ...] = ()
+    partial: bool = False
 
 
 @runtime_checkable
 class ProviderSearchWithFacets(Protocol):
     """Return rows and facets from the same call, including empty pages.
 
-    Implementations must collect facets locally to the call. Reading a
-    previous response from mutable session diagnostics cannot attest scope.
+    Implementations must collect facets and coverage locally to the call.
+    Reading a previous response from mutable session diagnostics cannot
+    attest scope.
     This optional method supplements the existing list-only search contract.
     """
 
