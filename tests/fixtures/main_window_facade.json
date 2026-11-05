@@ -50,14 +50,14 @@
     "async": false
   },
   "DetailPanel._cover_and_title": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='subtitle', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='thumbnail', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='badges', annotation=Subscript(value=Name(id='Iterable', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Tuple(elts=[], ctx=Load())])",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='subtitle', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='thumbnail', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='badges', annotation=Subscript(value=Name(id='Iterable', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load()))], kwonlyargs=[arg(arg='essential')], kw_defaults=[Tuple(elts=[], ctx=Load())], defaults=[Tuple(elts=[], ctx=Load())])",
     "returns": "Name(id='CoverView', ctx=Load())",
     "decorators": [],
     "async": false
   },
   "DetailPanel._group": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='str', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[arg(arg='fields')], kw_defaults=[Tuple(elts=[], ctx=Load())], defaults=[])",
-    "returns": "Constant(value=None)",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='str', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[arg(arg='fields'), arg(arg='parent')], kw_defaults=[Tuple(elts=[], ctx=Load()), Constant(value=None)], defaults=[])",
+    "returns": null,
     "decorators": [],
     "async": false
   },
