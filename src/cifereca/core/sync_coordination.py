@@ -1585,7 +1585,11 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 "partial", "attention_required", "fresh_cache_partial", "cancelled",
             } else "fresh_cache" if batch_status == "fresh_cache" else "started"
         )
-    elif kobo_decision["status"] == "manual_only":
+    elif (kobo_decision["status"] == "manual_only"
+          and kobo_decision["persisted_enabled"] is True):
+        # Keep the historical compatibility summary exactly as before:
+        # legacy OFF publishes no `kobo` batch, even though the source
+        # diagnostic correctly says manual_only. No source permission here.
         # A formerly enabled global toggle never licenses new downloads.
         kobo_summary = {"status": "manual_only", "skipped": True}
     for field in ("manifest_items", "owned", "archived", "downloadable",
