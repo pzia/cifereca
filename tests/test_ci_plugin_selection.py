@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -362,6 +362,69 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"Unexpected maintenance tool plugin consumer: {file}",
+                    )
+
+    def test_recommendations_product_is_scoped_to_its_own_suite(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("recommendations", audited)
+        self.assertEqual(
+            selector.affected_packages({"recommendations"}, graph),
+            ["recommendations"],
+        )
+        # The book-reference recommendation depends on the UI contribution
+        # *within the same package*; no external suite is needed.
+        for module in (
+            "recommendations.py", "recommendation_bridge.py",
+            "recommendation_service.py", "recommendation_llm.py",
+            "reference_recommendation.py",
+        ):
+            with self.subTest(module=module):
+                chosen, reason = selector.select([
+                    ("M", "src/plugins/recommendations/" + module),
+                ], ROOT)
+                self.assertEqual(chosen, ["src/plugins/recommendations"])
+                self.assertIn("dependency closure", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/recommendations/recommendations.py"),
+             ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/recommendations/cifereca-plugin.json")],
+            [("M", "src/plugins/recommendations/tests/conftest.py")],
+            [("D", "src/plugins/recommendations/recommendations.py")],
+            [("R100", "src/plugins/recommendations/recommendations.py")],
+        ):
+            with self.subTest(changes=changes):
+                chosen, reason = selector.select(changes, ROOT)
+                self.assertEqual(chosen, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_recommendations_plugin_ids_and_imports_have_no_other_consumers(self):
+        # Generic mentions of "recommendations" in other products are not
+        # import edges. Require a concrete plugin ID or Python import.
+        tokens = (
+            "ui.page.recommendations",
+            "recommendation.book-reference.recommendations",
+            "from recommendation_service import",
+            "from recommendation_bridge import",
+            "from recommendation_llm import",
+            "from reference_recommendation import",
+            "from trace_report import",
+            "import recommendation_service",
+            "import recommendation_bridge",
+            "import reference_recommendation",
+        )
+        root = ROOT / "src/plugins"
+        for package_dir in sorted(root.iterdir()):
+            if not package_dir.is_dir() or package_dir.name == "recommendations":
+                continue
+            for file in package_dir.rglob("*"):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yaml", ".yml", ".sh",
+                }:
+                    data = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in data for token in tokens),
+                        f"New recommendations plugin consumer: {file}",
                     )
 
     def test_ebooksgratuits_product_selects_home_page_consumer(self):
