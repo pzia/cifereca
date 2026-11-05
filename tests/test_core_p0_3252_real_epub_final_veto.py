@@ -90,6 +90,7 @@ def test_real_epub_bytes_keep_core_final_veto_and_attribution(
         assert "inspection_valid=True" in rejected[0]
         assert "inspection_format=epub" in rejected[0]
         assert "inspection_protected=True" in rejected[0]
+        assert "encryption_profile=aes_algorithm" in rejected[0]
         assert "catalog_valid=True" in rejected[0]
         assert "edition_id='edition'" in rejected[0]
         assert "right_id='purchase'" in rejected[0]
