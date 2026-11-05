@@ -28,6 +28,44 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+# P1 #3198: historical global Kobo values remain usable by the bounded
+# compatibility/rollback paths. This is an archival snapshot, NEVER an
+# acquisition-policy migration: it creates no sync.source.* permission.
+_RETIRED_KOBO_GLOBAL_KEYS = (
+    "enabled", "allow_unlinked_acquisition", "interval_minutes",
+    "directory", "display_profile", "format",
+)
+_KOBO_LEGACY_ARCHIVE_VERSION = "kobo_backup_globals_v1"
+
+
+def _archive_legacy_kobo_globals_once(data: dict[str, Any]) -> None:
+    """Keep first-seen legacy values for rollback without granting source consent.
+
+    The original kobo_backup values deliberately remain intact for manual
+    legacy tools and canonical preparation fingerprints. Only a later,
+    explicitly scoped migration may retire their remaining readers.
+    """
+    old = data.get("kobo_backup")
+    if type(old) is not dict:
+        return
+    values = {
+        key: deepcopy(old[key])
+        for key in _RETIRED_KOBO_GLOBAL_KEYS if key in old
+    }
+    if not values:
+        return
+    archive = data.get("migration_history")
+    if archive is None:
+        archive = {}
+        data["migration_history"] = archive
+    if type(archive) is not dict or _KOBO_LEGACY_ARCHIVE_VERSION in archive:
+        return
+    archive[_KOBO_LEGACY_ARCHIVE_VERSION] = {
+        "schema_version": 1,
+        "preferences": values,
+    }
+
+
 class Config:
     def __init__(self, path: Path | None = None):
         self.path = path or config_file()
@@ -186,6 +224,11 @@ class Config:
         if changed:
             self.set("identities", identities)
             self.set("providers.accounts", rows)
+
+        # Archive the first-seen legacy values exactly once. Do not remove or
+        # rewrite the old settings: some manual paths and rollback still read
+        # them, and an archived enabled=True is never source consent.
+        _archive_legacy_kobo_globals_once(self.data)
 
     def save(self) -> None:
         # Contract versions are discovered from Kobo-Adept at runtime and must

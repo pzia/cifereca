@@ -3725,8 +3725,12 @@ class LibraryService:
     def _kobo_backup_due(self) -> bool:
         return kobo_backup._kobo_backup_due(self)
 
-    def _kobo_backup_account_due(self, credential_id: str) -> bool:
-        return kobo_backup._kobo_backup_due(self, credential_id=credential_id)
+    def _kobo_backup_account_due(
+        self, credential_id: str, *, interval_minutes: int | None = None,
+    ) -> bool:
+        return kobo_backup._kobo_backup_due(
+            self, credential_id=credential_id, interval_minutes=interval_minutes,
+        )
 
     def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
         """Compatibility entry point for the Kobo local synchronization.

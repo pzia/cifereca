@@ -908,11 +908,22 @@ def _kobo_source_summaries(self) -> list[dict[str, Any]]:
     summaries.sort(key=lambda row: row["source_id"])
     return summaries
 
-def _kobo_backup_due(self, *, credential_id: str | None = None) -> bool:
-    try:
-        interval_minutes = max(1, int(self.config.get("kobo_backup.interval_minutes", 60) or 60))
-    except (TypeError, ValueError):
-        interval_minutes = 60
+def _kobo_backup_due(
+    self, *, credential_id: str | None = None,
+    interval_minutes: int | None = None,
+) -> bool:
+    # Manual/legacy callers retain their historical configuration. The
+    # explicit on_start scheduler passes its pinned exact-source interval,
+    # so a late change to the retired global value cannot change that scope.
+    if interval_minutes is None:
+        try:
+            interval_minutes = max(
+                1, int(self.config.get("kobo_backup.interval_minutes", 60) or 60)
+            )
+        except (TypeError, ValueError):
+            interval_minutes = 60
+    elif type(interval_minutes) is not int or not 60 <= interval_minutes <= 30 * 24 * 60:
+        return False  # Invalid explicit source cadence must fail closed.
     # A new account cannot inherit another account's fresh checkpoint.
     raw = None
     if credential_id is not None:
