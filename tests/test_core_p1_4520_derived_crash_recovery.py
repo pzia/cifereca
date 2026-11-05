@@ -530,7 +530,7 @@ def test_successful_publication_never_unlinks_any_receipt(tmp_path, monkeypatch)
         service.storage.close()
 
 
-def test_receipt_review_fails_closed_when_retention_limit_is_reached(tmp_path):
+def test_retained_receipts_paginate_without_deletion_or_unbounded_result(tmp_path):
     service, source, _ = _library(tmp_path)
     try:
         from cifereca.core.derived_variant_recovery import MAX_RECEIPTS
@@ -539,10 +539,33 @@ def test_receipt_review_fails_closed_when_retention_limit_is_reached(tmp_path):
         for number in range(MAX_RECEIPTS):
             foreign = stage / ("pending-" + f"{number:032x}" + ".json")
             foreign.write_bytes(b"{}")
-        with pytest.raises(ValueError, match="derived_recovery_receipt_limit"):
-            review_pending_derived_receipts(service, identity_id="id1")
+        first = review_pending_derived_receipts(service, identity_id="id1")
+        assert len(first) == MAX_RECEIPTS
+        assert first[-1].get("next_cursor") == first[-1]["cursor"]
+        second = review_pending_derived_receipts(
+            service, identity_id="id1", after_cursor=first[-1]["next_cursor"],
+        )
+        assert len(second) == 1
+        assert "next_cursor" not in second[-1]
+        cursors = {item["cursor"] for item in first + second}
+        assert len(cursors) == MAX_RECEIPTS + 1
+        assert all("receipt" in item and "status" in item
+                   for item in first + second)
         assert service.storage.artifact_variants() == []
-        # Fail-closed never deletes or rewrites the original pending proof.
         assert len(list(stage.glob("pending-*.json"))) == MAX_RECEIPTS + 1
+    finally:
+        service.storage.close()
+
+
+def test_recovery_rejects_invalid_pagination_cursor(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        for invalid in (None, 42, "a" * 513, "\\x00"):
+            with pytest.raises(ValueError, match="derived_recovery_cursor_invalid"):
+                review_pending_derived_receipts(
+                    service, identity_id="id1", after_cursor=invalid,
+                )
+        assert len(review_pending_derived_receipts(service, identity_id="id1")) == 1
     finally:
         service.storage.close()
