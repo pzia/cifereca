@@ -173,3 +173,35 @@ def test_paris_timing_marks_rights_observation_separately_from_inventory(caplog)
                    if "phase=metadata" in line)
     finally:
         session.close()
+
+
+
+def test_paris_cancelled_listloans_has_one_failed_scope_measure_and_no_retry(caplog):
+    from cifereca.plugin_api import Cancelled
+
+    requests = []
+
+    def handler(request):
+        requests.append(request.url.params.get("serviceCode"))
+        raise Cancelled("cancelled by caller before upstream result")
+
+    session, account, _diagnostics = _fixture(handler)
+    caplog.set_level("INFO", logger="cifereca")
+    try:
+        with pytest.raises(Cancelled):
+            session.loan_inventory_snapshot(account)
+        assert requests == ["DILICOM"]
+        branch_logs = [
+            record.getMessage() for record in caplog.records
+            if "TRACE paris list-loans timing phase=branch" in record.getMessage()
+        ]
+        assert len(branch_logs) == 1
+        assert "upstream=DILICOM" in branch_logs[0]
+        assert "status=cancelled" in branch_logs[0]
+        assert "loans=0" in branch_logs[0]
+        assert not any(
+            "TRACE paris list-loans timing phase=metadata" in record.getMessage()
+            for record in caplog.records
+        )
+    finally:
+        session.close()
