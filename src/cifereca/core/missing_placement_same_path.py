@@ -3,7 +3,7 @@
 An old state='missing' is not proof that its path is still absent. Reattest
 the *exact stored filename* under the pinned identity root and an immutable
 Artifact SHA, but do NOT use this narrow primitive for linked catalogues,
-provider claims, backup receipts, variants or opaque operational references.
+attested provider links, backup receipts, variants or opaque operational references.
 Those require their own separate source/provenance reconciliation contract.
 """
 from __future__ import annotations
@@ -101,7 +101,13 @@ def _evidence(db, *, root: Path, identity_id: str, placement_id: str):
     if type(metadata) is not str or not 0 < len(metadata) <= 65536:
         return _blocked("placement_metadata_unavailable"), None
     parsed = json.loads(metadata, object_pairs_hook=_unique_pairs)
-    if type(parsed) is not dict or parsed.get("relative_path") not in (None, ""):
+    # Only an empty/nonbinding metadata envelope is admissible. A legacy
+    # provider_id/source_item_id column is an opaque label, not attestation;
+    # but arbitrary JSON keys may carry independent provenance, ownership or
+    # operational references not covered by the generic path/ID dependency
+    # scanner. Never flip those rows to present by SHA alone.
+    if (type(parsed) is not dict or set(parsed) - {"relative_path"}
+            or parsed.get("relative_path") not in (None, "")):
         return _blocked("placement_metadata_unavailable"), None
 
     artifact = db.execute(
