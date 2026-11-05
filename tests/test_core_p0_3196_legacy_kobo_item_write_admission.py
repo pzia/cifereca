@@ -79,3 +79,31 @@ def test_valid_kobo_product_id_remains_writable_and_replayable(tmp_path):
         assert len(storage.acquisitions(provider_id="kobo")) == 1
     finally:
         storage.close()
+
+
+def test_kobo_prune_preserves_historical_padded_id_not_in_manifest(tmp_path):
+    # Legacy SQLite accepted padded Kobo product IDs. The typed manifest
+    # cannot establish that such an opaque historical source was removed.
+    storage = Storage(tmp_path / "legacy.sqlite")
+    try:
+        storage.backup_put(_claim("stale"))
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,title,status,updated_at"
+                ") VALUES(?,?,?,?,?,?)",
+                ("kobo", "vault", " book ", "Historical", "complete", 1),
+            )
+        before_rights = storage.entitlements(provider_id="kobo")
+        before_ledger = storage.acquisitions(provider_id="kobo")
+        before_padded = storage.backup_get("kobo", "vault", " book ")
+        assert storage.backup_prune_missing("kobo", "vault", {"another"}) == {
+            "pruned": 1, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert storage.backup_get("kobo", "vault", "stale") is None
+        assert storage.backup_get("kobo", "vault", " book ") == before_padded
+        assert storage.entitlements(provider_id="kobo") == before_rights
+        assert storage.acquisitions(provider_id="kobo") == before_ledger
+    finally:
+        storage.close()
