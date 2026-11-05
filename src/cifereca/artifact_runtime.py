@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import secrets
+import sqlite3
 import stat
 from pathlib import Path
 import shutil
@@ -298,7 +299,8 @@ def _scoped_derived_preference_candidate(
                                 for k, v in expected.items())):
                     qualifying += 1
             return (sid, pid) if qualifying == 1 else None
-    except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
+    except (sqlite3.DatabaseError, OSError, ValueError, TypeError,
+            RuntimeError, AttributeError):
         return None
 
 
