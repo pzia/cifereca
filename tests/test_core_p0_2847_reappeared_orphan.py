@@ -180,3 +180,69 @@ def test_transaction_abort_rolls_back_original_placement(rig):
     assert _commit(rig, token)["reason"] == "transaction_failed"
     assert db.placement_get(pid)["state"] == "missing"
     assert old.read_bytes() == payload
+
+
+def test_scoped_coreui_exposes_returned_original_only_without_retirement(rig):
+    import hashlib
+
+    from cifereca.core.library_audit import audit_library
+    from cifereca.core.library_local_inspection import LocalInspection
+    from tests.test_library_reconciliation import epub
+
+    db, root, old, new, pid, artifact, payload, lockpath = rig
+    epub(old, title="Returned original")
+    epub(new, title="Unrelated intact EPUB")
+    returned_payload = old.read_bytes()
+    returned_sha = hashlib.sha256(returned_payload).hexdigest()
+    returned_artifact = "sha256:" + returned_sha
+    db.artifact_put({
+        "artifact_id": returned_artifact, "sha256": returned_sha,
+        "size": len(returned_payload), "media_format": "epub",
+    })
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE placements SET artifact_id=? WHERE placement_id=?",
+            (returned_artifact, pid),
+        )
+    service, _operator = _session(rig)
+    audited = audit_library(db.path, {"alice": (root / "alice",)})
+    inspected = LocalInspection(
+        audited, lambda: True, "alice",
+        roots=(root / "alice",), service=service,
+    )
+    try:
+        assert inspected._manual_audit_complete
+        case_key = next(
+            key for key, value in inspected._missing_case_placements.items()
+            if value == pid
+        )
+        case = inspected.detail(case_key)
+        assert "stored_path_returned_historical" in case.states
+        assert "stored_path_missing_historical" not in case.states
+        assert inspected.preview_missing_retirement(case_key) == {
+            "status": "blocked", "reason": "inspection_scope_unavailable",
+            "read_only": True,
+        }
+        assert inspected.preview_missing_same_path_restoration(
+            "path:unobserved",
+        )["status"] == "blocked"
+        preview = inspected.preview_missing_same_path_restoration(case_key)
+        assert preview["status"] == "ready"
+        assert "plan_token" not in str(preview)
+        assert str(old) not in str(preview)
+        assert inspected.confirm_missing_repair(
+            "path:other", user_confirmed=True,
+        )["reason"] == "confirmation_required"
+        assert db.placement_get(pid)["state"] == "missing"
+        assert inspected.preview_missing_same_path_restoration(case_key)[
+            "status"
+        ] == "ready"
+        result = inspected.confirm_missing_repair(
+            case_key, user_confirmed=True,
+        )
+        assert result["status"] == "restored"
+        assert db.placement_get(pid)["state"] == "present"
+        assert not inspected.valid()
+        assert old.read_bytes() == returned_payload
+    finally:
+        inspected.close()
