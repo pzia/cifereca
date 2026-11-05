@@ -127,7 +127,7 @@ def test_protected_epub_after_selected_delivery_reports_drm_unresolved(
         and "phase=terminal " in row.getMessage()
     ]
     assert len(terminal) == 1
-    assert "status=failed" in terminal[0]
+    assert "code=failed" in terminal[0]
     assert "reason=drm_unresolved" in terminal[0]
     assert not any(
         "reason=canonical_delivery_failed" in x for x in terminal
