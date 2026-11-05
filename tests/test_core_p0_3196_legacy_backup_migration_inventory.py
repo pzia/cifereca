@@ -186,16 +186,18 @@ def test_ledger_ambiguous_or_rebound_never_promotes_backup(store):
     assert report["receipt_shape_candidate"] == 0
 
 
+@pytest.mark.parametrize("account", ["buyer", ""])
 def test_checkpoint_syntax_is_never_a_published_origin_or_physical_proof(
-    store, tmp_path,
+    store, tmp_path, account,
 ):
-    register(store, "A", "kobo", "card-a", account="buyer")
+    register(store, "A", "kobo", "card-a", account=account)
     path = tmp_path / "absent-but-claimed.epub"
-    _backup(store, item="book", path=path, sha="a" * 64, size=42)
+    _backup(store, item="book", account=account,
+            path=path, sha="a" * 64, size=42)
     payload = {
         "schema": "canonical.completed-delivery.v1",
         "source": [
-            "A", "kobo", "card-a", "buyer", "purchases",
+            "A", "kobo", "card-a", account, "purchases",
             "book", "purchase", "purchase",
         ],
         "offer_id": "synthetic-offer", "path": str(path),
