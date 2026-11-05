@@ -114,3 +114,26 @@ def test_malformed_manifest_coverage_is_unknown_not_available(tmp_path, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["journal_coverage"] == "unknown"
     assert report["historical_completeness_attested"] is False
+
+
+def test_malicious_manifest_metadata_is_never_echoed_as_a_marker(
+    tmp_path, capsys,
+):
+    path = tmp_path / "PRIVATE_MANIFEST_CONTENT.zip"
+    _zip(
+        path, coverage="PRIVATE_COVERAGE_SHOULD_NOT_LEAK",
+        gaps=["PRIVATE_ROTATION_SHOULD_NOT_LEAK"],
+        active_log_missing="PRIVATE_MISSING_SHOULD_NOT_LEAK",
+    )
+    _raw, marker = read_raw_journal_zip(
+        path, include_manifest_coverage=True,
+    )
+    assert marker == {
+        "coverage": None, "rotation_gaps_present": True,
+        "active_log_missing": None,
+    }
+    assert main([str(path)]) == 0
+    output = capsys.readouterr().out
+    assert json.loads(output)["journal_coverage"] == "partial"
+    assert "PRIVATE_" not in output
+    assert "PRIVATE_" not in str(marker)
