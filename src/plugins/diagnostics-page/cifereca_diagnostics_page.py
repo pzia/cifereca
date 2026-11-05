@@ -530,7 +530,7 @@ class DiagnosticsPagePlugin:
         reports_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         for key, title, content in (
             ("journals", "Journaux", journals_tab),
-            ("capture", "Capture", capture_tab),
+            ("capture", "Perfs", capture_tab),
             ("system", "État système", system_tab),
             ("reports", "Rapports et vérifications", reports_tab),
         ):

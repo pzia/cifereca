@@ -6,6 +6,7 @@ links and actions remain with MainWindow and are passed via its stable facade.
 from __future__ import annotations
 
 from .local_book_detail_sections import local_book_detail_sections
+from .detail_selection_perf import current_detail_trace
 
 
 def possession_usage_label(possession, provider_name: str) -> str:
@@ -63,7 +64,9 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
 
     detail = window.library_page.detail
     description = window._book_description(item)
-    detail.show_presentation(book_detail_presentation(
+    trace = current_detail_trace()
+    projection_started = trace.clock() if trace else None
+    presentation = book_detail_presentation(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
         thumbnail=item.get("thumbnail_url"),
@@ -78,7 +81,10 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         ),
         links=document_links(item),
         metadata=item.get('metadata'),
-    ), description=description)
+    )
+    if trace is not None:
+        trace.record("projection", projection_started)
+    detail.show_presentation(presentation, description=description)
     placements = list(item.get('placements') or [])
     possessions = list(item.get('possessions') or [])
     presence_rows = []

@@ -1517,12 +1517,21 @@ class Storage:
             raise ValueError("backup_canonical_receipt_scope_budget")
         completed_canonical_source = False
         for existing_id, p, credential, account, item, owner, stage_status, raw in checkpoints:
-            if (type(raw) is not str
-                    or "canonical.completed-delivery.v1" not in raw):
+            if type(raw) is not str:
                 continue
-            # The canonical marker is NOT a right or a local presence
-            # proof. It only prevents the old writer from changing any
-            # canonical facts when it is already present.
+            # Do not identify a completed Core receipt from raw JSON text
+            # alone: valid JSON may escape the schema key or any characters
+            # in its value (including the canonical marker). Most legacy
+            # metadata is a small {"legacy_status": ...} record, so only
+            # parse objects with a plausible schema key/escape or marker.
+            marker = "canonical.completed-delivery.v1"
+            possible_receipt = (
+                marker in raw or '"schema"' in raw or "\\u" in raw
+            )
+            if not possible_receipt:
+                continue
+            # The canonical marker is NOT a right or local-presence proof.
+            # It only blocks an older writer from mutating canonical facts.
             if len(raw) > 65536:
                 raise ValueError("backup_canonical_receipt_unreadable")
 
@@ -1538,9 +1547,15 @@ class Storage:
                 receipt = json.loads(raw, object_pairs_hook=unique_keys)
             except (ValueError, TypeError, RecursionError) as error:
                 raise ValueError("backup_canonical_receipt_unreadable") from error
-            if (type(receipt) is not dict
-                    or receipt.get("schema") != "canonical.completed-delivery.v1"):
+            if type(receipt) is not dict:
                 raise ValueError("backup_canonical_receipt_unreadable")
+            if receipt.get("schema") != marker:
+                # An unrelated structured legacy record is not a finished
+                # Core delivery. A stray literal marker elsewhere in JSON,
+                # however, is ambiguous and still fails closed.
+                if marker in raw:
+                    raise ValueError("backup_canonical_receipt_unreadable")
+                continue
             # A completed-delivery checkpoint with a non-complete ledger
             # status is contradictory; never let the old writer guess which
             # state it may overwrite or treat it as confirmed evidence.
@@ -2044,7 +2059,12 @@ class Storage:
             ).fetchall()
             stale = [
                 (item_id, path) for item_id, path in rows
-                if str(item_id or "") not in seen
+                # The admitted manifest IDs were stripped above. Apply the
+                # same normalization to historical SQLite keys for membership
+                # only: otherwise a still-seen legacy " book " is deleted
+                # while the manifest contains "book". Keep the original key
+                # unchanged for the exact DELETE below.
+                if str(item_id or "").strip() not in seen
             ]
             local_preserved = 0
             for item_id, path in stale:
