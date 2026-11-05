@@ -14,6 +14,7 @@ from gi.repository import Gdk, GLib, Gtk
 
 from .master_detail import MasterDetailPage
 from .query_model import progressive_online_search, merge_results
+from .search_response_facets import SearchResponseFacets
 from .task_runner import TaskPriority
 
 
@@ -80,6 +81,8 @@ def _build_search_page(self: SearchControllerHost) -> MasterDetailPage:
     self.search_global_button = Gtk.Button(label="Étendre en ligne")
     self.search_global_button.set_tooltip_text("Interroger les catalogues distants avec la requête et les filtres actuels")
     self.search_global_button.connect("clicked", lambda _b: self.run_search(True)); self.search_controls.primary.append(self.search_global_button)
+    self._search_response_facets = SearchResponseFacets()
+    page.page_header.insert_child_after(self._search_response_facets, page.count_label)
     page.connect_selected(self._search_selected)
     self._search_generation = getattr(self, "_search_generation", 0) + 1
     self._remote_search_results = []
@@ -172,6 +175,9 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     self._online_source_context = (
         (state.text, state.field, state.scope, identity_id) if force else None
     )
+    response_facets = getattr(self, "_search_response_facets", None)
+    if response_facets is not None:
+        response_facets.begin(self._online_source_context)
     def current():
         if getattr(self, "_closed", False):
             return False
@@ -222,6 +228,8 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
             )
     def deliver_batch(batch):
         if not current(): return False
+        if response_facets is not None:
+            response_facets.receive(batch)
         from .search_batch_feedback import public_batch_status
         # Closed Core status and bounded provider key. The ID is only a
         # per-request map key; neither ID nor label enters the GUI caption.
