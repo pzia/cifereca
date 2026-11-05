@@ -202,3 +202,67 @@ def test_foreign_catalogue_path_claim_vetoes_reactivation(rig):
     assert result == {"status": "blocked", "reason": "foreign_catalogue_reference"}
     assert db.placement_get(pid) == before
     assert db.catalog_entry_get("catalogue:original")["local_state"] == "missing"
+
+
+def test_coreui_linked_returned_case_uses_only_private_inspected_key(rig):
+    import hashlib
+
+    from cifereca.core.library_audit import audit_library
+    from cifereca.core.library_local_inspection import LocalInspection
+    from tests.test_library_reconciliation import epub
+
+    db, root, old, new, pid, artifact, payload, lockpath = rig
+    epub(old, title="Returned and catalogued original")
+    actual = old.read_bytes()
+    digest = hashlib.sha256(actual).hexdigest()
+    actual_artifact = "sha256:" + digest
+    db.artifact_put({
+        "artifact_id": actual_artifact, "sha256": digest,
+        "size": len(actual), "media_format": "epub",
+    })
+    with db._lock, db._connect() as sql:
+        sql.execute(
+            "UPDATE placements SET artifact_id=? WHERE placement_id=?",
+            (actual_artifact, pid),
+        )
+    db.catalog_entry_put({
+        "catalog_entry_id": "catalogue:original",
+        "placement_id": pid, "identity_id": "alice",
+        "artifact_id": actual_artifact, "provider_id": "kobo",
+        "item_id": "book-a", "local_state": "missing",
+        "title": "Returned", "metadata": {"path": str(old)},
+    })
+    service, _ = _session(rig)
+    audited = audit_library(db.path, {"alice": (root / "alice",)})
+    inspected = LocalInspection(
+        audited, lambda: True, "alice",
+        roots=(root / "alice",), service=service,
+    )
+    try:
+        assert inspected._manual_audit_complete
+        case_key = next(
+            key for key, value in inspected._missing_case_placements.items()
+            if value == pid
+        )
+        assert "stored_path_returned_historical" in inspected.detail(case_key).states
+        assert inspected.preview_missing_linked_same_path_restoration(
+            "path:unobserved",
+        )["status"] == "blocked"
+        assert inspected.preview_missing_same_path_restoration(case_key)[
+            "status"
+        ] == "blocked"  # Orphan operation still rejects linked catalogue.
+        preview_result = inspected.preview_missing_linked_same_path_restoration(
+            case_key
+        )
+        assert preview_result["status"] == "ready"
+        assert preview_result["catalogue_rows"] == 1
+        assert "plan_token" not in preview_result
+        assert inspected.confirm_missing_repair(
+            case_key, user_confirmed=True,
+        )["status"] == "restored"
+        assert db.placement_get(pid)["state"] == "present"
+        assert db.catalog_entry_get("catalogue:original")["local_state"] == "local"
+        assert not inspected.valid()
+        assert old.read_bytes() == actual
+    finally:
+        inspected.close()
