@@ -92,6 +92,39 @@ def classify(events: object) -> dict[str, object]:
     }
 
 
+
+def summarize_document(document: object) -> dict[str, object]:
+    """Do not confuse retained-log coverage with evidence of all attempts.
+
+    Even an 'available' day ZIP is a sequential, non-atomic capture of only
+    retained rotations. We neither assume earlier logs exist nor infer that
+    absence of a logged rejection means success.
+    """
+    if type(document) is not dict:
+        return {"status": "invalid_journal", "occurrences": 0,
+                "instrumented": 0, "reasons": {},
+                "journal_coverage": "unknown"}
+    report = classify(document.get("events"))
+    declared = document.get("coverage")
+    gaps = document.get("rotation_gaps")
+    missing = document.get("active_log_missing")
+    if (declared == "partial" or
+            type(gaps) is list and bool(gaps) or missing is True):
+        coverage = "partial"
+    elif (declared in ("available", "empty")
+            and gaps == [] and missing is False):
+        coverage = declared
+    else:
+        coverage = "unknown"
+    report["journal_coverage"] = coverage
+    # A stable on-disk log and an available retained window are still not
+    # evidence about already rotated-out events or past deliveries.
+    report["historical_completeness_attested"] = False
+    if report["status"] == "no_instrumented_evidence" and coverage == "partial":
+        report["status"] = "no_evidence_partial_coverage"
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("journal_zip", type=Path)
@@ -102,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         # Never print the exception: it may contain a private path.
         print(json.dumps({"status": "journal_unreadable"}))
         return 2
-    print(json.dumps(classify(data["events"]), sort_keys=True))
+    print(json.dumps(summarize_document(data), sort_keys=True))
     return 0
 
 
