@@ -224,6 +224,8 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
     the SHA256 of the exact reviewed receipt bytes; no unattended bulk replay.
     """
     storage = service.storage
+    if commit and getattr(getattr(service, "current_identity", None), "identity_id", None) != identity_id:
+        raise ValueError("derived_recovery_active_identity_mismatch")
     profile = storage.identity_get(identity_id)
     config = getattr(service, "config", None)
     get = getattr(config, "get", None)
