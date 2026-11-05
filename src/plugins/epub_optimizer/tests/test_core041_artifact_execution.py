@@ -56,3 +56,53 @@ def test_pdf_uses_public_artifact_execution():
     assert request.capability_id=='pdf.image-optimize-eink'
     assert transformer_id=='document.transformer.pdf-eink-optimizer'
     assert request.options['max_pdf_pages']==1000
+
+
+def test_optimized_copy_targets_exact_core_placement_for_each_profile():
+    """A global SHA does not identify which original file Core may read."""
+    from dataclasses import replace
+
+    execution = Execution()
+    page = make_page(execution)
+    shared = artifact("epub")
+    alice = replace(
+        shared, identity_id="alice", placement_id="original-alice",
+        filename="/local/alice/Book.epub",
+    )
+    bob = replace(
+        shared, identity_id="bob", placement_id="original-bob",
+        filename="/local/bob/Book.epub",
+    )
+    for selected in (alice, bob):
+        page._execute_artifact(selected, "device.profile.test", Control())
+
+    first, second = (item[0] for item in execution.calls)
+    assert first.source is alice and second.source is bob
+    assert (first.identity_id, first.placement_id) == (
+        "alice", "original-alice",
+    )
+    assert (second.identity_id, second.placement_id) == (
+        "bob", "original-bob",
+    )
+    assert first.options == second.options
+    assert first.source.sha256 == second.source.sha256
+    assert "local" not in first.options and "local" not in second.options
+
+
+def test_legacy_and_incomplete_artifacts_do_not_invent_a_placement():
+    from dataclasses import replace
+
+    execution = Execution()
+    page = make_page(execution)
+    original = artifact("pdf")
+    page._execute_artifact(original, "device.profile.test", Control())
+    legacy = execution.calls[-1][0]
+    assert legacy.identity_id is None and legacy.placement_id is None
+
+    # If Core only supplied one coordinate, it must reach Core unchanged,
+    # which rejects partial source scopes before reading any bytes.
+    incomplete = replace(original, identity_id="alice")
+    page._execute_artifact(incomplete, "device.profile.test", Control())
+    request = execution.calls[-1][0]
+    assert request.identity_id == "alice"
+    assert request.placement_id is None

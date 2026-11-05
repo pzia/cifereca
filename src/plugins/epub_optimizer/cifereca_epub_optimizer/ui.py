@@ -586,6 +586,10 @@ class OptimizerPage:
             capability_id=capability_id,
             profile_plugin_id=profile_plugin_id,
             options=options,
+            # The Core-owned book-detail context may pin one physical copy
+            # of a global SHA. Never guess another Placement in this plugin.
+            identity_id=artifact.identity_id,
+            placement_id=artifact.placement_id,
         )
         return broker.execute_transform(
             request,
