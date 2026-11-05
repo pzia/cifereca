@@ -65,7 +65,7 @@ def test_untrusted_epub_title_never_becomes_path_or_hides_receipt():
     name = _readable_epub_target_name(
         BytesIO(_epub(title=title, author="Auteur")), opaque_name=digest,
     )
-    assert name.startswith("Auteur - Un chemin.. interdit - ")
+    assert name.startswith("Auteur - Un chemin .. interdit - ")
     assert name.endswith(digest + ".epub")
     assert "/" not in name and "\\" not in name
     long_title = "É" * 800
