@@ -22,6 +22,9 @@ from .missing_placement_retirement import (
 from .missing_placement_same_path import (
     preview_reappeared_missing_placement, restore_reappeared_missing_placement,
 )
+from .missing_placement_linked_same_path import (
+    preview_reappeared_linked_placement, restore_reappeared_linked_placement,
+)
 from .missing_placement_catalogue_detachment import (
     prepare_missing_catalogue_detachment, retire_missing_linked_catalogue,
 )
@@ -61,7 +64,7 @@ def _public(result: object, *, preview: bool) -> dict[str, object]:
             count = result.get(key)
             if type(count) is int and 0 <= count <= 128:
                 outcome[key] = count
-    if status == "relocated":
+    if status in {"relocated", "restored"}:
         count = result.get("catalogue_rows")
         if type(count) is int and 0 <= count <= 128:
             outcome["catalogue_rows"] = count
@@ -148,6 +151,39 @@ class MissingPlacementOperatorSession:
         if (result.get("status") == "ready" and type(token) is str
                 and len(token) == 64 and self._root() == root):
             self._pending = ("restore", placement_id, None, root, token)
+        else:
+            self.cancel()
+            if result.get("status") == "ready":
+                return _public(
+                    {"status": "blocked", "reason": "scope_changed"},
+                    preview=True,
+                )
+        return _public(result, preview=True)
+
+    def preview_linked_same_path_restoration(
+        self, *, placement_id: str,
+    ) -> dict[str, object]:
+        """Re-attest returned bytes and exact linked catalogue state only."""
+        self.cancel()
+        if not self._inspection_complete:
+            return _public(
+                {"status": "blocked", "reason": "incomplete_inspection"},
+                preview=True,
+            )
+        root = self._root()
+        if root is None:
+            return _public(
+                {"status": "blocked", "reason": "scope_changed"},
+                preview=True,
+            )
+        result = preview_reappeared_linked_placement(
+            self._service.storage, placement_id=placement_id,
+            identity_id=self._identity_id, library_root=root,
+        )
+        token = result.get("plan_token")
+        if (result.get("status") == "ready" and type(token) is str
+                and len(token) == 64 and self._root() == root):
+            self._pending = ("restore_linked", placement_id, None, root, token)
         else:
             self.cancel()
             if result.get("status") == "ready":
@@ -256,6 +292,12 @@ class MissingPlacementOperatorSession:
                                    preview=False)
                 if operation == "restore":
                     result = restore_reappeared_missing_placement(
+                        self._service.storage, placement_id=placement_id,
+                        identity_id=self._identity_id, library_root=root,
+                        plan_token=token, confirmed=True, shared_lock=locked,
+                    )
+                elif operation == "restore_linked":
+                    result = restore_reappeared_linked_placement(
                         self._service.storage, placement_id=placement_id,
                         identity_id=self._identity_id, library_root=root,
                         plan_token=token, confirmed=True, shared_lock=locked,
