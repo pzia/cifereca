@@ -427,11 +427,14 @@ def complete_selected_delivery(
             logger.warning(
                 "TRACE canonical delivery final rejected "
                 "code=canonical_delivery_final_invalid provider_id=%s "
+                "identity_id=%r account_id=%r edition_id=%r right_id=%r "
                 "reader=%s runtime_guarded=%s expected_kind=%s "
                 "inspection_valid=%s inspection_format=%s "
                 "inspection_protected=%s inspection_reason=%s "
                 "catalog_valid=%s catalog_reason=%s",
-                scope.provider_id, reader_name, runtime_guarded, kind,
+                scope.provider_id, scope.identity_id, scope.account_id,
+                source.edition_id, source.right_id,
+                reader_name, runtime_guarded, kind,
                 inspection.valid, inspection.media_format, inspection.protected,
                 inspection.reason, valid, catalog_reason,
             )

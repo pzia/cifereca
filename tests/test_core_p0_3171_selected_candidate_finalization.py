@@ -549,6 +549,12 @@ def test_p0_3252_final_verdict_captures_all_four_checks_before_cleanup(
     assert len(observed) == 1
     verdict = observed[0]
     assert "code=canonical_delivery_final_invalid" in verdict
+    # The final verdict must be correlated to the *exact* rejected source,
+    # not another item from the same sync run. Repr escapes control chars.
+    assert "identity_id='A'" in verdict
+    assert "account_id='buyer-a'" in verdict
+    assert "edition_id='edition'" in verdict
+    assert "right_id='purchase'" in verdict
     assert "reader=rights_selected_delivery_candidate" in verdict
     assert "runtime_guarded=False" in verdict
     assert "expected_kind=pdf" in verdict
