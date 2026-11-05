@@ -10,7 +10,7 @@ import pytest
 
 from cifereca.core.search import file_format
 from cifereca.gui.detail_model import (
-    book_detail_presentation, detail_language,
+    book_detail_presentation, detail_language, search_detail_support_label,
 )
 from cifereca.providers import ProviderConfigurationError
 from tests.test_search_results_view import _book
@@ -45,6 +45,7 @@ def _show_search():
     env = dict(
         file_format=file_format, detail_language=detail_language,
         book_detail_presentation=book_detail_presentation,
+        search_detail_support_label=search_detail_support_label,
         # Isolated AST execution does not import module-level GTK helpers.
         # This scenario is Gallica-only; the Numilog scope is tested separately.
         _commercial_search_usage=lambda _item, _service=None: "",
