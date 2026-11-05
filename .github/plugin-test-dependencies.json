@@ -6,11 +6,13 @@
     "diagnostics-page",
     "literary-criticism",
     "maintenance-library-audit",
-    "provider-bnf-catalogue"
+    "provider-bnf-catalogue",
+    "provider-gutenberg"
   ],
   "dependencies": {
     "home-page": [
-      "provider-bnf-catalogue"
+      "provider-bnf-catalogue",
+      "provider-gutenberg"
     ]
   }
 }
