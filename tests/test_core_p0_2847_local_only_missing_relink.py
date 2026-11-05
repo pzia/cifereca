@@ -118,9 +118,31 @@ def test_local_relink_never_adopts_backup_claim_on_old_path(rig):
         )
     result = commit(rig, p["plan_token"])
     assert result["status"] == "blocked"
-    assert result["reason"] == "backup_requires_separate_relink"
+    # The new backup invalidates the preview digest before the writer even
+    # reaches its separate-link check: stale consent is never authorization.
+    assert result["reason"] == "stale_plan"
     assert storage.placement_get(pid)["path"] == str(old)
     assert storage.catalog_entry_get("catalogue:local")["metadata"]["path"] == str(old)
+
+
+def test_local_relink_with_existing_backup_refuses_source_rebinding(rig):
+    storage, root, old, new, pid, artifact, payload, lockpath = rig
+    _local(rig, catalogue=True)
+    with storage._lock, storage._connect() as db:
+        db.execute(
+            "INSERT INTO backup_items("
+            "provider_id,credential_id,item_id,title,status,updated_at,local_path)"
+            " VALUES(?,?,?,?,?,?,?)",
+            ("kobo", "foreign-card", "foreign-edition",
+             "Legacy unrelated", "complete", 1, str(old)),
+        )
+    p = prepare(rig)
+    assert p["status"] == "review_required"
+    result = commit(rig, p["plan_token"])
+    assert result["status"] == "blocked"
+    assert result["reason"] == "backup_requires_separate_relink"
+    assert storage.placement_get(pid)["state"] == "missing"
+    assert storage.catalog_entry_get("catalogue:local")["placement_id"] == pid
 
 
 def test_local_relink_refuses_id_only_checkpoint_even_with_verified_target(rig):
