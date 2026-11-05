@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol, runtime_checkable
 
+from .provider_search_facets import CatalogSearchFacet
+
 PluginState = Literal["disabled", "ready", "blocked", "degraded", "incompatible", "error"]
 ResolutionMode = Literal["priority", "all", "single"]
 InstantiationMode = Literal["multiple", "per_identity", "singleton_public"]
@@ -625,6 +627,7 @@ class CatalogSearchBatch:
         "live", "cached", "partial", "known_catalog_stale",
         "unavailable", "fallback_global",
     ] = "live"
+    response_facets: tuple[CatalogSearchFacet, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
