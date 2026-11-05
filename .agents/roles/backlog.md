@@ -36,11 +36,22 @@ Les labels sont **mutuellement exclusifs** et reflètent **l'urgence / l'engagem
 | **P2** | Ticket fonctionnel précis, sans lien direct avec le chantier actuel. | Conserver actionnable au backlog ; ne pas lancer de développement opportuniste. |
 | **P3** | Idée ou concept non engagé. | Conserver et enrichir sans implémentation ni PR sans décision explicite. |
 
-- **P1 n'est pas une catégorie Plugins** : plusieurs rôles peuvent concourir au sujet actif. Un nouveau chantier P1 ou une promotion P2 → P1 résulte d'un arbitrage explicite ; ne pas l'inférer d'une simple opportunité.
+- **P1 n'est pas une catégorie Plugins** : plusieurs rôles peuvent concourir au sujet actif. Un nouveau chantier P1 ou une promotion P2 → P1 résulte d'un arbitrage explicite du propriétaire **ou de la délégation bornée ci-dessous** ; ne pas l'inférer d'une simple opportunité.
 - **P0 n'est pas synonyme de « défaut technique »** : distinguer un vrai blocage/urgence d'une amélioration non urgente. Un risque grave objectivement confirmé doit être signalé immédiatement, même sans demande initiale de l'utilisateur.
 - **P2 et P3 sont distincts** : P2 = besoin concret et précis ; P3 = idée non retenue pour développement.
 - Conserver l'historique de reclassement pertinent dans l'issue canonique, sans créer d'issue-journal. Ne pas abaisser silencieusement un P0 ni engager un P3.
 - Pour chaque état du backlog, compter **P0, P1, P2 et P3** séparément et distinguer les PR ouvertes par priorité et rôle si utile.
+
+### Délégation de promotion du rôle Backlog (#4565)
+
+Le propriétaire autorise **uniquement le rôle `backlog`** à promouvoir une issue ouverte, de sa propre initiative, dans ces plafonds **globaux et inclusifs** :
+
+- **P1 → P0 : au plus 5 issues P0 ouvertes après promotion** (4 → 5 autorisé ; 5 → 6 refusé).
+- **P2 → P1 : au plus 15 issues P1 ouvertes après promotion** (14 → 15 autorisé ; 15 → 16 ou 18 → 19 refusé).
+
+**Procédure impérative avant chaque promotion autonome :** relire l'état GitHub live ; compter toutes les issues ouvertes de la priorité cible, **y compris celles marquées `PU`**, mais **jamais les PR ni les issues closes** ; vérifier le label unique et le périmètre actif, l'urgence avérée (P0) ou le travail effectivement engagé (P1), les dépendances et le rôle pilote. Dans l'issue promue, tracer l'ancienne et la nouvelle priorité, les preuves, la raison et les liens ; modifier le seul label de priorité ; **recompter après mutation**. Ne jamais lever `PU` par la promotion. Les tickets déjà au-dessus du plafond ne sont pas rétrogradés automatiquement.
+
+**Quota épuisé :** proposer des clôtures/reclassements individuellement étayés ou demander l'arbitrage explicite du propriétaire ; **aucun forçage ni déclassement silencieux**. Une promotion ordonnée explicitement par le propriétaire est distincte de cette initiative déléguée : documenter son éventuel dépassement. **P3 reste hors exécution** jusqu'à décision produit explicite. Cette délégation ne donne aucun droit de réaliser, tester, ouvrir une PR, merger ou déployer en rôle `backlog`.
 
 Référence : [priorités communes](../../AGENTS.md#priorités--une-seule-file).
 
