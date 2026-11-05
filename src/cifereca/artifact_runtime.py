@@ -229,6 +229,7 @@ def _variant_directory_stamp(path: Path) -> tuple[int, int] | None:
 def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
                                basename: str, sha256: str,
                                directory_stamp: tuple[int, int],
+                               staging_directory_stamp: tuple[int, int],
                                claimed_paths: frozenset[str]) -> Path:
     """Hardlink a verified staging inode atomically, with no replace path.
 
@@ -241,14 +242,17 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
     candidates = (basename, f"{stem}-{sha256[:8]}{suffix}")
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
     if (_variant_directory_stamp(source_parent) != directory_stamp
-            or _variant_directory_stamp(staged.parent) is None):
+            or _variant_directory_stamp(staged.parent) != staging_directory_stamp):
         raise Conflict("Répertoire de variante modifié", code="artifact_variant_directory_changed")
     parent_fd = stage_fd = None
     try:
         parent_fd = os.open(source_parent, flags)
         stage_fd = os.open(staged.parent, flags)
         parent_info = os.fstat(parent_fd)
+        stage_dir_info = os.fstat(stage_fd)
         if ((parent_info.st_dev, parent_info.st_ino) != directory_stamp
+                or (stage_dir_info.st_dev, stage_dir_info.st_ino) != staging_directory_stamp
+                or _variant_directory_stamp(staged.parent) != staging_directory_stamp
                 or _variant_directory_stamp(source_parent) != directory_stamp):
             raise Conflict("Répertoire de variante modifié", code="artifact_variant_directory_changed")
         stage_info = os.stat(staged.name, dir_fd=stage_fd, follow_symlinks=False)
@@ -330,6 +334,7 @@ class _OutputLease:
     source_identity_id: str = ""
     source_stamp: tuple[int, ...] | None = None
     source_directory_stamp: tuple[int, int] | None = None
+    staging_directory_stamp: tuple[int, int] | None = None
     active: bool = True
     @property
     def path(self) -> Path: return self._path
@@ -438,6 +443,7 @@ class ArtifactExecutionBrokerImpl:
             source_identity_id=row["identity_id"],
             source_stamp=stamp,
             source_directory_stamp=folder,
+            staging_directory_stamp=_variant_directory_stamp(staging),
         )
 
     @staticmethod
@@ -490,8 +496,7 @@ class ArtifactExecutionBrokerImpl:
         # produced staging file is disposable; preserve the existing source
         # artifact and do not create a false independent derivative.
         if actual_sha == source.sha256:
-            path.unlink()
-            lease.active = False
+            self.abort_output(lease)
             return source
         existing = self.service.storage.artifact_variant_find(
             source_sha256=source.sha256, transformer_plugin_id=transformer_plugin_id,
@@ -509,7 +514,7 @@ class ArtifactExecutionBrokerImpl:
                 except (Conflict, NotFound, OSError, ValueError):
                     artifact = None
             if artifact is not None:
-                path.unlink(missing_ok=True); lease.active = False
+                self.abort_output(lease)
                 return artifact
         proposed = Path(str(result.proposed_filename or lease.proposed_filename or "")).name
         if not proposed:
@@ -528,6 +533,7 @@ class ArtifactExecutionBrokerImpl:
         final = _publish_variant_exclusive(
             path, source_path.parent, basename=stem + suffix,
             sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
+            staging_directory_stamp=lease.staging_directory_stamp,
             claimed_paths=claimed_paths,
         )
         lease.active = False
@@ -579,7 +585,32 @@ class ArtifactExecutionBrokerImpl:
 
     def abort_output(self, destination: Any) -> None:
         lease = self._assert_output_lease(destination)
-        lease.path.unlink(missing_ok=True); lease.active = False
+        # A malicious transformer may swap the whole staging directory for
+        # a symlink into a foreign profile before raising. Never unlink
+        # through such a pathname; use a no-follow pinned directory FD.
+        lease.active = False
+        expected = lease.staging_directory_stamp
+        path = lease.path
+        if expected is None or _variant_directory_stamp(path.parent) != expected:
+            raise Conflict("Staging de variante déplacé", code="artifact_variant_staging_changed")
+        flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(path.parent, flags)
+            try:
+                directory = os.fstat(fd)
+                if ((directory.st_dev, directory.st_ino) != expected
+                        or _variant_directory_stamp(path.parent) != expected):
+                    raise Conflict("Staging de variante déplacé",
+                                   code="artifact_variant_staging_changed")
+                try:
+                    os.unlink(path.name, dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+            finally:
+                os.close(fd)
+        except OSError as error:
+            raise Conflict("Staging de variante inaccessible",
+                           code="artifact_variant_staging_changed") from error
 
     def variants(self, source: ArtifactRef) -> tuple[ArtifactVariant, ...]:
         out=[]
