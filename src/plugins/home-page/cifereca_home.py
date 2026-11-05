@@ -28,7 +28,6 @@ def issues_text(sync):
 PUBLIC_PROVIDERS = {'gallica', 'gutenberg', 'bnf-catalogue', 'baen', 'ebooksgratuits', 'numilog-catalog'}
 LOCAL_PROVIDERS = {'local'}
 SOURCE_NAMES = {
-    'local':'Local',
     'paris':'Bibliothèques de Paris',
     'kobo':'Kobo',
     'numilog':'Numilog',
@@ -40,32 +39,39 @@ SOURCE_NAMES = {
     'ebooksgratuits':'Ebooks libres et gratuits',
 }
 
-def source_groups(row, public_providers=PUBLIC_PROVIDERS, local_providers=LOCAL_PROVIDERS):
+def _attested_source_counts(stats):
+    uncovered = stats.get('local_books_without_provider_origin')
+    counts = stats.get('sources')
+    if type(uncovered) is int and uncovered >= 0 and isinstance(counts, dict):
+        return counts
+    return None
+
+
+def source_groups(row, public_providers=PUBLIC_PROVIDERS):
     linked=set(row.get('providers') or ())
     observed={s.get('provider_id'):dict(s) for s in row.get('sources',[]) if isinstance(s,dict) and s.get('provider_id')}
     stats=row.get('statistics') if isinstance(row.get('statistics'),dict) else {}
-    counts=stats.get('sources') if isinstance(stats.get('sources'),dict) else {}
-    candidates=set(linked)|set(observed)|set(counts)
-    if int(stats.get('local_books') or 0)>0:
-        candidates.add('local')
+    counts=_attested_source_counts(stats)
+    candidates=linked|set(observed)|set(counts or {})
 
     def build(pid,kind):
         item=dict(observed.get(pid) or {})
         item.setdefault('provider_id',pid)
         item.setdefault('label',SOURCE_NAMES.get(pid,pid))
-        count=counts.get(pid)
-        if count is None and pid=='local' and stats.get('local_books') is not None:
-            count=stats.get('local_books')
-        if count is not None:
-            item['count']=count
+        item['count']=counts.get(pid,0) if counts is not None else None
         item['kind']=kind
         if kind=='authenticated':
             item.setdefault('connected',False)
         return item
 
-    local=[build(pid,'local') for pid in sorted(candidates & set(local_providers))]
+    local=[]
+    if counts is not None and stats['local_books_without_provider_origin']:
+        local.append({'provider_id':'local','label':'Origine non attestée',
+                      'count':stats['local_books_without_provider_origin'],'kind':'local'})
+    elif counts is None and type(stats.get('local_books')) is int and stats['local_books'] > 0:
+        local.append({'provider_id':'local','label':'Origine des fichiers locaux','kind':'local'})
     public=[build(pid,'public') for pid in sorted(candidates & set(public_providers))]
-    authenticated=[build(pid,'authenticated') for pid in sorted(linked-set(public_providers)-set(local_providers))]
+    authenticated=[build(pid,'authenticated') for pid in sorted(linked-set(public_providers)-LOCAL_PROVIDERS)]
     return {'local':local,'public':public,'authenticated':authenticated}
 
 def linked_sources(row, public_providers=PUBLIC_PROVIDERS):
@@ -134,9 +140,11 @@ def statistics_lines(row):
     else:
         loan_text = f"{loans if loans is not None else '—'} prêts de bibliothèque connus"
     lines=[f"{stats.get('local_books',0)} livres locaux · {loan_text}"]
-    names={'paris':'Paris','kobo':'Kobo','gallica':'Gallica','gutenberg':'Gutenberg','bnf-catalogue':'BnF','numilog':'Numilog','local':'Local (origine non rapprochée)'}
-    sources=stats.get('sources') or {}
-    if sources:lines.append('Livres par catalogue : '+ ' · '.join(f"{names.get(key,key)} : {count}" for key,count in sorted(sources.items())))
+    sources=_attested_source_counts(stats)
+    if sources:
+        lines.append('Origines fournisseur attestées : '+ ' · '.join(
+            f"{SOURCE_NAMES.get(key,key)} : {count}" for key,count in sorted(sources.items())
+        ))
     lines.append(f"{stats.get('local_placements',0)} emplacements · {stats.get('remote_owned_rights',0)} droits d’achat distants")
     if loans is None and not _loan_scope_not_configured(row):
         lines.append('Prêts de bibliothèque non actualisés')
@@ -245,21 +253,25 @@ def compact_source_groups(row, public_providers=PUBLIC_PROVIDERS):
     """Display each origin once, without promoting an unknown origin to login."""
     groups=source_groups(row,public_providers)
     stats=row.get('statistics') if isinstance(row.get('statistics'),dict) else {}
-    counts=stats.get('sources') if isinstance(stats.get('sources'),dict) else {}
+    counts=_attested_source_counts(stats) or {}
     seen={str(src['provider_id']) for rows in groups.values() for src in rows}
     other=[{'provider_id':key, 'label':SOURCE_NAMES.get(key,key), 'count':value,
             'kind':'unknown'} for key,value in sorted(counts.items())
-           if isinstance(key,str) and key not in seen]
+           if isinstance(key,str) and key not in seen and key not in LOCAL_PROVIDERS]
     return {'local':groups['local'],'public':groups['public'],
             'authenticated':groups['authenticated'],'unknown':other}
 
 
-def compact_source_text(item, *, total_local_books=None):
-    """Counts describe indexed book origins, not remote search availability."""
+def compact_source_text(item):
+    """Render indexed local files, remote source status and coverage separately."""
     label=str(item.get('label') or item.get('provider_id') or 'Source')
     kind=item.get('kind')
     count=item.get('count')
-    has_count=type(count) is int and count>=0
+    files = '— (non déterminé)'
+    if type(count) is int and count >= 0:
+        files = f"{count} fichier local" if count < 2 else f"{count} fichiers locaux"
+        if kind != 'local':
+            files += ' lié' if count < 2 else ' liés'
     # Explicit provider IDs here describe the source's *usage*, not a
     # remote entitlement. Never infer purchase, borrow, downloadability or
     # file presence from the indexed origin count.
@@ -268,26 +280,16 @@ def compact_source_text(item, *, total_local_books=None):
         label=label+' — Mes achats (compte)'
     elif kind=='public' and provider_id=='numilog-catalog':
         label=label if 'Catalogue public' in label else label+' — Catalogue public'
-    if kind=='local':
-        # Local provenance == total local books in the common case; do not
-        # repeat the exact same number underneath the main summary.
-        amount=('origine locale (déjà comptée)' if has_count and
-                type(total_local_books) is int and count==total_local_books
-                else f"{count} livre(s) d’origine" if has_count else 'origine locale')
-    elif kind=='public':
-        amount=(f"{count} livre(s) d’origine · notices sans achat attesté"
-                if has_count and provider_id=='numilog-catalog'
-                else f"{count} livre(s) d’origine" if has_count
-                else 'catalogue public · sans achat attesté'
-                if provider_id=='numilog-catalog' else 'catalogue public')
+    if kind=='public':
+        files='catalogue public · '+files
+        if provider_id=='numilog-catalog':
+            files+=' · notices sans achat attesté'
     elif kind=='authenticated':
         status='connectée' if item.get('connected') is True else 'non connectée'
-        amount=status+(f" · {count} livre(s) d’origine" if has_count else '')
+        files=status+' · '+files
         if provider_id in {'kobo','numilog'}:
-            amount+=' · achats non présumés à partir de ce compteur'
-    else:
-        amount=f"{count} livre(s) d’origine" if has_count else 'origine non classée'
-    return label+' · '+amount
+            files+=' · achats non présumés à partir de ce compteur'
+    return label+' · '+files
 
 
 class OverviewController:
@@ -507,10 +509,10 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             if any(groups.values()):
                 sources_area=plain_section(box,'Sources et origines')
                 for kind,title_text in (
-                    ('local','Local'),
+                    ('local','Fichiers locaux'),
                     ('public','Catalogues publics'),
                     ('authenticated','Sources authentifiées'),
-                    ('unknown','Autres origines'),
+                    ('unknown','Autres origines fournisseur'),
                 ):
                     members=groups[kind]
                     if not members:
@@ -522,8 +524,8 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
                     for source in members:
                         pid=str(source['provider_id'])
                         connected=source.get('connected') is True
-                        route='library' if kind in ('local','unknown') else 'search'
-                        if kind=='authenticated' and not connected:
+                        route='library' if kind=='unknown' else 'search'
+                        if kind=='local' or (kind=='authenticated' and not connected):
                             action=None
                         elif has_filters:
                             action=lambda _b,identity=iid,provider=pid,dest=route:controller.filter(identity,dest,provider)
@@ -532,16 +534,16 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
                         settings=None
                         if kind=='authenticated' and connected and callable(settings_open):
                             settings=lambda _b,provider=pid:settings_open('provider.'+provider)
-                        count=stats.get('local_books') if stats is not None else None
                         compact_row(
                             sources_area,
-                            compact_source_text(source,total_local_books=count),
+                            compact_source_text(source),
                             action=action,
-                            action_title='Filtrer' if kind in ('local','unknown') else 'Chercher',
+                            action_title='Filtrer' if kind=='unknown' else 'Chercher',
                             settings=settings,
-                            tooltip='Origine du cache local ; ne préjuge pas de la disponibilité distante.'
-                                    if kind in ('local','public','unknown')
-                                    else 'Source authentifiée ; la connexion est indépendante des livres en cache.',
+                            tooltip='Couverture des origines fournisseur des fichiers locaux indexés.' if kind=='local'
+                                    else 'Fichiers locaux distincts avec origine fournisseur attestée. '
+                                         'Un même fichier peut avoir plusieurs origines. '
+                                         'Le compteur est indépendant des droits et de la disponibilité distante.',
                         )
 
             sync_area=plain_section(box,'Synchronisation')

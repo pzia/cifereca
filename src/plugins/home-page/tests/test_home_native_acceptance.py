@@ -19,11 +19,11 @@ pytestmark = pytest.mark.skipif(not os.environ.get('DISPLAY'), reason='GTK/Xvfb 
 def representative_rows():
     first = {
         'identity_id': 'synthetic-a', 'label': 'Profil A', 'selected': True,
-        'providers': ['local', 'paris', 'kobo', 'gallica', 'gutenberg'],
-        'sources': [{'provider_id': pid, 'connected': True} for pid in ('paris', 'kobo', 'gallica', 'gutenberg')],
+        'providers': ['local', 'paris', 'kobo', 'numilog', 'gutenberg'],
+        'sources': [{'provider_id': pid, 'connected': True} for pid in ('paris', 'kobo', 'numilog', 'gutenberg')],
         'statistics': {'local_books': 562, 'local_placements': 580, 'known_loans': 4,
-                       'remote_owned_rights': 300,
-                       'sources': {'local': 562, 'paris': 24, 'kobo': 300, 'gallica': 22, 'gutenberg': 100}},
+                       'remote_owned_rights': 300, 'local_books_without_provider_origin': 132,
+                       'sources': {'paris': 24, 'kobo': 300, 'numilog': 6, 'gutenberg': 100}},
         'sync': {'status': 'partial', 'new_acquisitions': 0, 'attention_required': 2, 'errors': 1},
         'adept_profile_id': 'synthetic-ade', 'associated_readers': [{'label': 'Liseuse témoin'}],
         'deep_last_at': 1791633600,
@@ -32,6 +32,8 @@ def representative_rows():
     second.update(identity_id='synthetic-b', label='Profil B', selected=False,
                   sync={'status': 'success', 'new_acquisitions': 0, 'attention_required': 0, 'errors': 0})
     second['statistics']['known_loans'] = None
+    second['statistics']['local_books_without_provider_origin'] = None
+    second['statistics']['sources'] = {}
     return [first, second]
 
 
@@ -93,7 +95,10 @@ def test_native_home_comparison_states_geometry_and_actions(width):
         assert all(rect.get_y() + rect.get_height() <= page.get_height() for rect in bounds)
         assert all('À traiter' in texts(card) for card in cards())
         assert sum(text.startswith('Livres locaux : 562') for text in texts()) == 2
-        assert 'Local · origine locale (déjà comptée)' in texts()
+        assert 'Origine non attestée · 132 fichiers locaux' in texts(cards()[0])
+        assert 'Origine des fichiers locaux · — (non déterminé)' in texts(cards()[1])
+        assert any('Numilog' in text and '6 fichiers locaux liés' in text for text in texts(cards()[0]))
+        assert any('Numilog' in text and '— (non déterminé)' in text for text in texts(cards()[1]))
         assert 'Catalogues publics' in texts() and 'Sources authentifiées' in texts()
         assert any('prêts de bibliothèque connus : —' in text for text in texts(cards()[1]))
         assert not calls  # no synchronization or settings at build
