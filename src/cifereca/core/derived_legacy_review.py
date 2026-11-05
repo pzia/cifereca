@@ -225,6 +225,8 @@ def review_legacy_derived_variant(
                 or not _digest(target_path, expected_child_sha, data[child][1])):
             return blocked("physical_sha_unverified")
         if attested != 1:
+            if links:
+                return blocked("derived_origin_conflict", verified=True)
             return LegacyDerivedReview(
                 "physical_pair_only", "derived_origin_unattributed",
                 identity_id, variant_id, True, False,
