@@ -117,6 +117,7 @@ def test_full_scan_proves_missing_without_removing_any_file(rig, monkeypatch):
     {ART: UsbObservedFile(TARGET, "f" * 64, True)},
     {"untracked:foreign": UsbObservedFile(TARGET, SHA, True)},
     {ART: UsbObservedFile(TARGET + "x", SHA, True)},
+    {"untracked:moved": UsbObservedFile("Books/Cifereca/moved.epub", SHA, True)},
 ])
 def test_mismatch_or_occupied_path_does_not_publish_missing_or_present(
     rig, monkeypatch, observed,
