@@ -317,3 +317,84 @@ def test_ui_never_remaps_explicit_foreign_account_to_primary(tmp_path):
         assert not window.runner.tasks and state["calls"] == []
     finally:
         service.close()
+
+
+def test_first_offer_staged_and_reused_without_reborrowing_or_reusing_url(tmp_path, monkeypatch):
+    """First signed URL -> private ACSM -> stable receipt -> later acquisition.
+
+    In particular, an inventory loan lacking that one-shot URL must still
+    reuse the staged bytes and cannot trigger another ASSARedirect.
+    """
+    from unittest.mock import Mock
+    from cifereca import acsm_cache
+    from cifereca.models import Loan
+
+    service, session, account, item, state = setup(tmp_path, result="acsm")
+    token = (b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
+             b'<format>application/epub+zip</format></fulfillmentToken>')
+    stage_calls = []
+
+    def first_token(loan, owner, directory, *, admission_current=None):
+        assert admission_current is not None
+        assert admission_current()
+        assert owner is account
+        assert loan.record_id == item.record_id
+        assert loan.ebook_url.endswith("synthetic.acsm")
+        stage_calls.append("GET-first-offer")
+        path = directory / "first-offer.acsm"
+        path.write_bytes(token)
+        return path, ""
+
+    monkeypatch.setattr(session, "download_digital", first_token)
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        assert stage_calls == ["GET-first-offer"]
+        assert state["mutations"] == 1
+        assert len(state["calls"]) == 4
+
+        later_loan = Loan(
+            id="loan-exact", provider="DILICOM", medium="digital",
+            record_id="edition", title="Synthetic",
+            source_provider="paris", source_credential="card-A",
+            source_account_id="primary", identity_id="default",
+            due_at=None, ebook_url=None,
+        )
+        directory = service._acquisition_work_dir("default", "paris", "loan-exact")
+        staged = acsm_cache.reuse_initial(
+            directory, later_loan, "default", "primary")
+        assert staged is not None and staged.read_bytes() == token
+        service.acquisition.run_post_download = Mock()
+        outcome2 = service.acquire_digital_loan(later_loan)
+        assert outcome2.kind == "acsm"
+        assert outcome2.path == staged
+        assert state["mutations"] == 1 and stage_calls == ["GET-first-offer"]
+        service.acquisition.run_post_download.assert_called_once()
+        # A subsequent read uses standard post-hook cache; no second hook.
+        service.acquire_digital_loan(later_loan)
+        service.acquisition.run_post_download.assert_called_once()
+    finally:
+        service.close()
+
+
+def test_first_offer_get_failure_does_not_repeat_or_unconfirm_borrow(tmp_path, monkeypatch):
+    service, session, account, item, state = setup(tmp_path, result="acsm")
+    attempts = []
+
+    def unavailable(*_args, **_kwargs):
+        attempts.append("GET")
+        raise RuntimeError("supplier first token unavailable")
+
+    monkeypatch.setattr(session, "download_digital", unavailable)
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        assert attempts == ["GET"]
+        assert state["mutations"] == 1
+        assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
+        assert attempts == ["GET"]
+        assert state["mutations"] == 1
+    finally:
+        service.close()
