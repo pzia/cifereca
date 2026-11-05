@@ -213,6 +213,7 @@ def test_coreui_linked_returned_case_uses_only_private_inspected_key(rig):
 
     db, root, old, new, pid, artifact, payload, lockpath = rig
     epub(old, title="Returned and catalogued original")
+    epub(new, title="Unrelated intact EPUB")
     actual = old.read_bytes()
     digest = hashlib.sha256(actual).hexdigest()
     actual_artifact = "sha256:" + digest
