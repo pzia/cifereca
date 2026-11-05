@@ -399,7 +399,11 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
                         or _variant_directory_stamp(source_parent) != directory_stamp):
                     raise _VariantConflict("Variante ou répertoire changé",
                                    code="artifact_variant_publish_race")
+                # A committed SQLite Placement must never outlive an
+                # unflushed hardlink directory entry on power loss.
+                os.fsync(parent_fd)
                 os.unlink(staged.name, dir_fd=stage_fd)
+                os.fsync(stage_fd)
                 return source_parent / candidate
             except Exception:
                 # The exclusive hardlink is our new entry; never touch a
