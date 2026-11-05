@@ -3872,8 +3872,11 @@ class LibraryService:
         )
 
     def _cleanup_acsm_after_success(self, path: Path | None, *, loan_id: str) -> None:
+        def forget_receipts(used_path):
+            acsm_cache.forget(used_path)
+            acsm_cache.forget_initial(used_path)
         return acsm_staging.cleanup_acsm_after_success(
-            path, loan_id=loan_id, forget=acsm_cache.forget, logger=_TRACE_LOG,
+            path, loan_id=loan_id, forget=forget_receipts, logger=_TRACE_LOG,
         )
 
     def _cleanup_old_acsm_work(self, *, max_age_seconds: int | None = None) -> dict[str, int]:
@@ -3904,7 +3907,13 @@ class LibraryService:
                         loan_trace_ref(loan, None), trace_ref)
         library_target_dir = self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
         target_dir = self._acquisition_work_dir(identity.identity_id, loan.source_provider, loan.id)
-        cached = None if force_refresh else acsm_cache.reuse(target_dir, loan, identity.identity_id, account_key)
+        cached = None if force_refresh else (
+            # #3121: exact first-offer bytes remain usable even when the
+            # supplier changes/omits its signed URL on a fresh ListLoans.
+            # This is a read of an already-staged file, never a new borrow.
+            acsm_cache.reuse_initial(target_dir, loan, identity.identity_id, account_key)
+            or acsm_cache.reuse(target_dir, loan, identity.identity_id, account_key)
+        )
         if cached is not None:
             path, url = cached, loan.ebook_url or ""
             self.diagnostics.add("PNB", "reuse artifact", detail={"loan_ref": trace_ref, "cached": True})
