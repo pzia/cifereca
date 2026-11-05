@@ -462,6 +462,49 @@ def sync_source_last_cycle_summary(source: object) -> str:
     )
 
 
+def sync_source_cycle_pulse(source: object) -> str:
+    """Compact, *historical* A-to-B outcome for a two-line source card.
+
+    Only a complete Core-count receipt may produce numbers. No zero fallback
+    or implication that the targeted cycle describes the opening global run.
+    """
+    from ..plugin_api import SyncSourceCycleReceipt
+    from ..core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+
+    receipt = getattr(source, "last_cycle", None)
+    if (type(receipt) is not SyncSourceCycleReceipt
+            or not sync_source_last_cycle_summary(source)):
+        return ""
+    counts = receipt.canonical_execution
+    if (type(counts) is not tuple
+            or len(counts) != len(CANONICAL_EXECUTION_STATUSES)
+            or any(type(pair) is not tuple or len(pair) != 2
+                   or type(pair[0]) is not str or type(pair[1]) is not int
+                   for pair in counts)):
+        return ""
+    values = dict(counts)
+    if (len(values) != len(CANONICAL_EXECUTION_STATUSES)
+            or set(values) != set(CANONICAL_EXECUTION_STATUSES)
+            or any(not 0 <= values[key] <= 1_000_000
+                   for key in CANONICAL_EXECUTION_STATUSES)):
+        return ""
+    labels = (
+        ("pending", "en attente"), ("failed", "en échec"),
+        ("blocked", "bloqués"), ("downloaded", "téléchargés"),
+        ("present_attested", "présents attestés"), ("recovered", "récupérés"),
+        ("cancelled", "annulés"),
+    )
+    displayed = [
+        str(values[key]) + " " + caption for key, caption in labels
+        if values[key] > 0
+    ]
+    if not displayed:
+        return "Dernier cycle ciblé : 0 réception locale attestée"
+    # Short on-screen line; the full nine-field canonical evidence remains in
+    # the tooltip. Put pending/errors before successful file observations.
+    return "Dernier cycle ciblé : " + " · ".join(displayed[:3])
+
+
 def sync_source_phase_summary(source: object) -> str:
     """Present only Core-enumerated phase states, never provider diagnostics.
 
