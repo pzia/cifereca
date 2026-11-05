@@ -118,15 +118,6 @@ def preview_canonical_duplicate(
             # The physical verifier checks the exact registered owner
             # directory; unrelated profile names carry no authority here.
             owner_dir = owner[0]
-            # #4496: an Outbox delivery or another internal excluded subtree
-            # is never an ordinary keeper NOR a retiree, even at equal SHA.
-            # This applies before computing a positive duplicate preview and
-            # is independently re-evaluated by the locked supervisor.
-            if ordinary_dedup_paths_excluded(
-                (candidate[0], keeper[0]), library_root=library_root,
-                identity_id=candidate[1], owner_directory=owner_dir,
-            ):
-                return report("blocked", "excluded_path")
             reserved = frozenset((owner_dir,))
             observations = []
             for raw in (candidate[0], keeper[0]):
@@ -143,6 +134,15 @@ def preview_canonical_duplicate(
                         ) or not _same_file(path, before)):
                     return report("blocked", "physical_evidence_changed")
                 observations.append((path, before))
+
+            # #4496: after the existing physical checks (which preserve the
+            # historical physical_evidence_changed reason for symlink/ABA),
+            # an attested Outbox is neither a keeper nor a retiree.
+            if ordinary_dedup_paths_excluded(
+                (candidate[0], keeper[0]), library_root=library_root,
+                identity_id=candidate[1], owner_directory=owner_dir,
+            ):
+                return report("blocked", "excluded_path")
 
             # Count the exact references for human-readable diagnostics.
             # A generic/unknown path elsewhere still prevents retirement.
