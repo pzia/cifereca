@@ -104,6 +104,12 @@ def main(argv: list[str] | None = None) -> int:
     acquisition_audit.add_argument("--verify-files", action="store_true")
     acquisition_audit.add_argument("--json", action="store_true")
     acquisition_audit.add_argument("--output", type=Path, metavar="JSON")
+    legacy_inventory = sub.add_parser(
+        "legacy-backup-inventory",
+        help="Inventaire SQLite Kobo 0.7 borné et hors réseau, sans migration",
+    )
+    legacy_inventory.add_argument("--identity", default="")
+    legacy_inventory.add_argument("--json", action="store_true")
     generic_sync = sub.add_parser("sync", help="Synchronisation ciblée par source, indépendante du fournisseur")
     generic_sub = generic_sync.add_subparsers(dest="sync_cmd", required=True)
     for command in ("list", "run"):
@@ -331,6 +337,22 @@ def main(argv: list[str] | None = None) -> int:
             # identity directory or provider secrets. Never print raw text.
             print("Annulation de migration impossible", file=sys.stderr)
             return 1
+
+    # P0 #3196: inventory the *existing* v14 SQLite in ro mode without
+    # constructing CiferecaCore/Storage or connecting a supplier. Do not
+    # expose the old product IDs, paths or credentials in terminal output.
+    if a.cmd == "legacy-backup-inventory":
+        from .core.legacy_backup_inventory_cli import inventory_existing_legacy_kobo
+        if a.username or a.account or not a.identity:
+            print(json.dumps({"status": "failed", "code": "identity_scope_required"}))
+            return 2
+        inventory = inventory_existing_legacy_kobo(identity_id=a.identity)
+        if inventory["status"] != "complete":
+            print(json.dumps({"status": "failed", "code": inventory["status"]}))
+            return 2
+        print(json.dumps({"status": "success", "inventory": inventory},
+                         ensure_ascii=False, indent=2))
+        return 0
 
     # A local repair/preview must not activate plugins, chmod Config, purge
     # caches or recover a directory migration as a side effect of startup.
