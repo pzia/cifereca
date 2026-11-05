@@ -2473,6 +2473,25 @@ class Storage:
                     )
                 ):
                     raise ValueError("relocate_scope_conflict")
+                # #3196 W5: a legacy path is not authority over an edition
+                # already represented by a typed Core SourceReference. The
+                # 0.7 row has no borrower/branch; even another canonical
+                # account on the same credential is an ambiguity, not a
+                # permit to rebind its historical path. A separate attested
+                # canonical relink operator handles such a migration.
+                # Refuse before changing either the backup or its Placement.
+                if old_text != new_text and provider_id == "kobo":
+                    if db.execute(
+                        "SELECT 1 FROM backup_items AS b WHERE "
+                        "b.provider_id='kobo' AND b.identity_id=? "
+                        "AND b.local_path=? AND EXISTS ("
+                        "SELECT 1 FROM source_references AS s "
+                        "WHERE s.provider_id='kobo' "
+                        "AND s.credential_id=b.credential_id "
+                        "AND s.edition_id=b.item_id) LIMIT 1",
+                        (identity_id, old_text),
+                    ).fetchone() is not None:
+                        raise ValueError("relocate_canonical_source_requires_core_relink")
                 # Relocation is never an ownership attestation. In particular,
                 # a no-op rename must not fill a historical NULL identity;
                 # actual moves already refuse ambiguous legacy owners above.
