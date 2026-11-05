@@ -295,7 +295,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(mod.select([path, "unknown/runtime.py"]), mod.ALL)
         self.assertEqual(mod.select([path], full=True), mod.ALL)
         workflow = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(encoding="utf-8")
-        self.assertIn("      - 'tests/test_e2e_ci_paths.py'\\n", workflow)
+        self.assertIn("      - 'tests/test_e2e_ci_paths.py'\n", workflow)
         self.assertIn("      - name: Test E2E scenario selector", workflow)
         self.assertIn("      - name: Validate privacy-safe E2E publication policy", workflow)
 
