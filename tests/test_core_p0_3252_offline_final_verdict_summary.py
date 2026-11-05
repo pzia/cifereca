@@ -120,3 +120,20 @@ def test_invalid_document_is_never_a_success():
     assert result["status"] == "invalid_journal"
     assert result["journal_coverage"] == "unknown"
     assert result["historical_completeness_attested"] is False
+
+
+def test_closed_encryption_profile_counts_never_echo_unknown_private_markers():
+    aes = _event(protected="True")
+    aes["message"] += " encryption_profile=aes_algorithm"
+    fonts = _event(protected="True")
+    fonts["message"] += " encryption_profile=font_obfuscation_algorithms_only"
+    private = _event(protected="True")
+    private["message"] += " encryption_profile=PRIVATE_KEY_MUST_NOT_LEAK"
+    report = classify([aes, fonts, private])
+    assert report["occurrences"] == 3
+    assert report["reasons"]["protected"] == 3
+    assert report["encryption_profiles"] == {
+        "aes_algorithm": 1,
+        "font_obfuscation_algorithms_only": 1,
+    }
+    assert "PRIVATE_KEY" not in str(report)
