@@ -577,6 +577,22 @@ def _refresh_sync_page(self) -> None:
                 sync_source_card_guidance,
             )
             next_step = sync_source_card_guidance(source, alert)
+            # #3416: the full typed Core receipt stays in the hover/focus
+            # summary. Show its compact counts without hiding a current
+            # warning, guidance or disabled-source state.
+            from cifereca.gui.sync_view import sync_source_cycle_pulse
+            pulse = (
+                sync_source_cycle_pulse(source)
+                if getattr(source, "enabled", None) is True else ""
+            )
+            if pulse and alert is None and not next_step:
+                head, separator, remainder = display_summary.partition("\n")
+                display_summary = (
+                    head + "\n" + pulse
+                    + ("\n" + remainder if separator else "")
+                )
+            elif pulse:
+                next_step = pulse + (" · " + next_step if next_step else "")
             if getattr(source, "enabled", None) is False:
                 # The previous failed/partial run remains in the tooltip but
                 # must not dominate the collapsed card of a voluntarily OFF
