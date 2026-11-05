@@ -2070,9 +2070,10 @@ class Storage:
         """Prune only the v0.7 compatibility projection after a complete manifest.
 
         A provider manifest admitted by the Kobo compatibility synchronizer
-        may retire obsolete backup_items rows without local_path; an unmigrated
-        Kobo row with a historical file locator is never pruned, even when
-        the path is currently inaccessible. Manifest absence cannot attest an
+        may retire obsolete backup_items rows without local_path and without
+        a pending manual-reconciliation state; an unmigrated Kobo row with a
+        historical locator or an unresolved reconcile_required/conflict state
+        is never pruned. Manifest absence cannot attest an
         exact SourceReference right, entitlement revocation or removal of bytes.
         Entitlements/OriginLinks/Placements/acquisition history are never
         mutated by this obsolete projection. Negative canonical rights require
@@ -2113,12 +2114,12 @@ class Storage:
                 if provider == "kobo" else set()
             )
             rows = db.execute(
-                "SELECT item_id,local_path FROM backup_items "
+                "SELECT item_id,local_path,status FROM backup_items "
                 "WHERE provider_id=? AND credential_id=?",
                 (provider, credential),
             ).fetchall()
             stale = [
-                (item_id, path) for item_id, path in rows
+                (item_id, path) for item_id, path, status in rows
                 # The admitted manifest IDs were stripped above. Apply the
                 # same normalization to historical SQLite keys for membership
                 # only: otherwise a still-seen legacy " book " is deleted
@@ -2146,6 +2147,14 @@ class Storage:
                     # not stat or follow this untrusted historical pathname.
                     and not (provider == "kobo" and type(path) is str
                              and bool(path.strip()))
+                    # A legacy Kobo row explicitly quarantined for manual
+                    # reconciliation is unresolved history, even if no
+                    # candidate path could safely be selected. A manifest
+                    # lacking the item does NOT prove that the competing
+                    # physical candidates or acquisition attempt vanished.
+                    and not (provider == "kobo" and status in (
+                        "reconcile_required", "reconcile_conflict",
+                    ))
                     and item_id.strip() not in seen)
             ]
             local_preserved = 0
