@@ -69,6 +69,7 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
         mark_settings_dirty=mark_settings_dirty,
         library_directory=lambda: sync_settings.library_dir_row.get_text(),
         Gtk=Gtk, Adw=Adw, add_css=add_css,
+        page_lifetime=page_lifetime,
     )
 
     # ADE is bound only at Paris Identity scope. Provider sub-accounts
