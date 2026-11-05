@@ -140,6 +140,11 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         # A missing widget key only occurs in old/headless callers. Use
         # the exact existing binding without coercing malformed saved IDs.
         prior_identity = config.identity(identity_id) or {}
+        raw_saved_primary = prior_identity.get('primary_paris_connection_id', '')
+        if type(raw_saved_primary) is not str:
+            raise SettingsValidationError(
+                'Connexion Paris principale historique invalide : recharger les paramètres.'
+            )
         selected = editor.get(
             'primary_paris_connection_id',
             prior_identity.get('primary_paris_connection_id', ''),
