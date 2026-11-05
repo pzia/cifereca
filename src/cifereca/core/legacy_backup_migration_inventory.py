@@ -118,6 +118,10 @@ def inventory_legacy_kobo_backups(
             for (owner, credential, account, item, revision, status, path,
                  digest, size) in records:
                 report["scanned"] += 1
+                # Receipt shape is advisory; this SQL-only inventory NEVER
+                # attests SourceKey/OriginLink or file bytes. Every row still
+                # requires independent receipt/provenance verification.
+                report["receipt_unproven"] += 1
                 if status == "complete":
                     report["status_complete"] += 1
                 elif status in ("acquiring", "pending_acquisition"):
@@ -144,7 +148,6 @@ def inventory_legacy_kobo_backups(
                                 and type(account) is str)
                 if not valid_source:
                     report["account_unbound"] += 1
-                    report["receipt_unproven"] += 1
                     continue
                 # Only a uniquely enabled connection and the EXACT borrower
                 # count as a current binding; borrower '' is valid if stored.
@@ -224,8 +227,6 @@ def inventory_legacy_kobo_backups(
                 )
                 if candidate:
                     report["receipt_shape_candidate"] += 1
-                else:
-                    report["receipt_unproven"] += 1
             return report
     except (sqlite3.Error, OSError, ValueError, TypeError, RuntimeError,
             RecursionError):
