@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from cifereca.storage import Storage
 from cifereca.core.derived_variant_recovery import review_pending_derived_receipts
 from cifereca.artifact_runtime import ArtifactExecutionBrokerImpl
 from cifereca.plugin_api import TransformRequest
@@ -59,6 +60,10 @@ def test_fsync_receipt_can_explicitly_restore_after_sql_interruption(tmp_path):
                 if p["artifact_id"] != source.artifact_id] == []
         journal = list((tmp_path / "library" / ".cifereca-staging" / "variants").glob("pending-*.json"))
         assert len(journal) == 1
+        # Exercise an actual SQLite service restart, not merely a second call
+        # against the same in-memory connection and plugin manager.
+        service.storage.close()
+        service.storage = Storage(tmp_path / "db.sqlite3")
         before = review_pending_derived_receipts(service, identity_id="id1")
         assert len(before) == 1 and before[0]["status"] == "recoverable"
         assert service.storage.artifact_variants() == []
