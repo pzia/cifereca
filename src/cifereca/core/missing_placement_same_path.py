@@ -121,6 +121,28 @@ def _evidence(db, *, root: Path, identity_id: str, placement_id: str,
                            for key, value in document.items()
                            if key != "path")):
                 return _blocked("catalogue_metadata_requires_review"), None
+        # An unrelated catalogue may reference the same path or Placement
+        # through opaque JSON even if its placement_id differs. Never
+        # assert physical presence for one source while another row silently
+        # claims this exact location. A bounded, strict scan preserves that
+        # ambiguity as a veto rather than adopting another account's bytes.
+        linked_ids = {record[0] for record in linked}
+        others = db.execute(
+            "SELECT catalog_entry_id,metadata_json FROM catalog_entries "
+            "ORDER BY catalog_entry_id LIMIT 100001"
+        ).fetchall()
+        if len(others) > 100000:
+            return _blocked("catalogue_budget"), None
+        for other_id, raw in others:
+            if other_id in linked_ids:
+                continue
+            if type(raw) is not str or len(raw) > 65536:
+                return _blocked("catalogue_metadata_requires_review"), None
+            document = json.loads(raw, object_pairs_hook=_unique_pairs)
+            if (type(document) is not dict
+                    or _mentions_exact_path(document, path)
+                    or _mentions_exact_path(document, placement_id)):
+                return _blocked("foreign_catalogue_reference"), None
         # Linked rows are intentionally NOT tested by the destructive
         # dependency guard: they survive with identical path and source.
         # Operational metadata mentioning the Placement ID still vetoes.
