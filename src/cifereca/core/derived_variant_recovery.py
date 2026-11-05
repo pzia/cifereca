@@ -229,8 +229,27 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
             claimed = storage.placement_for_path(target)
             if claimed is not None:
                 if (claimed.get("artifact_id") == "sha256:" + data["output_sha256"]
-                        and claimed.get("identity_id") == identity_id):
-                    outcome["status"] = "already_committed"
+                        and claimed.get("identity_id") == identity_id
+                        and claimed.get("provider_id") == "cifereca"
+                        and (claimed.get("metadata") or {}).get("source_placement_id")
+                            == data["source_placement_id"]):
+                    recipe_id = storage._stable_id(
+                        "variant", data["source_sha256"], data["transformer_id"],
+                        str(data["profile_id"] or ""),
+                        str(data["options_fingerprint"] or ""),
+                    )
+                    proof = ("derived:" + recipe_id + ":"
+                             + str(claimed["placement_id"]))
+                    with storage._lock, storage._connect() as db:
+                        attested = db.execute(
+                            "SELECT 1 FROM origin_links WHERE origin_kind='derived' "
+                            "AND identity_id=? AND artifact_id=? "
+                            "AND parent_artifact_id=? AND evidence_ref=? LIMIT 1",
+                            (identity_id, claimed["artifact_id"],
+                             data["source_artifact_id"], proof),
+                        ).fetchone()
+                    if attested:
+                        outcome["status"] = "already_committed"
                 continue
             outcome["status"] = "recoverable"
             outcome["sha256"] = receipt_digest
