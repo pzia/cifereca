@@ -66,6 +66,9 @@ def activate_identity(window, identity_id: str) -> None:
     window._search_local_objects = {}; window.search_objects = {}; window._remote_search_results = []
     window._loaded_search_context = None
     window._search_mode = "local"; window._remote_query_key = None; window._selected_search_id = None
+    response_facets = getattr(window, "_search_response_facets", None)
+    if response_facets is not None:
+        response_facets.begin(None)
     if hasattr(window, "search_page"):
         window.search_page.clear_rows()
         window.search_page.detail.empty("Nouvelle identité", "Lancez une recherche dans le connu.")

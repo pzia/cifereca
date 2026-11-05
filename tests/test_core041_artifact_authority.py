@@ -60,6 +60,10 @@ class FakeManager:
 
 def make_service(tmp_path: Path):
     storage=Storage(tmp_path/'db.sqlite3')
+    # Transform publishing now requires the actual configured identity root,
+    # never an implicitly selected global-SHA placement.
+    storage.identity_put({'identity_id': 'id1', 'label': 'id1',
+                          'directory_name': 'library'})
     source=tmp_path/'library'/'Book.epub'; source.parent.mkdir(); source.write_bytes(b'book-data')
     sha=hashlib.sha256(source.read_bytes()).hexdigest(); aid=f'sha256:{sha}'
     storage.artifact_put({'artifact_id':aid,'sha256':sha,'size':source.stat().st_size,'media_format':'epub','mime_type':'application/epub+zip','metadata':{}})
@@ -67,7 +71,9 @@ def make_service(tmp_path: Path):
     storage.catalog_entry_put({'artifact_id':aid,'placement_id':pid,'title':'Book','author':'Author','media_format':'epub','identity_id':'id1','provider_id':'local','item_id':'book-1','local_state':'local','metadata':{'path':str(source)}})
     def preview_library_filename(*,title,author='',series='',index='',extension='epub'):
         return f'{author} - {title}.{extension}' if author else f'{title}.{extension}'
-    return SimpleNamespace(storage=storage,plugin_manager=None,preview_library_filename=preview_library_filename), ArtifactRef(aid,'book-1',ArtifactFormat('application/epub+zip','epub'),source.stat().st_size,sha,filename=source.name), pid
+    config = SimpleNamespace(get=lambda key, default=None:
+                             str(tmp_path) if key == 'library.directory' else default)
+    return SimpleNamespace(storage=storage,config=config,current_identity=SimpleNamespace(identity_id='id1'),plugin_manager=None,preview_library_filename=preview_library_filename), ArtifactRef(aid,'book-1',ArtifactFormat('application/epub+zip','epub'),source.stat().st_size,sha,filename=source.name), pid
 
 
 def test_schema_10_and_transform_is_core_authoritative(tmp_path):

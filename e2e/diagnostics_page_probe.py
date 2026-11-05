@@ -566,7 +566,7 @@ def main():
     def capture_navigation():
         # New acceptance uses physical keyboard navigation, not the legacy
         # section preconditions used for the pre-existing report assertions.
-        tab_key("Capture", "capture", capture_initial)
+        tab_key("Perfs", "capture", capture_initial)
 
     def capture_initial():
         assert not host.performance.detailed_capture_enabled
@@ -584,7 +584,7 @@ def main():
     def capture_survives_navigation():
         assert host.performance.detailed_capture_enabled
         assert find_label("50 événements affichés")
-        tab_key("Capture", "capture", capture_stop)
+        tab_key("Perfs", "capture", capture_stop)
 
     def capture_stop():
         assert host.performance.detailed_capture_enabled

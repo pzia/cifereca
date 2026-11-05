@@ -1163,9 +1163,18 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     admitted_snapshots = []
                     rights_started = time.monotonic()
                     try:
-                        canonical = observe_canonical_rights_in_sync(
-                            self, account, snapshot_sink=admitted_snapshots.append,
-                        )
+                        # A typed, exact, complete loan read may be projected
+                        # into canonical rights *within this single account's
+                        # opening phase* if its provider explicitly supports
+                        # a read-only projection. No state survives this with,
+                        # and independent loan/borrow/download reads stay fresh.
+                        from .same_cycle_loan_inventory import opening_scoped_loan_inventory
+                        with opening_scoped_loan_inventory(
+                            self, account, session, snapshot,
+                        ):
+                            canonical = observe_canonical_rights_in_sync(
+                                self, account, snapshot_sink=admitted_snapshots.append,
+                            )
                     finally:
                         _record_opening_observation_timing(
                             detail, "canonical_resources", rights_started,

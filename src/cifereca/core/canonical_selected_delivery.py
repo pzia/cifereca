@@ -13,6 +13,7 @@ import hashlib
 from inspect import getattr_static
 from typing import Callable
 import json
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -30,6 +31,8 @@ from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReferen
 from .canonical_publication import _physical_target, _same_file
 from .convergence_execution import CompletedDelivery
 from .source_convergence import SourceKey
+
+logger = logging.getLogger(__name__)
 
 
 def complete_selected_delivery(
@@ -414,9 +417,24 @@ def complete_selected_delivery(
         if not stat.S_ISREG(before.st_mode) or before.st_size == 0:
             raise ValueError("canonical_delivery_final_not_regular")
         inspection = inspect_artifact(final, strict_structure=False)
-        valid, _ = LocalCatalog._validate(final, kind)
+        valid, catalog_reason = LocalCatalog._validate(final, kind)
         if (not inspection.valid or inspection.media_format != kind
                 or inspection.protected is True or not valid):
+            # P0 #3252: the candidate is cleaned up on this path. Record
+            # the independent validation facts *before* cleanup, without
+            # exposing a temporary file or treating a runtime returncode=0
+            # as evidence that the final EPUB/PDF is usable.
+            logger.warning(
+                "TRACE canonical delivery final rejected "
+                "code=canonical_delivery_final_invalid provider_id=%s "
+                "reader=%s runtime_guarded=%s expected_kind=%s "
+                "inspection_valid=%s inspection_format=%s "
+                "inspection_protected=%s inspection_reason=%s "
+                "catalog_valid=%s catalog_reason=%s",
+                scope.provider_id, reader_name, runtime_guarded, kind,
+                inspection.valid, inspection.media_format, inspection.protected,
+                inspection.reason, valid, catalog_reason,
+            )
             raise ValueError("canonical_delivery_final_invalid")
         digest = LocalCatalog.sha256(final)
         if (runtime_guarded and (

@@ -324,6 +324,15 @@ class ParisProviderSession(ProviderSession):
         self._loan_ebooks_attempts: ContextVar[int | None] = ContextVar(
             "paris_loan_ebooks_attempts", default=None,
         )
+        # Only the synchronous Core opening-rights projection may install
+        # an exact typed inventory in this task. No cross-call rights cache.
+        self._same_cycle_rights_inventory: ContextVar[LoanInventorySnapshot | None] = ContextVar(
+            "paris_same_cycle_rights_inventory", default=None,
+        )
+        # Tiny one-shot proof that Core's defensive copy stems from THIS
+        # session's latest completed typed read, not a different borrower,
+        # account instance or older session. Never retain loan rows here.
+        self._last_typed_loan_marker = None
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
@@ -617,6 +626,9 @@ class ParisProviderSession(ProviderSession):
         Both loans() and the typed snapshot reuse the same GETs; only the
         typed snapshot may attest branch coverage. No mutable v1 error facade.
         """
+        # A new private inventory request supersedes any previously offered
+        # same-cycle observation, including before a provider failure.
+        self._last_typed_loan_marker = None
         # DILICOM (digital/PNB) and SYRACUSE (physical) are independent upstream
         # services. One transient failure must not hide all loans from the other.
         rows: list[Loan] = []
@@ -794,7 +806,24 @@ class ParisProviderSession(ProviderSession):
         with self._loan_inventory_lock:
             token = self._loan_read_consumer.set("loan_inventory")
             try:
-                return self._snapshot_for_account(account)
+                snapshot = self._snapshot_for_account(account)
+                # The Core adapter makes defensive copies. Keep only a
+                # short marker and the live Account object's identity, not
+                # a second LoanInventorySnapshot or a persistent rights cache.
+                matches = [
+                    live for live in self._accounts if type(live) is Account
+                    and LoanInventoryScope.for_account(live) == snapshot.scope
+                ]
+                if (snapshot.status == "success"
+                        and snapshot.observed_at
+                        and snapshot.branch_claims_complete("dilicom", "digital")
+                        and snapshot.branch_claims_complete("syracuse", "physical")
+                        and len(matches) == 1):
+                    self._last_typed_loan_marker = (
+                        snapshot.observed_at, snapshot.scope, id(matches[0]),
+                        id(self._accounts), getattr(self, "_epoch", None),
+                    )
+                return snapshot
             finally:
                 self._loan_read_consumer.reset(token)
 
@@ -879,6 +908,7 @@ class ParisProviderSession(ProviderSession):
             loans=normalized,
             status="partial" if any(b.completeness == "partial" for b in branches) else "success",
             branches=branches,
+            observed_at=datetime.now(timezone.utc).isoformat(),
             reason_code=("branch_unavailable" if failed else
                          "invalid_response" if any(b.reason_code == "invalid_response"
                                                    for b in branches) else None),
@@ -949,11 +979,27 @@ class ParisProviderSession(ProviderSession):
             bound = original[0] if len(original) == 1 else None
             if bound is None:
                 raise ProviderConfigurationError("account_scope_mismatch")
-            token = self._loan_read_consumer.set("rights_observation")
-            try:
-                inventory = self._snapshot_for_account(account)
-            finally:
-                self._loan_read_consumer.reset(token)
+            same_cycle = self._same_cycle_rights_inventory.get()
+            if same_cycle is not None:
+                # The prior read was authenticated and normalized through the
+                # Core typed inventory adapter in the *same* source Sync phase.
+                # Consume only the exact complete two-branch immutable
+                # envelope. Never fetch a sibling account or silently use
+                # a partial/foreign batch to infer absent rights.
+                self._same_cycle_rights_inventory.set(None)
+                if (type(same_cycle) is not LoanInventorySnapshot
+                        or same_cycle.scope != LoanInventoryScope.for_account(account)
+                        or same_cycle.status != "success"
+                        or not same_cycle.branch_claims_complete("dilicom", "digital")
+                        or not same_cycle.branch_claims_complete("syracuse", "physical")):
+                    raise ProviderCapabilityError("paris_same_cycle_inventory_unverified")
+                inventory = same_cycle
+            else:
+                token = self._loan_read_consumer.set("rights_observation")
+                try:
+                    inventory = self._snapshot_for_account(account)
+                finally:
+                    self._loan_read_consumer.reset(token)
             scope = inventory.scope
             # A succeeded SYRACUSE response cannot turn a failed DILICOM
             # read into an empty but apparently successful rights branch.
@@ -1076,11 +1122,8 @@ class ParisProviderSession(ProviderSession):
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
 
-    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
-        # An unsupported field/scope is a new failed attempt, not a reason
-        # to keep a previous partial Syracuse branch warning visible.
-        self.last_search_warnings = []
-        self.last_search_response_facets = []
+    @staticmethod
+    def _search_arguments(query: str, scope: str, page: int, field: str) -> tuple[str, str]:
         # Syracuse search is a general text query. Do not advertise an
         # author/ISBN/subject restriction that the upstream client ignores.
         if type(field) is not str or field.strip().casefold() != "all":
@@ -1103,7 +1146,13 @@ class ParisProviderSession(ProviderSession):
         # The public capability validator accepts case/whitespace variants,
         # but ParisClient dispatches exact tokens. Pass the validated scope
         # rather than implicitly widening " DIGITAL " to all catalogues.
-        scope = scope.strip().casefold()
+        return query, scope.strip().casefold()
+
+    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
+        # An unsupported field/scope is a new failed attempt.
+        self.last_search_warnings = []
+        self.last_search_response_facets = []
+        query, scope = self._search_arguments(query, scope, page, field)
         try:
             rows = self._decorate(
                 self.client.search(query, scope, page),
@@ -1116,6 +1165,41 @@ class ParisProviderSession(ProviderSession):
             self.last_search_response_facets = [
                 dict(facet) for facet in getattr(self.client, "last_search_response_facets", ())
             ]
+
+    def search_with_response_facets(
+        self, query: str, scope: str = "all", *, field: str = "all",
+        content_types: tuple[str, ...] = (),
+    ):
+        # Import the optional contract only when a compatible Core invokes it.
+        from cifereca.plugin_api import (
+            CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
+        )
+
+        self.last_search_warnings = []
+        self.last_search_response_facets = []
+        query, scope = self._search_arguments(query, scope, 0, field)
+        try:
+            rows, facets, warnings = self.client.search_response(query, scope)
+        except Exception:
+            self.last_search_warnings = list(self.client.last_search_warnings)
+            raise
+        self.last_search_warnings = warnings
+        self.last_search_response_facets = [dict(facet) for facet in facets]
+        projected = tuple(
+            CatalogSearchFacet(
+                facet["scenario"], facet["page"], facet["field"], facet["label"],
+                tuple(CatalogSearchFacetValue(**value) for value in facet["values"])
+                if facet["values_schema"] == "label_count_selected_v1" else None,
+            )
+            for facet in facets
+        )
+        return ProviderSearchResponse(
+            [_project_paris_acquisition_formats(item) for item in self._decorate(
+                rows, self.provider_id, self.credential_id
+            )],
+            projected,
+            partial=bool(warnings),
+        )
 
     def acquisition_offers(self, item: SearchResult) -> AcquisitionOfferSet:
         return _paris_acquisition_offer_set(item)
@@ -1195,6 +1279,51 @@ class ParisProviderSession(ProviderSession):
         """#3723 v2: exact source observations, not permission or delivery."""
         from cifereca.plugin_api import from_legacy_rights_snapshot
         return from_legacy_rights_snapshot(self.rights_observation_snapshot(account))
+
+    def downloadable_resource_snapshot_from_loan_inventory(
+        self, account, *, loan_inventory,
+    ):
+        """#4281: project the *same* exact completed loan read in opening Sync.
+
+        Called only by the Core scoped lease. Never a durable cache: the
+        ContextVar is restored even when validation/rights projection fails.
+        All existing broker/owner/account and PNB-offer checks run unchanged.
+        Ordinary rights, selected-offer, borrow and content delivery remain
+        independently fresh, including after an upstream mutation.
+        """
+        if (type(account) is not Account
+                or type(loan_inventory) is not LoanInventorySnapshot
+                or loan_inventory.scope != LoanInventoryScope.for_account(account)
+                or loan_inventory.status != "success"
+                or not loan_inventory.branch_claims_complete("dilicom", "digital")
+                or not loan_inventory.branch_claims_complete("syracuse", "physical")):
+            raise ProviderCapabilityError("paris_same_cycle_inventory_unverified")
+        from cifereca.plugin_api import from_legacy_rights_snapshot
+        with self._loan_inventory_lock:
+            marker = self._last_typed_loan_marker
+            # Consume before rights projection, including on rejection. A
+            # replay can never use this token, and independent rights reads
+            # still perform two fresh ListLoans calls.
+            self._last_typed_loan_marker = None
+            matching = [
+                live for live in self._accounts if type(live) is Account
+                and LoanInventoryScope.for_account(live) == loan_inventory.scope
+            ]
+            if (marker is None or len(matching) != 1
+                    or marker != (
+                        loan_inventory.observed_at, loan_inventory.scope,
+                        id(matching[0]), id(self._accounts),
+                        getattr(self, "_epoch", None),
+                    )
+                    or self.connected is not True):
+                raise ProviderCapabilityError("paris_same_cycle_inventory_stale")
+            token = self._same_cycle_rights_inventory.set(loan_inventory)
+            try:
+                return from_legacy_rights_snapshot(
+                    self.rights_observation_snapshot(account)
+                )
+            finally:
+                self._same_cycle_rights_inventory.reset(token)
 
     def downloadable_selected_offer_snapshot(
         self, account, *, edition_id, resource_id, kind, branch,

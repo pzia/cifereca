@@ -53,7 +53,7 @@ def test_recovered_syracuse_retry_does_not_export_exception_message():
         sizes.append(result_size)
         if result_size == 50:
             raise ParisError(SECRET)
-        return [public_result("public-1", digital=True)]
+        return [public_result("public-1", digital=True)], []
 
     client._search_scenario = scenario
     try:
@@ -85,7 +85,7 @@ def test_partial_public_results_preserved_without_exporting_private_error():
     def scenario(_query, name, _page, _size):
         if name == "EBOOKS":
             raise ParisError(SECRET)
-        return [public_result("public-only", digital=False)]
+        return [public_result("public-only", digital=False)], []
 
     client._search_scenario = scenario
     try:

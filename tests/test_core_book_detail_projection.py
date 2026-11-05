@@ -56,7 +56,22 @@ def test_core_search_and_library_use_same_projection_before_render():
         method = _method("MainWindow", method_name)
         calls = _calls(method, "show_presentation")
         assert calls, method_name
-        assert any(_uses_projection_builder(call) for call in calls), method_name
+        if method_name == "_library_selected":
+            # #4524 timestamps the pure projection separately from GTK render.
+            # It is still the SAME builder, bound immediately before presentation.
+            assert any(
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "book_detail_presentation"
+                for node in ast.walk(method)
+            )
+            assert any(
+                isinstance(arg, ast.Name) and arg.id == "presentation"
+                for call in calls for arg in call.args
+            )
+        else:
+            assert any(_uses_projection_builder(call) for call in calls), method_name
 
 
 def test_plugin_master_detail_uses_same_detail_panel_renderer():

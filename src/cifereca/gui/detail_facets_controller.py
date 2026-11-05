@@ -6,8 +6,12 @@ No new facet extraction/lookup engine is introduced.
 """
 from __future__ import annotations
 
+from .detail_selection_perf import current_detail_trace
+
 
 def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
+    trace = current_detail_trace()
+    started = trace.clock() if trace else None
     values = window._facet_values(item)
     value_map = {}
     for field, label, value in values:
@@ -100,4 +104,6 @@ def add_facets(window, detail, item, controls, *, Adw, Gtk, TaskPriority):
                 author_box.add_css_class("detail-subtitle")
                 parent.append(author_box)
                 subtitle._cifereca_author_facets = author_box
+    if trace is not None:
+        trace.record("facets", started)
 

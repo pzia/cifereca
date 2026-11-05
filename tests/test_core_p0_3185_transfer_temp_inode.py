@@ -48,7 +48,7 @@ def test_substituted_temporary_path_never_writes_or_unlinks_foreign_file(
 
     def substitute(*args, **kwargs):
         fd, name = mkstemp_original(*args, **kwargs)
-        assert Path(kwargs["dir"]) == root / "bob" / "shared"
+        assert Path(kwargs["dir"]) == root / "bob" / "Acquisitions"
         os.unlink(name)
         if replacement == "symlink":
             Path(name).symlink_to(foreign)
@@ -75,7 +75,7 @@ def test_substituted_temporary_path_never_writes_or_unlinks_foreign_file(
         else:
             assert Path(replacements[0]).read_bytes() == replacement_bytes
         Path(replacements[0]).unlink()
-        assert not list((root / "bob" / "shared").iterdir())
+        assert not list((root / "bob" / "Acquisitions").iterdir())
         assert not any(
             p.get("identity_id") == "bob" for p in service.storage.placements()
         )

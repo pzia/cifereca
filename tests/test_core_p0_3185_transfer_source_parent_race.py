@@ -50,7 +50,7 @@ def test_substituted_intermediate_parent_never_sends_foreign_profile_file(
         assert moved.joinpath("Book.epub").read_bytes() == original
         assert foreign.read_bytes() == (original if same_contents else different)
         assert owned.parent.is_symlink()
-        assert not list((root / "bob" / "shared").glob("Book*.epub"))
+        assert not list((root / "bob" / "Acquisitions").glob("Book*.epub"))
         assert not any(
             row.get("identity_id") == "bob"
             for row in service.storage.placements()

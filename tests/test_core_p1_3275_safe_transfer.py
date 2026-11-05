@@ -89,7 +89,7 @@ def test_equal_bytes_belonging_to_bob_are_never_reused_or_relabelled(tmp_path):
         result = service.materialize_to_identity(placement, "bob")
         target = Path(result["path"])
         assert target != owned
-        assert target.name == "Book.epub"
+        assert target.name == "Author - Book.epub"
         assert target.read_bytes() == src.read_bytes()
         assert os.stat(src).st_ino != os.stat(target).st_ino
         previous = service.storage.placement_get(own_placement)
@@ -133,7 +133,7 @@ def test_existing_legacy_hardlink_from_this_placement_is_repaired(tmp_path):
 def test_dangling_destination_symlink_is_rejected_without_external_write(tmp_path):
     service = _service(tmp_path)
     src, placement = _source(service, tmp_path)
-    target = tmp_path / "EBooks" / "bob" / "shared" / "Book.epub"
+    target = tmp_path / "EBooks" / "bob" / "Acquisitions" / "Author - Book.epub"
     target.parent.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "external.epub"
     target.symlink_to(outside)

@@ -52,7 +52,7 @@ def test_equal_bytes_with_incomplete_or_foreign_provenance_not_adopted(tmp_path,
         new_path = Path(first["path"])
         assert first["status"] == "complete"
         assert new_path != owned
-        assert new_path.name == "Book.epub"
+        assert new_path.name == "Author - Book.epub"
         assert new_path.read_bytes() == owned.read_bytes() == src.read_bytes()
         assert os.stat(src).st_ino != os.stat(new_path).st_ino
         assert os.stat(owned).st_ino != os.stat(new_path).st_ino

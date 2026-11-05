@@ -13,6 +13,10 @@ from cifereca.document_classification import (
 from cifereca.install_paths import prefer_downloads_for_save
 from .provider_collection import (ProviderCollection, ProviderCollectionSnapshot, VirtualProviderEntry, ProviderCollectionValidationError, validate_provider_collection_snapshot)
 from .provider_search_stream import ProviderSearchEvent, ProviderSearchStream
+from .provider_search_facets import (
+    CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
+    ProviderSearchWithFacets,
+)
 from .capability_matrix import (
     CAPABILITY_MATRIX_CONTRACT, CapabilityEvidence, CapabilityMatrix,
     declared_provider_matrix,
@@ -108,6 +112,8 @@ __all__ = [
     "LendingActionAdmission", "assess_lending_action", "LendingActionStatus",
     "LendingActionOutcome",
     "ProviderSearchEvent", "ProviderSearchStream",
+    "CatalogSearchFacet", "CatalogSearchFacetValue", "ProviderSearchResponse",
+    "ProviderSearchWithFacets",
     "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix", "project_existing_capabilities",
     "RIGHTS_OBSERVATION_CONTRACT", "ProviderRightsScope", "ProviderRightObservation", "ProviderRightsSnapshot",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",

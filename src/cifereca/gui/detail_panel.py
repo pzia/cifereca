@@ -19,6 +19,7 @@ from .book_widgets import CoverView
 from .action_widgets import AdaptiveActionBar
 from .query_model import result_row
 from ..plugin_api import UiBookDetailPresentation, document_links
+from .detail_selection_perf import current_detail_trace
 from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate, search_detail_support_label
 from .action_widgets import clear_box, add_css
 from .loan_download_status import loan_download_unavailable_message
@@ -354,6 +355,8 @@ class DetailPanel(Gtk.Box):
     def _actions(self, buttons: list[Gtk.Button]) -> None:
         if not buttons:
             return
+        trace = current_detail_trace()
+        started = trace.clock() if trace else None
         current = getattr(self, '_action_buttons', None)
         if current is None:
             current = []
@@ -408,6 +411,8 @@ class DetailPanel(Gtk.Box):
                     button.grab_focus()
                     self._pending_action_focus_key = ''
                     break
+        if trace is not None:
+            trace.record("actions", started)
 
     def show_presentation(
         self,
@@ -420,6 +425,8 @@ class DetailPanel(Gtk.Box):
         When present, the editorial summary is kept in the primary reading
         flow: immediately after Essentiel and before bibliographic sections.
         """
+        trace = current_detail_trace()
+        started = trace.clock() if trace else None
         self._cancel_meta_request()
         self._pending_action_focus_key = self._focused_action_key()
         clear_box(self.content)
@@ -431,6 +438,7 @@ class DetailPanel(Gtk.Box):
             presentation.badges,
         )
         summary_rendered = False
+        sections_started = trace.clock() if trace else None
         for section in sorted(presentation.sections, key=lambda item: item.order):
             rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
             if rows:
@@ -443,6 +451,8 @@ class DetailPanel(Gtk.Box):
                 summary_rendered = True
         if not summary_rendered:
             self._show_description(description)
+        if trace is not None:
+            trace.record("sections", sections_started)
         link_buttons = []
         self._rendered_document_urls = set()
         for link in presentation.links:
@@ -459,6 +469,8 @@ class DetailPanel(Gtk.Box):
             self._rendered_document_urls.add(uri)
         if link_buttons:
             self._actions(link_buttons)
+        if trace is not None:
+            trace.record("render", started)  # Inclusive of nested sections/actions.
 
     def show_summary(
         self,

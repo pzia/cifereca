@@ -12,8 +12,10 @@ import sqlite3
 
 from .convergence_verified_presence import _verified_copy
 from .missing_placement_readiness import _physical_absence
+from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 
 _MAX_MATCHES = 64
+_MAX_SCAN_ROWS = 10_000  # Bound raw registrations before exclusion filtering.
 
 
 def verified_post_placement_duplicates(
@@ -62,15 +64,31 @@ def verified_post_placement_duplicates(
         # _verified_copy only tests whether the owner directory is in this
         # collection; it separately enforces relative path containment.
         reserved = frozenset((owner_dir,))
+        # A delivery Outbox cannot be a keeper for ordinary cleanup.
+        if ordinary_dedup_path_excluded(
+            target, library_root=library_root, identity_id=identity,
+            owner_directory=owner_dir,
+        ):
+            return ()
         candidates = db.execute(
             "SELECT placement_id,path FROM placements "
             "WHERE identity_id=? AND artifact_id=? AND state='present' "
             "AND placement_id<>? ORDER BY placement_id LIMIT ?",
-            (identity, artifact_id, placement_id, _MAX_MATCHES + 1),
+            (identity, artifact_id, placement_id, _MAX_SCAN_ROWS + 1),
         ).fetchall()
+        if len(candidates) > _MAX_SCAN_ROWS:
+            # Never silently take a subset of an unbounded SQLite snapshot.
+            raise ValueError("canonical_dedup_candidates_over_budget")
+        # A registered delivery Outbox is not a cleanable duplicate and must
+        # not consume the ordinary 64-candidate budget. Filter before SHA.
+        candidates = [
+            (other_id, path) for other_id, path in candidates
+            if not ordinary_dedup_path_excluded(
+                path, library_root=library_root, identity_id=identity,
+                owner_directory=owner_dir,
+            )
+        ]
         if len(candidates) > _MAX_MATCHES:
-            # A bounded SQL probe may not silently turn an oversized set
-            # into "no duplicates". No subset can authorize deduplication.
             raise ValueError("canonical_dedup_candidates_over_budget")
         if not candidates:
             # No duplicate => no extra full-file SHA pass on every successful

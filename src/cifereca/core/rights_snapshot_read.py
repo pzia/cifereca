@@ -173,7 +173,19 @@ def read_account_rights_snapshot(service, account: Account, *,
             return unavailable("cancelled")
         if not still_bound():
             return unavailable()
+        # An opening source Sync may supply its *just-read* exact typed
+        # inventory for this same account and session. This is a one-phase
+        # ContextVar lease, never a TTL cache or a general rights shortcut.
+        # Only providers with an explicit pure projection method can use it.
+        from .same_cycle_loan_inventory import current_scoped_loan_inventory
+        same_cycle_inventory = current_scoped_loan_inventory(service, account, session)
+        shared_reader = "downloadable_resource_snapshot_from_loan_inventory"
+        share = (
+            same_cycle_inventory is not None
+            and getattr_static(session, shared_reader, None) is not None
+        )
         reader_name = (
+            shared_reader if share else
             "downloadable_resource_snapshot"
             if getattr_static(session, "downloadable_resource_snapshot", None) is not None
             else "rights_observation_snapshot"
@@ -188,8 +200,10 @@ def read_account_rights_snapshot(service, account: Account, *,
         if not callable(reader):
             raise ValueError("invalid_rights_reader")
         def validated(raw):
-            if (reader_name == "downloadable_resource_snapshot"
-                    and type(raw) is not ResourceSnapshot):
+            if (reader_name in (
+                    "downloadable_resource_snapshot",
+                    "downloadable_resource_snapshot_from_loan_inventory",
+            ) and type(raw) is not ResourceSnapshot):
                 raise ValueError("invalid_downloadable_snapshot")
             if type(raw) is ResourceSnapshot:
                 if raw.scope != scope:
@@ -199,7 +213,10 @@ def read_account_rights_snapshot(service, account: Account, *,
                 raise ValueError("invalid_rights_snapshot_scope")
             return raw
 
-        result = validated(reader(account))
+        result = validated(
+            reader(account, loan_inventory=same_cycle_inventory)
+            if share else reader(account)
+        )
         if cancelled():
             return unavailable("cancelled")
         if not still_bound():

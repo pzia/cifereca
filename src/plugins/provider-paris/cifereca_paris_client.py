@@ -160,7 +160,6 @@ class ParisClient:
         # SearchService facets belong to a single response page, never a
         # SearchResult or a proved server filtering capability.
         self.last_search_response_facets: list[dict[str, Any]] = []
-        self._last_scenario_facet_observation: tuple[str, int, list[dict[str, Any]]] | None = None
         self.last_pairing_errors: list[dict[str, str]] = []
         self.last_history_errors: list[dict[str, str]] = []
         self.last_pnb_borrow: dict[str, Any] = {"phase": "idle"}
@@ -583,9 +582,9 @@ class ParisClient:
             "Url": f"{self.base_url}/search.aspx?SC={scenario}&QUERY={encoded}&QUERY_LABEL=#/Search/(query:(InitialSearch:!t,Page:{page},PageRange:3,QueryString:'{encoded}',ResultSize:{result_size},ScenarioCode:{scenario},SearchContext:0,SearchLabel:''))",
         }
 
-    def _search_scenario(self, query: str, scenario: str, page: int, result_size: int) -> list[SearchResult]:
-        # Clear before every network attempt, including failed fallback paths.
-        self._last_scenario_facet_observation = None
+    def _search_scenario(
+        self, query: str, scenario: str, page: int, result_size: int,
+    ) -> tuple[list[SearchResult], list[dict[str, Any]]]:
         body = {"query": self._search_query(query, scenario, page, result_size), "sst": 4}
         r = self.client.post(
             f"{self.base_url}{SEARCH_PATH}",
@@ -600,11 +599,12 @@ class ParisClient:
         if r.status_code in {401, 403, 408, 429} or r.status_code >= 500:
             r.raise_for_status()
         data = self._json(r, f"search {scenario}")
-        self._last_scenario_facet_observation = (
-            scenario, page, project_search_response_facets(data, scenario, page)
-        )
         rows = ((data.get("d") or {}).get("Results") or [])
-        return [x for x in (normalize_search_result(raw, scenario) for raw in rows if isinstance(raw, dict)) if x]
+        results = [
+            item for raw in rows if isinstance(raw, dict)
+            if (item := normalize_search_result(raw, scenario)) is not None
+        ]
+        return results, project_search_response_facets(data, scenario, page)
 
     def search_catalog(self, query: str, scenario: str = "CATALOGUE", page: int = 0, result_size: int = 20) -> list[SearchResult]:
         """Recherche un seul catalogue sans modifier l'état de recherche UI.
@@ -619,10 +619,16 @@ class ParisClient:
         size = max(1, min(int(result_size), 50))
         return self._timed(
             "CATALOG", f"history cover search {scenario}",
-            lambda: self._search_scenario(query, scenario, page, size),
+            lambda: self._search_scenario(query, scenario, page, size)[0],
         )
 
     def search(self, query: str, scope: str = "all", page: int = 0) -> list[SearchResult]:
+        rows, _facets, _warnings = self.search_response(query, scope, page)
+        return rows
+
+    def search_response(
+        self, query: str, scope: str = "all", page: int = 0,
+    ) -> tuple[list[SearchResult], list[dict[str, Any]], list[str]]:
         """Recherche tolérante aux défaillances d'un des deux catalogues.
 
         Les requêtes très larges pouvaient demander ``ResultSize=-1`` et provoquer
@@ -636,14 +642,14 @@ class ParisClient:
         positions: dict[str, int] = {}
         self.last_search_warnings = []
         self.last_search_response_facets = []
+        warnings: list[str] = []
+        facets: list[dict[str, Any]] = []
         failures: list[tuple[str, Exception]] = []
         successful_scenarios = 0
 
         for scenario in scenarios:
-            rows: list[SearchResult] | None = None
-            self._last_scenario_facet_observation = None
             try:
-                rows = self._timed(
+                rows, branch_facets = self._timed(
                     "CATALOG", f"search {scenario}",
                     lambda scenario=scenario: self._search_scenario(query, scenario, page, 50),
                 )
@@ -655,14 +661,13 @@ class ParisClient:
                     level="detailed",
                 )
                 try:
-                    self._last_scenario_facet_observation = None
-                    rows = self._timed(
+                    rows, branch_facets = self._timed(
                         "CATALOG", f"search {scenario} fallback",
                         lambda scenario=scenario: self._search_scenario(query, scenario, page, 20),
                     )
                 except Exception as second_exc:
                     failures.append((scenario, second_exc))
-                    self.last_search_warnings.append(
+                    warnings.append(
                         "Catalogue numérique momentanément indisponible" if scenario == "EBOOKS" else "Catalogue physique momentanément indisponible"
                     )
                     continue
@@ -681,19 +686,14 @@ class ParisClient:
                     warning = caption + " : accès refusé"
                 else:
                     warning = caption + " momentanément indisponible"
-                self.last_search_warnings.append(warning)
+                warnings.append(warning)
                 continue
 
-            # Facets are a descriptor of this successfully returned branch
-            # and *page*, not any particular book nor the whole catalogue.
-            capture = self._last_scenario_facet_observation
-            if (capture is not None and capture[0] == scenario
-                    and capture[1] == page):
-                self.last_search_response_facets.extend(capture[2])
+            facets.extend(branch_facets)
             # An empty result from an available catalogue is still a
             # successful search, not evidence that every route failed.
             successful_scenarios += 1
-            for item in rows or []:
+            for item in rows:
                 # Scenario is a search *route*, not positive per-item medium.
                 # A CATALOGUE page can contain DILICOM ebooks; an EBOOKS
                 # page can also contain a physical Syracuse record.
@@ -764,10 +764,11 @@ class ParisClient:
                     )
 
         if failures and successful_scenarios:
-            self.last_search_warnings = [
-                "partial_results : " + warning
-                for warning in self.last_search_warnings
-            ]
+            warnings = ["partial_results : " + warning for warning in warnings]
+        # Preserve the last-call diagnostics for compatibility. The return
+        # value uses the local collector even if another call completes now.
+        self.last_search_warnings = warnings
+        self.last_search_response_facets = facets
         if failures and not successful_scenarios:
             # No public stale fallback on a verified 401/403, even when
             # another branch had a timeout. Inspect httpx's numeric response
@@ -796,7 +797,7 @@ class ParisClient:
             # Do not chain raw Syracuse errors (which can contain the
             # request URL, personal cookies, or provider response text).
             raise error
-        return out
+        return out, facets, warnings
 
     def _holdings_payload(self, docbase: str, record_id: str, scenario: str, search_terms: str = "") -> dict[str, Any]:
         """Return the raw GetListHoldings payload.

@@ -54,14 +54,14 @@ _PERF_CATEGORIES = frozenset({
     # reported as "other.worker" despite being a known maintenance action.
     # Keep untrusted/plugin-defined task labels out of performance exports.
     "maintenance-plan", "maintenance-tool", "maintenance-inspection",
-    "history", "bookings", "search-known", "detail-cache",
+    "history", "bookings", "search-known", "detail-cache", "detail",
     "adept-inventory", "adept-return", "loan-acquisition", "borrow",
     "obtain", "provider-connect", "sync-audit", "source-consent", "identity",
 })
 _PERF_PHASES = frozenset({
     "queue_wait", "worker", "gtk_delivery_wait", "lock_wait", "provider",
     "storage", "projection", "row_projection", "facets", "model_update",
-    "selection", "render", "frame_wait", "gc_gen0", "gc_gen1", "gc_gen2",
+    "selection", "render", "frame_wait", "first_paint", "sections", "actions", "gc_gen0", "gc_gen1", "gc_gen2",
 })
 _PERF_TRIGGERS = frozenset({
     "automatic", "user", "navigation", "maintenance", "unspecified",

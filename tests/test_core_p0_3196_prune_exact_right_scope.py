@@ -332,3 +332,64 @@ def test_missing_registered_source_is_not_negative_evidence_for_a_right(tmp_path
         assert _right(storage) == before
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("manifest", [
+    {"book"}, ["book"], (" book ",),
+])
+def test_historical_padded_item_key_is_not_pruned_when_manifest_still_sees_it(
+    tmp_path, manifest,
+):
+    # The v0.7 SQLite PK preserves the raw item_id, but the admitted
+    # manifest strips IDs. A still-present " book " was previously deleted.
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy(item=" book "))
+        before_projection = storage.backup_get("opaque-seller", "card", " book ")
+        before_rights = storage.entitlements(provider_id="opaque-seller")
+        before_ledger = storage.acquisitions(provider_id="opaque-seller")
+        result = storage.backup_prune_missing("opaque-seller", "card", manifest)
+        assert result == {
+            "pruned": 0, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert storage.backup_get("opaque-seller", "card", " book ") == before_projection
+        assert storage.entitlements(provider_id="opaque-seller") == before_rights
+        assert storage.acquisitions(provider_id="opaque-seller") == before_ledger
+    finally:
+        storage.close()
+
+
+def test_padded_legacy_key_is_removed_only_if_missing_from_normalized_manifest(
+    tmp_path,
+):
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy(item=" book "))
+        before_rights = storage.entitlements(provider_id="opaque-seller")
+        before_ledger = storage.acquisitions(provider_id="opaque-seller")
+        result = storage.backup_prune_missing("opaque-seller", "card", {"other"})
+        assert result["pruned"] == 1
+        assert storage.backup_get("opaque-seller", "card", " book ") is None
+        # The prune still never revokes its canonical history.
+        assert storage.entitlements(provider_id="opaque-seller") == before_rights
+        assert storage.acquisitions(provider_id="opaque-seller") == before_ledger
+    finally:
+        storage.close()
+
+
+def test_normalized_legacy_aliases_are_both_preserved_if_still_in_manifest(
+    tmp_path,
+):
+    # Two distinct v0.7 PKs can spell the same Kobo product ID. This prune
+    # must not choose which source receipt to destroy as a side effect.
+    storage = Storage(tmp_path / "test.sqlite")
+    try:
+        storage.backup_put(_legacy(item="book"))
+        storage.backup_put(_legacy(item=" book "))
+        before = storage.backup_list("opaque-seller")
+        result = storage.backup_prune_missing("opaque-seller", "card", {"book"})
+        assert result["pruned"] == 0
+        assert storage.backup_list("opaque-seller") == before
+    finally:
+        storage.close()

@@ -7,6 +7,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, Gtk
 from .book_widgets import BookListItem, BookListCell
 from .detail_panel import DetailPanel
+from .detail_selection_perf import capture_detail_selection
+from .library_render_controller import _observe_after_paint
 from .action_widgets import add_css, AdaptiveActionBar
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
 if TYPE_CHECKING:
@@ -178,14 +180,30 @@ class MasterDetailPage(Gtk.Box):
         self._selected_callbacks.append(callback)
 
     def _selection_changed(self, _selection: Gtk.SingleSelection, _pspec) -> None:
-        item = self.selection.get_selected_item()
-        selected = item if isinstance(item, BookListItem) else None
-        if selected is None:
-            self.detail.empty("Aucun document sélectionné", "Sélectionnez un document pour afficher ses détails.")
-        for callback in self._selected_callbacks:
-            callback(selected)
-        if self._narrow_master_detail and selected is not None:
-            self._show_narrow_detail()
+        # One opt-in correlation ID covers synchronous selection work and the
+        # first observed GDK after-paint. No snapshot, title or account retained.
+        with capture_detail_selection(self.window, clock=time.perf_counter) as trace:
+            item = self.selection.get_selected_item()
+            selected = item if isinstance(item, BookListItem) else None
+            if selected is None:
+                self.detail.empty("Aucun document sélectionné", "Sélectionnez un document pour afficher ses détails.")
+            for callback in self._selected_callbacks:
+                callback(selected)
+            if self._narrow_master_detail and selected is not None:
+                self._show_narrow_detail()
+            if selected is None:
+                probe = getattr(self.window, "_ui_perf_frame_probe", None)
+                cancel = getattr(probe, "cancel", None)
+                if callable(cancel):
+                    cancel("detail")
+            elif trace is not None:
+                trace.record("selection", trace.started)
+                if trace.current():
+                    _observe_after_paint(
+                        self.window, "detail", self.detail, time.perf_counter,
+                        operation_id=trace.operation_id,
+                        selection_started=trace.started,
+                    )
 
     def select_key(self, key: str) -> bool:
         """Select a visible row by stable key and reveal it without changing filters."""

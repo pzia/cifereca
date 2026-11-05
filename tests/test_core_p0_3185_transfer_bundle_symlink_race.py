@@ -62,7 +62,7 @@ def test_bundle_symlink_injected_after_manifest_never_reads_foreign_profile(
         assert injected == [True]
         assert foreign_track.read_bytes() == contents
         assert (source / "play.m3u8").is_file()
-        assert not (root / "bob" / "shared" / "Audio").exists()
+        assert not (root / "bob" / "Acquisitions" / "Audio").exists()
         assert not any(
             row.get("identity_id") == "bob"
             for row in service.storage.placements()

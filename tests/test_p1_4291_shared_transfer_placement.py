@@ -1,4 +1,4 @@
-"""#4291/Q025: every *new* inter-identity send uses recipient/shared.
+"""#4496 supersedes #4291: new sends use Acquisitions; historical shared survives.
 
 Real LibraryService, SQLite and local bytes in tmp_path. Never contact Paris,
 BnF, Kobo, ADEPT or an account. No implicit rights, copy migration or Sync.
@@ -47,7 +47,7 @@ def source(service, root: Path, provider: str | None, *, item="fixture", data=b"
 @pytest.mark.parametrize("provider", [
     "bnf-pret", "paris", "kobo", "local", None,
 ])
-def test_new_send_uses_recipient_shared_not_source_provider(tmp_path, provider):
+def test_new_send_uses_recipient_acquisitions_not_source_provider(tmp_path, provider):
     service = _service(tmp_path)
     root = tmp_path / "EBooks"
     try:
@@ -57,7 +57,7 @@ def test_new_send_uses_recipient_shared_not_source_provider(tmp_path, provider):
         result = service.materialize_to_identity(pid, "bob")
         b = Path(result["path"])
         assert result["status"] == "complete"
-        assert b.parent == root / "bob" / "shared"
+        assert b.parent == root / "bob" / "Acquisitions"
         assert b.read_bytes() == a.read_bytes()
         assert os.stat(a).st_ino != os.stat(b).st_ino
         bob = service.storage.placement_get(result["placement_id"])
@@ -87,7 +87,7 @@ def test_new_send_uses_recipient_shared_not_source_provider(tmp_path, provider):
 
 def test_storage_class_is_closed_and_independent_of_supplier_labels():
     assert TRANSFER_STORAGE_CLASS == "transfer"
-    assert directory_for_storage_class("transfer") == "shared"
+    assert directory_for_storage_class("transfer") == "Acquisitions"
     for rejected in ("paris", "kobo", "bnf-pret", "other", "", None, True):
         with pytest.raises(ValueError, match="unsupported storage class"):
             directory_for_storage_class(rejected)
@@ -98,7 +98,7 @@ def test_existing_independent_shared_file_is_never_adopted_or_overwritten(tmp_pa
     root = tmp_path / "EBooks"
     try:
         a, pid = source(service, root, "bnf-pret")
-        existing = root / "bob" / "shared" / "Book.epub"
+        existing = root / "bob" / "Acquisitions" / "Fixture.epub"
         existing.parent.mkdir(parents=True, exist_ok=True)
         existing.write_bytes(b"Bob's preexisting content")
         own_id = service.storage.placement_put({
@@ -110,7 +110,7 @@ def test_existing_independent_shared_file_is_never_adopted_or_overwritten(tmp_pa
         })
         receipt = service.materialize_to_identity(pid, "bob")
         b = Path(receipt["path"])
-        assert b == existing.with_name("Book (2).epub")
+        assert b == existing.with_name("Fixture (2).epub")
         assert b.read_bytes() == a.read_bytes()
         assert existing.read_bytes() == b"Bob's preexisting content"
         assert service.storage.placement_get(own_id)["metadata"] == {
@@ -173,7 +173,7 @@ def test_unproved_historical_provider_copy_is_never_claimed(tmp_path):
         })
         result = service.materialize_to_identity(pid, "bob")
         b = Path(result["path"])
-        assert b == root / "bob" / "shared" / "Book.epub"
+        assert b == root / "bob" / "Acquisitions" / "Fixture.epub"
         assert b.read_bytes() == old.read_bytes()
         assert result["placement_id"] != old_id
         assert service.storage.placement_get(old_id)["metadata"] == {
@@ -196,7 +196,7 @@ def service_three(tmp_path):
     )
 
 
-def test_two_hops_use_each_recipient_shared_without_cross_identity_folder(tmp_path):
+def test_two_hops_use_each_recipient_acquisitions_without_cross_identity_folder(tmp_path):
     service = service_three(tmp_path)
     root = tmp_path / "EBooks"
     try:
@@ -204,8 +204,8 @@ def test_two_hops_use_each_recipient_shared_without_cross_identity_folder(tmp_pa
         first = service.materialize_to_identity(pid, "bob")
         second = service.materialize_to_identity(first["placement_id"], "charlie")
         b, c = Path(first["path"]), Path(second["path"])
-        assert b.parent == root / "bob" / "shared"
-        assert c.parent == root / "charlie" / "shared"
+        assert b.parent == root / "bob" / "Acquisitions"
+        assert c.parent == root / "charlie" / "Acquisitions"
         assert a.read_bytes() == b.read_bytes() == c.read_bytes()
         assert len({os.stat(p).st_ino for p in (a, b, c)}) == 3
         assert service.storage.entitlements() == []
@@ -230,7 +230,7 @@ def test_shared_destination_symlink_is_rejected_without_external_writes(tmp_path
         external.mkdir()
         owner = root / "bob"
         owner.mkdir(parents=True)
-        (owner / "shared").symlink_to(external, target_is_directory=True)
+        (owner / "Acquisitions").symlink_to(external, target_is_directory=True)
         with pytest.raises(ProviderConfigurationError, match="symbolique"):
             service.materialize_to_identity(pid, "bob")
         assert list(external.iterdir()) == []
@@ -244,7 +244,7 @@ def test_shared_destination_symlink_is_rejected_without_external_writes(tmp_path
 def test_canonical_bnf_send_survives_deep_scan_without_reclassifying_provider(
     tmp_path, monkeypatch,
 ):
-    """A B/shared path cannot rewrite attested BnF provenance after scan."""
+    """A B/Acquisitions path cannot rewrite attested BnF provenance after scan."""
     from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA
 
     service = _service(tmp_path)
@@ -281,7 +281,7 @@ def test_canonical_bnf_send_survives_deep_scan_without_reclassifying_provider(
     try:
         sent = service.materialize_to_identity(pid, "bob")
         received = Path(sent["path"])
-        assert received.parent == root / "bob" / "shared"
+        assert received.parent == root / "bob" / "Acquisitions"
         assert received.read_bytes() == pdf.read_bytes()
         with service.storage._lock, service.storage._connect() as db:
             assert db.execute(

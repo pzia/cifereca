@@ -62,6 +62,7 @@ def _render_phase_probe(window, clock, category: str, started: float):
 
 def _observe_after_paint(
     window, category: str, widget, clock, operation_id: int | None = None,
+    *, selection_started: float | None = None,
 ) -> None:
     """Only for mapped GTK widgets during explicit detailed capture.
 
@@ -85,7 +86,10 @@ def _observe_after_paint(
                 source_remove=GLib.source_remove,
             )
             window._ui_perf_frame_probe = probe
-        probe.observe(category, widget, monitor, clock=clock, operation_id=operation_id)
+        probe.observe(
+            category, widget, monitor, clock=clock, operation_id=operation_id,
+            selection_started=selection_started,
+        )
     except Exception:
         # Observability must never change the business render outcome.
         pass
