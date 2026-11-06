@@ -394,3 +394,23 @@ def test_expired_or_missing_observation_revokes_held_selection(harness):
                   replace(row, observed_at=1)).status == "revoked"
     assert _click(service, preview, selected).status == "revoked"
     assert session.calls == 0
+
+
+def test_global_source_rebind_revokes_click_even_when_session_epoch_repeats(harness):
+    service, account, old_session = harness
+    row = _candidate()
+    original = _preview(service, row)
+    old_token = original.options[0].option_id
+
+    # A physically new provider session may start at the same local _epoch.
+    replacement = ParisOffline(account)
+    assert replacement._epoch == old_session._epoch
+    service._sessions[service._session_key("paris", "card-alex")] = replacement
+    service._source_context_epoch += 1
+
+    fresh = _preview(service, row)
+    assert fresh.status == "external"
+    assert fresh.options[0].option_id != old_token
+    assert _click(service, original, old_token, row).status == "revoked"
+    assert _click(service, fresh, fresh.options[0].option_id, row).status == "current"
+    assert old_session.calls == replacement.calls == 0
