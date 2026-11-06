@@ -1364,8 +1364,6 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         return info
 
     abort_all = False
-    authoritative_manifest_ids: dict[str, set[str]] = {}
-    prunable_credentials: set[str] = set()
     source_metrics = (
         "scanned", "attempted", "downloaded", "unchanged",
         "already_local_declared", "pending", "skipped_archived",
@@ -1463,7 +1461,6 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 product_id for product_id, count in manifest_product_counts.items()
                 if count > 1
             }
-            authoritative_manifest_ids[session.credential_id] = set(manifest_product_counts)
             emit("manifest", credential_id=session.credential_id, total=len(manifest))
         except Exception as exc:
             summary["errors"] += 1
@@ -1638,18 +1635,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         # this credential even if another credential remains in the batch.
         emit("source_done", credential_id=session.credential_id,
              status=source_status, manifest_items=source_total, **delta)
-        if not malformed and not abort_all and processed == source_total and source_status in {"complete", "attention_required"}:
-            prunable_credentials.add(session.credential_id)
         if abort_all:
             break
 
-    # ``backup_items`` is a current-manifest compatibility projection.
-    # Prune it only after the complete Kobo run succeeded: a failed/partial
-    # sync must never make a remote title disappear merely because its
-    # manifest could not be observed.  Artifacts/placements/catalog rows are
-    # deliberately preserved by Storage.backup_prune_missing().
-    # #3196/W3: remote manifest absence can no longer delete Kobo archive
-    # rows. The legacy_pruned counters remain zero for report ABI stability.
+    # #3196/W3: the Kobo 0.7 projection is an archive, not a derived
+    # current-manifest cache. No remote manifest can prune historical rows.
+    # Deprecated legacy_pruned counters remain zero for caller compatibility.
     summary["attempts_saved"] = sum(
         max(0, int(getattr(session, "_cifereca_delegation_attempts_saved", 0))
             - delegation_saved_before.get(id(session), 0))
