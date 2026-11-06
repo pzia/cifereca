@@ -476,3 +476,39 @@ def test_initial_offer_never_follows_even_a_benign_redirect(tmp_path):
         assert state["mutations"] == 1
     finally:
         service.close()
+
+
+def test_initial_acsm_scope_rebound_during_get_never_publishes_receipt(
+        tmp_path, monkeypatch):
+    """Revoked context after lender confirmation cannot publish staged proof."""
+    from cifereca import acsm_cache
+
+    service, session, account, item, state = setup(tmp_path, result="acsm")
+    downloads = []
+    original_download = session.download_digital
+
+    def rebind_during_download(*args, **kwargs):
+        assert kwargs.get("initial_offer_only") is True
+        assert kwargs["admission_current"]() is True
+        downloads.append("first-get")
+        service._account_context_epoch += 1
+        # Do not make HTTP requests after rebind. Simulate a completed
+        # transport whose scope was revoked before staging publication.
+        directory = args[2]
+        path = directory / "synthetic.acsm"
+        path.write_bytes(
+            b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
+            b'<format>application/epub+zip</format></fulfillmentToken>')
+        return path, ""
+
+    monkeypatch.setattr(session, "download_digital", rebind_during_download)
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        assert downloads == ["first-get"]
+        assert state["mutations"] == 1
+        directory = service._acquisition_work_dir("default", "paris", "loan-exact")
+        assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    finally:
+        service.close()
