@@ -79,7 +79,11 @@ def test_first_offer_expiration_and_integrity_and_cleanup(first_offer):
     acsm_cache.forget_initial(directory / "other.acsm")
     assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
     acsm_cache.forget_initial(path)
-    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    # No pathname unlink: a concurrent actor could replace the receipt just
+    # before deletion. Retained sidecar is TTL-bounded for *reuse*, not disk.
+    assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    assert acsm_cache.reuse_initial(directory, loan, "identity-A",
+                                    "primary", now=100 + acsm_cache.TTL) is None
 
 
 def test_first_offer_symlinks_or_forged_manifest_rejected(first_offer, tmp_path):
@@ -157,3 +161,30 @@ def test_initial_manifest_swapped_to_symlink_at_open_is_rejected(
     assert acsm_cache.reuse_initial(directory, loan, "identity-A",
                                     "primary", now=101) is None
     assert switched
+
+
+def test_forget_initial_does_not_unlink_replaced_sidecar(
+        first_offer, tmp_path, monkeypatch):
+    """Neither original nor concurrently substituted receipt is deleted."""
+    import os
+
+    directory, path, loan = first_offer
+    assert acsm_cache.remember_initial(path, directory, loan, "identity-A",
+                                       "primary", now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    outside = tmp_path / "external.json"
+    outside.write_text("unrelated", encoding="utf-8")
+    manifest.unlink()
+    manifest.symlink_to(outside)
+    observed = []
+    original_unlink = os.unlink
+
+    def tracked_unlink(*args, **kwargs):
+        observed.append(args)
+        return original_unlink(*args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", tracked_unlink)
+    acsm_cache.forget_initial(path)
+    assert observed == []
+    assert manifest.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "unrelated"
