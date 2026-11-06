@@ -82,7 +82,7 @@ def test_w4_reconciliation_mirror_remains_available_until_migrated(
             "provider_id": "kobo", "credential_id": "vault",
             "identity_id": "alice", "account_id": "account-a",
             "item_id": "edition", "title": "Review",
-            "status": status,
+            "status": status, "sha256": "a" * 64, "size": 42,
         })
         assert storage.backup_get("kobo", "vault", "edition")["status"] == status
         assert len(storage.acquisitions(provider_id="kobo")) == 1
@@ -101,5 +101,67 @@ def test_other_provider_retains_historical_projection(tmp_path):
         })
         assert storage.backup_get("external", "vault", "edition") is not None
         assert storage.entitlements(provider_id="external")
+    finally:
+        storage.close()
+
+
+
+@pytest.mark.parametrize("sha,size", [
+    (None, None), ("a" * 64, None), (None, 12),
+    ("bad-sha", 12), ("a" * 63, 12), ("a" * 64, 0),
+    ("z" * 64, 12),
+])
+def test_unprovable_kobo_conflict_never_creates_positive_canonical_state(
+    tmp_path, sha, size,
+):
+    """A conflict missing W4's byte baseline remains a 0.7 archive only."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    row = {
+        "provider_id": "kobo", "credential_id": "vault",
+        "identity_id": "alice", "account_id": "account-a",
+        "item_id": "edition", "revision_id": "revision-a",
+        "title": "Unresolved local candidates", "status": "reconcile_conflict",
+        "sha256": sha, "size": size,
+        "local_path": str(tmp_path / "ambiguous.epub"),
+    }
+    try:
+        with storage._lock, storage._connect() as db:
+            tables = (
+                "entitlements", "acquisition_ledger", "artifacts",
+                "placements", "catalog_entries", "source_references", "origin_links",
+            )
+            before = {
+                table: db.execute("SELECT * FROM " + table).fetchall()
+                for table in tables
+            }
+        for _ in range(2):
+            storage.backup_put(row)
+            assert storage.backup_get("kobo", "vault", "edition")["status"] == "reconcile_conflict"
+            with storage._lock, storage._connect() as db:
+                assert all(
+                    db.execute("SELECT * FROM " + table).fetchall() == before[table]
+                    for table in tables
+                )
+    finally:
+        storage.close()
+
+
+def test_unprovable_conflict_retains_owner_collision_veto(tmp_path):
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        storage.entitlement_put({
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "alice", "account_id": "account-a",
+            "item_id": "edition", "entitlement_type": "owned",
+            "state": "active",
+        })
+        with pytest.raises(ValueError, match="backup_entitlement_owner_conflict"):
+            storage.backup_put({
+                "provider_id": "kobo", "credential_id": "vault",
+                "identity_id": "bob", "account_id": "account-a",
+                "item_id": "edition", "entitlement_type": "owned",
+                "title": "Unproven", "status": "reconcile_conflict",
+            })
+        assert storage.backup_get("kobo", "vault", "edition") is None
     finally:
         storage.close()
