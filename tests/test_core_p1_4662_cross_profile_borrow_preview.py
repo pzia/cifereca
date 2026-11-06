@@ -305,3 +305,23 @@ def test_option_id_remains_deterministic_within_one_context_epoch():
     one = project(witness(), requester="bob", epoch=4).options[0]
     two = project(witness(), requester="bob", epoch=4).options[0]
     assert one.option_id == two.option_id
+
+
+def test_account_choice_labels_do_not_swap_when_epoch_changes_opaque_ids():
+    from dataclasses import replace
+
+    first = witness(identity="alice", credential="card-A")
+    second = witness(identity="alice", credential="card-B")
+    before = project(first, second, requester="bob", epoch=4)
+    after = project(
+        replace(first, service_context_epoch=5),
+        replace(second, service_context_epoch=5),
+        requester="bob", epoch=5,
+    )
+    assert before.status == after.status == "choose"
+    assert [(x._source_coordinates, x.label) for x in before.options] == [
+        (x._source_coordinates, x.label) for x in after.options
+    ]
+    assert {x.option_id for x in before.options}.isdisjoint(
+        x.option_id for x in after.options
+    )
