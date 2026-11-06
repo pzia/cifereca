@@ -96,9 +96,11 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
             return httpx.Response(200, json={"success": True, "d": {"Loans": rows}})
         if request.url.path.endswith("/synthetic.acsm"):
             assert request.method == "GET"
-            if result in {"replay-redirect", "encoded-replay-redirect"}:
-                target = (href if result == "replay-redirect"
-                          else href.replace("ASSARedirect", "ASSA%52edirect"))
+            if result in {"replay-redirect", "encoded-replay-redirect", "benign-redirect"}:
+                target = (href if result == "replay-redirect" else
+                          href.replace("ASSARedirect", "ASSA%52edirect")
+                          if result == "encoded-replay-redirect" else
+                          "/numerique/another-token.acsm")
                 return httpx.Response(302, headers={"Location": target})
             return httpx.Response(200, content=(
                 b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
@@ -447,6 +449,27 @@ def test_first_token_redirect_cannot_reenter_mutating_assaredirect(tmp_path, res
         # refused *before* any HTTP request to the mutating endpoint.
         assert state["mutations"] == 1
         assert len(state["calls"]) == 5
+        stage = service._acquisition_work_dir("default", "paris", "loan-exact")
+        assert not (stage / acsm_cache.INITIAL_MANIFEST).exists()
+        assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
+        assert state["mutations"] == 1
+    finally:
+        service.close()
+
+
+def test_initial_offer_never_follows_even_a_benign_redirect(tmp_path):
+    """Only the supplied first-offer URL may be read, never redirect targets."""
+    from cifereca import acsm_cache
+
+    service, _session, account, item, state = setup(
+        tmp_path, result="benign-redirect")
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        assert state["mutations"] == 1
+        assert state["calls"].count("/numerique/synthetic.acsm") == 1
+        assert "/numerique/another-token.acsm" not in state["calls"]
         stage = service._acquisition_work_dir("default", "paris", "loan-exact")
         assert not (stage / acsm_cache.INITIAL_MANIFEST).exists()
         assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
