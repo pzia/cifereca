@@ -40,9 +40,26 @@ en droit. Les options de navigation existantes ne régressent pas.
    sections descriptives supplémentaires, jamais des preuves métier.
 
 Les états de refus/erreur n'exposent pas d'URL fournisseur, de compte, de
-jeton ou de contenu de réponse non fiable. Les sources `known_catalog`
-non déjà chargées gardent le parcours sûr préexistant vers Recherche ; ce
-premier lot ne les ouvre pas silencieusement en place.
+jeton ou de contenu de réponse non fiable.
+
+## Extension : notice connue du miroir v2 actif
+
+La tranche suivante ajoute
+`UiExactSearchDetailHost.present_known_search_detail_in_place` pour les
+notices non chargées en Recherche mais **connues de Core via un miroir SQLite
+v2 exact, toujours actif et lié au compte/identité sélectionnés**.
+`_exact_known_row` revalide la source/provenance, et
+`known_catalog_search_result` reconstruit le `SearchResult` sans accepter
+d'objet Search fourni par Recommandations. Cette preuve ne constitue toujours
+pas un droit de prêt ni d'acquisition.
+
+L'activation est un clic utilisateur explicite. Avant le worker et avant
+l'affichage, Core recroise le miroir, l'édition, les champs de source et les
+révisions capturées ; une notice modifiée, retirée ou devenue stale est
+refusée sans reprendre les droits d'une autre édition. La même demande de
+holdings Core et le même renderer de détail/action s'appliquent, sans
+navigation d'onglet. L'ancienne navigation vers Recherche reste disponible
+comme solution de repli et pour les notices non qualifiées.
 
 ## Couverture, suites et non-objectifs
 
@@ -52,8 +69,8 @@ distinctes, révocation A→B→A, session et connection désactivées, résulta
 hors date, sections de contexte conservées, aucun handler de droit secondaire.
 
 Reste à solder dans #4664 :
-- intégration de la source `known_catalog` après validation d'un miroir
-  v2 toujours actif et du chargement sur clic ;
+- approfondissement de la recette du miroir `known_catalog` avec
+  session retirée en cours de GET et plusieurs onglets simultanés ;
 - offre achat/gratuit, placement déjà présent et prêt via un autre profil
   (#4662) lorsqu'une capacité Core autoritative est disponible ;
 - boutons persistants/revalidation UX après mutation et recette GTK

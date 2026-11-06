@@ -1788,6 +1788,9 @@ class UxRecommendationsView:
             in_place = getattr(
                 self.host, "present_loaded_search_detail_in_place", None,
             )
+            known_in_place = getattr(
+                self.host, "present_known_search_detail_in_place", None,
+            )
             if ((callable(can_open) and callable(open_loaded))
                     or (callable(can_cached) and callable(open_cached))):
                 for index, variant in enumerate(visible_exact, page_start + 1):
@@ -1846,7 +1849,8 @@ class UxRecommendationsView:
                     # in this very panel on an explicit click. Core retrieves
                     # the SearchResult and ItemDetail and builds all provider
                     # actions; recommendation scores cannot grant rights.
-                    if mode == "loaded" and callable(in_place):
+                    presenter = in_place if mode == "loaded" else known_in_place
+                    if callable(presenter):
                         def in_place_current():
                             return (
                                 not getattr(self, "_disposed", False)
@@ -1863,7 +1867,7 @@ class UxRecommendationsView:
                             )
 
                         def show_in_place(
-                            coordinates=coordinates, presenter=in_place,
+                            coordinates=coordinates, presenter=presenter,
                             context_sections=tuple(sections),
                             still_selected=in_place_current,
                         ):
@@ -1880,7 +1884,7 @@ class UxRecommendationsView:
                                 return False
 
                         actions.append(UiBookDetailAction(
-                            f"recommendation.loaded-in-place.{index}",
+                            f"recommendation.{mode}-in-place.{index}",
                             (f"Consulter disponibilités et actions de la notice "
                              f"{index} ici · "
                              f"{self._display_source(variant.source_provider)}"),

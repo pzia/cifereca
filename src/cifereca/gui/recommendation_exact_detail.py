@@ -24,6 +24,20 @@ def _loaded_item(window: Any, coords: dict[str, str]) -> SearchResult | None:
     return row if type(row) is SearchResult else None
 
 
+def _known_item(
+    window: Any, coords: dict[str, str],
+) -> tuple[SearchResult, dict] | None:
+    """Require a live, exact v2 SQLite mirror and Core session binding."""
+    from .known_search_notice_navigation import _exact_known_row
+    from ..core.known_catalog_provenance import known_catalog_search_result
+
+    row = _exact_known_row(window, **coords)
+    if type(row) is not dict:
+        return None
+    item = known_catalog_search_result(row, identity_id=coords["identity_id"])
+    return (item, row) if type(item) is SearchResult else None
+
+
 def _view_mapped(view: Any) -> bool:
     """A detached plugin pane may retain an old clickable GTK button."""
     try:
@@ -38,6 +52,7 @@ def present_loaded_search_detail_in_place(
     context_sections: tuple, is_current: Callable[[], bool],
     provider: str, credential: str, record_id: str,
     docbase: str, source_collection: str, identity_id: str,
+    known_source: bool = False,
 ) -> bool:
     """Explicit click triggers ordinary Core holdings and in-panel actions.
 
@@ -47,7 +62,8 @@ def present_loaded_search_detail_in_place(
     coords = dict(provider=provider, credential=credential,
                   record_id=record_id, docbase=docbase,
                   source_collection=source_collection, identity_id=identity_id)
-    if (getattr(window, "_closed", False)
+    if (type(known_source) is not bool
+            or getattr(window, "_closed", False)
             or getattr(view, "_window", None) is not window
             or not _view_mapped(view)
             or not callable(getattr(view, "show_existing_search_detail", None))
@@ -58,9 +74,16 @@ def present_loaded_search_detail_in_place(
     try:
         if not is_current():
             return False
-        item = _loaded_item(window, coords)
+        known = _known_item(window, coords) if known_source else None
+        item = known[0] if known_source and known is not None else (
+            None if known_source else _loaded_item(window, coords)
+        )
         if item is None:
             return False
+        known_snapshot = known[1] if known is not None else None
+        query = item.title if known_source else (
+            getattr(window, "_last_search_query", "") or ""
+        )
         service = window.service
         identity = service.current_identity
         if getattr(identity, "identity_id", None) != identity_id:
@@ -107,15 +130,24 @@ def present_loaded_search_detail_in_place(
         if not source_current():
             from ..plugin_api import Cancelled
             raise Cancelled("Source de consultation périmée.")
-        return service.holdings(item, getattr(window, "_last_search_query", "") or "",
-                                force=False)
+        if known_source:
+            current = _known_item(window, coords)
+            if current is None or current[1] != known_snapshot:
+                from ..plugin_api import Cancelled
+                raise Cancelled("Notice catalogue modifiée.")
+        return service.holdings(item, query, force=False)
 
     def deliver(detail: object) -> None:
         if (type(detail) is not ItemDetail
                 or not source_current()
                 or not _view_mapped(view)
-                or not is_current()
-                or _loaded_item(window, coords) is not item):
+                or not is_current()):
+            return
+        if known_source:
+            current = _known_item(window, coords)
+            if current is None or current[1] != known_snapshot:
+                return
+        elif _loaded_item(window, coords) is not item:
             return
         view.show_existing_search_detail(
             item, detail, context_sections=context_sections,

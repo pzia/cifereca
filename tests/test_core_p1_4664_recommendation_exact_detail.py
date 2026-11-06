@@ -201,3 +201,71 @@ def test_unmapped_plugin_page_cannot_start_or_publish_external_actions(monkeypat
     f.mapped[0] = False  # navigation or removal after explicit user click
     success(work())
     assert f.outputs == []
+
+
+def test_attested_known_v2_mirror_is_fetched_only_after_explicit_click(monkeypatch):
+    f = _fixture(monkeypatch)
+    row = {"item_id": "record-1", "metadata": {
+        "catalogue_scope_version": 2, "source_credential": "card-A",
+        "docbase": "EBOOKS", "source_collection": "collection-1",
+    }}
+    records = [row]
+    monkeypatch.setattr(
+        port, "_known_item",
+        lambda window, coords: (f.item, dict(records[0]))
+        if records[0] is not None else None,
+    )
+    kwargs = {**f.kwargs, "known_source": True}
+    assert port.present_loaded_search_detail_in_place(f.window, **kwargs)
+    assert f.calls == [] and len(f.scheduled) == 1
+    work, success, failure = (f.scheduled[0][0][1:4])
+    assert work() is f.detail
+    success(f.detail)
+    assert len(f.outputs) == 1
+    assert f.calls == [((f.item, "Titre exact"), {"force": False})]
+
+
+def test_known_mirror_removed_or_revised_blocks_work_and_late_gtk(monkeypatch):
+    f = _fixture(monkeypatch)
+    mirror = [{"revision": "v1"}]
+    monkeypatch.setattr(
+        port, "_known_item",
+        lambda window, coords: (f.item, dict(mirror[0]))
+        if mirror[0] is not None else None,
+    )
+    kwargs = {**f.kwargs, "known_source": True}
+    assert port.present_loaded_search_detail_in_place(f.window, **kwargs)
+    work, success, failure = f.scheduled[0][0][1:4]
+    mirror[0] = {"revision": "v2"}
+    with pytest.raises(Cancelled):
+        work()
+    assert f.calls == []
+    success(f.detail)
+    assert f.outputs == []
+    mirror[0] = None
+    assert not port.present_loaded_search_detail_in_place(f.window, **kwargs)
+
+
+def test_known_mirror_changed_after_worker_is_not_published(monkeypatch):
+    f = _fixture(monkeypatch)
+    mirror = [{"revision": "v1"}]
+    monkeypatch.setattr(
+        port, "_known_item",
+        lambda window, coords: (f.item, dict(mirror[0]))
+        if mirror[0] is not None else None,
+    )
+    kwargs = {**f.kwargs, "known_source": True}
+    assert port.present_loaded_search_detail_in_place(f.window, **kwargs)
+    work, success, failure = f.scheduled[0][0][1:4]
+    work()
+    mirror[0] = {"revision": "v2"}
+    success(f.detail)
+    assert f.outputs == []
+
+
+def test_unknown_source_mode_is_not_truthy_fallback(monkeypatch):
+    f = _fixture(monkeypatch)
+    assert not port.present_loaded_search_detail_in_place(
+        f.window, **{**f.kwargs, "known_source": 1},
+    )
+    assert f.calls == [] and f.scheduled == []
