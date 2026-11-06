@@ -2082,7 +2082,21 @@ class Storage:
             ).fetchone()
             if persisted is None:
                 raise ValueError("backup_projection_handoff_missing")
-            self._mirror_backup_row(db, dict(zip(keys, persisted)), now=now, migration=False)
+            # #3196 W1 cutover: a LIVE Kobo 0.7 projection is no longer a
+            # canonical acquisition writer. Its status, reported SHA and
+            # local_path cannot attest rights, OriginLinks, Artifacts or
+            # physical Placements. Keep the historic backup row for W2
+            # recovery and manual reconciliation, but do not mint/refresh
+            # entitlements or acquisition_ledger from it.
+            #
+            # The independently versioned v2->v14 startup migration still
+            # imports old receipts as explicitly tagged historical evidence;
+            # this runtime cutover only forbids NEW propagation. Other
+            # providers retain the existing compatibility mirror.
+            if item.get("provider_id") != "kobo":
+                self._mirror_backup_row(
+                    db, dict(zip(keys, persisted)), now=now, migration=False,
+                )
 
     def backup_prune_missing(
         self, provider_id: str, credential_id: str, seen_item_ids: set[str] | list[str] | tuple[str, ...]
