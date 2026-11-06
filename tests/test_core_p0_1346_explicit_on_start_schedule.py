@@ -510,7 +510,9 @@ def test_startup_rechecks_exact_session_after_attempt_clock_before_legacy_get(
         )
         result = service._opening_sync_locked(deep=False)
         assert attempts == [True]
-        assert result["kobo"]["synced_accounts"] == 0
+        assert result["kobo"]["status"] == "partial"
+        assert result["kobo"]["errors"] == 1
+        assert result["kobo"]["attempted"] == result["kobo"]["downloaded"] == 0
         assert service.storage.metadata_get(policy_key(
             SynchronizationBrokerImpl._source_id(account),
         )) == "1"
