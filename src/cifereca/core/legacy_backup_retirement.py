@@ -116,6 +116,21 @@ def retire_attested_legacy_kobo_backup(
             db.execute("BEGIN IMMEDIATE")
             if context_current() is not True:
                 return blocked("source_context_changed")
+            # A source toggle can be switched OFF independently of the
+            # in-memory provider/session epoch. Exactly like canonical A
+            # publication, recheck its durable setting *inside* the same
+            # BEGIN IMMEDIATE that archives the old receipt. A stale
+            # successful inventory cannot authorize maintenance after OFF.
+            from .source_auto_consent_bridge import _source_id
+            from .source_enablement import source_enabled
+            enabled = db.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                ("sync.source.enabled." + _source_id(scope),),
+            ).fetchone()
+            _require(
+                source_enabled(enabled[0] if enabled else None),
+                "source_disabled",
+            )
             existing_audit = db.execute(
                 "SELECT value FROM metadata WHERE key=?", (archive_key,),
             ).fetchone()
