@@ -519,15 +519,15 @@ def test_conflicting_same_edition_observation_blocks_old_positive_in_any_order(
 ):
     service, account, session = harness
     positive = _candidate()
-    if change["edition_evidence"] == "denied":
+    if change.get("edition_evidence") == "denied":
         other = replace(positive, edition_evidence=replace(
             positive.edition_evidence, item_offer="unavailable",
         ))
-    elif change["edition_evidence"] == "unknown":
+    elif change.get("edition_evidence") == "unknown":
         other = replace(positive, edition_evidence=replace(
             positive.edition_evidence, item_offer="unknown",
         ))
-    elif change["edition_evidence"] is None:
+    elif change.get("edition_evidence") is None:
         other = replace(positive, edition_evidence=None)
     elif change.get("evidence") == "quota_reached":
         other = replace(positive, evidence=replace(
