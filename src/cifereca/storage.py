@@ -684,6 +684,11 @@ class Storage:
                                 and not row["attention_code"]
                                 and not row["acquisition_strategy"]
                                 and not row["executor"]
+                                and not row["job_id"]
+                                and not row["adept_profile"]
+                                and row["entitlement_type"] == "owned"
+                                and not row["loan_id"]
+                                and not row["expires_at"]
                             )
                         )
                     )
