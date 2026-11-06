@@ -33,7 +33,9 @@ class CanonicalTextSchema:
 
 
 def _bounded_value(value: Any, limit: int) -> bool:
-    if type(value) is not str:
+    # NUL is not descriptive text. It can truncate/interfere with downstream
+    # C/GTK/SQL bindings even when the UTF-8 byte count is within budget.
+    if type(value) is not str or "\x00" in value:
         return False
     try:
         size = len(value.encode("utf-8"))
