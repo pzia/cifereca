@@ -2636,6 +2636,27 @@ class Storage:
                         or type(keeper[0]) is not str
                         or rewrite_path(keeper[0], mappings, root) != keeper[0]):
                     raise ValueError("directory_migration_pending_dedup_keeper")
+            # #3196 W5 cutover: a directory rename is not authority to
+            # rewrite an already canonical Kobo edition through backup_items.
+            # The legacy PK has no borrower/branch and can alias another
+            # SourceReference even on the same credential. Refuse the whole
+            # migration before touching Placements, catalogue or old rows;
+            # an exact canonical relink needs its own attested operation.
+            for credential, edition, historical_path in db.execute(
+                "SELECT credential_id,item_id,local_path FROM backup_items "
+                "WHERE provider_id='kobo' AND local_path IS NOT NULL"
+            ).fetchall():
+                if (type(historical_path) is str
+                        and rewrite_path(historical_path, mappings, root) != historical_path
+                        and db.execute(
+                            "SELECT 1 FROM source_references WHERE "
+                            "provider_id='kobo' AND credential_id=? "
+                            "AND edition_id=? LIMIT 1",
+                            (credential, edition),
+                        ).fetchone() is not None):
+                    raise ValueError(
+                        "directory_migration_canonical_source_requires_relink"
+                    )
             # Repoint old references to an already indexed identical destination.
             for pid, path in db.execute("SELECT placement_id,path FROM placements").fetchall():
                 new = rewrite_path(path, mappings, root)
