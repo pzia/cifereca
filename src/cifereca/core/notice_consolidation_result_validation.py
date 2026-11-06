@@ -17,7 +17,7 @@ MAX_CANONICAL_BYTES = 2048
 MAX_REFERENCES = 128
 _RESULT_KEYS = frozenset({
     "canonical_type", "target_edition_id", "schema_id", "value",
-    "inherited", "source_evidence_ids",
+    "inherited", "source_evidence_keys",
 })
 
 
@@ -30,7 +30,7 @@ class ValidatedDescriptiveResult:
     schema_id: str
     value: str
     inherited: bool
-    source_evidence_ids: tuple[str, ...]
+    source_evidence_keys: tuple[tuple[str, str, str], ...]
 
 
 def validate_descriptive_result(
@@ -77,24 +77,25 @@ def validate_descriptive_result(
         raise ValueError("invalid_result_value") from exc
     if not 0 < encoded_size <= MAX_CANONICAL_BYTES:
         raise ValueError("invalid_result_value")
-    refs = proposed["source_evidence_ids"]
+    refs = proposed["source_evidence_keys"]
     if (type(refs) not in (list, tuple)
             or not 1 <= len(refs) <= MAX_REFERENCES
-            or any(type(ref) is not str for ref in refs)):
+            or any(type(ref) not in (tuple, list) or len(ref) != 3\n                   or any(type(field) is not str for field in ref)\n                   for ref in refs)):
         raise ValueError("invalid_result_references")
-    # All selected facts have *distinct* evidence keys. A bare evidence_id
-    # may be reused by different providers: never attach it by guesswork.
-    # Plugin ABI uses scoped source_id/edition_id/evidence_id triples.
+    # Keep the triple structured: a delimiter-joined string would let
+    # different editions/providers collide when identifiers contain '/'.
+    # Only the same exact/relation-vetted evidence bucket can be referenced.
+    keys = tuple(tuple(ref) for ref in refs)
     eligible = admitted.inherited if inherited else admitted.exact
-    by_key: dict[str, SourceFact] = {}
+    by_key: set[tuple[str, str, str]] = set()
     for fact in eligible:
         if type(fact) is not SourceFact:
             raise ValueError("invalid_admitted_evidence")
-        key = f"{fact.source_id}/{fact.edition_id}/{fact.evidence_id}"
+        key = (fact.source_id, fact.edition_id, fact.evidence_id)
         if key in by_key:
             raise ValueError("ambiguous_admitted_evidence")
-        by_key[key] = fact
-    if len(set(refs)) != len(refs) or any(ref not in by_key for ref in refs):
+        by_key.add(key)
+    if len(set(keys)) != len(keys) or any(ref not in by_key for ref in keys):
         raise ValueError("unattested_result_references")
     return ValidatedDescriptiveResult(
         canonical_type=selection.canonical_type,
@@ -103,5 +104,5 @@ def validate_descriptive_result(
         plugin_version=selection.version,
         schema_id=selection.schema_id,
         value=value, inherited=inherited,
-        source_evidence_ids=tuple(sorted(refs)),
+        source_evidence_keys=tuple(sorted(keys)),
     )
