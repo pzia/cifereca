@@ -118,6 +118,13 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
                     and result.get("provider_verified") is True):
                 window._activity_result(f"Prêt {label} actif vérifié dans Mes emprunts")
                 window.refresh_loans(True)
+                if provider_id == "bnf-pret" and current():
+                    # Keep holdings and avoid a fresh provider GET: reproject
+                    # the exact visible notice using current Core admission.
+                    panel = getattr(getattr(window, "search_page", None), "detail", None)
+                    refresh = getattr(panel, "refresh_confirmed_borrow_detail", None)
+                    if callable(refresh):
+                        refresh(item)
             elif type(result) is dict and result.get("status") == "unsupported":
                 window.show_error(
                     f"L’emprunt {label} n’est pas disponible pour ce compte.",

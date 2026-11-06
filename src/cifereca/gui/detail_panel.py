@@ -70,6 +70,8 @@ class DetailPanel(Gtk.Box):
         super().__init__()
         self.window = window
         self._meta_request = None
+        # Exact last rendered remote Search detail; never an authorization cache.
+        self._rendered_search_detail = None
         self._pending_action_focus_key = ""
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
@@ -108,6 +110,7 @@ class DetailPanel(Gtk.Box):
             self._meta_request = None
 
     def empty(self, title: str, description: str, icon: str = "book-open-symbolic") -> None:
+        self._rendered_search_detail = None
         self._cancel_meta_request()
         self._pending_action_focus_key = ""
         clear_box(self.content)
@@ -514,6 +517,7 @@ class DetailPanel(Gtk.Box):
         """
         trace = current_detail_trace()
         started = trace.clock() if trace else None
+        self._rendered_search_detail = None
         self._cancel_meta_request()
         self._pending_action_focus_key = self._focused_action_key()
         clear_box(self.content)
@@ -1058,3 +1062,16 @@ class DetailPanel(Gtk.Box):
                 row.add_suffix(chip)
             group.add(row)
         self._append_content(group)
+        self._rendered_search_detail = (item, detail)
+
+    def refresh_confirmed_borrow_detail(self, item: SearchResult) -> bool:
+        """Reproject the exact visible detail from Core state, without I/O.
+
+        Only a confirmed callback guarded by identity/account/selection epochs
+        may invoke this method. A later presentation invalidates the cache.
+        """
+        cached = self._rendered_search_detail
+        if cached is None or cached[0] is not item:
+            return False
+        self.show_item_detail(item, cached[1])
+        return True
