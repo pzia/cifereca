@@ -1270,7 +1270,7 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
     )
 
 
-def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False, confirmed_manifest: list | None = None, source_guard: Callable[[], None] | None = None, item_guard: Callable[[SearchResult, str, str | None], None] | None = None) -> dict[str, Any]:
+def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False, confirmed_manifest: list | None = None, source_guard: Callable[[], None] | None = None, item_guard: Callable[[SearchResult, str, str | None], None] | None = None, on_delivery_committed: Callable[[], None] | None = None) -> dict[str, Any]:
     """Reconcile the Vault manifest and acquire missing Kobo books locally.
 
     Paris owns the destination and orchestration. Vault Provider API v2.x
@@ -1678,7 +1678,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     summary["pending"] += 1
                     item_committed = True
                     continue
-                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger, item_guard=item_guard):
+                if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger, item_guard=item_guard,
+                                          on_delivery_committed=on_delivery_committed):
                     abort_all = True
                     item_committed = True
                     break
@@ -2542,7 +2543,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
 
 
 
-def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger, *, item_guard=None):
+def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger, *, item_guard=None, on_delivery_committed=None):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     summary["attempted"] += 1
@@ -2590,6 +2591,19 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         })
         summary["downloaded"] += 1
         summary["completed"] += 1
+        # #3196 D2: the completed file and its 0.7 receipt have been
+        # persisted by THIS executor. Report this fact privately before
+        # the source-level checkpoint: a later checkpoint failure must not
+        # hide an actual delivery. The public "downloaded" event is still
+        # buffered until checkpoint success by the caller; neither a passive
+        # backup replay nor its status may invoke this hook.
+        if on_delivery_committed is not None:
+            try:
+                on_delivery_committed()
+            except Exception:
+                # Reporting failure cannot invalidate delivered bytes, nor
+                # can a callback trigger a second acquisition attempt.
+                pass
         emit(
             "downloaded", current=index + 1, total=total, title=title,
             item_id=product_id, path=str(artifact), downloaded=summary["downloaded"],
