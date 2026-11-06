@@ -6,10 +6,13 @@ Fixtures have an already independent canonical A/B/receipt and current PDF.
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 import sqlite3
 
 import pytest
 
+from cifereca.core.canonical_sync_stage import observe_canonical_rights_in_sync
+from cifereca.models import Account
 from cifereca.core.legacy_backup_retirement_sync import (
     retire_canonical_kobo_legacy_in_sync,
 )
@@ -96,3 +99,46 @@ def test_unchanged_legacy_evidence_after_sql_audit_failure(rig):
     with InterProcessLock(lock_path) as lease:
         assert _call(rig, lease) == 0
     assert storage.backup_get("kobo", "card-a", "book") == old
+
+
+def test_actual_core_rights_stage_uses_its_held_sync_lease_without_second_get(rig):
+    storage, root, path, snapshot, lock_path = rig
+    account = Account(
+        identity_id="A", provider_id="kobo",
+        credential_id="card-a", unique_id="buyer",
+    )
+    reads = []
+    session = SimpleNamespace(
+        provider_id="kobo", credential_id="card-a",
+        connected=True, _closed=False, accounts=[account],
+        rights_observation_snapshot=lambda selected: (
+            reads.append(selected) or snapshot
+        ),
+    )
+    service = SimpleNamespace(
+        storage=storage, accounts=[account],
+        _sessions={"kobo:card-a": session},
+        _session_key=lambda provider, credential: provider + ":" + credential,
+        sync_source_enabled=lambda selected: selected is account,
+        library_dir=lambda: root,
+    )
+    original = _canonical(storage)
+
+    # Read-only callers of the stage are unable to trigger retirement.
+    first = observe_canonical_rights_in_sync(service, account)
+    assert first["status"] == "success"
+    assert storage.backup_get("kobo", "card-a", "book") is not None
+    assert reads == [account]
+    assert _canonical(storage) == original
+
+    # The already-held source Sync lock is the only admission difference;
+    # the Core uses the EXACT same provider observation with no extra GET.
+    with InterProcessLock(lock_path) as lease:
+        second = observe_canonical_rights_in_sync(
+            service, account, retirement_lease=lease,
+        )
+    assert second["status"] == "success"
+    assert reads == [account, account]
+    assert storage.backup_get("kobo", "card-a", "book") is None
+    assert _canonical(storage) == original
+    assert path.read_bytes() == BYTES
