@@ -357,6 +357,31 @@ _LANGUAGE_LABELS = {
 }
 
 
+_LOCAL_FORMAT_LABELS = {
+    "epub": "EPUB", "pdf": "PDF", "mp3": "MP3", "m4a": "M4A",
+    "ogg": "OGG", "opus": "OPUS", "flac": "FLAC", "wav": "WAV",
+}
+
+
+def _candidate_formats(item: Any) -> tuple[str, ...]:
+    """Local display facet from explicitly provided exact media formats.
+
+    Never derive a file format from an ISBN, title, external URL, inferred
+    acquisition, or unrelated edition. Unknown/mixed formats stay unknown.
+    """
+    observed: set[str] = set()
+    for field in ("format", "media_format"):
+        try:
+            raw = get_field(item, field, None)
+        except Exception:
+            continue
+        if type(raw) is str:
+            value = raw.strip().casefold()
+            if value in _LOCAL_FORMAT_LABELS:
+                observed.add(value)
+    return tuple(sorted(observed))
+
+
 def _candidate_languages(item: Any) -> tuple[str, ...]:
     """Project only safely normalized language tags from explicit evidence.
 
@@ -1025,6 +1050,14 @@ class UxRecommendationsView:
             return False
         if languages and set(languages).isdisjoint(_candidate_languages(ranked.item)):
             return False
+        controls = getattr(self, "_query_controls", None)
+        format_reader = getattr(controls, "selected_formats", None)
+        if callable(format_reader):
+            selected_formats = format_reader()
+            if selected_formats and set(selected_formats).isdisjoint(
+                _candidate_formats(ranked.item)
+            ):
+                return False
         needle = normalize(text)
         if needle:
             item = ranked.item
@@ -1067,7 +1100,20 @@ class UxRecommendationsView:
             available.add(selected_id)
         ordered = sorted(available, key=lambda language: (_language_label(language).casefold(), language))
         if controls is not None:
-            controls.set_choices(languages=tuple((lang, _language_label(lang)) for lang in ordered))
+            kwargs = {"languages": tuple(
+                (lang, _language_label(lang)) for lang in ordered
+            )}
+            # Feature detection keeps older Core hosts usable; newer hosts
+            # reuse the Search Format MultiSelect without remote requests.
+            if callable(getattr(controls, "selected_formats", None)):
+                observed_formats = sorted({
+                    fmt for ranked in ranked_rows
+                    for fmt in _candidate_formats(ranked.item)
+                })
+                kwargs["formats"] = tuple(
+                    (fmt, _LOCAL_FORMAT_LABELS[fmt]) for fmt in observed_formats
+                )
+            controls.set_choices(**kwargs)
             return
 
         self._reloading_languages = True
