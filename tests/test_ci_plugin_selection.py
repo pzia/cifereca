@@ -191,6 +191,36 @@ class PluginSelectionTests(unittest.TestCase):
                 self.assertEqual(names, [])
                 self.assertTrue(reason.startswith("full:"))
 
+    def test_malformed_dependency_graph_values_fail_closed(self):
+        malformed = (
+            {"audited_product_packages": [None], "dependencies": {}},
+            {"audited_product_packages": ["provider", "provider"], "dependencies": {}},
+            {"audited_product_packages": ["provider"], "dependencies": {"consumer": [None]}},
+            {"audited_product_packages": ["provider"], "dependencies": {"consumer": "provider"}},
+        )
+        for value in malformed:
+            with self.subTest(value=value):
+                self.write_explicit(value)
+                names, reason = self.names([("M", "src/plugins/provider/module.py")])
+                self.assertEqual(names, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_malformed_manifest_dependencies_fail_closed(self):
+        invalid_plugins = (
+            [None],
+            [{"id": "bad", "type": "bad", "requires": None}],
+            [{"id": "bad", "type": "bad", "requires": [None]}],
+            [{"id": "bad", "type": "bad", "requires": [{"plugin": []}]}],
+            [{"id": "bad", "type": "bad", "requires_contracts": None}],
+            [{"id": "bad", "type": "bad", "requires_contracts": [None]}],
+        )
+        for plugins in invalid_plugins:
+            with self.subTest(plugins=plugins):
+                self.add_package("broken", plugins)
+                names, reason = self.names([("M", "src/plugins/provider/module.py")])
+                self.assertEqual(names, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
     def test_unknown_required_plugin_falls_back(self):
         self.add_package("broken", [{"id": "broken", "type": "broken", "requires": [{"plugin": "missing"}]}])
         self.assertEqual(self.names([("M", "src/plugins/provider/module.py")])[0], [])
