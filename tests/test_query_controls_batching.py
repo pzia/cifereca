@@ -149,4 +149,25 @@ class QueryControlBatching(unittest.TestCase):
         self.assertEqual(len(calls),2)
         self.assertEqual(calls[-1].types,('epub','pdf','mp3'))
 
+    def test_local_format_facets_reuse_search_widget_without_auto_refresh(self):
+        changes = []
+        control = LocalQueryControls(
+            lambda: changes.append(control.selected_formats()),
+            "Titre ou auteur",
+        )
+        self.assertEqual(control.selected_formats(), ())
+        self.assertEqual(tuple(control.types.buttons), ())
+        control.set_choices(formats=(("epub", "EPUB"), ("pdf", "PDF")))
+        self.assertEqual(changes, [])
+        control.types.set_values(("epub",))
+        self.assertEqual(changes, [("epub",)])
+        control.set_choices(formats=(("pdf", "PDF"),))
+        self.assertEqual(changes, [("epub",)])
+        self.assertEqual(control.selected_formats(), ())
+        control.types.set_values(("pdf",))
+        self.assertEqual(changes[-1], ("pdf",))
+        control.types.set_values(())
+        self.assertEqual(changes[-1], ())
+
+
 if __name__ == '__main__': unittest.main()
