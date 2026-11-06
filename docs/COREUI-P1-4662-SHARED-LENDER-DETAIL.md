@@ -20,7 +20,7 @@ contient **aucune `UiBookDetailAction`, aucun lien ni callback**.
 
 Pour préserver intégralement la signature publique et la projection AST
 de `DetailPanel.show_item_detail(item, detail)`, le contrôleur propose
-`DetailPanel.show_cross_profile_borrow_detail(preview)` : cet adaptateur
+`DetailPanel.show_cross_profile_borrow_detail(preview, expected_item=..., expected_edition_id=..., expected_context_epoch=..., expected_source_epoch=...)` : cet adaptateur
 **explicitement appelé après le détail normal** ajoute le même
 `DetailSection` dans un `Adw.PreferencesGroup` standard, sans bouton ni
 callback. Les textes sont rendus sans markup. Aucune requête fournisseur,
