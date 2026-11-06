@@ -253,6 +253,29 @@ def exact_kobo_offer_id(
                         normalized if type(normalized) is str and normalized in allowed
                         else "other"
                     )
+                # KVault v0.9.7 normalizes library_sync KDRM/FLEPUB to
+                # media_format=epub, source_format=FLEPUB, format=FLEPUB.
+                # A K2 unknown/flepub descriptor cannot be silently fixed:
+                # classify whether the redundant source alias agrees and
+                # whether the documented upstream normalization holds.
+                if (source == "library_sync"
+                        and type(observed.get("source_format")) is str
+                        and observed["source_format"].strip().casefold() == "flepub"):
+                    media = observed.get("media_format")
+                    diagnostic["candidate_kvault_flepub_contract"] = (
+                        "normalized_epub" if type(media) is str
+                        and media.strip().casefold() == "epub" else
+                        "media_unknown" if type(media) is str
+                        and media.strip().casefold() == "unknown" else
+                        "media_other"
+                    )
+                    alias = observed.get("format")
+                    diagnostic["candidate_kvault_format_alias"] = (
+                        "missing" if alias is None else
+                        "matching" if type(alias) is str
+                        and alias.strip().casefold() == "flepub" else
+                        "conflicting"
+                    )
     eligible: list[tuple[str, str, str, str]] = []
     # Private transient comparison only; never persist or log signed URLs.
     eligible_urls: list[str] = []

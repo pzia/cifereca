@@ -1468,6 +1468,13 @@ class KoboSession(ProviderSession):
                 qualification_diagnostic.get("candidate_media_format", "not_applicable"),
                 qualification_diagnostic.get("candidate_source_format", "not_applicable"),
             )
+            if "candidate_kvault_flepub_contract" in qualification_diagnostic:
+                # Closed local categories only: never log the raw format
+                # alias, signed URL, account ID or provider-supplied text.
+                detail += " candidate_kvault_flepub_contract=%s candidate_kvault_format_alias=%s" % (
+                    qualification_diagnostic["candidate_kvault_flepub_contract"],
+                    qualification_diagnostic["candidate_kvault_format_alias"],
+                )
             if "candidate_rejection_counts" in qualification_diagnostic:
                 counts = qualification_diagnostic["candidate_rejection_counts"]
                 summary = ",".join(

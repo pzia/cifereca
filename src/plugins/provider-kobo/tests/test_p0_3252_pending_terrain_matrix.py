@@ -190,3 +190,60 @@ def test_k3_unknown_format_and_source_remain_other_not_raw_text():
     }
     for secret in ("PRIVATE", "VERY_SECRET", "SECRET"):
         assert secret not in str(diagnostic)
+
+
+@pytest.mark.parametrize(("media", "alias", "expected_media", "expected_alias"), [
+    ("unknown", "FLEPUB", "media_unknown", "matching"),
+    ("unknown", "EPUB3", "media_unknown", "conflicting"),
+    ("unknown", None, "media_unknown", "missing"),
+    ("FLEPUB", "FLEPUB", "media_other", "matching"),
+    ("epub", "FLEPUB", "normalized_epub", "matching"),
+    ("epub", "PRIVATE-API-TOKEN-DO-NOT-LOG", "normalized_epub", "conflicting"),
+])
+def test_k2_kvault_flepub_alias_diagnostic_is_closed_and_not_an_admission(
+    media, alias, expected_media, expected_alias,
+):
+    candidate = kdrm_candidate("book-1")
+    candidate["media_format"] = media
+    candidate["source_format"] = "FLEPUB"
+    if alias is None:
+        candidate.pop("format", None)
+    else:
+        candidate["format"] = alias
+    diagnostic = {}
+    offer = exact_kobo_offer_id(
+        descriptor(candidate=candidate), **_SCOPE,
+        kdrm_runtime_ready=True, diagnostic=diagnostic,
+    )
+    assert diagnostic["candidate_kvault_flepub_contract"] == expected_media
+    assert diagnostic["candidate_kvault_format_alias"] == expected_alias
+    assert "PRIVATE-API-TOKEN" not in str(diagnostic)
+    assert "FLEPUB" not in str(diagnostic)
+    if expected_media == "normalized_epub":
+        assert offer.startswith("kobo.runtime:")
+    else:
+        assert offer == ""
+        assert diagnostic["qualification_reason"] == "kdrm_format_pair_unqualified"
+
+
+def test_k2_alias_diagnostic_requires_library_sync_kdrm_and_flepub():
+    for change in ("source", "drm", "format"):
+        candidate = kdrm_candidate("book-1")
+        if change == "source":
+            candidate["kobo"]["source"] = "content_access_book"
+        elif change == "drm":
+            candidate["drm"]["raw_type"] = "None"
+            candidate["drm"]["family"] = "none"
+            candidate["drm"]["protected"] = False
+            candidate["drm_type"] = "None"
+            candidate["protected"] = False
+            candidate["handling"] = "http_plain"
+        else:
+            candidate["source_format"] = "KEPUB"
+        diagnostic = {}
+        exact_kobo_offer_id(
+            descriptor(candidate=candidate), **_SCOPE,
+            kdrm_runtime_ready=True, diagnostic=diagnostic,
+        )
+        assert "candidate_kvault_flepub_contract" not in diagnostic
+        assert "candidate_kvault_format_alias" not in diagnostic
