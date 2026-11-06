@@ -72,3 +72,43 @@ def test_valid_legacy_and_matching_aliases_are_compatible():
     assert catalog.normalize_item({
         "product_id": "same", "id": "same",
     }).record_id == "same"
+
+@pytest.mark.parametrize("owned", [True, False])
+def test_kobo_unqualified_age_keys_cannot_impersonate_attested_ranges(owned):
+    """Catalogue JSON is not an attested exact-edition age source (#4530)."""
+    catalog = KoboCatalogService(FakeClient(), credential_id="credential")
+    item = catalog.normalize_item({
+        "product_id": "edition-123",
+        "title": "Livre jeunesse",
+        "owned": owned,
+        "recommended_age": 12,
+        "youth_age_ranges": [{"min_age": 12, "max_age": 15}],
+        "attested_age_ranges": [{"min_age": 12, "max_age": 15}],
+        "attested_age_status": "attested",
+        "genre": "Jeunesse",
+        "typicalAgeRange": "12-15",
+    })
+    for reserved in (
+        "recommended_age", "youth_age_ranges",
+        "attested_age_ranges", "attested_age_status",
+    ):
+        assert reserved not in item.metadata
+    # Non-authoritative descriptive fields survive unchanged, but do not
+    # generate a canonical numeric age or an ISBN for the selected edition.
+    assert item.metadata["genre"] == "Jeunesse"
+    assert item.metadata["typicalAgeRange"] == "12-15"
+    assert "isbn_digital" not in item.metadata
+    assert item.owned is owned
+
+
+def test_kobo_age_is_not_inferred_from_category_or_title():
+    catalog = KoboCatalogService(FakeClient(), credential_id="credential")
+    item = catalog.normalize_item({
+        "id": "edition-456", "title": "Dès 8 ans",
+        "category": "Jeunesse", "genre": "Young adult",
+    })
+    assert not any(key in item.metadata for key in (
+        "recommended_age", "youth_age_ranges",
+        "attested_age_ranges", "attested_age_status",
+    ))
+
