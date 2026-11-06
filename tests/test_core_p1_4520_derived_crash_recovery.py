@@ -963,3 +963,50 @@ def test_retention_summary_rejects_invalid_work_limits(tmp_path, bad):
             )
     finally:
         service.storage.close()
+
+
+
+def test_sql_compaction_rejects_receipt_swap_inside_writer_transaction(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core import derived_variant_recovery as recovery
+    service, source, _ = _library(tmp_path)
+    try:
+        ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        preview = recovery.review_pending_derived_receipts(
+            service, identity_id="id1",
+        )[0]
+        receipt = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        intent_key = recovery._pending_intent_key(receipt)
+        original = recovery._read_receipt_nofollow
+        calls = 0
+
+        def mutate_at_locked_recheck(path, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                # First call is review; second is pre-lock check. Inject a
+                # hostile edit at the third read inside BEGIN IMMEDIATE.
+                receipt.write_bytes(receipt.read_bytes() + b" ")
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(recovery, "_read_receipt_nofollow",
+                            mutate_at_locked_recheck)
+        with pytest.raises(
+            ValueError, match="derived_compaction_receipt_changed",
+        ):
+            recovery.compact_committed_derived_intent(
+                service, identity_id="id1",
+                receipt_cursor=preview["cursor"],
+                approved_receipt_sha256=preview["sha256"],
+            )
+        assert calls >= 3
+        assert service.storage.metadata_get(intent_key) == preview["sha256"]
+        assert len(service.storage.artifact_variants()) == 1
+        assert receipt.exists()
+    finally:
+        service.storage.close()
