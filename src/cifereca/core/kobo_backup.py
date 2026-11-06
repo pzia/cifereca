@@ -44,6 +44,25 @@ def _observed_backup_artifact(path: Path) -> dict[str, Any]:
     return {"format": inspection.media_format.upper(), "size": path.stat().st_size, "sha256": sha256_file(path)}
 
 
+def _kobo_legacy_unlocated_byte_evidence(current: dict[str, Any] | None) -> bool:
+    """A v0.7 SHA/size claim with no locator requires explicit reconciliation.
+
+    It is neither a positive B presence proof nor permission to replace bytes.
+    In particular, an old failed/pending row may still carry evidence of a
+    partially completed opaque provider/ADEPT operation.
+    """
+    if not isinstance(current, dict):
+        return False
+    digest, size, path = (
+        current.get("sha256"), current.get("size"), current.get("local_path"),
+    )
+    return (
+        not str(path or "").strip()
+        and ((type(digest) is str and bool(digest.strip()))
+             or (type(size) is int and size > 0))
+    )
+
+
 def _kobo_legacy_current_path_scoped(
     service: Any, path: Path, target_dir: Path, *, identity_id: str,
 ) -> bool:
@@ -2053,7 +2072,8 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
                     current.get("status") in {
                         "ok", "complete", "reconcile_required", "reconcile_conflict",
                         "acquiring",
-                    } or (current.get("status") == "pending_acquisition"
+                    } or _kobo_legacy_unlocated_byte_evidence(current)
+                    or (current.get("status") == "pending_acquisition"
                           and (current.get("attention_code")
                                == "interrupted_acquisition_review"
                                or str(current.get("error") or "").startswith(
@@ -2260,6 +2280,27 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             "revision_id": current.get("revision_id"),
             "status": "reconcile_required",
             "error": "Acquisition Kobo précédemment complète sans chemin local fiable ; rapprochement requis",
+        })
+        summary["reconcile_pending"] += 1
+        summary["reconcile_skipped"] += 1
+        emit("reconcile_required", current=index + 1, total=total,
+             item_id=product_id, title=title)
+        return True
+
+    # W2/W3 #3196: even if an old status is 'error' or 'pending', a stored
+    # checksum or byte count without a locator can describe an interrupted
+    # GET/ADEPT. W3 preserves this orphan through a manifest gap; W2 must
+    # also prevent its return from becoming a fresh acquisition. Keep the
+    # original revision and claimed byte evidence, but never attest B.
+    if _kobo_legacy_unlocated_byte_evidence(current):
+        self.storage.backup_put({
+            **base_record,
+            "revision_id": current.get("revision_id"),
+            "status": "reconcile_required",
+            "error": (
+                "Artefact Kobo historique sans chemin mais avec empreinte "
+                "ou taille : rapprochement manuel requis"
+            ),
         })
         summary["reconcile_pending"] += 1
         summary["reconcile_skipped"] += 1
