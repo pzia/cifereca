@@ -319,6 +319,17 @@ def test_fresh_kobo_right_does_not_turn_legacy_sha_into_b_presence(
         fresh = service.kobo_backup_preview(
             "vault-1", refresh_manifest=True, verify_local_files=verify,
         )
+        # W2 still supplies a mutable reason sink for its internal legacy
+        # execution preflight; do not change that ABI until W2 is migrated.
+        internal_reasons = {}
+        internal = service.kobo_backup_preview(
+            "vault-1", refresh_manifest=True, verify_local_files=verify,
+            _item_reasons=internal_reasons,
+        )
+        assert internal_reasons["historical"] == (
+            "already_local_verified" if verify else "already_local_linked"
+        )
+        assert internal["acquisition_authorized"] is False
         assert fresh["counts"]["already_local_linked"] == 0
         assert fresh["counts"]["already_local_verified"] == 0
         assert fresh["counts"]["needs_reconciliation"] == 1
