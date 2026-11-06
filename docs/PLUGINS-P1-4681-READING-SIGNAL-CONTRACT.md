@@ -39,6 +39,20 @@ titre/auteur restent dans l'exclusion des œuvres déjà présentes.
   cet outil comme contrôle d'accès ; `library_entries(identity_id)` doit
   être autorisé et isolé préalablement par Core.
 
+## Tranche 2 — API de calcul opt-in
+
+`compute_recommendations(..., explicit_signals=...)` transmet
+optionnellement au moteur les témoins explicitement fournis par son
+appelant. Aucun broker supplémentaire n'est interrogé : l'UI actuelle ne
+fournit pas cette option. Une source étrangère ou un signal ambigu bloque le
+calcul avant la consultation des catalogues.
+
+Le cache de **bibliothèque** reste isolé par identité et peut être réutilisé :
+le profil de préférence est **recalculé à chaque appel**, ce qui empêche de
+réutiliser un ancien classement lorsque seuls les signaux explicites
+changent. Cela ne dispense pas de prévoir l'invalidation des résultats
+présentés lorsque le futur Core stockera des préférences.
+
 ## Suite de #4681
 
 Avant activation UX, stabiliser le stockage et la preuve des préférences
