@@ -212,8 +212,11 @@ def preview_borrow_for_identity(
                 raise ValueError("conflicting_cross_profile_borrow_offer")
             continue
         options[coordinates] = output
+    # Button IDs are revocation tokens, NOT stable sort keys: an epoch
+    # change must not silently swap account labels (choix 1/2, 2/2).
     ordered = tuple(sorted(options.values(), key=lambda x: (
-        x.borrowing_identity_id, x.provider_id, x.lender_name, x.option_id,
+        x.borrowing_identity_id, x.provider_id, x.lender_name,
+        x._source_coordinates,
     )))
     # A lender can legitimately have two distinct accounts or source routes.
     # Never show indistinguishable choices or leak an account identifier.
