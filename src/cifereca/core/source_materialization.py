@@ -242,6 +242,7 @@ def prepare(broker, source_id):
 
 def execute(broker, source_id, token, control=None):
     downloaded = 0
+    durable_downloaded = 0
     attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     service = broker.service
     running = False
@@ -252,6 +253,13 @@ def execute(broker, source_id, token, control=None):
 
     def cancelled():
         return bool(control is not None and control.cancelled())
+
+    def delivery_committed():
+        nonlocal durable_downloaded
+        # This private hook comes from the Core executor after a physically
+        # inspected delivery and durable backup_put; it is never invoked by a
+        # backup_items reader. Public delivery events remain checkpoint-gated.
+        durable_downloaded += 1
 
     def progress(event):
         nonlocal downloaded
@@ -268,6 +276,7 @@ def execute(broker, source_id, token, control=None):
         # running and the validated executor report on normal return. On a
         # crash or missing report, keep completion_unknown rather than
         # manufacturing a positive download from a 0.7 row/SHA/path.
+        downloaded = max(downloaded, durable_downloaded)
         terminal = _result(status, ok=ok, changed=downloaded, counts=counts or {})
         if completion_unknown:
             terminal.facts["completion_unknown"] = True
@@ -308,6 +317,7 @@ def execute(broker, source_id, token, control=None):
             service, logger=_LOG, credential_id=account.credential_id,
             confirmed_manifest=manifest, source_guard=guard, item_guard=guard_item,
             cancelled=cancelled, progress=progress,
+            on_delivery_committed=delivery_committed,
         )
         sources = report.get("sources", [])
         state = sources[0].get("status") if len(sources) == 1 else "unknown"
