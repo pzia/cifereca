@@ -40,6 +40,10 @@ def test_multiple_plain_routes_remain_pending_even_if_opaque_ids_match(media_for
         "qualification_reason": "eligible_count_not_one",
         "candidate_selection": "multiple_eligible_candidates",
         "candidate_rejection_counts": {},
+        "candidate_route_comparison": (
+            "same_route_distinct_urls" if media_format == "epub"
+            else "distinct_routes"
+        ),
     }
 
 
@@ -115,3 +119,16 @@ def test_observed_non_epub_flepub_pair_is_not_inferred_as_epub(media_format, rep
         descriptor(candidate=candidate), **_SCOPE, kdrm_runtime_ready=True,
     )
     assert accepted.startswith("kobo.runtime:")
+
+
+def test_k1_same_route_and_same_signed_url_is_still_not_auto_selected():
+    envelope = descriptor()
+    candidate = envelope["acquisition"]["candidates"][0]
+    envelope["acquisition"]["candidates"].append(dict(candidate))
+    diagnostic = {}
+    assert exact_kobo_offer_id(envelope, **_SCOPE, diagnostic=diagnostic) == ""
+    assert diagnostic["candidate_selection"] == "multiple_eligible_candidates"
+    assert diagnostic["candidate_route_comparison"] == "same_route_same_url"
+    assert diagnostic["eligible_candidate_count"] == 2
+    assert "https://" not in str(diagnostic)
+    assert "signature" not in str(diagnostic)
