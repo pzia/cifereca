@@ -520,6 +520,34 @@ def test_all_languages_mode_keeps_unknown_language_candidate():
     assert view._matches(ranked("Unknown"))
 
 
+def test_shared_filters_use_union_within_facets_and_intersection_between_them():
+    view = object.__new__(UxRecommendationsView)
+    view._score = SimpleNamespace(get_value=lambda: 0)
+    sources = ["paris", "bnf"]
+    languages = ["fr", "en"]
+    view._query_controls = SimpleNamespace(
+        filter_text=lambda: "roman",
+        selected_sources=lambda: tuple(sources),
+        selected_languages=lambda: tuple(languages),
+    )
+    paris = ranked("Roman parisien", provider="paris")
+    paris.item["language"] = "fr"
+    bnf = ranked("Roman anglais", provider="bnf")
+    bnf.item["language"] = "en"
+    unknown = ranked("Roman sans langue", provider="bnf")
+    other = ranked("Roman d’une autre source", provider="other")
+    other.item["language"] = "en"
+    unrelated = ranked("Poème", provider="bnf")
+    unrelated.item["language"] = "en"
+
+    candidates = [paris, bnf, unknown, other, unrelated]
+    assert [row for row in candidates if view._matches(row)] == [paris, bnf]
+    languages.clear()
+    assert [row for row in candidates if view._matches(row)] == [paris, bnf, unknown]
+    sources.clear()
+    assert [row for row in candidates if view._matches(row)] == [paris, bnf, unknown, other]
+
+
 def test_scheduled_first_map_does_not_refresh_disposed_view():
     widget = _FakeWidget()
     glib = _FakeGLib()
