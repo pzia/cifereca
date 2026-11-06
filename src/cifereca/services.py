@@ -1558,9 +1558,13 @@ class LibraryService:
         """Resolve an inventoried file in the explicit identity scope, no acquisition."""
         return library_projection.local_book_path(self, placement_id, identity_id=identity_id)
 
-    def local_placement_for_source(self, *, provider_id, credential_id, item_id, identity_id):
-        """Find only an acquisition-attested unique placement, never by title."""
-        return library_projection.local_placement_for_source(self, provider_id=provider_id, credential_id=credential_id, item_id=item_id, identity_id=identity_id)
+    def local_placement_for_source(self, *, provider_id, credential_id, item_id, identity_id,
+                                   account_id=None):
+        """Find an exact identity-scoped placement; optionally bind the borrower."""
+        return library_projection.local_placement_for_source(
+            self, provider_id=provider_id, credential_id=credential_id,
+            item_id=item_id, identity_id=identity_id, account_id=account_id,
+        )
 
     def local_placements_for_sources(self, identity_id):
         """One snapshot for search; only unique acquisition-attested placements."""
