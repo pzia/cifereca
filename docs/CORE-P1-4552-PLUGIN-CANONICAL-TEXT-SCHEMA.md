@@ -32,8 +32,11 @@ de la sémantique de la valeur, sans donner le moindre droit fournisseur.
 3. Valider et sélectionner le schéma de texte de **ce même** plugin/version/type/portée.
 4. Exécuter le consolidateur métier isolé, sans réseau ; valider l'entrée,
    la preuve exacte/héritée, puis la sortie `ValidatedDescriptiveResult`.
-5. Appliquer `validate_text_schema_result` sur cette sortie et le schéma
-   préalablement sélectionné. Cette fonction n'écrit ni cache ni SQLite.
+5. Appliquer `validate_text_schema_result(result, schema=..., selection=...)`
+   avec **le même** `ExplicitSelection` que les étapes 2–3. Le contrôle
+   compare également `scope` : un schéma d'une autre portée, même avec le
+   même `schema_id`, ne peut élargir les valeurs ou autoriser l'héritage.
+   Cette fonction n'écrit ni cache ni SQLite.
 
 **Règle de cache/invalidation** : le fournisseur du type DOIT changer
 `schema_id` dès qu'il change ses contraintes (énumération, taille,
