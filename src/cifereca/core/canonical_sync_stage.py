@@ -156,6 +156,7 @@ def observe_canonical_rights_in_sync(
     service: Any, account: Account, *,
     cancelled: Callable[[], bool] = lambda: False,
     snapshot_sink: Callable[[ProviderRightsSnapshot], None] | None = None,
+    retirement_lease: Any = None,
 ) -> dict[str, Any] | None:
     """Opt-in rights phase of the *existing* source Sync, no additional loop.
 
@@ -317,6 +318,19 @@ def observe_canonical_rights_in_sync(
         # Only Core's existing source Sync receives this in-memory lease.
         # No raw A payload or private delivery URL is stored in Sync facts.
         snapshot_sink(snapshot)
+
+    # #3196: after A is committed and canonical B has been independently
+    # re-verified, retire ONLY redundant old Kobo 0.7 archives whose current
+    # provider revision and completed B receipt match exactly. Reuse the
+    # acquisition lease of the already running Sync; no additional Vault
+    # read, GET, ADEPT, rights grant or automatic delivery is allowed.
+    # The ordinary read-only observer has no lease and remains unchanged.
+    if retirement_lease is not None and snapshot.scope.provider_id == "kobo":
+        from .legacy_backup_retirement_sync import retire_canonical_kobo_legacy_in_sync
+        retire_canonical_kobo_legacy_in_sync(
+            service.storage, snapshot, library_root=Path(service.library_dir()),
+            lease=retirement_lease, context_current=current_context,
+        )
     return {
         "status": snapshot.status, "observed": len(snapshot.rights),
         "attested_active": admitted,
