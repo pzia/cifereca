@@ -15,6 +15,10 @@ from ..plugin_api.lending_capabilities import (
     BorrowerOperationEvidence, assess_borrower_operation_eligibility,
     assess_lending_operation,
 )
+from ..plugin_api.lending_borrower_eligibility import (
+    BorrowerOperationEvidence as ExactEditionBorrowerEvidence,
+    assess_borrower_eligibility,
+)
 from ..providers.base import ProviderDescriptor
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_preview import (
@@ -38,6 +42,11 @@ class ObservedBorrowOffer:
     evidence: BorrowerOperationEvidence | None
     edition_id: str
     observed_at: int
+    # Separate, independently observed permission for this exact source
+    # collection and record_id. Account-wide loan capability/permission is
+    # never proof that a particular digital edition may be borrowed.
+    # Legacy callers without this fact must see zero options, not an error.
+    edition_evidence: ExactEditionBorrowerEvidence | None = None
     # A provider loan does not imply any transferable use/copy entitlement.
     transfer_state: str = "unknown"
 
@@ -58,6 +67,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
     item, evidence = row.notice, row.evidence
     if (type(item) is not SearchResult
             or type(evidence) is not BorrowerOperationEvidence
+            or type(row.edition_evidence) is not ExactEditionBorrowerEvidence
             or type(row.edition_id) is not str
             or type(row.observed_at) is not int
             or row.transfer_state not in ("unknown", "blocked")
@@ -161,6 +171,15 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             evidence=evidence,
         )
         if eligibility.state != "eligible_observed":
+            return None
+        # #4662: borrower-wide readiness can be true while *this book*
+        # is unavailable. Never qualify a different edition/collection,
+        # a catalogue-only CanLoan hint, or a generic branch permission.
+        exact_offer = assess_borrower_eligibility(
+            capability=capability, account=account, notice=item,
+            evidence=row.edition_evidence,
+        )
+        if exact_offer.status != "eligible":
             return None
         key = borrow_claim_key(account, item)
         if key is None or service.storage.metadata_get(key) is not None:

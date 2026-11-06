@@ -13,6 +13,9 @@ import pytest
 from cifereca.models import Account, SearchResult
 from cifereca.providers.base import ProviderSession, ProviderDescriptor, ProviderCapabilities
 from cifereca.plugin_api.lending_capabilities import BorrowerOperationEvidence
+from cifereca.plugin_api.lending_borrower_eligibility import (
+    BorrowerOperationEvidence as ExactEditionBorrowerEvidence,
+)
 from cifereca.core.borrow_action_scope import borrow_claim_key
 from cifereca.core.borrow_for_identity_live import ObservedBorrowOffer
 from tests.test_sync_state_contract import _service
@@ -69,8 +72,15 @@ def _candidate(credential="card-alex", collection="catalogue"):
         account_id="", branch="DILICOM", operation="loan.borrow",
         subscription="valid", remaining_loans=1, permission="allowed",
     )
+    exact = ExactEditionBorrowerEvidence(
+        identity_id="alex", provider_id="paris", credential_id=credential,
+        borrower_id="", docbase=notice.docbase, record_id=notice.record_id,
+        source_collection=notice.source_collection, operation="loan.borrow",
+        account_state="active", quota_state="available",
+        item_offer="available", permission="allowed",
+    )
     return ObservedBorrowOffer(
-        notice=notice, evidence=evidence,
+        notice=notice, evidence=evidence, edition_evidence=exact,
         edition_id="edition-1", observed_at=1000,
     )
 
@@ -414,3 +424,84 @@ def test_global_source_rebind_revokes_click_even_when_session_epoch_repeats(harn
     assert _click(service, original, old_token, row).status == "revoked"
     assert _click(service, fresh, fresh.options[0].option_id, row).status == "current"
     assert old_session.calls == replacement.calls == 0
+
+
+def test_account_wide_positive_without_exact_edition_attestation_is_not_a_choice(harness):
+    service, account, session = harness
+    base = _candidate()
+    # This account's subscription/quota are positive. The supplier has not
+    # attested any offer for the actual book: do NOT extrapolate.
+    assert _preview(service, replace(base, edition_evidence=None)).status == "none"
+    assert _preview(service, replace(base, edition_evidence=None)).options == ()
+    assert session.calls == 0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("identity_id", "default"),
+    ("provider_id", "other"),
+    ("credential_id", "card-different"),
+    ("borrower_id", "other-borrower"),
+    ("docbase", "SYRACUSE"),
+    ("record_id", "another-digital-edition"),
+    ("source_collection", "other-collection"),
+    ("operation", "loan.return"),
+    ("account_state", "renewal_pending"),
+    ("quota_state", "exhausted"),
+    ("item_offer", "unavailable"),
+    ("permission", "denied"),
+    ("account_state", "unknown"),
+    ("quota_state", "unknown"),
+    ("item_offer", "unknown"),
+    ("permission", "unknown"),
+])
+def test_foreign_denied_or_incomplete_exact_book_evidence_cannot_unlock_action(
+    harness, field, value,
+):
+    service, account, session = harness
+    base = _candidate()
+    changed = replace(base, edition_evidence=replace(
+        base.edition_evidence, **{field: value},
+    ))
+    assert _preview(service, changed).status == "none"
+    assert session.calls == 0
+
+
+def test_same_title_different_record_rejects_other_editions_attestation(harness):
+    service, account, session = harness
+    base = _candidate()
+    foreign_edition = replace(
+        base, notice=replace(
+            base.notice, record_id="edition-2-same-title", title="Fiction",
+        ),
+    )
+    assert _preview(service, foreign_edition).options == ()
+    assert _preview(service, base).status == "external"
+    assert session.calls == 0
+
+
+def test_old_selected_edition_permission_revoked_when_evidence_changes(harness):
+    service, account, session = harness
+    base = _candidate()
+    first = _preview(service, base)
+    assert len(first.options) == 1
+    selected = first.options[0].option_id
+    new_offer = replace(
+        base, edition_evidence=replace(
+            base.edition_evidence, item_offer="unknown",
+        ),
+    )
+    denied = _click(service, first, selected, new_offer)
+    assert denied.status == "revoked"
+    assert denied.executable is False
+    assert session.calls == 0
+
+
+def test_other_collection_exact_permission_not_reused_by_another_route(harness):
+    service, account, session = harness
+    base = _candidate(collection="collection-1")
+    foreign_collection = replace(
+        base, notice=replace(base.notice, source_collection="collection-2"),
+    )
+    assert _preview(service, foreign_collection).options == ()
+    assert _preview(service, base).status == "external"
+    assert session.calls == 0
