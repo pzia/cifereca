@@ -249,12 +249,14 @@ def _profile_feedback_weights(
     books still remain in the presence/exclusion projection; weighting only
     changes descriptive query and ranking inputs.
     """
-    if explicit_signals is None or len(explicit_signals) == 0:
+    if explicit_signals is None:
+        return [1] * len(books)
+    if type(explicit_signals) not in (tuple, list) or len(explicit_signals) > 2048:
+        raise ValueError("invalid_explicit_reading_signal_scope")
+    if not explicit_signals:
         return [1] * len(books)
     if (type(identity_id) is not str or not 0 < len(identity_id) <= 160
-            or not identity_id.isprintable()
-            or type(explicit_signals) not in (tuple, list)
-            or len(explicit_signals) > 2048):
+            or not identity_id.isprintable()):
         raise ValueError("invalid_explicit_reading_signal_scope")
     by_key: dict[str, int] = {}
     for signal in explicit_signals:
