@@ -174,3 +174,23 @@ def test_revision_changes_on_parser_version_branch_visibility_and_status():
 def test_invalid_timestamp_version_or_status_is_rejected(values):
     with pytest.raises(ValueError, match="invalid_source_notice_observation"):
         admit(**values)
+
+
+@pytest.mark.parametrize("url", [
+    "HTTPS://catalogue.example/epub?X-Amz-Signature=private",
+    "  hTtPs://catalogue.example/epub?ACCESS_TOKEN=private",
+    "//catalogue.example/epub?sig=private",
+    " \t//catalogue.example/epub?refresh_token=private",
+    "HTTP://user:password@catalogue.example/book",
+    "//user:password@catalogue.example/book",
+    " HTTPS://catalogue.example/book#private",
+])
+def test_source_url_security_is_scheme_insensitive_and_protocol_relative(url):
+    with pytest.raises(ValueError, match="invalid_source_notice_observation"):
+        admit(raw={"cover": url})
+
+
+def test_harmless_uppercase_or_protocol_relative_url_remains_raw():
+    raw = {"links": ["HTTPS://catalogue.example/book?lang=fr",
+                     "//catalogue.example/cover.jpg"]}
+    assert admit(raw=raw).fields_copy() == raw
