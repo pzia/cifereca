@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-reference", "recommendations"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "recommendations"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-reference", "recommendations"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -960,6 +960,50 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"New constellations plugin consumer: {file}",
+                    )
+
+    def test_reference_provider_product_includes_home_page_consumer(self):
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("provider-reference", audited)
+        self.assertIn("provider-reference", graph["home-page"])
+        for module in ("cifereca_reference.py", "cifereca_reference_fixtures.py"):
+            with self.subTest(module=module):
+                selected, reason = selector.select([
+                    ("M", f"src/plugins/provider-reference/{module}"),
+                ], ROOT)
+                self.assertEqual(selected, [
+                    "src/plugins/home-page", "src/plugins/provider-reference",
+                ])
+                self.assertIn("dependency closure", reason)
+
+    def test_reference_provider_keeps_exhaustive_fallbacks(self):
+        product = "src/plugins/provider-reference/cifereca_reference.py"
+        for changes in (
+            [("M", product), ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-reference/cifereca-plugin.json")],
+            [("M", "src/plugins/provider-reference/tests/conftest.py")],
+            [("D", product)],
+            [("R100", product)],
+        ):
+            with self.subTest(changes=changes):
+                selected, reason = selector.select(changes, ROOT)
+                self.assertEqual(selected, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_reference_provider_has_no_other_plugin_consumers(self):
+        tokens = ("provider-reference", "provider.reference", "cifereca_reference")
+        source_root = ROOT / "src/plugins"
+        for package in sorted(source_root.iterdir()):
+            if not package.is_dir() or package.name == "provider-reference":
+                continue
+            for file in sorted(package.rglob("*")):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in content for token in tokens),
+                        f"New explicit reference provider consumer: {file}",
                     )
 
     def git(self, *args):
