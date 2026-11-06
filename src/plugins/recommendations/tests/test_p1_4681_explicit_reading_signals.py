@@ -158,3 +158,35 @@ def test_public_rationale_counts_real_books_not_amplified_preference_weight():
     assert score > 0
     assert "auteur déjà présent (2 livres)" in reasons
     assert "3 livres" not in " ".join(reasons)
+
+
+def test_one_explicit_signal_does_not_weight_two_duplicate_core_library_keys():
+    first = _book("artifact:same", "alice", "Auteure A", "Histoire")
+    duplicate = {**first, "state": "remote_loan_active", "source": "entitlement"}
+    with pytest.raises(ValueError, match="ambiguous_explicit_reading_signal_target"):
+        build_profile(
+            [first, duplicate], identity_id="alice",
+            explicit_signals=[_signal("artifact:same", "liked")],
+        )
+    with pytest.raises(ValueError, match="ambiguous_explicit_reading_signal_target"):
+        build_profile(
+            [duplicate, first], identity_id="alice",
+            explicit_signals=[_signal("artifact:same", "not_interested")],
+        )
+
+
+def test_same_key_for_other_identity_is_not_an_ambiguous_feedback_target():
+    first = _book("artifact:same", "alice", "Auteure A", "Histoire")
+    other = _book("artifact:same", "bob", "Auteur Bob", "Voyage")
+    result = build_profile(
+        [other, first], identity_id="alice",
+        explicit_signals=[_signal("artifact:same", "liked")],
+    )
+    assert result.authors == {"auteure a": 2, "auteur bob": 1}
+    assert result.subjects == {"histoire": 2, "voyage": 1}
+
+
+def test_unselected_duplicated_keys_keep_legacy_neutral_projection():
+    first = _book("artifact:same", "alice", "Auteure A", "Histoire")
+    assert build_profile([first, dict(first)], identity_id="alice",
+                         explicit_signals=[]) == build_profile([first, dict(first)])
