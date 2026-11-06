@@ -48,6 +48,20 @@ def _view_mapped(view: Any) -> bool:
         return False
 
 
+def _loaded_notice_facts(item: SearchResult) -> tuple:
+    """Pin mutable loaded Search evidence independently from the live object.
+
+    The original object is reused by the standard Search detail. In-place
+    changes to nested metadata must not silently preserve a prior GET/action
+    request for a now-different offer. Only read existing local properties.
+    """
+    return (
+        item.id, item.record_id, item.docbase, item.source_provider,
+        item.source_credential, item.source_collection, item.medium,
+        item.format, item.content_type, item.metadata,
+    )
+
+
 def present_loaded_search_detail_in_place(
     window: Any, *, view: Any,
     context_sections: tuple, is_current: Callable[[], bool],
@@ -85,6 +99,9 @@ def present_loaded_search_detail_in_place(
         # adapters may reuse mutable dictionaries across SQLite projections;
         # aliasing would hide a changed edition or offer at worker/delivery.
         known_snapshot = deepcopy(known[1]) if known is not None else None
+        loaded_snapshot = (
+            deepcopy(_loaded_notice_facts(item)) if not known_source else None
+        )
         query = item.title if known_source else (
             getattr(window, "_last_search_query", "") or ""
         )
@@ -139,8 +156,16 @@ def present_loaded_search_detail_in_place(
         except Exception:
             return False
 
+    def loaded_facts_current() -> bool:
+        if known_source:
+            return True
+        try:
+            return _loaded_notice_facts(item) == loaded_snapshot
+        except Exception:
+            return False
+
     def work() -> ItemDetail:
-        if not source_current():
+        if not source_current() or not loaded_facts_current():
             from ..plugin_api import Cancelled
             raise Cancelled("Source de consultation périmée.")
         if known_source:
@@ -160,6 +185,7 @@ def present_loaded_search_detail_in_place(
                 or detail.source_provider != provider
                 or detail.source_credential != credential
                 or not source_current()
+                or not loaded_facts_current()
                 or not _view_mapped(view)
                 or not is_current()):
             return
