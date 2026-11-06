@@ -51,8 +51,11 @@ D1/W2/W4 reste ouvert.
 Le récupérateur local `_recover_local_remnants` préserve également le
 SHA/taille **même absents** d'un `reconcile_required/conflict` : le fait de
 retrouver un seul fichier candidat lors du cycle suivant ne remplit plus
-l'empreinte manquante. Les observations provisoires d'acquisitions
-effectivement interrompues restent distinctes, en attente de W2.
+l'empreinte manquante. W2 est désormais aligné : même un ancien
+`acquiring` ou un GET/ADEPT à réponse illisible ne peut plus inventer
+`sha256/size` à partir du candidat ; seules les anciennes valeurs
+sont préservées (voir
+`CORE-P0-3196-W2-INTERRUPTED-KOBO-CANDIDATE-IS-NOT-DELIVERY.md`).
 
 Tests : `tests/test_kobo_backup_integrity_baseline.py`
 (SHA absent, corrompu, taille absente ou nulle ; pas de lecture
