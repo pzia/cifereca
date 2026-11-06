@@ -82,11 +82,12 @@ def test_none_input_does_not_touch_cache_or_logger(service):
 def test_failed_unlink_keeps_input_cache_and_parent(service, monkeypatch):
     instance, forget, logger = service
     path = staged(instance)
-    original = Path.unlink
+    original = os.unlink
     def refused(received, *args, **kwargs):
-        if received == path: raise PermissionError('synthetic denied')
+        if received == path.name and kwargs.get('dir_fd') is not None:
+            raise PermissionError('synthetic denied')
         return original(received, *args, **kwargs)
-    monkeypatch.setattr(Path, 'unlink', refused)
+    monkeypatch.setattr(os, 'unlink', refused)
     instance._cleanup_acsm_after_success(path, loan_id='loan-1')
     assert path.is_file() and path.parent.is_dir()
     forget.assert_not_called(); logger.info.assert_not_called(); logger.warning.assert_called_once()
@@ -322,3 +323,50 @@ def test_retention_does_not_forget_through_rebound_root_after_unlink(
     assert not (held / owned.relative_to(root)).exists()
     assert external.read_bytes() == b'outside'
     forget.assert_not_called()
+
+
+def test_success_cleanup_refuses_symlink_leaf_without_touching_target(
+        service, tmp_path):
+    instance, forget, logger = service
+    parent = instance._acquisition_work_dir('alice', 'paris', 'loan-1')
+    target = tmp_path / 'outside.acsm'
+    target.write_bytes(b'foreign')
+    link = parent / 'first.acsm'
+    link.symlink_to(target)
+    instance._cleanup_acsm_after_success(link, loan_id='loan-1')
+    assert link.is_symlink()
+    assert target.read_bytes() == b'foreign'
+    forget.assert_not_called()
+    logger.warning.assert_called_once()
+
+
+def test_success_cleanup_refuses_rebound_parent_before_unlink(
+        service, tmp_path, monkeypatch):
+    instance, forget, logger = service
+    path = staged(instance)
+    parent = path.parent
+    relocated = parent.with_name('held-loan')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    external = outside / path.name
+    external.write_bytes(b'foreign')
+    original = os.stat
+    swapped = []
+
+    def switch_at_stat(target, *args, **kwargs):
+        # After opening the trusted parent and stat'ing its leaf, the final
+        # parent pathname check must detect a replacement.
+        if target == parent and kwargs.get('follow_symlinks') is False:
+            if not swapped:
+                parent.rename(relocated)
+                parent.symlink_to(outside, target_is_directory=True)
+                swapped.append(True)
+        return original(target, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'stat', switch_at_stat)
+    instance._cleanup_acsm_after_success(path, loan_id='loan-1')
+    assert swapped
+    assert (relocated / path.name).exists()
+    assert external.read_bytes() == b'foreign'
+    forget.assert_not_called()
+    logger.warning.assert_called_once()
