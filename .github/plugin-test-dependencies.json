@@ -12,6 +12,7 @@
     "provider-bnf-catalogue",
     "provider-gallica",
     "provider-gutenberg",
+    "provider-reference",
     "recommendations"
   ],
   "dependencies": {
