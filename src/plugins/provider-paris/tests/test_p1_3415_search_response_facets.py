@@ -225,6 +225,69 @@ def test_untrusted_nested_shapes_do_not_imply_facet_values_or_server_filtering()
     assert project_search_response_facets({"d": {"FacetCollectionList": [None] * 65}}, "CATALOGUE", 0) == []
 
 
+@pytest.mark.parametrize("scenario", ("CATALOGUE", "EBOOKS"))
+def test_age_like_syracuse_facet_is_page_scope_not_book_age(scenario):
+    """#4530: a youth facet describes a response page, not an exact edition."""
+    response = _response(scenario, _facet(
+        field="Audience", label="Public / âge",
+        values=[
+            {"Label": "Dès 8 ans", "Count": 3, "IsSelected": False},
+            {"Label": "13-99", "Count": 2, "IsSelected": True},
+        ],
+    ))
+    # Subject and category labels are bibliographic facts, not numeric age.
+    response["d"]["Results"][0]["Resource"]["Subj"] = ["Jeunesse", "Dès 8 ans"]
+    response["d"]["Results"][0]["Resource"]["Tags"] = ["13-99"]
+    client = _client(lambda _request: httpx.Response(200, json=response))
+    try:
+        rows = client.search(
+            "synthetic", scope="digital" if scenario == "EBOOKS" else "physical",
+        )
+        assert len(rows) == 1
+        metadata = rows[0].metadata
+        for key in ("recommended_age", "youth_age_ranges",
+                    "attested_age_ranges", "attested_age_status",
+                    "public_age_range_label", "search_response_facets"):
+            assert key not in metadata, key
+        descriptors = client.last_search_response_facets
+        assert len(descriptors) == 1
+        facet = descriptors[0]
+        assert facet["field"] == "Audience"
+        assert facet["scope"] == "response_page_only"
+        assert facet["filter_capability"] == "unverified"
+        assert facet["values_schema"] == "label_count_selected_v1"
+        assert [v["label"] for v in facet["values"]] == [
+            "Dès 8 ans", "13-99",
+        ]
+        assert facet["page"] == 0 and facet["scenario"] == scenario
+    finally:
+        client.close()
+
+
+def test_age_like_syracuse_facet_is_not_carried_to_following_query():
+    first = _response("EBOOKS", _facet(
+        field="Audience", label="Âge", values=[
+            {"Label": "12-15", "Count": 7, "IsSelected": False},
+        ],
+    ))
+    second = _response("EBOOKS")
+    call_count = 0
+
+    def respond(_request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(200, json=first if call_count == 1 else second)
+
+    client = _client(respond)
+    try:
+        assert len(client.search("first", scope="digital")) == 1
+        assert len(client.last_search_response_facets) == 1
+        assert len(client.search("second", scope="digital")) == 1
+        assert client.last_search_response_facets == []
+    finally:
+        client.close()
+
+
 def test_response_with_no_facets_is_not_false_zero_server_facet_claim():
     client = _client(lambda request: httpx.Response(200, json=_response("CATALOGUE")))
     try:
