@@ -277,3 +277,31 @@ def test_same_account_different_collections_also_disambiguate_without_choice_by_
     assert len({x.label for x in direct.options}) == 2
     assert len({x.option_id for x in direct.options}) == 2
     assert direct.requires_explicit_choice is True
+
+
+def test_option_id_is_revoked_by_context_epoch_even_after_profile_aba():
+    from dataclasses import replace
+
+    initial = witness(identity="alice", credential="card-A")
+    before = project(initial, requester="bob", epoch=4)
+    assert len(before.options) == 1
+
+    # A→B→A may restore the exact same account, edition and source epoch.
+    # A fresh Core context must still produce a different opaque button id.
+    current = replace(initial, service_context_epoch=5)
+    after = project(current, requester="bob", epoch=5)
+    assert len(after.options) == 1
+    assert before.options[0]._source_coordinates == after.options[0]._source_coordinates
+    assert before.options[0].option_id != after.options[0].option_id
+    assert before.options[0].executable is False
+    assert after.options[0].executable is False
+
+    # Old witness cannot enter the newer preview even with identical source.
+    stale = project(initial, requester="bob", epoch=5)
+    assert stale.options == () and stale.rejected_count == 1
+
+
+def test_option_id_remains_deterministic_within_one_context_epoch():
+    one = project(witness(), requester="bob", epoch=4).options[0]
+    two = project(witness(), requester="bob", epoch=4).options[0]
+    assert one.option_id == two.option_id
