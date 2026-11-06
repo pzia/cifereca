@@ -775,3 +775,136 @@ def test_retention_audit_reports_symlink_without_following_outside(tmp_path):
         assert journal.is_symlink()
     finally:
         service.storage.close()
+
+
+def test_completed_intent_compacts_only_sql_and_is_idempotent(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        compact_committed_derived_intent, _pending_intent_key,
+    )
+    service, source, _ = _library(tmp_path)
+    try:
+        child = ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        reviewed = review_pending_derived_receipts(service, identity_id="id1")
+        assert len(reviewed) == 1
+        assert reviewed[0]["status"] == "already_committed"
+        journal = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        original = journal.read_bytes()
+        key = _pending_intent_key(journal)
+        assert service.storage.metadata_get(key) == reviewed[0]["sha256"]
+        kwargs = dict(
+            identity_id="id1",
+            receipt_cursor=reviewed[0]["cursor"],
+            approved_receipt_sha256=reviewed[0]["sha256"],
+        )
+        result = compact_committed_derived_intent(service, **kwargs)
+        assert result["status"] == "compacted"
+        assert result["receipt_retained"] and result["canonical_origin_retained"]
+        assert result["intent_removed"]
+        assert service.storage.metadata_get(key) is None
+        assert journal.read_bytes() == original
+        assert review_pending_derived_receipts(
+            service, identity_id="id1",
+        )[0]["status"] == "already_committed"
+        assert compact_committed_derived_intent(
+            service, **kwargs,
+        )["status"] == "already_compacted"
+        assert len(service.storage.artifact_variants(
+            artifact_id=child.artifact_id,
+        )) == 1
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute(
+                "SELECT COUNT(*) FROM origin_links WHERE artifact_id=? "
+                "AND origin_kind='derived'",
+                (child.artifact_id,),
+            ).fetchone()[0] == 1
+    finally:
+        service.storage.close()
+
+
+def test_compaction_refuses_pending_or_wrong_approval_without_db_mutation(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        compact_committed_derived_intent, _pending_intent_key,
+    )
+    service, source, _ = _library(tmp_path)
+    try:
+        _failed_publication(service, source)
+        reviewed = review_pending_derived_receipts(service, identity_id="id1")
+        journal = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        key = _pending_intent_key(journal)
+        original_intent = service.storage.metadata_get(key)
+        assert reviewed[0]["status"] == "recoverable"
+        for digest in (reviewed[0]["sha256"], "0" * 64):
+            with pytest.raises(
+                ValueError, match="derived_compaction_unattested_receipt",
+            ):
+                compact_committed_derived_intent(
+                    service, identity_id="id1",
+                    receipt_cursor=reviewed[0]["cursor"],
+                    approved_receipt_sha256=digest,
+                )
+        assert journal.exists()
+        assert service.storage.metadata_get(key) == original_intent
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
+
+
+def test_compaction_refuses_missing_canonical_origin_inside_writer_lock(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core import derived_variant_recovery as recovery
+    service, source, _ = _library(tmp_path)
+    try:
+        ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        reviewed = recovery.review_pending_derived_receipts(
+            service, identity_id="id1",
+        )
+        journal = next((
+            tmp_path / "library" / ".cifereca-staging" / "variants"
+        ).glob("pending-*.json"))
+        key = recovery._pending_intent_key(journal)
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("DELETE FROM origin_links WHERE origin_kind='derived'")
+        with pytest.raises(
+            ValueError, match="derived_compaction_unattested_receipt",
+        ):
+            recovery.compact_committed_derived_intent(
+                service, identity_id="id1",
+                receipt_cursor=reviewed[0]["cursor"],
+                approved_receipt_sha256=reviewed[0]["sha256"],
+            )
+        assert service.storage.metadata_get(key) == reviewed[0]["sha256"]
+        assert journal.exists()
+    finally:
+        service.storage.close()
+
+
+def test_compaction_rejects_other_active_profile(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        compact_committed_derived_intent,
+    )
+    service, source, _ = _library(tmp_path)
+    try:
+        ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        reviewed = review_pending_derived_receipts(service, identity_id="id1")
+        service.current_identity.identity_id = "id2"
+        with pytest.raises(
+            ValueError, match="derived_recovery_active_identity_mismatch",
+        ):
+            compact_committed_derived_intent(
+                service, identity_id="id1",
+                receipt_cursor=reviewed[0]["cursor"],
+                approved_receipt_sha256=reviewed[0]["sha256"],
+            )
+    finally:
+        service.storage.close()
