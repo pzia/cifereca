@@ -1043,6 +1043,9 @@ class DetailPanel(Gtk.Box):
             group.add(row)
         for holding in detail.holdings:
             row = Adw.ActionRow()
+            # Library names, sections, and call numbers are plain provider text.
+            # ActionRow otherwise interprets ampersands and angle brackets as markup.
+            row.set_use_markup(False)
             row.set_title(holding.library or holding.location or "Exemplaire")
             pieces = [holding.status_label or holding.status]
             if holding.section:
