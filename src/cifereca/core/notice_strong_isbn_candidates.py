@@ -49,7 +49,8 @@ def _reference(value: object) -> bool:
     return (type(value) is str and 0 < len(value) <= _MAX_REF
             and value == value.strip() and value.isprintable()
             and all(ch.isascii() and (ch.isalnum() or ch in "._:-/")
-                    for ch in value))
+                    for ch in value)
+            and all(part not in (".", "..") for part in value.split("/")))
 
 
 def _isbn13(namespace: str, raw: str) -> str:
