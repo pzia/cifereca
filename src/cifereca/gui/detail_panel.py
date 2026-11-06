@@ -939,7 +939,10 @@ class DetailPanel(Gtk.Box):
         group.add(box)
         self._append_content(group)
 
-    def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
+    def show_item_detail(
+        self, item: SearchResult, detail: ItemDetail, *,
+        borrow_preview=None,
+    ) -> None:
         medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
@@ -953,7 +956,7 @@ class DetailPanel(Gtk.Box):
             paris_catalogue_availability(item, availability)
         )
         usage = _commercial_search_usage(item, self.window.service)
-        self.show_presentation(book_detail_presentation(
+        presentation = book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
             thumbnail=detail.thumbnail_url or item.thumbnail_url,
@@ -978,7 +981,26 @@ class DetailPanel(Gtk.Box):
             ],
             links=document_links(result_row(item)),
             metadata=item.metadata,
-        ), description=getattr(detail, "description", None) or item.description)
+        )
+        # #4662: a borrower preview is not an actionable loan affordance.
+        # The same neutral DetailSection can be rendered by the standard
+        # Search detail and a recommendations master/detail presentation.
+        # No implicit eligibility lookups or provider GETs on this path.
+        if borrow_preview is not None:
+            from dataclasses import replace
+            from ..core.borrow_for_identity_detail import (
+                cross_profile_borrow_detail_section,
+            )
+            section = cross_profile_borrow_detail_section(borrow_preview)
+            if section is not None:
+                presentation = replace(
+                    presentation,
+                    sections=presentation.sections + (section,),
+                )
+        self.show_presentation(
+            presentation,
+            description=getattr(detail, "description", None) or item.description,
+        )
         direct_download = (
             False if (item.source_provider == "numilog-catalog"
                       or (item.source_provider == "numilog"
