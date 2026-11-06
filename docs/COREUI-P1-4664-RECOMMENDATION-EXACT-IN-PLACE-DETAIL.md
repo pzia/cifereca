@@ -53,6 +53,12 @@ v2 exact, toujours actif et lié au compte/identité sélectionnés**.
 d'objet Search fourni par Recommandations. Cette preuve ne constitue toujours
 pas un droit de prêt ni d'acquisition.
 
+La preuve `known-v2` du clic est copiée indépendamment, y compris les
+métadonnées imbriquées, pour qu'un adaptateur SQLite qui réutilise un
+dictionnaire mutable ne masque pas une modification en place de l'édition,
+de l'offre ou de sa provenance. Le Core compare cette preuve figée à
+la lecture courante avant le GET et avant la publication des actions.
+
 L'activation est un clic utilisateur explicite. Avant le worker et avant
 l'affichage, Core recroise le miroir, l'édition, les champs de source et les
 révisions capturées ; une notice modifiée, retirée ou devenue stale est
