@@ -75,12 +75,35 @@ def retire_canonical_kobo_legacy_in_sync(
                 ids = rights_ids[offset:offset + 200]
                 placeholders = ",".join("?" for _ in ids)
                 records = db.execute(
-                    "SELECT item_id,revision_id FROM backup_items "
-                    "WHERE provider_id='kobo' AND identity_id=? "
-                    "AND credential_id=? AND account_id=? AND status='complete' "
-                    f"AND item_id IN ({placeholders})",
+                    "SELECT b.item_id,b.revision_id FROM backup_items AS b "
+                    "WHERE b.provider_id='kobo' AND b.identity_id=? "
+                    "AND b.credential_id=? AND b.account_id=? "
+                    "AND b.status='complete' "
+                    f"AND b.item_id IN ({placeholders}) "
+                    # Keep the bounded 4-row physical verifier from being
+                    # starved by hundreds of provider-positive old downloads
+                    # that still have ONLY a v0.7 placeholder, not published
+                    # canonical B. This SQL join is merely a candidate
+                    # prefilter: the full completed receipt, SHA/inode,
+                    # uniqueness and source epoch are ALL checked again
+                    # inside the per-row BEGIN IMMEDIATE writer.
+                    "AND EXISTS (SELECT 1 FROM source_references AS s "
+                    "JOIN origin_links AS o "
+                    "ON o.source_reference_id=s.source_reference_id "
+                    "AND o.origin_kind='provider' "
+                    "AND o.identity_id=s.identity_id "
+                    "JOIN placements AS p ON p.artifact_id=o.artifact_id "
+                    "AND p.identity_id=s.identity_id AND p.state='present' "
+                    "AND p.provider_id IS NULL AND p.source_item_id IS NULL "
+                    "WHERE s.provider_id='kobo' "
+                    "AND s.credential_id=b.credential_id "
+                    "AND s.account_id=b.account_id "
+                    "AND s.identity_id=b.identity_id "
+                    "AND s.branch_id=? "
+                    "AND s.edition_id=b.item_id AND s.reference_kind='purchase' "
+                    "AND s.state='active' AND s.evidence_kind='provider_response')",
                     (snapshot.scope.identity_id, snapshot.scope.credential_id,
-                     snapshot.scope.account_id, *ids),
+                     snapshot.scope.account_id, *ids, snapshot.branch),
                 ).fetchall()
                 for item, revision in records:
                     observed = matched.get(item)
