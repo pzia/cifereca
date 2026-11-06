@@ -1756,6 +1756,9 @@ class UxRecommendationsView:
             open_loaded = getattr(self.host, "open_loaded_search_notice", None)
             can_cached = getattr(self.host, "can_open_known_search_notice", None)
             open_cached = getattr(self.host, "open_known_search_notice", None)
+            in_place = getattr(
+                self.host, "present_loaded_search_detail_in_place", None,
+            )
             if ((callable(can_open) and callable(open_loaded))
                     or (callable(can_cached) and callable(open_cached))):
                 for index, variant in enumerate(visible_exact, page_start + 1):
@@ -1810,6 +1813,51 @@ class UxRecommendationsView:
                         + f" · {self._display_source(variant.source_provider)}",
                         "document-open-symbolic", callback=open_exact,
                     ))
+                    # #4664: exact loaded Search actions may now be displayed
+                    # in this very panel on an explicit click. Core retrieves
+                    # the SearchResult and ItemDetail and builds all provider
+                    # actions; recommendation scores cannot grant rights.
+                    if mode == "loaded" and callable(in_place):
+                        def in_place_current():
+                            return (
+                                not getattr(self, "_disposed", False)
+                                and self._generation == generation_at_selection
+                                and self._detail_selection_generation
+                                    == detail_generation_at_selection
+                                and self._llm_selection_key == key_at_selection
+                                and self._ranked_by_key.get(key_at_selection)
+                                    is ranked_at_selection
+                                and self.selected_identity_id()
+                                    == identity_at_selection
+                                and self._exact_notice_state is state
+                                and state["page"] == page_index
+                            )
+
+                        def show_in_place(
+                            coordinates=coordinates, presenter=in_place,
+                            context_sections=tuple(sections),
+                            still_selected=in_place_current,
+                        ):
+                            if not still_selected():
+                                return False
+                            try:
+                                return presenter(
+                                    view=self._master,
+                                    context_sections=context_sections,
+                                    is_current=still_selected,
+                                    **coordinates,
+                                ) is True
+                            except Exception:
+                                return False
+
+                        actions.append(UiBookDetailAction(
+                            f"recommendation.loaded-in-place.{index}",
+                            (f"Consulter disponibilités et actions de la notice "
+                             f"{index} ici · "
+                             f"{self._display_source(variant.source_provider)}"),
+                            "document-open-symbolic",
+                            callback=show_in_place,
+                        ))
             # Pure-local pagination of exact source choices. A callback from
             # the previous page, a replaced ranking or another profile cannot
             # change the active detail. Core remains the sole action resolver.

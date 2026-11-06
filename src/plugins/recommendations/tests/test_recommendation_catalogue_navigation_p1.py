@@ -751,3 +751,87 @@ def test_known_cache_callback_refuses_stale_ranking_and_prefers_loaded_notice():
     )
     assert loaded.callback() is False
     assert calls == ["loaded"] and searches == []
+
+
+def test_loaded_exact_notice_offers_in_place_core_actions_without_navigation():
+    view, identity, searches, _, row = _view((_variant(),))
+    presentations, calls, navigations = [], [], []
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **_: True,
+        open_loaded_search_notice=lambda **kw: navigations.append(kw) or True,
+        present_loaded_search_detail_in_place=lambda **kw:
+            calls.append(kw) or True,
+    )
+    view._master.show_detail = presentations.append
+    view._selected_row(row)
+    actions = [
+        a for a in presentations[-1].actions
+        if a.id.startswith("recommendation.loaded-in-place.")
+    ]
+    assert len(actions) == 1
+    assert not calls and not navigations and not searches
+    assert "ici" in actions[0].title
+    assert all(secret not in actions[0].title for secret in
+               ("vault-1", "book-1", "card-A"))
+    assert actions[0].callback() is True
+    assert len(calls) == 1
+    assert calls[0]["view"] is view._master
+    assert calls[0]["provider"] == "kobo"
+    assert calls[0]["credential"] == "vault-1"
+    assert calls[0]["identity_id"] == "reader-1"
+    assert calls[0]["is_current"]() is True
+    assert any(s.id == "recommendation" for s in calls[0]["context_sections"])
+    assert not navigations and not searches
+
+    # Even the Core's queued delivery callback gets this revocation closure.
+    identity[0] = "reader-2"
+    assert calls[0]["is_current"]() is False
+    assert actions[0].callback() is False
+    assert len(calls) == 1
+
+
+def test_only_loaded_exact_notice_offers_in_place_route_not_known_fallback():
+    view, identity, searches, _, row = _view((_variant(),))
+    presentations, calls = [], []
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **_: False,
+        open_loaded_search_notice=lambda **_: True,
+        can_open_known_search_notice=lambda **_: True,
+        open_known_search_notice=lambda **_: True,
+        present_loaded_search_detail_in_place=lambda **kw:
+            calls.append(kw) or True,
+    )
+    view._master.show_detail = presentations.append
+    view._selected_row(row)
+    assert not [
+        a for a in presentations[-1].actions
+        if a.id.startswith("recommendation.loaded-in-place.")
+    ]
+    assert len([
+        a for a in presentations[-1].actions
+        if a.id.startswith("recommendation.known-notice.")
+    ]) == 1
+    assert calls == []
+
+
+def test_in_place_rejects_stale_ranking_generation_and_new_selection():
+    view, identity, searches, _, row = _view((_variant(),))
+    presentations, calls = [], []
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **_: True,
+        open_loaded_search_notice=lambda **_: True,
+        present_loaded_search_detail_in_place=lambda **kw:
+            calls.append(kw) or True,
+    )
+    view._master.show_detail = presentations.append
+    view._selected_row(row)
+    old = next(a.callback for a in presentations[-1].actions
+               if a.id.startswith("recommendation.loaded-in-place."))
+    view._selected_row(None)
+    assert old() is False
+    view._selected_row(row)
+    current = next(a.callback for a in presentations[-1].actions
+                   if a.id.startswith("recommendation.loaded-in-place."))
+    view._generation += 1
+    assert current() is False
+    assert not calls
