@@ -9,7 +9,8 @@ No calls to providers, Storage, GUI, network or mutation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import dataclass, field, replace
 from hashlib import sha256
 import json
 from typing import Any
@@ -60,6 +61,8 @@ class BorrowForIdentityOption:
     # Internal exact coordinates must NOT be rendered as a user-visible label.
     # Still no authority for a callback: re-resolve all facts in fresh Core.
     _source_coordinates: tuple[str, ...] = field(repr=False)
+    # A user-facing label only, never a credential/barcode/account identifier.
+    account_label: str = "Compte bibliothèque"
     executable: bool = False
 
 
@@ -86,6 +89,17 @@ def _name(value: object) -> bool:
     return (type(value) is str and 0 < len(value) <= _MAX_NAME
             and value.isprintable() and value == value.strip()
             and "\x00" not in value)
+
+
+def _display_account_label(value: object) -> str:
+    """Admit a short named library, not a private login, card or signed URL."""
+    if not _name(value):
+        return "Compte bibliothèque"
+    if ("@" in value or "/" in value or "\\" in value
+            or any(len(part) >= 5 and part.isdigit()
+                   for part in value.replace("-", " ").split())):
+        return "Compte bibliothèque"
+    return value
 
 
 def _eligible(w: BorrowForIdentityWitness, *, now: int,
@@ -184,6 +198,7 @@ def preview_borrow_for_identity(
             edition_id=w.edition_id, label=label,
             transfer_state=w.transfer_state,
             _source_coordinates=coordinates,
+            account_label=_display_account_label(a.display_name),
         )
         existing = options.get(coordinates)
         if existing is not None:
@@ -196,6 +211,25 @@ def preview_borrow_for_identity(
     ordered = tuple(sorted(options.values(), key=lambda x: (
         x.borrowing_identity_id, x.provider_id, x.lender_name, x.option_id,
     )))
+    # A lender can legitimately have two distinct accounts or source routes.
+    # Never show indistinguishable choices or leak an account identifier.
+    repeated = Counter(row.label for row in ordered)
+    names = Counter((row.label, row.account_label) for row in ordered)
+    ordinal: dict[str, int] = {}
+    distinct = []
+    for row in ordered:
+        if repeated[row.label] == 1:
+            distinct.append(row)
+            continue
+        ordinal[row.label] = ordinal.get(row.label, 0) + 1
+        suffix = (
+            f" · {row.account_label}"
+            if names[(row.label, row.account_label)] == 1 else
+            f" · {row.account_label} · choix "
+            f"{ordinal[row.label]}/{repeated[row.label]}"
+        )
+        distinct.append(replace(row, label=row.label + suffix))
+    ordered = tuple(distinct)
     if not ordered:
         status, label, requires_choice = "none", "Emprunt non vérifié", False
     elif len(ordered) == 1:
