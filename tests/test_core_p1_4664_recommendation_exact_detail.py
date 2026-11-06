@@ -3,6 +3,7 @@
 The host gets only exact source coordinates and a selection lease. Fixtures
 exercise the actual Core port without GTK or network; no provider POST.
 """
+from dataclasses import replace
 from types import SimpleNamespace as NS
 
 import pytest
@@ -269,3 +270,41 @@ def test_unknown_source_mode_is_not_truthy_fallback(monkeypatch):
         f.window, **{**f.kwargs, "known_source": 1},
     )
     assert f.calls == [] and f.scheduled == []
+
+
+@pytest.mark.parametrize("known_source", [False, True], ids=["loaded", "known-v2"])
+@pytest.mark.parametrize("field,value", [
+    ("record_id", "foreign-record"),
+    ("docbase", "FOREIGN"),
+    ("source_provider", "other-provider"),
+    ("source_credential", "other-card"),
+])
+def test_cross_source_holdings_response_never_publishes_actions(
+    monkeypatch, known_source, field, value,
+):
+    f = _fixture(monkeypatch)
+    if known_source:
+        monkeypatch.setattr(
+            port, "_known_item",
+            lambda window, coords: (f.item, {"revision": "v1"}),
+        )
+        f.kwargs["known_source"] = True
+    work, success, failure = _start(f)
+    assert work() is f.detail
+    success(replace(f.detail, **{field: value}))
+    assert f.outputs == []
+    assert len(f.calls) == 1  # one explicit lookup, no action
+
+
+def test_matching_known_v2_holdings_preserves_in_place_actions(monkeypatch):
+    f = _fixture(monkeypatch)
+    monkeypatch.setattr(
+        port, "_known_item",
+        lambda window, coords: (f.item, {"revision": "v1"}),
+    )
+    f.kwargs["known_source"] = True
+    work, success, failure = _start(f)
+    success(work())
+    assert len(f.outputs) == 1
+    assert f.outputs[0][0] == (f.item, f.detail)
+
