@@ -209,7 +209,8 @@ def _initial_scope(loan, identity_id: str, account_id: str) -> dict | None:
 
 
 def remember_initial(path: Path, directory: Path, loan, identity_id: str,
-                     account_id: str, *, now=None) -> bool:
+                     account_id: str, *, now=None,
+                     admission_current=None) -> bool:
     """Remember validated first-offer ACSM bytes, never their bearer URL.
 
     An initial receipt is not a new loan or evidence of ADEPT fulfillment.
@@ -218,10 +219,16 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
     """
     now = time.time() if now is None else now
     try:
+        if admission_current is not None and (
+                not callable(admission_current)
+                or admission_current() is not True):
+            return False
         owner = _initial_scope(loan, identity_id, account_id)
         digest = _initial_digest(path, directory, now)
         if (owner is None or digest is None or not _active(loan, now)
-                or directory.is_symlink() or path.parent != directory):
+                or directory.is_symlink() or path.parent != directory
+                or (admission_current is not None
+                    and admission_current() is not True)):
             return False
         row = dict(schema=1, scope=owner, file=path.name, sha256=digest,
                    created_at=now)
@@ -233,6 +240,8 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
                 json.dump(row, stream, ensure_ascii=False)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if admission_current is not None and admission_current() is not True:
+                return False
             os.replace(temporary, directory / INITIAL_MANIFEST)
             parent_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY
                                 | os.O_NOFOLLOW)
