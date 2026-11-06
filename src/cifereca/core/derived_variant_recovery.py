@@ -472,3 +472,63 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
     if has_more and out:
         out[-1]["next_cursor"] = out[-1]["cursor"]
     return tuple(out)
+
+
+def audit_derived_receipt_retention(
+    service: Any, *, identity_id: str, after_cursor: str = "",
+) -> dict[str, Any]:
+    """Read-only, page-scoped inventory for future supervised consolidation.
+
+    Do not treat "already_committed" as permission to unlink: the receipt,
+    its SQL intent and exact derived OriginLink remain authority evidence.
+    This method never performs filesystem or SQLite mutations.
+    """
+    entries = review_pending_derived_receipts(
+        service, identity_id=identity_id, after_cursor=after_cursor,
+        commit=False,
+    )
+    statuses = {
+        "already_committed": 0,
+        "recoverable": 0,
+        "manual_review": 0,
+        "approval_required": 0,
+    }
+    total_bytes = 0
+    unknown_bytes = 0
+    config = getattr(service, "config", None)
+    raw_root = config.get("library.directory", None) if config is not None else None
+    identity = service.storage.identity_get(identity_id)
+    directory_name = identity.get("directory_name") if isinstance(identity, dict) else None
+    if not isinstance(raw_root, str) or not isinstance(directory_name, str):
+        raise ValueError("derived_recovery_invalid_scope")
+    root = Path(os.path.expandvars(raw_root)).expanduser() / directory_name
+    for entry in entries:
+        status = entry["status"]
+        statuses[status] = statuses.get(status, 0) + 1
+        try:
+            cursor = entry["cursor"]
+            if (not isinstance(cursor, str) or not cursor
+                    or Path(cursor).is_absolute() or ".." in Path(cursor).parts):
+                raise ValueError("derived_recovery_cursor_invalid")
+            receipt = root / cursor
+            fd = _open_under_root_nofollow(root, receipt)
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError("derived_receipt_not_regular")
+                total_bytes += info.st_size
+            finally:
+                os.close(fd)
+        except (OSError, ValueError):
+            unknown_bytes += 1
+    next_cursor = entries[-1].get("next_cursor") if entries else None
+    return {
+        "identity_id": identity_id,
+        "count": len(entries),
+        "statuses": statuses,
+        "receipt_bytes_observed": total_bytes,
+        "unknown_size_count": unknown_bytes,
+        "next_cursor": next_cursor,
+        "has_more": next_cursor is not None,
+        "destructive_cleanup_allowed": False,
+    }
