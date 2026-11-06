@@ -107,17 +107,22 @@ def test_standard_search_detail_has_opt_in_no_eager_provider_observation():
         / "src/cifereca/gui/detail_panel.py"
     ).read_text(encoding="utf-8")
     tree = ast.parse(source)
-    detail = next(
-        item for item in ast.walk(tree)
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and item.name == "show_item_detail"
+    existing = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "show_item_detail"
     )
-    assert "borrow_preview" in [a.arg for a in detail.args.kwonlyargs]
+    assert existing.args.kwonlyargs == []  # Stable public GUI facade.
+    helper = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "show_cross_profile_borrow_detail"
+    )
     names = [
-        node.func.id for node in ast.walk(detail)
+        node.func.id for node in ast.walk(helper)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     ]
     assert "cross_profile_borrow_detail_section" in names
-    # No separately named remote inventory query is introduced for rendering.
     assert "holdings" not in names
     assert "borrow_paris_manual" not in names
+    assert "borrow_search_item" not in names
