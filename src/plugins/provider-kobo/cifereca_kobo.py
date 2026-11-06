@@ -1476,6 +1476,14 @@ class KoboSession(ProviderSession):
                 detail += " candidate_selection=%s candidate_rejection_counts=%s" % (
                     qualification_diagnostic["candidate_selection"], summary or "none",
                 )
+            if "candidate_shape_counts" in qualification_diagnostic:
+                shapes = qualification_diagnostic["candidate_shape_counts"]
+                # Values are only short, locally whitelisted categories from
+                # the exact same candidate admission pass; never raw URLs.
+                summary = ";".join(
+                    f"{shape}={count}" for shape, count in sorted(shapes.items())
+                )
+                detail += " candidate_shape_counts=%s" % (summary or "none")
         _TRACE_LOG.info(
             "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
