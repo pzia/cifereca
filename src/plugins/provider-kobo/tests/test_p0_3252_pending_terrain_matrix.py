@@ -40,6 +40,13 @@ def test_multiple_plain_routes_remain_pending_even_if_opaque_ids_match(media_for
         "qualification_reason": "eligible_count_not_one",
         "candidate_selection": "multiple_eligible_candidates",
         "candidate_rejection_counts": {},
+        "candidate_shape_counts": (
+            {"content_access_book:epub:missing:http_plain": 2}
+            if media_format == "epub" else {
+                "content_access_book:epub:missing:http_plain": 1,
+                "content_access_book:pdf:missing:http_plain": 1,
+            }
+        ),
     }
 
 
@@ -62,6 +69,10 @@ def test_no_eligible_route_counts_distinct_first_rejections(reverse):
         "candidate_rejection_counts": {
             "candidate_transport_invalid": 1,
             "candidate_expiry_invalid": 1,
+        },
+        "candidate_shape_counts": {
+            "content_access_book:epub:missing:http_plain": 1,
+            "library_sync:kepub:kepub:kobo_kdrm": 1,
         },
     }
 

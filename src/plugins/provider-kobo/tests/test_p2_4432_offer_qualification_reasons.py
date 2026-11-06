@@ -94,6 +94,9 @@ def test_multiple_valid_candidates_do_not_attrib_single_candidate_failure():
         "qualification_reason": "eligible_count_not_one",
         "candidate_selection": "multiple_eligible_candidates",
         "candidate_rejection_counts": {},
+        "candidate_shape_counts": {
+            "library_sync:kepub:kepub:kobo_kdrm": 2,
+        },
     }
 
 
