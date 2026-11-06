@@ -1,8 +1,8 @@
-"""#3196 W1: an active Kobo 0.7 backup is history, not canonical authority.
+"""#3196 W1: unbound Kobo v0.7 receipts must not mint canonical rights.
 
-Offline SQLite contract. Legacy recovery remains readable/writable, but no
-backup status or declared SHA can generate current B rights, provenance,
-acquisition receipts or physical Placements. No provider HTTP or files.
+A missing profile or borrower is not permission to infer A/B from a 0.7
+backup row. The scope-known legacy writer and recovery remain operational
+pending their coordinated cutover, and the other providers are unchanged.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ _TABLES = (
 )
 
 
-def _snapshot(store):
+def _canonical(store):
     with store._lock, store._connect() as db:
         return tuple(
             tuple(db.execute("SELECT * FROM " + table + " ORDER BY 1").fetchall())
@@ -25,40 +25,41 @@ def _snapshot(store):
         )
 
 
-def _legacy(*, status="pending", item="edition", credential="vault",
-            identity="alice", account="buyer", digest=None):
+def _row(*, identity="alice", account=None, credential="vault", item="edition",
+         status="pending", digest=None):
     return {
         "provider_id": "kobo", "credential_id": credential,
         "identity_id": identity, "account_id": account,
         "item_id": item, "revision_id": "old-revision",
-        "title": "Synthetic historical Kobo item",
-        "entitlement_type": "owned", "status": status,
-        "sha256": digest, "size": 100 if digest else None,
+        "entitlement_type": "owned", "title": "Synthetic Kobo archive",
+        "status": status, "sha256": digest,
+        "size": 100 if digest else None,
     }
 
 
+@pytest.mark.parametrize("identity,account", [(None, "borrower"), ("alice", None)])
 @pytest.mark.parametrize("first,last", [
     ("pending", "complete"), ("acquiring", "error"),
     ("attention_required", "complete"), ("complete", "pending_acquisition"),
 ])
-def test_live_legacy_kobo_updates_never_project_canonical_rights_or_receipts(
-    tmp_path, first, last,
+def test_unbound_live_backup_is_archive_not_canonical_acquisition(
+    tmp_path, identity, account, first, last,
 ):
     store = Storage(tmp_path / "library.sqlite")
     try:
-        canonical = _snapshot(store)
-        store.backup_put(_legacy(status=first))
+        baseline = _canonical(store)
+        store.backup_put(_row(identity=identity, account=account, status=first))
         store.backup_put({
-            **_legacy(status=last, digest="a" * 64),
-            "local_path": str(tmp_path / "disconnected.epub"),
+            **_row(identity=identity, account=account, status=last,
+                   digest="a" * 64),
+            "local_path": str(tmp_path / "offline.epub"),
             "attempt_count": 2,
         })
-        legacy = store.backup_get("kobo", "vault", "edition")
-        assert legacy is not None and legacy["status"] == last
-        assert legacy["sha256"] == "a" * 64
-        assert legacy["attempt_count"] == 2
-        assert _snapshot(store) == canonical
-        assert store.artifacts() == []
+        archive = store.backup_get("kobo", "vault", "edition")
+        assert archive["status"] == last
+        assert archive["sha256"] == "a" * 64
+        assert archive["attempt_count"] == 2
+        assert _canonical(store) == baseline
         assert store.placements() == []
         assert store.acquisitions(provider_id="kobo") == []
         assert store.entitlements(provider_id="kobo") == []
@@ -66,73 +67,86 @@ def test_live_legacy_kobo_updates_never_project_canonical_rights_or_receipts(
         store.close()
 
 
-def test_live_legacy_writer_cannot_downgrade_independent_canonical_state(tmp_path):
+def test_partial_patch_reuses_existing_exact_borrower_and_mirror(tmp_path):
     store = Storage(tmp_path / "library.sqlite")
     try:
-        source = _legacy()
+        store.backup_put(_row(account="buyer", status="pending"))
+        assert len(store.acquisitions(provider_id="kobo")) == 1
+        store.backup_put(_row(identity=None, account=None, status="complete"))
+        assert store.backup_get("kobo", "vault", "edition")["account_id"] == "buyer"
+        assert store.acquisitions(provider_id="kobo")[0]["status"] == "complete"
+        assert len(store.entitlements(provider_id="kobo")) == 1
+    finally:
+        store.close()
+
+
+def test_unbound_initial_row_can_be_bound_without_inventing_prior_right(tmp_path):
+    store = Storage(tmp_path / "library.sqlite")
+    try:
+        store.backup_put(_row(identity=None, account=None))
+        assert store.entitlements(provider_id="kobo") == []
+        store.backup_put(_row(identity="alice", account="buyer", status="acquiring"))
+        assert len(store.entitlements(provider_id="kobo")) == 1
+        assert len(store.acquisitions(provider_id="kobo")) == 1
+        assert store.backup_get("kobo", "vault", "edition")["account_id"] == "buyer"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("credential,identity", [
+    ("vault-a", "alice"), ("vault-b", "bob"),
+])
+def test_unbound_profiles_do_not_mint_shared_sha_placement(
+    tmp_path, credential, identity,
+):
+    store = Storage(tmp_path / "library.sqlite")
+    try:
+        store.backup_put(_row(
+            identity=identity, account=None, credential=credential,
+            status="complete", digest="a" * 64,
+        ))
+        assert store.acquisitions(provider_id="kobo") == []
+        assert store.placements() == []
+        assert store.artifacts() == []
+        assert store.backup_get("kobo", credential, "edition") is not None
+    finally:
+        store.close()
+
+
+def test_unbound_legacy_row_respects_existing_canonical_owner(tmp_path):
+    store = Storage(tmp_path / "library.sqlite")
+    try:
+        row = _row(account=None)
         store.entitlement_put({
-            **source, "state": "inactive", "revision_id": "provider-revision",
-            "metadata": {"source": "attested_provider"},
+            **row, "identity_id": "bob", "state": "active",
         })
-        store.acquisition_put({
-            "provider_id": "kobo", "credential_id": "vault",
-            "identity_id": "alice", "account_id": "buyer",
-            "item_id": "edition", "status": "complete",
-            "metadata": {"schema": "canonical.test-receipt"},
+        canonical = _canonical(store)
+        with pytest.raises(ValueError, match="backup_entitlement_owner_conflict"):
+            store.backup_put(row)
+        assert store.backup_get("kobo", "vault", "edition") is None
+        assert _canonical(store) == canonical
+    finally:
+        store.close()
+
+
+def test_non_kobo_legacy_mirror_remains_active(tmp_path):
+    store = Storage(tmp_path / "library.sqlite")
+    try:
+        store.backup_put({
+            **_row(identity="alice", account=None, status="complete"),
+            "provider_id": "other",
         })
-        before = _snapshot(store)
-        for state in ("pending", "acquiring", "complete", "error"):
-            store.backup_put(_legacy(status=state, digest="b" * 64))
-            assert _snapshot(store) == before
-        assert store.backup_get("kobo", "vault", "edition")["status"] == "error"
-    finally:
-        store.close()
-
-
-def test_two_legacy_profiles_same_sha_do_not_create_shared_canonical_placement(
-    tmp_path,
-):
-    store = Storage(tmp_path / "library.sqlite")
-    try:
-        before = _snapshot(store)
-        for credential, identity, account in (
-            ("vault-a", "alice", "account-a"),
-            ("vault-b", "bob", "account-b"),
-        ):
-            store.backup_put(_legacy(
-                item="edition", credential=credential,
-                identity=identity, account=account, status="complete",
-                digest="c" * 64,
-            ))
-        assert len(store.backup_list("kobo")) == 2
-        assert _snapshot(store) == before
-    finally:
-        store.close()
-
-
-def test_legacy_owner_rebinding_is_still_rejected_before_any_canonical_change(
-    tmp_path,
-):
-    store = Storage(tmp_path / "library.sqlite")
-    try:
-        store.backup_put(_legacy())
-        before = _snapshot(store)
-        history = store.backup_get("kobo", "vault", "edition")
-        with pytest.raises(ValueError, match="backup_projection_owner_conflict"):
-            store.backup_put(_legacy(account="other-borrower"))
-        assert store.backup_get("kobo", "vault", "edition") == history
-        assert _snapshot(store) == before
-    finally:
-        store.close()
-
-
-def test_non_kobo_legacy_mirror_is_unmodified(tmp_path):
-    store = Storage(tmp_path / "library.sqlite")
-    try:
-        row = {**_legacy(status="complete"), "provider_id": "other"}
-        store.backup_put(row)
         assert len(store.acquisitions(provider_id="other")) == 1
         assert len(store.entitlements(provider_id="other")) == 1
-        assert store.backup_get("other", "vault", "edition") is not None
+    finally:
+        store.close()
+
+
+def test_bad_legacy_path_is_rejected_before_archive_write(tmp_path):
+    store = Storage(tmp_path / "library.sqlite")
+    try:
+        with pytest.raises(ValueError, match="backup_legacy_path_invalid"):
+            store.backup_put({**_row(account=None), "local_path": "/books/\x00bad"})
+        assert store.backup_list("kobo") == []
     finally:
         store.close()
