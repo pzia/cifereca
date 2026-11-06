@@ -1199,11 +1199,11 @@ class UiMasterDetailHost(UiPageHost, Protocol):
 
 @runtime_checkable
 class UiLocalQueryControls(Protocol):
-    """Shared text, source and language controls for existing result sets.
+    """Shared Search text/source/language/format widgets for local results.
 
-    Empty source/language selections mean all values. Replacing choices keeps
-    valid selections and does not call the user-change callback. The caller
-    supplies attested choices and owns filtering, counts and result rendering.
+    Empty selections mean all values. Replacing choices keeps valid
+    selections without triggering recalculation. The caller supplies only
+    observed facets and owns read-only local filtering and result rendering.
     """
 
     @property
@@ -1212,10 +1212,12 @@ class UiLocalQueryControls(Protocol):
     def filter_text(self) -> str: ...
     def selected_sources(self) -> tuple[str, ...]: ...
     def selected_languages(self) -> tuple[str, ...]: ...
+    def selected_formats(self) -> tuple[str, ...]: ...
     def set_choices(
         self, *,
         sources: tuple[tuple[str, str], ...] | None = None,
         languages: tuple[tuple[str, str], ...] | None = None,
+        formats: tuple[tuple[str, str], ...] | None = None,
     ) -> None: ...
 
 
