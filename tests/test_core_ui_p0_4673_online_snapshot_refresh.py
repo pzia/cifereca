@@ -61,8 +61,10 @@ def test_old_batch_cannot_repopulate_new_same_query_request():
     old_callback(NS(results=(_book("old"),)))
     old_delivery = host.scheduled.pop()
 
-    # A new click is a fresh source generation. Even an already queued
-    # GLib delivery from the previous account must be refused.
+    # While online work is pending, a same-query second click is correctly
+    # coalesced. Switching to known/local search first revokes that request;
+    # an explicit new online click then opens a fresh source generation.
+    host.run_search(False)
     host.run_search(True)
     assert old_delivery[0](*old_delivery[1]) is False
     assert host._remote_search_results == []
