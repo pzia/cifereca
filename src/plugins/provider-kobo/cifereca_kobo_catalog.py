@@ -308,9 +308,19 @@ class KoboCatalogService:
             "cover_url", "thumbnail_url", "image_url", "cover", "image",
             "images", "covers", "CoverImageUrl", "ImageUrl",
         }
+        # Upstream Kobo catalogue JSON has not been qualified as an
+        # edition-specific numeric age source (#4530). Raw vendor keys must
+        # never impersonate Core's canonical, attested youth-age fields.
+        # Keep other raw descriptive metadata; do not guess an age from
+        # categories, titles, genres or edition-independent labels.
+        unverified_age_authority_keys = {
+            "recommended_age", "youth_age_ranges", "attested_age_ranges",
+            "attested_age_status",
+        }
         metadata = {
             k: v for k, v in item.items()
             if k != "description" and k not in cover_keys
+            and k not in unverified_age_authority_keys
         }
         if cover:
             metadata["cover_url"] = cover
