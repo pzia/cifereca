@@ -560,3 +560,7 @@ Les types de contenu sont transmis aux providers qui acceptent le paramètre
 optionnel `content_types`. Les signatures v1 des plugins 0.9.4 n'acceptent pas
 ce paramètre : leur filtrage de type est fait sur les résultats reçus. Une
 facette ne provoque jamais de requête distante supplémentaire.
+
+### Python de l'installation active
+
+Après une installation ou mise à jour Core, `cifereca-python` utilise le Python du venv de la release active, y compris après un rollback. Par exemple : `cifereca-python --version`, `cifereca-python -c 'import sys; print(sys.executable)'` ou `cifereca-python -m cifereca.core.missing_placements_cli --help`. Cette commande n'installe pas de modules et échoue si la release active est introuvable. Les modules invoqués peuvent modifier des données : seul `missing_placements_cli` est en lecture seule. Ne pas publier de chemins personnels ni d'identifiants dans les tickets.

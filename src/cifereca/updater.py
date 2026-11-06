@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import re
+import shlex
 import sqlite3
 import os
 import shutil
@@ -36,6 +37,7 @@ PUBLIC_COMMANDS = (
     "cifereca-update",
 )
 DEV_COMMAND = "cifereca-update-dev"
+PYTHON_COMMAND = "cifereca-python"  # Runtime wrapper; not a package entry point.
 DEFAULT_GITHUB_REPOSITORY = "pzia/cifereca"
 TRANSACTION_FILE = ".cifereca-transaction.json"
 TRANSACTION_SCHEMA = 1
@@ -318,7 +320,20 @@ def _replace_symlink(link: Path, target: Path) -> None:
 
 
 def _launcher_content(command: str, root: Path) -> str:
-    target = root / "current" / ".venv" / "bin" / command
+    target = root / "current" / ".venv" / "bin" / (
+        "python" if command == PYTHON_COMMAND else command
+    )
+    if command == PYTHON_COMMAND:
+        # Check active release at invocation time; never use system Python.
+        quoted = shlex.quote(str(target))
+        return (
+            "#!/bin/sh\n"
+            f"if [ ! -x {quoted} ]; then\n"
+            '  echo "cifereca-python: active interpreter unavailable" >&2\n'
+            "  exit 127\n"
+            "fi\n"
+            f'exec {quoted} "$@"\n'
+        )
     return f'#!/bin/sh\nexec "{target}" "$@"\n'
 
 
@@ -328,7 +343,7 @@ def _write_launchers(root: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     directory = bin_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    commands = list(PUBLIC_COMMANDS)
+    commands = [*PUBLIC_COMMANDS, PYTHON_COMMAND]
     dev_target = root / "current" / ".venv" / "bin" / DEV_COMMAND
     if dev_target.is_file():
         commands.append(DEV_COMMAND)
@@ -739,7 +754,7 @@ def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str,
                 _path_from_identity(core["before_current"]), transaction,
             )
         else:
-            for command in (*PUBLIC_COMMANDS, DEV_COMMAND):
+            for command in (*PUBLIC_COMMANDS, DEV_COMMAND, PYTHON_COMMAND):
                 (bin_dir() / command).unlink(missing_ok=True)
     except Exception as exc:
         errors.append("core")
@@ -1267,7 +1282,7 @@ def status() -> dict[str, Any]:
         "current": str(current or "") or None,
         "previous": str(_symlink_target(root / "previous") or "") or None,
         "releases": [str(x) for x in _releases(root)],
-        "launchers": {x: str(bin_dir() / x) for x in PUBLIC_COMMANDS},
+        "launchers": {x: str(bin_dir() / x) for x in (*PUBLIC_COMMANDS, PYTHON_COMMAND)},
         "transaction": current_transaction,
         "incomplete_transactions": incomplete,
     }
@@ -1281,7 +1296,7 @@ def rollback(to: str | None = None) -> dict[str, Any]:
             "ok": True,
             "current": str(_symlink_target(root / "current") or "") or None,
             "previous": str(_symlink_target(root / "previous") or "") or None,
-            "launchers": {x: str(bin_dir() / x) for x in PUBLIC_COMMANDS},
+            "launchers": {x: str(bin_dir() / x) for x in (*PUBLIC_COMMANDS, PYTHON_COMMAND)},
             "recovered_transactions": recovered,
         }
     current = _symlink_target(root / "current")
@@ -1329,7 +1344,7 @@ def rollback(to: str | None = None) -> dict[str, Any]:
             "ok": True,
             "current": str(target),
             "previous": str(_symlink_target(root / "previous") or "") or None,
-            "launchers": {x: str(bin_dir() / x) for x in PUBLIC_COMMANDS},
+            "launchers": {x: str(bin_dir() / x) for x in (*PUBLIC_COMMANDS, PYTHON_COMMAND)},
             "transaction": str(transaction_path),
             "plugins_restored": sorted(transaction.get("packages", {})),
             "plugin_state": {
