@@ -2110,8 +2110,21 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     # receipt or discard its path, SHA, rights or placement.
     archived = _manifest_archived(raw, current)
     if archived:
-        if not current or current.get("status") not in {
-                "ok", "complete", "reconcile_required", "reconcile_conflict"}:
+        # A provider archive flag only disables a *new* acquisition.
+        # It cannot resolve a prior GET/ADEPT crash checkpoint. Replacing
+        # acquiring/pending_acquisition with skipped_archived would erase
+        # the at-most-once marker and allow a later unarchive to re-GET.
+        interrupted = bool(current and (
+            current.get("status") == "acquiring"
+            or (current.get("status") == "pending_acquisition" and (
+                current.get("attention_code") == "interrupted_acquisition_review"
+                or str(current.get("error") or "").startswith(
+                    "Acquisition locale interrompue avant finalisation"
+                )
+            ))
+        ))
+        if not interrupted and (not current or current.get("status") not in {
+                "ok", "complete", "reconcile_required", "reconcile_conflict"}):
             self.storage.backup_put({
                 **(current or {}), **base_record, "status": "skipped_archived",
                 "error": None, "attention_code": None,
