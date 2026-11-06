@@ -628,3 +628,40 @@ def test_nested_receipt_walker_rejects_unbounded_depth_and_directory_count(
         assert deepest.is_dir()
     finally:
         service.storage.close()
+
+
+def test_nested_publication_crash_is_recoverable_by_supervised_scanner(
+    tmp_path,
+):
+    service, source, source_pid = _library(tmp_path)
+    try:
+        folder = tmp_path / "library" / "Collections" / "History" / "Volume"
+        folder.mkdir(parents=True)
+        original = tmp_path / "library" / "Book.epub"
+        relocated = folder / original.name
+        original.rename(relocated)
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute(
+                "UPDATE placements SET path=? WHERE placement_id=?",
+                (str(relocated), source_pid),
+            )
+        _failed_publication(service, source)
+        staged = folder / ".cifereca-staging" / "variants"
+        assert len(list(staged.glob("pending-*.json"))) == 1
+        review = review_pending_derived_receipts(
+            service, identity_id="id1",
+        )
+        assert len(review) == 1
+        assert review[0]["status"] == "recoverable"
+        assert review[0]["cursor"].startswith("Collections/History/Volume/")
+        restored = review_pending_derived_receipts(
+            service, identity_id="id1", commit=True,
+            approved_receipt_sha256=review[0]["sha256"],
+        )
+        assert restored[0]["status"] == "recovered"
+        assert len(service.storage.artifact_variants()) == 1
+        assert review_pending_derived_receipts(
+            service, identity_id="id1",
+        )[0]["status"] == "already_committed"
+    finally:
+        service.storage.close()
