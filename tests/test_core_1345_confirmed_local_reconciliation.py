@@ -731,3 +731,61 @@ def test_legacy_catalogue_duplicate_json_keys_never_authorize_relink(
         _run(case)
     assert _dump(case) == before
     assert case.target.is_file() and case.original.is_file()
+
+
+@pytest.mark.parametrize("metadata", [
+    "{incomplete",
+    "[]",
+    "null",
+    "x" * 65537,
+])
+def test_legacy_relink_rejects_unreadable_catalogue_metadata(
+        case, metadata):
+    """A broken catalogue row may conceal an already-bound physical path."""
+    placement = case.storage.placement_put({
+        "path": str(case.target), "identity_id": "default",
+        "provider_id": "local", "source_item_id": "local-id",
+        "state": "unverified",
+    })
+    cid = case.storage.catalog_entry_put({
+        "placement_id": placement, "identity_id": "default",
+        "provider_id": "local", "item_id": "local-id",
+        "title": "Synthetic", "local_state": "unverified",
+        "metadata": {"path": str(case.target)},
+    })
+    with case.storage._lock, case.storage._connect() as db:
+        db.execute(
+            "UPDATE catalog_entries SET metadata_json=? "
+            "WHERE catalog_entry_id=?", (metadata, cid),
+        )
+    before = _dump(case)
+    with pytest.raises(
+        repair.ReconciliationRejected,
+        match="^invalid_catalogue_metadata$",
+    ):
+        _run(case)
+    assert _dump(case) == before
+    assert case.original.is_file() and case.target.is_file()
+
+
+def test_unrelated_legacy_catalogue_with_broken_metadata_blocks_relink(
+        case):
+    """Unparsed metadata of another row cannot silently hide a path alias."""
+    case.storage.catalog_entry_put({
+        "catalog_entry_id": "synthetic-other-row",
+        "identity_id": "default", "provider_id": "local",
+        "item_id": "another-item", "title": "Other",
+        "local_state": "unverified", "metadata": {"path": "/other/file.epub"},
+    })
+    with case.storage._lock, case.storage._connect() as db:
+        db.execute(
+            "UPDATE catalog_entries SET metadata_json='{" "
+            "WHERE catalog_entry_id='synthetic-other-row'"
+        )
+    before = _dump(case)
+    with pytest.raises(
+        repair.ReconciliationRejected,
+        match="^invalid_catalogue_metadata$",
+    ):
+        _run(case)
+    assert _dump(case) == before
