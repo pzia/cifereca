@@ -482,3 +482,38 @@ def test_initial_offer_never_follows_even_a_benign_redirect(tmp_path):
         assert state["mutations"] == 1
     finally:
         service.close()
+
+
+def test_first_acsm_epoch_rebind_after_get_does_not_publish_claimed_receipt(
+        tmp_path, monkeypatch):
+    """A verified borrow stays confirmed; revoked context cannot stage bytes."""
+    from cifereca import acsm_cache
+
+    service, session, account, item, state = setup(tmp_path, result="acsm")
+    attempts = []
+
+    def rebind_after_get(*args, **kwargs):
+        assert kwargs["initial_offer_only"] is True
+        assert kwargs["admission_current"]() is True
+        attempts.append("token-get")
+        service._account_context_epoch += 1
+        directory = args[2]
+        candidate = directory / "first.acsm"
+        candidate.write_bytes(
+            b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
+            b'<format>application/epub+zip</format></fulfillmentToken>'
+        )
+        return candidate, ""
+
+    monkeypatch.setattr(session, "download_digital", rebind_after_get)
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        assert state["mutations"] == 1
+        assert attempts == ["token-get"]
+        directory = service._acquisition_work_dir(
+            "default", "paris", "loan-exact")
+        assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    finally:
+        service.close()
