@@ -186,8 +186,12 @@ def preview_borrow_for_identity(
         )
         route = (item.medium, w.source_epoch)
         full = coordinates + route
+        # A profile A→B→A or account rebinding can restore the same textual
+        # coordinates. Pin the Core context epoch in the opaque option ID so
+        # a stale UI callback cannot match a later snapshot by ID alone.
+        # This remains non-authorizing: the lender is always revalidated.
         option_id = "borrow-profile.v1:" + sha256(json.dumps(
-            (requesting_identity_id, full), ensure_ascii=True,
+            (requesting_identity_id, context_epoch, full), ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
         label = ("Emprunter" if a.identity_id == requesting_identity_id else
