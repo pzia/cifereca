@@ -22,8 +22,11 @@ La projection donne quatre états UX :
 Deux comptes d'un même profil sont des options distinctes, épinglées à leur
 credential/account, docbase, notice exacte, édition et epoch. Le plan
 `BorrowForIdentityPreview` garde `executable=False`, et l'identifiant
-opaque `option_id` **n'est pas** un jeton d'action. Les credentials et
-comptes ne sont jamais dans les libellés affichés.
+opaque `option_id` **n'est pas** un jeton d'action : il est révoqué lorsque
+l'epoch de contexte change. Le tri des choix suit toutefois les coordonnées
+de source **stables**, jamais cet identifiant opaque renouvelé, pour ne pas
+intervertir les ordinales « choix 1/2 » entre deux comptes après A→B→A.
+Les credentials et comptes ne sont jamais dans les libellés affichés.
 
 Tout candidat périmé (plus de 300 secondes), venant d'une autre édition,
 sans capacité de prêt publiée et session prête, avec observation de permission
