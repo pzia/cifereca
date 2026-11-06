@@ -112,6 +112,10 @@ def present_loaded_search_detail_in_place(
 
     def deliver(detail: object) -> None:
         if (type(detail) is not ItemDetail
+                or detail.record_id != item.record_id
+                or detail.docbase != item.docbase
+                or detail.source_provider != item.source_provider
+                or detail.source_credential != item.source_credential
                 or not source_current()
                 or not _view_mapped(view)
                 or not is_current()
