@@ -69,6 +69,26 @@ appels Python directs `.backup_put()` / `.backup_prune_missing()` hors de
 `core/kobo_backup.py`. Il ne prétend **pas** détecter toute écriture SQL
 dynamique (W4–W5) ; une revue de code de celles-ci reste indispensable.
 
+**W4 — observation physique indépendante (06/11/2026) :** le rapprochement
+manuel confirmé conserve désormais, dans la **même transaction SQLite** que son
+journal de confirmation/undo, une observation append-only
+`core.kobo.local-file-evidence.<operation>` contenant la portée exacte
+identité/credential/compte/édition/révision ancienne, le SHA/taille
+réellement relus dans le répertoire du profil et le fingerprint
+`device/inode/mtime/ctime`. Le preview ne crée rien, un échec du second
+INSERT annule toute la confirmation et l'undo conserve cette trace
+historique (le journal principal indique `undone`). Les anciens journaux
+W4 sans nouvelle observation restent réversibles. Une transaction W4 ne
+peut désormais **plus écraser un ledger 0.8 qui n'est pas explicitement
+le miroir historique** (`metadata_json.legacy_status` unique).
+Cette observation **ne prouve ni droit Kobo, ni SourceReference, ni
+OriginLink, ni réception de téléchargement**, et ne permet aucun GET :
+une migration canonique future devra toujours obtenir A fournisseur frais,
+révision et reçu de livraison indépendants. Les états
+`reconcile_required/conflict` conservent W1/W2/W4 jusqu'à cette migration ;
+**la coupure finale reste ouverte**.
+Réception : `tests/test_core_1345_confirmed_local_reconciliation.py`.
+
 ## 2. Lecteurs qui influencent encore une décision
 
 | ID | Point de lecture | Effet restant / dépendance |
