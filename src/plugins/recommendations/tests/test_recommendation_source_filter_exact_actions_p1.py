@@ -59,6 +59,9 @@ def test_changing_source_filter_rebuilds_actions_without_another_search():
 
     old_kobo_action = _actions(kobo, "recommendation.loaded-notice.")[0]
     selected[:] = ["paris"]
+    # Even before the GTK refresh, the old button cannot navigate a source
+    # that the user has just excluded via the common filter.
+    assert old_kobo_action.callback() is False
     checked.clear()
     view._render(preserve_summary=True)
     assert len(presented) == 3
