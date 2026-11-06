@@ -75,23 +75,74 @@ def acquisition_work_dir(storage_path, identity_id, provider_id, loan_id=None, *
 
 
 def cleanup_acsm_after_success(path, *, loan_id, forget, logger):
+    """Remove only the verified input in its pinned private staging folder.
+
+    No pathname unlink or symlink follow. Refuse a renamed parent before
+    invoking a pathname-based cache forget, and never remove a replaced dir.
+    """
     if path is None:
         return
+    parent_fd = None
     try:
-        path.unlink(missing_ok=True)
-        forget(path)
-        logger.info('TRACE download acsm cleanup request_ref=%s action=deleted', unbound_loan_trace_ref(loan_id))
-        # Remove only the now-empty directory containing the input.
         parent = path.parent
-        try:
-            parent.rmdir()
-        except OSError:
-            pass
-    except OSError as exc:
-        logger.warning('TRACE download acsm cleanup request_ref=%s action=keep reason=delete_failed', unbound_loan_trace_ref(loan_id))
+        parent_fd = os.open(
+            parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        pinned = os.fstat(parent_fd)
+        if (not stat.S_ISDIR(pinned.st_mode)
+                or pinned.st_uid != os.geteuid()):
+            raise PermissionError('untrusted_acsm_cleanup_directory')
+        leaf = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(leaf.st_mode)
+                or leaf.st_uid != os.geteuid()):
+            raise PermissionError('untrusted_acsm_cleanup_input')
+
+        def same_parent():
+            try:
+                current = os.stat(parent, follow_symlinks=False)
+                return (stat.S_ISDIR(current.st_mode)
+                        and (current.st_dev, current.st_ino)
+                        == (pinned.st_dev, pinned.st_ino))
+            except OSError:
+                return False
+
+        if not same_parent():
+            raise PermissionError('acsm_cleanup_parent_changed')
+        os.unlink(path.name, dir_fd=parent_fd)
+        # Another actor could rebind the directory after unlink. Cache
+        # forget operates by pathname, and must never reach that new tree.
+        if not same_parent():
+            logger.warning(
+                'TRACE download acsm cleanup request_ref=%s action=keep reason=delete_failed',
+                unbound_loan_trace_ref(loan_id))
+            return
+        forget(path)
+        logger.info(
+            'TRACE download acsm cleanup request_ref=%s action=deleted',
+            unbound_loan_trace_ref(loan_id))
+        # Only remove the now-empty original folder while its inode is still
+        # bound to the supplied name. A failed rmdir is harmless.
+        if same_parent():
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+    except OSError:
+        logger.warning(
+            'TRACE download acsm cleanup request_ref=%s action=keep reason=delete_failed',
+            unbound_loan_trace_ref(loan_id))
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def cleanup_old_acsm_work(storage_path, *, max_age_seconds=None, config_get, clock, forget, logger):
+    """Retire old ACSM inputs only inside a pinned, no-follow staging tree.
+
+    A pathname-only os.walk can be redirected after its root symlink check.
+    Walk relative to a verified root descriptor; use per-directory dir_fd for
+    stat and unlink. If the root pathname is rebound, retain files instead
+    of acting on an obsolete tree or calling a cache cleanup by stale path.
+    """
     root = storage_path.parent / 'acquisition-work'
     if max_age_seconds is None:
         try:
@@ -101,32 +152,84 @@ def cleanup_old_acsm_work(storage_path, *, max_age_seconds=None, config_get, clo
         max_age_seconds = retention_days * 24 * 3600
     now = clock()
     deleted = kept = 0
-    # An old installation may have a replaced staging root. Never use
-    # rglob/is_dir alone: following such a symlink could delete foreign ACSMs.
-    if root.is_symlink() or not root.is_dir():
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        root_fd = os.open(root, flags)
+    except OSError:
         return {'deleted': 0, 'kept': 0}
-    for current, dirs, filenames in os.walk(root, topdown=True, followlinks=False):
-        directory = Path(current)
-        # Old trees may contain links. Do not descend into them even if the
-        # runtime's recursive glob behavior changes between Python versions.
-        dirs[:] = [name for name in dirs if not (directory / name).is_symlink()]
-        for name in filenames:
-            if not name.endswith('.acsm'):
-                continue
-            path = directory / name
+    try:
+        pinned = os.fstat(root_fd)
+        if (not stat.S_ISDIR(pinned.st_mode)
+                or pinned.st_uid != os.geteuid()):
+            return {'deleted': 0, 'kept': 0}
+
+        def root_current():
             try:
-                if path.is_symlink():
-                    kept += 1
-                    continue
-                age = now - path.stat().st_mtime
-                if age >= max_age_seconds:
-                    path.unlink()
-                    forget(path)
-                    deleted += 1
-                else:
-                    kept += 1
+                observed = os.stat(root, follow_symlinks=False)
+                return (stat.S_ISDIR(observed.st_mode)
+                        and (observed.st_dev, observed.st_ino)
+                        == (pinned.st_dev, pinned.st_ino))
             except OSError:
-                kept += 1
+                return False
+
+        for relative, dirs, filenames, current_fd in os.fwalk(
+                '.', topdown=True, follow_symlinks=False, dir_fd=root_fd):
+            # A symlink or foreign-owned directory is never descended into.
+            safe_dirs = []
+            for name in dirs:
+                try:
+                    info = os.stat(name, dir_fd=current_fd,
+                                   follow_symlinks=False)
+                    if stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid():
+                        safe_dirs.append(name)
+                except OSError:
+                    pass
+            dirs[:] = safe_dirs
+
+            def directory_current():
+                # The root may be stable while a nested loan directory has
+                # been renamed/rebound. Cache cleanup must not use its old
+                # pathname unless it still resolves to this pinned fd.
+                try:
+                    observed = os.stat(
+                        root / relative, follow_symlinks=False)
+                    held = os.fstat(current_fd)
+                    return (stat.S_ISDIR(observed.st_mode)
+                            and (observed.st_dev, observed.st_ino)
+                            == (held.st_dev, held.st_ino))
+                except OSError:
+                    return False
+
+            for name in filenames:
+                if not name.endswith('.acsm'):
+                    continue
+                try:
+                    info = os.stat(name, dir_fd=current_fd,
+                                   follow_symlinks=False)
+                    if not stat.S_ISREG(info.st_mode):
+                        kept += 1
+                        continue
+                    if now - info.st_mtime < max_age_seconds:
+                        kept += 1
+                        continue
+                    # A root rename/symlink swap must not redirect cache
+                    # forget() through a now-untrusted original pathname.
+                    if not root_current() or not directory_current():
+                        kept += 1
+                        continue
+                    os.unlink(name, dir_fd=current_fd)
+                    deleted += 1
+                    # Cache cleanup uses a pathname, not our pinned fd.
+                    # Skip it if the root was rebound after the unlink.
+                    if root_current() and directory_current():
+                        forget(root / relative / name)
+                except OSError:
+                    kept += 1
+    except OSError:
+        # Fail closed for traversal failures; no fallback to path walking.
+        pass
+    finally:
+        os.close(root_fd)
     if deleted:
         logger.info('TRACE download acsm cleanup-old deleted=%s kept=%s max_age_seconds=%s', deleted, kept, max_age_seconds)
     return {'deleted': deleted, 'kept': kept}

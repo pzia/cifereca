@@ -82,11 +82,12 @@ def test_none_input_does_not_touch_cache_or_logger(service):
 def test_failed_unlink_keeps_input_cache_and_parent(service, monkeypatch):
     instance, forget, logger = service
     path = staged(instance)
-    original = Path.unlink
+    original = os.unlink
     def refused(received, *args, **kwargs):
-        if received == path: raise PermissionError('synthetic denied')
+        if received == path.name and kwargs.get('dir_fd') is not None:
+            raise PermissionError('synthetic denied')
         return original(received, *args, **kwargs)
-    monkeypatch.setattr(Path, 'unlink', refused)
+    monkeypatch.setattr(os, 'unlink', refused)
     instance._cleanup_acsm_after_success(path, loan_id='loan-1')
     assert path.is_file() and path.parent.is_dir()
     forget.assert_not_called(); logger.info.assert_not_called(); logger.warning.assert_called_once()
@@ -120,11 +121,12 @@ def test_retention_defaults_and_minimum_are_preserved(service, configured, days)
 def test_retention_counts_failed_deletions_as_kept_and_does_not_forget(service, monkeypatch):
     instance, forget, _ = service
     path = staged(instance, age=100)
-    original = Path.unlink
+    original = os.unlink
     def refused(received, *args, **kwargs):
-        if received == path: raise PermissionError('synthetic denied')
+        if received == path.name and kwargs.get('dir_fd') is not None:
+            raise PermissionError('synthetic denied')
         return original(received, *args, **kwargs)
-    monkeypatch.setattr(Path, 'unlink', refused)
+    monkeypatch.setattr(os, 'unlink', refused)
     assert instance._cleanup_old_acsm_work(max_age_seconds=1) == {'deleted':0,'kept':1}
     assert path.is_file(); forget.assert_not_called()
 
@@ -239,3 +241,163 @@ def test_retention_ignores_linked_subdirectories_and_token_files(service, tmp_pa
     assert not own.exists()
     assert (root / 'linked-file.acsm').is_symlink()
     forget.assert_called_once_with(own)
+
+
+def test_retention_root_swap_during_walk_never_deletes_outside_or_old_tree(
+        service, tmp_path, monkeypatch):
+    """A raced root symlink cannot redirect the aged ACSM sweep."""
+    instance, forget, _ = service
+    old = staged(instance, 'old.acsm', age=200)
+    root = instance.storage.path.parent / 'acquisition-work'
+    held = root.with_name('held-staging')
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    external = foreign / 'old.acsm'
+    external.write_bytes(b'outside')
+    os.utime(external, (0, 0))
+    real_fwalk = os.fwalk
+    triggered = []
+
+    def swap_root(*args, **kwargs):
+        if not triggered:
+            triggered.append(True)
+            root.rename(held)
+            root.symlink_to(foreign, target_is_directory=True)
+        yield from real_fwalk(*args, **kwargs)
+
+    monkeypatch.setattr(os, 'fwalk', swap_root)
+    assert instance._cleanup_old_acsm_work(max_age_seconds=100) == {
+        'deleted': 0, 'kept': 1}
+    assert triggered
+    assert (held / old.relative_to(root)).is_file()
+    assert external.read_bytes() == b'outside'
+    forget.assert_not_called()
+
+
+def test_retention_directory_symlinks_cannot_redirect_pinned_walk(
+        service, tmp_path):
+    instance, forget, _ = service
+    root = instance._acquisition_work_dir('alice', 'paris', 'loan-1')
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    outside = foreign / 'old.acsm'
+    outside.write_bytes(b'foreign')
+    os.utime(outside, (0, 0))
+    (root / 'alias').symlink_to(foreign, target_is_directory=True)
+    own = root / 'owned.acsm'
+    own.write_bytes(b'owned')
+    os.utime(own, (0, 0))
+    assert instance._cleanup_old_acsm_work(max_age_seconds=100) == {
+        'deleted': 1, 'kept': 0}
+    assert not own.exists()
+    assert outside.read_bytes() == b'foreign'
+    forget.assert_called_once_with(own)
+
+
+def test_retention_does_not_forget_through_rebound_root_after_unlink(
+        service, tmp_path, monkeypatch):
+    """Even a successful fd-relative unlink cannot authorize path-based forget."""
+    instance, forget, _ = service
+    owned = staged(instance, 'old.acsm', age=200)
+    root = instance.storage.path.parent / 'acquisition-work'
+    held = root.with_name('held-staging')
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    external = foreign / 'old.acsm'
+    external.write_bytes(b'outside')
+    real_unlink = os.unlink
+    changed = []
+
+    def rebound_unlink(name, *args, **kwargs):
+        result = real_unlink(name, *args, **kwargs)
+        if name == 'old.acsm' and kwargs.get('dir_fd') is not None:
+            changed.append(True)
+            root.rename(held)
+            root.symlink_to(foreign, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(os, 'unlink', rebound_unlink)
+    assert instance._cleanup_old_acsm_work(max_age_seconds=100) == {
+        'deleted': 1, 'kept': 0}
+    assert changed
+    assert not (held / owned.relative_to(root)).exists()
+    assert external.read_bytes() == b'outside'
+    forget.assert_not_called()
+
+
+def test_success_cleanup_refuses_symlink_leaf_without_touching_target(
+        service, tmp_path):
+    instance, forget, logger = service
+    parent = instance._acquisition_work_dir('alice', 'paris', 'loan-1')
+    target = tmp_path / 'outside.acsm'
+    target.write_bytes(b'foreign')
+    link = parent / 'first.acsm'
+    link.symlink_to(target)
+    instance._cleanup_acsm_after_success(link, loan_id='loan-1')
+    assert link.is_symlink()
+    assert target.read_bytes() == b'foreign'
+    forget.assert_not_called()
+    logger.warning.assert_called_once()
+
+
+def test_success_cleanup_refuses_rebound_parent_before_unlink(
+        service, tmp_path, monkeypatch):
+    instance, forget, logger = service
+    path = staged(instance)
+    parent = path.parent
+    relocated = parent.with_name('held-loan')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    external = outside / path.name
+    external.write_bytes(b'foreign')
+    original = os.stat
+    swapped = []
+
+    def switch_at_stat(target, *args, **kwargs):
+        # After opening the trusted parent and stat'ing its leaf, the final
+        # parent pathname check must detect a replacement.
+        if target == parent and kwargs.get('follow_symlinks') is False:
+            if not swapped:
+                parent.rename(relocated)
+                parent.symlink_to(outside, target_is_directory=True)
+                swapped.append(True)
+        return original(target, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'stat', switch_at_stat)
+    instance._cleanup_acsm_after_success(path, loan_id='loan-1')
+    assert swapped
+    assert (relocated / path.name).exists()
+    assert external.read_bytes() == b'foreign'
+    forget.assert_not_called()
+    logger.warning.assert_called_once()
+
+
+def test_retention_does_not_forget_through_rebound_loan_directory(
+        service, tmp_path, monkeypatch):
+    """Stable staging root does not authorize a rebinding of nested paths."""
+    instance, forget, _ = service
+    staged_path = staged(instance, 'old.acsm', age=200)
+    loan_dir = staged_path.parent
+    relocated = loan_dir.with_name('held-loan')
+    outside = tmp_path / 'foreign'
+    outside.mkdir()
+    external = outside / staged_path.name
+    external.write_bytes(b'foreign')
+    old_unlink = os.unlink
+    swapped = []
+
+    def swap_loan_dir(name, *args, **kwargs):
+        result = old_unlink(name, *args, **kwargs)
+        if name == staged_path.name and kwargs.get('dir_fd') is not None:
+            swapped.append(True)
+            loan_dir.rename(relocated)
+            loan_dir.symlink_to(outside, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(os, 'unlink', swap_loan_dir)
+    assert instance._cleanup_old_acsm_work(max_age_seconds=100) == {
+        'deleted': 1, 'kept': 0}
+    assert swapped
+    assert not (relocated / staged_path.name).exists()
+    assert external.read_bytes() == b'foreign'
+    forget.assert_not_called()

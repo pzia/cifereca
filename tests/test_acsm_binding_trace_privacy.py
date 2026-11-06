@@ -31,13 +31,14 @@ def test_cleanup_keeps_exact_file_cache_and_directory_contracts(tmp_path, monkey
     forget = Mock()
     monkeypatch.setattr(facade.acsm_cache, 'forget', forget)
     monkeypatch.setattr(facade, '_TRACE_LOG', logging.getLogger('privacy-cleanup'))
-    unlink, rmdir = Path.unlink, Path.rmdir
+    unlink, rmdir = __import__('os').unlink, Path.rmdir
     class PrivateError(PermissionError): pass
     if failure == 'unlink':
         def refuse_unlink(p, *a, **kw):
-            if p == path: raise PrivateError(PRIVATE)
+            if p == path.name and kw.get('dir_fd') is not None:
+                raise PrivateError(PRIVATE)
             return unlink(p,*a,**kw)
-        monkeypatch.setattr(Path,'unlink',refuse_unlink)
+        monkeypatch.setattr('os.unlink',refuse_unlink)
     elif failure == 'forget': forget.side_effect = PrivateError(PRIVATE)
     elif failure == 'rmdir':
         def refuse_rmdir(p, *a, **kw):
