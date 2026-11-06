@@ -1800,6 +1800,12 @@ class ParisProviderSession(ProviderSession):
             )
             ensure_scope()
             self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
+            if initial_offer_only and response.status_code in {301, 302, 303, 307, 308}:
+                # The one-shot post-borrow read is never allowed to follow an
+                # unqualified redirect: its destination could be another
+                # supplier mutation endpoint. Keep the loan confirmed; the
+                # separately staged ACSM is simply unavailable.
+                raise ProviderConfigurationError("paris_initial_acsm_redirect_unqualified")
             if response.status_code not in {301,302,303,307,308}: break
             location = response.headers.get('location')
             if not location: raise ProviderConfigurationError('Redirection PNB sans Location')
