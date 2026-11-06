@@ -233,7 +233,7 @@ class CoverLoader:
 
     def _valid_cache_file(self, path: Path) -> bool:
         try:
-            if not path.exists() or path.stat().st_size <= 0:
+            if not path.exists() or not 0 < path.stat().st_size <= MAX_IMAGE:
                 return False
             with path.open("rb") as fh:
                 head = fh.read(1024)
@@ -433,16 +433,28 @@ class CoverLoader:
                 error: Exception | None = None
                 started = time.perf_counter()
                 try:
-                    response = self.client.get(absolute)
-                    response.raise_for_status()
-                    data = response.content
-                    content_type = response.headers.get("content-type", "").lower()
+                    # Stream through the shared Core loader: a remote cover
+                    # may advertise a false Content-Length or expand when
+                    # decompressed. Never buffer/write more than MAX_IMAGE.
+                    with self.client.stream("GET", absolute) as response:
+                        response.raise_for_status()
+                        content_type = response.headers.get("content-type", "").lower()
+                        if ("text/html" in content_type
+                                or "application/json" in content_type):
+                            raise ValueError("unexpected image content type")
+                        announced = response.headers.get("content-length", "")
+                        if (announced.isdecimal() and len(announced) <= 15
+                                and int(announced) > MAX_IMAGE):
+                            raise ValueError("image exceeds size budget")
+                        data = bytearray()
+                        for chunk in response.iter_bytes(chunk_size=65536):
+                            if len(data) + len(chunk) > MAX_IMAGE:
+                                raise ValueError("image exceeds size budget")
+                            data.extend(chunk)
                     if not data:
                         raise ValueError("empty image body")
-                    if "text/html" in content_type or "application/json" in content_type:
-                        raise ValueError(f"unexpected content-type {content_type}")
                     if not self._supported_image_bytes(data[:1024]):
-                        raise ValueError(f"unsupported or invalid image ({content_type or 'no content-type'})")
+                        raise ValueError("unsupported image bytes")
                     tmp = path.with_suffix(".tmp")
                     tmp.write_bytes(data)
                     tmp.replace(path)
