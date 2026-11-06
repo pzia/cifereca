@@ -2,6 +2,7 @@
 from dataclasses import replace
 
 import pytest
+import hashlib
 import json
 import time
 
@@ -32,7 +33,9 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
         paths.append(path)
         service.storage.backup_put({'provider_id': 'kobo', 'credential_id': credential,
                                     'identity_id': identity, 'item_id': 'book-1', 'revision_id': 'rev-1',
-                                    'title': 'Cached', 'format': 'EPUB', 'status': 'complete', 'local_path': str(path)})
+                                    'title': 'Cached', 'format': 'EPUB', 'status': 'complete', 'local_path': str(path),
+                                     'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                                     'size': path.stat().st_size})
         service.storage.backup_put({'provider_id': 'kobo', 'credential_id': credential,
                                     'identity_id': identity, 'item_id': 'stale', 'title': 'Stale', 'status': 'pending'})
     original = [p.read_bytes() for p in paths]
@@ -106,6 +109,8 @@ def test_scoped_kobo_backup_excludes_other_identity_and_preserves_global_cache(t
         "identity_id": "default", "item_id": "book-1",
         "title": "Book One", "author": "Author", "format": "EPUB",
         "revision_id": "rev-1", "status": "complete", "local_path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "size": path.stat().st_size,
     })
     service.storage.backup_put({
         "provider_id": "kobo", "credential_id": "vault-2",
