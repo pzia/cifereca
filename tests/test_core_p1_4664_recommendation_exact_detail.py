@@ -4,6 +4,7 @@ The host gets only exact source coordinates and a selection lease. Fixtures
 exercise the actual Core port without GTK or network; no provider POST.
 """
 from types import SimpleNamespace as NS
+from dataclasses import replace
 
 import pytest
 
@@ -201,3 +202,26 @@ def test_unmapped_plugin_page_cannot_start_or_publish_external_actions(monkeypat
     f.mapped[0] = False  # navigation or removal after explicit user click
     success(work())
     assert f.outputs == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("record_id", "other-record"),
+    ("docbase", "OTHER"),
+    ("source_provider", "other-provider"),
+    ("source_credential", "other-card"),
+])
+def test_holdings_for_other_exact_notice_never_publish_actions(
+    monkeypatch, field, value,
+):
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    work()
+    success(replace(f.detail, **{field: value}))
+    assert f.outputs == []
+
+
+def test_matching_holdings_still_publish_after_exact_result_guard(monkeypatch):
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    success(work())
+    assert len(f.outputs) == 1
