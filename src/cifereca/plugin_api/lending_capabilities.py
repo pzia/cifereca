@@ -6,7 +6,7 @@ method declarations; it cannot invoke a provider operation or touch the net.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import getattr_static
 from typing import Literal
 
@@ -310,11 +310,20 @@ class BorrowerOperationEvidence:
 
 @dataclass(frozen=True, slots=True)
 class BorrowerOperationEligibility:
-    """Presentation evidence only; never authorization for a remote action."""
+    """Presentation evidence only; never authorization for a remote action.
+
+    A positive outcome pins the exact borrower scope checked against source
+    evidence. Unverified or blocked outcomes carry no borrower identifiers.
+    These coordinates are internal and must never be rendered as UI labels.
+    """
     state: BorrowerEligibilityState
     reason_code: str
     operation: str
     branch: str
+    identity_id: str = field(default="", repr=False)
+    provider_id: str = field(default="", repr=False)
+    credential_id: str = field(default="", repr=False)
+    account_id: str = field(default="", repr=False)
 
 
 def assess_borrower_operation_eligibility(
@@ -347,7 +356,7 @@ def assess_borrower_operation_eligibility(
         return outcome("unverified", "capability_unverified")
     if (type(account) is not Account
             or not requested_branch or len(requested_branch) > 64
-            or any(not (c.isascii() and (c.islower() or c.isdigit()
+            or any(not (c.isascii() and (c.isalpha() or c.isdigit()
                          or c in "._-")) for c in requested_branch)
             or type(evidence) is not BorrowerOperationEvidence):
         return outcome("unverified", "borrower_evidence_unavailable")
@@ -385,7 +394,13 @@ def assess_borrower_operation_eligibility(
             or evidence.remaining_loans is None
             or evidence.permission != "allowed"):
         return outcome("unverified", "borrow_permission_unverified")
-    return outcome("eligible_observed", "borrow_permission_observed")
+    # Only the EXACT verified account can be offered later by Core. The
+    # detached status/branch alone is not sufficient across two profiles.
+    return BorrowerOperationEligibility(
+        "eligible_observed", "borrow_permission_observed", operation,
+        requested_branch, evidence.identity_id, evidence.provider_id,
+        evidence.credential_id, evidence.account_id,
+    )
 
 
 __all__ = [
