@@ -2145,7 +2145,21 @@ class Storage:
                          # generic right, receipt or local content from it.
                          # Reconciliation statuses still require the 0.8
                          # mirror for W4 confirmation/undo until migrated.
-                         or merged.get("status") == "skipped_archived")):
+                         or merged.get("status") == "skipped_archived"
+                         # #3196 W1: an unprovable conflict cannot be
+                         # confirmed by W4 (which requires an exact historical
+                         # SHA AND a positive byte size). Archive it without
+                         # minting new rights, acquisition or local B facts.
+                         # Conflicts with both byte claims still retain W4.
+                         or (merged.get("status") == "reconcile_conflict"
+                             and (
+                                 type(merged.get("sha256")) is not str
+                                 or len(merged["sha256"]) != 64
+                                 or any(ch not in "0123456789abcdef"
+                                        for ch in merged["sha256"].lower())
+                                 or type(merged.get("size")) is not int
+                                 or merged["size"] <= 0
+                             )))):
                 self._check_kobo_legacy_canonical_owner(db, merged)
             else:
                 self._mirror_backup_row(
