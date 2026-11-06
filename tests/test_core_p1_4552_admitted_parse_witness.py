@@ -147,3 +147,12 @@ def test_revision_is_opaque_no_user_identifier_exposed_by_diagnostic():
     for private in ("alice", "card-A", "borrower-A", "record:01"):
         assert private not in repr(report)
     assert report.affected_fields == ("critical_field_1", "critical_field_2")
+
+
+
+def test_forged_giant_raw_json_is_refused_before_decode():
+    forged = replace(observation(), raw_json="x" * 65537)
+    with pytest.raises(ValueError, match="invalid_admitted_source_observation"):
+        review_admitted_source_parse_witness(
+            witness(), observation=forged, input_sha256=BODY_SHA,
+        )
