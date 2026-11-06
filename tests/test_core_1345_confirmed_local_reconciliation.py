@@ -779,8 +779,9 @@ def test_unrelated_legacy_catalogue_with_broken_metadata_blocks_relink(
     })
     with case.storage._lock, case.storage._connect() as db:
         db.execute(
-            "UPDATE catalog_entries SET metadata_json='{" "
-            "WHERE catalog_entry_id='synthetic-other-row'"
+            "UPDATE catalog_entries SET metadata_json=? "
+            "WHERE catalog_entry_id='synthetic-other-row'",
+            ("{broken",),
         )
     before = _dump(case)
     with pytest.raises(
