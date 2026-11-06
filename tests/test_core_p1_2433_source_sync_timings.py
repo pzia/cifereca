@@ -181,10 +181,11 @@ def test_source_sync_separates_typed_loan_and_canonical_observation_wall_time(
             now[0] += 5_000_000
             return []
 
-        def canonical_read(_service, _account, *, cancelled, snapshot_sink):
+        def canonical_read(_service, _account, *, cancelled, snapshot_sink, retirement_lease=None):
             observed.append("canonical_resources")
             assert cancelled() is False
             assert callable(snapshot_sink)
+            assert isinstance(retirement_lease, InterProcessLock)
             now[0] += canonical_ms * 1_000_000
             return None
 
