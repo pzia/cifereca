@@ -29,6 +29,11 @@ from .kobo_backup import _kobo_preview_paths
 from .kobo_local_audit import _read_hash_within
 
 _JOURNAL = "core.kobo.local-reconciliation."
+# A separate append-only file observation is deliberately NOT a right or a
+# completed Core acquisition receipt. Its historical stat cannot prove current
+# file presence after undo, a rename, account rebind, or fresh provider Sync.
+_FILE_EVIDENCE_JOURNAL = "core.kobo.local-file-evidence."
+_FILE_EVIDENCE_SCHEMA = "kobo.offline-file-observation/1"
 _SCHEMA = "kobo.local.reconciliation.receipt/1"
 _KEYS = {
     "backup_items": ("provider_id", "credential_id", "item_id"),
@@ -246,8 +251,18 @@ def _snapshot(db, storage, credential, item, path, sha):
         if (type(stage) is dict
                 and stage.get("schema") == "canonical.completed-delivery.v1"):
             raise ReconciliationRejected("canonical_stage_requires_core_recovery")
-    elif raw_stage is not None:
-        raise ReconciliationRejected("canonical_stage_ambiguous")
+        # This reversible 0.7 W4 repair is permitted to update only the
+        # *synthetic legacy* acquisition row. A canonical/independently
+        # produced generic ledger lacking this marker must go through the
+        # Core's own recovery, even before SourceReference publication.
+        # legacy_status identifies projection provenance, NOT a right.
+        _require(
+            type(stage) is dict and set(stage) == {"legacy_status"}
+            and type(stage["legacy_status"]) is str,
+            "legacy_acquisition_provenance_missing",
+        )
+    else:
+        raise ReconciliationRejected("legacy_acquisition_provenance_missing")
     artifacts = _rows(db, "artifacts", "artifact_id=?", ("sha256:" + sha,))
     _require(len(artifacts) == 1, "artifact_evidence_missing")
     return {
@@ -415,6 +430,46 @@ def _validate_historical_links(snapshot, intent):
                      == {key: value for key, value in current.items() if key != "path"}, "invalid_journal")
 
 
+def _record_offline_file_evidence(db, operation, intent, backup, evidence):
+    """Keep a durable *file-only* observation for later exact-source review.
+
+    This W4 evidence comes from independently hashed local bytes and a
+    manual confirmation. Neither legacy receipt nor content SHA proves Kobo
+    purchase, revocation, delivery, or OriginLink. It is append-only; undo
+    changes the W4 journal's state but preserves the historical observation.
+    """
+    observed, device, inode, modified_ns, changed_ns = evidence
+    _require(
+        observed[:2] == (intent["sha"], backup["size"])
+        and observed[2] == intent["path"],
+        "file_evidence_changed",
+    )
+    entry = {
+        "schema": _FILE_EVIDENCE_SCHEMA,
+        "operation_id": operation,
+        "source": {
+            "identity_id": intent["identity"], "provider_id": "kobo",
+            "credential_id": intent["credential"], "account_id": intent["account"],
+            "edition_id": intent["item"], "legacy_revision_id": backup["revision_id"],
+        },
+        "file": {
+            "path": intent["path"], "sha256": observed[0], "size": observed[1],
+            "device": device, "inode": inode, "mtime_ns": modified_ns,
+            "ctime_ns": changed_ns,
+        },
+        "observed_at": int(time.time()),
+        "authority": "historical_local_file_only",
+        "rights_attested": False,
+        "canonical_delivery_attested": False,
+    }
+    # An already existing key means a collision/corrupt journal; do not
+    # overwrite another file observation even with a matching SHA.
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES(?,?)",
+        (_FILE_EVIDENCE_JOURNAL + operation, _json(entry)),
+    )
+
+
 def _receipt(status, *, token=None, operation=None, changed=0):
     return {"schema": _SCHEMA, "ok": True, "status": status, "offline": True,
             "dry_run": status == "preview", "changed": changed,
@@ -504,6 +559,12 @@ def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expecte
             operation = undo_operation or _operation_id(journal)
             db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                        (_JOURNAL + operation, journal_text))
+            if record is None:
+                # Same durable transaction as the reversible 0.7 relink:
+                # no partial evidence record can survive failed SQL/FS checks.
+                _record_offline_file_evidence(
+                    db, operation, intent, before["backup_items"], evidence,
+                )
             # Recheck bytes and roots last, immediately before SQLite commit.
             _require(intent["roots"] == list(map(str, _roots(service, owner))), "source_configuration_changed")
             _require(evidence == _file(path, _roots(service, owner), expected_sha256,
