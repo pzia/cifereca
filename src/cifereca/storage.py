@@ -1997,6 +1997,26 @@ class Storage:
         except (TypeError, ValueError):
             attempt_count_value = 0
         with self._lock, self._connect() as db:
+            # W1 cutover for ALREADY-TYPED Kobo editions. The old
+            # (provider, credential, edition) projection has no borrower,
+            # branch or right, so it cannot safely refresh any canonical
+            # source. Once a typed source exists, keep an existing legacy
+            # row as a READ-ONLY archive and never create a new one here.
+            #
+            # BEGIN IMMEDIATE pins the typed-source decision to the same
+            # SQLite write transaction as the legacy UPSERT below. A typed
+            # source cannot be inserted between this check and that UPSERT.
+            # Other providers, and Kobo editions with no typed source,
+            # retain the historical writer until their recovery is migrated.
+            if item.get("provider_id") == "kobo":
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute(
+                    "SELECT 1 FROM source_references WHERE provider_id='kobo' "
+                    "AND credential_id=? AND edition_id=? LIMIT 1",
+                    (str(item.get("credential_id") or ""),
+                     str(item.get("item_id") or "")),
+                ).fetchone() is not None:
+                    return
             # The v0.7 writer is still in service until #3196 migrates its
             # consumers. In particular an active Kobo delivery legitimately
             # advances the canonical receipt before refreshing backup_items.
