@@ -354,15 +354,22 @@ def _search_sessions_for_active_identity(
             continue
         is_active = False
         credential = getattr(session, "credential_id", None)
+        owner = None
         if type(active) is str and active and type(credential) is str and credential:
             try:
-                is_active = (
-                    self.storage.identity_for_connection(provider, credential)
-                    == active
-                )
+                owner = self.storage.identity_for_connection(provider, credential)
+                is_active = owner == active
             except (AttributeError, LookupError, TypeError, ValueError):
                 # Unknown owner cannot be treated as belonging to the reader.
                 pass
+        # Paris is an authenticated, account-scoped source. If SQLite
+        # explicitly ties this session to another reader, never use it as a
+        # fallback catalogue under the selected reader. A legitimate public
+        # source with no owner mapping retains the existing legacy fallback;
+        # none of these choices grants an actionable borrowing right.
+        if (provider == "paris" and type(active) is str and active
+                and owner is not None and owner != active):
+            continue
         rank = 2 if is_active else 1
         if provider == "paris" and is_active and credential == paris_primary:
             rank = 3
