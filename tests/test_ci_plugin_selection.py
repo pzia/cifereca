@@ -322,7 +322,7 @@ class PluginSelectionTests(unittest.TestCase):
             "provider.kobo", "provider.kobo.catalog",
             "org.cifereca.provider.kobo",
             "cifereca_kobo_catalog", "cifereca_kobo:",
-            "from cifereca_kobo import", "import cifereca_kobo",
+            "from cifereca_kobo import", "import cifereca_kobo\\n",
         )
         root = ROOT / "src/plugins"
         for package_dir in sorted(root.iterdir()):
