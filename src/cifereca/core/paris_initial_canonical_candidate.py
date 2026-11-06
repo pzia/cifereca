@@ -31,6 +31,11 @@ def stage_first_paris_acsm(service, session, account: Account, source, *,
     # legitimately use ordinary canonical selected-right acquisition;
     # absence of this special receipt must never block their delivery.
     if type(account) is Account and account.unique_id != "":
+        if (account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id) != (
+                scope.identity_id, scope.provider_id,
+                scope.credential_id, scope.account_id):
+            raise ValueError("canonical_paris_initial_scope_invalid")
         return None
     if (type(account) is not Account
             or (account.identity_id, account.provider_id,
