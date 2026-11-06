@@ -191,7 +191,12 @@ def normalize_item_detail(docbase: str, record_id: str, payload: dict[str, Any])
     if docbase.upper() == "DILICOM":
         display_holdings = [h for h in holdings if h.library or h.location or h.call_number]
     basis = display_holdings or holdings
-    if any(h.status == "available" for h in basis) or item_holding.get("Availability") == 1 or item_holding.get("CanLoan") is True:
+    # #4673: for digital Paris, catalogue stock/Availability=1 cannot
+    # override a *negative* CanLoan from the same current holdings payload.
+    # This is only an advisory snapshot, not permanent borrower entitlement.
+    if docbase.upper() == "DILICOM" and item_holding.get("CanLoan") is False:
+        status, label = "unavailable", "Prêt numérique non proposé dans cette réponse Paris"
+    elif any(h.status == "available" for h in basis) or item_holding.get("Availability") == 1 or item_holding.get("CanLoan") is True:
         status, label = "available", item_holding.get("HoldingLabel") or "Disponible"
     elif any(h.status == "borrowed" for h in basis):
         status, label = "borrowed", item_holding.get("HoldingLabel") or "Emprunté"
