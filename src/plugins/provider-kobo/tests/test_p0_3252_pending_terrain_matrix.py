@@ -78,6 +78,10 @@ def test_no_eligible_route_counts_distinct_first_rejections(reverse):
             "content_access_book:epub:missing:http_plain": 1,
             "library_sync:kepub:kepub:kobo_kdrm": 1,
         },
+        "candidate_rejection_profile_counts": {
+            "content_access_book:epub:missing:http_plain|candidate_transport_invalid": 1,
+            "library_sync:kepub:kepub:kobo_kdrm|candidate_expiry_invalid": 1,
+        },
     }
 
 
@@ -143,3 +147,46 @@ def test_same_route_and_same_signed_url_remains_ambiguous():
     assert diagnostic["eligible_candidate_count"] == 2
     assert "https://" not in str(diagnostic)
     assert "signature" not in str(diagnostic)
+
+
+def test_k3_same_shape_can_have_distinct_rejection_reasons_without_leaking_urls():
+    envelope = descriptor()
+    first = envelope["acquisition"]["candidates"][0]
+    first["url"] = "http://bad.invalid/?secret=DO_NOT_LEAK"
+    second = dict(first)
+    second["url"] = "https://cdn.kobo.com/other?token=HIDDEN"
+    second["expires_at"] = "2000-01-01T00:00:00Z"
+    envelope["acquisition"]["candidates"].append(second)
+    diagnostics = {}
+    assert exact_kobo_offer_id(envelope, **_SCOPE, diagnostic=diagnostics) == ""
+    assert diagnostics["candidate_selection"] == "no_eligible_candidates"
+    assert diagnostics["candidate_shape_counts"] == {
+        "content_access_book:epub:missing:http_plain": 2,
+    }
+    assert diagnostics["candidate_rejection_profile_counts"] == {
+        "content_access_book:epub:missing:http_plain|candidate_transport_invalid": 1,
+        "content_access_book:epub:missing:http_plain|candidate_expiry_invalid": 1,
+    }
+    assert "DO_NOT_LEAK" not in str(diagnostics)
+    assert "HIDDEN" not in str(diagnostics)
+    assert "http://" not in str(diagnostics)
+
+
+def test_k3_unknown_format_and_source_remain_other_not_raw_text():
+    envelope = descriptor()
+    first = envelope["acquisition"]["candidates"][0]
+    first["media_format"] = "SECRET-PRIVATE-FORMAT"
+    first["source_format"] = "PRIVATE-SOURCE-SECRET"
+    second = dict(first)
+    second["media_format"] = "unknown"
+    second["url"] = "https://cdn.kobo.com/second?token=VERY_SECRET"
+    envelope["acquisition"]["candidates"].append(second)
+    diagnostic = {}
+    assert exact_kobo_offer_id(envelope, **_SCOPE, diagnostic=diagnostic) == ""
+    assert diagnostic["candidate_selection"] == "no_eligible_candidates"
+    assert diagnostic["candidate_rejection_profile_counts"] == {
+        "content_access_book:other:other:http_plain|candidate_format_pair_unqualified": 1,
+        "content_access_book:unknown:other:http_plain|candidate_format_pair_unqualified": 1,
+    }
+    for secret in ("PRIVATE", "VERY_SECRET", "SECRET"):
+        assert secret not in str(diagnostic)
