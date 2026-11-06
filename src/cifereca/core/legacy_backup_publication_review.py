@@ -11,6 +11,7 @@ token, entitlement, right, skip-download decision or deletion permission.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import sqlite3
@@ -46,6 +47,7 @@ def _require(ok, reason):
 def review_legacy_backup_publication(
     storage, *, library_root: Path,
     identity_id: str, credential_id: str, item_id: str,
+    _db: sqlite3.Connection | None = None,
 ) -> LegacyBackupPublicationReview:
     """Qualify existing canonical publication of one old Kobo backup row.
 
@@ -62,10 +64,19 @@ def review_legacy_backup_publication(
                    for value in (identity_id, credential_id, item_id))):
         return blocked("invalid_request")
     try:
-        if storage.schema_version() < 14:
+        if _db is None and storage.schema_version() < 14:
             return blocked("schema_unavailable")
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
+        # The maintenance cutover can supply its ALREADY locked, BEGIN IMMEDIATE
+        # transaction. Reuse every physical/SourceKey/receipt test inside that
+        # transaction; a separate read connection would permit an intervening
+        # canonical rebind between review and archive retirement.
+        with ExitStack() as context:
+            if _db is None:
+                context.enter_context(storage._lock)
+                db = context.enter_context(storage._connect())
+                db.execute("BEGIN")
+            else:
+                db = _db
             row = db.execute(
                 "SELECT identity_id,account_id,revision_id,status,local_path,"
                 "sha256,size FROM backup_items WHERE provider_id='kobo' "
