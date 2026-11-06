@@ -200,17 +200,22 @@ def _snapshot(db, storage, credential, item, path, sha):
     matches = []
     for row in catalogue:
         raw = row.get("metadata_json")
+        # Every catalogue row is a potential historical owner of this
+        # path. Missing, malformed or oversized JSON can conceal such an
+        # association: treating it as {} would permit a duplicate relink.
+        _require(type(raw) is str and len(raw) <= 65536,
+                 "invalid_catalogue_metadata")
         try:
             metadata = json.loads(
                 raw, object_pairs_hook=_unique_catalogue_fields,
-            ) if type(raw) is str and len(raw) <= 65536 else {}
+            )
         except ReconciliationRejected:
-            # A duplicated key can hide a path already claimed by this
-            # catalogue row, so do not create a competing entry or relink.
+            # Duplicate keys, even nested, cannot be interpreted last-wins.
             raise
         except (TypeError, ValueError, RecursionError):
-            metadata = {}
-        candidate = metadata.get("path") if isinstance(metadata, dict) else None
+            raise ReconciliationRejected("invalid_catalogue_metadata") from None
+        _require(type(metadata) is dict, "invalid_catalogue_metadata")
+        candidate = metadata.get("path")
         same_path = (type(candidate) is str and "\0" not in candidate
                      and os.path.isabs(candidate) and os.path.abspath(candidate) == path)
         if row.get("placement_id") == placement_id or same_path:
