@@ -111,3 +111,43 @@ def test_never_started_legacy_item_preserves_explicit_direct_capability(
         assert calls == ["book-1"]
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("state", ["reconcile_required", "complete", "acquiring"])
+def test_fresh_exact_core_admission_is_not_vetoed_by_legacy_row(
+    tmp_path, monkeypatch, state,
+):
+    # A real Core action may independently attest the current purchase even
+    # when an old compatibility-only backup row points to a vanished file.
+    # The 0.7 claim is neither a positive right nor a universal retry veto.
+    service = _service(tmp_path)
+    item = service._sessions[
+        service._session_key("kobo", "vault-1")
+    ].normalize_item(_manifest_row())
+
+    @contextmanager
+    def lock(_path):
+        yield
+
+    try:
+        service.storage.backup_put({
+            "provider_id": "kobo", "credential_id": "vault-1",
+            "identity_id": "alice", "account_id": "account",
+            "item_id": "book-1", "revision_id": "old-revision",
+            "title": "Historical", "entitlement_type": "owned",
+            "status": state, "local_path": str(tmp_path / "vanished.epub"),
+        })
+        calls = []
+        monkeypatch.setattr(services, "InterProcessLock", lock)
+        monkeypatch.setattr(
+            service, "_execute_kobo_acquisition",
+            lambda received, _target: (
+                calls.append(received.record_id) or
+                SimpleNamespace(path=tmp_path / "admitted.epub", metadata={})
+            ),
+        )
+        result = service._acquire_direct_item_impl(item, _admission=lambda: item)
+        assert result.path == tmp_path / "admitted.epub"
+        assert calls == ["book-1"]
+    finally:
+        service.close()
