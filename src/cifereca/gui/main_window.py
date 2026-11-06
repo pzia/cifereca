@@ -1518,7 +1518,11 @@ class MainWindow(Adw.ApplicationWindow):
                 raise ValueError('L’identité active a changé')
             uri = self.service.local_book_path(placement['placement_id'], identity_id=current.identity_id).as_uri()
             Gio.AppInfo.launch_default_for_uri(uri, None)
-        except Exception as exc: self.show_error(str(exc), 'Ouverture du livre impossible')
+        except Exception:
+            # Missing/foreign Placements and OS launch failures may contain
+            # private file names, credentials or untrusted upstream text.
+            # Never display exception prose for a local-book open refusal.
+            self.show_error('Ouverture locale indisponible.', 'Ouverture du livre impossible')
 
     def _add_catalogue_action(self, detail, item):
         return public_catalogue_action_controller.add_catalogue_action(
