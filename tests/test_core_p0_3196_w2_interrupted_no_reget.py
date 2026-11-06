@@ -249,3 +249,55 @@ def test_real_legacy_sync_archive_then_unarchive_preserves_crash_checkpoint(
         }
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("status,error", [
+    ("acquiring", None),
+    ("error", "Kobo-Adept : réponse JSON invalide"),
+])
+@pytest.mark.parametrize("sha,size", [
+    (None, None), (None, 43), ("a" * 64, 43),
+])
+def test_single_interrupted_candidate_never_mints_byte_baseline(
+    tmp_path, monkeypatch, status, error, sha, size,
+):
+    """The locator is only a recovery lead; no bytes or Kobo rights are proven."""
+    from cifereca.core import kobo_backup
+    from tests.test_kobo_backup_reconcile_prune import _write_epub
+
+    service = _service(tmp_path, manifest=[_manifest_row()])
+    try:
+        path = service._kobo_backup_target_dir("default") / "Author - Book One.epub"
+        _write_epub(path, marker=b"candidate-not-a-provider-receipt")
+        original = path.read_bytes()
+        service.storage.backup_put({
+            **_checkpoint(status=status, revision="rev-1", error=error),
+            "sha256": sha, "size": size,
+        })
+        before_links = service.storage.origin_links()
+        _forbid_download(service, monkeypatch)
+        # A recovered candidate must not be hashed to complete its previously
+        # missing legacy SHA, including via the next reconciliation pass.
+        monkeypatch.setattr(
+            kobo_backup, "sha256_file",
+            lambda *_a, **_k: pytest.fail("candidate must not become hash proof"),
+        )
+        first = service.sync_kobo_backup_account("vault-1")
+        assert first["attempted"] == first["downloaded"] == first["unchanged"] == 0
+        assert first["reconcile_skipped"] >= 1
+        after = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert after["status"] == "reconcile_required"
+        assert after["revision_id"] == "rev-1"
+        assert after["sha256"] == sha and after["size"] == size
+        assert after["local_path"] == str(path)
+        assert path.read_bytes() == original
+        assert service.storage.origin_links() == before_links
+        second = service.sync_kobo_backup_account("vault-1")
+        again = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert second["attempted"] == second["downloaded"] == second["unchanged"] == 0
+        assert again["sha256"] == sha and again["size"] == size
+        assert again["local_path"] == str(path)
+        assert path.read_bytes() == original
+        assert service.storage.origin_links() == before_links
+    finally:
+        service.close()
