@@ -696,11 +696,14 @@ def local_placements_for_sources(self, identity_id):
     # checks Core origin/SourceReference evidence, artifact identity and
     # current owner; local_book_path below independently checks physical B.
     canonical_artifacts = {}
-    for artifact, owner, provider, credential, account, edition, _kind in (
+    # Keep the legacy-only hot path free of an additional global origin join.
+    # The typed-source query above is bounded and cannot hide new B editions.
+    current_origins = (
         _verified_provider_origin_coordinates(
             self.storage, identity_id=identity_id, with_kind=True,
-        )
-    ):
+        ) if typed_scopes else ()
+    )
+    for artifact, owner, provider, credential, account, edition, _kind in current_origins:
         key = (provider, credential, edition)
         if provider == "kobo" and key in typed_scopes:
             canonical_artifacts.setdefault(key, set()).add(
