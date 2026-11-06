@@ -56,7 +56,7 @@ def retire_canonical_kobo_legacy_in_sync(
         row.edition_id: row
         for row in snapshot.rights
         if (row.provider_attested and row.kind == "purchase"
-            and row.state == "active" and row.right_id == row.edition_id
+            and row.state == "active"
             and row.provider_revision_id is not None)
     }
     if not matched:
