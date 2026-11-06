@@ -2,6 +2,7 @@ from gi.repository import Gtk
 from .query_model import QueryState, FIELDS
 from .book_facets import CONTENT_FIELDS
 from ..core.provider_search import provider_search_summary
+from ..core.document_filter import loaded_document_facets
 
 class MultiSelect(Gtk.MenuButton):
     def __init__(self, label, choices, changed, help_text=''):
@@ -138,6 +139,7 @@ class QueryControls(Gtk.Box):
         ]))
         self.field.set_tooltip_text("Choisir le champ interrogé : titre, auteur, ISBN, sujet, série, collection ou langue.")
         self.field.connect('notify::selected', lambda *_: self._changed())
+        self._scope_values = ('all','physical','digital','unknown')
         self.scope = insert_filter(Gtk.DropDown.new_from_strings([
             'Type', 'Type · Physique', 'Type · Numérique', 'Type · Support indéterminé',
         ]))
@@ -191,13 +193,13 @@ class QueryControls(Gtk.Box):
 
     def state(self):
         return QueryState(self.entry.get_text().strip(), FIELDS[self.field.get_selected()],
-                          ('all','physical','digital','unknown')[self.scope.get_selected()], self.provider.values(), self.types.values(), self.languages.values())
+                          self._scope_values[self.scope.get_selected()], self.provider.values(), self.types.values(), self.languages.values())
 
     def set_state(self, state, *, notify=True):
         self._programmatic_update = True
         try:
             self.entry.set_text(state.text); self.field.set_selected(FIELDS.index(state.field))
-            self.scope.set_selected(('all','physical','digital','unknown').index(state.scope))
+            self.scope.set_selected(self._scope_values.index(state.scope))
             self.provider.set_values(state.providers); self.types.set_values(state.types); self.languages.set_values(getattr(state, 'languages', ()))
         finally:
             self._programmatic_update = False
@@ -216,8 +218,14 @@ class LocalQueryControls(QueryControls):
     def __init__(self, changed, placeholder):
         super().__init__((), changed, self._changed, library=True)
         self.entry.set_placeholder_text(placeholder)
-        for widget in (self.field, self.scope, self.types):
-            widget.set_visible(False)
+        self.field.set_visible(False)
+        self._format_labels = self.types.choice_labels.copy()
+        scope_model = self.scope.get_model()
+        self._scope_labels = {
+            value: scope_model.get_string(index)
+            for index, value in enumerate(self._scope_values)
+        }
+        self.set_document_choices(())
         self.set_choices(languages=())
 
     @property
@@ -232,6 +240,49 @@ class LocalQueryControls(QueryControls):
 
     def selected_languages(self):
         return self.languages.values()
+
+    def _document_facets(self, item):
+        return loaded_document_facets(
+            item, tuple(self._format_labels),
+        )
+
+    def set_document_choices(self, items):
+        """Expose only supports and formats present in the current result set."""
+        media, formats = set(), set()
+        for item in items:
+            medium, offered = self._document_facets(item)
+            media.add(medium)
+            formats.update(offered)
+        known_medium = bool(media - {'unknown'})
+        scope_choices = tuple(
+            (value, label) for value, label in self._scope_labels.items()
+            if value == 'all' or (known_medium and value in media)
+        )
+        scope_values = tuple(value for value, _label in scope_choices)
+        self._programmatic_update = True
+        try:
+            if scope_values != self._scope_values:
+                selected = self._scope_values[self.scope.get_selected()]
+                self.scope.set_model(Gtk.StringList.new([label for _value, label in scope_choices]))
+                self._scope_values = scope_values
+                self.scope.set_selected(scope_values.index(selected) if selected in scope_values else 0)
+            self.scope.set_visible(known_medium)
+            self.types.set_choices(tuple(
+                (value, label) for value, label in self._format_labels.items() if value in formats
+            ))
+            self.types.set_visible(bool(formats))
+        finally:
+            self._programmatic_update = False
+        self._last_notified_state = self.state()
+
+    def matches_document(self, item):
+        scope = self._scope_values[self.scope.get_selected()]
+        formats = self.types.values()
+        if scope == 'all' and not formats:
+            return True
+        medium, offered = self._document_facets(item)
+        return ((scope == 'all' or scope == medium)
+                and (not formats or not set(formats).isdisjoint(offered)))
 
     def set_choices(self, *, sources=None, languages=None):
         self._programmatic_update = True

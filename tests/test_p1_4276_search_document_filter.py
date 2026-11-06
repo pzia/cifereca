@@ -13,7 +13,7 @@ from cifereca.document_classification import (
 from cifereca.core.document_filter import (
     classification_from_row, classified_content_type,
     filter_loaded_with_documentary_proofs, matches_classified_type,
-    public_document_classification, search_medium_label,
+    loaded_document_facets, public_document_classification, search_medium_label,
 )
 from cifereca.gui.query_model import QueryState, result_row
 from cifereca.models import SearchResult
@@ -40,6 +40,20 @@ def notice(name, *, medium="physical", old_kind="physical", doc=None):
         friendly_url=None, scenario="CATALOGUE", content_type=old_kind,
         document_classification=doc,
     )
+
+
+def test_local_document_facets_agree_with_search_on_typed_and_legacy_notices():
+    rows = [
+        notice("epub", doc=classified("digital", "book", offered=("epub",))),
+        notice("print", doc=classified("physical", "book")),
+        notice("unknown", doc=DocumentClassification()),
+        {"format": "KEPUB"},
+        {"format": "EPUB", "document_classification": {"contract": []}},
+    ]
+    assert [loaded_document_facets(row, ("epub", "pdf")) for row in rows] == [
+        ("digital", ("epub",)), ("physical", ()), ("unknown", ()),
+        ("digital", ("epub",)), ("unknown", ()),
+    ]
 
 
 def test_documentary_type_dominates_historic_catalogue_physical_guess():
