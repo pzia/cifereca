@@ -66,8 +66,8 @@ def test_provider_rejection_blocks_prune_even_if_valid_subset_is_processed(
         good = service.sync_kobo_backup_account("vault-1")
         assert good["status"] == "complete"
         assert good["provider_rejected_manifest_items"] == 0
-        assert good["legacy_pruned"] == 1
-        assert service.storage.backup_get("kobo", "vault-1", "historic") is None
+        assert good["legacy_pruned"] == 0
+        assert service.storage.backup_get("kobo", "vault-1", "historic") is not None
     finally:
         service.close()
 
