@@ -160,7 +160,10 @@ def cleanup_old_acsm_work(storage_path, *, max_age_seconds=None, config_get, clo
                         continue
                     os.unlink(name, dir_fd=current_fd)
                     deleted += 1
-                    forget(root / relative / name)
+                    # Cache cleanup uses a pathname, not our pinned fd.
+                    # Skip it if the root was rebound after the unlink.
+                    if root_current():
+                        forget(root / relative / name)
                 except OSError:
                     kept += 1
     except OSError:
