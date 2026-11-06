@@ -17,8 +17,12 @@ contenu, ni une acquisition de droit, ni une copie de fichier.
    accompagné du vrai verrou encore détenu par le thread appelant. Il
    sélectionne au plus quatre lignes `backup_items.complete` liées
    exactement à l'identity/credential/account et dont la révision correspond
-   à la révision positive du fournisseur. Les comptes non qualifiables et
-   les autres états restent des archives.
+   à la révision positive du fournisseur. La présélection exige déjà un
+   OriginLink fournisseur et un Placement canonique `present` sous le même
+   profil afin que des milliers de checkpoints uniquement legacy ne
+   monopolisent pas les quatre places ; seul le contrôle transactionnel
+   complet du point suivant décide de la suppression. Les comptes non
+   qualifiables et les autres états restent des archives.
 4. Pour chaque ligne, `legacy_backup_retirement.retire_attested_legacy_kobo_backup`
    revérifie **dans `BEGIN IMMEDIATE`** toutes les preuves : SourceRef
    unique et fraîche, révision fournisseur, OriginLink, Placement, reçu de
