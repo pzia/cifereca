@@ -300,6 +300,53 @@ def execute_admitted_convergence(
         initial_storage, snapshot, library_root=library_root,
     )
     plan_by_source = {decision.source: decision for decision in plan.decisions}
+    # #3196 W1/W2: the canonical Sync can retire a superseded legacy archive
+    # only AFTER the independent provider B has been verified or published.
+    # Read just candidate keys once; the retirement operator rechecks scope,
+    # snapshot freshness, the canonical receipt and physical bytes under its
+    # own BEGIN IMMEDIATE. A failed/advisory cleanup never affects Sync.
+    legacy_candidates: set[str] = set()
+    if (scope.provider_id == "kobo" and snapshot.status == "success"
+            and snapshot.coverage == "complete"
+            and snapshot.pagination_complete is True and snapshot.snapshot_ref):
+        try:
+            with initial_storage._lock, initial_storage._connect() as db:
+                candidates = db.execute(
+                    "SELECT item_id FROM backup_items WHERE provider_id='kobo' "
+                    "AND credential_id=? AND identity_id=? AND account_id=? "
+                    "AND status='complete' AND entitlement_type='owned' "
+                    "LIMIT 10001",
+                    (scope.credential_id, scope.identity_id, scope.account_id),
+                ).fetchall()
+            if len(candidates) <= 10000:
+                legacy_candidates = {item for (item,) in candidates}
+            else:
+                _LOG.warning("TRACE convergence code=legacy_retirement_budget_exhausted")
+        except Exception:
+            _LOG.warning("TRACE convergence code=legacy_retirement_inventory_unavailable")
+
+    def retire_legacy_if_verified(observation: ProviderRightObservation) -> None:
+        if (observation.kind != "purchase"
+                or observation.edition_id not in legacy_candidates):
+            return
+        try:
+            if not current():
+                return
+            from .legacy_backup_retirement import retire_attested_legacy_kobo_backup
+            result = retire_attested_legacy_kobo_backup(
+                initial_storage, library_root=library_root, snapshot=snapshot,
+                item_id=observation.edition_id, right_id=observation.right_id,
+                # No Storage calls in this callback: the retirement operator
+                # invokes it while holding Storage's SQL write lock.
+                context_current=current_memory,
+            )
+            if result.changed:
+                _LOG.info("TRACE convergence code=legacy_archive_exactly_retired")
+            elif result.status == "blocked":
+                _LOG.info("TRACE convergence code=legacy_archive_retirement_deferred")
+        except Exception:
+            _LOG.warning("TRACE convergence code=legacy_archive_retirement_unavailable")
+
     results: list[ConvergenceOutcome] = []
     trace = CanonicalFlowTrace()
     for row in snapshot.rights:
@@ -445,6 +492,7 @@ def execute_admitted_convergence(
                     initial_storage, library_root=library_root,
                     placement_id=decision.placement_ids[0],
                 )
+            retire_legacy_if_verified(row)
             results.append(ConvergenceOutcome(
                 key, "recovered" if repaired else "present_attested",
                 "canonical_stock_relocated" if repaired else "exact_verified_origin",
@@ -607,6 +655,7 @@ def execute_admitted_convergence(
                 initial_storage, library_root=library_root,
                 placement_id=published.placement_id,
             )
+            retire_legacy_if_verified(row)
             results.append(ConvergenceOutcome(
                 key,
                 "recovered" if was_recovered else (
