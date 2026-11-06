@@ -12,9 +12,7 @@ import pytest
 from cifereca.storage import Storage
 
 
-@pytest.mark.parametrize("status", (
-    "skipped_archived", "reconcile_required", "reconcile_conflict",
-))
+@pytest.mark.parametrize("status", ("skipped_archived",))
 def test_passive_kobo_checkpoint_does_not_mint_canonical_state(tmp_path, status):
     storage = Storage(tmp_path / "state.sqlite3")
     data = b"synthetic historical content"
@@ -45,9 +43,7 @@ def test_passive_kobo_checkpoint_does_not_mint_canonical_state(tmp_path, status)
         storage.close()
 
 
-@pytest.mark.parametrize("status", (
-    "skipped_archived", "reconcile_required", "reconcile_conflict",
-))
+@pytest.mark.parametrize("status", ("skipped_archived",))
 def test_passive_kobo_checkpoint_cannot_rebind_existing_canonical_owner(
     tmp_path, status,
 ):
@@ -72,6 +68,24 @@ def test_passive_kobo_checkpoint_cannot_rebind_existing_canonical_owner(
             storage.backup_put(row)
         assert storage.backup_get("kobo", "vault", "edition") is None
         assert storage.entitlements() == before
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("status", ("reconcile_required", "reconcile_conflict"))
+def test_w4_reconciliation_mirror_remains_available_until_migrated(
+    tmp_path, status,
+):
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        storage.backup_put({
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "alice", "account_id": "account-a",
+            "item_id": "edition", "title": "Review",
+            "status": status,
+        })
+        assert storage.backup_get("kobo", "vault", "edition")["status"] == status
+        assert len(storage.acquisitions(provider_id="kobo")) == 1
     finally:
         storage.close()
 
