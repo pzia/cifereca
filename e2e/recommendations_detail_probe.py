@@ -97,6 +97,7 @@ def main():
         "real_host": "cifereca.gui.plugin_ui_host._UiHost",
         "source_data": "synthetic ranked candidates; ranking task disabled",
         "p1_1354_phase": "probe_start",
+        "p1_774_phase": "setup",
     }
     app = Adw.Application(
         application_id="org.cifereca.E2ERecommendations",
@@ -131,11 +132,18 @@ def main():
         # #774: the requested --width is not evidence of the Xvfb or GTK
         # allocation. Verify the captured *actual* display and toplevel.
         expected_height = 900 if args.width == 1366 else 1000
-        assert image.size == (args.width, expected_height)
+        report["p1_774_phase"] = "display_geometry"
         window = state["window"]
         actual_width, actual_height = window.get_width(), window.get_height()
+        report["p1_774_geometry"] = {
+            "display_width": image.width, "display_height": image.height,
+            "window_width": actual_width, "window_height": actual_height,
+        }
+        assert image.size == (args.width, expected_height)
+        report["p1_774_phase"] = "gtk_geometry"
         assert args.width - 100 <= actual_width <= args.width
         assert 500 <= actual_height <= expected_height
+        report["p1_774_phase"] = "image_pixels"
         colors = image.getcolors(maxcolors=2)
         assert colors is None or len(colors) > 1
         image_path = out / (stage + ".png")
@@ -218,6 +226,7 @@ def main():
         assert isinstance(view._master, PublicBookMasterDetailView)
         assert view._master._page.store.get_n_items() == 0
         assert not state["searches"]
+        report["p1_774_phase"] = "initial_capture"
         capture("00-empty")
         view._ranked = [
             ranked("edition-a", "Livre A", "9780306406157", score=94),
@@ -239,6 +248,7 @@ def main():
         generation = view._generation
         state["filter_generation"] = generation
         assert query.widget.get_mapped() and store.get_n_items() == 3
+        report["p1_774_phase"] = "source_filters"
         query.provider.buttons["fixture"].set_active(True)
         assert store.get_n_items() == 1
         query.provider.buttons["second"].set_active(True)
@@ -247,11 +257,13 @@ def main():
         assert view._generation == generation and not state["searches"]
         report["checks"]["shared_multisource_filter_is_local"] = True
         query.provider.set_values(())
+        report["p1_774_phase"] = "format_counter"
         query.types.buttons["pdf"].set_active(True)
         assert store.get_n_items() == 1 and store.get_item(0).title == "Livre B"
         assert "PDF" in view._summary.get_text()
         query.types.set_values(())
         assert "PDF" not in view._summary.get_text()
+        report["p1_774_phase"] = "support_counter"
         query.scope.set_selected(1)
         assert store.get_n_items() == 1 and store.get_item(0).title == "Livre C"
         assert "Type · Physique" in view._summary.get_text()
@@ -263,11 +275,13 @@ def main():
         assert store.get_n_items() == 3
         # A real XTEST typing event, not entry.set_text()/emit(): local
         # filtering must work with keyboard and without a new Core search.
+        report["p1_774_phase"] = "keyboard_focus"
         assert query.entry.get_mapped()
         assert query.entry.grab_focus() is not False
         later(160, type_filter_by_keyboard)
 
     def type_filter_by_keyboard():
+        report["p1_774_phase"] = "keyboard_type"
         view = state["view"]
         query = view._query_controls
         assert query.entry.has_focus()
@@ -275,6 +289,7 @@ def main():
         later(200, after_keyboard_filter)
 
     def after_keyboard_filter():
+        report["p1_774_phase"] = "keyboard_verdict"
         view = state["view"]
         query = view._query_controls
         store = view._master._page.store
@@ -297,6 +312,7 @@ def main():
         later(150, selected_a)
 
     def selected_a():
+        report["p1_774_phase"] = "original_scenarios"
         view = state["view"]
         assert view._master._page.selection.get_selected() == 0
         assert any(
