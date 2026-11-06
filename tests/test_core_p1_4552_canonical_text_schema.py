@@ -65,6 +65,7 @@ def test_identical_or_conflicting_duplicate_declaration_fails_closed():
     {"allowed_values": ("regular", "regular")},
     {"allowed_values": ("",)},
     {"allowed_values": ("bad\ud800",)},
+    {"allowed_values": ("novice\x00hidden",)},
     {"plugin_id": "secret credential"},
 ])
 def test_bad_declaration_anywhere_invalidates_registry(change):
@@ -162,3 +163,21 @@ def test_schema_result_refuses_alternate_selected_scope_even_if_value_allowed(ch
 def test_schema_result_needs_explicit_selection_not_a_fabricated_none():
     with pytest.raises(ValueError, match="invalid_canonical_text_validation_context"):
         validate_text_schema_result(RESULT, schema=SCHEMA, selection=None)
+
+
+def test_nul_invalid_free_text_even_without_enum_and_with_selected_scope():
+    schema = replace(SCHEMA, allowed_values=())
+    with pytest.raises(ValueError, match="canonical_text_schema_value_invalid"):
+        validate_text_schema_result(
+            replace(RESULT, value="regular\x00hidden"),
+            schema=schema, selection=SELECTED,
+        )
+
+
+def test_nul_in_unselected_schema_invalidates_entire_registry():
+    unrelated = replace(
+        SCHEMA, canonical_type="custom.other",
+        allowed_values=("hidden\x00record",),
+    )
+    with pytest.raises(ValueError, match="invalid_canonical_text_schema"):
+        select_text_schema([SCHEMA, unrelated], selection=SELECTED)
