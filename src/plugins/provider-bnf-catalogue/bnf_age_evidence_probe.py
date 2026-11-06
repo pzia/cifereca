@@ -140,3 +140,74 @@ def exact_edition_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
                     "age_status": "unqualified_raw_evidence",
                 })
     return output
+
+
+# Conservative qualification of *observed* CNLJ public SRU fields only.
+# These are audience statements for the bibliographic record, not a claim
+# about a purchased digital variant or a Core YouthAgeRange (#4530/#4552).
+# Each JAg code here has been checked against the BnF reference and the
+# corresponding public SRU fixture. Do not extrapolate a numeric grammar.
+_OBSERVED_JAG = {
+    "JAg1399": (13, None),
+    "JAg0003": (0, 3),
+    "JAg0699": (6, None),
+}
+_OBSERVED_CNLJ_NOTES = {
+    "À partir de 13 ans": (13, None),
+    "De 0 à 3 ans": (0, 3),
+}
+
+
+def qualified_observed_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
+    """Qualify only whitelisted observed BnF audience codes on own ISBN.
+
+    Still offline, and intentionally **not** a Core canonical age producer.
+    A malformed/ambiguous MARC or unknown code yields no numeric projection,
+    while raw original fields remain available via exact_edition_age_fields().
+    Distinct contradictory claims for one ARK are not reconciled by guessing.
+    """
+    observed = exact_edition_age_fields(xml, isbn)
+    candidates: dict[str, list[dict[str, object]]] = {}
+    for row in observed:
+        marker = (row["marc_format"], row["field_tag"])
+        pairs = row["raw_subfields"]
+        bounds = None
+        code = None
+        if marker == ("UNIMARC", "333"):
+            notes = [v for k, v in pairs if k == "a"]
+            authority = [v for k, v in pairs if k == "2"]
+            if len(notes) == 1 and authority == ["CNLJ"]:
+                code = notes[0]
+                bounds = _OBSERVED_CNLJ_NOTES.get(code)
+        elif marker == ("INTERMARC", "833"):
+            values = [v for k, v in pairs if k == "m"]
+            if len(values) == 1:
+                code = values[0]
+                bounds = _OBSERVED_JAG.get(code)
+        # A critical review 329 and any unknown or malformed declaration
+        # are never numeric. Do not interpret ranges embedded in free text.
+        if bounds is None:
+            continue
+        candidates.setdefault(row["record_ark"], []).append({
+            "record_ark": row["record_ark"],
+            "own_isbn13": row["own_isbn13"],
+            "marc_format": row["marc_format"],
+            "field_tag": row["field_tag"],
+            "source_subfield": "a" if marker[0] == "UNIMARC" else "m",
+            "source_literal": code,
+            "audience_age_min": bounds[0],
+            "audience_age_max": bounds[1],
+            "evidence_role": "cnlj_bibliographic_target_audience",
+            "edition_support_verified": False,
+            "core_youth_age_range_authorized": False,
+        })
+    result = []
+    for rows in candidates.values():
+        # Identical repeated Intermarc 833 fields do not count twice.
+        # Two different assertions from one record are conflicting; return
+        # neither as a normalized interval.
+        if len({(row["audience_age_min"], row["audience_age_max"])
+                for row in rows}) != 1:
+            continue
+        result.append(rows[0])
+    return result
