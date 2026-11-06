@@ -66,3 +66,31 @@ dans Core (consentement, suppression, invalidation de cache, multi-profils),
 puis comparer sur corpus identique les classements et la diversité
 baseline vs opt-in. La notice C et les origins enrichissent les attributs
 des livres, jamais leur appréciation implicite. Aucune API réseau ajoutée.
+
+
+## Corpus contrôlé — comparaison du classement complet
+
+`test_p1_4681_explicit_reading_signals.py` vérifie désormais le pipeline de
+classement complet `rank_candidates_prepared` sur deux candidats de catalogue
+ayant des éditions différentes mais le même contexte de source. Les deux
+requêtes explicites conservent **exactement** les mêmes résultats et leur ordre
+fournisseur ; le seul paramètre changé est le feedback Core opt-in :
+
+| Signal sur la bibliothèque d'Alice | Premier candidat attendu |
+| --- | --- |
+| Aucun (baseline neutre) | Édition A |
+| `liked` sur le livre B | Édition B |
+| `not_interested` sur le livre A | Édition B |
+| Retour à zéro signal | Classement baseline restauré |
+
+Ce test verrouille aussi l'ensemble des coordonnées
+`provider / credential / docbase / collection / record_id` des variantes,
+identique avant/après pondération. Un score modifié n'est pas un droit d'action
+ni une permission d'achat/emprunt ; aucune requête fournisseur, persistance,
+collecte d'appréciations ou activation UI n'est introduite.
+
+**Limite de preuve :** ce corpus synthétique teste la réversibilité de la
+politique déterministe actuelle, non la pertinence réelle ni un consentement
+utilisateur. L'API et le writer Core des préférences, les invalidations live,
+les comparaisons quantitatives sur plus grand corpus et la recette UI restent
+des critères de sortie du P1 #4681.
