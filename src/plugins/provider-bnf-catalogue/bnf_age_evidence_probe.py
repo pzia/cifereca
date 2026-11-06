@@ -57,10 +57,19 @@ def exact_edition_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
         raise ValueError("invalid_isbn")
     if type(xml) is not bytes or not 0 < len(xml) <= MAX_XML_BYTES:
         raise ValueError("invalid_sru_size")
-    if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+    # BnF SRU is UTF-8. Decode before checking for declarations so an XML
+    # parser cannot auto-detect UTF-16 and expand an entity the guard missed.
+    try:
+        text = xml.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("invalid_sru_encoding") from None
+    if "\x00" in text:
+        raise ValueError("invalid_sru_encoding")
+    markup = text.upper()
+    if "<!DOCTYPE" in markup or "<!ENTITY" in markup:
         raise ValueError("sru_entities_forbidden")
     try:
-        root = ET.fromstring(xml)
+        root = ET.fromstring(text)
     except ET.ParseError as exc:
         raise ValueError("invalid_sru_xml") from exc
     if root.tag != SRU + "searchRetrieveResponse":

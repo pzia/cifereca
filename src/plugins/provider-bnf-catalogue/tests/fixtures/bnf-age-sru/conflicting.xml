@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='utf-8'?>
+<srw:searchRetrieveResponse xmlns:diag="http://www.loc.gov/zing/srw/diagnostic/" xmlns:srw="http://www.loc.gov/zing/srw/">
+  <srw:version>1.2</srw:version>
+  <srw:numberOfRecords>1</srw:numberOfRecords>
+  <srw:records>
+    <srw:record>
+      <srw:recordSchema>marcxchange</srw:recordSchema>
+      <srw:recordPacking>xml</srw:recordPacking>
+      <srw:recordData>
+        <srw:diagnostics>
+          <diag:diagnostic>
+            <diag:uri>info:srw/diagnostic/1/131</diag:uri>
+            <diag:details>-20;</diag:details>
+            <diag:message>erreur de traitement</diag:message>
+          </diag:diagnostic>
+        </srw:diagnostics>
+      </srw:recordData>
+      <srw:recordIdentifier>ark:/12148/cb47584428d</srw:recordIdentifier>
+      <srw:recordPosition>1</srw:recordPosition>
+    </srw:record>
+  </srw:records>
+</srw:searchRetrieveResponse>

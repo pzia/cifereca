@@ -1,0 +1,34 @@
+<?xml version='1.0' encoding='utf-8'?>
+<srw:searchRetrieveResponse xmlns:mxc="info:lc/xmlns/marcxchange-v2" xmlns:srw="http://www.loc.gov/zing/srw/">
+  <srw:version>1.2</srw:version>
+  <srw:numberOfRecords>1</srw:numberOfRecords>
+  <srw:records>
+    <srw:record>
+      <srw:recordSchema>marcxchange</srw:recordSchema>
+      <srw:recordPacking>xml</srw:recordPacking>
+      <srw:recordData>
+        <mxc:record format="INTERMARC" id="ark:/12148/cb47671506m" type="Bibliographic">
+          <mxc:controlfield tag="008">250228s 2025                 frfre     b  001 </mxc:controlfield>
+          <mxc:datafield tag="020" ind1=" " ind2=" ">
+            <mxc:subfield code="a">979-10-401-2097-1</mxc:subfield>
+            <mxc:subfield code="b">rel.</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="245" ind1="1" ind2=" ">
+            <mxc:subfield code="a">Carré</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="280" ind1=" " ind2=" ">
+            <mxc:subfield code="a">1 vol. (non paginé [12] p.)</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="833" ind1=" " ind2=" ">
+            <mxc:subfield code="m">JAg0003</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="833" ind1=" " ind2=" ">
+            <mxc:subfield code="m">JAg0003</mxc:subfield>
+          </mxc:datafield>
+        </mxc:record>
+      </srw:recordData>
+      <srw:recordIdentifier>ark:/12148/cb47671506m</srw:recordIdentifier>
+      <srw:recordPosition>1</srw:recordPosition>
+    </srw:record>
+  </srw:records>
+</srw:searchRetrieveResponse>
