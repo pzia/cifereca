@@ -224,6 +224,8 @@ def exact_kobo_offer_id(
                         else "other"
                     )
     eligible: list[tuple[str, str, str, str]] = []
+    # Private transient comparison only; never persist or log signed URLs.
+    eligible_urls: list[str] = []
     for candidate in candidates:
         if type(candidate) is not dict:
             skip("candidate_not_mapping")
@@ -388,6 +390,7 @@ def exact_kobo_offer_id(
         route = (fmt + ":" + source_fmt.strip().lower()
                  if _kdrm_raw_type(raw_drm) else fmt)
         eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
+        eligible_urls.append(candidate["url"])
     # #4640 K1/K3: closed, bounded shape histogram from the *same* already
     # fetched descriptor. Never log a signed URL, account, bearer, raw opaque
     # format, product or source-provided text. This NEVER proves that two
@@ -431,6 +434,10 @@ def exact_kobo_offer_id(
     if len(preferred) == 1 and all(
         row == preferred[0] or legacy_kdrm(row) for row in eligible
     ):
+        eligible_urls = [
+            url for row, url in zip(eligible, eligible_urls)
+            if not legacy_kdrm(row)
+        ]
         eligible = preferred
     # Multiple independent routes remain ambiguous.
     if len(eligible) != 1:
@@ -442,6 +449,12 @@ def exact_kobo_offer_id(
             # Only publish counts after a complete pass. A conflicting scope
             # aborts the descriptor before the remaining rows can be counted.
             diagnostic["candidate_rejection_counts"] = dict(rejections)
+            if len(eligible) > 1:
+                diagnostic["candidate_route_comparison"] = (
+                    "distinct_routes" if len(set(eligible)) > 1 else
+                    "same_route_distinct_urls" if len(set(eligible_urls)) > 1
+                    else "same_route_same_url"
+                )
         return reject(
             str(diagnostic.get("candidate_reason", "eligible_count_not_one"))
             if diagnostic is not None and len(candidates) == 1
