@@ -9,6 +9,7 @@ context as supplementary sections. No provider request on render.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Callable
 
 from ..models import SearchResult, ItemDetail
@@ -80,7 +81,10 @@ def present_loaded_search_detail_in_place(
         )
         if item is None:
             return False
-        known_snapshot = known[1] if known is not None else None
+        # Pin nested metadata separately from the storage adapter. Some
+        # adapters may reuse mutable dictionaries across SQLite projections;
+        # aliasing would hide a changed edition or offer at worker/delivery.
+        known_snapshot = deepcopy(known[1]) if known is not None else None
         query = item.title if known_source else (
             getattr(window, "_last_search_query", "") or ""
         )
