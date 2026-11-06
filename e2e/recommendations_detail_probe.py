@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -24,11 +25,14 @@ sys.path.insert(0, str(ROOT / "src/plugins/recommendations"))
 sys.path.insert(0, str(ROOT / "environnements/openai-chat-debian"))
 
 import gi
+import httpx
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk
-from PIL import ImageGrab
+from PIL import Image, ImageGrab
 
+from cifereca.gui.book_widgets import BookListCell, CoverView
+from cifereca.gui.cover_loader import CoverLoader
 from cifereca.gui.plugin_ui_host import _UiHost
 from cifereca.gui.public_book_view import PublicBookMasterDetailView
 from cifereca.gui.exact_search_notice_navigation import (
@@ -38,6 +42,9 @@ from cifereca.gui.exact_search_notice_navigation import (
 from recommendation_engine import CatalogNoticeVariant, RankedCandidate
 from recommendations import RecommendationsPlugin
 from x11_input import X11Input
+
+
+COVER_URL = "https://covers.example.org/recommendation.png"
 
 
 def ranked(book_id, title, isbn, *, score, provider="fixture"):
@@ -99,6 +106,17 @@ def main():
              "old_action": None, "exact_navigations": [],
              "exact_selected": [], "exact_button": None, "exact_clicked": 0,
              "stale_page_button": None}
+    image_requests = []
+    cover_loader = None
+    cover_bytes = BytesIO()
+    Image.new("RGB", (64, 96), (130, 20, 100)).save(cover_bytes, format="PNG")
+
+    def image_response(request):
+        assert request.method == "GET" and str(request.url) == COVER_URL
+        image_requests.append(str(request.url))
+        return httpx.Response(
+            200, headers={"Content-Type": "image/png"}, content=cover_bytes.getvalue(),
+        )
 
     def save():
         report["duration_seconds"] = round(monotonic() - start, 2)
@@ -195,6 +213,7 @@ def main():
             ranked("edition-b", "Livre B", "9780140328721", score=85, provider="second"),
             ranked("edition-c", "Livre C", "9780140328721", score=60, provider="third"),
         ]
+        view._ranked[0].item["thumbnail_url"] = COVER_URL
         view._reload_providers((
             ("fixture", "Premier"), ("second", "Deuxième"), ("third", "Troisième"),
         ))
@@ -230,6 +249,29 @@ def main():
             isinstance(widget, Gtk.Label) and "Autrice Attestée" in widget.get_text()
             for widget in walk(view._master._page.detail)
         )
+        verify_cover_a(0)
+
+    def verify_cover_a(attempt):
+        page = state["view"]._master._page
+        list_covers = [
+            cell.cover for cell in walk(page.list_stack)
+            if isinstance(cell, BookListCell) and cell.get_mapped()
+            and cell.title_label.get_text() == "Livre A"
+        ]
+        detail_covers = [
+            cover for cover in walk(page.detail)
+            if isinstance(cover, CoverView) and cover.get_mapped()
+        ]
+        if not (
+            len(list_covers) == len(detail_covers) == 1
+            and all(cover.picture.get_paintable() is not None
+                    for cover in list_covers + detail_covers)
+        ):
+            assert attempt < 20, "La couverture n’est pas chargée dans la liste et le détail"
+            later(100, lambda: verify_cover_a(attempt + 1))
+            return
+        assert image_requests == [COVER_URL]
+        report["checks"]["shared_cover_loader_list_and_detail"] = True
         capture("01-selected-a")
         action = get_isbn_action()
         state["old_action"] = action
@@ -251,6 +293,14 @@ def main():
             isinstance(widget, Gtk.Label) and widget.get_text() == "Livre B"
             for widget in walk(view._master._page.detail)
         ), "The second candidate did not replace the first GTK detail"
+        covers = [
+            cover for cover in walk(view._master._page.detail)
+            if isinstance(cover, CoverView) and cover.get_mapped()
+        ]
+        assert len(covers) == 1 and covers[0].placeholder.get_visible()
+        assert covers[0].picture.get_paintable() is None
+        assert image_requests == [COVER_URL]
+        report["checks"]["missing_cover_uses_shared_placeholder"] = True
         capture("02-selected-b")
         # Retained callback from old A selection must be inert even though
         # the original button object still has its Python reference.
@@ -566,10 +616,16 @@ def main():
         app.quit()
 
     def activate(_app):
+        nonlocal cover_loader
         window = Adw.ApplicationWindow(application=app)
         window.set_default_size(args.width - 40, 850 if args.width == 1366 else 930)
         window._closed = False
-        window.covers = None
+        cover_loader = CoverLoader(max_workers=2)
+        cover_loader.client.close()
+        cover_loader.client = httpx.Client(
+            transport=httpx.MockTransport(image_response), trust_env=False,
+        )
+        window.covers = cover_loader
         window.service = NS(
             current_identity=NS(identity_id="alice"),
             dashboard_state=lambda: [
@@ -609,6 +665,8 @@ def main():
             fail(AssertionError("GTK Recommendations closed before checks"))
         if state["device"] is not None:
             state["device"].close()
+        if cover_loader is not None:
+            cover_loader.close()
         save()
     return 0 if report["status"] == "PASS" else 1
 
