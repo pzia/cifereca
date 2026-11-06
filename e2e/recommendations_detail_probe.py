@@ -8,6 +8,7 @@ and candidate results are synthetic; no provider search, LLM or acquisition.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -352,6 +353,13 @@ def main():
         ), "New plugin did not render a fresh detail through shared GTK"
         assert view.selected_identity_id() == "alice"
         assert len(state["searches"]) == 1
+        updated = replace(view._ranked[0], score=96)
+        view._ranked = [updated]
+        view._render()
+        assert view._master._page.selection.get_selected() == 0
+        assert view._exact_notice_state["ranked"] is updated
+        assert len(state["searches"]) == 1
+        report["checks"]["retained_selection_refreshes_detail"] = True
         assert not state["plugin"]._view._disposed
         report["checks"]["reactivation_fresh_detail_and_identity"] = True
         # A post-selection Gtk allocation may need an extra frame. Probe
