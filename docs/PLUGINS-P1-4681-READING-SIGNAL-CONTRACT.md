@@ -18,6 +18,8 @@ par l'utilisateur**. Chaque signal lie une identité exacte et une clé
 - `not_interested` : contribution documentaire **0** pour ce livre.
 - Sans signal explicite : contribution **1** inchangée.
 
+Les mentions « auteur déjà présent (N livres) » continuent de compter les **livres réels** qui participent au profil, pas la somme pondérée des affinités.
+
 Ces coefficients constituent une **politique provisoire déterministe,
 opt-in**, pour expérimentations contrôlées ; l'interface et le Core
 n'injectent aucun signal aujourd'hui. Les préférences ne sont ni acquises
