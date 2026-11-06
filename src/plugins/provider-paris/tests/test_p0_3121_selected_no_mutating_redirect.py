@@ -17,7 +17,10 @@ from tests.test_p1_3252_paris_selected_right_freshness import raw_loan
 @pytest.mark.parametrize("url", [
     "https://bibliotheques.paris.fr/numerique/Portal/ASSARedirect.ashx?url=token",
     "https://bibliotheques.paris.fr/numerique/Portal/ASSA%52edirect.ashx?url=token",
+    "https://bibliotheques.paris.fr/numerique/Portal/ASSA%2552edirect.ashx?url=token",
+    "https://bibliotheques.paris.fr/numerique/Portal/ASSA%252552edirect.ashx?url=token",
     "https://bibliotheques.paris.fr/numerique/DownloadDigitalDocument?book=edition-1",
+    "https://bibliotheques.paris.fr/numerique/Download%2544igitalDocument?book=edition-1",
 ])
 def test_selected_existing_right_refuses_known_mutating_url_before_get(
     tmp_path, monkeypatch, url,
@@ -39,8 +42,13 @@ def test_selected_existing_right_refuses_known_mutating_url_before_get(
         session.close()
 
 
+@pytest.mark.parametrize("endpoint", [
+    "ASSARedirect.ashx",
+    "ASSA%2552edirect.ashx",
+    "Download%2544igitalDocument",
+])
 def test_selected_redirect_cannot_issue_second_get_to_mutating_path(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, endpoint,
 ):
     session, account, loan, client, content_gets = prepare(tmp_path, monkeypatch)
     client.digital = [raw_loan(SIGNED)]
@@ -49,7 +57,7 @@ def test_selected_redirect_cannot_issue_second_get_to_mutating_path(
         content_gets.append(str(url))
         return httpx.Response(
             302, headers={"location": (
-                "/numerique/Portal/ASSARedirect.ashx?url="
+                "/numerique/Portal/" + endpoint + "?url="
                 + quote("/synthetic.acsm", safe="")
             )},
             request=httpx.Request("GET", str(url)),
@@ -65,6 +73,29 @@ def test_selected_redirect_cannot_issue_second_get_to_mutating_path(
                 expected_identity_id="identity-A",
             )
         assert len(content_gets) == 1
+        assert not list(tmp_path.iterdir())
+    finally:
+        session.close()
+
+@pytest.mark.parametrize("url", [
+    "https://bibliotheques.paris.fr/numerique/Portal/ASSA%2552edirect.ashx",
+    "https://bibliotheques.paris.fr/numerique/DownloadDigitalDocument",
+    "https://bibliotheques.paris.fr/numerique/Download%2544igitalDocument",
+])
+def test_first_acsm_read_never_replays_mutating_endpoint(
+    tmp_path, monkeypatch, url,
+):
+    session, account, loan, client, content_gets = prepare(tmp_path, monkeypatch)
+    loan.ebook_url = url
+    try:
+        with pytest.raises(
+            ProviderConfigurationError, match="paris_initial_acsm_replay_denied",
+        ):
+            session.download_digital(
+                loan, account, tmp_path,
+                initial_offer_only=True, admission_current=lambda: True,
+            )
+        assert content_gets == []
         assert not list(tmp_path.iterdir())
     finally:
         session.close()
