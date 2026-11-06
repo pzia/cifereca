@@ -749,3 +749,5 @@ class LiteraryCriticismPlugin:
 
 PLUGIN = LiteraryCriticismPlugin()
 
+
+# ci-timing-probe-4209: non-functional change; discard this branch after measurement.
