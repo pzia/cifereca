@@ -8,6 +8,8 @@ Le synchroniseur Kobo ne peut éliminer les lignes de **projection** absentes qu
 
 **Refus de délégation durable :** `attention_required` avec `attention_code=missing_delegation_scope` est conservé même sans `local_path` quand un manifeste complet omet temporairement l'édition. Sinon sa réapparition redéclencherait un GET automatique malgré le refus 403 antérieur. Le checkpoint ne cède qu'à la reprise explicite propre au compte ou à la migration canonique attestée. Les états `attention_required` sans ce code ne bénéficient pas de ce veto supplémentaire ; la règle est propre à Kobo. Test de non-régression : `tests/test_core_p0_3196_w3_scope_denial_retention.py`.
 
+**Archive Kobo attestée :** une édition `skipped_archived` à la suite d'un refus 409, ou une ancienne projection `attention_required / archived_book`, demeure en archive lorsque le manifeste complet l'omet temporairement. Sinon la réapparition sans attribut `archived` pourrait relancer une acquisition précédemment refusée. Seul un manifeste frais `archived=False` lève cette protection de livraison, sans créer de droit ni supprimer de fichier. Test de non-régression : `tests/test_core_p0_3196_w3_archive_409_retention.py`.
+
 L'opération est atomique sous `BEGIN IMMEDIATE`. Les fichiers sont seulement constatés pour le compteur `local_preserved`, jamais effacés ni promus en preuves vérifiées. Un renouvellement d'acquisition doit être attribué par des preuves positives typées `#3171` et une éventuelle conclusion négative dépend de son **propre** contrat exhaustif et scoper `#3197`, non d'un prune v0.7.
 
 ## Recette / limites

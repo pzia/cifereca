@@ -2189,6 +2189,16 @@ class Storage:
                     and not (provider == "kobo"
                              and status == "attention_required"
                              and attention_code == "missing_delegation_scope")
+                    # #3196 W3: a Kobo 409 archived_book remains a durable
+                    # provider delivery veto until a fresh manifest explicitly
+                    # reports archived=False. Losing skipped_archived (or an
+                    # older archived_book attention marker) at a manifest gap
+                    # would silently re-enable automatic acquisition.
+                    and not (provider == "kobo" and (
+                        status == "skipped_archived"
+                        or (status == "attention_required"
+                            and attention_code == "archived_book")
+                    ))
                     # A stale backup_items projection can say "pending" or
                     # "complete" while a separate canonical/legacy ledger
                     # still owns an interrupted acquisition for this exact
