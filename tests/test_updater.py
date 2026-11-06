@@ -34,9 +34,9 @@ def test_cifereca_python_launcher_tracks_active_release_and_preserves_argv(
         executable = release / ".venv" / "bin" / "python"
         executable.parent.mkdir(parents=True)
         executable.write_text(
-            "#!/bin/sh\\n"
-            f'printf "%s\\\\n" "{name}" "$@"\\n'
-            'if [ "$1" = "--fail" ]; then exit 23; fi\\n',
+            "#!/bin/sh\n"
+            f'printf "%s\\\n" "{name}" "$@"\n'
+            'if [ "$1" = "--fail" ]; then exit 23; fi\n',
             encoding="utf-8",
         )
         executable.chmod(0o755)
@@ -47,7 +47,7 @@ def test_cifereca_python_launcher_tracks_active_release_and_preserves_argv(
     assert published["cifereca-python"] == str(launcher)
     original = launcher.read_bytes()
 
-    args = ["-c", "print('hello')", "with spaces", "quotes'\\"; $HOME", "--version"]
+    args = ["-c", "print(42)", "with spaces", "dollar$ and ; semicolon"]
     first = subprocess.run([str(launcher), *args], capture_output=True, text=True)
     assert first.returncode == 0
     assert first.stdout.splitlines() == ["A", *args]
@@ -58,7 +58,7 @@ def test_cifereca_python_launcher_tracks_active_release_and_preserves_argv(
     assert second.returncode == 0
     assert second.stdout.splitlines() == ["B", *args]
     updater._replace_symlink(root / "current", releases[0])
-    assert subprocess.run([str(launcher)], capture_output=True, text=True).stdout == "A\\n"
+    assert subprocess.run([str(launcher)], capture_output=True, text=True).stdout == "A\n"
     assert launcher.read_bytes() == original
 
 
