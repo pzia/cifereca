@@ -27,7 +27,8 @@ contenu, ni une acquisition de droit, ni une copie de fichier.
    revérifie **dans `BEGIN IMMEDIATE`** toutes les preuves : SourceRef
    unique et fraîche, révision fournisseur, OriginLink, Placement, reçu de
    livraison terminé, appartenance au profil, SHA/taille et inode, absence
-   de collision et contexte de session toujours inchangé. Il écrit le reçu
+   de collision, préférence source durable toujours activée dans SQLite
+   et contexte de session toujours inchangé. Il écrit le reçu
    append-only `core.legacy-kobo-retirement.v1` dans la même transaction
    que le DELETE **de cette seule ligne legacy**.
 5. Le second Sync ne modifie rien ; la copie physique, les droits et toute
