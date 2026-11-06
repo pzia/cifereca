@@ -1823,12 +1823,12 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
         try:
             accounts = session.accounts
             bound = self.storage.identity_for_connection("kobo", source)
-            if (len(accounts) != 1 or bound is None
+            if (len(accounts) != 1 or type(bound) is not str or not bound
                     or accounts[0].credential_id != source
-                    or accounts[0].identity_id != bound.identity_id
+                    or accounts[0].identity_id != bound
                     or not accounts[0].unique_id):
                 continue
-            live[source] = (bound.identity_id, accounts[0].unique_id)
+            live[source] = (bound, accounts[0].unique_id)
         except (AttributeError, TypeError, ValueError):
             continue
     for source in ambiguous:
