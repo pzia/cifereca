@@ -22,8 +22,12 @@ La projection donne quatre états UX :
 Deux comptes d'un même profil sont des options distinctes, épinglées à leur
 credential/account, docbase, notice exacte, édition et epoch. Le plan
 `BorrowForIdentityPreview` garde `executable=False`, et l'identifiant
-opaque `option_id` **n'est pas** un jeton d'action. Les credentials et
-comptes ne sont jamais dans les libellés affichés.
+opaque `option_id` **n'est pas** un jeton d'action. Il inclut désormais
+l'epoch de contexte Core dans son empreinte, pour qu'un changement A→B→A
+ne réutilise pas le même identifiant de bouton même si les coordonnées
+prêteur/compte/édition semblent identiques. Le Core doit **toujours**
+revalider le contexte au clic : ce mécanisme seul n'autorise aucun prêt.
+Les credentials et comptes ne sont jamais dans les libellés affichés.
 
 Tout candidat périmé (plus de 300 secondes), venant d'une autre édition,
 sans capacité de prêt publiée et session prête, avec observation de permission
