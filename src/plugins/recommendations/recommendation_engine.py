@@ -330,6 +330,7 @@ def _profile_feedback_weights(
 @dataclass(frozen=True)
 class ProfileVector:
     authors: Counter[str]
+    author_book_counts: Counter[str]
     subjects: Counter[str]
     series: Counter[str]
     title_terms: Counter[str]
@@ -355,6 +356,7 @@ def build_profile(
         books, identity_id=identity_id, explicit_signals=explicit_signals,
     )
     authors: Counter[str] = Counter()
+    author_book_counts: Counter[str] = Counter()
     subjects: Counter[str] = Counter()
     series: Counter[str] = Counter()
     title_terms: Counter[str] = Counter()
@@ -369,6 +371,9 @@ def build_profile(
         book_authors = {normalize(author): author for author in author_values(book)}
         if signal_weight:
             authors.update({key: signal_weight for key in book_authors})
+            # Public rationale counts books, never the amplified preference
+            # weights (one liked book must not appear as two owned books).
+            author_book_counts.update(book_authors)
         for key, author in book_authors.items():
             author_labels.setdefault(key, author)
         # The same descriptive fact may be projected at the top level, in
@@ -406,6 +411,7 @@ def build_profile(
 
     return ProfileVector(
         authors=authors,
+        author_book_counts=author_book_counts,
         subjects=subjects,
         series=series,
         title_terms=title_terms,
@@ -502,7 +508,7 @@ def _content_score_prevalidated(
     )
     score += author_score
     if authors:
-        count = max(profile.authors[normalize(a)] for a in authors)
+        count = max(profile.author_book_counts[normalize(a)] for a in authors)
         reasons.append(f"auteur déjà présent ({count} livre{'s' if count > 1 else ''})")
 
     subject_tokens: set[str] = set()
