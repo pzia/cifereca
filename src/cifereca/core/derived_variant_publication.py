@@ -28,6 +28,7 @@ def publish_derived_variant(
     expected_intent_key: str = "", expected_intent_sha256: str = "",
     expected_parent_stamp: tuple[int, ...] | None = None,
     expected_output_stamp: tuple[int, ...] | None = None,
+    expected_profile_root: Path | None = None,
 ) -> str:
     """Commit Artifact B, Placement B, OriginLink(derived), recipe and notice.
 
@@ -99,11 +100,14 @@ def publish_derived_variant(
             from .derived_variant_recovery import _verified_sha
             if (type(expected_parent_stamp) is not tuple
                     or type(expected_output_stamp) is not tuple
+                    or type(expected_profile_root) is not Path
                     or not _verified_sha(
                         parent_path, expected_parent_stamp, parent_sha256,
+                        profile_root=expected_profile_root,
                     )
                     or not _verified_sha(
                         published_path, expected_output_stamp, output_sha256,
+                        profile_root=expected_profile_root,
                     )):
                 raise DerivedPublicationConflict("derived_variant_fs_changed")
         parent = db.execute(
