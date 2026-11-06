@@ -79,7 +79,10 @@ def test_first_offer_expiration_and_integrity_and_cleanup(first_offer):
     acsm_cache.forget_initial(directory / "other.acsm")
     assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
     acsm_cache.forget_initial(path)
-    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    assert acsm_cache.reuse_initial(
+        directory, loan, "identity-A", "primary",
+        now=100 + acsm_cache.TTL) is None
 
 
 def test_first_offer_symlinks_or_forged_manifest_rejected(first_offer, tmp_path):
@@ -305,3 +308,60 @@ def test_legacy_unmarked_posthook_cache_cannot_bypass_existing_initial_receipt(f
     assert acsm_cache.reuse(
         directory, loan, "identity-A", "primary",
         now=102, claim_state=lambda key: confirmed if key == claim_key else None) == path
+
+
+def test_claimed_initial_receipt_revoked_at_final_publication_gate(
+        first_offer, monkeypatch):
+    """The last lease check must prevent publishing a stale claim."""
+    import os
+
+    directory, path, loan = first_offer
+    claim = ("loan.borrow.v1:" + "a" * 64, "operation-1")
+    checks = {"n": 0, "replaces": 0}
+
+    def current():
+        checks["n"] += 1
+        return checks["n"] < 3
+
+    original_replace = os.replace
+
+    def track_replace(*args, **kwargs):
+        checks["replaces"] += 1
+        return original_replace(*args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", track_replace)
+    assert not acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        now=100, borrow_claim=claim, admission_current=current)
+    assert checks["n"] >= 3
+    assert checks["replaces"] == 0
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_claimed_initial_receipt_no_pathname_unlink_after_substitution(
+        first_offer, tmp_path, monkeypatch):
+    """Neither a substituted symlink nor an outside file may be deleted."""
+    import os
+
+    directory, path, loan = first_offer
+    claim = ("loan.borrow.v1:" + "a" * 64, "operation-1")
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        borrow_claim=claim, now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    outside = tmp_path / "unrelated.json"
+    outside.write_text("keep", encoding="utf-8")
+    manifest.unlink()
+    manifest.symlink_to(outside)
+    unlink_calls = []
+    old_unlink = os.unlink
+
+    def track_unlink(*args, **kwargs):
+        unlink_calls.append(args)
+        return old_unlink(*args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", track_unlink)
+    acsm_cache.forget_initial(path)
+    assert not unlink_calls
+    assert manifest.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "keep"
