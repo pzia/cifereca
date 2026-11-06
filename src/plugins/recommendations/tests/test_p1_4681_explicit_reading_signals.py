@@ -141,3 +141,20 @@ def test_controlled_candidates_only_gain_affinity_from_explicit_liking():
         {**books[0], "state": "remote_entitled"},
         {**books[1], "state": "remote_loan_active"},
     ]), alice_candidate) == content_score(baseline, alice_candidate)
+
+
+def test_public_rationale_counts_real_books_not_amplified_preference_weight():
+    books = [
+        _book("artifact:one", "alice", "Auteure A", "Histoire"),
+        _book("artifact:two", "alice", "Auteure A", "Culture"),
+    ]
+    profile = build_profile(
+        books, identity_id="alice",
+        explicit_signals=[_signal("artifact:one", "liked")],
+    )
+    assert profile.authors["auteure a"] == 3
+    assert profile.author_book_counts["auteure a"] == 2
+    score, reasons = content_score(profile, {"title": "Nouveau", "author": "Auteure A"})
+    assert score > 0
+    assert "auteur déjà présent (2 livres)" in reasons
+    assert "3 livres" not in " ".join(reasons)
