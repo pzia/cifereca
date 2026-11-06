@@ -1184,7 +1184,7 @@ def _verified_canonical_kobo_unlinked_exemptions(
             ).fetchone()
             if (owner is None or type(owner[0]) is not str
                     or not owner[0] or owner[0] in {".", ".."}
-                    or "/" in owner[0] or "\\\\" in owner[0]
+                    or "/" in owner[0] or "\\" in owner[0]
                     or db.execute(
                         "SELECT 1 FROM identities WHERE directory_name=? "
                         "AND identity_id<>? LIMIT 1",
