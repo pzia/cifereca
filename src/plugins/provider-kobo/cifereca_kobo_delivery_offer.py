@@ -186,10 +186,40 @@ def exact_kobo_offer_id(
         return reject("candidate_list_invalid")
 
     rejections: Counter[str] = Counter()
+    rejection_profiles: Counter[str] = Counter()
+    current_candidate: Any = None
+
+    def closed_shape(row: Any) -> str:
+        """Bounded, whitelisted categories only; never expose provider text."""
+        if type(row) is not dict:
+            return "invalid_candidate"
+        def category(value: Any, allowed: frozenset[str]) -> str:
+            return (value.strip().casefold()
+                    if type(value) is str and value.strip().casefold() in allowed
+                    else "missing" if value is None else "other")
+        source = row.get("source")
+        if source is None and type(row.get("kobo")) is dict:
+            source = row["kobo"].get("source")
+        return ":".join((
+            category(source, frozenset({"library_sync", "content_access_book"})),
+            category(row.get("media_format"), frozenset({
+                "epub", "kepub", "pdf", "acsm", "flepub", "unknown",
+            })),
+            category(row.get("source_format"), frozenset({
+                "epub", "kepub", "epub3", "epub3fl", "flepub", "pdf", "acsm",
+            })),
+            category(row.get("handling"), frozenset({
+                "http_plain", "adobe_adept", "kobo_kdrm",
+            })),
+        ))
 
     def skip(reason: str, *, single_reason: str | None = None) -> None:
         if diagnostic is not None:
             rejections[reason] += 1
+            if len(candidates) > 1:
+                # First rejected guard for this candidate, joined ONLY to
+                # closed categories, never to its URL or unknown metadata.
+                rejection_profiles[closed_shape(current_candidate) + "|" + reason] += 1
             if len(candidates) == 1:
                 diagnostic["candidate_reason"] = single_reason or reason
 
@@ -227,6 +257,7 @@ def exact_kobo_offer_id(
     # Private transient comparison only; never persist or log signed URLs.
     eligible_urls: list[str] = []
     for candidate in candidates:
+        current_candidate = candidate
         if type(candidate) is not dict:
             skip("candidate_not_mapping")
             continue
@@ -396,32 +427,7 @@ def exact_kobo_offer_id(
     # format, product or source-provided text. This NEVER proves that two
     # candidates with the same categories are equivalent/executable.
     if diagnostic is not None and len(candidates) > 1:
-        def category(value: Any, allowed: frozenset[str]) -> str:
-            return (value.strip().casefold()
-                    if type(value) is str and value.strip().casefold() in allowed
-                    else "missing" if value is None else "other")
-
-        profiles: Counter[str] = Counter()
-        for row in candidates:
-            if type(row) is not dict:
-                profiles["invalid_candidate"] += 1
-                continue
-            source = row.get("source")
-            if source is None and type(row.get("kobo")) is dict:
-                source = row["kobo"].get("source")
-            shape = ":".join((
-                category(source, frozenset({"library_sync", "content_access_book"})),
-                category(row.get("media_format"), frozenset({
-                    "epub", "kepub", "pdf", "acsm", "flepub", "unknown",
-                })),
-                category(row.get("source_format"), frozenset({
-                    "epub", "kepub", "epub3", "epub3fl", "flepub", "pdf", "acsm",
-                })),
-                category(row.get("handling"), frozenset({
-                    "http_plain", "adobe_adept", "kobo_kdrm",
-                })),
-            ))
-            profiles[shape] += 1
+        profiles: Counter[str] = Counter(closed_shape(row) for row in candidates)
         diagnostic["candidate_shape_counts"] = dict(sorted(profiles.items()))
 
     # Preserve a single proven plain, ACSM or library_sync route before
@@ -449,6 +455,10 @@ def exact_kobo_offer_id(
             # Only publish counts after a complete pass. A conflicting scope
             # aborts the descriptor before the remaining rows can be counted.
             diagnostic["candidate_rejection_counts"] = dict(rejections)
+            if rejection_profiles:
+                diagnostic["candidate_rejection_profile_counts"] = dict(
+                    sorted(rejection_profiles.items())
+                )
             if len(eligible) > 1:
                 diagnostic["candidate_route_comparison"] = (
                     "distinct_routes" if len(set(eligible)) > 1 else
