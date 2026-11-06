@@ -142,6 +142,10 @@ def _eligible(w: BorrowForIdentityWitness, *, now: int,
             or cap.session_ready is not True
             or eligible.operation != "loan.borrow"
             or eligible.branch != item.docbase
+            or (eligible.identity_id, eligible.provider_id,
+                eligible.credential_id, eligible.account_id) != (
+                a.identity_id, a.provider_id, a.credential_id, a.unique_id
+            )
             or eligible.state != "eligible_observed"
             or eligible.reason_code != "borrow_permission_observed"
             or borrow_claim_key(a, item) is None):
