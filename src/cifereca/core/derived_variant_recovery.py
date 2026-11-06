@@ -357,8 +357,7 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
             receipt_digest = hashlib.sha256(receipt_bytes).hexdigest()
             data = json.loads(receipt_bytes)
             if (type(data) is not dict or data.get("schema") != SCHEMA
-                    or data.get("identity_id") != identity_id
-                    or not _intent_matches(storage, journal, receipt_digest)):
+                    or data.get("identity_id") != identity_id):
                 continue
             source = Path(data["source_path"])
             target = Path(data["published_path"])
@@ -426,7 +425,16 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                              data["source_artifact_id"], proof),
                         ).fetchone()
                     if attested:
+                        # Canonical derived OriginLink remains authoritative
+                        # after a supervised SQL-intent compaction. This
+                        # read-only status never creates a new provenance.
                         outcome["status"] = "already_committed"
+                        outcome["sha256"] = receipt_digest
+                continue
+            if not _intent_matches(storage, journal, receipt_digest):
+                # Without the original prelink intent, an orphan file/JSON
+                # can never be promoted. A committed child is recognized
+                # only by the exact existing Placement and OriginLink above.
                 continue
             outcome["status"] = "recoverable"
             outcome["sha256"] = receipt_digest
