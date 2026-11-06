@@ -553,6 +553,8 @@ def test_774_recommendations_failed_gtk_probe_emits_only_closed_diagnostics():
     for marker in (
         '"P1_774_CLOSED_FAILURE_STAGE=" + phase',
         '"P1_774_NUMERIC_" + key',
+        '"P1_774_PROBE_LINE=" + str(line)',
+        'traceback.extract_tb(exc.__traceback__)',
         'and all(type(v) is int and 0 <= v <= 4096',
         '"format_counter", "support_counter", "keyboard_focus"',
         'report["p1_774_phase"] = "keyboard_verdict"',
