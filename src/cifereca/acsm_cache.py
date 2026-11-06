@@ -102,6 +102,17 @@ def reuse(directory: Path, loan, identity_id: str, account_id: str, *,
         elif 'initial_claim_bound' in row:
             # Unknown/forged provenance markers can never weaken the check.
             return None
+        else:
+            # #4644/#4648 may have written an ordinary post-hook cache
+            # before the claim-bound marker existed. Do not grandfather in
+            # a same-file first-offer receipt as an unqualified cache hit.
+            initial_row = _read_initial_manifest(directory)
+            if (initial_row is not None and initial_row.get('file') == name):
+                if (claim_state is None or reuse_initial(
+                        directory, loan, identity_id, account_id,
+                        now=now, claim_state=claim_state,
+                ) != path):
+                    return None
         return path
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return None
