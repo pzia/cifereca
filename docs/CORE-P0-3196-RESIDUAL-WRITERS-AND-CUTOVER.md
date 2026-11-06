@@ -27,6 +27,8 @@ production n'était identifié ; le veto explicite permet de détecter un
 La migration journalisée des répertoires d'identités et les relinks canoniques
 attestés restent des opérations distinctes, non retirées par cette tranche.
 
+**Complément W3 — orphelins avec indices d'octets :** un ancien enregistrement Kobo sans `local_path` mais avec `sha256` non vide et/ou `size` positive reste consultable après un manifeste sans l'édition. Ce sont des indices historiques, pas des fichiers attestés ni des droits. La réapparition de l'édition doit conduire au rapprochement et non à un GET automatique. Le garde est limité au prune W3, n'efface rien et ne réalise pas le cutover ; tests SQLite et service sans fournisseur réel dans `tests/test_core_p0_3196_w3_orphaned_byte_evidence.py`.
+
 **Complément W3 — refus de délégation :** `backup_prune_missing` conserve désormais un refus `attention_required` avec `attention_code=missing_delegation_scope`, même sans chemin local lorsque l'édition sort temporairement d'un manifeste complet. La disparition de l'édition ne démontre pas un nouveau scope ; le retour du manifeste ne doit jamais réarmer implicitement le GET refusé. Seule une reprise explicite du compte ou un cutover canonique attesté peut lever ce checkpoint ; test SQLite et synchronisation sans réseau dans `tests/test_core_p0_3196_w3_scope_denial_retention.py`.
 
 **Garde W4 sur le chemin cible :** si le Placement existe et que son
