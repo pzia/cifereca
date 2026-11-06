@@ -55,6 +55,8 @@ class ParseWitnessReview:
 def _valid_baseline(witness: object) -> bool:
     if (type(witness) is not ParseWitness
             or type(witness.approved) is not bool
+            or type(witness.source_scope_sha256) is not str
+            or type(witness.approved_input_sha256) is not str
             or _SHA.fullmatch(witness.source_scope_sha256) is None
             or _SHA.fullmatch(witness.approved_input_sha256) is None
             or type(witness.parser_version) is not str
@@ -70,6 +72,7 @@ def _valid_baseline(witness: object) -> bool:
                 or any(type(k) is not str or _NAME.fullmatch(k) is None
                        for k in fact.path)
                 or fact.path in known
+                or type(fact.expected_type) is not str
                 or fact.expected_type not in _TYPES
                 or type(fact.required) is not bool
                 or (fact.expected_sha256 is not None and (
