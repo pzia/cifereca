@@ -416,12 +416,53 @@ def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
 
 
 def forget_initial(path: Path) -> None:
-    """Remove only the receipt for this input after successful fulfillment."""
-    manifest = path.parent / INITIAL_MANIFEST
+    """Best-effort receipt cleanup in the pinned private staging directory.
+
+    Never follow a sidecar symlink, trust a pathname-only read, or delete a
+    manifest for a different ACSM. This is not an atomic inode-CAS unlink:
+    the private staging directory must remain owner-controlled.
+    """
+    import stat
+    if (not isinstance(path, Path) or path.suffix.casefold() != '.acsm'
+            or not path.name or '/' in path.name or chr(92) in path.name):
+        return
+    parent_fd = manifest_fd = None
     try:
-        if not manifest.is_symlink() and manifest.stat().st_size <= 16384:
-            row = json.loads(manifest.read_text(encoding='utf-8'))
-            if type(row) is dict and row.get('file') == path.name:
-                manifest.unlink()
-    except (OSError, ValueError, AttributeError):
+        parent_fd = os.open(
+            path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        parent = os.fstat(parent_fd)
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid():
+            return
+        manifest_fd = os.open(
+            INITIAL_MANIFEST, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        before = os.fstat(manifest_fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                or not 0 < before.st_size <= 16384):
+            return
+        with os.fdopen(manifest_fd, 'rb', closefd=False) as stream:
+            raw = stream.read(16385)
+        after = os.fstat(manifest_fd)
+        if (len(raw) != before.st_size or before.st_dev != after.st_dev
+                or before.st_ino != after.st_ino
+                or before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns):
+            return
+        row = json.loads(raw.decode('utf-8'))
+        if type(row) is not dict or row.get('file') != path.name:
+            return
+        current = os.stat(
+            INITIAL_MANIFEST, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(current.st_mode)
+                or current.st_dev != before.st_dev
+                or current.st_ino != before.st_ino
+                or current.st_size != before.st_size
+                or current.st_mtime_ns != before.st_mtime_ns):
+            return
+        os.unlink(INITIAL_MANIFEST, dir_fd=parent_fd)
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
         pass
+    finally:
+        if manifest_fd is not None:
+            os.close(manifest_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
