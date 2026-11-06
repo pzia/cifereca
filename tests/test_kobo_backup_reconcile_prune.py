@@ -358,3 +358,79 @@ def test_failed_manifest_run_never_prunes_stale_projection(tmp_path: Path):
         assert service.storage.backup_get("kobo", "vault-1", "stale") is not None
     finally:
         service.close()
+
+
+def test_legacy_remnant_outside_own_profile_is_never_hashed_or_adopted(
+        tmp_path: Path, monkeypatch):
+    """W3 keeps the historical locator but never reads an external candidate."""
+    import cifereca.core.kobo_backup as backup_module
+
+    service = _service(tmp_path, manifest=[])
+    try:
+        foreign = tmp_path / "foreign" / "outside.epub"
+        _write_epub(foreign, b"private other profile")
+        original_digest = "a" * 64
+        service.storage.backup_put({
+            "provider_id": "kobo", "credential_id": "vault-1",
+            "identity_id": "default", "item_id": "foreign-remnant",
+            "revision_id": "original-rev", "title": "Foreign",
+            "author": "Owner", "format": "EPUB", "status": "acquiring",
+            "local_path": str(foreign), "sha256": original_digest,
+            "size": 12345,
+        })
+
+        def forbidden_hash(*args, **kwargs):
+            raise AssertionError("unscoped legacy bytes must never be hashed")
+
+        monkeypatch.setattr(backup_module, "try_sha256_file", forbidden_hash)
+        before_bytes = foreign.read_bytes()
+        report = service.sync_kobo_backup()
+        row = service.storage.backup_get(
+            "kobo", "vault-1", "foreign-remnant")
+        assert report["downloaded"] == 0
+        assert row["status"] == "reconcile_required"
+        assert row["local_path"] == str(foreign)
+        assert row["sha256"] == original_digest
+        assert row["size"] == 12345
+        assert row["revision_id"] == "original-rev"
+        assert foreign.read_bytes() == before_bytes
+    finally:
+        service.close()
+
+
+def test_legacy_remnant_symlink_ancestor_is_quarantined_without_hash(
+        tmp_path: Path, monkeypatch):
+    """A symlinked Kobo parent cannot transfer another identity's bytes."""
+    import cifereca.core.kobo_backup as backup_module
+
+    service = _service(tmp_path, manifest=[])
+    try:
+        foreign = tmp_path / "outside" / "book.epub"
+        _write_epub(foreign, b"private foreign bytes")
+        own = service._kobo_backup_target_dir("default")
+        linked = own / "linked"
+        linked.symlink_to(foreign.parent, target_is_directory=True)
+        candidate = linked / foreign.name
+        service.storage.backup_put({
+            "provider_id": "kobo", "credential_id": "vault-1",
+            "identity_id": "default", "item_id": "symlink-remnant",
+            "revision_id": "r0", "title": "Unverified",
+            "format": "EPUB", "status": "acquiring",
+            "local_path": str(candidate), "sha256": None,
+        })
+
+        monkeypatch.setattr(
+            backup_module, "try_sha256_file",
+            lambda *_a, **_kw: (_ for _ in ()).throw(
+                AssertionError("never hash through a linked ancestor")),
+        )
+        report = service.sync_kobo_backup()
+        row = service.storage.backup_get(
+            "kobo", "vault-1", "symlink-remnant")
+        assert report["downloaded"] == 0
+        assert row["status"] == "reconcile_required"
+        assert row["local_path"] == str(candidate)
+        assert row["sha256"] is None
+        assert foreign.is_file()
+    finally:
+        service.close()
