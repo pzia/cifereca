@@ -350,3 +350,26 @@ def test_legacy_unscoped_positive_status_cannot_qualify_cross_profile_loan():
     result = project(forged)
     assert result.options == ()
     assert result.rejected_count == 1
+
+
+def test_refreshed_exact_lender_observation_revokes_old_button_id():
+    # The collection, account, edition, local session epoch and even
+    # context epoch can remain stable across an actual supplier recheck.
+    # No old GTK callback may masquerade as the new observation.
+    old = project(witness(observed_at=1000)).options[0]
+    current = project(witness(observed_at=1001)).options[0]
+    assert old._source_coordinates == current._source_coordinates
+    assert old.option_id != current.option_id
+    assert old.label == current.label == "Emprunter avec Alice"
+    assert old.executable is current.executable is False
+    assert "1000" not in old.option_id
+    assert "card-A" not in repr(old)
+
+
+def test_identical_observation_epoch_is_stable_under_reordering():
+    one = witness("alice", observed_at=1001)
+    other = witness("charlie", observed_at=1001)
+    a = project(one, other)
+    b = project(other, one)
+    assert a == b
+    assert len({option.option_id for option in a.options}) == 2

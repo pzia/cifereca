@@ -642,3 +642,20 @@ def test_negative_for_other_borrower_or_book_cannot_veto_positive(harness):
     assert _preview(service, positive, foreign_borrower).status == "external"
     assert _preview(service, positive, foreign_edition).status == "external"
     assert session.calls == 0
+
+
+def test_held_lender_choice_revoked_after_positive_fact_refresh(harness):
+    service, account, session = harness
+    initial = _candidate()
+    preview = _preview(service, initial)
+    assert len(preview.options) == 1
+    old_token = preview.options[0].option_id
+    refreshed = replace(initial, observed_at=1001)
+    next_preview = _preview(service, refreshed)
+    assert next_preview.status == preview.status == "external"
+    assert next_preview.options[0]._source_coordinates == preview.options[0]._source_coordinates
+    assert next_preview.options[0].option_id != old_token
+    assert _click(service, preview, old_token, refreshed).status == "revoked"
+    assert _click(service, next_preview, next_preview.options[0].option_id,
+                  refreshed).status == "current"
+    assert session.calls == 0

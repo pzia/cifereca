@@ -76,3 +76,17 @@ docbase/record_id/source_collection` : un refus fournisseur précis ne
 disparaît pas simplement parce que les données de quota ou d'abonnement
 sont inconnues. Un refus relatif à un autre emprunteur ou à un autre livre
 ne peut en revanche invalider la permission du prêteur exact.
+
+## Révocation lors du renouvellement d'une preuve personnelle
+
+À coordonnées de compte, édition, collection et epochs de session **identiques**,
+un nouveau constat positif peut remplacer l'ancien. Le `option_id` du preview
+incorpore désormais `observed_at` dans son SHA-256 opaque. Le clic conservé
+avant un refresh ne peut plus se présenter comme le choix sur le constat
+nouvellement observé ; `revalidate_borrow_lender_choice` renvoie
+`selection_stale`. Le même constat non renouvelé garde un identifiant stable.
+
+Cette révocation ne transforme pas l'âge d'observation en autorisation
+fournisseur et ne modifie ni les claims anti-rejeu, ni la politique de transfert.
+Le fournisseur doit toujours attester les deux preuves positives par compte
+et édition ; aucune requête supplémentaire n'est effectuée à l'affichage.
