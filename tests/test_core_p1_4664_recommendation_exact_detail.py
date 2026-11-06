@@ -308,3 +308,30 @@ def test_matching_known_v2_holdings_preserves_in_place_actions(monkeypatch):
     assert len(f.outputs) == 1
     assert f.outputs[0][0] == (f.item, f.detail)
 
+
+
+@pytest.mark.parametrize("revision_point", ["before_worker", "before_delivery"])
+def test_shared_nested_known_mirror_mutation_revokes_exact_actions(
+    monkeypatch, revision_point,
+):
+    f = _fixture(monkeypatch)
+    # Model a storage adapter returning a shared nested metadata dict. A
+    # shallow snapshot would alias it, silently accepting a revised edition.
+    row = {"metadata": {"source_collection": "collection-1",
+                        "edition_revision": "r1"}}
+    monkeypatch.setattr(
+        port, "_known_item",
+        lambda window, coords: (f.item, row),
+    )
+    f.kwargs["known_source"] = True
+    work, success, failure = _start(f)
+    if revision_point == "before_worker":
+        row["metadata"]["edition_revision"] = "r2"
+        with pytest.raises(Cancelled):
+            work()
+        assert f.calls == []
+    else:
+        assert work() is f.detail
+        row["metadata"]["edition_revision"] = "r2"
+        success(f.detail)
+    assert f.outputs == []
