@@ -296,14 +296,17 @@ class MasterDetailPage(Gtk.Box):
         selected = self.selection.get_selected_item()
         selected_key = selected.key if isinstance(selected, BookListItem) else None
         existing_count = self.store.get_n_items()
-        existing_keys = [self.store.get_item(index).key for index in range(existing_count)]
+        existing_rows = [self.store.get_item(index) for index in range(existing_count)]
+        existing_keys = [row.key for row in existing_rows]
         new_keys = [row.key for row in rows]
 
         # Progressive search normally grows by appending provider batches. Keep
         # the already-materialised GTK rows in place instead of splicing the
-        # complete ListStore on every batch. The final authoritative ranking may
-        # reorder rows; that falls through to the full reconciliation below.
+        # complete ListStore on every batch. Public plugin rows can also
+        # update their presentation while keeping the same selection key.
         if (existing_count and existing_keys == new_keys[:existing_count] and len(rows) >= existing_count
+                and all(getattr(old, "_public_row_content", None) == getattr(new, "_public_row_content", None)
+                        for old, new in zip(existing_rows, rows))
                 and not (self is getattr(self.window, "search_page", None)
                          and getattr(self.window, "_search_local_snapshot_dirty", False))):
             tail = rows[existing_count:]
