@@ -108,7 +108,7 @@ def reuse(directory: Path, loan, identity_id: str, account_id: str, *,
 
 
 def remember(path: Path, directory: Path, loan, identity_id: str, account_id: str, *,
-             now=None, initial_claim_bound=False) -> bool:
+             now=None, initial_claim_bound=False, claim_state=None) -> bool:
     now = time.time() if now is None else now
     digest = _digest(path, directory, now)
     if (type(initial_claim_bound) is not bool
@@ -117,7 +117,10 @@ def remember(path: Path, directory: Path, loan, identity_id: str, account_id: st
     if initial_claim_bound:
         # Not sufficient as authority by itself; only a matching,
         # independently verified first-offer receipt may be promoted.
-        if reuse_initial(directory, loan, identity_id, account_id, now=now) != path:
+        if (claim_state is None or reuse_initial(
+                directory, loan, identity_id, account_id, now=now,
+                claim_state=claim_state,
+        ) != path):
             return False
     row = dict(schema=1, scope=scope(loan, identity_id, account_id), file=path.name,
                sha256=digest, created_at=now)
