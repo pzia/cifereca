@@ -100,9 +100,15 @@ def _safe_scalar(text: str) -> bool:
         return False
     if len(encoded) > _MAX_VALUE_BYTES or "\x00" in text:
         return False
-    if text.startswith(("https://", "http://")):
+    # URLs are scheme-insensitive and may be whitespace-prefixed or
+    # protocol-relative. Keep the raw descriptive text unchanged, but never
+    # preserve a signed URL merely because its scheme was capitalized.
+    candidate = text.lstrip()
+    if candidate.casefold().startswith(("https://", "http://", "//")):
         try:
-            u = urlsplit(text)
+            source_url = ("https:" + candidate if candidate.startswith("//")
+                          else candidate)
+            u = urlsplit(source_url)
             if (not u.hostname or u.username is not None or u.password is not None
                     or u.fragment or
                     any(k.casefold() in _RESTRICTED_QUERY_KEYS

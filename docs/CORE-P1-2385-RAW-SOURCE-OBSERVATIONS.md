@@ -26,7 +26,9 @@ Observation JSON ≤64 KiB, champ texte ≤8 KiB, nom de champ ≤128 octets,
 256 champs par objet, profondeur ≤8, 4 096 nœuds, pas de NaN/objets Python
 non JSON/Unicode isolé. Les clés de secrets explicites et URL signées
 usuelles (signature/token/cookie/autorisation/URL avec credentials)
-sont refusées, y compris profondément imbriquées. Le parseur d'origine doit
+sont refusées, y compris profondément imbriquées, même si l'URL HTTP(S)
+est en majuscules, préfixée par des espaces ou relative au protocole (`//`).
+Le parseur d'origine doit
 également retirer toute donnée privée non bibliographique avant émission ;
 cette validation ne garantit pas seule l'absence de tout secret inconnu.
 
