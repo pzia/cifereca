@@ -1913,6 +1913,7 @@ class UxRecommendationsView:
                             getattr(self, "_disposed", False)
                             or self._generation != generation_at_selection
                             or self._detail_selection_generation != detail_generation_at_selection
+                            or self._selected_catalogue_sources() != catalogue_sources
                             or self._llm_selection_key != key_at_selection
                             or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
                             or self.selected_identity_id() != identity_at_selection
@@ -1943,6 +1944,7 @@ class UxRecommendationsView:
                                 and self._generation == generation_at_selection
                                 and self._detail_selection_generation
                                     == detail_generation_at_selection
+                                and self._selected_catalogue_sources() == catalogue_sources
                                 and self._llm_selection_key == key_at_selection
                                 and self._ranked_by_key.get(key_at_selection)
                                     is ranked_at_selection
@@ -1986,6 +1988,7 @@ class UxRecommendationsView:
                         getattr(self, "_disposed", False)
                         or self._generation != generation_at_selection
                         or self._detail_selection_generation != detail_generation_at_selection
+                        or self._selected_catalogue_sources() != catalogue_sources
                         or self._llm_selection_key != key_at_selection
                         or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
                         or self.selected_identity_id() != identity_at_selection
@@ -2019,6 +2022,7 @@ class UxRecommendationsView:
                     if (
                         self._generation != generation_at_selection
                         or self._detail_selection_generation != detail_generation_at_selection
+                        or self._selected_catalogue_sources() != catalogue_sources
                         or self._llm_selection_key != key_at_selection
                         or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
                         or self.selected_identity_id() != identity_at_selection
@@ -2054,6 +2058,7 @@ class UxRecommendationsView:
                         if (
                             self._generation != generation_at_selection
                             or self._detail_selection_generation != detail_generation_at_selection
+                            or self._selected_catalogue_sources() != catalogue_sources
                             or self._llm_selection_key != key_at_selection
                             or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
                             or self.selected_identity_id() != identity_at_selection
@@ -2084,6 +2089,7 @@ class UxRecommendationsView:
                     if (
                         self._generation != generation_at_selection
                         or self._detail_selection_generation != detail_generation_at_selection
+                        or self._selected_catalogue_sources() != catalogue_sources
                         or self._llm_selection_key != key_at_selection
                         or self._ranked_by_key.get(key_at_selection) is not ranked_at_selection
                         or self.selected_identity_id() != identity_at_selection
