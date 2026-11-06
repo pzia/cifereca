@@ -35,7 +35,7 @@ RESULT = ValidatedDescriptiveResult(
 def test_explicit_registered_custom_type_without_core_type_whitelist():
     other = replace(SCHEMA, canonical_type="custom.secondary")
     assert select_text_schema([other, SCHEMA], selection=SELECTED) == SCHEMA
-    assert validate_text_schema_result(RESULT, schema=SCHEMA) is RESULT
+    assert validate_text_schema_result(RESULT, schema=SCHEMA, selection=SELECTED) is RESULT
     assert select_text_schema([other], selection=SELECTED) is None
 
 
@@ -88,15 +88,15 @@ def test_invalid_registry_length_or_shape_never_admits_a_plugin():
 ])
 def test_value_is_bounded_and_checked_against_declared_enum(value, message):
     with pytest.raises(ValueError, match=message):
-        validate_text_schema_result(replace(RESULT, value=value), schema=SCHEMA)
+        validate_text_schema_result(replace(RESULT, value=value), schema=SCHEMA, selection=SELECTED)
 
 
 def test_inheritance_declarative_flag_is_only_a_restriction_not_permission():
     with pytest.raises(ValueError, match="canonical_text_schema_inheritance_forbidden"):
-        validate_text_schema_result(replace(RESULT, inherited=True), schema=SCHEMA)
+        validate_text_schema_result(replace(RESULT, inherited=True), schema=SCHEMA, selection=SELECTED)
     permissive = replace(SCHEMA, inherited_allowed=True)
     assert validate_text_schema_result(
-        replace(RESULT, inherited=True), schema=permissive
+        replace(RESULT, inherited=True), schema=permissive, selection=SELECTED
     ).inherited is True
 
 
@@ -109,7 +109,7 @@ def test_different_output_plugin_schema_or_type_is_not_rebound():
     ):
         with pytest.raises(ValueError, match="canonical_text_schema_scope_mismatch"):
             validate_text_schema_result(
-                replace(RESULT, **{field: value}), schema=SCHEMA,
+                replace(RESULT, **{field: value}), schema=SCHEMA, selection=SELECTED,
             )
 
 
@@ -139,4 +139,26 @@ def test_schema_gate_composes_with_previous_core_evidence_and_result_gates():
     assert checked is not None
     assert validate_text_schema_result(
         checked, schema=select_text_schema([SCHEMA], selection=SELECTED),
+        selection=SELECTED,
     ) == checked
+
+
+@pytest.mark.parametrize("change", [
+    {"scope": "edition:foreign"},
+    {"canonical_type": "custom.other"},
+    {"plugin_id": "org.other"},
+    {"plugin_version": "2.0.0"},
+    {"schema_id": "schema.reader-level.v2"},
+])
+def test_schema_result_refuses_alternate_selected_scope_even_if_value_allowed(change):
+    # Same selected result, but a differently scoped declaration must never
+    # relax vocabulary or inherited rules by direct validator invocation.
+    foreign = replace(SCHEMA, **change, inherited_allowed=True,
+                      allowed_values=())
+    with pytest.raises(ValueError, match="canonical_text_schema_scope_mismatch"):
+        validate_text_schema_result(RESULT, schema=foreign, selection=SELECTED)
+
+
+def test_schema_result_needs_explicit_selection_not_a_fabricated_none():
+    with pytest.raises(ValueError, match="invalid_canonical_text_validation_context"):
+        validate_text_schema_result(RESULT, schema=SCHEMA, selection=None)
