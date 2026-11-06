@@ -117,7 +117,7 @@ def test_library_entries_federates_local_owned_remote_and_active_loan_for_identi
             _write_epub(root / "EBooks" / "alice" / "gallica" / "Local Book.epub")
             service.catalog_scan()
             storage.backup_put({
-                "provider_id": "kobo", "credential_id": "vault-a", "identity_id": "alice", "item_id": "owned-1",
+                "provider_id": "kobo", "credential_id": "vault-a", "identity_id": "alice", "account_id": "buyer", "item_id": "owned-1",
                 "title": "Owned Remote", "format": "epub", "status": "pending", "entitlement_type": "owned",
             })
             service.last_loans = [Loan(
@@ -220,7 +220,7 @@ def test_library_entries_keep_kobo_and_loan_thumbnails():
         service = LibraryService(config, storage, Diagnostics())
         try:
             storage.backup_put({
-                "provider_id": "kobo", "credential_id": "vault-a", "identity_id": "alice", "item_id": "owned-1",
+                "provider_id": "kobo", "credential_id": "vault-a", "identity_id": "alice", "account_id": "buyer", "item_id": "owned-1",
                 "title": "Owned Remote", "format": "epub", "status": "pending", "entitlement_type": "owned",
                 "cover_url": "https://covers.example/kobo.jpg",
             })

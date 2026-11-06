@@ -1978,6 +1978,48 @@ class Storage:
         out.update({"provider_id": provider_id, "credential_id": credential_id, "item_id": item_id})
         return out
 
+    @classmethod
+    def _check_kobo_legacy_canonical_owner(
+        cls, db: sqlite3.Connection, row: dict[str, Any],
+    ) -> None:
+        """Preserve W1 owner-collision veto without a canonical SQL writer.
+
+        An exact legacy backup PK omits its borrower. An existing canonical
+        right or receipt with the same deterministic ID cannot be assigned
+        to another profile by a replay, even though this transaction no
+        longer updates the canonical row. No rights or receipt are inferred.
+        """
+        right = db.execute(
+            "SELECT provider_id,credential_id,account_id,item_id,"
+            "entitlement_type,loan_id,identity_id "
+            "FROM entitlements WHERE entitlement_id=?",
+            (cls._entitlement_id_for(row),),
+        ).fetchone()
+        owner = row.get("identity_id")
+        if right is not None:
+            expected = (
+                row["provider_id"], row["credential_id"], row["account_id"],
+                row["item_id"], row["entitlement_type"], row["loan_id"],
+            )
+            if (right[:6] != expected
+                    or (right[6] is not None and owner is not None
+                        and right[6] != owner)):
+                raise ValueError("backup_entitlement_owner_conflict")
+        receipt = db.execute(
+            "SELECT provider_id,credential_id,account_id,item_id,identity_id "
+            "FROM acquisition_ledger WHERE acquisition_id=?",
+            (cls._acquisition_id_for(row),),
+        ).fetchone()
+        if receipt is not None:
+            expected = (
+                row["provider_id"], row["credential_id"], row["account_id"],
+                row["item_id"],
+            )
+            if (receipt[:4] != expected
+                    or (receipt[4] is not None and owner is not None
+                        and receipt[4] != owner)):
+                raise ValueError("backup_acquisition_owner_conflict")
+
     def backup_put(self, item: dict[str, Any]) -> None:
         # The Kobo 0.7 writer remains for legacy recovery. Never introduce
         # *new* unusable product IDs into that compatibility table: the
@@ -1990,6 +2032,11 @@ class Storage:
                     or key != key.strip() or len(key) > 1024
                     or any(c in key for c in "\x00\r\n")):
                 raise ValueError("backup_legacy_item_id_invalid")
+            # W1 previously rejected NUL paths while projecting placements.
+            # Keep that input admission even though the canonical projection
+            # is now disabled: a later legacy reader must not ingest it.
+            if "\x00" in str(item.get("local_path") or ""):
+                raise ValueError("backup_legacy_path_invalid")
         now = int(item.get("updated_at") or time.time())
         attempt_count = item.get("attempt_count")
         try:
@@ -2017,15 +2064,10 @@ class Storage:
                      str(item.get("item_id") or "")),
                 ).fetchone() is not None:
                     return
-            # The v0.7 writer is still in service until #3196 migrates its
-            # consumers. In particular an active Kobo delivery legitimately
-            # advances the canonical receipt before refreshing backup_items.
-            # Do not reject that transition merely because the two states
-            # temporarily differ: protect only passive replay downgrades in
-            # the canonical UPSERT below, leaving both writers operational.
-            # A legacy projection PK omits identity/account. Refuse an
-            # explicit conflicting owner atomically: neither the 0.7 row nor
-            # the canonical right/receipt may change on an ambiguous rebind.
+            # The v0.7 checkpoint remains writable for legacy recovery,
+            # but neither passive inventory nor active delivery may mirror
+            # canonical A/B state. The legacy PK omits owner/account: reject
+            # conflicting rebinds before allowing the compatibility update.
             backup_cursor = db.execute(
                 "INSERT INTO backup_items("
                 "provider_id,credential_id,item_id,revision_id,title,author,format,local_path,status,size,sha256,updated_at,error,job_id,"
@@ -2082,7 +2124,26 @@ class Storage:
             ).fetchone()
             if persisted is None:
                 raise ValueError("backup_projection_handoff_missing")
-            self._mirror_backup_row(db, dict(zip(keys, persisted)), now=now, migration=False)
+            # #3196 W1: a legacy Kobo row with no proven borrower or profile
+            # is NOT eligible to mint a canonical entitlement, acquisition,
+            # Artifact or Placement. The old backup PK omits borrower and an
+            # unbound row is an archive/recovery hint only. Source-bound
+            # historical Kobo flows retain their mirror until W2/D1-D5 are
+            # migrated together; otherwise reconciliation and library UI
+            # lose their last 0.7 evidence.
+            #
+            # This is checked on the persisted merged row: a partial patch
+            # with omitted owner/account must not demote an earlier exact
+            # owner in the backup projection.
+            merged = dict(zip(keys, persisted))
+            if (item.get("provider_id") == "kobo"
+                    and (merged.get("identity_id") is None
+                         or merged.get("account_id") is None)):
+                self._check_kobo_legacy_canonical_owner(db, merged)
+            else:
+                self._mirror_backup_row(
+                    db, merged, now=now, migration=False,
+                )
 
     def backup_prune_missing(
         self, provider_id: str, credential_id: str, seen_item_ids: set[str] | list[str] | tuple[str, ...]

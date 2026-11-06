@@ -86,6 +86,7 @@ def test_schema_v3_mirrors_legacy_backup_into_generic_ledger():
             "provider_id": "kobo",
             "credential_id": "identity-a",
             "account_id": "account-a",
+            "identity_id": "identity-a",
             "item_id": "book-a",
             "title": "Book A",
             "status": "pending_acquisition",
