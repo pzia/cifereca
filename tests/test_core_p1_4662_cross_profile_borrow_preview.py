@@ -277,3 +277,25 @@ def test_same_account_different_collections_also_disambiguate_without_choice_by_
     assert len({x.label for x in direct.options}) == 2
     assert len({x.option_id for x in direct.options}) == 2
     assert direct.requires_explicit_choice is True
+
+
+def test_same_lender_offer_after_profile_aba_gets_new_context_scoped_option_id():
+    # A -> B -> A may restore exactly the same identity, credential, edition
+    # and supplier source epoch. The old callback must not match the new UI
+    # context even when the underlying book has not changed.
+    original = witness("alice")
+    first = project(original, epoch=4)
+    new_context = replace(original, service_context_epoch=6)
+    after_aba = project(new_context, epoch=6)
+    assert first.status == after_aba.status == "external"
+    assert first.options[0]._source_coordinates == after_aba.options[0]._source_coordinates
+    assert first.options[0].option_id != after_aba.options[0].option_id
+    assert first.options[0].executable is False
+    assert after_aba.options[0].executable is False
+
+
+def test_original_context_epoch_witness_does_not_cross_identity_rebind():
+    original = witness("alice")
+    refreshed = project(original, epoch=7)
+    assert refreshed.options == ()
+    assert refreshed.rejected_count == 1
