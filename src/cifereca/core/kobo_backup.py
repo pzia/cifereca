@@ -1709,6 +1709,27 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 candidates.append(linked)
         if len(candidates) == 1:
             artifact = candidates[0]
+            # W3: a persisted legacy path (or a candidate discovered through
+            # a replaced ancestor) is not permission to hash another profile
+            # or arbitrary external files. Preserve its historical locator,
+            # and quarantine without reading it or inventing an artifact.
+            if not _kobo_legacy_current_path_scoped(
+                    self, artifact, previous_target_dir,
+                    identity_id=previous_identity):
+                self.storage.backup_put({
+                    **previous,
+                    "status": "reconcile_required",
+                    # A dangling symlink can be the sole discovered candidate
+                    # with no prior locator. Keep its name for supervised
+                    # reconciliation, never as evidence of a usable file.
+                    "local_path": previous.get("local_path") or str(artifact),
+                    "updated_at": int(time.time()),
+                    "error": "Emplacement Kobo historique hors profil ou non vérifiable",
+                    "job_id": None,
+                })
+                emit("reconcile_required", item_id=previous.get("item_id"),
+                     title=previous.get("title"), path=stored_path or str(artifact))
+                continue
             # Never dereference a symlink (including dangling links) when
             # recovering an unverified local artifact.
             ordinary_file = artifact.is_file() and not artifact.is_symlink()
