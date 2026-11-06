@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Protocol, runtime_checkable
+from typing import Any, Callable, Iterable, Literal, Mapping, Protocol, runtime_checkable
 
 from .provider_search_facets import CatalogSearchFacet
 
@@ -1220,6 +1220,19 @@ class UiLocalQueryControls(Protocol):
 
 
 @runtime_checkable
+class UiLocalDocumentFilters(Protocol):
+    """Optional format and support filters on shared local query controls.
+
+    The Core evaluates SearchResult objects or existing catalogue mappings
+    using Search's documentary rules. Replacing the loaded documents updates
+    the available choices without calling the change callback.
+    """
+
+    def set_document_choices(self, items: Iterable[object]) -> None: ...
+    def matches_document(self, item: object) -> bool: ...
+
+
+@runtime_checkable
 class UiLocalQueryHost(UiPageHost, Protocol):
     """Optional shared query widgets with a callback for local filtering."""
 
@@ -1287,7 +1300,7 @@ __all__ = [
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
     "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
-    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiLocalQueryHost", "UiLocalQueryControls", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
+    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiLocalQueryHost", "UiLocalQueryControls", "UiLocalDocumentFilters", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
 ]
 

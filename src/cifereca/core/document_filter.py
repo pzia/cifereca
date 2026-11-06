@@ -50,9 +50,9 @@ def classification_from_row(
         return None
     if isinstance(value, DocumentClassification):
         return value
-    if type(value) is not dict or value.get("contract") not in {
+    if type(value) is not dict or value.get("contract") not in (
         DOCUMENT_CLASSIFICATION_CONTRACT, None,
-    }:
+    ):
         return DocumentClassification()
     if set(value) - {*_EVIDENCE_AXES, "contract", "offered_file_formats"}:
         return DocumentClassification()
@@ -125,6 +125,32 @@ def matches_classified_type(item: DocumentClassification, selected: str) -> bool
              and item.digital_format.value == selected)
         )
     return False
+
+
+def loaded_document_facets(item, formats: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
+    """Read the same support and file-format evidence used by loaded Search."""
+    from .search import available_formats, format_family, support_kind
+    from ..models import SearchResult
+
+    if isinstance(item, SearchResult):
+        row = {
+            "document_classification": item.document_classification,
+            "medium": item.medium, "format": item.format,
+            "content_type": item.content_type, "metadata": item.metadata,
+        }
+    elif isinstance(item, Mapping):
+        row = item
+    else:
+        return "unknown", ()
+    classification = classification_from_row(row)
+    if classification is None:
+        families = {format_family(value) for value in available_formats(row)}
+        return support_kind(row), tuple(value for value in formats if value in families)
+    medium = classification.medium
+    return (
+        medium.value if medium.status == "attested" else "unknown",
+        tuple(value for value in formats if matches_classified_type(classification, value)),
+    )
 
 
 def search_medium_label(item: DocumentClassification) -> str:

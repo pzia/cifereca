@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 import unittest
 
+from cifereca.core.document_filter import loaded_document_facets
+
 FIELDS = ('all', 'title', 'author', 'isbn', 'subject', 'series', 'collection', 'language')
 
 @dataclass(frozen=True)
@@ -27,6 +29,9 @@ class Widget:
     def get_parent(self): return None
     def set_child(self, child): self.child=child
     def set_popover(self, popover): self.popover=popover
+    def set_visible(self, visible): self.visible=visible
+    def get_model(self): return self.model
+    def set_model(self, model): self.model=model
     def set_label(self, label): self.label=label
     def set_tooltip_text(self, text): self.tooltip=text
     def add_css_class(self, _name): pass
@@ -43,24 +48,57 @@ class Widget:
         self.active=active; self.emit('toggled')
     def get_active(self): return self.active
     @classmethod
-    def new_from_strings(cls, *_): return cls()
+    def new_from_strings(cls, labels):
+        widget = cls()
+        widget.model = NS(get_string=labels.__getitem__)
+        return widget
     def __getattr__(self, name):
         if name.startswith('set_'): return lambda *args: None
         raise AttributeError(name)
 
 Gtk=NS(MenuButton=Widget,Popover=Widget,Box=Widget,Button=Widget,CheckButton=Widget,Label=Widget,
-       SearchEntry=Widget,ScrolledWindow=Widget,DropDown=Widget,Align=NS(START=0),
+       SearchEntry=Widget,ScrolledWindow=Widget,DropDown=Widget,StringList=NS(new=list),Align=NS(START=0),
        Orientation=NS(VERTICAL=1,HORIZONTAL=2),PolicyType=NS(AUTOMATIC=0,NEVER=1))
 
 source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/query_controls.py'
 tree=ast.parse(source.read_text())
 classes=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name in {'MultiSelect','QueryControls','LocalQueryControls'}]
-ns={'Gtk':Gtk,'QueryState':QueryState,'FIELDS':FIELDS,'provider_search_summary':lambda *_:''}
+ns={'Gtk':Gtk,'QueryState':QueryState,'FIELDS':FIELDS,'provider_search_summary':lambda *_:'',
+    'loaded_document_facets': loaded_document_facets}
 exec(compile(ast.fix_missing_locations(ast.Module(body=classes,type_ignores=[])),str(source),'exec'),ns)
 MultiSelect=ns['MultiSelect']; QueryControls=ns['QueryControls']
 LocalQueryControls = ns['LocalQueryControls']
 
 class QueryControlBatching(unittest.TestCase):
+    def test_local_document_choices_are_silent_and_keep_only_valid_selections(self):
+        calls = []
+        control = LocalQueryControls(lambda: calls.append(control.state()), 'Filtre')
+        pdf = {'format': 'application/pdf'}
+        physical = {'medium': 'physical'}
+        unknown = {}
+        self.assertFalse(control.types.visible)
+        self.assertFalse(control.scope.visible)
+        control.set_document_choices((pdf, physical, unknown))
+        self.assertTrue(control.types.visible)
+        self.assertTrue(control.scope.visible)
+        self.assertEqual(tuple(control.types.buttons), ('pdf',))
+        self.assertEqual(calls, [])
+
+        control.types.set_values(('pdf',))
+        self.assertTrue(control.matches_document(pdf))
+        self.assertFalse(control.matches_document(physical))
+        control.scope.set_selected(1)
+        self.assertFalse(control.matches_document(pdf))
+        control.set_document_choices((pdf, unknown))
+        self.assertEqual(control.state().scope, 'all')
+        self.assertEqual(control.state().types, ('pdf',))
+        self.assertEqual(len(calls), 2)
+        control.set_document_choices((unknown,))
+        self.assertFalse(control.types.visible)
+        self.assertFalse(control.scope.visible)
+        self.assertTrue(control.matches_document(unknown))
+        self.assertEqual(len(calls), 2)
+
     def test_local_choices_keep_surviving_filters_without_notifying(self):
         calls = []
         control = LocalQueryControls(
