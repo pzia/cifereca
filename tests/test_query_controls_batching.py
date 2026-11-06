@@ -54,12 +54,43 @@ Gtk=NS(MenuButton=Widget,Popover=Widget,Box=Widget,Button=Widget,CheckButton=Wid
 
 source=Path(__file__).resolve().parents[1]/'src/cifereca/gui/query_controls.py'
 tree=ast.parse(source.read_text())
-classes=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name in {'MultiSelect','QueryControls'}]
+classes=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name in {'MultiSelect','QueryControls','LocalQueryControls'}]
 ns={'Gtk':Gtk,'QueryState':QueryState,'FIELDS':FIELDS,'provider_search_summary':lambda *_:''}
 exec(compile(ast.fix_missing_locations(ast.Module(body=classes,type_ignores=[])),str(source),'exec'),ns)
 MultiSelect=ns['MultiSelect']; QueryControls=ns['QueryControls']
+LocalQueryControls = ns['LocalQueryControls']
 
 class QueryControlBatching(unittest.TestCase):
+    def test_local_choices_keep_surviving_filters_without_notifying(self):
+        calls = []
+        control = LocalQueryControls(
+            lambda: calls.append((
+                control.filter_text(), control.selected_sources(),
+                control.selected_languages(),
+            )),
+            'Titre ou auteur',
+        )
+        self.assertIs(control.widget, control)
+        control.set_choices(
+            sources=(('a', 'Catalogue A'), ('b', 'Catalogue B')),
+            languages=(('fr', 'Français'), ('en', 'English')),
+        )
+        self.assertEqual(calls, [])
+        control.provider.set_values(('a', 'b'))
+        control.languages.set_values(('fr', 'en'))
+        control.entry.set_text('  Dumas  ')
+        self.assertEqual(calls[-1], ('Dumas', ('a', 'b'), ('fr', 'en')))
+        self.assertEqual(len(calls), 3)
+
+        control.set_choices(sources=(('b', 'Catalogue B'),))
+        control.entry.emit('search-changed')
+        control.entry.emit('activate')
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(control.selected_sources(), ('b',))
+        self.assertEqual(control.selected_languages(), ('fr', 'en'))
+        control.provider.set_values(())
+        self.assertEqual(calls[-1], ('Dumas', (), ('fr', 'en')))
+
     def test_multiselect_programmatic_changes_emit_once(self):
         calls=[]
         control=MultiSelect('Format',[('epub','EPUB'),('pdf','PDF'),('mp3','MP3')],lambda:calls.append(control.values()),'Choisir un format')

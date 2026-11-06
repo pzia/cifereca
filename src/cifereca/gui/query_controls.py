@@ -208,3 +208,38 @@ class QueryControls(Gtk.Box):
             updater = getattr(self, "_update_search_capability_hint", None)
             if callable(updater):
                 updater()
+
+
+class LocalQueryControls(QueryControls):
+    """Reuse the Search controls for local filtering of an existing list."""
+
+    def __init__(self, changed, placeholder):
+        super().__init__((), changed, self._changed, library=True)
+        self.entry.set_placeholder_text(placeholder)
+        for widget in (self.field, self.scope, self.types):
+            widget.set_visible(False)
+        self.set_choices(languages=())
+
+    @property
+    def widget(self):
+        return self
+
+    def filter_text(self):
+        return self.entry.get_text().strip()
+
+    def selected_sources(self):
+        return self.provider.values()
+
+    def selected_languages(self):
+        return self.languages.values()
+
+    def set_choices(self, *, sources=None, languages=None):
+        self._programmatic_update = True
+        try:
+            if sources is not None:
+                self.set_provider_choices(sources)
+            if languages is not None:
+                self.languages.set_choices(languages)
+        finally:
+            self._programmatic_update = False
+        self._last_notified_state = self.state()
