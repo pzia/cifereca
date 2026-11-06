@@ -279,3 +279,29 @@ def test_posthook_promotion_needs_live_claim_and_cannot_drop_binding(first_offer
         path, directory, loan, "identity-A", "primary", now=102)
     assert acsm_cache.reuse(
         directory, loan, "identity-A", "primary", now=103) == path
+
+
+def test_legacy_unmarked_posthook_cache_cannot_bypass_existing_initial_receipt(first_offer):
+    """#4648-created sidecars remain protected after an in-place upgrade."""
+    directory, path, loan = first_offer
+    claim_key = "loan.borrow.v1:" + "d" * 64
+    operation_id = "legacy-upgrade"
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        borrow_claim=(claim_key, operation_id))
+    # An older version of Core promoted initial bytes into an ordinary
+    # cache sidecar without preserving the initial origin marker.
+    assert acsm_cache.remember(
+        path, directory, loan, "identity-A", "primary", now=101)
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary",
+        now=102, claim_state=lambda _key: None) is None
+    confirmed = {
+        "schema": 1, "operation": "loan.borrow",
+        "status": "confirmed", "operation_id": operation_id,
+        "request_accepted": True, "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary",
+        now=102, claim_state=lambda key: confirmed if key == claim_key else None) == path
