@@ -18,9 +18,10 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 )
 
 
+@pytest.mark.parametrize("provider_offer_available", [False, True])
 @pytest.mark.parametrize("invalid_receipt", [False, True])
 def test_canonical_paris_consumes_first_confirmed_acsm_without_second_get(
-    rig, tmp_path, invalid_receipt, monkeypatch,
+    rig, tmp_path, invalid_receipt, provider_offer_available, monkeypatch,
 ):
     # The selected executor verifies the SAME existing acquisition lock as
     # sync_coordination; the shared rig patches its own module only.
@@ -44,8 +45,11 @@ def test_canonical_paris_consumes_first_confirmed_acsm_without_second_get(
     service.source = source
     service.snapshot = replace(
         snapshot, rights=(replace(
-            snapshot.rights[0], delivery="available",
-            delivery_offer_id="signed-existing-loan-offer",
+            snapshot.rights[0],
+            delivery="available" if provider_offer_available else "unknown",
+            delivery_offer_id=(
+                "signed-existing-loan-offer" if provider_offer_available else ""
+            ),
         ),),
     )
     session = service.session
@@ -65,6 +69,12 @@ def test_canonical_paris_consumes_first_confirmed_acsm_without_second_get(
         due_at="2099-01-01T00:00:00Z", ebook_url=None,
     )
     session.loans = lambda _: [loan]
+    # When the later signed EbookUrl has disappeared, the selected provider
+    # offers only an observed right, not a new content URL. The Core claim
+    # receipt is the ONLY admissible initial fulfillment token.
+    session.rights_selected_delivery_offer_snapshot = (
+        lambda _account, **_kw: service.snapshot
+    )
     private = tmp_path / "staging" / "first-offer"
     private.mkdir(parents=True)
     initial = private / "original.acsm"
@@ -113,7 +123,8 @@ def test_canonical_paris_consumes_first_confirmed_acsm_without_second_get(
 
     outcome = synchronize_account_source(service, account)
     if invalid_receipt:
-        assert outcome["canonical_execution"]["failed"] == 1
+        assert outcome["canonical_execution"]["failed" if provider_offer_available
+                                              else "pending"] == 1
         assert executed == []
         assert db.placements() == []
         assert refs(db)[1] == 0
