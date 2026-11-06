@@ -73,14 +73,14 @@ def test_offline_preview_is_readonly_and_requires_live_authority(tmp_path: Path,
         assert result["acquisition_authorized"] is False
         assert result["manifest_items"] == 4
         assert result["counts"] == {
-            "already_local_linked": 1, "already_local_verified": 0,
-            "needs_reconciliation": 1, "attention_required": 0, "skipped_archived": 0,
+            "already_local_linked": 0, "already_local_verified": 0,
+            "needs_reconciliation": 2, "attention_required": 0, "skipped_archived": 0,
             "blocked_scope": 1, "blocked_unlinked": 0, "not_downloadable": 0,
             "candidate_unverified": 1, "potentially_missing": 0,
             "invalid_manifest_items": 0,
         }
-        assert result["blocking_items"] == 2
-        assert len(result["examples"]) == 3
+        assert result["blocking_items"] == 3
+        assert len(result["examples"]) == 4
         public = json.dumps(result)
         for private in ("vault-1", "linked.epub", "candidate.epub", '"item_id"',
                         '"credential_id"', "https://"):
@@ -244,7 +244,8 @@ def test_offline_preview_never_confuses_same_product_id_across_identities(tmp_pa
         assert first["source_id"] != second["source_id"]
         assert first["counts"]["candidate_unverified"] == 1
         assert first["counts"]["already_local_linked"] == 0
-        assert second["counts"]["already_local_linked"] == 1
+        assert second["counts"]["already_local_linked"] == 0
+        assert second["counts"]["needs_reconciliation"] == 1
         assert second["counts"]["candidate_unverified"] == 0
         assert path.is_file()
     finally:
@@ -314,8 +315,10 @@ def test_fresh_kobo_right_does_not_turn_legacy_sha_into_b_presence(
         offline = service.kobo_backup_preview(
             "vault-1", verify_local_files=verify,
         )
-        assert offline["counts"]["already_local_verified" if verify
-                                  else "already_local_linked"] == 1
+        assert offline["counts"]["already_local_verified"] == 0
+        assert offline["counts"]["already_local_linked"] == 0
+        assert offline["counts"]["needs_reconciliation"] == 1
+        assert offline["blocking_items"] == 1
         fresh = service.kobo_backup_preview(
             "vault-1", refresh_manifest=True, verify_local_files=verify,
         )
