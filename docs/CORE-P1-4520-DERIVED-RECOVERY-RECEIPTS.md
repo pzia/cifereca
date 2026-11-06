@@ -55,3 +55,10 @@ Garanties : l'opérateur sélectionne un reçu par curseur exact et fournit son 
 La revue reconnaît toujours `already_committed` **même après disparition de l'intent**, mais uniquement lorsque l'origine dérivée et le Placement exacts existent déjà. Un reçu orphelin **sans** intent reste `manual_review` et ne peut jamais être promu par SHA. La conservation des reçus disque demeure intégrale : ce protocole compacte uniquement la croissance des lignes d'intent SQLite, pas l'espace disque. Les tests couvrent idempotence, conservation du reçu/origine, refus sur publication interrompue, identité inactive et absence de preuve canonique.
 
 Cette API doit rester Core interne / draft jusqu'à définition du parcours superviseur et d'une politique explicite de rétention physique.
+
+
+## Synthèse de rétention globale bornée
+
+La fonction Core interne `summarize_derived_receipt_retention(service, identity_id=..., after_cursor="", max_pages=16)` agrège les résultats de l'inventaire sur **1 à 64 pages** de 128 reçus maximum, avec un budget par défaut de 16 pages. Elle retourne le nombre de pages et de reçus, les statuts, les octets mesurés, les tailles indéterminées, `complete` et un `next_cursor` permettant de reprendre lorsque le budget est épuisé. Un curseur qui ne progresse plus est refusé. L'inventaire est **non atomique** en présence de modifications concurrentes et ne constitue pas une preuve d'intégrité à un instant donné.
+
+Cette synthèse n'effectue aucune mutation, ne retire aucun reçu et expose toujours `destructive_cleanup_allowed=False`. Elle permet de quantifier la croissance des preuves physiques et de préparer un budget de rétention, mais ne compacte pas les fichiers. Le plan de stockage Core protégé reste un préalable à la mise en service.
