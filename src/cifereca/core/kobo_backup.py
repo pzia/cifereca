@@ -1154,6 +1154,86 @@ def _attested_received_kobo_copy(
     )
 
 
+def _verified_canonical_kobo_unlinked_exemptions(
+    service: Any, identity_id: str, candidate_paths: set[str],
+) -> set[str]:
+    """Exclude independently published canonical Kobo B from 'unlinked'.
+
+    An old backup_items path was historically the only exclusion. Once an
+    exact legacy row is retired after canonical delivery, the same file must
+    not reappear as a foreign/orphan library book and block another source.
+    Neither title, filename, SHA alone nor an arbitrary catalogue provider
+    label is sufficient: require current active SourceReference, provider
+    OriginLink, unique registered profile, enabled exact account, present
+    Placement and freshly verified current bytes. This only refines a
+    diagnostic count. It cannot authorize a GET, right or file adoption.
+    """
+    if (type(identity_id) is not str or not identity_id
+            or not candidate_paths or len(candidate_paths) > 256):
+        return set()
+    from .convergence_verified_presence import _verified_copy
+    import sqlite3
+
+    try:
+        root = Path(service.library_dir())
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("BEGIN")
+            owner = db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?",
+                (identity_id,),
+            ).fetchone()
+            if (owner is None or type(owner[0]) is not str
+                    or not owner[0] or owner[0] in {".", ".."}
+                    or "/" in owner[0] or "\\" in owner[0]
+                    or db.execute(
+                        "SELECT 1 FROM identities WHERE directory_name=? "
+                        "AND identity_id<>? LIMIT 1",
+                        (owner[0], identity_id),
+                    ).fetchone() is not None):
+                return set()
+            # DISTINCT avoids one Artifact/Placement multiplying through
+            # multiple provider rights. The cap fails closed instead of
+            # claiming an exhaustive local provenance scan.
+            rows = db.execute(
+                "SELECT DISTINCT p.path,a.sha256,a.size FROM placements p "
+                "JOIN artifacts a ON a.artifact_id=p.artifact_id "
+                "JOIN origin_links o ON o.artifact_id=p.artifact_id "
+                "AND o.identity_id=p.identity_id AND o.origin_kind='provider' "
+                "JOIN source_references s ON s.source_reference_id=o.source_reference_id "
+                "AND s.identity_id=p.identity_id "
+                "WHERE p.identity_id=? AND p.state='present' "
+                "AND s.provider_id='kobo' AND s.state='active' "
+                "AND s.evidence_kind='provider_response' AND s.evidence_ref<>'' "
+                "AND o.evidence_ref<>'' "
+                "AND EXISTS (SELECT 1 FROM provider_connections c "
+                "JOIN provider_accounts pa ON pa.connection_id=c.connection_id "
+                "WHERE c.provider_id='kobo' AND c.credential_id=s.credential_id "
+                "AND c.identity_id=s.identity_id AND c.enabled=1 "
+                "AND pa.provider_id='kobo' AND pa.credential_id=s.credential_id "
+                "AND pa.identity_id=s.identity_id AND pa.account_id=s.account_id) "
+                "LIMIT 257",
+                (identity_id,),
+            ).fetchall()
+            if len(rows) > 256:
+                return set()
+            admitted: set[str] = set()
+            for path, sha, size in rows:
+                if type(path) is not str:
+                    continue
+                normalized = str(Path(path).resolve(strict=False))
+                if normalized not in candidate_paths:
+                    continue
+                if _verified_copy(
+                    path, root=root, owner_directory=owner[0],
+                    registered_directories=frozenset((owner[0],)),
+                    size=size, sha256=sha,
+                ):
+                    admitted.add(normalized)
+            return admitted
+    except (sqlite3.Error, OSError, TypeError, ValueError, RuntimeError):
+        return set()
+
+
 def kobo_unlinked_local_count(self, identity_id: str) -> int:
     """Block true unlinked local books, not copies received from another ID.
 
@@ -1182,7 +1262,12 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
                 ):
                     continue
                 paths.add(str(path.resolve()))
-    return len(paths)
+    # A fully independent Core B publication may outlive the 0.7 row.
+    # Verify its current SourceReference/OriginLink + physical bytes instead
+    # of resurrecting an orphan count (or trusting the old archive).
+    return len(
+        paths - _verified_canonical_kobo_unlinked_exemptions(self, identity_id, paths)
+    )
 
 
 def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False, confirmed_manifest: list | None = None, source_guard: Callable[[], None] | None = None, item_guard: Callable[[SearchResult, str, str | None], None] | None = None) -> dict[str, Any]:

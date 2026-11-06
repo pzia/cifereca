@@ -239,8 +239,13 @@ def test_real_legacy_sync_archive_then_unarchive_preserves_crash_checkpoint(
         unarchived = service.sync_kobo_backup()
         assert unarchived["attempted"] == unarchived["downloaded"] == 0
         assert unarchived["reconcile_pending"] == 1
-        assert service.storage.backup_get(
-            "kobo", "vault-1", "book-1",
-        ) == stored
+        after = service.storage.backup_get("kobo", "vault-1", "book-1")
+        # _refresh_manifest_record may update the observation timestamp on
+        # the next second. Compare durable crash/retry evidence, not the
+        # wall-clock value of an otherwise no-op metadata refresh.
+        assert after["updated_at"] >= stored["updated_at"]
+        assert {k: v for k, v in after.items() if k != "updated_at"} == {
+            k: v for k, v in stored.items() if k != "updated_at"
+        }
     finally:
         service.close()
