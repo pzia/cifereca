@@ -37,7 +37,8 @@ def _holdings_render_loop():
             break
     else:
         raise AssertionError("holdings subtitle assignment missing")
-    return compile(ast.fix_missing_locations(ast.Module(body=rendered, type_ignores=[])),
+    loop.body = rendered
+    return compile(ast.fix_missing_locations(ast.Module(body=[loop], type_ignores=[])),
                    str(SOURCE), "exec")
 
 
