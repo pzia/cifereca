@@ -632,3 +632,62 @@ def compact_committed_derived_intent(
         "canonical_origin_retained": True,
         "intent_removed": result == "compacted",
     }
+
+
+
+def summarize_derived_receipt_retention(
+    service: Any, *, identity_id: str, after_cursor: str = "",
+    max_pages: int = 16,
+) -> dict[str, Any]:
+    """Bounded, read-only multi-page retention summary.
+
+    Deliberately not an atomic snapshot or a cleanup authorization. The
+    caller may resume through next_cursor if max_pages is reached; a changed
+    filesystem can affect later pages, so no financial or forensic inference
+    may assume a frozen inventory.
+    """
+    if type(max_pages) is not int or not 1 <= max_pages <= 64:
+        raise ValueError("derived_retention_invalid_page_limit")
+    if (type(after_cursor) is not str or len(after_cursor) > 512
+            or chr(0) in after_cursor):
+        raise ValueError("derived_recovery_cursor_invalid")
+    statuses = {
+        "already_committed": 0, "recoverable": 0,
+        "manual_review": 0, "approval_required": 0,
+    }
+    cursor = after_cursor
+    total_count = 0
+    receipt_bytes = 0
+    unknown_sizes = 0
+    pages = 0
+    has_more = False
+    while pages < max_pages:
+        page = audit_derived_receipt_retention(
+            service, identity_id=identity_id, after_cursor=cursor,
+        )
+        pages += 1
+        total_count += page["count"]
+        receipt_bytes += page["receipt_bytes_observed"]
+        unknown_sizes += page["unknown_size_count"]
+        for key, value in page["statuses"].items():
+            statuses[key] = statuses.get(key, 0) + value
+        next_cursor = page["next_cursor"]
+        has_more = page["has_more"]
+        if not has_more:
+            cursor = ""
+            break
+        if (not isinstance(next_cursor, str)
+                or next_cursor <= cursor):
+            raise ValueError("derived_retention_nonprogressing_cursor")
+        cursor = next_cursor
+    return {
+        "identity_id": identity_id,
+        "pages_scanned": pages,
+        "receipt_count_observed": total_count,
+        "statuses": statuses,
+        "receipt_bytes_observed": receipt_bytes,
+        "unknown_size_count": unknown_sizes,
+        "complete": not has_more,
+        "next_cursor": cursor if has_more else None,
+        "destructive_cleanup_allowed": False,
+    }
