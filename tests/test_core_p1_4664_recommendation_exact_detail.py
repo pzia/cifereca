@@ -397,3 +397,82 @@ def test_unmodified_shared_known_mirror_keeps_exact_core_actions(monkeypatch):
     assert work() is f.detail
     success(f.detail)
     assert len(f.outputs) == 1
+
+
+def _isolated_public_view_methods(*names):
+    """Run the actual GTK view methods on a fake panel, without importing GI."""
+    import ast
+    from pathlib import Path
+
+    path = (Path(__file__).resolve().parents[1] /
+            "src/cifereca/gui/public_book_view.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    cls = next(node for node in tree.body
+               if isinstance(node, ast.ClassDef)
+               and node.name == "PublicBookMasterDetailView")
+    methods = {}
+    for name in names:
+        node = next(node for node in cls.body
+                    if isinstance(node, ast.FunctionDef) and node.name == name)
+        isolated = ast.fix_missing_locations(
+            ast.Module(body=[node], type_ignores=[]))
+        scope = {"Gtk": NS(INVALID_LIST_POSITION=-1)}
+        exec(compile(isolated, str(path), "exec"), scope)
+        methods[name] = scope[name]
+    return methods
+
+
+@pytest.mark.parametrize("known_source", [False, True], ids=["loaded", "known-v2"])
+@pytest.mark.parametrize("redraw", [
+    "show_detail", "empty_detail", "set_list_state",
+])
+def test_plugin_panel_redraw_revokes_unstarted_exact_holdings_without_get(
+    monkeypatch, known_source, redraw,
+):
+    f = _fixture(monkeypatch)
+    if known_source:
+        monkeypatch.setattr(
+            port, "_known_item",
+            lambda window, coords: (f.item, {"revision": "v1"}),
+        )
+        f.kwargs["known_source"] = True
+    work, success, failure = _start(f)
+
+    methods = _isolated_public_view_methods(
+        "_revoke_pending_exact_detail", redraw,
+    )
+    view = f.kwargs["view"]
+    view._revoke_pending_exact_detail = methods[
+        "_revoke_pending_exact_detail"
+    ].__get__(view)
+    events = []
+    view._page = NS(
+        detail=NS(
+            show_presentation=lambda detail: events.append("detail"),
+            add_actions=lambda buttons: None,
+            empty=lambda *args: events.append("empty"),
+        ),
+        selection=NS(set_selected=lambda position: events.append("deselect")),
+        empty_page=NS(
+            set_title=lambda title: None,
+            set_description=lambda description: None,
+            set_icon_name=lambda icon: None,
+        ),
+        list_stack=NS(
+            set_visible_child_name=lambda name: events.append("list-empty"),
+        ),
+    )
+    if redraw == "show_detail":
+        methods[redraw](view, NS(actions=()))
+    else:
+        methods[redraw](view, "Aucune notice", "Filtre ou sélection modifié")
+
+    # A redraw of the plugin pane must revoke the queued worker BEFORE
+    # service.holdings (provider GET), not merely suppress its late GTK result.
+    assert view._cifereca_exact_detail_request_token is None
+    with pytest.raises(Cancelled):
+        work()
+    success(f.detail)
+    failure(RuntimeError("old provider response"))
+    assert f.calls == [] and f.outputs == []
+    assert events
