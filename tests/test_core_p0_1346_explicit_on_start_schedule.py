@@ -470,3 +470,54 @@ def test_startup_consent_matches_upstream_borrower_even_if_credential_is_stable(
         )) is None
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("switch", [
+    "borrower", "new_session_same_credential", "missing_session_account",
+])
+def test_startup_rechecks_exact_session_after_attempt_clock_before_legacy_get(
+    tmp_path, monkeypatch, switch,
+):
+    """#3196 D4: an account swap inside clock write cannot launch old GET."""
+    from cifereca.core import source_materialization_schedule as schedule
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
+        account = service.accounts[0]
+        old_session = service._sessions[("kobo", "vault")]
+        assert kobo_on_start_sessions(service) == (old_session,)
+        attempts = []
+
+        def swap_during_clock(current_service, current_account):
+            assert current_service is service and current_account is account
+            attempts.append(True)
+            if switch == "borrower":
+                old_session.accounts = [replace(account, unique_id="new-borrower")]
+            elif switch == "missing_session_account":
+                old_session.accounts = []
+            else:
+                service._sessions[("kobo", "vault")] = NS(
+                    connected=True, provider_id="kobo", credential_id="vault",
+                    accounts=[account], capabilities=NS(backup=True),
+                )
+            return True
+
+        monkeypatch.setattr(schedule, "mark_on_start_attempt", swap_during_clock)
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda *_a, **_kw: pytest.fail("stale startup authorization reached GET"),
+        )
+        result = service._opening_sync_locked(deep=False)
+        assert attempts == [True]
+        assert result["kobo"]["synced_accounts"] == 0
+        assert service.storage.metadata_get(policy_key(
+            SynchronizationBrokerImpl._source_id(account),
+        )) == "1"
+        # Restoring the original account and original session preserves its
+        # explicit consent rather than transferring it to the replacement.
+        service._sessions[("kobo", "vault")] = old_session
+        old_session.accounts = [account]
+        assert kobo_on_start_sessions(service) == (old_session,)
+    finally:
+        service.close()
