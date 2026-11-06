@@ -178,6 +178,19 @@ def main():
         phase = report.get("p1_1354_phase")
         if type(phase) is str and phase in allowed:
             print("P1_1354_CLOSED_FAILURE_STAGE=" + phase, flush=True)
+        # A source line inside this fixed synthetic probe is a safe numeric
+        # checkpoint. No traceback, exception string, GTK value or user data
+        # is exported to the public CI verdict.
+        try:
+            lines = [
+                frame.lineno for frame in traceback.extract_tb(exc.__traceback__)
+                if Path(frame.filename).name == "recommendations_detail_probe.py"
+                and 1 <= frame.lineno <= 1200
+            ]
+            if lines:
+                report["p1_774_probe_line"] = lines[-1]
+        except Exception:
+            pass
         report["status"] = "FAIL"
         report["error"] = str(exc)
         report["traceback"] = traceback.format_exc(limit=6)
