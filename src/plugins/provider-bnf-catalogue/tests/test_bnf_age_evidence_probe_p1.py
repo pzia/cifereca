@@ -275,3 +275,77 @@ def test_age_qualifier_has_no_side_effectful_or_network_import():
     source = PATH.read_text(encoding="utf-8")
     assert "def qualified_observed_age_fields(" in source
     assert "httpx" not in source and "requests" not in source
+
+
+def _synthetic_cnlj_333(ark="ark:/12148/cb465971480", age="À partir de 13 ans"):
+    # Synthetic structural mutation, never described as a captured BnF page.
+    raw = record(ark=ark, ages=[age]).replace('tag="329"', 'tag="333"')
+    return raw.replace(
+        "</mxc:datafield>",
+        '<mxc:subfield code="2">CNLJ</mxc:subfield></mxc:datafield>',
+        2,
+    )
+
+
+def test_same_own_isbn_on_two_different_arks_is_ambiguous():
+    first = _synthetic_cnlj_333()
+    second = _synthetic_cnlj_333(ark="ark:/12148/cb465971481")
+    assert len(probe.exact_edition_age_fields(response(first, second), ISBN)) == 2
+    assert probe.qualified_observed_age_fields(response(first, second), ISBN) == []
+
+
+def test_conflicting_ark_with_a_different_age_cannot_choose_first():
+    first = _synthetic_cnlj_333()
+    second = _synthetic_cnlj_333(
+        ark="ark:/12148/cb465971481", age="De 0 à 3 ans",
+    )
+    assert probe.qualified_observed_age_fields(response(first, second), ISBN) == []
+
+
+def test_known_833_followed_by_unknown_833_is_not_partially_qualified():
+    data = (PUBLIC_FIXTURES / "age-tendre-intermarc.xml").read_bytes()
+    # The reference has two identical, safely deduplicated JAg1399 fields.
+    tampered = data.replace(b"JAg1399", b"JAg1398", 1)
+    assert len(probe.exact_edition_age_fields(tampered, ISBN)) == 2
+    assert probe.qualified_observed_age_fields(tampered, ISBN) == []
+
+
+def test_known_833_with_unqualified_extra_subfield_is_not_sufficient():
+    data = (PUBLIC_FIXTURES / "age-tendre-intermarc.xml").read_bytes()
+    tampered = data.replace(
+        b"<mxc:subfield code=\"m\">JAg1399</mxc:subfield>",
+        b"<mxc:subfield code=\"m\">JAg1399</mxc:subfield>"
+        b"<mxc:subfield code=\"z\">unqualified context</mxc:subfield>",
+        1,
+    )
+    assert len(probe.exact_edition_age_fields(tampered, ISBN)) == 2
+    assert probe.qualified_observed_age_fields(tampered, ISBN) == []
+
+
+def test_recognized_333_followed_by_333_without_cnlj_vetoes_projection():
+    first = _synthetic_cnlj_333()
+    # Second field asserts a different range but lacks the CNLJ authority.
+    extra_field = ('<mxc:datafield tag="333"><mxc:subfield code="a">'
+                   'De 0 à 3 ans</mxc:subfield></mxc:datafield>')
+    modified = first.replace("</mxc:record>", extra_field + "</mxc:record>")
+    assert len(probe.exact_edition_age_fields(response(modified), ISBN)) == 2
+    assert probe.qualified_observed_age_fields(response(modified), ISBN) == []
+
+
+def test_exact_observed_public_positive_fixtures_still_qualify_after_hardening():
+    cases = (
+        ("age-tendre", ISBN, 13, None),
+        ("age-tendre-intermarc", ISBN, 13, None),
+        ("carre-unimarc", "9791040120971", 0, 3),
+        ("carre-intermarc", "9791040120971", 0, 3),
+        ("conflicting-intermarc", "9782362901645", 6, None),
+    )
+    for filename, isbn, low, high in cases:
+        rows = probe.qualified_observed_age_fields(
+            (PUBLIC_FIXTURES / (filename + ".xml")).read_bytes(), isbn,
+        )
+        assert len(rows) == 1
+        assert (rows[0]["audience_age_min"], rows[0]["audience_age_max"]) == (
+            low, high,
+        )
+        assert rows[0]["core_youth_age_range_authorized"] is False
