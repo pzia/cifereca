@@ -13,8 +13,26 @@ _MESSAGES = {
     "primary_paris_connection_mismatch_or_inactive":
         "La connexion Paris principale de ce profil ne correspond pas à cette notice, "
         "ou n’est pas active.",
+    "local_edition_scope_invalid":
+        "L’édition affichée ne correspond pas à une source de prêt Paris numérique.",
+    "local_provider_or_identity_unavailable":
+        "Le fournisseur Paris ou l’identité active ne permet pas cette action locale.",
+    "local_session_unavailable":
+        "La session Paris associée à cette notice n’est pas connectée.",
+    "local_primary_account_unverified":
+        "Le compte Paris principal pour ce profil et cette édition est absent ou ambigu.",
+    "local_claim_scope_invalid":
+        "La réservation locale de cette tentative ne peut pas être vérifiée.",
+    "local_previous_attempt":
+        "Une demande existe déjà pour ce compte et cette édition ; vérifiez Mes emprunts.",
+    "local_scope_changed":
+        "Le contexte du compte Paris a changé ; actualisez la fiche.",
+    "local_borrow_capability_unavailable":
+        "La capacité de prêt n’est pas attestée par cette session Paris.",
+    "local_borrow_executor_unavailable":
+        "Le service Paris connecté ne propose pas cette action de prêt.",
     "local_admission_unavailable":
-        "L’admission locale n’est pas satisfaite (compte, session, capacité ou tentative précédente).",
+        "L’admission locale est indisponible ; vérifiez compte, session ou tentative précédente.",
     "local_action_available_provider_unknown":
         "L’action locale est proposée ; le fournisseur décide lors de la demande explicite.",
 }
