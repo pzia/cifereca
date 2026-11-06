@@ -27,16 +27,24 @@ def _result(status: str, reason: str, *, verified: bool = False):
 
 
 def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
-                            docbase: str, primary_id: str | None = None) -> bool:
-    """Inert CoreUI availability, never borrower permission or a provider GET.
+                            docbase: str, primary_id: str | None = None,
+                            diagnostic: dict[str, str] | None = None) -> bool:
+    """Inert local admission, never supplier permission or a provider GET.
 
-    Availability is an inert check, NOT proof of Pass/quota/permission.
-    A single explicit user action, exact live account and unused claim
-    remain prerequisites; no separate website attestation is required.
+    Optional diagnostic is a CLOSED-code side channel, not new authorization.
+    The boolean outcome and all existing safeguards are unchanged.
     """
+    if diagnostic is not None:
+        diagnostic.clear()
+
+    def reject(code: str) -> bool:
+        if diagnostic is not None:
+            diagnostic["reason_code"] = code
+        return False
+
     if (type(item) is not SearchResult or item.source_provider != provider_id
             or item.docbase != docbase or item.medium != "digital"):
-        return False
+        return reject("local_edition_scope_invalid")
     try:
         manager = service._plugin_manager
         plugin_id = service._provider_plugin_ids[provider_id]
@@ -46,12 +54,12 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
                 or plugin.descriptor.type != "provider.library"
                 or plugin.descriptor.id != plugin_id
                 or not getattr(identity, "identity_id", None)):
-            return False
+            return reject("local_provider_or_identity_unavailable")
         session = service._session_for_source(
             provider_id, item.source_credential)
         rows = _inert_session_accounts(session)
         if rows is None or _inert_session_state(session) is None:
-            return False
+            return reject("local_session_unavailable")
         candidates = [
             a for a in service.accounts
             if (type(a) is Account and a.is_primary is True
@@ -62,32 +70,33 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
                 and sum(r is a for r in rows) == 1)
         ]
         if len(candidates) != 1:
-            return False
+            return reject("local_primary_account_unverified")
         claim_key = borrow_claim_key(candidates[0], item)
-        # Check raw checkpoint presence, not its decoded semantic state:
-        # loan_borrow_state() returns None for malformed existing rows while
-        # loan_borrow_claim_once() correctly rejects their INSERT. Rendering
-        # a borrow button for such a permanently spent/invalid claim would
-        # invite an impossible second attempt, even though dispatch is guarded.
-        if claim_key is None or service.storage.metadata_get(claim_key) is not None:
-            return False
+        if claim_key is None:
+            return reject("local_claim_scope_invalid")
+        # A malformed prior checkpoint is spent even if decoding returns None.
+        if service.storage.metadata_get(claim_key) is not None:
+            return reject("local_previous_attempt")
         if capture_borrow_action_scope(
                 service, item, candidates[0], session,
                 expected_identity_id=identity.identity_id) is None:
-            return False
+            return reject("local_scope_changed")
         fact = assess_lending_operation(
             "loan.borrow",
             manifest_capabilities=tuple(plugin.descriptor.capabilities),
             descriptor=session.descriptor, session=session,
             account=candidates[0],
         )
-        return (
-            fact.usable
-            and callable(getattr_static(
-                type(session), "borrow_explicit_with_claim", None))
-        )
+        if not fact.usable:
+            return reject("local_borrow_capability_unavailable")
+        if not callable(getattr_static(
+                type(session), "borrow_explicit_with_claim", None)):
+            return reject("local_borrow_executor_unavailable")
+        if diagnostic is not None:
+            diagnostic["reason_code"] = "local_action_available_provider_unknown"
+        return True
     except Exception:
-        return False
+        return reject("local_admission_unavailable")
 
 
 def manual_borrow(
