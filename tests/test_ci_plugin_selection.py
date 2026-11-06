@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-reference", "recommendations", "transport-http"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-reference", "recommendations", "transport-http"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-reference", "recommendations", "transport-http"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-reference", "recommendations", "transport-http"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -1060,6 +1060,69 @@ class PluginSelectionTests(unittest.TestCase):
             {"ebooksgratuits", "provider-gallica",
              "provider-gutenberg"} <= graph["home-page"]
         )
+
+    def test_audited_numilog_private_and_public_depend_on_home_page(self):
+        # One manifest/package contains private owned Numilog and its public
+        # anonymous commercial catalogue; neither is a separate test target.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("provider-numilog", audited)
+        self.assertIn("provider-numilog", graph["home-page"])
+        self.assertEqual(
+            selector.affected_packages({"provider-numilog"}, graph),
+            ["home-page", "provider-numilog"],
+        )
+        for module in (
+            "cifereca_numilog.py",
+            "cifereca_numilog_public_provider.py",
+            "cifereca_numilog_public_metadata.py",
+            "cifereca_numilog_enrichment.py",
+        ):
+            with self.subTest(module=module):
+                selected, reason = selector.select([
+                    ("M", f"src/plugins/provider-numilog/{module}"),
+                ], ROOT)
+                self.assertEqual(
+                    selected,
+                    ["src/plugins/home-page", "src/plugins/provider-numilog"],
+                )
+                self.assertIn("dependency closure", reason)
+
+    def test_numilog_manifest_and_unqualified_changes_still_force_full(self):
+        product = "src/plugins/provider-numilog/cifereca_numilog.py"
+        for changes in (
+            [("M", product), ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-numilog/cifereca-plugin.json")],
+            [("M", "src/plugins/provider-numilog/tests/conftest.py")],
+            [("D", product)],
+            [("R100", product)],
+            [("M", product), ("M", "src/cifereca/services.py")],
+        ):
+            with self.subTest(changes=changes):
+                selected, reason = selector.select(changes, ROOT)
+                self.assertEqual(selected, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_numilog_has_no_cross_package_plugin_import_consumers(self):
+        # Check concrete module imports and the two declared plugin IDs,
+        # not generic lower-case text such as Numilog in UIs or diagnostics.
+        tokens = (
+            "from cifereca_numilog", "import cifereca_numilog",
+            "provider.numilog", "org.cifereca.provider.numilog",
+            "/provider-numilog/", "src/plugins/provider-numilog",
+        )
+        source_root = ROOT / "src/plugins"
+        for package in sorted(source_root.iterdir()):
+            if not package.is_dir() or package.name == "provider-numilog":
+                continue
+            for file in sorted(package.rglob("*")):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in content for token in tokens),
+                        f"New explicit Numilog plugin consumer: {file}",
+                    )
 
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.root), *args], stderr=subprocess.DEVNULL).decode().strip()
