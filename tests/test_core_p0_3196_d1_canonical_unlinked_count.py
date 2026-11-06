@@ -111,7 +111,7 @@ def test_canonical_exact_b_overrides_unproven_legacy_path_for_same_profile(
         "provider_id": "kobo", "credential_id": "card-a",
         "identity_id": "A", "account_id": "buyer",
         "item_id": "book", "title": "Historical",
-        "status": "complete", "local_path": str(path),
+        "status": "skipped_archived", "local_path": str(path),
     })
     published = publish(store, root, path, source, snapshot)
     _catalog(
