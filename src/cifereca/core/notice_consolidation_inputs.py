@@ -9,7 +9,7 @@ No I/O, account, permission, entitlement, profile, HTTP or storage access.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 MAX_FACTS = 512
 MAX_RELATED = 128
@@ -95,8 +95,15 @@ def admit_descriptive_facts(
         value = row.get("value")
         if (not all(_identifier(x) for x in (
                 source_id, edition_id, evidence_id, source_revision))
-                or type(value) is not str
-                or not 0 < len(value.encode("utf-8")) <= MAX_VALUE_BYTES):
+                or type(value) is not str):
+            rejected += 1
+            continue
+        try:
+            value_size = len(value.encode("utf-8"))
+        except UnicodeEncodeError:
+            rejected += 1
+            continue
+        if not 0 < value_size <= MAX_VALUE_BYTES:
             rejected += 1
             continue
         if edition_id == target_edition_id:
