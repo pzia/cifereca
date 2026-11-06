@@ -262,8 +262,11 @@ def test_source_replacement_during_plugin_inspection_returns_no_actions(harness)
 
 def test_unsafe_lender_display_name_never_leaks_into_action(harness):
     service, account, session = harness
-    alex = service.identity_by_id("alex")
-    alex.label = "alex@example.com"
+    service.identities = [
+        replace(identity, label="alex@example.com")
+        if identity.identity_id == "alex" else identity
+        for identity in service.identities
+    ]
     output = _preview(service, _candidate())
     assert output.status == "external"
     assert output.label == "Emprunter avec Profil prêteur"
