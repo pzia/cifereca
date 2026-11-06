@@ -1,0 +1,144 @@
+"""Offline SRU BnF MarcXchange exact-edition evidence contract (#4530)."""
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+PATH = Path(__file__).resolve().parents[1] / "bnf_age_evidence_probe.py"
+spec = importlib.util.spec_from_file_location("bnf_age_evidence_probe", PATH)
+probe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(probe)
+
+SRU = "http://www.loc.gov/zing/srw/"
+MXC = "info:lc/xmlns/marcxchange-v2"
+ISBN = "9782377314652"
+
+
+def response(*records, total=None):
+    count = len(records) if total is None else total
+    body = "".join(records)
+    return (f'<srw:searchRetrieveResponse xmlns:srw="{SRU}" xmlns:mxc="{MXC}">'
+            f'<srw:numberOfRecords>{count}</srw:numberOfRecords>'
+            f'<srw:records>{body}</srw:records></srw:searchRetrieveResponse>').encode()
+
+
+def record(isbn=ISBN, fmt="UNIMARC", ages=None, ark="ark:/12148/cb465971480",
+           extra_isbn=None, bib_type="Bibliographic"):
+    isbntag = "010" if fmt == "UNIMARC" else "020"
+    age_tag = "329" if fmt == "UNIMARC" else "833"
+    age_rows = "".join(
+        f'<mxc:datafield tag="{age_tag}"><mxc:subfield code="a">{value}</mxc:subfield>'
+        f'</mxc:datafield>' for value in (ages or [])
+    )
+    extra = (f'<mxc:datafield tag="{isbntag}"><mxc:subfield code="a">'
+             f'{extra_isbn}</mxc:subfield></mxc:datafield>') if extra_isbn else ""
+    return (
+        f'<srw:record><srw:recordSchema>marcxchange</srw:recordSchema>'
+        f'<srw:recordPacking>xml</srw:recordPacking>'
+        f'<srw:recordData><mxc:record id="{ark}" '
+        f'format="{fmt}" type="{bib_type}">'
+        f'<mxc:datafield tag="{isbntag}"><mxc:subfield code="a">'
+        f'{isbn}</mxc:subfield></mxc:datafield>{extra}{age_rows}'
+        f'</mxc:record></srw:recordData></srw:record>'
+    )
+
+
+def test_raw_unimarc_age_is_not_promoted_to_numeric_age():
+    result = probe.exact_edition_age_fields(response(record(ages=["À partir de 13 ans"])), ISBN)
+    assert result == [{
+        "record_ark": "ark:/12148/cb465971480",
+        "own_isbn13": ISBN,
+        "marc_format": "UNIMARC",
+        "field_tag": "329",
+        "raw_subfields": (("a", "À partir de 13 ans"),),
+        "evidence_role": "cnlj_critical_review_not_age",
+        "age_status": "unqualified_raw_evidence",
+    }]
+    assert not any("min_age" in value or "max_age" in value for value in result)
+
+
+def test_intermediate_age_833_and_isbn10_conversion():
+    assert probe.canonical_isbn("2-37731-465-0") is None
+    other = "0306406152"
+    converted = probe.canonical_isbn(other)
+    assert converted == "9780306406157"
+    data = response(record(isbn=other, fmt="INTERMARC", ages=["9+"]))
+    assert probe.exact_edition_age_fields(data, converted)[0]["field_tag"] == "833"
+    assert probe.exact_edition_age_fields(data, converted)[0]["evidence_role"] == "cnlj_mixed_review_or_audience"
+
+
+@pytest.mark.parametrize("field_isbn", [None, "9782377314653", "0000000000000"])
+def test_unmatched_or_invalid_isbn_is_not_proof(field_isbn):
+    if field_isbn is None:
+        xml = response(record(ages=["13 ans"]).replace(
+            '<mxc:datafield tag="010"><mxc:subfield code="a">' + ISBN
+            + '</mxc:subfield></mxc:datafield>', ""))
+    else:
+        xml = response(record(isbn=field_isbn, ages=["13 ans"]))
+    assert probe.exact_edition_age_fields(xml, ISBN) == []
+
+
+def test_ambiguous_own_isbns_and_related_editions_are_excluded():
+    assert probe.exact_edition_age_fields(
+        response(record(extra_isbn="9780306406157", ages=["13 ans"])), ISBN) == []
+    assert probe.exact_edition_age_fields(
+        response(record(isbn="9780306406157", ages=["13 ans"])), ISBN) == []
+
+
+def test_missing_age_or_authority_record_is_no_evidence():
+    assert probe.exact_edition_age_fields(response(record()), ISBN) == []
+    assert probe.exact_edition_age_fields(
+        response(record(ages=["13 ans"], bib_type="Authority")), ISBN) == []
+
+
+@pytest.mark.parametrize("xml", [
+    b"<root/>", b"<srw:searchRetrieveResponse/>",
+    b"<!DOCTYPE root [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><root/>",
+    b"not xml", b"a" * (probe.MAX_XML_BYTES + 1),
+])
+def test_invalid_responses_fail_closed(xml):
+    with pytest.raises(ValueError):
+        probe.exact_edition_age_fields(xml, ISBN)
+
+
+def test_record_limit_and_no_http_import():
+    with pytest.raises(ValueError, match="sru_record_limit"):
+        probe.exact_edition_age_fields(response(*(record() for _ in range(51))), ISBN)
+    source = PATH.read_text(encoding="utf-8")
+    assert "httpx" not in source and "requests" not in source
+
+
+def test_bnf_sru_wrapper_schema_and_packing_are_required():
+    good = record(ages=["13 ans"])
+    assert probe.exact_edition_age_fields(response(good), ISBN)
+    assert probe.exact_edition_age_fields(response(
+        good.replace("<srw:recordSchema>marcxchange</srw:recordSchema>",
+                     "<srw:recordSchema>dublincore</srw:recordSchema>")), ISBN) == []
+    assert probe.exact_edition_age_fields(response(
+        good.replace("<srw:recordPacking>xml</srw:recordPacking>",
+                     "<srw:recordPacking>string</srw:recordPacking>")), ISBN) == []
+
+
+@pytest.mark.parametrize("count", ["", "-1", "abc", "2x", "0"])
+def test_sru_count_is_not_inferred_from_wrapped_records(count):
+    with pytest.raises(ValueError):
+        probe.exact_edition_age_fields(response(record(ages=["13 ans"]), total=count), ISBN)
+
+
+def test_contradictory_or_unknown_marc_subfield_is_not_interpreted():
+    source = record(ages=["13 ans"])
+    tampered = source.replace('<mxc:subfield code="a">13 ans</mxc:subfield>',
+                              '<mxc:subfield code="z">JAg1399</mxc:subfield>')
+    result = probe.exact_edition_age_fields(response(tampered), ISBN)
+    assert result[0]["raw_subfields"] == (("z", "JAg1399"),)
+    assert result[0]["age_status"] == "unqualified_raw_evidence"
+
+
+def test_unimarc_audience_note_333_is_distinct_from_cnlj_review_329():
+    xml = response(record(ages=["critique"]) .replace(
+        'tag="329"', 'tag="333"'))
+    result = probe.exact_edition_age_fields(xml, ISBN)
+    assert len(result) == 1
+    assert result[0]["evidence_role"] == "audience_note_unqualified"
+    assert result[0]["field_tag"] == "333"
+    assert result[0]["age_status"] == "unqualified_raw_evidence"
