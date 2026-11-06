@@ -10,9 +10,18 @@ y compris un pointage vers un fichier inexistant, d'augmenter
 `changed` sans réception réelle d'un fichier.
 
 Le nombre de livraisons annoncé provient désormais uniquement :
-- des événements `downloaded` émis par l'exécuteur Core pendant l'exécution,
-  notamment si la suite du traitement échoue ;
+- du signal **privé** `on_delivery_committed` émis par l'exécuteur
+  immédiatement après l'inspection physique du fichier et la persistance
+  du résultat d'acquisition, avant le checkpoint source ; il permet de ne
+  pas perdre une livraison réelle lorsque ce checkpoint échoue ;
+- des événements publics `downloaded`, qui demeurent différés jusqu'à
+  la réussite du checkpoint et ne peuvent pas être anticipés ;
 - du champ `downloaded` du rapport **Core** validé lors d'un retour normal.
+
+Le résultat n'est pas inféré depuis une relecture de la table historique :
+le signal privé provient de l'exécution effective après réception des octets.
+Il reste interdit de publier un événement public `downloaded` avant
+l'enregistrement réussi du checkpoint source.
 
 Si l'exécution s'interrompt avant de rendre un rapport final, aucune
 ligne `backup_items` ne vient fabriquer une livraison supplémentaire ;
