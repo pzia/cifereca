@@ -29,6 +29,24 @@ attestés restent des opérations distinctes, non retirées par cette tranche.
 
 **Préparation de la migration exacte (06/11/2026) :** l'opérateur exécutable `core/legacy_backup_retirement.py::retire_attested_legacy_kobo_backup` peut retirer **une seule** ligne `backup_items.complete` Kobo déjà entièrement supersédée. Il exige la concordance `identity/credential/account/branch/edition/right/revision` avec une **nouvelle** observation fournisseur réussie, exhaustive et horodatée (fraîcheur <= 15 min), la source canonique `provider_response` correspondante, un seul propriétaire du credential/édition, un OriginLink canonique, un Placement présent, un reçu `canonical.completed-delivery.v1` exact sans collision, et des octets SHA/taille/inode vérifiés dans le profil. Contrôle `context_current` avant/après le commit, `BEGIN IMMEDIATE`, journal versionné append-only contenant l'archive complète avant `DELETE` atomique ; aucun GET, déplacement ou révocation. Répéter est sans effet. Cet opérateur n'est **pas encore branché au Sync** : W2/D1 restent des dépendances à migrer, le journal ne crée aucun droit. Tests positifs, négatifs et rollback dans `tests/test_core_p0_3196_exact_legacy_retirement.py`. Tout usage en production nécessite le verrou d'acquisition partagé et la vue fournisseur authentifiée du compte courant. 
 
+**Mise à jour W1/W2 — raccordement au Sync canonique (06/11/2026) :**
+`execute_admitted_convergence` appelle maintenant l'opérateur
+`retire_attested_legacy_kobo_backup` **seulement après** vérification
+indépendante d'un B déjà présent (OriginLink + Placement) ou publication
+complète A→B. L'appel s'effectue sous le verrou unique d'acquisition détenu
+par Sync. Un seul inventaire SQL borné (10 000 clés maximum) sélectionne les
+archives `backup_items.complete` Kobo de l'identité/compte exacts ;
+l'opérateur recontrôle ensuite sous `BEGIN IMMEDIATE` la source, la révision
+fraîche issue d'un snapshot fournisseur complet et réussi, le reçu autonome,
+l'unicité du propriétaire et les octets SHA/taille/inode avant archivage
+journalisé + suppression de la **seule** ligne redondante. La moindre preuve
+manquante laisse la ligne 0.7 intacte. Les erreurs et refus de ce nettoyage
+post-B ne déclassent pas le résultat Sync et ne déclenchent jamais de GET.
+Les statuts `reconcile_required`, `acquiring`, `pending` et les autres
+fournisseurs ne sont pas candidats. La coupure W4 et la migration des dossiers
+historiques sans B indépendant restent ouvertes. Recette SQLite + fichier
+dans `tests/test_core_p0_3196_sync_retirement_integration.py`.
+
 **Mise à jour W1 (06/11/2026) :** le checkpoint Kobo `skipped_archived` ne déclenche plus `_mirror_backup_row` lors de `backup_put`, même avec `identity_id/account_id` renseignés. L'archive reste dans `backup_items`, avec contrôle transactionnel de collision d'owner. Aucun nouveau droit, ledger, Artifact, Placement ou catalogue ne peut être créé/rafraîchi par cet état d'archivage. **Les statuts `reconcile_required` et `reconcile_conflict` conservent temporairement le miroir W1** : la première CI a révélé 46 échecs et 11 erreurs sur W4/confirmation et leurs consommateurs lorsqu'il était supprimé sans remplacement. Ils doivent être migrés avec W4, pas coupés isolément. Les autres états Kobo et fournisseurs restent compatibles. Aucune ancienne projection n'est supprimée. Test `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
 
 **Mise à jour W3 (06/11/2026) :** l'intégralité du prune Kobo est retirée, y compris pour les enregistrements `pending` sans aucune preuve ; les détails historiques de garde W3 ci-dessous décrivent les protections antérieures désormais subsumées par la conservation de *toutes* les lignes. La migration transactionnelle seule pourra décider du retrait d'une archive.
