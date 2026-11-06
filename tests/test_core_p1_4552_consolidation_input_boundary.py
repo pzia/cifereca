@@ -1,6 +1,4 @@
 """#4552: edition-exact evidence before inherited description, no Core reducer."""
-from dataclasses import replace
-
 import pytest
 
 from cifereca.core.notice_consolidation_inputs import (
@@ -85,6 +83,7 @@ def test_conflicting_duplicate_proof_fails_closed():
       "source_revision": "rev1", "account": "private"}],
     [fact(value="x" * 2049)],
     [fact(edition="private url?token=secret")],
+    [fact(value="\\ud800")],
     [None],
 ])
 def test_unqualified_rows_do_not_enter_either_provenance_bucket(source):
