@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from recommendation_engine import (
     CatalogNoticeVariant,
+    ExplicitReadingSignal,
     RankedCandidate,
     _remember_notice,
     build_profile,
@@ -212,6 +213,7 @@ def compute_recommendations(
     max_results: int = 120,
     exploration: int = 25,
     exclude_owned: bool = True,
+    explicit_signals: tuple[ExplicitReadingSignal, ...] | None = None,
     snapshot_cache: LibrarySnapshotCache | None = None,
     progress: Callable[[int, int, str], None] | None = None,
     partial: Callable[[RecommendationPartial], None] | None = None,
@@ -234,7 +236,14 @@ def compute_recommendations(
         snapshot_cached = snapshot.cached
 
     profile_started = time.perf_counter()
-    profile = build_profile(books)
+    # Trusted Core explicit feedback is optional: no implicit extraction from
+    # purchases, loans, EPUB data or catalogue provenance.
+    # Preserve the original call contract for the default path (including
+    # instrumentation that wraps build_profile(books) with one positional arg).
+    profile = (build_profile(books) if explicit_signals is None
+               else build_profile(
+                   books, identity_id=identity_id, explicit_signals=explicit_signals,
+               ))
     queries = build_queries(books, max_queries=max_queries, profile=profile)
     profile_ms = (time.perf_counter() - profile_started) * 1000.0
 

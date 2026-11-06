@@ -1,9 +1,12 @@
 import logging
+
+import pytest
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
 
 from recommendation_service import LibrarySnapshotCache, compute_recommendations
+from recommendation_engine import ExplicitReadingSignal
 
 
 class Metadata:
@@ -268,3 +271,63 @@ def test_snapshot_cache_can_invalidate_one_identity_without_dropping_others():
     cache.load(metadata, "id-1")
     cache.load(metadata, "id-2")
     assert metadata.calls == ["id-1", "id-2", "id-1"]
+
+
+class ExactPreferenceMetadata:
+    def __init__(self):
+        self.calls = []
+
+    def library_entries(self, **kwargs):
+        self.calls.append(kwargs)
+        assert kwargs == {"identity_id": "id-1", "scan": False}
+        return [
+            {"key": "entry:bob", "identity_id": "id-1",
+             "title": "First book", "author": "Bob"},
+            {"key": "entry:alice", "identity_id": "id-1",
+             "title": "Second book", "author": "Alice"},
+        ]
+
+
+class PreferenceCatalog:
+    def __init__(self):
+        self.queries = []
+
+    def searchable_providers(self):
+        return [("test", "Catalogue test")]
+
+    def search(self, query, **kwargs):
+        assert kwargs["force"] is False
+        self.queries.append(query)
+        return []
+
+
+def test_service_optin_explicit_preferences_change_queries_without_rescan():
+    metadata = ExactPreferenceMetadata()
+    catalog = PreferenceCatalog()
+    cache = LibrarySnapshotCache()
+    ordinary = compute_recommendations(
+        metadata, catalog, "id-1", max_queries=2, snapshot_cache=cache,
+    )
+    preferred = compute_recommendations(
+        metadata, catalog, "id-1", max_queries=2, snapshot_cache=cache,
+        explicit_signals=(ExplicitReadingSignal(
+            "id-1", "entry:alice", "liked",
+        ),),
+    )
+    assert ordinary.queries[:2] == ("Bob", "Alice")
+    assert preferred.queries[:2] == ("Alice", "Bob")
+    assert ordinary.books_count == preferred.books_count == 2
+    assert metadata.calls == [{"identity_id": "id-1", "scan": False}]
+    assert len(catalog.queries) == 4  # Still only explicit catalogue searches.
+
+
+def test_cross_identity_explicit_feedback_cannot_trigger_search():
+    catalog = PreferenceCatalog()
+    with pytest.raises(ValueError, match="invalid_explicit_reading_signal"):
+        compute_recommendations(
+            ExactPreferenceMetadata(), catalog, "id-1",
+            explicit_signals=(ExplicitReadingSignal(
+                "id-2", "entry:alice", "liked",
+            ),),
+        )
+    assert catalog.queries == []
