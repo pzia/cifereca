@@ -244,3 +244,59 @@ def test_contributor_role_proof_cannot_be_reattributed_to_other_product():
             merge_attested_owned_direct_public_detail(owned, forged)
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("age_label", [
+    "12-15", "À partir de 13 ans", "Young adult", "8+", "13-99",
+])
+def test_public_age_literal_never_becomes_attested_numeric_age(age_label):
+    """A JSON-LD age label lacks proof of the exact purchased edition."""
+    record = details(typicalAgeRange=age_label)
+    fields, evidence = validated_public_jsonld_fields(
+        record, PAGE.items[0].friendly_url,
+    )
+    assert fields["public_age_range_label"] == age_label
+    assert evidence["public_age_range_label"]["edition_proven"] is False
+    assert evidence["public_age_range_label"]["source_url"] == PAGE.items[0].friendly_url
+    for forbidden in ("recommended_age", "youth_age_ranges",
+                      "attested_age_ranges", "isbn_digital"):
+        assert forbidden not in fields
+    session, owned = purchased(0)
+    try:
+        merged = merge_attested_owned_direct_public_detail(owned, record)
+        assert (merged.metadata["public_detail_enrichment"]["public_jsonld"]
+                ["fields"]["public_age_range_label"] == age_label)
+        for forbidden in ("recommended_age", "youth_age_ranges",
+                          "attested_age_ranges", "isbn_digital"):
+            assert forbidden not in merged.metadata
+    finally:
+        session.close()
+
+
+def test_same_title_different_products_cannot_transfer_age_evidence():
+    """Exact public product URLs, not identical titles, scope age evidence."""
+    assert PAGE.items[1].title == PAGE.items[2].title
+    first = details(1, typicalAgeRange="8+")
+    second = details(2, typicalAgeRange="15+")
+    assert first["fields"]["public_age_range_label"] == "8+"
+    assert second["fields"]["public_age_range_label"] == "15+"
+    for index, record in ((1, first), (2, second)):
+        url = PAGE.items[index].friendly_url
+        _, evidence = validated_public_jsonld_fields(record, url)
+        assert evidence["public_age_range_label"]["source_url"] == url
+        assert evidence["public_age_range_label"]["edition_proven"] is False
+        other = PAGE.items[3 - index].friendly_url
+        with pytest.raises(PublicDetailError, match="public_jsonld_evidence_unverified"):
+            validated_public_jsonld_fields(record, other)
+
+
+def test_age_absent_or_not_a_scalar_is_unknown_not_zero():
+    for value in (None, [], {"minValue": 8, "maxValue": 12}, 0, True):
+        record = details(typicalAgeRange=value)
+        fields, evidence = validated_public_jsonld_fields(
+            record, PAGE.items[0].friendly_url,
+        )
+        assert "public_age_range_label" not in fields
+        assert "public_age_range_label" not in evidence
+        assert "recommended_age" not in fields
+
