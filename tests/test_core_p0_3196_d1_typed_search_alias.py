@@ -25,7 +25,7 @@ def case(tmp_path):
         "media_format": "epub", "metadata": {},
     })
     placement = _placement(
-        service, tmp_path, owner="alice", filename="book.epub",
+        service, tmp_path / "library", owner="alice", filename="book.epub",
         artifact_id=artifact, item_id="book",
     )
     try:
@@ -137,7 +137,7 @@ def test_typed_kobo_origin_requires_file_still_present(case):
     service, artifact, _placement_id, tmp_path = case
     _typed(service)
     _origin(service, artifact)
-    (tmp_path / "alice/book.epub").unlink()
+    (tmp_path / "library/alice/book.epub").unlink()
     assert ("kobo", "vault", "book") not in (
         service.local_placements_for_sources("alice")
     )
