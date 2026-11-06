@@ -143,3 +143,38 @@ def test_no_evidence_unavailable_capability_and_wrong_operation_fail_closed():
     assert assess(reader, evidence(reader), capability=replace(
         SUPPORTED, session_ready=False,
     )).state == "unverified"
+
+
+
+def test_uppercase_exact_catalogue_branch_can_retain_observed_borrower_scope():
+    reader = account(borrower="reader-A", credential="card-A")
+    decision = assess(
+        reader, evidence(reader, branch="EBOOKS"), branch="EBOOKS",
+    )
+    assert decision.state == "eligible_observed"
+    assert decision.reason_code == "borrow_permission_observed"
+    assert (
+        decision.identity_id, decision.provider_id,
+        decision.credential_id, decision.account_id, decision.branch,
+    ) == ("alice", "paris", "card-A", "reader-A", "EBOOKS")
+    assert "card-A" not in repr(decision)
+    assert "reader-A" not in repr(decision)
+
+
+def test_missing_or_foreign_evidence_carries_no_claimed_borrower_scope():
+    reader = account(borrower="reader-A")
+    for observed in (None, evidence(reader, account_id="other-reader")):
+        decision = assess(reader, observed)
+        assert decision.state == "unverified"
+        assert (decision.identity_id, decision.provider_id,
+                decision.credential_id, decision.account_id) == ("", "", "", "")
+
+
+@pytest.mark.parametrize("invalid_branch", ["EBOOKS/PRIVATE", "EBOOKS\n", "EBOOKS ", ""])
+def test_malformed_branch_never_produces_borrower_permission(invalid_branch):
+    reader = account()
+    result = assess(
+        reader, evidence(reader, branch=invalid_branch),
+        branch=invalid_branch,
+    )
+    assert result.state != "eligible_observed"
