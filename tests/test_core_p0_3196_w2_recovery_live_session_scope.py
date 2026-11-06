@@ -76,3 +76,52 @@ def test_recovery_requires_one_live_session_per_credential(tmp_path):
         assert service.storage.backup_get("kobo", "vault-1", "ambiguous") == before
     finally:
         service.close()
+
+
+
+def _recover_only(service):
+    from cifereca.core.kobo_backup import _recover_local_remnants
+
+    summary = {
+        "recovered_interrupted": 0, "recovered_unparsed": 0,
+        "reconcile_pending": 0, "reconcile_conflicts": 0,
+    }
+    _recover_local_remnants(service, summary, {}, lambda *_args, **_kw: None)
+    return summary
+
+
+def test_recovery_refuses_disabled_bound_connection(tmp_path):
+    service = _service(tmp_path, manifest=[])
+    try:
+        record = _interrupted("vault-1", "disabled")
+        service.storage.backup_put(record)
+        before = service.storage.backup_get("kobo", "vault-1", "disabled")
+        service.storage.provider_connection_put({
+            "identity_id": "default", "provider_id": "kobo",
+            "credential_id": "vault-1", "label": "Disabled", "enabled": False,
+        })
+        summary = _recover_only(service)
+        assert summary["recovered_interrupted"] == 0
+        assert service.storage.backup_get("kobo", "vault-1", "disabled") == before
+    finally:
+        service.close()
+
+
+def test_legacy_default_alias_preserves_recovery_for_verified_named_owner(tmp_path):
+    service = _service(tmp_path, manifest=[])
+    try:
+        # The provider's Account model can report "default" even when Core's
+        # verified SQLite credential owner is another named identity.
+        service.storage.provider_connection_put({
+            "identity_id": "named", "provider_id": "kobo",
+            "credential_id": "vault-1", "label": "Named", "enabled": True,
+        })
+        record = _interrupted("vault-1", "named-owned", identity="named")
+        service.storage.backup_put(record)
+        summary = _recover_only(service)
+        assert summary["recovered_interrupted"] == 1
+        receipt = service.storage.backup_get("kobo", "vault-1", "named-owned")
+        assert receipt["status"] == "pending_acquisition"
+        assert receipt["attention_code"] == "interrupted_acquisition_review"
+    finally:
+        service.close()
