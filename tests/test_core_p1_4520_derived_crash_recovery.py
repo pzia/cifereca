@@ -665,3 +665,33 @@ def test_nested_publication_crash_is_recoverable_by_supervised_scanner(
         )[0]["status"] == "already_committed"
     finally:
         service.storage.close()
+
+
+def test_nofollow_profile_open_rejects_intermediate_symlink(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        _open_under_root_nofollow, _read_receipt_nofollow,
+    )
+    root = tmp_path / "profile"
+    outside = tmp_path / "foreign"
+    root.mkdir()
+    outside.mkdir()
+    (outside / "pending-file.json").write_bytes(b'{"secret":"other-profile"}')
+    (root / "redirect").symlink_to(outside, target_is_directory=True)
+    candidate = root / "redirect" / "pending-file.json"
+    with pytest.raises(OSError):
+        _open_under_root_nofollow(root, candidate)
+    with pytest.raises(OSError):
+        _read_receipt_nofollow(candidate, profile_root=root)
+    assert candidate.read_bytes() == b'{"secret":"other-profile"}'
+
+
+def test_nofollow_profile_open_rejects_parent_escape(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        _open_under_root_nofollow,
+    )
+    root = tmp_path / "profile"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"foreign")
+    with pytest.raises(ValueError, match="relative"):
+        _open_under_root_nofollow(root, outside)
