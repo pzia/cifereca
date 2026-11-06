@@ -138,7 +138,14 @@ def present_loaded_search_detail_in_place(
         return service.holdings(item, query, force=False)
 
     def deliver(detail: object) -> None:
+        # Exact source admission is necessary even if the context/lease is
+        # still live: a provider response for another notice or credential
+        # must never expose its holdings/actions in Recommendations.
         if (type(detail) is not ItemDetail
+                or detail.record_id != record_id
+                or detail.docbase != docbase
+                or detail.source_provider != provider
+                or detail.source_credential != credential
                 or not source_current()
                 or not _view_mapped(view)
                 or not is_current()):
