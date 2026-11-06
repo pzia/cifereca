@@ -20,7 +20,7 @@ from .action_widgets import AdaptiveActionBar
 from .query_model import result_row
 from ..plugin_api import UiBookDetailPresentation, document_links
 from .detail_selection_perf import current_detail_trace
-from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate, search_detail_support_label
+from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate, search_detail_support_label, paris_catalogue_availability
 from .action_widgets import clear_box, add_css
 from .loan_download_status import loan_download_unavailable_message
 from .loan_view import loan_due_detail_value
@@ -941,14 +941,10 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
-        # Catalogue availability is not a personal Paris borrowing right.
-        paris_catalogue_candidate = (
-            item.source_provider == "paris" and item.medium == "digital"
-        )
-        visible_availability = (
-            "Empruntable selon le catalogue · compte non vérifié"
-            if paris_catalogue_candidate and availability == "Empruntable"
-            else availability
+        # This pure projector separates provider catalogue facts from
+        # attested medium and account-specific borrowing admission.
+        paris_catalogue_candidate, visible_availability = (
+            paris_catalogue_availability(item, availability)
         )
         usage = _commercial_search_usage(item, self.window.service)
         self.show_presentation(book_detail_presentation(
