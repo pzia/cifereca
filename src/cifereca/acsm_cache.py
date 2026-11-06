@@ -416,12 +416,14 @@ def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
 
 
 def forget_initial(path: Path) -> None:
-    """Remove only the receipt for this input after successful fulfillment."""
-    manifest = path.parent / INITIAL_MANIFEST
-    try:
-        if not manifest.is_symlink() and manifest.stat().st_size <= 16384:
-            row = json.loads(manifest.read_text(encoding='utf-8'))
-            if type(row) is dict and row.get('file') == path.name:
-                manifest.unlink()
-    except (OSError, ValueError, AttributeError):
-        pass
+    """Retain the first-offer claim receipt after successful fulfillment.
+
+    POSIX unlink cannot atomically compare the sidecar inode, so a competing
+    rename could replace the checked entry before removal. Keep the small
+    URL-free sidecar as provenance: a standard cache with the same filename
+    must continue to validate its original confirmed borrow claim. This
+    does not prevent cleanup of the consumed ACSM bytes and does not turn
+    a retained sidecar into a right to download or reuse an expired token.
+    Physical retention/compaction needs a separately supervised policy.
+    """
+    return None
