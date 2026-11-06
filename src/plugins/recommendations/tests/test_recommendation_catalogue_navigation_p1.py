@@ -835,3 +835,50 @@ def test_in_place_rejects_stale_ranking_generation_and_new_selection():
     view._generation += 1
     assert current() is False
     assert not calls
+
+
+def test_known_v2_route_adds_in_place_action_only_on_explicit_click():
+    view, identity, searches, _, row = _view((_variant(),))
+    presentations, actions, navigation = [], [], []
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **_: False,
+        open_loaded_search_notice=lambda **_: True,
+        can_open_known_search_notice=lambda **_: True,
+        open_known_search_notice=lambda **kw: navigation.append(kw) or True,
+        present_known_search_detail_in_place=lambda **kw:
+            actions.append(kw) or True,
+    )
+    view._master.show_detail = presentations.append
+    view._selected_row(row)
+    in_place = [a for a in presentations[-1].actions
+                if a.id.startswith("recommendation.known-in-place.")]
+    assert len(in_place) == 1
+    assert not actions and not navigation and not searches
+    assert in_place[0].callback() is True
+    assert len(actions) == 1 and navigation == []
+    assert actions[0]["view"] is view._master
+    assert actions[0]["record_id"] == "book-1"
+    assert actions[0]["credential"] == "vault-1"
+    assert actions[0]["is_current"]() is True
+    view._selected_row(None)
+    assert actions[0]["is_current"]() is False
+    assert in_place[0].callback() is False
+    assert len(actions) == 1
+
+
+def test_in_place_is_never_offered_for_unknown_or_absent_mirror_proof():
+    view, identity, searches, _, row = _view((_variant(),))
+    calls, presentations = [], []
+    view.host = NS(
+        can_open_loaded_search_notice=lambda **_: False,
+        open_loaded_search_notice=lambda **_: True,
+        can_open_known_search_notice=lambda **_: False,
+        open_known_search_notice=lambda **_: True,
+        present_known_search_detail_in_place=lambda **kw:
+            calls.append(kw) or True,
+    )
+    view._master.show_detail = presentations.append
+    view._selected_row(row)
+    assert not [a for a in presentations[-1].actions
+                if a.id.startswith("recommendation.known-in-place.")]
+    assert not calls and not searches
