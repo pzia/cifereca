@@ -327,10 +327,14 @@ def observe_canonical_rights_in_sync(
     # The ordinary read-only observer has no lease and remains unchanged.
     if retirement_lease is not None and snapshot.scope.provider_id == "kobo":
         from .legacy_backup_retirement_sync import retire_canonical_kobo_legacy_in_sync
-        retire_canonical_kobo_legacy_in_sync(
+        retired = retire_canonical_kobo_legacy_in_sync(
             service.storage, snapshot, library_root=Path(service.library_dir()),
             lease=retirement_lease, context_current=current_context,
         )
+        if retired:
+            # Bounded, non-identifying maintenance metric only: no account,
+            # path, title, SHA, provider response or signed URL in diagnostics.
+            _LOG.info("TRACE canonical legacy retirement code=attested_kobo_archive retired_count=%d", retired)
     return {
         "status": snapshot.status, "observed": len(snapshot.rights),
         "attested_active": admitted,
