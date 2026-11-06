@@ -85,3 +85,5 @@ def epub_bytes(resource: ReferenceResource) -> bytes:
             info.compress_type = zipfile.ZIP_STORED
             archive.writestr(info, content)
     return output.getvalue()
+
+# P1 #4209 CI measurement only: no runtime behavior or fixture changed.
