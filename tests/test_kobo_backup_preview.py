@@ -398,8 +398,8 @@ def test_private_w2_preflight_refuses_complete_without_original_integrity_baseli
     )
     try:
         reasons = {}
-        plan = service.kobo_backup_preview(
-            "vault-1", refresh_manifest=True, verify_local_files=verify,
+        plan = kobo_backup.kobo_backup_preview(
+            service, "vault-1", refresh_manifest=True, verify_local_files=verify,
             _item_reasons=reasons,
         )
         assert reasons == {"historical": "needs_reconciliation"}
