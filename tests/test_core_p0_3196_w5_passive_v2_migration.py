@@ -141,6 +141,11 @@ def test_v2_passive_kobo_backups_survive_without_synthesizing_v3_rights(tmp_path
     {"attention_code": "interrupted_acquisition_review"},
     {"acquisition_strategy": "acsm-descriptor"},
     {"executor": "kobo-adept"},
+    {"job_id": "queued-legacy-job"},
+    {"adept_profile": "adept-profile"},
+    {"entitlement_type": "loan"},
+    {"loan_id": "borrower-loan"},
+    {"expires_at": "2030-01-01T00:00:00Z"},
 ])
 def test_v2_pending_with_interruption_clue_remains_reviewable(tmp_path, clue):
     db_path = tmp_path / "partial.sqlite"
