@@ -56,9 +56,11 @@ def descriptive_lineage_key(
             or selection.plugin_id != admitted.consolidator_id
             or selection.version != admitted.consolidator_version):
         raise ValueError("consolidator_context_mismatch")
-    if (len(admitted.exact) + len(admitted.inherited) > MAX_CACHE_FACTS
+    if (type(admitted.exact) is not tuple
+            or type(admitted.inherited) is not tuple
+            or len(admitted.exact) + len(admitted.inherited) > MAX_CACHE_FACTS
             or type(admitted.rejected_count) is not int
-            or admitted.rejected_count < 0):
+            or not 0 <= admitted.rejected_count <= MAX_CACHE_FACTS):
         raise ValueError("invalid_lineage_size")
     seen: set[tuple[str, str, str]] = set()
     fact_rows = []
