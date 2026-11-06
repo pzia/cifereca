@@ -250,36 +250,44 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
     series: Counter[str] = Counter()
     title_terms: Counter[str] = Counter()
     description_terms: Counter[str] = Counter()
+    lexical_terms: Counter[str] = Counter()
     author_labels: dict[str, str] = {}
     series_labels: dict[str, str] = {}
     identifiers: set[str] = set()
     existing_pairs: set[str] = set()
 
     for book in books:
-        for author in author_values(book):
-            key = normalize(author)
-            if key:
-                authors[key] += 1
-                author_labels.setdefault(key, author)
-        for subject in subject_values(book):
-            for token in tokens(subject):
-                subjects[token] += 1
+        book_authors = {normalize(author): author for author in author_values(book)}
+        authors.update(book_authors.keys())
+        for key, author in book_authors.items():
+            author_labels.setdefault(key, author)
+        # The same descriptive fact may be projected at the top level, in
+        # catalogue metadata and in EPUB metadata. Count books, not copies
+        # of a fact. A title/description overlap is one lexical signal too.
+        subjects.update(sorted({
+            token for subject in subject_values(book) for token in tokens(subject)
+        }))
+        book_series: set[str] = set()
         for value in series_values(book):
             key = normalize(value)
             if key:
-                series[key] += 1
+                book_series.add(key)
                 series_labels.setdefault(key, value)
-        for token in tokens(get_field(book, "title", "")):
-            title_terms[token] += 1
-        for token in tokens(get_field(book, "description", "") or metadata(book).get("description")):
-            description_terms[token] += 1
+        series.update(sorted(book_series))
+        book_title = get_field(book, "title", "")
+        title_tokens = tokens(book_title)
+        description_tokens = tokens(
+            get_field(book, "description", "") or metadata(book).get("description")
+        )
+        title_terms.update(sorted(title_tokens))
+        description_terms.update(sorted(description_tokens))
+        lexical_terms.update(sorted(title_tokens | description_tokens))
         identifiers.update(identifier_values(book))
-        title = normalize(get_field(book, "title", ""))
-        auth = "/".join(sorted(normalize(a) for a in author_values(book) if normalize(a)))
+        title = normalize(book_title)
+        auth = "/".join(sorted(book_authors))
         if title and auth:
             existing_pairs.add(f"{title}|{auth}")
 
-    lexical_terms = title_terms + description_terms
     return ProfileVector(
         authors=authors,
         subjects=subjects,

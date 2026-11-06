@@ -57,6 +57,14 @@ Ces mesures servent à caractériser le hotspot CPU ; elles ne constituent pas u
 
 Le plugin construit jusqu'à 8 recherches à partir des auteurs, séries et sujets dominants, interroge les catalogues en parallèle via le Core, fusionne les rangs avec RRF, retire les livres déjà présents et applique une diversification MMR.
 
+Chaque entrée de bibliothèque contribue au plus une fois par auteur, thème,
+série et terme du titre ou du résumé. Une valeur répétée dans la projection
+catalogue et les métadonnées EPUB garde donc le même poids. Un signal présent
+dans deux livres compte deux fois. Les états de possession et la provenance
+fournisseur restent descriptifs, quelle que soit la présence du fichier ou
+la nature de l'emprunt. Les signaux d'appréciation exigent une donnée explicite
+du lecteur. Les notices consolidées relèvent des contrats #4552 et #2385.
+
 Pendant la recherche, les recommandations provisoires sont fondées sur le score de contenu uniquement afin de garder le streaming peu coûteux. Le classement final complet remplace ensuite ces résultats.
 
 Aucun accès privé au Core, aucune acquisition, aucun téléchargement.
