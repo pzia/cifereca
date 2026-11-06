@@ -1760,12 +1760,32 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 "job_id": None,
             })
             emit("reconcile_conflict", item_id=previous.get("item_id"), title=previous.get("title"), count=len(candidates))
+        elif previous_status == "acquiring" and stored_path:
+            # A previously recorded locator must remain a manual
+            # reconciliation case even when the file is no longer at the
+            # old path. The earlier no-candidate fallback used to reach
+            # this classification in _skip_manifest_item; the new
+            # interrupted-GET fence must not mask the physical locator.
+            self.storage.backup_put({
+                **previous,
+                "status": "reconcile_required",
+                "updated_at": int(time.time()),
+                "error": (
+                    "Artefact Kobo précédemment lié introuvable ; "
+                    "vérifiez son déplacement avant tout téléchargement"
+                ),
+                "job_id": None,
+            })
         elif previous_status == "acquiring":
             self.storage.backup_put({
                 **previous,
                 "status": "pending_acquisition",
                 "updated_at": int(time.time()),
-                "error": "Acquisition locale interrompue avant finalisation ; nouvelle tentative nécessaire",
+                # This is an unresolved *prior attempt*, not a fresh
+                # pending offer. Its original candidate could be outside
+                # the bounded local scan. Never auto-GET the same edition.
+                "attention_code": "interrupted_acquisition_review",
+                "error": "Acquisition locale interrompue avant finalisation ; rapprochement requis",
                 "job_id": None,
             })
         elif previous_status in {"reconcile_required", "reconcile_conflict"}:
@@ -2008,9 +2028,17 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
             # provenance with the newer remote revision.
             "revision_id": (
                 current.get("revision_id")
-                if current.get("status") in {
-                    "ok", "complete", "reconcile_required", "reconcile_conflict",
-                }
+                if (
+                    current.get("status") in {
+                        "ok", "complete", "reconcile_required", "reconcile_conflict",
+                        "acquiring",
+                    } or (current.get("status") == "pending_acquisition"
+                          and (current.get("attention_code")
+                               == "interrupted_acquisition_review"
+                               or str(current.get("error") or "").startswith(
+                                   "Acquisition locale interrompue avant finalisation"
+                               )))
+                )
                 and current.get("revision_id") != revision_id
                 else revision_id
             ),
@@ -2078,6 +2106,31 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         emit(
             "reconcile_waiting",
             current=index + 1, total=total, title=title, item_id=product_id,
+            status=current.get("status"), path=current.get("local_path"),
+        )
+        return True
+
+    # #3196/W2: recovering an interrupted 0.7 download without a local
+    # candidate MUST NOT restart an opaque GET/ADEPT as though it were a
+    # fresh, never-started edition. This includes historical rows already
+    # rewritten to pending_acquisition before the closed marker existed.
+    # A simple pending_acquisition with no interrupted-attempt evidence
+    # (e.g. adapter unavailable on the first ever manifest) keeps its
+    # pre-existing admissibility and can start when the adapter recovers.
+    if current and (
+        current.get("status") == "acquiring"
+        or (current.get("status") == "pending_acquisition" and (
+            current.get("attention_code") == "interrupted_acquisition_review"
+            or str(current.get("error") or "").startswith(
+                "Acquisition locale interrompue avant finalisation"
+            )
+        ))
+    ):
+        summary["reconcile_pending"] += 1
+        summary["reconcile_skipped"] += 1
+        emit(
+            "reconcile_waiting", current=index + 1, total=total,
+            title=title, item_id=product_id,
             status=current.get("status"), path=current.get("local_path"),
         )
         return True

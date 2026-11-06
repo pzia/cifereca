@@ -141,7 +141,7 @@ def test_checkpoint_write_failure_cannot_advertise_completed_item(tmp_path, monk
 
 
 def test_large_manifest_resumes_after_117_without_redownloading(tmp_path, monkeypatch):
-    """#1348: a persisted partial batch resumes only the missing 405 items."""
+    """#3196: resume 404 untouched items; quarantine one interrupted GET."""
     names = [f"book-{n:04d}" for n in range(522)]
     service, _session = _service(tmp_path, _manifest(*names))
     monkeypatch.setattr(service, "kobo_adept_state", lambda **_kw: _ready_adept_state())
@@ -166,13 +166,22 @@ def test_large_manifest_resumes_after_117_without_redownloading(tmp_path, monkey
         assert checkpoint["status"] == "interrupted"
 
         resumed = service.sync_kobo_backup_account("vault-1")
-        assert resumed["status"] == "complete"
-        assert resumed["downloaded"] == 405
+        # The interrupted item may have produced inaccessible bytes before
+        # KeyboardInterrupt. Continue other acquisitions, but NEVER issue
+        # a second GET for this one without an explicit reconciliation.
+        assert resumed["status"] == "attention_required"
+        assert resumed["downloaded"] == 404
         assert resumed["unchanged"] == 117
-        assert resumed["attempted"] == 405
-        assert len(downloaded) == 522
-        assert len(set(downloaded)) == 522
-        assert json.loads(service.storage.metadata_get(key))["status"] == "complete"
+        assert resumed["attempted"] == 404
+        assert resumed["reconcile_pending"] == resumed["reconcile_skipped"] == 1
+        assert len(downloaded) == len(set(downloaded)) == 521
+        assert "book-0117" not in downloaded
+        interrupted_row = service.storage.backup_get(
+            "kobo", "vault-1", "book-0117",
+        )
+        assert interrupted_row["status"] == "pending_acquisition"
+        assert interrupted_row["attention_code"] == "interrupted_acquisition_review"
+        assert json.loads(service.storage.metadata_get(key))["status"] == "attention_required"
     finally:
         service.close()
 
@@ -247,12 +256,15 @@ def test_resume_after_closing_and_reopening_sqlite_service(tmp_path, monkeypatch
     monkeypatch.setattr(second, "_execute_kobo_acquisition", acquire)
     try:
         result = second.sync_kobo_backup_account("vault-1")
-        assert result["status"] == "complete"
-        assert result["downloaded"] == 5
+        assert result["status"] == "attention_required"
+        assert result["downloaded"] == 4
         assert result["unchanged"] == 4
-        assert result["attempted"] == 5
-        assert len(downloaded) == 9
-        assert len(set(downloaded)) == 9
+        assert result["attempted"] == 4
+        assert result["reconcile_pending"] == result["reconcile_skipped"] == 1
+        assert len(downloaded) == len(set(downloaded)) == 8
+        assert "book-0004" not in downloaded
+        persisted = second.storage.backup_get("kobo", "vault-1", "book-0004")
+        assert persisted["attention_code"] == "interrupted_acquisition_review"
     finally:
         second.close()
 
@@ -324,12 +336,13 @@ def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkey
         assert third["downloaded"] == 5
 
         resumed = service.sync_kobo_backup_account("vault-2")
-        assert resumed["status"] == "complete"
-        assert resumed["downloaded"] == 405
+        assert resumed["status"] == "attention_required"
+        assert resumed["downloaded"] == 404
         assert resumed["unchanged"] == 117
-        assert resumed["attempted"] == 405
-        assert len(downloads) == 536
-        assert len(set(downloads)) == 536
+        assert resumed["attempted"] == 404
+        assert resumed["reconcile_pending"] == resumed["reconcile_skipped"] == 1
+        assert len(downloads) == len(set(downloads)) == 535
+        assert "b-0117" not in downloads
         for credential, identity, expected in (
             ("vault-1", "default", 9),
             ("vault-2", "reader-2", 522),
@@ -337,7 +350,9 @@ def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkey
         ):
             checkpoint = json.loads(service.storage.metadata_get(
                 _kobo_checkpoint_key(identity, credential)))
-            assert checkpoint["status"] == "complete"
+            assert checkpoint["status"] == (
+                "attention_required" if credential == "vault-2" else "complete"
+            )
             assert checkpoint["total"] == expected
     finally:
         service.close()
