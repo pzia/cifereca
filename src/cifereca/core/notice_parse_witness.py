@@ -13,7 +13,7 @@ import json
 import re
 
 from .notice_source_observation import (
-    NoticeSourceKey, NoticeSourceObservation, _valid_key, _id as _source_id, admit_source_notice,
+    NoticeSourceKey, NoticeSourceObservation, _valid_key, _id as _source_id, admit_source_notice, _MAX_BYTES as _MAX_SOURCE_JSON_BYTES,
 )
 
 _MAX_FIELDS = 32
@@ -212,7 +212,11 @@ def review_admitted_source_parse_witness(
     The Core must still hash the *actual authorized response bytes* to supply
     input_sha256; a provider's string claim is never an authenticity proof.
     """
-    if type(observation) is not NoticeSourceObservation:
+    if (type(observation) is not NoticeSourceObservation
+            or type(observation.raw_json) is not str
+            or len(observation.raw_json) > _MAX_SOURCE_JSON_BYTES):
+        # A forged DTO must never allocate an unbounded JSON tree before
+        # the Core's normal parsed-source size gate runs.
         raise ValueError("invalid_admitted_source_observation")
     try:
         fields = observation.fields_copy()
