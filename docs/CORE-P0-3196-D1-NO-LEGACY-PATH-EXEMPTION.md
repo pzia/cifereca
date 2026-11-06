@@ -48,6 +48,12 @@ aucun nouveau droit ; les états sans preuve attendent revue et
 rétablissement d'une provenance fournisseur indépendante. Le reliquat
 D1/W2/W4 reste ouvert.
 
+Le récupérateur local `_recover_local_remnants` préserve également le
+SHA/taille **même absents** d'un `reconcile_required/conflict` : le fait de
+retrouver un seul fichier candidat lors du cycle suivant ne remplit plus
+l'empreinte manquante. Les observations provisoires d'acquisitions
+effectivement interrompues restent distinctes, en attente de W2.
+
 Tests : `tests/test_kobo_backup_integrity_baseline.py`
 (SHA absent, corrompu, taille absente ou nulle ; pas de lecture
 de fichier, pas de re-GET, pas de mutation d'empreinte, répétition
