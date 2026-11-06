@@ -172,6 +172,14 @@ def _snapshot(db, storage, credential, item, path, sha):
     placements = _rows(db, "placements", "path=? OR placement_id=?", (path, placement_id))
     _require(len(placements) <= 1, "ambiguous_placement")
     placement = placements[0] if placements else None
+    # OriginLinks are scoped to Artifact + identity, not to a placement ID.
+    # This path may already support a different canonical edition even when
+    # the legacy credential/item has no typed SourceReference of its own.
+    if placement is not None and db.execute(
+        "SELECT 1 FROM origin_links WHERE artifact_id=? AND identity_id=? LIMIT 1",
+        (placement["artifact_id"], placement["identity_id"]),
+    ).fetchone():
+        raise ReconciliationRejected("canonical_placement_requires_core_recovery")
     placement_id = placement["placement_id"] if placement else placement_id
     catalogue = _rows(db, "catalog_entries", "1 LIMIT 4097")
     _require(len(catalogue) <= 4096, "catalogue_budget_exhausted")

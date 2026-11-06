@@ -27,6 +27,14 @@ production n'était identifié ; le veto explicite permet de détecter un
 La migration journalisée des répertoires d'identités et les relinks canoniques
 attestés restent des opérations distinctes, non retirées par cette tranche.
 
+**Garde W4 sur le chemin cible :** si le Placement existe et que son
+Artifact a un OriginLink pour la même identité, le rapprochement 0.7 refuse
+la prévisualisation, la confirmation et l'annulation. Une autre édition ou
+connexion peut s'appuyer sur ce Placement, même quand l'édition Kobo legacy
+n'a aucune SourceReference. Une provenance d'une autre identité ne suffit
+pas à bloquer une copie indépendante. Les écritures W4 purement legacy
+restent accessibles.
+
 **Gel de surface :** le test
 `tests/test_core_p0_3196_residual_writer_surface.py` détecte les nouveaux
 appels Python directs `.backup_put()` / `.backup_prune_missing()` hors de
