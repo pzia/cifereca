@@ -388,6 +388,39 @@ def exact_kobo_offer_id(
         route = (fmt + ":" + source_fmt.strip().lower()
                  if _kdrm_raw_type(raw_drm) else fmt)
         eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
+    # #4640 K1/K3: closed, bounded shape histogram from the *same* already
+    # fetched descriptor. Never log a signed URL, account, bearer, raw opaque
+    # format, product or source-provided text. This NEVER proves that two
+    # candidates with the same categories are equivalent/executable.
+    if diagnostic is not None and len(candidates) > 1:
+        def category(value: Any, allowed: frozenset[str]) -> str:
+            return (value.strip().casefold()
+                    if type(value) is str and value.strip().casefold() in allowed
+                    else "missing" if value is None else "other")
+
+        profiles: Counter[str] = Counter()
+        for row in candidates:
+            if type(row) is not dict:
+                profiles["invalid_candidate"] += 1
+                continue
+            source = row.get("source")
+            if source is None and type(row.get("kobo")) is dict:
+                source = row["kobo"].get("source")
+            shape = ":".join((
+                category(source, frozenset({"library_sync", "content_access_book"})),
+                category(row.get("media_format"), frozenset({
+                    "epub", "kepub", "pdf", "acsm", "flepub", "unknown",
+                })),
+                category(row.get("source_format"), frozenset({
+                    "epub", "kepub", "epub3", "epub3fl", "flepub", "pdf", "acsm",
+                })),
+                category(row.get("handling"), frozenset({
+                    "http_plain", "adobe_adept", "kobo_kdrm",
+                })),
+            ))
+            profiles[shape] += 1
+        diagnostic["candidate_shape_counts"] = dict(sorted(profiles.items()))
+
     # Preserve a single proven plain, ACSM or library_sync route before
     # using the legacy delegated KDRM fallback. Do not choose between
     # multiple equally admissible routes by their upstream list order.
