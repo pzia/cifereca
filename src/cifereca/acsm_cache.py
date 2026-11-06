@@ -209,7 +209,8 @@ def _initial_scope(loan, identity_id: str, account_id: str) -> dict | None:
 
 
 def remember_initial(path: Path, directory: Path, loan, identity_id: str,
-                     account_id: str, *, now=None, borrow_claim=None) -> bool:
+                     account_id: str, *, now=None, borrow_claim=None,
+                     admission_current=None) -> bool:
     """Remember validated first-offer ACSM bytes, never their bearer URL.
 
     An initial receipt is not a new loan or evidence of ADEPT fulfillment.
@@ -218,10 +219,16 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
     """
     now = time.time() if now is None else now
     try:
+        if admission_current is not None and (
+                not callable(admission_current)
+                or admission_current() is not True):
+            return False
         owner = _initial_scope(loan, identity_id, account_id)
         digest = _initial_digest(path, directory, now)
         if (owner is None or digest is None or not _active(loan, now)
-                or directory.is_symlink() or path.parent != directory):
+                or directory.is_symlink() or path.parent != directory
+                or (admission_current is not None
+                    and admission_current() is not True)):
             return False
         # A production first-offer receipt also records the opaque Core
         # at-most-once claim. Neither the operation ID nor hashed claim key
@@ -250,6 +257,10 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
                 json.dump(row, stream, ensure_ascii=False)
                 stream.flush()
                 os.fsync(stream.fileno())
+            # The lease may have been invalidated after the file digest and
+            # durable temporary receipt; do not publish stale evidence.
+            if admission_current is not None and admission_current() is not True:
+                return False
             os.replace(temporary, directory / INITIAL_MANIFEST)
             parent_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY
                                 | os.O_NOFOLLOW)
@@ -361,12 +372,11 @@ def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
 
 
 def forget_initial(path: Path) -> None:
-    """Remove only the receipt for this input after successful fulfillment."""
-    manifest = path.parent / INITIAL_MANIFEST
-    try:
-        if not manifest.is_symlink() and manifest.stat().st_size <= 16384:
-            row = json.loads(manifest.read_text(encoding='utf-8'))
-            if type(row) is dict and row.get('file') == path.name:
-                manifest.unlink()
-    except (OSError, ValueError, AttributeError):
-        pass
+    """Retain the URL-free receipt; never unlink a raced pathname.
+
+    POSIX unlink cannot atomically compare the checked inode. A concurrent
+    rename could replace the selected receipt after validation. Reuse still
+    requires the exact confirmed loan claim, identity, byte hash and TTL;
+    physical retention is a separate, supervised housekeeping concern.
+    """
+    return None
