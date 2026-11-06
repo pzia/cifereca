@@ -177,3 +177,14 @@ def test_unmatched_earlier_legacy_archive_never_starves_exact_retirement(rig):
         row for row in storage.backup_list("kobo", "card-a")
         if row["item_id"].endswith("-history")
     ]) == 5
+
+
+def test_durable_source_off_vetoes_archive_retirement_inside_sql_txn(rig):
+    from cifereca.core.source_auto_consent_bridge import _source_id
+    storage, _root, path, snapshot, lock_path = rig
+    old = storage.backup_get("kobo", "card-a", "book")
+    storage.metadata_set("sync.source.enabled." + _source_id(snapshot.scope), "off")
+    with InterProcessLock(lock_path) as lease:
+        assert _call(rig, lease) == 0
+    assert storage.backup_get("kobo", "card-a", "book") == old
+    assert path.read_bytes() == BYTES
