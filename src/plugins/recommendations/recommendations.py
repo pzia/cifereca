@@ -1599,6 +1599,23 @@ class UxRecommendationsView:
         self._ranked_by_key = mapping
         self._master.show_rows(tuple(rows), total_count=len(self._ranked))
 
+        # A local filter may hide the selected recommendation while other
+        # rows remain. GTK does not always emit selection-changed on a model
+        # replacement, so explicitly revoke the old detail and its callbacks.
+        # Do not clear a NEW selection installed synchronously by show_rows.
+        if (rows and selection is not None
+                and self._exact_notice_state is selection
+                and selection["key"] not in mapping):
+            self._exact_notice_state = None
+            self._detail_selection_generation = (
+                getattr(self, "_detail_selection_generation", 0) + 1
+            )
+            self._reset_llm_selection(None)
+            self._master.empty_detail(
+                "Aucune recommandation sélectionnée",
+                "La recommandation précédente ne correspond plus aux filtres.",
+            )
+
         # The shared list can keep its selected GTK item without emitting a
         # signal when a progressive batch retains the same row keys. Refresh
         # the detail only if that selection still belongs to this snapshot.
