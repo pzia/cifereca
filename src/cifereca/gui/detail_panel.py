@@ -939,10 +939,7 @@ class DetailPanel(Gtk.Box):
         group.add(box)
         self._append_content(group)
 
-    def show_item_detail(
-        self, item: SearchResult, detail: ItemDetail, *,
-        borrow_preview=None,
-    ) -> None:
+    def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
         medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
@@ -956,7 +953,7 @@ class DetailPanel(Gtk.Box):
             paris_catalogue_availability(item, availability)
         )
         usage = _commercial_search_usage(item, self.window.service)
-        presentation = book_detail_presentation(
+        self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
             thumbnail=detail.thumbnail_url or item.thumbnail_url,
@@ -981,26 +978,7 @@ class DetailPanel(Gtk.Box):
             ],
             links=document_links(result_row(item)),
             metadata=item.metadata,
-        )
-        # #4662: a borrower preview is not an actionable loan affordance.
-        # The same neutral DetailSection can be rendered by the standard
-        # Search detail and a recommendations master/detail presentation.
-        # No implicit eligibility lookups or provider GETs on this path.
-        if borrow_preview is not None:
-            from dataclasses import replace
-            from ..core.borrow_for_identity_detail import (
-                cross_profile_borrow_detail_section,
-            )
-            section = cross_profile_borrow_detail_section(borrow_preview)
-            if section is not None:
-                presentation = replace(
-                    presentation,
-                    sections=presentation.sections + (section,),
-                )
-        self.show_presentation(
-            presentation,
-            description=getattr(detail, "description", None) or item.description,
-        )
+        ), description=getattr(detail, "description", None) or item.description)
         direct_download = (
             False if (item.source_provider == "numilog-catalog"
                       or (item.source_provider == "numilog"
@@ -1111,6 +1089,29 @@ class DetailPanel(Gtk.Box):
             group.add(row)
         self._append_content(group)
         self._rendered_search_detail = (item, detail)
+
+    def show_cross_profile_borrow_detail(self, preview) -> None:
+        """#4662: append a neutral DetailSection after the regular book detail.
+
+        Call explicitly only with a current, correctly scoped Core preview.
+        No mutation, provider I/O or action button is generated here. Search
+        keeps the stable legacy show_item_detail signature/AST contract.
+        """
+        from ..core.borrow_for_identity_detail import (
+            cross_profile_borrow_detail_section,
+        )
+        section = cross_profile_borrow_detail_section(preview)
+        if section is None:
+            return
+        group = Adw.PreferencesGroup()
+        group.set_title(section.title)
+        for field in section.fields:
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_title(field.label)
+            row.set_subtitle(str(field.value))
+            group.add(row)
+        self._append_content(group)
 
     def refresh_confirmed_borrow_detail(self, item: SearchResult) -> bool:
         """Reproject the exact visible detail from Core state, without I/O.
