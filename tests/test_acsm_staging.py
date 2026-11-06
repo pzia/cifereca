@@ -120,11 +120,12 @@ def test_retention_defaults_and_minimum_are_preserved(service, configured, days)
 def test_retention_counts_failed_deletions_as_kept_and_does_not_forget(service, monkeypatch):
     instance, forget, _ = service
     path = staged(instance, age=100)
-    original = Path.unlink
+    original = os.unlink
     def refused(received, *args, **kwargs):
-        if received == path: raise PermissionError('synthetic denied')
+        if received == path.name and kwargs.get('dir_fd') is not None:
+            raise PermissionError('synthetic denied')
         return original(received, *args, **kwargs)
-    monkeypatch.setattr(Path, 'unlink', refused)
+    monkeypatch.setattr(os, 'unlink', refused)
     assert instance._cleanup_old_acsm_work(max_age_seconds=1) == {'deleted':0,'kept':1}
     assert path.is_file(); forget.assert_not_called()
 
@@ -238,4 +239,55 @@ def test_retention_ignores_linked_subdirectories_and_token_files(service, tmp_pa
     assert external.read_bytes() == b'external'
     assert not own.exists()
     assert (root / 'linked-file.acsm').is_symlink()
+    forget.assert_called_once_with(own)
+
+
+def test_retention_root_swap_during_walk_never_deletes_outside_or_old_tree(
+        service, tmp_path, monkeypatch):
+    """A raced root symlink cannot redirect the aged ACSM sweep."""
+    instance, forget, _ = service
+    old = staged(instance, 'old.acsm', age=200)
+    root = instance.storage.path.parent / 'acquisition-work'
+    held = root.with_name('held-staging')
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    external = foreign / 'old.acsm'
+    external.write_bytes(b'outside')
+    os.utime(external, (0, 0))
+    real_fwalk = os.fwalk
+    triggered = []
+
+    def swap_root(*args, **kwargs):
+        if not triggered:
+            triggered.append(True)
+            root.rename(held)
+            root.symlink_to(foreign, target_is_directory=True)
+        yield from real_fwalk(*args, **kwargs)
+
+    monkeypatch.setattr(os, 'fwalk', swap_root)
+    assert instance._cleanup_old_acsm_work(max_age_seconds=100) == {
+        'deleted': 0, 'kept': 1}
+    assert triggered
+    assert (held / old.relative_to(root)).is_file()
+    assert external.read_bytes() == b'outside'
+    forget.assert_not_called()
+
+
+def test_retention_directory_symlinks_cannot_redirect_pinned_walk(
+        service, tmp_path):
+    instance, forget, _ = service
+    root = instance._acquisition_work_dir('alice', 'paris', 'loan-1')
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    outside = foreign / 'old.acsm'
+    outside.write_bytes(b'foreign')
+    os.utime(outside, (0, 0))
+    (root / 'alias').symlink_to(foreign, target_is_directory=True)
+    own = root / 'owned.acsm'
+    own.write_bytes(b'owned')
+    os.utime(own, (0, 0))
+    assert instance._cleanup_old_acsm_work(max_age_seconds=100) == {
+        'deleted': 1, 'kept': 0}
+    assert not own.exists()
+    assert outside.read_bytes() == b'foreign'
     forget.assert_called_once_with(own)
