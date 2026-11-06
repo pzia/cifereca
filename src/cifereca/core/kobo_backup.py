@@ -2292,7 +2292,12 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     # GET/ADEPT. W3 preserves this orphan through a manifest gap; W2 must
     # also prevent its return from becoming a fresh acquisition. Keep the
     # original revision and claimed byte evidence, but never attest B.
-    if _kobo_legacy_unlocated_byte_evidence(current):
+    if (_kobo_legacy_unlocated_byte_evidence(current)
+            and not (current.get("status") == "attention_required"
+                     and current.get("attention_code") == "missing_delegation_scope")):
+        # The explicit 403 delegation denial below has stronger retry
+        # semantics: do not rewrite its durable attention code as a generic
+        # reconciliation marker, even if a legacy SHA/size also survives.
         self.storage.backup_put({
             **base_record,
             "revision_id": current.get("revision_id"),
