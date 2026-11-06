@@ -2139,17 +2139,13 @@ class Storage:
             if (item.get("provider_id") == "kobo"
                     and (merged.get("identity_id") is None
                          or merged.get("account_id") is None
-                         # #3196 W1: an archived edition, or one requiring
-                         # manual reconciliation, is NOT a provider-attested
-                         # right or an acquisition. Keep its 0.7 checkpoint
-                         # and owner collision veto, but never mint/refresh
-                         # a generic entitlement, receipt, Artifact, Placement
-                         # or catalogue row from this passive state. Existing
-                         # legacy canonical rows are not deleted or revoked.
-                         or merged.get("status") in {
-                             "skipped_archived", "reconcile_required",
-                             "reconcile_conflict",
-                         })):
+                         # #3196 W1: a provider-archived Kobo edition is
+                         # not an active acquisition. Keep the 0.7 archive
+                         # and transactional owner veto, but never mint a
+                         # generic right, receipt or local content from it.
+                         # Reconciliation statuses still require the 0.8
+                         # mirror for W4 confirmation/undo until migrated.
+                         or merged.get("status") == "skipped_archived")):
                 self._check_kobo_legacy_canonical_owner(db, merged)
             else:
                 self._mirror_backup_row(
