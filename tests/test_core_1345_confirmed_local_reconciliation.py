@@ -839,7 +839,7 @@ def test_w4_file_evidence_is_append_only_and_not_rights_proof(case):
 @pytest.mark.parametrize("metadata", [
     '{}', '{"schema":"another.core-stage"}',
     '{"legacy_status":123}', '{"legacy_status":"reconcile_required","extra":"value"}',
-    None,
+    'null',
 ])
 def test_w4_rejects_nonlegacy_acquisition_without_touching_projections(
         case, metadata):
