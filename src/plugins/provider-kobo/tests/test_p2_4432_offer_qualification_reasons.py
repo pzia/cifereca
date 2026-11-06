@@ -197,3 +197,46 @@ def test_multiple_valid_signed_urls_never_leak_to_real_provider_log(caplog):
         assert "https://" not in records[0]
     finally:
         session.close()
+
+
+def test_k2_observed_library_sync_unknown_flepub_logs_contract_not_raw_alias(caplog):
+    session, vault, _broker, account, posts = setup()
+    session.runtime_capabilities = SimpleNamespace(
+        acquisition=lambda _provider: SimpleNamespace(
+            available=True, compatible=True, operational=True,
+            modes=("kobo_kdrm",),
+        )
+    )
+
+    def observed_descriptor(product_id, **options):
+        posts.append((product_id, options))
+        candidate = kdrm_candidate(product_id)
+        candidate["media_format"] = "unknown"
+        candidate["source_format"] = "FLEPUB"
+        candidate["format"] = "PRIVATE-ALIAS-TOKEN-DO-NOT-LOG"
+        return descriptor(product=product_id, candidate=candidate)
+
+    vault.acquisition = observed_descriptor
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            snapshot = session.rights_delivery_offer_snapshot(
+                account, "book-1", explicit_user_action=True,
+            )
+        assert snapshot.rights[0].delivery == "unknown"
+        assert snapshot.rights[0].delivery_offer_id == ""
+        assert len(posts) == 1 and posts[0][1]["mode"] == "descriptor"
+        records = [
+            row.getMessage() for row in caplog.records
+            if "EVENT kobo selected_offer" in row.getMessage()
+        ]
+        assert len(records) == 1
+        event = records[0]
+        assert "candidate_kvault_flepub_contract=media_unknown" in event
+        assert "candidate_kvault_format_alias=conflicting" in event
+        assert "candidate_media_format=unknown" in event
+        assert "candidate_source_format=flepub" in event
+        assert "outcome=unknown" in event
+        assert "PRIVATE-ALIAS-TOKEN" not in event
+        assert "https://" not in event
+    finally:
+        session.close()
