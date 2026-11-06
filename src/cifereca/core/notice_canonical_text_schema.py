@@ -99,18 +99,28 @@ def select_text_schema(
 
 def validate_text_schema_result(
     result: ValidatedDescriptiveResult, *, schema: CanonicalTextSchema,
+    selection: ExplicitSelection,
 ) -> ValidatedDescriptiveResult:
     """Check bounded text and enum only AFTER descriptive provenance admission.
 
-    This does not normalize vocabulary or decide whether inherited evidence
-    is semantically appropriate; the selected type-specific plugin does.
+    The selection is compulsory: a schema from another scope could otherwise
+    silently weaken inheritance or enum restrictions when the same plugin
+    publishes the same schema_id for multiple scopes. The type-specific
+    plugin still owns semantic interpretation; this gate grants no rights.
     """
     if (type(result) is not ValidatedDescriptiveResult
+            or type(selection) is not ExplicitSelection
             or not _valid_schema(schema)):
         raise ValueError("invalid_canonical_text_validation_context")
+    if (schema.canonical_type, schema.scope, schema.plugin_id,
+            schema.plugin_version, schema.schema_id) != (
+                selection.canonical_type, selection.scope,
+                selection.plugin_id, selection.version, selection.schema_id,
+            ):
+        raise ValueError("canonical_text_schema_scope_mismatch")
     if (result.canonical_type, result.plugin_id, result.plugin_version,
-            result.schema_id) != (schema.canonical_type, schema.plugin_id,
-                                 schema.plugin_version, schema.schema_id):
+            result.schema_id) != (selection.canonical_type, selection.plugin_id,
+                                 selection.version, selection.schema_id):
         raise ValueError("canonical_text_schema_scope_mismatch")
     if not _bounded_value(result.value, schema.max_bytes):
         raise ValueError("canonical_text_schema_value_invalid")
