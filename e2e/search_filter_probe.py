@@ -501,6 +501,7 @@ def main() -> int:
         assert not window._search_response_facets.get_visible()
         assert facet_queries == ["Facettes"]
         result["checks"]["response_facets_descriptive_and_scoped"] = True
+        result["p0_4673_stage"] = "fixture_setup"
         begin_paris_profiles()
 
     # P0 #4673: real GTK Search + Core session routing with two owned Paris
@@ -545,10 +546,12 @@ def main() -> int:
         window.navigate("search")
         assert service.current_identity.identity_id == "camille"
         assert not any(s.search_calls for s in paris.values())
+        result["p0_4673_stage"] = "initial_camille"
         search_paris("camille")
 
     def search_paris(identity):
         # One actual GTK button click, not a direct call to the selector.
+        result["p0_4673_stage"] = "query_" + identity
         assert core.library.current_identity.identity_id == identity
         assert window.search_global_button.get_mapped()
         paris_deadline[0] = monotonic() + 6
@@ -556,6 +559,7 @@ def main() -> int:
         later(100, lambda: await_paris_results(identity))
 
     def await_paris_results(identity):
+        result["p0_4673_stage"] = "await_" + identity
         credential = "card-" + identity
         rows = list(window._remote_search_results)
         if (len(rows) != 1 or rows[0].source_credential != credential
@@ -569,6 +573,7 @@ def main() -> int:
         later(180, lambda: check_paris_action(identity))
 
     def check_paris_action(identity):
+        result["p0_4673_stage"] = "action_" + identity
         source = paris[identity]
         book = window._remote_search_results[0]
         assert book.source_credential == source.credential_id
@@ -599,15 +604,18 @@ def main() -> int:
             later(170, begin_alex_search)
         else:
             result["checks"]["P0_4673_gtk_A_B_A_no_cross_account"] = True
+            result["p0_4673_stage"] = "complete"
             finish()
 
     def begin_alex_search():
+        result["p0_4673_stage"] = "switch_alex"
         from cifereca.gui.query_model import QueryState
         assert core.library.current_identity.identity_id == "alex"
         window.search_controls.set_state(QueryState(text="Serpentine"), notify=False)
         search_paris("alex")
 
     def disconnect_alex():
+        result["p0_4673_stage"] = "disconnect_alex"
         # Kept read-only: no supplier login/logout or account switch HTTP.
         paris["alex"].connected = False
         before = paris["alex"].search_calls
@@ -622,6 +630,7 @@ def main() -> int:
         later(100, check_disconnected_alex_cleared)
 
     def check_disconnected_alex_cleared():
+        result["p0_4673_stage"] = "clear_disconnected"
         assert window._remote_search_results == []
         assert window.search_page.store.get_n_items() == 0
         assert not any(
@@ -631,6 +640,7 @@ def main() -> int:
         later(130, finish_disconnected_alex)
 
     def finish_disconnected_alex():
+        result["p0_4673_stage"] = "finish_disconnected"
         if not window.search_global_button.get_sensitive():
             if monotonic() < paris_deadline[0]:
                 later(100, finish_disconnected_alex)
@@ -647,6 +657,7 @@ def main() -> int:
         later(170, begin_return_to_camille)
 
     def begin_return_to_camille():
+        result["p0_4673_stage"] = "return_camille"
         from cifereca.gui.query_model import QueryState
         window.search_controls.set_state(QueryState(text="Serpentine"), notify=False)
         search_paris("camille")
