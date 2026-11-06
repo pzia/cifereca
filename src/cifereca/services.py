@@ -338,6 +338,15 @@ class LibraryService:
         from .core.manual_paris_borrow import manual_paris_borrow_available
         return manual_paris_borrow_available(self, item)
 
+    def paris_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
+        """Read-only local readiness, provider eligibility always unknown.
+
+        Shares the Core admission decision used by can_borrow_paris. No
+        network operation or mutation is permitted in this diagnostics path.
+        """
+        from .core.manual_paris_borrow import manual_paris_borrow_diagnostic
+        return manual_paris_borrow_diagnostic(self, item)
+
     def borrow_paris_manual(
         self, item: SearchResult, *, expected_identity_id: str,
         confirmed: bool = False, expected_context_epoch: int | None = None,

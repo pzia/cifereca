@@ -72,12 +72,51 @@ def _normal_paris_source_current(service, item: SearchResult, identity_id: str) 
         return False
 
 
+
+def manual_paris_borrow_diagnostic(service, item: SearchResult) -> dict[str, object]:
+    """Read-only local admission reason; NOT a lender eligibility oracle.
+
+    In particular, a valid local action never proves personal quota or
+    account-specific permission at the Paris supplier. No provider I/O.
+    Closed reason codes only: no credentials, notice text or identifiers.
+    """
+    reason = "local_admission_unavailable"
+    possible = False
+    try:
+        identity_id = getattr(
+            getattr(service, "current_identity", None), "identity_id", None
+        )
+        if type(identity_id) is not str or not identity_id:
+            reason = "identity_not_selected"
+        elif (type(item) is not SearchResult
+              or item.source_provider != "paris"
+              or item.docbase != "DILICOM"
+              or item.medium != "digital"
+              or type(item.source_credential) is not str
+              or not item.source_credential):
+            reason = "edition_or_source_unqualified"
+        elif not _normal_paris_source_current(service, item, identity_id):
+            reason = "primary_paris_connection_mismatch_or_inactive"
+        elif manual_borrow_available(
+            service, item, provider_id="paris", docbase="DILICOM",
+            primary_id="",
+        ):
+            reason = "local_action_available_provider_unknown"
+            possible = True
+    except Exception:
+        # Unexpected access failure must never manufacture eligibility.
+        reason = "local_admission_unavailable"
+    return {
+        "local_action_possible": possible,
+        "reason_code": reason,
+        # Public Search availability is not account-specific proof.
+        "provider_eligibility": "unknown",
+    }
+
+
 def manual_paris_borrow_available(service, item: SearchResult) -> bool:
-    identity_id = getattr(getattr(service, "current_identity", None), "identity_id", None)
-    if not _normal_paris_source_current(service, item, identity_id):
-        return False
-    return manual_borrow_available(
-        service, item, provider_id="paris", docbase="DILICOM", primary_id="")
+    # UI and the read-only diagnostic consume exactly the same admission.
+    return manual_paris_borrow_diagnostic(service, item)["local_action_possible"] is True
 
 
 def manual_paris_borrow(
@@ -99,4 +138,5 @@ def manual_paris_borrow(
     )
 
 
-__all__ = ["manual_paris_borrow", "manual_paris_borrow_available"]
+__all__ = ["manual_paris_borrow", "manual_paris_borrow_available",
+           "manual_paris_borrow_diagnostic"]
