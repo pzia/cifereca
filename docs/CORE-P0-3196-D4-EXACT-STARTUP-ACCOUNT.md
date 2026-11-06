@@ -14,6 +14,9 @@ Coupure D4 :
   identiques aux quatre champs de la source explicitement consentie ;
 - session sans cache de comptes, plusieurs comptes ou fournisseur changé
   => planification **manual_only**, aucun GET ;
+- le parcours d'ouverture recontrôle l'identité de **la même instance**
+  de session lors du dispatch et **après l'écriture du checkpoint d'essai** :
+  une reconnexion entre planification et exécution est refusée sans GET ;
 - les autres gardes restent inchangés : source explicitement activée,
   credential/owner non ambigu, connexion actuelle, ABI Core complète
   exclue du worker historique ;
