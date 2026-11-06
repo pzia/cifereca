@@ -100,7 +100,7 @@ def publish_derived_variant(
             from .derived_variant_recovery import _verified_sha
             if (type(expected_parent_stamp) is not tuple
                     or type(expected_output_stamp) is not tuple
-                    or type(expected_profile_root) is not Path
+                    or not isinstance(expected_profile_root, Path)
                     or not _verified_sha(
                         parent_path, expected_parent_stamp, parent_sha256,
                         profile_root=expected_profile_root,
