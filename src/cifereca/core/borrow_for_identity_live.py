@@ -60,18 +60,22 @@ def _lender_label(value: object) -> str:
 def _observation_route(row: ObservedBorrowOffer) -> tuple[str, ...] | None:
     """Local identity/account/edition scope for contradictory observations.
 
-    Missing or foreign borrower identities cannot veto unrelated lenders.
-    The route deliberately excludes catalogue row IDs, display labels,
-    timestamps and positive/negative status, none of which identify a loan.
+    A publisher may observe an exact *negative* without collecting a complete
+    account-wide readiness report. Use either independently scoped fact to
+    locate that denial; never convert it to a positive option.
     """
-    item, evidence = row.notice, row.evidence
-    if (type(item) is not SearchResult
-            or type(evidence) is not BorrowerOperationEvidence
-            or type(row.edition_id) is not str):
+    item, evidence, exact = row.notice, row.evidence, row.edition_evidence
+    if type(item) is not SearchResult or type(row.edition_id) is not str:
         return None
-    coords = (
-        evidence.identity_id, evidence.provider_id,
-        evidence.credential_id, evidence.account_id,
+    if type(evidence) is BorrowerOperationEvidence:
+        owner = (evidence.identity_id, evidence.provider_id,
+                 evidence.credential_id, evidence.account_id, evidence.branch)
+    elif type(exact) is ExactEditionBorrowerEvidence:
+        owner = (exact.identity_id, exact.provider_id,
+                 exact.credential_id, exact.borrower_id, exact.docbase)
+    else:
+        return None
+    coords = owner[:4] + (
         item.docbase, item.record_id, item.source_collection or "",
         row.edition_id,
     )
@@ -79,13 +83,15 @@ def _observation_route(row: ObservedBorrowOffer) -> tuple[str, ...] | None:
             for x in coords)
             or not all(coords[i] for i in (0, 1, 2, 4, 5, 7))
             or (item.source_provider, item.source_credential,
-                item.docbase) != (
-                    evidence.provider_id, evidence.credential_id,
-                    evidence.branch,
-                )):
+                item.docbase) != (owner[1], owner[2], owner[4])):
+        return None
+    # The edition-only fact also pins the book, not just the borrower.
+    # A denial for another record/collection is never a veto here.
+    if type(evidence) is not BorrowerOperationEvidence and (
+            item.record_id != exact.record_id
+            or item.source_collection != exact.source_collection):
         return None
     return coords
-
 
 def _noncontradictory_observations(
     observations: tuple[ObservedBorrowOffer, ...] | list[ObservedBorrowOffer],
