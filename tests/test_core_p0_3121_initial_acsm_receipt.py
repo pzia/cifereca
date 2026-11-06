@@ -79,7 +79,11 @@ def test_first_offer_expiration_and_integrity_and_cleanup(first_offer):
     acsm_cache.forget_initial(directory / "other.acsm")
     assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
     acsm_cache.forget_initial(path)
-    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    # The URL-free receipt is retained rather than unlinked by a raced name.
+    assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    assert acsm_cache.reuse_initial(
+        directory, loan, "identity-A", "primary",
+        now=100 + acsm_cache.TTL) is None
 
 
 def test_first_offer_symlinks_or_forged_manifest_rejected(first_offer, tmp_path):
@@ -222,3 +226,60 @@ def test_invalid_claim_cannot_create_initial_receipt(first_offer, claim):
         path, directory, loan, "identity-A", "primary",
         now=100, borrow_claim=claim)
     assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_claimed_initial_receipt_rejects_revoked_admission_at_publish(
+        first_offer, monkeypatch):
+    """The confirmed claim and live epoch are rechecked before final rename."""
+    import os
+
+    directory, path, loan = first_offer
+    claim = ("loan.borrow.v1:" + "a" * 64, "operation-1")
+    state = {"checks": 0, "renamed": False}
+
+    def current():
+        state["checks"] += 1
+        return state["checks"] < 3
+
+    original = os.replace
+
+    def track_replace(*args, **kwargs):
+        state["renamed"] = True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", track_replace)
+    assert not acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        borrow_claim=claim, admission_current=current, now=100)
+    assert state["checks"] >= 3
+    assert state["renamed"] is False
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_claimed_initial_receipt_never_unlinks_substituted_sidecar(
+        first_offer, tmp_path, monkeypatch):
+    """A symlink replaced by a peer must not be deleted on fulfillment."""
+    import os
+
+    directory, path, loan = first_offer
+    claim = ("loan.borrow.v1:" + "a" * 64, "operation-1")
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        borrow_claim=claim, now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    outside = tmp_path / "unrelated.json"
+    outside.write_text("keep", encoding="utf-8")
+    manifest.unlink()
+    manifest.symlink_to(outside)
+    calls = []
+    original = os.unlink
+
+    def track_unlink(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", track_unlink)
+    acsm_cache.forget_initial(path)
+    assert not calls
+    assert manifest.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "keep"
