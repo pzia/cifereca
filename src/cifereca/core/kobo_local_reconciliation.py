@@ -146,11 +146,25 @@ def _file(path, roots, sha, size):
     return (result, info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def _unique_catalogue_fields(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ReconciliationRejected("ambiguous_catalogue_metadata")
+        value[key] = item
+    return value
+
+
 def _metadata(row):
     raw = row.get("metadata_json", "{}")
     _require(type(raw) is str and len(raw) <= 65536, "invalid_catalogue_metadata")
-    value = json.loads(raw)
-    _require(isinstance(value, dict), "invalid_catalogue_metadata")
+    try:
+        value = json.loads(raw, object_pairs_hook=_unique_catalogue_fields)
+    except (ValueError, TypeError, RecursionError) as exc:
+        if isinstance(exc, ReconciliationRejected):
+            raise
+        raise ReconciliationRejected("invalid_catalogue_metadata") from None
+    _require(type(value) is dict, "invalid_catalogue_metadata")
     return value
 
 
@@ -187,8 +201,14 @@ def _snapshot(db, storage, credential, item, path, sha):
     for row in catalogue:
         raw = row.get("metadata_json")
         try:
-            metadata = json.loads(raw) if type(raw) is str and len(raw) <= 65536 else {}
-        except (TypeError, ValueError):
+            metadata = json.loads(
+                raw, object_pairs_hook=_unique_catalogue_fields,
+            ) if type(raw) is str and len(raw) <= 65536 else {}
+        except ReconciliationRejected:
+            # A duplicated key can hide a path already claimed by this
+            # catalogue row, so do not create a competing entry or relink.
+            raise
+        except (TypeError, ValueError, RecursionError):
             metadata = {}
         candidate = metadata.get("path") if isinstance(metadata, dict) else None
         same_path = (type(candidate) is str and "\0" not in candidate
