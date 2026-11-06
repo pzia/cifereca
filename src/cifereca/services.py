@@ -3914,7 +3914,8 @@ class LibraryService:
             target_dir, loan, identity.identity_id, account_key)
         initial_cached = (None if force_refresh or normal_cached is not None
                           else acsm_cache.reuse_initial(
-                              target_dir, loan, identity.identity_id, account_key))
+                              target_dir, loan, identity.identity_id, account_key,
+                              claim_state=self.storage.loan_borrow_state))
         cached = normal_cached or initial_cached
         if cached is not None:
             path, url = cached, loan.ebook_url or ""
