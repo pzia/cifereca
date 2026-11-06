@@ -58,7 +58,9 @@ def _loaded_notice_facts(item: SearchResult) -> tuple:
     return (
         item.id, item.record_id, item.docbase, item.source_provider,
         item.source_credential, item.source_collection, item.medium,
-        item.format, item.content_type, item.metadata,
+        item.scenario, item.format, item.content_type, item.download_url,
+        item.owned, item.downloadable, item.price, item.currency,
+        item.revision_id, item.document_classification, item.metadata,
     )
 
 
