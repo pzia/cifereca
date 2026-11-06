@@ -7,6 +7,7 @@ import os
 import pytest
 
 import cifereca.services as facade
+from cifereca.acsm_cache import INITIAL_MANIFEST
 from cifereca.services import LibraryService
 
 
@@ -71,6 +72,32 @@ def test_success_preserves_other_files_and_does_not_touch_library(service):
     assert other.read_bytes() == b'pending' and book.read_bytes() == b'kept book'
     assert path.parent.is_dir()
     forget.assert_called_once_with(path)
+
+
+@pytest.mark.parametrize('remove_before_cleanup', [True, False])
+def test_success_retires_receipts_when_input_is_already_absent(
+        service, monkeypatch, remove_before_cleanup):
+    instance, forget, logger = service
+    path = staged(instance)
+    receipt = path.parent / INITIAL_MANIFEST
+    receipt.write_text('{"file":"input.acsm"}', encoding='utf-8')
+    if remove_before_cleanup:
+        path.unlink()
+    else:
+        original = os.unlink
+
+        def concurrent_remove(name, *args, **kwargs):
+            if name == path.name and kwargs.get('dir_fd') is not None:
+                original(name, *args, **kwargs)
+            return original(name, *args, **kwargs)
+
+        monkeypatch.setattr(os, 'unlink', concurrent_remove)
+
+    instance._cleanup_acsm_after_success(path, loan_id='loan-1')
+    assert not receipt.exists() and not path.parent.exists()
+    forget.assert_called_once_with(path)
+    assert 'action=already_absent' in logger.info.call_args.args[0]
+    logger.warning.assert_not_called()
 
 
 def test_none_input_does_not_touch_cache_or_logger(service):

@@ -91,11 +91,6 @@ def cleanup_acsm_after_success(path, *, loan_id, forget, logger):
         if (not stat.S_ISDIR(pinned.st_mode)
                 or pinned.st_uid != os.geteuid()):
             raise PermissionError('untrusted_acsm_cleanup_directory')
-        leaf = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
-        if (not stat.S_ISREG(leaf.st_mode)
-                or leaf.st_uid != os.geteuid()):
-            raise PermissionError('untrusted_acsm_cleanup_input')
-
         def same_parent():
             try:
                 current = os.stat(parent, follow_symlinks=False)
@@ -105,9 +100,20 @@ def cleanup_acsm_after_success(path, *, loan_id, forget, logger):
             except OSError:
                 return False
 
-        if not same_parent():
-            raise PermissionError('acsm_cleanup_parent_changed')
-        os.unlink(path.name, dir_fd=parent_fd)
+        action = 'already_absent'
+        try:
+            leaf = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if (not stat.S_ISREG(leaf.st_mode)
+                    or leaf.st_uid != os.geteuid()):
+                raise PermissionError('untrusted_acsm_cleanup_input')
+            if not same_parent():
+                raise PermissionError('acsm_cleanup_parent_changed')
+            os.unlink(path.name, dir_fd=parent_fd)
+            action = 'deleted'
+        except FileNotFoundError:
+            # A previous cleanup may have removed the input before retiring
+            # its receipt. Finish that step only in the same pinned folder.
+            pass
         # Another actor could rebind the directory after unlink. Cache
         # forget operates by pathname, and must never reach that new tree.
         if not same_parent():
@@ -117,7 +123,7 @@ def cleanup_acsm_after_success(path, *, loan_id, forget, logger):
             return
         forget(path)
         logger.info(
-            'TRACE download acsm cleanup request_ref=%s action=deleted',
+            f'TRACE download acsm cleanup request_ref=%s action={action}',
             unbound_loan_trace_ref(loan_id))
         # Only remove the now-empty original folder while its inode is still
         # bound to the supplied name. A failed rmdir is harmless.
