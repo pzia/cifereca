@@ -1030,11 +1030,11 @@ class UxRecommendationsView:
             else:
                 values = ()
         except Exception:
-            return ("\\x00",)
+            return ("\x00",)
         if (type(values) not in (list, tuple) or len(values) > 128
                 or any(type(x) is not str or not x or len(x) > 120
                        or x != x.strip() or not x.isprintable() for x in values)):
-            return ("\\x00",)
+            return ("\x00",)
         return tuple(dict.fromkeys(values))
 
 
