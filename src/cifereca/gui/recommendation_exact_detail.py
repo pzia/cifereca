@@ -15,6 +15,7 @@ from typing import Any, Callable
 from ..models import SearchResult, ItemDetail
 from .exact_search_notice_navigation import loaded_notice_key
 from ..task_queue import TaskPriority
+from ..core.source_context import source_context_epoch
 
 
 def _loaded_item(window: Any, coords: dict[str, str]) -> SearchResult | None:
@@ -89,6 +90,9 @@ def present_loaded_search_detail_in_place(
             getattr(window, "_last_search_query", "") or ""
         )
         service = window.service
+        # The Core source generation changes on disconnect, rebind and
+        # session replacement even if GTK still shows the same identity.
+        source_epoch = source_context_epoch(service)
         identity = service.current_identity
         if getattr(identity, "identity_id", None) != identity_id:
             return False
@@ -122,7 +126,8 @@ def present_loaded_search_detail_in_place(
                 or getattr(session, "connected", False) is not True):
             return False
         try:
-            if (service._session_for_source(provider, credential) is not session
+            if (source_context_epoch(service) != source_epoch
+                    or service._session_for_source(provider, credential) is not session
                     or service.storage.identity_for_connection(provider, credential)
                     != identity_id):
                 return False
