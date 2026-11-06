@@ -77,7 +77,14 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
         with sqlite3.connect(service.storage.path) as db:
             raw = db.execute("SELECT value FROM metadata WHERE key=?",
                              (borrow_claim_key(account, item),)).fetchone()
-        assert raw is not None and json.loads(raw[0])["status"] == "request_sent"
+        # The initial token GET belongs to the *same* borrowing action but
+        # occurs only AFTER the exact loan was confirmed in the Core claim.
+        # All preflight and ASSARedirect requests still require request_sent.
+        expected_checkpoint = (
+            "confirmed" if request.url.path.endswith("/synthetic.acsm")
+            else "request_sent"
+        )
+        assert raw is not None and json.loads(raw[0])["status"] == expected_checkpoint
         state["calls"].append(request.url.path)
         if request.url.path.endswith("ListLoans"):
             assert request.method == "GET"
