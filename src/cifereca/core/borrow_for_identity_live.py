@@ -40,12 +40,13 @@ class ObservedBorrowOffer:
 
     notice: SearchResult
     evidence: BorrowerOperationEvidence | None
+    edition_id: str
+    observed_at: int
     # Separate, independently observed permission for this exact source
     # collection and record_id. Account-wide loan capability/permission is
     # never proof that a particular digital edition may be borrowed.
-    edition_evidence: ExactEditionBorrowerEvidence | None
-    edition_id: str
-    observed_at: int
+    # Legacy callers without this fact must see zero options, not an error.
+    edition_evidence: ExactEditionBorrowerEvidence | None = None
     # A provider loan does not imply any transferable use/copy entitlement.
     transfer_state: str = "unknown"
 
