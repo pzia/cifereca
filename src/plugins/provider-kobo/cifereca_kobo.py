@@ -1476,6 +1476,10 @@ class KoboSession(ProviderSession):
                 detail += " candidate_selection=%s candidate_rejection_counts=%s" % (
                     qualification_diagnostic["candidate_selection"], summary or "none",
                 )
+                if "candidate_route_comparison" in qualification_diagnostic:
+                    detail += " candidate_route_comparison=%s" % (
+                        qualification_diagnostic["candidate_route_comparison"],
+                    )
         _TRACE_LOG.info(
             "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
