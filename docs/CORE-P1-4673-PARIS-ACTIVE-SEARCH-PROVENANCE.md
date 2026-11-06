@@ -44,3 +44,16 @@ déconnecté et changement en cours de GET. Aucun I/O fournisseur réel.
 Ce correctif ne qualifie ni quota, ni disponibilité de prêt par compte ; la
 recette GTK réelle A→B→A et la décision d'éligibilité fournisseur restent au
 suivi #4673/#3120, sans POST de diagnostic.
+
+## P0 : aucun repli vers un compte Paris explicitement étranger
+
+Si le profil actif A ne possède plus de session Paris connectée et que la
+seule session disponible appartient explicitement à B dans SQLite, le Core
+**n'interroge plus cette session Paris depuis A**. La provenance de B ne doit
+pas apparaître sous A sous prétexte que la garde de prêt refuserait ensuite
+l'action. La règle s'applique aux recherches synchrone et progressive,
+indépendamment de l'ordre des connexions ; elle n'affecte pas les autres
+catalogues publics ni le repli historique des sources sans propriétaire
+attesté. Le droit de prêt reste contrôlé séparément et ne se déduit pas de
+la recherche. Régressions synthétiques B seul, B→A, A→B→A et catalogue
+public simultané, sans HTTP ni mutation fournisseur.
