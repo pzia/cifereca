@@ -14,8 +14,10 @@ import pytest
 
 from cifereca import cli
 from cifereca.core import kobo_local_reconciliation as repair
+from cifereca.core.canonical_publication import publish_completed_acquisition
 from cifereca.identities import Identity
 from cifereca.locking import InterProcessLock
+from tests.test_core_p0_3171_atomic_publication_v14 import new_source
 from tests.test_kobo_backup_fault_isolation import _service, _write_epub
 
 
@@ -50,7 +52,8 @@ def case(tmp_path, monkeypatch):
 def _dump(case):
     with case.storage._lock, case.storage._connect() as db:
         return {table: db.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
-                for table in (*repair._KEYS, "metadata", "entitlements", "provider_connections", "artifacts")}
+                for table in (*repair._KEYS, "metadata", "entitlements", "provider_connections",
+                              "artifacts", "source_references", "origin_links")}
 
 
 def _run(case, **kwargs):
@@ -202,6 +205,65 @@ def test_old_kobo_repair_cannot_write_over_a_canonical_source_or_stage(case, var
     assert _dump(case) == before
     assert case.original.is_file() and case.target.is_file()
     assert case.original.read_bytes() == case.target.read_bytes()
+
+
+def _publish_independent_edition(case, path, *, owner="default"):
+    source, snapshot = new_source(
+        owner, provider="numilog", credential="other-card", account="other-buyer",
+        edition="other-edition",
+    )
+    connection = case.storage.provider_connection_put({
+        "provider_id": "numilog", "identity_id": owner, "credential_id": "other-card",
+    })
+    case.storage.provider_account_put({
+        "connection_id": connection, "provider_id": "numilog", "identity_id": owner,
+        "credential_id": "other-card", "account_id": "other-buyer",
+    })
+    return publish_completed_acquisition(
+        case.storage, library_root=Path(case.service.config.get("library.directory")),
+        path=path, source=source, snapshot=snapshot, final_sha256=case.sha,
+        delivery_receipt_ref="synthetic-other-edition-delivery",
+    )
+
+
+@pytest.mark.parametrize("operation", ["preview", "confirm", "undo"])
+def test_legacy_repair_preserves_placement_published_for_another_edition(case, operation):
+    options = {}
+    if operation == "confirm":
+        case.storage.placement_put({
+            "path": case.target, "identity_id": "default", "artifact_id": "sha256:" + case.sha,
+        })
+        options["confirmation"] = _run(case)["plan_token"]
+    elif operation == "undo":
+        applied = _apply(case)
+        options = {"path": None, "undo_operation": applied["operation_id"]}
+        options["confirmation"] = _run(case, **options)["plan_token"]
+
+    _publish_independent_edition(case, case.target)
+    before = _dump(case)
+    with pytest.raises(repair.ReconciliationRejected, match="canonical_placement_requires_core_recovery"):
+        _run(case, **options)
+    assert _dump(case) == before
+    assert case.original.read_bytes() == case.target.read_bytes()
+
+
+def test_other_identity_canonical_origin_does_not_block_independent_legacy_copy(case):
+    root = Path(case.service.config.get("library.directory"))
+    foreign = root / "other" / "synthetic.epub"
+    foreign.parent.mkdir()
+    foreign.write_bytes(case.target.read_bytes())
+    case.storage.identity_put({"identity_id": "other", "directory_name": "other", "label": "Other"})
+    _publish_independent_edition(case, foreign, owner="other")
+    case.storage.placement_put({
+        "path": case.target, "identity_id": "default", "artifact_id": "sha256:" + case.sha,
+    })
+    before = _dump(case)
+    assert _apply(case)["status"] == "applied"
+    after = _dump(case)
+    assert after["origin_links"] == before["origin_links"]
+    assert case.storage.placement_for_path(foreign)["identity_id"] == "other"
+    assert foreign.read_bytes() == case.target.read_bytes()
+
 
 def test_different_bytes_are_not_matched_by_title_product_or_filename(case):
     case.target.write_bytes(b"different edition")
