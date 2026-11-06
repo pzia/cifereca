@@ -61,8 +61,11 @@ def _fixture(monkeypatch):
         search_objects={"paris:search-1": item},
         runner=NS(submit=submit), toast=lambda *args: None,
     )
-    view = NS(_window=window, show_existing_search_detail=lambda *a, **k:
-              outputs.append((a, k)))
+    mapped = [True]
+    view = NS(
+        _window=window, widget=NS(get_mapped=lambda: mapped[0]),
+        show_existing_search_detail=lambda *a, **k: outputs.append((a, k)),
+    )
     selection = [True]
     loaded = [True]
     monkeypatch.setattr(
@@ -77,7 +80,8 @@ def _fixture(monkeypatch):
     )
     return NS(window=window, service=service, session=session, storage=storage,
               item=item, detail=detail, calls=calls, outputs=outputs,
-              scheduled=scheduled, selection=selection, loaded=loaded, kwargs=kwargs)
+              scheduled=scheduled, selection=selection, loaded=loaded,
+              mapped=mapped, kwargs=kwargs)
 
 
 def _start(f):
@@ -185,3 +189,15 @@ def test_core_panel_method_calls_canonical_search_renderer():
     assert "panel._group" in body
     assert "borrow_search_item" not in body
     assert "download_direct_item" not in body
+
+
+def test_unmapped_plugin_page_cannot_start_or_publish_external_actions(monkeypatch):
+    f = _fixture(monkeypatch)
+    f.mapped[0] = False
+    assert not port.present_loaded_search_detail_in_place(f.window, **f.kwargs)
+    assert f.scheduled == [] and f.calls == []
+    f.mapped[0] = True
+    work, success, failure = _start(f)
+    f.mapped[0] = False  # navigation or removal after explicit user click
+    success(work())
+    assert f.outputs == []
