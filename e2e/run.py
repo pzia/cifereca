@@ -614,9 +614,9 @@ def main() -> int:
                     allowed = frozenset({
                         "fixture_setup", "initial_camille", "query_camille",
                         "await_camille", "action_camille",
-                        "admission_camille", "button_camille", "switch_alex",
-                        "query_alex", "await_alex", "action_alex",
-                        "admission_alex", "button_alex",
+                        "admission_camille", "button_camille", "holdings_camille",
+                        "switch_alex", "query_alex", "await_alex", "action_alex",
+                        "admission_alex", "button_alex", "holdings_alex",
                         "disconnect_alex", "clear_disconnected",
                         "finish_disconnected", "return_camille", "complete",
                     })
