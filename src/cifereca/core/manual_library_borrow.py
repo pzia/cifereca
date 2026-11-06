@@ -5,6 +5,7 @@ Only the provider implements the remote protocol; no Sync or ADEPT runs here.
 """
 from __future__ import annotations
 
+import logging
 from inspect import getattr_static
 from uuid import uuid4
 
@@ -13,6 +14,8 @@ from ..plugin_api import LendingActionAdmission, BorrowRequestNotSubmitted
 from ..plugin_api.lending_capabilities import assess_lending_operation
 from .borrow_action_scope import capture_borrow_action_scope, borrow_claim_key
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
+
+_LOG = logging.getLogger(__name__)
 
 
 def _result(status: str, reason: str, *, verified: bool = False):
@@ -256,14 +259,22 @@ def manual_borrow(
             # failure does not negate the separately verified lender loan.
             try:
                 from .paris_first_acsm_receipt import stage_paris_initial_acsm
-                stage_paris_initial_acsm(
+                staged = stage_paris_initial_acsm(
                     service, session, account, loan, scope_current=current,
                     claim_key=key, operation_id=operation_id)
+                verdict = "staged" if staged is True else "refused"
+                reason = ("verified_initial_receipt" if staged is True
+                          else "initial_candidate_unavailable")
             except Exception:
                 # The borrow claim is already durably confirmed. A local
                 # staging/config/import fault cannot unconfirm it or reopen
-                # the mutating supplier request.
-                pass
+                # the mutating supplier request. Never log the exception:
+                # it can contain a bearer URL, loan ID or local ACSM path.
+                verdict, reason = "refused", "initial_staging_error"
+            _LOG.info(
+                "TRACE paris_first_acsm outcome=%s reason_code=%s",
+                verdict, reason,
+            )
         return _result("confirmed", "borrow_active_loan_observed", verified=True)
     except BorrowRequestNotSubmitted:
         # The trusted provider raises this ONLY before attempting a mutating request.
