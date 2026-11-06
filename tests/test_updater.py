@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from types import SimpleNamespace
 import zipfile
 from pathlib import Path
@@ -19,6 +20,71 @@ def _mini_project(root: Path, version: str = "9.9.9") -> Path:
     )
     (root / "x.py").write_text("def main(): return 0\n", encoding="utf-8")
     return root
+
+
+def test_cifereca_python_launcher_tracks_active_release_and_preserves_argv(
+    tmp_path, monkeypatch,
+):
+    root = tmp_path / "install root ' space"
+    bindir = tmp_path / "custom bin"
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(root))
+    monkeypatch.setenv("CIFERECA_BIN_DIR", str(bindir))
+    releases = [root / "releases" / name for name in ("release A", "release B")]
+    for name, release in zip(("A", "B"), releases):
+        executable = release / ".venv" / "bin" / "python"
+        executable.parent.mkdir(parents=True)
+        executable.write_text(
+            "#!/bin/sh\\n"
+            f'printf "%s\\\\n" "{name}" "$@"\\n'
+            'if [ "$1" = "--fail" ]; then exit 23; fi\\n',
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+
+    updater._replace_symlink(root / "current", releases[0])
+    published = updater._write_launchers(root)
+    launcher = bindir / "cifereca-python"
+    assert published["cifereca-python"] == str(launcher)
+    original = launcher.read_bytes()
+
+    args = ["-c", "print('hello')", "with spaces", "quotes'\\"; $HOME", "--version"]
+    first = subprocess.run([str(launcher), *args], capture_output=True, text=True)
+    assert first.returncode == 0
+    assert first.stdout.splitlines() == ["A", *args]
+    assert subprocess.run([str(launcher), "--fail"]).returncode == 23
+
+    updater._replace_symlink(root / "current", releases[1])
+    second = subprocess.run([str(launcher), *args], capture_output=True, text=True)
+    assert second.returncode == 0
+    assert second.stdout.splitlines() == ["B", *args]
+    updater._replace_symlink(root / "current", releases[0])
+    assert subprocess.run([str(launcher)], capture_output=True, text=True).stdout == "A\\n"
+    assert launcher.read_bytes() == original
+
+
+def test_cifereca_python_refuses_missing_or_broken_active_release(
+    tmp_path, monkeypatch,
+):
+    root = tmp_path / "uninstalled runtime"
+    bindir = tmp_path / "bin"
+    monkeypatch.setenv("CIFERECA_INSTALL_ROOT", str(root))
+    monkeypatch.setenv("CIFERECA_BIN_DIR", str(bindir))
+    launcher = Path(updater._write_launchers(root)["cifereca-python"])
+    for target in (None, root / "releases" / "missing"):
+        if target:
+            updater._replace_symlink(root / "current", target)
+        outcome = subprocess.run(
+            [str(launcher), "-c", "print('must not run')"],
+            capture_output=True, text=True,
+        )
+        assert outcome.returncode == 127
+        assert outcome.stdout == ""
+        assert "active interpreter unavailable" in outcome.stderr
+
+    release = root / "releases" / "present"
+    (release / ".venv" / "bin").mkdir(parents=True)
+    updater._replace_symlink(root / "current", release)
+    assert subprocess.run([str(launcher)], capture_output=True).returncode == 127
 
 
 def test_update_dry_run_does_not_create_install_root(tmp_path, monkeypatch):
