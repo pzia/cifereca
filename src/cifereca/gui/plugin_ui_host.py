@@ -199,6 +199,25 @@ class _UiHost:
             identity_id=identity_id,
         )
 
+    def present_known_search_detail_in_place(
+        self, *, view, context_sections, is_current,
+        provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool:
+        """The exact active mirrored v2 notice, without Search navigation."""
+        if (not self._window_alive()
+                or type(view) is not PublicBookMasterDetailView
+                or view._window is not self.window):
+            return False
+        from .recommendation_exact_detail import present_loaded_search_detail_in_place
+        return present_loaded_search_detail_in_place(
+            self.window, view=view,
+            context_sections=context_sections, is_current=is_current,
+            provider=provider, credential=credential, record_id=record_id,
+            docbase=docbase, source_collection=source_collection,
+            identity_id=identity_id, known_source=True,
+        )
+
     def build_action_bar(self, actions):
         bar = AdaptiveActionBar()
         generation = getattr(self.window, "_shell_page_rebuild_token", None)
