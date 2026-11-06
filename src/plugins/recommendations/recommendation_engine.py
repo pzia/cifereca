@@ -373,7 +373,7 @@ def build_profile(
             authors.update({key: signal_weight for key in book_authors})
             # Public rationale counts books, never the amplified preference
             # weights (one liked book must not appear as two owned books).
-            author_book_counts.update(book_authors)
+            author_book_counts.update(book_authors.keys())
         for key, author in book_authors.items():
             author_labels.setdefault(key, author)
         # The same descriptive fact may be projected at the top level, in
