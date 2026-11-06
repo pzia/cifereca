@@ -54,7 +54,10 @@ def dependency_graph(root: Path) -> tuple[dict[str, set[str]], set[str]]:
             providers.setdefault(plugin_type, set()).add(name)
     for name, manifest in manifests.items():
         for plugin in manifest["plugins"]:
-            for requirement in plugin.get("requires", []):
+            requirements = plugin.get("requires", [])
+            if not isinstance(requirements, list):
+                raise GraphError(f"invalid requirements in {name}")
+            for requirement in requirements:
                 if (not isinstance(requirement, dict)
                         or not isinstance(requirement.get("plugin"), str)):
                     raise GraphError(f"invalid requirement in {name}")
@@ -75,7 +78,12 @@ def dependency_graph(root: Path) -> tuple[dict[str, set[str]], set[str]]:
                 dependency = owners.get(recommendation["plugin"])
                 if dependency is not None and dependency != name:
                     graph[name].add(dependency)
-            for requirement in plugin.get("requires_contracts", []):
+            contracts = plugin.get("requires_contracts", [])
+            if not isinstance(contracts, list):
+                raise GraphError(f"invalid contracts in {name}")
+            for requirement in contracts:
+                if not isinstance(requirement, dict):
+                    raise GraphError(f"invalid contract in {name}")
                 category = requirement.get("category")
                 if not isinstance(category, str):
                     raise GraphError(f"invalid contract in {name}")
