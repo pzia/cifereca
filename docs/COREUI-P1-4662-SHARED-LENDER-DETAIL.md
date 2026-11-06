@@ -32,7 +32,10 @@ standard, sans importer de widget privé GTK.
 
 Il ne s'agit **pas encore de l'UX cliquable de fermeture** : tant que
 l'observation positive par fournisseur n'est pas branchée, les écrans actuels
-n'appellent pas `show_item_detail` avec un tel preview. Le CTA
+n'appellent pas `show_cross_profile_borrow_detail` avec un tel preview.
+La méthode refuse une fiche non actuellement rendue, une identité sélectionnée
+différente, un `SearchResult` remplacé ou des epochs Core/source périmés,
+avant et après la construction de la section. Le CTA
 « Emprunter avec A » ou le menu N ne peuvent devenir actifs que lorsque le
 Core dispose du contrat mutateur avec consentement, plan exact,
 anti-rejeu et livraison/DRM contrôlée. Afficher une option consultative
