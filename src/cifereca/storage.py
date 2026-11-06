@@ -2090,11 +2090,11 @@ class Storage:
         """Prune only the v0.7 compatibility projection after a complete manifest.
 
         A provider manifest admitted by the Kobo compatibility synchronizer
-        may retire obsolete backup_items rows without local_path and without
-        an interrupted-acquisition or manual-reconciliation state. An unmigrated
-        Kobo row with a historical locator, acquiring/pending_acquisition
-        checkpoint or unresolved reconcile_required/conflict state is never
-        pruned. Manifest absence cannot attest an
+        may retire obsolete backup_items rows without a historical locator,
+        recorded byte evidence or unresolved acquisition/reconciliation state.
+        An unmigrated Kobo row with a historical locator, SHA/size evidence,
+        acquiring/pending_acquisition checkpoint or unresolved
+        reconcile_required/conflict state is never pruned. Manifest absence cannot attest an
         exact SourceReference right, entitlement revocation or removal of bytes.
         Entitlements/OriginLinks/Placements/acquisition history are never
         mutated by this obsolete projection. Negative canonical rights require
@@ -2135,12 +2135,12 @@ class Storage:
                 if provider == "kobo" else set()
             )
             rows = db.execute(
-                "SELECT item_id,local_path,status,attention_code FROM backup_items "
-                "WHERE provider_id=? AND credential_id=?",
+                "SELECT item_id,local_path,status,attention_code,sha256,size "
+                "FROM backup_items WHERE provider_id=? AND credential_id=?",
                 (provider, credential),
             ).fetchall()
             stale = [
-                (item_id, path) for item_id, path, status, attention_code in rows
+                (item_id, path) for item_id, path, status, attention_code, digest, size in rows
                 # The admitted manifest IDs were stripped above. Apply the
                 # same normalization to historical SQLite keys for membership
                 # only: otherwise a still-seen legacy " book " is deleted
@@ -2168,6 +2168,18 @@ class Storage:
                     # not stat or follow this untrusted historical pathname.
                     and not (provider == "kobo" and type(path) is str
                              and bool(path.strip()))
+                    # A complete old download may have lost its filename
+                    # while its recorded SHA or byte count survives. Even a
+                    # malformed nonempty hash is an unresolved historical
+                    # claim, NOT verified physical presence or a right.
+                    # Never erase that last byte-evidence pointer merely
+                    # because a later remote manifest omitted the edition.
+                    # The next seen manifest must quarantine it for manual
+                    # reconciliation, not silently issue another GET.
+                    and not (provider == "kobo" and (
+                        (type(digest) is str and bool(digest.strip()))
+                        or (type(size) is int and size > 0)
+                    ))
                     # An interrupted 0.7 acquisition without an observed
                     # local file must retain its last resumable checkpoint,
                     # even if the edition is absent from the next manifest.
