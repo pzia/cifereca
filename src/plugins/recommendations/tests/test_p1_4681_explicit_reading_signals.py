@@ -69,7 +69,7 @@ def test_negative_signal_does_not_override_ownership_or_edition_exclusion():
         explicit_signals=[_signal("artifact:one", "not_interested")],
     )
     assert profile.authors == {}
-    assert "9780306406157" in profile.identifiers
+    assert "isbn:9780306406157" in profile.identifiers
     assert is_already_present(profile, {"isbn": "9780306406157", "title": "Autre"}) is True
 
 
