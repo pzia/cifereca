@@ -305,3 +305,40 @@ def test_legacy_unmarked_posthook_cache_cannot_bypass_existing_initial_receipt(f
     assert acsm_cache.reuse(
         directory, loan, "identity-A", "primary",
         now=102, claim_state=lambda key: confirmed if key == claim_key else None) == path
+
+
+def test_initial_receipt_rejects_revoked_lease_before_atomic_publication(first_offer, monkeypatch):
+    """Epoch/claim rechecked after fsync and before publish, without a URL."""
+    import os
+    directory, path, loan = first_offer
+    claim = ("loan.borrow.v1:" + "a" * 64, "operation-1")
+    seen = {"checks": 0, "published": False}
+
+    def admission():
+        seen["checks"] += 1
+        return seen["checks"] < 3
+
+    original = os.replace
+
+    def track_replace(*args, **kwargs):
+        seen["published"] = True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", track_replace)
+    assert not acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        borrow_claim=claim, admission_current=admission,
+    )
+    assert seen["checks"] >= 3
+    assert seen["published"] is False
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_initial_receipt_rejects_revoked_lease_at_entry(first_offer):
+    directory, path, loan = first_offer
+    assert not acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        borrow_claim=("loan.borrow.v1:" + "b" * 64, "operation-1"),
+        admission_current=lambda: False,
+    )
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
