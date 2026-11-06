@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from recommendation_engine import (
-    ExplicitReadingSignal, build_profile, build_queries, is_already_present,
+    ExplicitReadingSignal, build_profile, build_queries, content_score, is_already_present,
 )
 
 
@@ -114,3 +114,30 @@ def test_catalogue_metadata_cannot_sneak_in_a_user_preference():
         "metadata": {**book["metadata"], "reading_feedback": "liked"},
     }
     assert build_profile([forged]) == build_profile([book])
+
+
+def test_controlled_candidates_only_gain_affinity_from_explicit_liking():
+    books = [
+        {"key": "one", "identity_id": "alice", "title": "Premier",
+         "author": "Alice", "subjects": ["histoire"]},
+        {"key": "two", "identity_id": "alice", "title": "Second",
+         "author": "Bob", "subjects": ["histoire"]},
+    ]
+    alice_candidate = {"title": "Candidat A", "author": "Alice"}
+    bob_candidate = {"title": "Candidat B", "author": "Bob"}
+    baseline = build_profile(books)
+    assert content_score(baseline, alice_candidate)[0] == content_score(
+        baseline, bob_candidate,
+    )[0]
+    weighted = build_profile(
+        books, identity_id="alice",
+        explicit_signals=[_signal("one", "liked")],
+    )
+    assert content_score(weighted, alice_candidate)[0] > content_score(
+        weighted, bob_candidate,
+    )[0]
+    # A supplier state or an EPUB metadata field does not affect this score.
+    assert content_score(build_profile([
+        {**books[0], "state": "remote_entitled"},
+        {**books[1], "state": "remote_loan_active"},
+    ]), alice_candidate) == content_score(baseline, alice_candidate)
