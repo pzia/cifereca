@@ -26,3 +26,35 @@ ne sont pas couverts par cette tranche.
 Réception : `tests/test_core_p0_3196_d1_canonical_unlinked_count.py`
 teste les états historiques, le compte/OriginLink, les octets physiques,
 l'isolation des profils et la stabilité avant/après retrait de l'archive.
+
+
+## D1 complémentaire — aucun nouveau SHA à partir d'un ancien `complete`
+
+Le synchroniseur 0.7 ne peut plus « vérifier une fois » un `backup_items.complete`
+dont le SHA historique est absent/invalide ou dont la taille originale
+n'est pas un entier positif. Avant de lire les octets, il place cette
+acquisition en `reconcile_required`, **sans GET**, et conserve
+`local_path`, `sha256`, `size`, la révision historique et le fichier
+physique. Une empreinte fraîche d'un EPUB/PDF visible au même chemin
+ne prouve pas qu'il s'agit de l'édition précédemment acquise ni d'un
+téléchargement terminé ; elle ne doit donc jamais devenir le premier
+baseline canonique ou historique.
+
+Les reçus historiques dotés **avant synchronisation** d'un SHA-256
+hexadécimal exact et d'une taille positive conservent provisoirement
+la comparaison des octets (ancien chemin D1), sans qu'il s'agisse
+d'une SourceReference ou d'un OriginLink. Cette tranche n'atteste
+aucun nouveau droit ; les états sans preuve attendent revue et
+rétablissement d'une provenance fournisseur indépendante. Le reliquat
+D1/W2/W4 reste ouvert.
+
+Le récupérateur local `_recover_local_remnants` préserve également le
+SHA/taille **même absents** d'un `reconcile_required/conflict` : le fait de
+retrouver un seul fichier candidat lors du cycle suivant ne remplit plus
+l'empreinte manquante. Les observations provisoires d'acquisitions
+effectivement interrompues restent distinctes, en attente de W2.
+
+Tests : `tests/test_kobo_backup_integrity_baseline.py`
+(SHA absent, corrompu, taille absente ou nulle ; pas de lecture
+de fichier, pas de re-GET, pas de mutation d'empreinte, répétition
+idempotente) et `tests/test_kobo_backup_guard.py`.
