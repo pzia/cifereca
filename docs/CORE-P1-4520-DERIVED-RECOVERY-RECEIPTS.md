@@ -35,3 +35,12 @@ Tests FS et SQLite synthétiques : succès normal avec reçu `already_committed`
 ### Protection contre la substitution de chemins intermédiaires
 
 Le parcours récursif ouvre les répertoires sous un fd du profil par chaîne `openat(O_DIRECTORY|O_NOFOLLOW)`, puis énumère par `scandir(fd)`. La lecture des reçus et le re-hachage du parent et de la sortie utilisent la même discipline, y compris sous `BEGIN IMMEDIATE` lors d'une reprise approuvée : un lien symbolique injecté dans un répertoire **intermédiaire** ne doit jamais rediriger une lecture vers un autre profil. Tests de chemin sortant du profil et de symlink parent. Ce durcissement n'autorise toujours pas de récupération au démarrage ni d'exposition plugin.
+
+
+## Bilan de rétention en lecture seule (06/11/2026)
+
+La fonction Core interne `audit_derived_receipt_retention(service, identity_id=..., after_cursor="")` expose un **inventaire paginé** (au plus 128 reçus par appel) avec les compteurs de statuts `already_committed`, `recoverable`, `manual_review`, le nombre d'octets effectivement mesurés, le nombre de tailles non lisibles, le curseur suivant et `destructive_cleanup_allowed=False`. Elle réutilise la vérification de profil de la revue supervisée et lit les tailles par descripteurs `O_NOFOLLOW` à chaque composant, sans ouvrir les liens symboliques externes.
+
+Cette API **ne constitue pas une consolidation** : elle permet d'estimer la pression sur l'espace disque et la part d'archives déjà attestées avant de choisir une rétention de long terme. Les compteurs sont **par page** et non un total atomique, et l'inventaire peut évoluer si le propriétaire modifie simultanément les dossiers. La taille en SQLite des intentions n'est pas incluse dans `receipt_bytes_observed`. Une entrée sans taille vérifiable augmente `unknown_size_count`, sans lire les octets d'un autre profil ni supprimer un fichier.
+
+**Politique retenue pour cette tranche :** ne pas transformer `already_committed` en permission de purge automatique. Le stockage physique reste potentiellement croissant ; une migration vers un journal Core contrôlé et une consolidation explicitement approuvée sont des travaux ultérieurs, avec conservation des preuves de causalité, reprise idempotente et tests de crash. La PR reste draft et la fonctionnalité n'est pas exposée au backoffice.
