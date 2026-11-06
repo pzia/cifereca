@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from ..models import SearchResult, ItemDetail
 from .exact_search_notice_navigation import loaded_notice_key
-from .task_runner import TaskPriority
+from ..task_queue import TaskPriority
 
 
 def _loaded_item(window: Any, coords: dict[str, str]) -> SearchResult | None:
