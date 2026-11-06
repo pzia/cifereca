@@ -1833,20 +1833,19 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 **previous,
                 "status": "reconcile_required",
                 "local_path": str(artifact),
-                # Do not erase the original acquisition baseline when a
-                # quarantined artifact is re-inspected on subsequent syncs.
-                # Only an interrupted/unparsed acquisition without an
-                # authoritative checksum may take a provisional observation.
+                # #3196 D1: a quarantine is NOT permission to synthesize
+                # missing historical SHA/size from a candidate file. Even an
+                # initially absent baseline must stay absent across repeated
+                # runs. Only interrupted/unparsed attempts may still collect
+                # a *provisional* byte observation pending W2 migration.
                 "size": (
                     previous.get("size")
                     if previous_status in {"reconcile_required", "reconcile_conflict"}
-                    and previous.get("size") is not None
                     else artifact.stat().st_size if ordinary_file else None
                 ),
                 "sha256": (
                     previous.get("sha256")
                     if previous_status in {"reconcile_required", "reconcile_conflict"}
-                    and previous.get("sha256")
                     else try_sha256_file(artifact) if ordinary_file else None
                 ),
                 "updated_at": int(time.time()),
