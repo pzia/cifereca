@@ -111,16 +111,17 @@ def test_other_provider_retains_historical_projection(tmp_path):
     ("bad-sha", 12), ("a" * 63, 12), ("a" * 64, 0),
     ("z" * 64, 12),
 ])
-def test_unprovable_kobo_conflict_never_creates_positive_canonical_state(
-    tmp_path, sha, size,
+@pytest.mark.parametrize("status", ("reconcile_required", "reconcile_conflict"))
+def test_unprovable_kobo_reconciliation_never_creates_positive_canonical_state(
+    tmp_path, sha, size, status,
 ):
-    """A conflict missing W4's byte baseline remains a 0.7 archive only."""
+    """W4 cannot confirm missing SHA or size; archive the checkpoint only."""
     storage = Storage(tmp_path / "state.sqlite3")
     row = {
         "provider_id": "kobo", "credential_id": "vault",
         "identity_id": "alice", "account_id": "account-a",
         "item_id": "edition", "revision_id": "revision-a",
-        "title": "Unresolved local candidates", "status": "reconcile_conflict",
+        "title": "Unresolved local candidates", "status": status,
         "sha256": sha, "size": size,
         "local_path": str(tmp_path / "ambiguous.epub"),
     }
@@ -136,7 +137,7 @@ def test_unprovable_kobo_conflict_never_creates_positive_canonical_state(
             }
         for _ in range(2):
             storage.backup_put(row)
-            assert storage.backup_get("kobo", "vault", "edition")["status"] == "reconcile_conflict"
+            assert storage.backup_get("kobo", "vault", "edition")["status"] == status
             with storage._lock, storage._connect() as db:
                 assert all(
                     db.execute("SELECT * FROM " + table).fetchall() == before[table]
@@ -163,5 +164,39 @@ def test_unprovable_conflict_retains_owner_collision_veto(tmp_path):
                 "title": "Unproven", "status": "reconcile_conflict",
             })
         assert storage.backup_get("kobo", "vault", "edition") is None
+    finally:
+        storage.close()
+
+
+def test_unprovable_required_patch_preserves_previous_typed_canonical_evidence(tmp_path):
+    """A 0.7 error must not downgrade independent Core rows on a retry."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        right = storage.entitlement_put({
+            "provider_id": "kobo", "credential_id": "vault",
+            "account_id": "account-a", "identity_id": "alice",
+            "item_id": "edition", "entitlement_type": "owned",
+            "revision_id": "provider-v2", "state": "active",
+        })
+        storage.acquisition_put({
+            "acquisition_id": "independent-123",
+            "entitlement_id": right, "provider_id": "kobo",
+            "credential_id": "vault", "account_id": "account-a",
+            "identity_id": "alice", "item_id": "edition",
+            "status": "complete", "metadata": {"source": "provider-v2"},
+        })
+        before = storage.entitlements(), storage.acquisitions()
+        row = {
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "alice", "account_id": "account-a",
+            "item_id": "edition", "revision_id": "historical-v1",
+            "status": "reconcile_required", "sha256": None,
+            "size": None, "local_path": str(tmp_path / "lost.epub"),
+        }
+        storage.backup_put(row)
+        storage.backup_put({**row, "title": "Retried unproven"})
+        assert storage.entitlements() == before[0]
+        assert storage.acquisitions() == before[1]
+        assert storage.backup_get("kobo", "vault", "edition")["title"] == "Retried unproven"
     finally:
         storage.close()
