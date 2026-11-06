@@ -26,7 +26,8 @@ def _manifests(root: Path) -> dict[str, dict]:
             manifest = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise GraphError(f"invalid manifest: {name}") from error
-        if name in result or not isinstance(manifest.get("plugins"), list):
+        if (not isinstance(manifest, dict) or name in result
+                or not isinstance(manifest.get("plugins"), list)):
             raise GraphError(f"invalid package: {name}")
         result[name] = manifest
     if not result:
@@ -42,6 +43,8 @@ def dependency_graph(root: Path) -> tuple[dict[str, set[str]], set[str]]:
     graph = {name: set() for name in manifests}
     for name, manifest in manifests.items():
         for plugin in manifest["plugins"]:
+            if not isinstance(plugin, dict):
+                raise GraphError(f"invalid plugin declaration: {name}")
             plugin_id, plugin_type = plugin.get("id"), plugin.get("type")
             if not isinstance(plugin_id, str) or not isinstance(plugin_type, str):
                 raise GraphError(f"invalid plugin declaration: {name}")
@@ -52,7 +55,10 @@ def dependency_graph(root: Path) -> tuple[dict[str, set[str]], set[str]]:
     for name, manifest in manifests.items():
         for plugin in manifest["plugins"]:
             for requirement in plugin.get("requires", []):
-                dependency = owners.get(requirement.get("plugin"))
+                if (not isinstance(requirement, dict)
+                        or not isinstance(requirement.get("plugin"), str)):
+                    raise GraphError(f"invalid requirement in {name}")
+                dependency = owners.get(requirement["plugin"])
                 if dependency is None:
                     raise GraphError(f"unknown required plugin in {name}")
                 if dependency != name:
@@ -82,12 +88,15 @@ def dependency_graph(root: Path) -> tuple[dict[str, set[str]], set[str]]:
         raise GraphError("explicit dependency graph must be an object")
     audited = explicit.get("audited_product_packages")
     dependencies_by_consumer = explicit.get("dependencies")
-    if not isinstance(audited, list) or not isinstance(dependencies_by_consumer, dict):
+    if (not isinstance(audited, list) or not isinstance(dependencies_by_consumer, dict)
+            or any(not isinstance(package, str) for package in audited)
+            or len(set(audited)) != len(audited)):
         raise GraphError("invalid explicit dependency graph schema")
     if any(package not in graph for package in audited):
         raise GraphError("unknown audited product package")
     for consumer, dependencies in dependencies_by_consumer.items():
-        if consumer not in graph or not isinstance(dependencies, list):
+        if (consumer not in graph or not isinstance(dependencies, list)
+                or any(not isinstance(dependency, str) for dependency in dependencies)):
             raise GraphError(f"unknown explicit consumer: {consumer}")
         for dependency in dependencies:
             if dependency not in graph:
