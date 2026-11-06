@@ -200,3 +200,33 @@ def test_unprovable_required_patch_preserves_previous_typed_canonical_evidence(t
         assert storage.backup_get("kobo", "vault", "edition")["title"] == "Retried unproven"
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("connected_owner,mirrored", [
+    (None, False), ("alice", True), ("bob", False),
+])
+def test_unprovable_required_retains_active_source_discovery_only_for_its_owner(
+    tmp_path, connected_owner, mirrored,
+):
+    """Do not suppress legitimate Kobo OWN-manifest discoveries before W2."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        if connected_owner is not None:
+            storage.provider_connection_put({
+                "identity_id": connected_owner, "provider_id": "kobo",
+                "credential_id": "vault",
+            })
+        storage.backup_put({
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "alice", "account_id": "account-a",
+            "item_id": "edition", "revision_id": "r1",
+            "status": "reconcile_required",
+            "title": "Local candidate without verified bytes",
+            "sha256": None, "size": None,
+        })
+        assert (len(storage.acquisitions(provider_id="kobo")) == 1) is mirrored
+        assert (len(storage.entitlements(provider_id="kobo")) == 1) is mirrored
+        assert storage.artifacts() == []
+        assert storage.backup_get("kobo", "vault", "edition") is not None
+    finally:
+        storage.close()
