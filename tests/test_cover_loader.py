@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx
 
 from cifereca.gui.cover_loader import CoverLoader
+from cifereca.epub_metadata import MAX_IMAGE
 
 
 # Signature PNG valide pour la validation légère du cache (le loader ne décode pas l'image).
@@ -74,5 +75,71 @@ def test_cover_loader_tracks_ui_decode_cost(tmp_path, monkeypatch):
         assert stats["ui_decode_avg_ms"] == 27.25
         assert stats["ui_decode_max_ms"] == 42.0
         assert stats["ui_decode_slow"] == 1
+    finally:
+        loader.close()
+
+
+
+def test_oversized_remote_cover_is_not_cached_or_delivered(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    loader = CoverLoader(max_workers=2)
+    original = loader.client
+    url = "https://covers.example.test/oversized.png"
+    oversized = PNG_HEAD + b"X" * (MAX_IMAGE - len(PNG_HEAD) + 1)
+    called = []
+
+    def handler(request):
+        called.append(request.url)
+        return httpx.Response(200, content=oversized,
+                              headers={"content-type": "image/png"})
+
+    loader.client = httpx.Client(transport=httpx.MockTransport(handler))
+    original.close()
+    done = threading.Event()
+    seen = []
+    try:
+        loader.load(url, lambda value: (seen.append(value), done.set()))
+        assert done.wait(5.0)
+        assert len(called) == 1
+        assert seen == [None]
+        assert not loader._path(url).exists()
+        assert loader.stats()["download_failed"] == 1
+        assert loader.stats()["download_ok"] == 0
+    finally:
+        loader.close()
+
+
+def test_oversized_old_cover_cache_is_replaced_with_bounded_valid_image(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    loader = CoverLoader(max_workers=2)
+    url = "https://covers.example.test/recovered.png"
+    path = loader._path(url)
+    path.write_bytes(PNG_HEAD + b"X" * (MAX_IMAGE - len(PNG_HEAD) + 1))
+    calls = []
+    original = loader.client
+
+    def handler(request):
+        calls.append(request.url)
+        return httpx.Response(200, content=PNG_HEAD,
+                              headers={"content-type": "image/png"})
+
+    loader.client = httpx.Client(transport=httpx.MockTransport(handler))
+    original.close()
+    seen = []
+    done = threading.Event()
+    try:
+        loader.load(url, lambda value: (seen.append(value), done.set()))
+        assert done.wait(5.0)
+        assert len(calls) == 1
+        assert seen == [path]
+        assert path.read_bytes() == PNG_HEAD
+        assert loader.stats()["cache_invalid"] == 1
+        assert loader.stats()["download_ok"] == 1
+        cached = []
+        loader.load(url, cached.append)
+        assert cached == [path]
+        assert len(calls) == 1
     finally:
         loader.close()
