@@ -15,3 +15,32 @@ Le même helper est utilisé avant `_without_redundant_merged` et avant le calcu
 Tests hors réseau sur deux sessions Paris et deux profils : ordre de connexion inversé, `search` et `search_progressive`, A→B→A, seconde lecture avec cache, disparition de la session A et propriétaire du credential inconnu. Aucun POST, aucun simulateur de permission fournisseur, aucune donnée de compte privé.
 
 **Limites :** la disponibilité affichée reste celle du catalogue sélectionné ; l'admission réelle côté fournisseur (quota, titre, restrictions, prêt en cours) ne peut pas être attestée par le seul `source_credential`. Les parcours d'emprunt interprofils #4662 et la capacité fournisseur compte-spécifique #3120 restent distincts.
+
+
+## Complément P1 : plusieurs connexions Paris sur un même profil
+
+La priorité « première session appartenant à l'identité active » ne suffit pas
+si deux credentials Paris sont liés à cette identité. Lorsqu'une
+`primary_paris_connection_id` explicite et syntaxiquement valide est définie,
+les recherches synchrone et progressive privilégient **cette session connectée**
+si son propriétaire SQLite est bien l'identité active, même si un autre compte
+du même profil s'est connecté avant. Pour les autres fournisseurs et en absence
+de primaire attesté et connecté, l'ordre historique de découverte subsiste.
+L'identité/provenance du résultat n'est jamais réécrite.
+
+Ce choix n'est **pas** une preuve de prêt : la garde
+`_normal_paris_source_current` conserve tous les contrôles de connexion
+activée, configuration et compte principal. Un primaire disparu laisse au
+plus un catalogue sous sa provenance secondaire exacte ; aucune autorisation
+de mutation ne lui est conférée.
+
+Le primaire configuré est capturé par requête et contrôlé pendant les leases.
+Son changement à chaud invalide les résultats en vol, y compris callbacks et
+miroirs de recherche progressive ; la clé de cache continue à incorporer le
+credential réellement retenu. Tests synthétiques : trois sessions B/A2/A1,
+ordre inversé, changement de primaire sans reconnexion, cache, primaire
+déconnecté et changement en cours de GET. Aucun I/O fournisseur réel.
+
+Ce correctif ne qualifie ni quota, ni disponibilité de prêt par compte ; la
+recette GTK réelle A→B→A et la décision d'éligibilité fournisseur restent au
+suivi #4673/#3120, sans POST de diagnostic.
