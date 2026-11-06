@@ -64,7 +64,9 @@ def test_inventory_classifies_all_historical_states_without_authorizing_migratio
     assert result["status_skipped_archived"] == 1
     assert result["status_other"] == 1
     assert result["revision_unrecorded"] == 1
-    assert result["ledger_absent"] == 0
+    # #3196 W1: skipped_archived is archive-only and no longer
+    # synthesizes a canonical acquisition row.
+    assert result["ledger_absent"] == 1
     assert result["receipt_shape_candidate"] == 0
     assert result["receipt_unproven"] == 5
     assert "buyer" not in repr(result)
