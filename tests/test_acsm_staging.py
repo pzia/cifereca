@@ -370,3 +370,34 @@ def test_success_cleanup_refuses_rebound_parent_before_unlink(
     assert external.read_bytes() == b'foreign'
     forget.assert_not_called()
     logger.warning.assert_called_once()
+
+
+def test_retention_does_not_forget_through_rebound_loan_directory(
+        service, tmp_path, monkeypatch):
+    """Stable staging root does not authorize a rebinding of nested paths."""
+    instance, forget, _ = service
+    staged_path = staged(instance, 'old.acsm', age=200)
+    loan_dir = staged_path.parent
+    relocated = loan_dir.with_name('held-loan')
+    outside = tmp_path / 'foreign'
+    outside.mkdir()
+    external = outside / staged_path.name
+    external.write_bytes(b'foreign')
+    old_unlink = os.unlink
+    swapped = []
+
+    def swap_loan_dir(name, *args, **kwargs):
+        result = old_unlink(name, *args, **kwargs)
+        if name == staged_path.name and kwargs.get('dir_fd') is not None:
+            swapped.append(True)
+            loan_dir.rename(relocated)
+            loan_dir.symlink_to(outside, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(os, 'unlink', swap_loan_dir)
+    assert instance._cleanup_old_acsm_work(max_age_seconds=100) == {
+        'deleted': 1, 'kept': 0}
+    assert swapped
+    assert not (relocated / staged_path.name).exists()
+    assert external.read_bytes() == b'foreign'
+    forget.assert_not_called()
