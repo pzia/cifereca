@@ -18,6 +18,7 @@
     "provider-paris",
     "provider-reference",
     "recommendations",
+    "runtime-kobo-adept",
     "transport-http"
   ],
   "dependencies": {
@@ -26,6 +27,18 @@
       "provider-bnf-catalogue",
       "provider-gallica",
       "provider-gutenberg"
+    ],
+    "provider-kobo": [
+      "runtime-kobo-adept"
+    ],
+    "provider-paris": [
+      "runtime-kobo-adept"
+    ],
+    "provider-numilog": [
+      "runtime-kobo-adept"
+    ],
+    "diagnostics-page": [
+      "runtime-kobo-adept"
     ]
   }
 }
