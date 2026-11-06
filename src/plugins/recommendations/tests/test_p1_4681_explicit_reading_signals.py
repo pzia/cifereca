@@ -190,3 +190,69 @@ def test_unselected_duplicated_keys_keep_legacy_neutral_projection():
     first = _book("artifact:same", "alice", "Auteure A", "Histoire")
     assert build_profile([first, dict(first)], identity_id="alice",
                          explicit_signals=[]) == build_profile([first, dict(first)])
+
+
+def test_controlled_corpus_optin_changes_full_rank_without_changing_sources():
+    """#4681: compare deterministic ranking, reasons and variant provenance.
+
+    Corpus uses only local exact keys, neutral vs explicit feedback. It cannot
+    derive appreciation from an ownership state or catalogue credentials.
+    """
+    from recommendation_engine_fast import rank_candidates_prepared
+
+    books = [
+        _book("artifact:alice", "alice", "Autrice Alice", "Histoire"),
+        _book("artifact:bob", "alice", "Auteur Bob", "Voyage"),
+    ]
+    offers = [
+        {"title": "À découvrir — Alice", "author": "Autrice Alice",
+         "record_id": "edition-a", "docbase": "BOOKS",
+         "source_provider": "catalogue", "source_credential": "public",
+         "source_collection": "current"},
+        {"title": "À découvrir — Bob", "author": "Auteur Bob",
+         "record_id": "edition-b", "docbase": "BOOKS",
+         "source_provider": "catalogue", "source_credential": "public",
+         "source_collection": "current"},
+    ]
+
+    def ranked(signals):
+        profile = build_profile(
+            books, identity_id="alice", explicit_signals=signals,
+        )
+        # Two independent explicit queries, same catalogue ordering for both
+        # arms. RRF and source variant recovery are not preference-derived.
+        return rank_candidates_prepared(
+            profile, [offers, offers], exploration=0, limit=2,
+        )
+
+    baseline = ranked(())
+    preferred = ranked((_signal("artifact:bob", "liked"),))
+    disliked = ranked((_signal("artifact:alice", "not_interested"),))
+    again = ranked(())  # Returning to neutral cannot reuse preference scores.
+
+    assert len(baseline) == len(preferred) == len(disliked) == 2
+    assert [row.item["record_id"] for row in baseline] == [
+        "edition-a", "edition-b",
+    ]
+    assert preferred[0].item["record_id"] == "edition-b"
+    assert disliked[0].item["record_id"] == "edition-b"
+    assert baseline == again
+
+    def attested_variants(rows):
+        return {
+            (notice.source_provider, notice.source_credential,
+             notice.docbase, notice.source_collection, notice.record_id)
+            for ranked_row in rows for notice in ranked_row.notices
+        }
+
+    coordinates = {
+        ("catalogue", "public", "BOOKS", "current", "edition-a"),
+        ("catalogue", "public", "BOOKS", "current", "edition-b"),
+    }
+    assert attested_variants(baseline) == coordinates
+    assert attested_variants(preferred) == coordinates
+    assert attested_variants(disliked) == coordinates
+    assert all(
+        not hasattr(row, "executable")
+        for rows in (baseline, preferred, disliked) for row in rows
+    )
