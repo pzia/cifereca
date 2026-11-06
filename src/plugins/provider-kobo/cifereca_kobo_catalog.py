@@ -394,7 +394,18 @@ class KoboCatalogService:
             owned=owned_flag,
             downloadable=downloadable_flag,
             price=price, currency=currency,
-            revision_id=str(item.get("revision_id") or "").strip() or None,
+            # A revision is a typed provider witness for later migration,
+            # never a product-id substitute. Do not coerce ints/bools,
+            # trim ambiguous values or accept control characters.
+            revision_id=(
+                item["revision_id"]
+                if (type(item.get("revision_id")) is str
+                    and 0 < len(item["revision_id"]) <= 256
+                    and item["revision_id"] == item["revision_id"].strip()
+                    and not any(ord(c) < 32 or ord(c) == 127
+                                for c in item["revision_id"]))
+                else None
+            ),
             metadata=metadata,
         )
 
