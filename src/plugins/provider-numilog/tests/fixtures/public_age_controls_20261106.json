@@ -1,0 +1,47 @@
+{
+  "sample_id": "numilog_public_age_controls_2026-11-06",
+  "observed_date": "2026-11-06",
+  "selection": "Purposefully selected non-age editorial controls and format-identity edge cases; not random or a catalogue-coverage sample",
+  "source": "Public Numilog product pages; only visible collection and editorial summary inspected for reading-age claims",
+  "records": [
+    {
+      "product_id": "1889226",
+      "product_url": "https://www.numilog.com/1889226/les-petits-meurtres-de-loch-down-abbey.ebook",
+      "title": "Les petits meurtres de Loch Down Abbey",
+      "language": "fr",
+      "collection_label": "Policier",
+      "editorial_reading_age_status": "not_observed_in_inspected_collection_or_summary",
+      "isbn_paper": "9782290425718",
+      "isbn_epub": "9782290425725",
+      "isbn_pdf": "9782290425756",
+      "isbn_epub_label": "EAN EPUB SANS DRM",
+      "isbn_pdf_label": "EAN PDF SANS DRM",
+      "reading_age_proof": false
+    },
+    {
+      "product_id": "1873253",
+      "product_url": "https://www.numilog.com/1873253/la-colline--grand-prix-des-lectrices-de-elle-policier-2026.ebook",
+      "title": "La Colline - Grand Prix des lectrices de ELLE policier 2026",
+      "language": "fr",
+      "collection_label": "n.c",
+      "editorial_reading_age_status": "not_observed_in_inspected_collection_or_summary",
+      "description_character_age_text": "elle a dix-sept ans",
+      "isbn_paper": "9782021602302",
+      "isbn_epub": "9782380200751",
+      "isbn_epub_label": "EAN EPUB SANS DRM",
+      "reading_age_proof": false
+    },
+    {
+      "product_id": "954158",
+      "product_url": "https://www.numilog.com/954158/fleur-de-crime.ebook",
+      "title": "Fleur-de-Crime",
+      "language": "fr",
+      "collection_label": "Policier",
+      "editorial_reading_age_status": "not_observed_in_inspected_collection_or_summary",
+      "isbn_paper": "9782346138913",
+      "isbn_epub": "9782346138913",
+      "isbn_epub_label": "EAN EPUB SANS DRM",
+      "reading_age_proof": false
+    }
+  ]
+}
