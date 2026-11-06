@@ -299,3 +299,24 @@ def test_original_context_epoch_witness_does_not_cross_identity_rebind():
     refreshed = project(original, epoch=7)
     assert refreshed.options == ()
     assert refreshed.rejected_count == 1
+
+
+def test_same_lender_multi_account_ordinals_remain_stable_across_context_aba():
+    # Context-bound option hashes change after A→B→A; button identities must
+    # rotate, but the ordinal labels must stay attached to the same accounts.
+    first = witness("alice", "card-A", "borrower-A")
+    second = witness("alice", "card-B", "borrower-B")
+    before = project(second, first, epoch=4)
+    after = project(
+        replace(first, service_context_epoch=7),
+        replace(second, service_context_epoch=7),
+        epoch=7,
+    )
+    assert before.status == after.status == "choose"
+    assert [(x._source_coordinates, x.label) for x in before.options] == [
+        (x._source_coordinates, x.label) for x in after.options
+    ]
+    assert {x.option_id for x in before.options}.isdisjoint(
+        x.option_id for x in after.options
+    )
+    assert all(x.executable is False for x in before.options + after.options)
