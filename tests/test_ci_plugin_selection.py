@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-reference", "recommendations"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-reference", "recommendations", "transport-http"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-reference", "recommendations"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-reference", "recommendations", "transport-http"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -1005,6 +1005,61 @@ class PluginSelectionTests(unittest.TestCase):
                         any(token in content for token in tokens),
                         f"New explicit reference provider consumer: {file}",
                     )
+
+    def test_audited_transport_http_includes_every_declared_consumer(self):
+        # A shared HTTP transport is NEVER an isolated one-suite change.
+        # Manifest requires: Baen, Gutenberg, Gallica, EbooksGratuits.
+        # EbooksGratuits/Gallica/Gutenberg propagate to Home through
+        # home-page's provider.library contract and the explicit graph.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("transport-http", audited)
+        expected = [
+            "baen", "ebooksgratuits", "home-page",
+            "provider-gallica", "provider-gutenberg", "transport-http",
+        ]
+        self.assertEqual(
+            selector.affected_packages({"transport-http"}, graph),
+            expected,
+        )
+        for module in (
+            "cifereca_http_transport.py", "cifereca_http_transport_health.py",
+        ):
+            with self.subTest(module=module):
+                selected, reason = selector.select([
+                    ("M", f"src/plugins/transport-http/{module}"),
+                ], ROOT)
+                self.assertEqual(
+                    selected, [f"src/plugins/{package}" for package in expected],
+                )
+                self.assertIn("dependency closure", reason)
+
+    def test_transport_http_unaudited_mixed_changes_remain_full(self):
+        product = "src/plugins/transport-http/cifereca_http_transport.py"
+        for changes in (
+            [("M", product), ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/transport-http/cifereca-plugin.json")],
+            [("M", "src/plugins/transport-http/tests/conftest.py")],
+            [("D", product)],
+            [("R100", product)],
+            [("M", product), ("M", "src/cifereca/services.py")],
+        ):
+            with self.subTest(changes=changes):
+                selected, reason = selector.select(changes, ROOT)
+                self.assertEqual(selected, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_transport_http_declared_consumers_stay_in_graph(self):
+        # An accidental removal of a declared required edge must not
+        # silently reduce the coverage of this shared security boundary.
+        graph, _ = selector.dependency_graph(ROOT)
+        consumers = {"baen", "ebooksgratuits",
+                     "provider-gallica", "provider-gutenberg"}
+        for consumer in consumers:
+            self.assertIn("transport-http", graph[consumer])
+        self.assertTrue(
+            {"ebooksgratuits", "provider-gallica",
+             "provider-gutenberg"} <= graph["home-page"]
+        )
 
     def git(self, *args):
         return subprocess.check_output(["git", "-C", str(self.root), *args], stderr=subprocess.DEVNULL).decode().strip()
