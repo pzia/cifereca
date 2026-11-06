@@ -607,6 +607,43 @@ def main() -> int:
                                     width, height = item.get("width"), item.get("height")
                                     if type(width) is int and type(height) is int and 0 <= width <= 5000 and 0 <= height <= 5000:
                                         print(f"UX611_NUMERIC {route}.{family}={width}x{height}", flush=True)
+                # #4673: a fixed checkpoint code from our own synthetic GTK
+                # probe is the only failure detail emitted to public Actions
+                # logs. Never echo report.error, widget labels or tracebacks.
+                if name == "search-filter-p0" and report_data.get("status") != "PASS":
+                    allowed = frozenset({
+                        "fixture_setup", "initial_camille", "query_camille",
+                        "await_camille", "action_camille",
+                        "admission_camille", "button_camille", "holdings_camille",
+                        "switch_alex", "query_alex", "await_alex", "action_alex",
+                        "admission_alex", "button_alex", "holdings_alex",
+                        "disconnect_alex", "clear_disconnected",
+                        "finish_disconnected", "return_camille", "complete",
+                    })
+                    stage = report_data.get("p0_4673_stage")
+                    if type(stage) is str and stage in allowed:
+                        print("P0_4673_CLOSED_FAILURE_STAGE=" + stage, flush=True)
+                    if stage in {
+                        "admission_camille", "admission_alex",
+                        "button_camille", "button_alex",
+                    }:
+                        local_reasons = frozenset({
+                            "local_action_available_provider_unknown",
+                            "primary_paris_connection_mismatch_or_inactive",
+                            "local_edition_scope_invalid",
+                            "local_provider_or_identity_unavailable",
+                            "local_session_unavailable",
+                            "local_primary_account_unverified",
+                            "local_claim_scope_invalid",
+                            "local_previous_attempt",
+                            "local_scope_changed",
+                            "local_borrow_capability_unavailable",
+                            "local_borrow_executor_unavailable",
+                            "local_admission_unavailable",
+                        })
+                        code = report_data.get("p0_4673_local_reason")
+                        if type(code) is str and code in local_reasons:
+                            print("P0_4673_CLOSED_LOCAL_REASON=" + code, flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
                 if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-capture-session"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"

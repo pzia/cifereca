@@ -138,6 +138,10 @@ def test_empty_provider_status_does_not_repaint_from_old_query_or_identity():
     host._remote_search_results = [old_book]
     host.run_search(True)
     assert host._remote_search_results == []
+    # Starting a new online snapshot intentionally clears the previous
+    # visible rows synchronously. Only a late provider batch must not repaint.
+    host._populate_search.assert_called_once_with([], announce=False)
+    host._populate_search.reset_mock()
     host.requests[-1].work()
     on_batch = host.online.call_args.args[2]
     on_batch(NS(provider_id="public", result_status="unavailable",

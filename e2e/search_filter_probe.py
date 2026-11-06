@@ -30,9 +30,98 @@ from PIL import ImageGrab
 from x11_input import X11Input
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
+from cifereca.models import Account, SearchResult, ItemDetail
+from cifereca.providers.base import (
+    ProviderSession, ProviderDescriptor, ProviderCapabilities,
+)
 from cifereca.plugin_api import (
     CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
 )
+
+
+class _OfflineParisSession(ProviderSession):
+    """Real ProviderSession shape with zero lender or network dependencies."""
+
+    def __init__(self, credential: str, identity: str):
+        super().__init__(
+            descriptor=ProviderDescriptor(
+                id="paris", display_name="Bibliothèques de Paris",
+                description="Fixture GTK sans réseau", state="ready",
+                capabilities=ProviderCapabilities(search=True, holdings=True, borrow=True),
+            ),
+            credential_id=credential, label="Paris hors ligne",
+            credentials={}, options={},
+        )
+        self.connected = True
+        self._accounts = [Account(
+            unique_id="", identity_id=identity, provider_id="paris",
+            credential_id=credential, display_name="Lecteur fictif",
+        )]
+        self.search_calls = 0
+        self.holdings_calls = 0
+        self.borrow_calls = 0
+
+    def connect(self):
+        return list(self._accounts)
+
+    def close(self):
+        self.connected = False
+
+    def search(self, query, scope="all", page=0, field="all"):
+        self.search_calls += 1
+        assert query == "Serpentine"
+        return [SearchResult(
+            id="paris:" + self.credential_id,
+            record_id="edition-" + self.credential_id,
+            docbase="DILICOM", medium="digital",
+            title="Serpentine", author="Mélanie Fazi", type="ebook",
+            format="EPUB", publisher=None, published_at=None,
+            description="Notice fictive", thumbnail_url=None,
+            friendly_url=None, scenario="EBOOKS",
+            source_provider="paris", source_credential=self.credential_id,
+            source_collection="catalog",
+        )]
+
+    def holdings(self, item, search_terms=""):
+        self.holdings_calls += 1
+        assert item.source_credential == self.credential_id
+        return ItemDetail(
+            record_id=item.record_id, docbase=item.docbase,
+            title=item.title, author=item.author, type=item.type,
+            year=None, thumbnail_url=None, availability_status="available",
+            availability_label="Disponible à l'emprunt", holdings=[],
+            source_provider="paris", source_credential=self.credential_id,
+        )
+
+    def borrow(self, item, account):
+        self.borrow_calls += 1
+        raise AssertionError("No loan mutation in GTK acceptance")
+
+    def borrow_explicit_with_claim(self, *args, **kwargs):
+        self.borrow_calls += 1
+        raise AssertionError("No loan claim/mutation in GTK acceptance")
+
+
+class _ParisFixtureManager:
+    """Add one explicit tested plugin declaration without removing the host."""
+
+    def __init__(self, delegate):
+        self.delegate = delegate
+
+    def status(self, plugin_id):
+        if plugin_id == "fixture.paris":
+            return SimpleNamespace(
+                enabled=True, state="ready",
+                descriptor=SimpleNamespace(
+                    id=plugin_id, type="provider.library",
+                    instantiation="multiple",
+                    capabilities=("acquisition.borrow",),
+                ),
+            )
+        return self.delegate.status(plugin_id)
+
+    def __getattr__(self, key):
+        return getattr(self.delegate, key)
 
 
 def main() -> int:
@@ -412,7 +501,181 @@ def main() -> int:
         assert not window._search_response_facets.get_visible()
         assert facet_queries == ["Facettes"]
         result["checks"]["response_facets_descriptive_and_scoped"] = True
-        finish()
+        result["p0_4673_stage"] = "fixture_setup"
+        begin_paris_profiles()
+
+    # P0 #4673: real GTK Search + Core session routing with two owned Paris
+    # accounts. UI clicks and selection are native; all provider I/O is fake.
+    paris = {}
+    paris_deadline = [0.0]
+
+    def begin_paris_profiles():
+        from cifereca.gui.query_model import QueryState
+        service = core.library
+        saved = [dict(row) for row in core.config.identities()]
+        assert {"camille", "alex"} <= {row["id"] for row in saved}
+        for row in saved:
+            if row["id"] in {"camille", "alex"}:
+                row["primary_paris_connection_id"] = "card-" + row["id"]
+        core.config.set("identities", saved)
+        core.config.set("providers.accounts", [
+            {"id": "card-" + identity, "provider": "paris",
+             "identity_id": identity, "enabled": True}
+            for identity in ("camille", "alex")
+        ])
+        camille = _OfflineParisSession("card-camille", "camille")
+        alex = _OfflineParisSession("card-alex", "alex")
+        paris.update(camille=camille, alex=alex)
+        service._sessions.pop("synthetic-facets", None)
+        # Bob first is essential: a provider-id-first selector would return
+        # Alex's credential under Camille, reproducing the original bug.
+        service._sessions[service._session_key("paris", "card-alex")] = alex
+        service._sessions[service._session_key("paris", "card-camille")] = camille
+        service.accounts = [*camille._accounts, *alex._accounts]
+        for identity in ("camille", "alex"):
+            service.storage.provider_connection_put({
+                "identity_id": identity, "provider_id": "paris",
+                "credential_id": "card-" + identity,
+                "label": "Paris fictif", "enabled": True, "metadata": {},
+            })
+        service._provider_plugin_ids["paris"] = "fixture.paris"
+        service._plugin_manager = _ParisFixtureManager(service._plugin_manager)
+        service._mirror_remote_results = lambda *_a, **_kw: 0
+        service.refresh_identity_loans = lambda **_kw: []
+        window.search_controls.set_state(QueryState(text="Serpentine"), notify=False)
+        window.navigate("search")
+        assert service.current_identity.identity_id == "camille"
+        assert not any(s.search_calls for s in paris.values())
+        result["p0_4673_stage"] = "initial_camille"
+        search_paris("camille")
+
+    def search_paris(identity):
+        # One actual GTK button click, not a direct call to the selector.
+        result["p0_4673_stage"] = "query_" + identity
+        assert core.library.current_identity.identity_id == identity
+        assert window.search_global_button.get_mapped()
+        paris_deadline[0] = monotonic() + 6
+        device.click_widget(window.search_global_button)
+        later(100, lambda: await_paris_results(identity))
+
+    def await_paris_results(identity):
+        result["p0_4673_stage"] = "await_" + identity
+        credential = "card-" + identity
+        rows = list(window._remote_search_results)
+        if (len(rows) != 1 or rows[0].source_credential != credential
+                or window.search_page.store.get_n_items() != 1):
+            if monotonic() < paris_deadline[0]:
+                later(80, lambda: await_paris_results(identity))
+                return
+            raise AssertionError("Paris exact source not visible in real GTK Search")
+        assert rows[0].source_provider == "paris"
+        window.search_page.selection.set_selected(0)
+        later(180, lambda: check_paris_action(identity))
+
+    def check_paris_action(identity):
+        result["p0_4673_stage"] = "action_" + identity
+        source = paris[identity]
+        book = window._remote_search_results[0]
+        assert book.source_credential == source.credential_id
+        # Read-only, exact Core diagnostic: no supplier GET or POST. Publish
+        # only the closed code through a source-reviewed allowlist in runner.
+        diagnosis = core.library.paris_borrow_diagnostic(book)
+        result["p0_4673_local_reason"] = diagnosis["reason_code"]
+        result["p0_4673_stage"] = "admission_" + identity
+        assert diagnosis["local_action_possible"] is True
+        assert core.library.can_borrow_paris(book) is True
+        result["p0_4673_stage"] = "button_" + identity
+        actions = [
+            button for button in window.search_page.detail._action_buttons
+            if getattr(button, "_cifereca_action_label", None) == "Emprunter"
+        ]
+        if not actions or source.holdings_calls == 0:
+            if monotonic() < paris_deadline[0]:
+                later(90, lambda: check_paris_action(identity))
+                return
+            result["p0_4673_stage"] = (
+                "holdings_" + identity if source.holdings_calls == 0
+                else "button_" + identity
+            )
+            raise AssertionError("Current Paris account has no GTK borrow action")
+        assert len(actions) == 1
+        assert source.borrow_calls == 0
+        assert paris["alex" if identity == "camille" else "camille"].borrow_calls == 0
+        result["checks"]["P0_4673_gtk_" + identity + "_exact_borrow_action"] = True
+        capture_stage(
+            "10-paris-camille-return"
+            if identity == "camille" and paris.get("returned_from_alex")
+            else "08-paris-" + identity
+        )
+        if identity == "alex":
+            disconnect_alex()
+            return
+        if identity == "camille" and not paris.get("returned_from_alex"):
+            old_button = actions[0]
+            window._activate_identity("alex")
+            assert window._remote_search_results == []
+            assert window.search_page.store.get_n_items() == 0
+            assert old_button.get_mapped() is False
+            later(170, begin_alex_search)
+        else:
+            result["checks"]["P0_4673_gtk_A_B_A_no_cross_account"] = True
+            result["p0_4673_stage"] = "complete"
+            finish()
+
+    def begin_alex_search():
+        result["p0_4673_stage"] = "switch_alex"
+        from cifereca.gui.query_model import QueryState
+        assert core.library.current_identity.identity_id == "alex"
+        window.search_controls.set_state(QueryState(text="Serpentine"), notify=False)
+        search_paris("alex")
+
+    def disconnect_alex():
+        result["p0_4673_stage"] = "disconnect_alex"
+        # Kept read-only: no supplier login/logout or account switch HTTP.
+        paris["alex"].connected = False
+        before = paris["alex"].search_calls
+        paris["alex_prior_queries"] = before
+        assert core.library.current_identity.identity_id == "alex"
+        # Force a new request with the exact same text. The former result,
+        # actions and cache must be cleared BEFORE the worker finishes.
+        device.click_widget(window.search_global_button)
+        paris_deadline[0] = monotonic() + 6
+        # XTEST injects asynchronously: the GTK event loop must first process
+        # the physical button click before checking synchronous action removal.
+        later(100, check_disconnected_alex_cleared)
+
+    def check_disconnected_alex_cleared():
+        result["p0_4673_stage"] = "clear_disconnected"
+        assert window._remote_search_results == []
+        assert window.search_page.store.get_n_items() == 0
+        assert not any(
+            getattr(button, "_cifereca_action_label", None) == "Emprunter"
+            for button in window.search_page.detail._action_buttons
+        )
+        later(130, finish_disconnected_alex)
+
+    def finish_disconnected_alex():
+        result["p0_4673_stage"] = "finish_disconnected"
+        if not window.search_global_button.get_sensitive():
+            if monotonic() < paris_deadline[0]:
+                later(100, finish_disconnected_alex)
+                return
+            raise AssertionError("Paris disconnected search did not finish")
+        assert window._remote_search_results == []
+        assert paris["alex"].search_calls == paris["alex_prior_queries"]
+        assert paris["camille"].borrow_calls == paris["alex"].borrow_calls == 0
+        result["checks"]["P0_4673_gtk_disconnected_no_foreign_fallback"] = True
+        capture_stage("09-paris-disconnected")
+        paris["returned_from_alex"] = True
+        window._activate_identity("camille")
+        assert window._remote_search_results == []
+        later(170, begin_return_to_camille)
+
+    def begin_return_to_camille():
+        result["p0_4673_stage"] = "return_camille"
+        from cifereca.gui.query_model import QueryState
+        window.search_controls.set_state(QueryState(text="Serpentine"), notify=False)
+        search_paris("camille")
 
     def finish():
         result["status"] = "PASS"
@@ -444,7 +707,7 @@ def main() -> int:
             encoding="utf-8",
         )
 
-    GLib.timeout_add_seconds(30, lambda: (fail("timeout GTK P0 (30s)"), False)[1] if rc[0] else False)
+    GLib.timeout_add_seconds(50, lambda: (fail("timeout GTK P0 (50s)"), False)[1] if rc[0] else False)
     app.run([sys.argv[0]])
     if not (output / "screen.json").is_file():
         result["status"] = "FAIL"

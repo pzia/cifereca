@@ -67,21 +67,32 @@ def test_active_profile_wins_over_connection_order(tmp_path, monkeypatch, revers
 
 
 @pytest.mark.parametrize("progressive", [False, True])
-def test_unowned_and_other_profile_sessions_do_not_gain_active_credential(
+def test_disconnected_active_paris_never_falls_back_to_foreign_owner(
     tmp_path, monkeypatch, progressive,
 ):
     service = _setup(tmp_path, monkeypatch)
+    foreign_queries = []
     try:
-        # Alice's Paris session disconnects; keeping the existing catalogue
-        # discovery fallback must NOT rewrite Bob's source_credential to Alice.
+        # The earlier fallback was only safe when the source owner was
+        # unknown. A known Bob credential must not be searched under Alice,
+        # even though it would keep its original source_credential.
         service._sessions["session-alice"].connected = False
+        bob = service._sessions["session-bob"]
+        original = bob.search
+        def observed(*args, **kwargs):
+            foreign_queries.append(True)
+            return original(*args, **kwargs)
+        bob.search = observed
         if progressive:
-            service.search_progressive("Serpentine", provider_id="paris", force=True)
+            summary = service.search_progressive(
+                "Serpentine", provider_id="paris", force=True,
+            )
+            assert summary.cancelled is False
             results = service.last_search
         else:
             results = service.search("Serpentine", provider_id="paris", force=True)
-        assert len(results) == 1
-        assert results[0].source_credential == "paris-bob"
+        assert results == []
+        assert foreign_queries == []
     finally:
         service.close()
 

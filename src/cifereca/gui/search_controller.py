@@ -201,13 +201,21 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
             lambda: self.service.search_known_catalog(state.text, state.scope, field=state.field, identity_id=identity_id),
             done, control=self.search_button, priority=TaskPriority.USER_ACTION, kind="search-known")
         return
-    # Retain all already-loaded provider/type results for instant reversal
-    # of facet changes. A different text/field begins a new result universe.
+    # A NEW explicit online request is a new source/account snapshot even
+    # when the text and local facets are unchanged. Merging its batches with
+    # earlier rows could retain a Paris edition from the former primary
+    # credential (or a now-disconnected reader). Local facet changes remain
+    # reversible without re-querying, using this request's loaded rows only.
     request_key = (state.text, state.field, state.scope)
+    had_remote_rows = bool(self._remote_search_results)
     if request_key != getattr(self, "_remote_query_key", None):
-        self._remote_search_results = []
         if state.text != self._last_search_query: self._search_local_objects = {}
+    self._remote_search_results = []
     self._remote_query_key = request_key
+    if had_remote_rows:
+        # Revoke old GTK row/detail actions synchronously, before any worker
+        # completes. Late batches are independently rejected by generation.
+        self._populate_search([], announce=False)
     self._last_search_query = state.text
     pending_token = object()
     self._online_pending_key = online_key

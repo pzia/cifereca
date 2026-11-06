@@ -20,6 +20,7 @@ def test_active_components_trigger_real_gtk_e2e():
     patterns = e2e_pull_request_patterns()
     included = (
         "src/cifereca/brokers.py", "src/cifereca/core/source_materialization.py",
+        "src/cifereca/core/search_orchestration.py",
         "src/cifereca/core/loan_local_preparation.py",
         "src/cifereca/core/loan_provider_delivery.py",
         "src/cifereca/core/numilog_direct_acquisition.py",
