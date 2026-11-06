@@ -1648,8 +1648,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     # sync must never make a remote title disappear merely because its
     # manifest could not be observed.  Artifacts/placements/catalog rows are
     # deliberately preserved by Storage.backup_prune_missing().
-    if not confirmed:
-        _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, prunable_credentials=prunable_credentials)
+    # #3196/W3: remote manifest absence can no longer delete Kobo archive
+    # rows. The legacy_pruned counters remain zero for report ABI stability.
     summary["attempts_saved"] = sum(
         max(0, int(getattr(session, "_cifereca_delegation_attempts_saved", 0))
             - delegation_saved_before.get(id(session), 0))
@@ -1851,25 +1851,6 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
     if summary["recovered_unparsed"]:
         emit("recovered_unparsed", count=summary["recovered_unparsed"])
 
-
-
-def _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, *, prunable_credentials=None):
-    # Preserve compatibility for callers without an explicit authority set.
-    if prunable_credentials is None:
-        prunable_credentials = (
-            set(authoritative_manifest_ids)
-            if not summary.get("errors") and not summary.get("aborted") else set()
-        )
-    for source_credential, seen_ids in authoritative_manifest_ids.items():
-        if source_credential not in prunable_credentials:
-            continue
-        pruned = self.storage.backup_prune_missing("kobo", source_credential, seen_ids)
-        summary["legacy_pruned"] += int(pruned.get("pruned") or 0)
-        summary["legacy_local_preserved"] += int(pruned.get("local_preserved") or 0)
-        summary["legacy_entitlements_inactivated"] += int(pruned.get("entitlements_inactivated") or 0)
-        if pruned.get("pruned"):
-            emit("legacy_pruned", credential_id=source_credential,
-                 count=pruned.get("pruned"), local_preserved=pruned.get("local_preserved"))
 
 
 _KOBO_DIAGNOSTIC_METRICS = frozenset({
