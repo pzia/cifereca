@@ -112,21 +112,14 @@ def test_same_exact_witness_deduplicated_but_different_credential_preserved():
     assert len(v.options) == 2
 
 
-def test_conflicting_edition_or_session_epoch_for_same_account_fails_closed():
+def test_conflicting_epoch_or_transfer_for_same_account_fails_closed():
     original = witness()
-    for changed in (
-        witness(edition="edition-2"),
-        witness(source_epoch=2),
-        witness(transfer="blocked"),
-    ):
+    for changed in (witness(source_epoch=2), witness(transfer="blocked")):
         with pytest.raises(ValueError, match="conflicting_cross_profile_borrow_offer"):
-            project(original, changed, edition="edition-1") if changed.edition_id == "edition-1" else (
-                # Both edition IDs must be within one demanded edition: a
-                # foreign edition must be ignored, never become a conflict.
-                project(original, changed)
-            )
-    # Explicit different edition is refused without contaminating own offer.
-    assert project(original, witness(edition="edition-2")).rejected_count == 1
+            project(original, changed)
+    # An unselected edition never becomes an action for the requested book.
+    v = project(original, witness(edition="edition-2"))
+    assert len(v.options) == 1 and v.rejected_count == 1
 
 
 @pytest.mark.parametrize("change", [
