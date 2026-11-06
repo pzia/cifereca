@@ -215,3 +215,32 @@ def test_ordinary_pending_archived_manifest_still_records_archive(
         )["status"] == "skipped_archived"
     finally:
         service.close()
+
+
+def test_real_legacy_sync_archive_then_unarchive_preserves_crash_checkpoint(
+        tmp_path, monkeypatch):
+    """Exercise recovery + manifest refresh + archived skip, not only helper."""
+    raw = {**_manifest_row(revision_id="rev-new"), "archived": True}
+    service = _service(tmp_path, manifest=[raw])
+    try:
+        service.storage.backup_put(_checkpoint(
+            status="acquiring", revision="rev-before-crash",
+        ))
+        _forbid_download(service, monkeypatch)
+        archived = service.sync_kobo_backup()
+        stored = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert archived["attempted"] == archived["downloaded"] == 0
+        assert archived["skipped_archived"] == 1
+        assert stored["status"] == "pending_acquisition"
+        assert stored["attention_code"] == "interrupted_acquisition_review"
+        assert stored["revision_id"] == "rev-before-crash"
+        # Manifest changes without a new user-triggered borrowing/download.
+        raw["archived"] = False
+        unarchived = service.sync_kobo_backup()
+        assert unarchived["attempted"] == unarchived["downloaded"] == 0
+        assert unarchived["reconcile_pending"] == 1
+        assert service.storage.backup_get(
+            "kobo", "vault-1", "book-1",
+        ) == stored
+    finally:
+        service.close()
