@@ -134,3 +134,36 @@ def test_final_partial_warning_remains_visible_after_filtering():
     assert view._summary.value == (
         "0 sur 1 · « Dumas » · Ordre diversifié · 1 recherche(s) partiellement en erreur"
     )
+
+
+def test_summary_reports_active_shared_support_and_format_without_recalculation():
+    view = object.__new__(UxRecommendationsView)
+    view._ranked = ['one', 'two']
+    view._matches = lambda row: row == 'one'
+    view._view_filters = lambda: ('', (), ())
+    view._summary = Label()
+    view._partial_warning_count = 0
+    view._query_controls = NS(
+        active_document_labels=lambda: ('Type · Numérique', 'EPUB'),
+    )
+    view._update_view_summary(provisional=False)
+    assert view._summary.value == (
+        '1 sur 2 · Type · Numérique · EPUB · Ordre diversifié'
+    )
+
+
+def test_optional_document_labels_are_bounded_and_legacy_host_is_safe():
+    view = object.__new__(UxRecommendationsView)
+    view._ranked = ['one']
+    view._matches = lambda row: True
+    view._view_filters = lambda: ('', (), ())
+    view._summary = Label()
+    view._partial_warning_count = 0
+    view._query_controls = NS(
+        active_document_labels=lambda: ('SECRET' * 200,),
+    )
+    view._update_view_summary(provisional=False)
+    assert view._summary.value == '1 recommandation(s) · Ordre diversifié'
+    view._query_controls = None
+    view._update_view_summary(provisional=False)
+    assert view._summary.value == '1 recommandation(s) · Ordre diversifié'
