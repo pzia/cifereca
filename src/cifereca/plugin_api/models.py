@@ -1109,6 +1109,14 @@ class UiExactSearchDetailHost(UiPageHost, Protocol):
         docbase: str, source_collection: str, identity_id: str,
     ) -> bool: ...
 
+    def present_known_search_detail_in_place(
+        self, *, view: UiBookMasterDetailView,
+        context_sections: tuple[DetailSection, ...],
+        is_current: Callable[[], bool],
+        provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool: ...
+
 
 @runtime_checkable
 class UiKnownSearchNoticeHost(UiPageHost, Protocol):
