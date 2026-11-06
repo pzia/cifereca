@@ -1509,6 +1509,22 @@ class UxRecommendationsView:
             filters.append(f"« {text_filter} »")
         filters.extend(self._display_source(source) for source in sources)
         filters.extend(_language_label(language) for language in languages)
+        # Same Core LocalQueryControls as Search: expose current format and
+        # support choices in the visible counter. Absent/legacy hosts simply
+        # omit the optional labels; this is presentation, not a new filter.
+        controls = getattr(self, "_query_controls", None)
+        describe_documents = getattr(controls, "active_document_labels", None)
+        if callable(describe_documents):
+            try:
+                labels = describe_documents()
+                if (type(labels) is tuple and len(labels) <= 32
+                        and all(
+                            type(value) is str and 0 < len(value) <= 120
+                            and value.isprintable() for value in labels
+                        )):
+                    filters.extend(labels)
+            except Exception:
+                pass
 
         if filters or visible != total:
             parts = [f"{visible} sur {total}"]
