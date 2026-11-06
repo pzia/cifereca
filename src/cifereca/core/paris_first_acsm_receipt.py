@@ -51,7 +51,7 @@ def stage_paris_initial_acsm(service, session, account: Account, loan: Loan,
         candidate, _url = session.download_digital(
             loan, account, directory, admission_current=scope_current,
             initial_offer_only=True)
-        if (scope_current() is not True or type(candidate) is not Path
+        if (scope_current() is not True or not isinstance(candidate, Path)
                 or directory.is_symlink() or candidate.is_symlink()
                 or candidate.parent != directory
                 or candidate.suffix.casefold() != ".acsm"
