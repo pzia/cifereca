@@ -1824,9 +1824,24 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             accounts = session.accounts
             bound = self.storage.identity_for_connection("kobo", source)
             if (len(accounts) != 1 or type(bound) is not str or not bound
+                    or getattr(accounts[0], "provider_id", None) != "kobo"
                     or accounts[0].credential_id != source
-                    or accounts[0].identity_id != bound
+                    # The old provider account may report the historical
+                    # "default" identity alias. Only the independently bound
+                    # SQLite owner below determines the current profile.
+                    or accounts[0].identity_id not in {bound, "default"}
+                    or type(accounts[0].unique_id) is not str
                     or not accounts[0].unique_id):
+                continue
+            # An inactive/rebound connection must not drive 0.7 recovery.
+            # Check the live enabled source, not only its historical owner.
+            bindings = [
+                row for row in self.storage.provider_connections(identity_id=bound)
+                if row.get("provider_id") == "kobo"
+                and row.get("credential_id") == source
+                and row.get("enabled") is True
+            ]
+            if len(bindings) != 1:
                 continue
             live[source] = (bound, accounts[0].unique_id)
         except (AttributeError, TypeError, ValueError):
