@@ -214,9 +214,9 @@ class PluginSelectionTests(unittest.TestCase):
             [{"id": "bad", "type": "bad", "requires_contracts": None}],
             [{"id": "bad", "type": "bad", "requires_contracts": [None]}],
         )
-        for plugins in invalid_plugins:
+        for index, plugins in enumerate(invalid_plugins):
             with self.subTest(plugins=plugins):
-                self.add_package("broken", plugins)
+                self.add_package(f"broken-{index}", plugins)
                 names, reason = self.names([("M", "src/plugins/provider/module.py")])
                 self.assertEqual(names, [])
                 self.assertTrue(reason.startswith("full:"), reason)
