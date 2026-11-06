@@ -121,13 +121,20 @@ class ResourceObservation:
     evidence_ref: str
     observed_at: str
     right: OptionalRightMetadata | None = None
+    # Optional provider-manifest revision: migration comparison only.
+    provider_revision_id: str | None = None
 
     def __post_init__(self) -> None:
         if (type(self.source) is not SourceReference
                 or type(self.capability) is not DownloadCapability
                 or not _token(self.evidence_ref)
                 or not _timestamp(self.observed_at)
-                or (self.right is not None and type(self.right) is not OptionalRightMetadata)):
+                or (self.right is not None and type(self.right) is not OptionalRightMetadata)
+                or (self.provider_revision_id is not None
+                    and (not _token(self.provider_revision_id)
+                         or self.provider_revision_id != self.provider_revision_id.strip()
+                         or any(ord(c) < 32 or ord(c) == 127
+                                for c in self.provider_revision_id)))):
             raise ValueError("invalid_downloadable_observation")
 
     @property
@@ -256,6 +263,7 @@ def from_legacy_rights_snapshot(snapshot: ProviderRightsSnapshot) -> ResourceSna
             evidence_ref=item.evidence_ref,
             observed_at=item.observed_at,
             right=OptionalRightMetadata(state=item.state, right_id=item.right_id),
+            provider_revision_id=item.provider_revision_id,
         ))
     full_attestation = len(resources) == len(snapshot.rights)
     return ResourceSnapshot(
@@ -294,6 +302,7 @@ def as_legacy_rights_snapshot(snapshot: ResourceSnapshot) -> ProviderRightsSnaps
                 delivery=item.capability.state,
                 delivery_offer_id=item.capability.offer_id,
                 delivery_unavailable_reason=item.capability.unavailable_reason,
+                provider_revision_id=item.provider_revision_id,
             ) for item in snapshot.resources
         ),
         status=snapshot.status, coverage=snapshot.coverage,
