@@ -333,6 +333,23 @@ class LibraryService:
             expected_account=expected_account,
         )
 
+    def cross_profile_borrow_progress(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+    ):
+        """#4662: observe only the lender's durable loan claim.
+
+        A confirmed loan is separate from an unverified transfer; this
+        accessor never borrows again, fulfills ADEPT or sends a local copy.
+        """
+        from .core.borrow_for_identity_progress import (
+            observed_cross_profile_borrow_progress,
+        )
+        return observed_cross_profile_borrow_progress(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+        )
+
     def preview_borrow_for_current_identity(
         self, *, expected_edition_id: str, observations: object,
         now: int | None = None,
