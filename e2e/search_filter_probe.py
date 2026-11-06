@@ -587,12 +587,16 @@ def main() -> int:
         result["p0_4673_stage"] = "button_" + identity
         actions = [
             button for button in window.search_page.detail._action_buttons
-            if button.get_label() == "Emprunter"
+            if getattr(button, "_cifereca_action_label", None) == "Emprunter"
         ]
         if not actions or source.holdings_calls == 0:
             if monotonic() < paris_deadline[0]:
                 later(90, lambda: check_paris_action(identity))
                 return
+            result["p0_4673_stage"] = (
+                "holdings_" + identity if source.holdings_calls == 0
+                else "button_" + identity
+            )
             raise AssertionError("Current Paris account has no GTK borrow action")
         assert len(actions) == 1
         assert source.borrow_calls == 0
@@ -641,7 +645,7 @@ def main() -> int:
         assert window._remote_search_results == []
         assert window.search_page.store.get_n_items() == 0
         assert not any(
-            button.get_label() == "Emprunter"
+            getattr(button, "_cifereca_action_label", None) == "Emprunter"
             for button in window.search_page.detail._action_buttons
         )
         later(130, finish_disconnected_alex)
