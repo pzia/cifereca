@@ -21,3 +21,9 @@ Replis conservés : changement de manifeste, de helper, renommage, suppression, 
 ## Sortie de #4209
 
 L'audit du graphe peut être déclaré complet après PR CI verte. **La mesure du gain de durée**, distincte du nombre de suites sélectionnées, reste à produire sur runs comparables ; ne pas fermer l'objectif « bénéfice mesuré » sans cette preuve.
+
+## Cas d'import homonyme qualifié par la CI
+
+Le package distinct `runtime-kobo-adept` contient des modules `cifereca_kobo_adept_*`. Ils ne sont pas des imports du fournisseur `cifereca_kobo` et ne peuvent pas être signalés comme consommation du package `provider-kobo`. Le garde de régression examine les imports Python concrets tout en excluant uniquement ce préfixe ADEPT reconnu ; les références explicites aux identifiants du catalogue/compte Kobo restent vérifiées.
+
+Cette distinction a été imposée après un premier échec du test de sélection en CI sur un faux positif d'homonymie. La CI doit être rejouée sur le HEAD final avant fusion.
