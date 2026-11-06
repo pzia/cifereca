@@ -3911,7 +3911,8 @@ class LibraryService:
         library_target_dir = self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
         target_dir = self._acquisition_work_dir(identity.identity_id, loan.source_provider, loan.id)
         normal_cached = None if force_refresh else acsm_cache.reuse(
-            target_dir, loan, identity.identity_id, account_key)
+            target_dir, loan, identity.identity_id, account_key,
+            claim_state=self.storage.loan_borrow_state)
         initial_cached = (None if force_refresh or normal_cached is not None
                           else acsm_cache.reuse_initial(
                               target_dir, loan, identity.identity_id, account_key,
@@ -3934,7 +3935,11 @@ class LibraryService:
         )
         if cached is None or initial_cached is not None:
             self.acquisition.run_post_download(hook_item, path, url, target_dir)
-            acsm_cache.remember(path, target_dir, loan, identity.identity_id, account_key)
+            acsm_cache.remember(
+                path, target_dir, loan, identity.identity_id, account_key,
+                initial_claim_bound=initial_cached is not None,
+                claim_state=self.storage.loan_borrow_state,
+            )
         is_acsm = path.suffix.casefold() == ".acsm"
         if not is_acsm and path.is_file():
             # A provider may yield a final file directly. Publish it into the

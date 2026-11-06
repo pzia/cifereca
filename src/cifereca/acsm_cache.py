@@ -67,7 +67,8 @@ def _digest(path: Path, directory: Path, now: float) -> str | None:
         return None
 
 
-def reuse(directory: Path, loan, identity_id: str, account_id: str, *, now=None) -> Path | None:
+def reuse(directory: Path, loan, identity_id: str, account_id: str, *,
+          now=None, claim_state=None) -> Path | None:
     now = time.time() if now is None else now
     manifest = directory / MANIFEST
     try:
@@ -84,18 +85,58 @@ def reuse(directory: Path, loan, identity_id: str, account_id: str, *, now=None)
             return None
         path = directory / name
         digest = _digest(path, directory, now)
-        return path if digest and digest == row.get('sha256') else None
+        if not digest or digest != row.get('sha256'):
+            return None
+        # An ACSM promoted from a one-shot first offer keeps its immutable
+        # claim binding even after post-download hooks succeeded. Merely
+        # matching the standard URL-keyed sidecar is not a substitute.
+        if row.get('initial_claim_bound') is True:
+            if claim_state is None:
+                return None
+            initial = reuse_initial(
+                directory, loan, identity_id, account_id,
+                now=now, claim_state=claim_state,
+            )
+            if initial != path:
+                return None
+        elif 'initial_claim_bound' in row:
+            # Unknown/forged provenance markers can never weaken the check.
+            return None
+        else:
+            # #4644/#4648 may have written an ordinary post-hook cache
+            # before the claim-bound marker existed. Do not grandfather in
+            # a same-file first-offer receipt as an unqualified cache hit.
+            initial_row = _read_initial_manifest(directory)
+            if (initial_row is not None and initial_row.get('file') == name):
+                if (claim_state is None or reuse_initial(
+                        directory, loan, identity_id, account_id,
+                        now=now, claim_state=claim_state,
+                ) != path):
+                    return None
+        return path
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return None
 
 
-def remember(path: Path, directory: Path, loan, identity_id: str, account_id: str, *, now=None) -> bool:
+def remember(path: Path, directory: Path, loan, identity_id: str, account_id: str, *,
+             now=None, initial_claim_bound=False, claim_state=None) -> bool:
     now = time.time() if now is None else now
     digest = _digest(path, directory, now)
-    if directory.is_symlink() or not digest or not _active(loan, now):
+    if (type(initial_claim_bound) is not bool
+            or directory.is_symlink() or not digest or not _active(loan, now)):
         return False
+    if initial_claim_bound:
+        # Not sufficient as authority by itself; only a matching,
+        # independently verified first-offer receipt may be promoted.
+        if (claim_state is None or reuse_initial(
+                directory, loan, identity_id, account_id, now=now,
+                claim_state=claim_state,
+        ) != path):
+            return False
     row = dict(schema=1, scope=scope(loan, identity_id, account_id), file=path.name,
                sha256=digest, created_at=now)
+    if initial_claim_bound:
+        row['initial_claim_bound'] = True
     temporary = directory / (MANIFEST + '.' + uuid.uuid4().hex + '.tmp')
     try:
         with temporary.open('x', encoding='utf-8') as stream:

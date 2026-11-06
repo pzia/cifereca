@@ -222,3 +222,86 @@ def test_invalid_claim_cannot_create_initial_receipt(first_offer, claim):
         path, directory, loan, "identity-A", "primary",
         now=100, borrow_claim=claim)
     assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_posthook_cache_preserves_initial_claim_binding(first_offer):
+    """Postprocessing must not turn a conditional receipt into a free pass."""
+    directory, path, loan = first_offer
+    claim_key = "loan.borrow.v1:" + "b" * 64
+    operation_id = "operation-posthook"
+    accepted = {
+        "schema": 1, "operation": "loan.borrow",
+        "status": "confirmed", "operation_id": operation_id,
+        "request_accepted": True, "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
+    state = {claim_key: accepted}
+    fetch = state.get
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        borrow_claim=(claim_key, operation_id))
+    assert acsm_cache.remember(
+        path, directory, loan, "identity-A", "primary", now=101,
+        initial_claim_bound=True, claim_state=fetch)
+    later = replace(loan, ebook_url=None)
+    # The normal cache is still URL keyed: with the fresh URL omitted it
+    # cannot match. A same-URL read nevertheless has to check the claim.
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary",
+        now=102, claim_state=fetch) == path
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary", now=102) is None
+    assert acsm_cache.reuse_initial(
+        directory, later, "identity-A", "primary",
+        now=102, claim_state=fetch) == path
+    state.clear()
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary",
+        now=103, claim_state=fetch) is None
+    assert acsm_cache.reuse_initial(
+        directory, later, "identity-A", "primary",
+        now=103, claim_state=fetch) is None
+
+
+def test_posthook_promotion_needs_live_claim_and_cannot_drop_binding(first_offer):
+    directory, path, loan = first_offer
+    claim_key = "loan.borrow.v1:" + "c" * 64
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        borrow_claim=(claim_key, "op-A"))
+    assert not acsm_cache.remember(
+        path, directory, loan, "identity-A", "primary", now=101,
+        initial_claim_bound=True, claim_state=lambda _key: None)
+    assert not (directory / acsm_cache.MANIFEST).exists()
+    # The unrelated historical ordinary cache contract stays untouched.
+    acsm_cache.forget_initial(path)
+    assert acsm_cache.remember(
+        path, directory, loan, "identity-A", "primary", now=102)
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary", now=103) == path
+
+
+def test_legacy_unmarked_posthook_cache_cannot_bypass_existing_initial_receipt(first_offer):
+    """#4648-created sidecars remain protected after an in-place upgrade."""
+    directory, path, loan = first_offer
+    claim_key = "loan.borrow.v1:" + "d" * 64
+    operation_id = "legacy-upgrade"
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        borrow_claim=(claim_key, operation_id))
+    # An older version of Core promoted initial bytes into an ordinary
+    # cache sidecar without preserving the initial origin marker.
+    assert acsm_cache.remember(
+        path, directory, loan, "identity-A", "primary", now=101)
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary",
+        now=102, claim_state=lambda _key: None) is None
+    confirmed = {
+        "schema": 1, "operation": "loan.borrow",
+        "status": "confirmed", "operation_id": operation_id,
+        "request_accepted": True, "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary",
+        now=102, claim_state=lambda key: confirmed if key == claim_key else None) == path
