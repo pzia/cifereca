@@ -248,14 +248,7 @@ def execute(broker, source_id, token, control=None):
     lock = None
     locked = False
     terminal = None
-    baseline = {}
-    scope_credential = None
     completion_unknown = False
-
-    def completed():
-        return {row["item_id"]: (row.get("local_path"), row.get("sha256"), row.get("revision_id"))
-                for row in service.storage.backup_list("kobo", scope_credential)
-                if row.get("status") in {"ok", "complete"} and row.get("local_path") and row.get("sha256")}
 
     def cancelled():
         return bool(control is not None and control.cancelled())
@@ -270,11 +263,11 @@ def execute(broker, source_id, token, control=None):
 
     def finish(status, *, ok=False, counts=None):
         nonlocal terminal, downloaded, completion_unknown
-        if running:
-            try:
-                downloaded = max(downloaded, sum(baseline.get(key) != value for key, value in completed().items()))
-            except Exception:
-                completion_unknown = True
+        # #3196 D2: a changed legacy backup_items.complete row is NOT a
+        # completed acquisition. Count only Core-owned delivery events while
+        # running and the validated executor report on normal return. On a
+        # crash or missing report, keep completion_unknown rather than
+        # manufacturing a positive download from a 0.7 row/SHA/path.
         terminal = _result(status, ok=ok, changed=downloaded, counts=counts or {})
         if completion_unknown:
             terminal.facts["completion_unknown"] = True
@@ -309,8 +302,6 @@ def execute(broker, source_id, token, control=None):
                      and item.owned is True, "normalized_item_mismatch")
 
         guard()
-        scope_credential = account.credential_id
-        baseline = completed()
         broker._set_materialization_state(source_id, "running", attempted_at)
         running = True
         report = kobo_backup._sync_kobo_backup_locked(
