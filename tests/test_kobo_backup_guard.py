@@ -256,7 +256,7 @@ def test_missing_local_file_does_not_block(tmp_path: Path):
         service.close()
 
 
-def test_complete_linked_backup_is_unchanged(tmp_path: Path, monkeypatch):
+def test_complete_linked_without_historical_sha_requires_review(tmp_path: Path, monkeypatch):
     service = _service(tmp_path)
     artifact = tmp_path / "EBooks" / "alice" / "kobo" / "book-one.epub"
     _write_epub(artifact, b"already-linked")
@@ -279,16 +279,18 @@ def test_complete_linked_backup_is_unchanged(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(
         service,
         "_execute_kobo_acquisition",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("linked complete backup must be reused")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unproven historical backup must never be redownloaded")),
     )
     try:
         summary = service.sync_kobo_backup()
 
-        assert summary["unchanged"] == 1
+        assert summary["unchanged"] == 0
+        assert summary["reconcile_skipped"] >= 1
         assert summary["attempted"] == 0
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert row is not None
-        assert row["status"] == "complete"
+        assert row["status"] == "reconcile_required"
+        assert row["sha256"] is None
         assert Path(row["local_path"]).resolve() == artifact.resolve()
     finally:
         service.close()
