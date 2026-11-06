@@ -540,3 +540,95 @@ def audit_derived_receipt_retention(
         "has_more": next_cursor is not None,
         "destructive_cleanup_allowed": False,
     }
+
+
+def compact_committed_derived_intent(
+    service: Any, *, identity_id: str, receipt_cursor: str,
+    approved_receipt_sha256: str, after_cursor: str = "",
+) -> dict[str, Any]:
+    """Operator-approved SQL-only compaction of ONE finished intent.
+
+    This never unlinks, moves, rewrites, or truncates filesystem evidence.
+    The canonical Placement and derived OriginLink must be re-attested under
+    the same BEGIN IMMEDIATE transaction as the metadata DELETE.
+    """
+    if (type(receipt_cursor) is not str or not receipt_cursor
+            or len(receipt_cursor) > 512
+            or type(approved_receipt_sha256) is not str
+            or len(approved_receipt_sha256) != 64):
+        raise ValueError("derived_compaction_invalid_coordinates")
+    if (getattr(getattr(service, "current_identity", None), "identity_id", None)
+            != identity_id):
+        raise ValueError("derived_recovery_active_identity_mismatch")
+    approved = [
+        row for row in review_pending_derived_receipts(
+            service, identity_id=identity_id, after_cursor=after_cursor,
+            commit=False,
+        )
+        if row.get("cursor") == receipt_cursor
+        and row.get("status") == "already_committed"
+        and row.get("sha256") == approved_receipt_sha256
+    ]
+    if len(approved) != 1:
+        raise ValueError("derived_compaction_unattested_receipt")
+    identity = service.storage.identity_get(identity_id)
+    config = getattr(service, "config", None)
+    raw_root = config.get("library.directory", None) if config else None
+    dirname = identity.get("directory_name") if isinstance(identity, dict) else None
+    if not isinstance(raw_root, str) or not isinstance(dirname, str):
+        raise ValueError("derived_recovery_invalid_scope")
+    folder = Path(os.path.expandvars(raw_root)).expanduser() / dirname
+    journal = folder / receipt_cursor
+    raw = _read_receipt_nofollow(journal, profile_root=folder)
+    if hashlib.sha256(raw).hexdigest() != approved_receipt_sha256:
+        raise ValueError("derived_compaction_receipt_changed")
+    data = json.loads(raw)
+    if (not isinstance(data, dict) or data.get("identity_id") != identity_id):
+        raise ValueError("derived_compaction_invalid_receipt")
+    target = str(data["published_path"])
+    artifact_id = "sha256:" + data["output_sha256"]
+    placement_id = service.storage._stable_id("placement", target)
+    recipe_id = service.storage._stable_id(
+        "variant", data["source_sha256"], data["transformer_id"],
+        str(data["profile_id"] or ""), str(data["options_fingerprint"] or ""),
+    )
+    origin_proof = "derived:" + recipe_id + ":" + placement_id
+    storage = service.storage
+    key = _pending_intent_key(journal)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        valid = db.execute(
+            "SELECT 1 FROM placements p "
+            "JOIN origin_links o ON o.artifact_id=p.artifact_id "
+            "WHERE p.placement_id=? AND p.path=? AND p.identity_id=? "
+            "AND p.artifact_id=? AND p.provider_id='cifereca' "
+            "AND p.state='present' "
+            "AND o.identity_id=? AND o.origin_kind='derived' "
+            "AND o.parent_artifact_id=? AND o.evidence_ref=? LIMIT 1",
+            (placement_id, target, identity_id, artifact_id,
+             identity_id, data["source_artifact_id"], origin_proof),
+        ).fetchone()
+        if valid is None:
+            raise ValueError("derived_compaction_canonical_proof_missing")
+        intent = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (key,),
+        ).fetchone()
+        if intent is None:
+            result = "already_compacted"
+        elif intent[0] != approved_receipt_sha256:
+            raise ValueError("derived_compaction_intent_changed")
+        else:
+            changed = db.execute(
+                "DELETE FROM metadata WHERE key=? AND value=?",
+                (key, approved_receipt_sha256),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("derived_compaction_intent_changed")
+            result = "compacted"
+    return {
+        "status": result,
+        "receipt_cursor": receipt_cursor,
+        "receipt_retained": True,
+        "canonical_origin_retained": True,
+        "intent_removed": result == "compacted",
+    }
