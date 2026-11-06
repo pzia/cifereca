@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -141,5 +142,40 @@ def test_oversized_old_cover_cache_is_replaced_with_bounded_valid_image(
         loader.load(url, cached.append)
         assert cached == [path]
         assert len(calls) == 1
+    finally:
+        loader.close()
+
+
+def test_cover_cooldown_fallback_can_reenter_loader_without_deadlocking(
+    tmp_path, monkeypatch,
+):
+    """A cached HTTP failure must never call UI/preview callbacks under _lock."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    loader = CoverLoader(max_workers=2)
+    url = "https://covers.example.test/cooldown.png"
+    # No request is enqueued: simulate a prior bounded HTTP failure.
+    with loader._lock:
+        loader._fail_until[url] = time.monotonic() + 60.0
+    seen = []
+    try:
+        def first(value):
+            assert value is None
+            assert not loader._lock.locked()
+            assert loader.stats()["requested"] == 1
+            seen.append("first")
+            # A detail/list callback may immediately retry a different
+            # binding or request another placeholder from the same loader.
+            loader.load(url, lambda nested: seen.append(("nested", nested)))
+
+        loader.load(url, first)
+        assert seen == ["first", ("nested", None)]
+        assert loader.stats()["requested"] == 2
+        assert loader.stats()["queue"] == 0
+        assert loader.stats()["inflight_urls"] == 0
+
+        preview = []
+        loader.load_preview(url, preview.append, width=60, height=90)
+        assert preview == [None]
+        assert loader.stats()["queue"] == 0
     finally:
         loader.close()
