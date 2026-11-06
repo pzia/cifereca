@@ -159,36 +159,54 @@ _OBSERVED_CNLJ_NOTES = {
 
 
 def qualified_observed_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
-    """Qualify only whitelisted observed BnF audience codes on own ISBN.
+    """Qualify a single unambiguous own-ISBN BnF record, offline.
 
-    Still offline, and intentionally **not** a Core canonical age producer.
-    A malformed/ambiguous MARC or unknown code yields no numeric projection,
-    while raw original fields remain available via exact_edition_age_fields().
-    Distinct contradictory claims for one ARK are not reconciled by guessing.
+    No numeric value escapes if two distinct ARKs claim the same ISBN, or
+    any audience field of the matched record is unknown or contradictory.
+    Historical 329 critical reviews are not audience fields and do not veto
+    a verified 333. No digital support or Core age range is inferred.
     """
     observed = exact_edition_age_fields(xml, isbn)
-    candidates: dict[str, list[dict[str, object]]] = {}
-    for row in observed:
+    audience = [
+        row for row in observed
+        if (row["marc_format"], row["field_tag"]) in {
+            ("UNIMARC", "333"), ("INTERMARC", "833"),
+        }
+    ]
+    if not audience:
+        return []
+    # Multiple ARKs with the same own ISBN are not proof of the one
+    # manifestation meant by the caller; never pick the first SRU hit.
+    arks = {row["record_ark"] for row in observed}
+    if len(arks) != 1:
+        return []
+
+    candidates: list[dict[str, object]] = []
+    for row in audience:
         marker = (row["marc_format"], row["field_tag"])
         pairs = row["raw_subfields"]
-        bounds = None
         code = None
+        bounds = None
         if marker == ("UNIMARC", "333"):
-            notes = [v for k, v in pairs if k == "a"]
-            authority = [v for k, v in pairs if k == "2"]
-            if len(notes) == 1 and authority == ["CNLJ"]:
-                code = notes[0]
-                bounds = _OBSERVED_CNLJ_NOTES.get(code)
-        elif marker == ("INTERMARC", "833"):
-            values = [v for k, v in pairs if k == "m"]
-            if len(values) == 1:
-                code = values[0]
+            # The *whole* field shape must be the attested 333$a + $2=CNLJ,
+            # not just one recognizable subfield inside an unknown record.
+            if len(pairs) == 2 and {key for key, _ in pairs} == {"a", "2"}:
+                notes = [value for key, value in pairs if key == "a"]
+                authority = [value for key, value in pairs if key == "2"]
+                if len(notes) == 1 and authority == ["CNLJ"]:
+                    code = notes[0]
+                    bounds = _OBSERVED_CNLJ_NOTES.get(code)
+        else:
+            # An 833 with any additional/unknown subfield cannot be mapped
+            # safely merely because one $m happens to resemble a JAg code.
+            if len(pairs) == 1 and pairs[0][0] == "m":
+                code = pairs[0][1]
                 bounds = _OBSERVED_JAG.get(code)
-        # A critical review 329 and any unknown or malformed declaration
-        # are never numeric. Do not interpret ranges embedded in free text.
         if bounds is None:
-            continue
-        candidates.setdefault(row["record_ark"], []).append({
+            # Reject the *entire* candidate record if any age-bearing
+            # field is unqualified: no cherry-picking a favorable range.
+            return []
+        candidates.append({
             "record_ark": row["record_ark"],
             "own_isbn13": row["own_isbn13"],
             "marc_format": row["marc_format"],
@@ -201,13 +219,8 @@ def qualified_observed_age_fields(xml: bytes, isbn: str) -> list[dict[str, objec
             "edition_support_verified": False,
             "core_youth_age_range_authorized": False,
         })
-    result = []
-    for rows in candidates.values():
-        # Identical repeated Intermarc 833 fields do not count twice.
-        # Two different assertions from one record are conflicting; return
-        # neither as a normalized interval.
-        if len({(row["audience_age_min"], row["audience_age_max"])
-                for row in rows}) != 1:
-            continue
-        result.append(rows[0])
-    return result
+    if len({(row["audience_age_min"], row["audience_age_max"])
+            for row in candidates}) != 1:
+        return []
+    # Duplicate identical 833$m fields are one attested observation.
+    return candidates[:1]
