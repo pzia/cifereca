@@ -13,6 +13,7 @@
     "provider-gallica",
     "provider-gutenberg",
     "provider-numilog",
+    "provider-paris",
     "provider-reference",
     "recommendations",
     "transport-http"
