@@ -505,3 +505,102 @@ def test_other_collection_exact_permission_not_reused_by_another_route(harness):
     assert _preview(service, foreign_collection).options == ()
     assert _preview(service, base).status == "external"
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("change", [
+    {"edition_evidence": None},
+    {"edition_evidence": "denied"},
+    {"edition_evidence": "unknown"},
+    {"evidence": "quota_reached"},
+    {"transfer_state": "blocked"},
+])
+def test_conflicting_same_edition_observation_blocks_old_positive_in_any_order(
+    harness, change,
+):
+    service, account, session = harness
+    positive = _candidate()
+    if change["edition_evidence"] == "denied":
+        other = replace(positive, edition_evidence=replace(
+            positive.edition_evidence, item_offer="unavailable",
+        ))
+    elif change["edition_evidence"] == "unknown":
+        other = replace(positive, edition_evidence=replace(
+            positive.edition_evidence, item_offer="unknown",
+        ))
+    elif change["edition_evidence"] is None:
+        other = replace(positive, edition_evidence=None)
+    elif change.get("evidence") == "quota_reached":
+        other = replace(positive, evidence=replace(
+            positive.evidence, remaining_loans=0,
+        ))
+    else:
+        other = replace(positive, transfer_state="blocked")
+    assert _preview(service, positive, other).status == "none"
+    assert _preview(service, other, positive).status == "none"
+    assert session.calls == 0
+
+
+def test_identical_duplicates_can_be_collapsed_without_lender_duplication(harness):
+    service, account, session = harness
+    original = _candidate()
+    # Two independent notice rows can refer to the exact same offering.
+    same_offer = replace(
+        original, notice=replace(original.notice, id="other-search-row"),
+    )
+    preview = _preview(service, original, same_offer)
+    assert preview.status == "external"
+    assert len(preview.options) == 1
+    assert preview.options[0].executable is False
+    assert session.calls == 0
+
+
+def test_two_different_freshness_snapshots_on_same_route_are_ambiguous(harness):
+    service, account, session = harness
+    base = _candidate()
+    changed = replace(base, observed_at=1001)
+    assert _preview(service, base, changed).options == ()
+    assert _preview(service, changed, base).options == ()
+    assert session.calls == 0
+
+
+def test_denial_on_other_collection_does_not_veto_qualified_lender(harness):
+    service, account, session = harness
+    first = _candidate(collection="collection-1")
+    second = _candidate(collection="collection-2")
+    denied_second = replace(second, edition_evidence=replace(
+        second.edition_evidence, item_offer="unavailable",
+    ))
+    actual = _preview(service, first, denied_second)
+    assert actual.status == "external"
+    assert len(actual.options) == 1
+    # An independent source route (even for the same borrower) remains valid.
+    assert actual.options[0]._source_coordinates[6] == "collection-1"
+    assert session.calls == 0
+
+
+def test_unrelated_borrower_negative_cannot_veto_matching_borrower(harness):
+    service, account, session = harness
+    positive = _candidate()
+    other_borrower = replace(positive, evidence=replace(
+        positive.evidence, identity_id="default", account_id="other",
+    ))
+    assert _preview(service, positive, other_borrower).status == "external"
+    assert session.calls == 0
+
+
+def test_new_explicit_denial_rejects_held_click_even_if_old_positive_remains(harness):
+    service, account, session = harness
+    positive = _candidate()
+    before = _preview(service, positive)
+    assert before.status == "external"
+    now_denied = replace(positive, edition_evidence=replace(
+        positive.edition_evidence, item_offer="unavailable",
+    ))
+    stale = _click(
+        service, before, before.options[0].option_id,
+        positive, now_denied,
+    )
+    assert stale.status == "revoked"
+    assert stale.reason_code == "selection_stale"
+    assert stale.executable is False
+    assert session.calls == 0
