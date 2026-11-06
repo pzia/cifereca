@@ -1583,7 +1583,13 @@ class LibraryService:
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
-        key = f"{item.source_provider}:{item.source_credential}:{item.scenario}:{item.docbase}:{item.record_id}"
+        # Identical record IDs can belong to different collections. Scope
+        # cached availability and offers to the exact source and profile.
+        key = json.dumps((
+            "v2", getattr(self.current_identity, "identity_id", None),
+            item.source_provider, item.source_credential, item.scenario,
+            item.docbase, item.source_collection or "", item.record_id,
+        ), separators=(",", ":"))
         ttl = int(self.config.get("cache.holdings_seconds", 300))
         if not force:
             cached = self.storage.cache_get("holdings", key)

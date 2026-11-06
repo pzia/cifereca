@@ -1198,6 +1198,37 @@ class UiMasterDetailHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiLocalQueryControls(Protocol):
+    """Shared text, source and language controls for existing result sets.
+
+    Empty source/language selections mean all values. Replacing choices keeps
+    valid selections and does not call the user-change callback. The caller
+    supplies attested choices and owns filtering, counts and result rendering.
+    """
+
+    @property
+    def widget(self) -> Any: ...
+
+    def filter_text(self) -> str: ...
+    def selected_sources(self) -> tuple[str, ...]: ...
+    def selected_languages(self) -> tuple[str, ...]: ...
+    def set_choices(
+        self, *,
+        sources: tuple[tuple[str, str], ...] | None = None,
+        languages: tuple[tuple[str, str], ...] | None = None,
+    ) -> None: ...
+
+
+@runtime_checkable
+class UiLocalQueryHost(UiPageHost, Protocol):
+    """Optional shared query widgets with a callback for local filtering."""
+
+    def build_local_query_controls(
+        self, *, changed: Callable[[], None], placeholder: str,
+    ) -> UiLocalQueryControls: ...
+
+
+@runtime_checkable
 class UiPageActionHost(UiPageHost, Protocol):
     """Optional standard action-bar factory, Core 0.9.33 and later."""
     def build_action_bar(self, actions: tuple[UiActionContribution, ...]) -> object: ...
@@ -1256,7 +1287,7 @@ __all__ = [
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult",
     "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost",
-    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
+    "UiActionContribution", "UiPageContribution", "UiPageHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiPluginManagementHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiLocalQueryHost", "UiLocalQueryControls", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
     "PluginLifecycle", "PluginContext",
 ]
 

@@ -240,6 +240,10 @@ class _UiHost:
         )
     def build_standard_page(self, route: str):
         return self.window._build_standard_page(route)
+    def build_local_query_controls(self, *, changed, placeholder: str):
+        from .query_controls import LocalQueryControls
+
+        return LocalQueryControls(changed, placeholder)
     def import_acsm(self):
         if self._window_alive():
             self.window.choose_acsm()

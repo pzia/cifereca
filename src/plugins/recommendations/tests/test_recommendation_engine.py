@@ -116,6 +116,34 @@ def test_queries_start_with_repeated_author():
     assert "Bob Durand" in queries
 
 
+def test_duplicate_projections_of_one_book_do_not_amplify_reading_signals():
+    book = {
+        "title": "Mémoire des rues", "author": "Alice Martin",
+        "series": "Archives", "subjects": ["mémoire", "histoire"],
+        "description": "MÉMOIRE urbaine",
+    }
+    repeated = {
+        **book,
+        "metadata": {
+            "authors": ["ALICE MARTIN"],
+            "genres": ["Histoire et mémoire"],
+            "collection": "ARCHIVES",
+            "epub_metadata": {"subjects": ["Mémoire"], "series": "Archives"},
+        },
+        "provider_id": "paris", "state": "remote_loan_active",
+    }
+    other = {"title": "Chronique", "subjects": ["Histoire"]}
+
+    profile = build_profile([repeated, other])
+    assert profile == build_profile([book, other])
+    assert profile.authors == {"alice martin": 1}
+    assert profile.subjects == {"histoire": 2, "memoire": 1}
+    assert profile.series == {"archives": 1}
+    assert profile.title_terms["memoire"] == profile.description_terms["memoire"] == 1
+    assert profile.lexical_terms["memoire"] == 1
+    assert build_queries([repeated, other]) == build_queries([book, other])
+
+
 def test_mmr_increases_author_diversity():
     books = [
         {"title": "A", "author": "Alice", "metadata": {"subjects": ["science fiction"]}},

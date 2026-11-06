@@ -1701,8 +1701,8 @@ class UxRecommendationsView:
             if visible_exact:
                 edition_fields.append(DetailField(
                     "source-edition-warning", "Actions disponibles",
-                    "Choisir une notice dans Recherche pour consulter les "
-                    "disponibilités et les actions réellement autorisées.",
+                    "Choisir une notice source exacte : consulter ici ses "
+                    "actions lorsqu’elles sont qualifiées, ou utiliser Recherche.",
                 ))
             if len(exact_variants) > page_size:
                 edition_fields.append(DetailField(

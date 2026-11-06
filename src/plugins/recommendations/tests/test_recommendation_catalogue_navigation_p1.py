@@ -882,3 +882,18 @@ def test_in_place_is_never_offered_for_unknown_or_absent_mirror_proof():
     assert not [a for a in presentations[-1].actions
                 if a.id.startswith("recommendation.known-in-place.")]
     assert not calls and not searches
+
+
+def test_detail_hint_preserves_inplace_actions_and_safe_search_fallback():
+    view, identity, searches, detail, row = _view((_variant(),))
+    sections = [section for section in detail.sections
+                if section.id == "source-editions"]
+    assert len(sections) == 1
+    warning = next(field.value for field in sections[0].fields
+                   if field.id == "source-edition-warning")
+    assert "consulter ici" in warning
+    assert "ou utiliser Recherche" in warning
+    assert "Choisir une notice dans Recherche" not in warning
+    assert all(private not in warning for private in
+               ("vault-1", "book-1", "card-A"))
+    assert searches == []
