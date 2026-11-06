@@ -136,12 +136,29 @@ def attempt(service, account, item, **kwargs):
 @pytest.mark.parametrize("result", ["acsm", "no-acsm", "timeout"])
 def test_single_manual_action_confirms_current_loan_independently_of_acsm(tmp_path, result):
     service, session, account, item, state = setup(tmp_path, result=result)
+    first_get_attempts = []
+    first_get_errors = []
+    original_download = session.download_digital
+
+    def observed_download(*args, **kwargs):
+        first_get_attempts.append(kwargs.get("initial_offer_only") is True)
+        try:
+            return original_download(*args, **kwargs)
+        except Exception as exc:
+            # Only closed exception *types* are safe for CI assertions.
+            first_get_errors.append(type(exc).__name__)
+            raise
+
+    session.download_digital = observed_download
     try:
         assert service.can_borrow_paris(item)
         assert state["calls"] == []  # availability is inert
         outcome = attempt(service, account, item)
         assert outcome["status"] == "confirmed" and outcome["provider_verified"] is True
         assert state["mutations"] == 1
+        if result == "acsm":
+            assert first_get_attempts == [True]
+            assert first_get_errors == []
         assert len(state["calls"]) == (5 if result == "acsm" else 4)
         row = service.storage.loan_borrow_state(borrow_claim_key(account, item))
         assert row["verified_loan_id"] == "loan-exact" and row["status"] == "confirmed"
