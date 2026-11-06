@@ -541,6 +541,27 @@ def test_1599_recommendations_real_gtk_identity_and_local_isbn_action():
         assert marker in probe
 
 
+def test_774_recommendations_failed_gtk_probe_emits_only_closed_diagnostics():
+    """A failed GTK case must be diagnosable without revealing fixture data."""
+    runner = (ROOT / "e2e/run.py").read_text(encoding="utf-8")
+    probe = (ROOT / "e2e/recommendations_detail_probe.py").read_text(
+        encoding="utf-8"
+    )
+    import ast
+    ast.parse(runner)
+    ast.parse(probe)
+    for marker in (
+        '"P1_774_CLOSED_FAILURE_STAGE=" + phase',
+        '"P1_774_NUMERIC_" + key',
+        'and all(type(v) is int and 0 <= v <= 4096',
+        '"format_counter", "support_counter", "keyboard_focus"',
+        'report["p1_774_phase"] = "keyboard_verdict"',
+        'report["p1_774_geometry"] = {',
+    ):
+        assert marker in runner + probe
+    assert 'print("P1_774_RAW_FAILURE' not in runner
+
+
 def test_774_real_gtk_recommendations_covers_native_geometry_and_keyboard_filter():
     """CI must keep the actual GTK/XTEST checks, not synthetic state setters."""
     import ast
