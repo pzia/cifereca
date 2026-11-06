@@ -19,7 +19,7 @@ from cifereca.core.legacy_backup_publication_review import (
     review_legacy_backup_publication,
 )
 from tests.test_core_p0_3171_atomic_publication_v14 import (
-    BYTES, new_source, rows,
+    BYTES, new_source, rows, store,
 )
 from tests.test_core_p0_3196_legacy_backup_publication_review import legacy_rig
 
