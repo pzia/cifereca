@@ -6,6 +6,7 @@ ADEPT or content download. The accepted subset remains available to inspect.
 from __future__ import annotations
 
 import json
+import hashlib
 
 import pytest
 
@@ -19,6 +20,8 @@ def _restore_existing(service, *, item_id="historic", status="pending", path=Non
         "identity_id": "default", "item_id": item_id, "revision_id": "rev-1",
         "title": item_id, "format": "EPUB", "status": status,
         "local_path": str(path) if path else None,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest() if path else None,
+        "size": path.stat().st_size if path else None,
     })
 
 
