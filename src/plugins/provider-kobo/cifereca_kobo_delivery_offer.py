@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
@@ -184,9 +185,13 @@ def exact_kobo_offer_id(
     if type(candidates) is not list or not 1 <= len(candidates) <= 50:
         return reject("candidate_list_invalid")
 
-    def skip(reason: str) -> None:
-        if diagnostic is not None and len(candidates) == 1:
-            diagnostic["candidate_reason"] = reason
+    rejections: Counter[str] = Counter()
+
+    def skip(reason: str, *, single_reason: str | None = None) -> None:
+        if diagnostic is not None:
+            rejections[reason] += 1
+            if len(candidates) == 1:
+                diagnostic["candidate_reason"] = single_reason or reason
 
     if diagnostic is not None and len(candidates) == 1:
         observed = candidates[0]
@@ -202,7 +207,7 @@ def exact_kobo_offer_id(
                     ("candidate_source", source,
                      {"library_sync", "content_access_book"}),
                     ("candidate_media_format", observed.get("media_format"),
-                     {"epub", "kepub", "pdf", "acsm"}),
+                     {"epub", "kepub", "pdf", "acsm", "flepub", "unknown"}),
                     ("candidate_source_format", observed.get("source_format"),
                      {"epub", "kepub", "flepub", "epub3", "epub3fl"}),
                 ):
@@ -238,8 +243,13 @@ def exact_kobo_offer_id(
                 type(candidate[key]) is not str or candidate[key] != expected
             ):
                 return reject("candidate_scope_conflict")
-        if not _safe_https_get(candidate) or not _current_expiry(candidate):
-            skip("candidate_transport_or_expiry_invalid")
+        if not _safe_https_get(candidate):
+            skip("candidate_transport_invalid",
+                 single_reason="candidate_transport_or_expiry_invalid")
+            continue
+        if not _current_expiry(candidate):
+            skip("candidate_expiry_invalid",
+                 single_reason="candidate_transport_or_expiry_invalid")
             continue
         kind, handling = candidate.get("kind"), candidate.get("handling")
         drm = candidate.get("drm")
@@ -393,6 +403,12 @@ def exact_kobo_offer_id(
     if len(eligible) != 1:
         if diagnostic is not None:
             diagnostic["eligible_candidate_count"] = len(eligible)
+            diagnostic["candidate_selection"] = (
+                "multiple_eligible_candidates" if eligible else "no_eligible_candidates"
+            )
+            # Only publish counts after a complete pass. A conflicting scope
+            # aborts the descriptor before the remaining rows can be counted.
+            diagnostic["candidate_rejection_counts"] = dict(rejections)
         return reject(
             str(diagnostic.get("candidate_reason", "eligible_count_not_one"))
             if diagnostic is not None and len(candidates) == 1
