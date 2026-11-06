@@ -14,7 +14,7 @@ import time
 import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from cifereca.plugin_api import (
     Account, HistoryItem, ItemDetail, Loan, SearchResult,
@@ -1528,7 +1528,7 @@ class ParisProviderSession(ProviderSession):
         expected_right_id: str | None = None,
         expected_identity_id: str | None = None,
         selected_stage_fd: int | None = None,
-        admission_current=None,
+        admission_current=None, initial_offer_only: bool = False,
     ) -> tuple[Path, str]:
         """Existing-loan delivery only: exact live Paris borrower and loan.
 
@@ -1537,6 +1537,8 @@ class ParisProviderSession(ProviderSession):
         The same lock protects the full private GET/staging against reconnect,
         and mutable objects/broker ownership are fenced after network I/O.
         """
+        if initial_offer_only and not callable(admission_current):
+            raise ProviderConfigurationError("paris_initial_acsm_scope_required")
         with self._loan_inventory_lock:
             if (not self.connected or type(account) is not Account
                     or type(loan) is not Loan
@@ -1686,6 +1688,7 @@ class ParisProviderSession(ProviderSession):
             completed, historical_url = self._download_digital_scoped_impl(
                 delivery_loan, account, target_dir,
                 scope_guard=scope_current, borrower_uid=borrower_uid,
+                initial_offer_only=initial_offer_only,
                 selected_stage_fd=selected_stage_fd,
                 **({"stream_admission_current": scope_current}
                    if admission_current is not None else {}),
@@ -1701,7 +1704,8 @@ class ParisProviderSession(ProviderSession):
                                       target_dir: Path, *, scope_guard=None,
                                       borrower_uid=None,
                                       selected_stage_fd=None,
-                                      stream_admission_current=None) -> tuple[Path, str]:
+                                      stream_admission_current=None,
+                                      initial_offer_only=False) -> tuple[Path, str]:
         """Network + validated staging, guarded by download_digital in service."""
         def ensure_scope():
             if scope_guard is not None and not scope_guard():
@@ -1728,6 +1732,10 @@ class ParisProviderSession(ProviderSession):
                 book_id, public_site(url),
             )
         else:
+            if initial_offer_only:
+                # A first-borrow token GET can never create/extend a loan.
+                # Missing one-shot URL means no candidate, not a fallback POST.
+                raise ProviderConfigurationError("paris_initial_acsm_url_missing")
             _TRACE_LOG.info(
                 "TRACE download paris direct-loan-url missing book_id=%s fallback=DownloadDigitalDocument",
                 book_id,
@@ -1772,6 +1780,13 @@ class ParisProviderSession(ProviderSession):
         visited_urls: set[str] = set()
         for hop in range(12):
             ensure_scope()
+            if initial_offer_only and (
+                "assaredirect" in unquote(urlparse(current).path).casefold()
+                or not direct_url
+            ):
+                # The first borrow consumed its mutating ASSARedirect
+                # already. No redirect or fallback may replay that endpoint.
+                raise ProviderConfigurationError("paris_initial_acsm_replay_denied")
             self.client._validate_pnb_redirect_url(current)
             if current in visited_urls:
                 # The signed URL may carry borrower tokens: do not re-GET or log it.
@@ -1785,6 +1800,12 @@ class ParisProviderSession(ProviderSession):
             )
             ensure_scope()
             self.client._pnb_trace_response(response, hop=hop + 1, elapsed_ms=int((time.monotonic()-hop_started)*1000))
+            if initial_offer_only and response.status_code in {301, 302, 303, 307, 308}:
+                # The one-shot post-borrow read is never allowed to follow an
+                # unqualified redirect: its destination could be another
+                # supplier mutation endpoint. Keep the loan confirmed; the
+                # separately staged ACSM is simply unavailable.
+                raise ProviderConfigurationError("paris_initial_acsm_redirect_unqualified")
             if response.status_code not in {301,302,303,307,308}: break
             location = response.headers.get('location')
             if not location: raise ProviderConfigurationError('Redirection PNB sans Location')

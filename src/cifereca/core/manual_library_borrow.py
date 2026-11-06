@@ -237,6 +237,20 @@ def manual_borrow(
         )
         if finished is None:
             return _result("verification_unavailable", "borrow_checkpoint_unavailable")
+        if provider_id == "paris":
+            # #3121: the first signed ACSM offer exists only on the fresh Loan
+            # returned by the claimed borrow. Stage *after* the durable
+            # confirmed checkpoint, by a guarded, read-only token GET. Its
+            # failure does not negate the separately verified lender loan.
+            try:
+                from .paris_first_acsm_receipt import stage_paris_initial_acsm
+                stage_paris_initial_acsm(
+                    service, session, account, loan, scope_current=current)
+            except Exception:
+                # The borrow claim is already durably confirmed. A local
+                # staging/config/import fault cannot unconfirm it or reopen
+                # the mutating supplier request.
+                pass
         return _result("confirmed", "borrow_active_loan_observed", verified=True)
     except BorrowRequestNotSubmitted:
         # The trusted provider raises this ONLY before attempting a mutating request.

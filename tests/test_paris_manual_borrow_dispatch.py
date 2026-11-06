@@ -77,7 +77,14 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
         with sqlite3.connect(service.storage.path) as db:
             raw = db.execute("SELECT value FROM metadata WHERE key=?",
                              (borrow_claim_key(account, item),)).fetchone()
-        assert raw is not None and json.loads(raw[0])["status"] == "request_sent"
+        # The initial token GET belongs to the *same* borrowing action but
+        # occurs only AFTER the exact loan was confirmed in the Core claim.
+        # All preflight and ASSARedirect requests still require request_sent.
+        expected_checkpoint = (
+            "confirmed" if request.url.path.endswith("/synthetic.acsm")
+            else "request_sent"
+        )
+        assert raw is not None and json.loads(raw[0])["status"] == expected_checkpoint
         state["calls"].append(request.url.path)
         if request.url.path.endswith("ListLoans"):
             assert request.method == "GET"
@@ -87,6 +94,18 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
             if result == "duplicate" and state["active"]:
                 rows *= 2
             return httpx.Response(200, json={"success": True, "d": {"Loans": rows}})
+        if request.url.path.endswith("/synthetic.acsm"):
+            assert request.method == "GET"
+            if result in {"replay-redirect", "encoded-replay-redirect", "benign-redirect"}:
+                target = (href if result == "replay-redirect" else
+                          href.replace("ASSARedirect", "ASSA%52edirect")
+                          if result == "encoded-replay-redirect" else
+                          "/numerique/another-token.acsm")
+                return httpx.Response(302, headers={"Location": target})
+            return httpx.Response(200, content=(
+                b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
+                b'<format>application/epub+zip</format></fulfillmentToken>'
+            ), headers={"content-type": "application/vnd.adobe.adept+xml"})
         if "GetListHoldings" in request.url.path:
             assert request.method == "POST"
             state["before_holdings"]()
@@ -126,12 +145,30 @@ def attempt(service, account, item, **kwargs):
 @pytest.mark.parametrize("result", ["acsm", "no-acsm", "timeout"])
 def test_single_manual_action_confirms_current_loan_independently_of_acsm(tmp_path, result):
     service, session, account, item, state = setup(tmp_path, result=result)
+    first_get_attempts = []
+    first_get_errors = []
+    original_download = session.download_digital
+
+    def observed_download(*args, **kwargs):
+        first_get_attempts.append(kwargs.get("initial_offer_only") is True)
+        try:
+            return original_download(*args, **kwargs)
+        except Exception as exc:
+            # Only closed exception *types* are safe for CI assertions.
+            first_get_errors.append(type(exc).__name__)
+            raise
+
+    session.download_digital = observed_download
     try:
         assert service.can_borrow_paris(item)
         assert state["calls"] == []  # availability is inert
         outcome = attempt(service, account, item)
         assert outcome["status"] == "confirmed" and outcome["provider_verified"] is True
-        assert state["mutations"] == 1 and len(state["calls"]) == 4
+        assert state["mutations"] == 1
+        if result == "acsm":
+            assert first_get_attempts == [True]
+            assert first_get_errors == []
+        assert len(state["calls"]) == (5 if result == "acsm" else 4)
         row = service.storage.loan_borrow_state(borrow_claim_key(account, item))
         assert row["verified_loan_id"] == "loan-exact" and row["status"] == "confirmed"
         assert service.storage.entitlements(provider_id="paris") == []
@@ -315,5 +352,127 @@ def test_ui_never_remaps_explicit_foreign_account_to_primary(tmp_path):
                              TaskPriority=NS(USER_ACTION=object()),
                              account=replace(account, unique_id="linked-reader"))
         assert not window.runner.tasks and state["calls"] == []
+    finally:
+        service.close()
+
+
+def test_first_offer_staged_and_reused_without_reborrowing_or_reusing_url(tmp_path, monkeypatch):
+    """First signed URL -> private ACSM -> stable receipt -> later acquisition.
+
+    In particular, an inventory loan lacking that one-shot URL must still
+    reuse the staged bytes and cannot trigger another ASSARedirect.
+    """
+    from unittest.mock import Mock
+    from cifereca import acsm_cache
+
+    service, session, account, item, state = setup(tmp_path, result="acsm")
+    token = (b'<fulfillmentToken xmlns="http://ns.adobe.com/adept">'
+             b'<format>application/epub+zip</format></fulfillmentToken>')
+    stage_calls = []
+    staged_loans = []
+
+    def first_token(loan, owner, directory, *, admission_current=None,
+                    initial_offer_only=False):
+        assert initial_offer_only is True
+        assert admission_current is not None
+        assert admission_current()
+        assert owner is account
+        assert loan.record_id == item.record_id
+        assert loan.ebook_url.endswith("synthetic.acsm")
+        stage_calls.append("GET-first-offer")
+        staged_loans.append(loan)
+        path = directory / "first-offer.acsm"
+        path.write_bytes(token)
+        return path, ""
+
+    monkeypatch.setattr(session, "download_digital", first_token)
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        assert stage_calls == ["GET-first-offer"]
+        assert state["mutations"] == 1
+        assert len(state["calls"]) == 4
+
+        later_loan = replace(staged_loans[0], ebook_url=None)
+        directory = service._acquisition_work_dir("default", "paris", "loan-exact")
+        staged = acsm_cache.reuse_initial(
+            directory, later_loan, "default", "primary")
+        assert staged is not None and staged.read_bytes() == token
+        service.acquisition.run_post_download = Mock()
+        outcome2 = service.acquire_digital_loan(later_loan)
+        assert outcome2.kind == "acsm"
+        assert outcome2.path == staged
+        assert state["mutations"] == 1 and stage_calls == ["GET-first-offer"]
+        service.acquisition.run_post_download.assert_called_once()
+        # A subsequent read uses standard post-hook cache; no second hook.
+        service.acquire_digital_loan(later_loan)
+        service.acquisition.run_post_download.assert_called_once()
+    finally:
+        service.close()
+
+
+def test_first_offer_get_failure_does_not_repeat_or_unconfirm_borrow(tmp_path, monkeypatch):
+    service, session, account, item, state = setup(tmp_path, result="acsm")
+    attempts = []
+
+    def unavailable(*_args, **_kwargs):
+        attempts.append("GET")
+        raise RuntimeError("supplier first token unavailable")
+
+    monkeypatch.setattr(session, "download_digital", unavailable)
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        assert attempts == ["GET"]
+        assert state["mutations"] == 1
+        assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
+        assert attempts == ["GET"]
+        assert state["mutations"] == 1
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("result", ["replay-redirect", "encoded-replay-redirect"])
+def test_first_token_redirect_cannot_reenter_mutating_assaredirect(tmp_path, result):
+    """A signed token GET returning a loan endpoint is rejected without replay."""
+    from cifereca import acsm_cache
+
+    service, _session, account, item, state = setup(
+        tmp_path, result=result)
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        # The first request creates the loan. The redirected second one is
+        # refused *before* any HTTP request to the mutating endpoint.
+        assert state["mutations"] == 1
+        assert len(state["calls"]) == 5
+        stage = service._acquisition_work_dir("default", "paris", "loan-exact")
+        assert not (stage / acsm_cache.INITIAL_MANIFEST).exists()
+        assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
+        assert state["mutations"] == 1
+    finally:
+        service.close()
+
+
+def test_initial_offer_never_follows_even_a_benign_redirect(tmp_path):
+    """Only the supplied first-offer URL may be read, never redirect targets."""
+    from cifereca import acsm_cache
+
+    service, _session, account, item, state = setup(
+        tmp_path, result="benign-redirect")
+    try:
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "confirmed"
+        assert outcome["provider_verified"] is True
+        assert state["mutations"] == 1
+        assert state["calls"].count("/numerique/synthetic.acsm") == 1
+        assert "/numerique/another-token.acsm" not in state["calls"]
+        stage = service._acquisition_work_dir("default", "paris", "loan-exact")
+        assert not (stage / acsm_cache.INITIAL_MANIFEST).exists()
+        assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
+        assert state["mutations"] == 1
     finally:
         service.close()

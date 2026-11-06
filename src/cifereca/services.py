@@ -3872,15 +3872,21 @@ class LibraryService:
         )
 
     def _cleanup_acsm_after_success(self, path: Path | None, *, loan_id: str) -> None:
+        def forget_receipts(used_path):
+            acsm_cache.forget(used_path)
+            acsm_cache.forget_initial(used_path)
         return acsm_staging.cleanup_acsm_after_success(
-            path, loan_id=loan_id, forget=acsm_cache.forget, logger=_TRACE_LOG,
+            path, loan_id=loan_id, forget=forget_receipts, logger=_TRACE_LOG,
         )
 
     def _cleanup_old_acsm_work(self, *, max_age_seconds: int | None = None) -> dict[str, int]:
+        def forget_receipts(expired_path):
+            acsm_cache.forget(expired_path)
+            acsm_cache.forget_initial(expired_path)
         return acsm_staging.cleanup_old_acsm_work(
             self.storage.path, max_age_seconds=max_age_seconds,
             config_get=self.config.get, clock=time.time,
-            forget=acsm_cache.forget, logger=_TRACE_LOG,
+            forget=forget_receipts, logger=_TRACE_LOG,
         )
 
     def acquire_digital_loan(self, loan: Loan, *, force_refresh: bool = False) -> Acquisition:
@@ -3904,7 +3910,12 @@ class LibraryService:
                         loan_trace_ref(loan, None), trace_ref)
         library_target_dir = self.library_identity_provider_dir(identity.identity_id, loan.source_provider)
         target_dir = self._acquisition_work_dir(identity.identity_id, loan.source_provider, loan.id)
-        cached = None if force_refresh else acsm_cache.reuse(target_dir, loan, identity.identity_id, account_key)
+        normal_cached = None if force_refresh else acsm_cache.reuse(
+            target_dir, loan, identity.identity_id, account_key)
+        initial_cached = (None if force_refresh or normal_cached is not None
+                          else acsm_cache.reuse_initial(
+                              target_dir, loan, identity.identity_id, account_key))
+        cached = normal_cached or initial_cached
         if cached is not None:
             path, url = cached, loan.ebook_url or ""
             self.diagnostics.add("PNB", "reuse artifact", detail={"loan_ref": trace_ref, "cached": True})
@@ -3920,7 +3931,7 @@ class LibraryService:
         hook_item = loan_download_projection.build_hook_item(
             loan, url, result_factory=SearchResult,
         )
-        if cached is None:
+        if cached is None or initial_cached is not None:
             self.acquisition.run_post_download(hook_item, path, url, target_dir)
             acsm_cache.remember(path, target_dir, loan, identity.identity_id, account_key)
         is_acsm = path.suffix.casefold() == ".acsm"
