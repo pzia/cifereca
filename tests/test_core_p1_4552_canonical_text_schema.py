@@ -65,6 +65,7 @@ def test_identical_or_conflicting_duplicate_declaration_fails_closed():
     {"allowed_values": ("regular", "regular")},
     {"allowed_values": ("",)},
     {"allowed_values": ("bad\ud800",)},
+    {"allowed_values": ("novice\x00hidden",)},
     {"plugin_id": "secret credential"},
 ])
 def test_bad_declaration_anywhere_invalidates_registry(change):
@@ -140,3 +141,20 @@ def test_schema_gate_composes_with_previous_core_evidence_and_result_gates():
     assert validate_text_schema_result(
         checked, schema=select_text_schema([SCHEMA], selection=SELECTED),
     ) == checked
+
+
+def test_nul_is_not_a_canonical_text_value_even_without_enum():
+    no_enum = replace(SCHEMA, allowed_values=())
+    with pytest.raises(ValueError, match="canonical_text_schema_value_invalid"):
+        validate_text_schema_result(
+            replace(RESULT, value="regular\x00hidden"), schema=no_enum,
+        )
+
+
+def test_nul_fails_non_selected_schema_validation_too():
+    other = replace(
+        SCHEMA, canonical_type="custom.other",
+        allowed_values=("hidden\x00record",),
+    )
+    with pytest.raises(ValueError, match="invalid_canonical_text_schema"):
+        select_text_schema([SCHEMA, other], selection=SELECTED)
