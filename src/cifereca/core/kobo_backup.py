@@ -2282,6 +2282,27 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 identity_id=str(base_record.get("identity_id") or ""),
             ):
                 return refuse_unscoped()
+            # #3196 D1: an unverified 0.7 "complete" filename cannot
+            # establish the original Kobo bytes or create its own baseline.
+            # Require a prior exact SHA and positive size *before* opening
+            # today's file; otherwise retain the path for supervised review.
+            historical_sha = current.get("sha256")
+            historical_size = current.get("size")
+            if (type(historical_sha) is not str
+                    or re.fullmatch(r"[0-9a-fA-F]{64}", historical_sha) is None
+                    or type(historical_size) is not int
+                    or historical_size <= 0):
+                self.storage.backup_put({
+                    **current,
+                    "status": "reconcile_required",
+                    "error": "Preuve d'intégrité Kobo historique incomplète ; rapprochement explicite requis",
+                    "updated_at": int(time.time()),
+                })
+                summary["reconcile_pending"] += 1
+                summary["reconcile_skipped"] += 1
+                emit("reconcile_required", current=index + 1, total=total,
+                     title=title, item_id=product_id)
+                return True
             try:
                 observed = self._observed_backup_artifact(local)
             except ProviderConfigurationError:
@@ -2319,8 +2340,8 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 emit("reconcile_required", current=index + 1, total=total,
                      title=title, item_id=product_id)
                 return True
-            # Historic complete rows may lack a checksum: accept only after
-            # format/DRM inspection, then persist the first verified baseline.
+            # Exactly the persisted historical digest/size were checked;
+            # metadata refresh here does not invent an absent hash baseline.
             self.storage.backup_put({**current, **observed})
             summary["unchanged"] += 1
             return True
