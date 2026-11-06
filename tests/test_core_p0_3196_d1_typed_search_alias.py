@@ -149,3 +149,58 @@ def test_untyped_kobo_retains_legacy_search_compatibility(case):
     assert service.local_placements_for_sources("alice")[
         ("kobo", "vault", "book")
     ]["placement_id"] == placement
+
+
+def test_single_kobo_lookup_discards_legacy_after_typed_source_without_origin(
+        case):
+    service, artifact, _placement_id, _ = case
+    _legacy(service, artifact)
+    _typed(service)
+    assert service.local_placement_for_source(
+        provider_id="kobo", credential_id="vault", item_id="book",
+        identity_id="alice",
+    ) is None
+    assert service.local_placement_for_source(
+        provider_id="kobo", credential_id="vault", item_id="book",
+        identity_id="alice", account_id="buyer",
+    ) is None
+
+
+def test_single_kobo_lookup_requires_origin_and_exact_selected_borrower(case):
+    service, artifact, placement, _ = case
+    _legacy(service, artifact)
+    _typed(service)
+    _origin(service, artifact)
+    args = dict(
+        provider_id="kobo", credential_id="vault",
+        item_id="book", identity_id="alice",
+    )
+    assert service.local_placement_for_source(
+        **args,
+    )["placement_id"] == placement
+    assert service.local_placement_for_source(
+        **args, account_id="buyer",
+    )["placement_id"] == placement
+    assert service.local_placement_for_source(
+        **args, account_id="other-buyer",
+    ) is None
+    _typed(service, source_id="other", account="other-buyer")
+    # The public three-coordinate key has become ambiguous, but an exact
+    # borrower may still use her original canonical receipt and physical B.
+    assert service.local_placement_for_source(**args) is None
+    assert service.local_placement_for_source(
+        **args, account_id="buyer",
+    )["placement_id"] == placement
+    assert service.local_placement_for_source(
+        **args, account_id="other-buyer",
+    ) is None
+
+
+def test_single_untyped_kobo_still_supports_previous_exact_account_reader(
+        case):
+    service, artifact, placement, _ = case
+    _legacy(service, artifact)
+    assert service.local_placement_for_source(
+        provider_id="kobo", credential_id="vault", item_id="book",
+        identity_id="alice", account_id="buyer",
+    )["placement_id"] == placement
