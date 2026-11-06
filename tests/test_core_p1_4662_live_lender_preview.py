@@ -281,3 +281,136 @@ def test_invalid_input_is_rejected_before_any_provider_access(harness):
                 expected_edition_id="edition-1", observations=invalid, now=1100,
             )
     assert session.calls == 0
+
+
+def _click(service, captured, selected_option_id, *rows):
+    return service.revalidate_borrow_lender_choice(
+        captured_preview=captured, selected_option_id=selected_option_id,
+        expected_edition_id="edition-1", observations=list(rows), now=1100,
+    )
+
+
+def test_explicit_current_lender_click_is_only_an_inert_preflight(harness):
+    service, account, session = harness
+    row = _candidate()
+    preview = _preview(service, row)
+    selection = _click(service, preview, preview.options[0].option_id, row)
+    assert selection.status == "current"
+    assert selection.reason_code == "selection_current_unverified"
+    assert selection.borrowing_identity_id == "alex"
+    assert selection.label == "Emprunter avec Alex"
+    assert selection.transfer_state == "unknown"
+    assert selection.executable is False
+    assert "card-alex" not in repr(selection)
+    assert session.calls == 0
+    assert service.current_identity.identity_id == "default"
+
+
+def test_no_option_and_foreign_or_malformed_clicked_id_fails_closed(harness):
+    service, account, session = harness
+    row = _candidate()
+    preview = _preview(service, row)
+    for selected in (None, "", "other", "borrow-profile.v1:unknown"):
+        selected_result = _click(service, preview, selected, row)
+        assert selected_result.status == "revoked"
+        assert selected_result.executable is False
+    empty = _preview(service)
+    assert _click(service, empty, preview.options[0].option_id, row).status == "revoked"
+    assert session.calls == 0
+
+
+def test_two_collections_need_exact_clicked_choice_no_first_fallback(harness):
+    service, account, session = harness
+    a = _candidate(collection="catalogue-A")
+    b = _candidate(collection="catalogue-B")
+    preview = _preview(service, a, b)
+    assert preview.status == "choose"
+    one, two = preview.options
+    for option in preview.options:
+        resolved = _click(service, preview, option.option_id, b, a)
+        assert resolved.status == "current"
+        assert resolved.label == option.label
+    assert _click(service, preview, one.option_id, b).status == "revoked"
+    assert _click(service, preview, two.option_id, a).status == "revoked"
+    assert session.calls == 0
+
+
+def test_lender_selection_aba_and_source_epoch_change_are_revoked(harness):
+    service, account, session = harness
+    row = _candidate()
+    original = _preview(service, row)
+    old = original.options[0].option_id
+    service._account_context_epoch += 2
+    assert _click(service, original, old, row).status == "revoked"
+    renewed = _preview(service, row)
+    assert _click(service, renewed, renewed.options[0].option_id, row).status == "current"
+    session._epoch += 1
+    assert _click(service, renewed, renewed.options[0].option_id, row).status == "revoked"
+    assert session.calls == 0
+
+
+def test_lender_choice_refuses_claim_and_disconnection_without_retry(harness):
+    service, account, session = harness
+    row = _candidate()
+    preview = _preview(service, row)
+    selected = preview.options[0].option_id
+    service.storage.metadata_set(borrow_claim_key(account, row.notice), "spent")
+    assert _click(service, preview, selected, row).status == "revoked"
+    assert session.calls == 0
+
+
+def test_lender_selection_change_of_profile_refuses_old_callback(harness):
+    service, account, session = harness
+    row = _candidate()
+    preview = _preview(service, row)
+    service.current_identity = service.identity_by_id("alex")
+    service._account_context_epoch += 1
+    stale = _click(service, preview, preview.options[0].option_id, row)
+    assert stale.status == "revoked"
+    assert stale.executable is False
+    assert session.calls == 0
+
+
+def test_transfer_is_never_silently_promoted_to_a_copy_permission(harness):
+    service, account, session = harness
+    row = replace(_candidate(), transfer_state="blocked")
+    preview = _preview(service, row)
+    selected = _click(service, preview, preview.options[0].option_id, row)
+    assert selected.status == "current"
+    assert selected.transfer_state == "blocked"
+    assert selected.executable is False
+    # An observed lender permission cannot qualify transfer/use of a copy.
+    assert _click(service, preview, preview.options[0].option_id,
+                  replace(row, transfer_state="unknown")).status == "revoked"
+    assert session.calls == 0
+
+
+def test_expired_or_missing_observation_revokes_held_selection(harness):
+    service, account, session = harness
+    row = _candidate()
+    preview = _preview(service, row)
+    selected = preview.options[0].option_id
+    assert _click(service, preview, selected,
+                  replace(row, observed_at=1)).status == "revoked"
+    assert _click(service, preview, selected).status == "revoked"
+    assert session.calls == 0
+
+
+def test_global_source_rebind_revokes_click_even_when_session_epoch_repeats(harness):
+    service, account, old_session = harness
+    row = _candidate()
+    original = _preview(service, row)
+    old_token = original.options[0].option_id
+
+    # A physically new provider session may start at the same local _epoch.
+    replacement = ParisOffline(account)
+    assert replacement._epoch == old_session._epoch
+    service._sessions[service._session_key("paris", "card-alex")] = replacement
+    service._source_context_epoch += 1
+
+    fresh = _preview(service, row)
+    assert fresh.status == "external"
+    assert fresh.options[0].option_id != old_token
+    assert _click(service, original, old_token, row).status == "revoked"
+    assert _click(service, fresh, fresh.options[0].option_id, row).status == "current"
+    assert old_session.calls == replacement.calls == 0

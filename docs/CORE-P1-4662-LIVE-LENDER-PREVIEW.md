@@ -30,3 +30,11 @@ La seule sortie est `BorrowForIdentityPreview` avec `executable=False` et des `o
 `tests/test_core_p1_4662_live_lender_preview.py` couvre 0/1/N, deux collections distinctes, session B utilisée depuis A sans repli, désactivation/rebind compte, changement de compte primaire, claim consommé, capability absente, quota/abonnement/permission refusés ou inconnus, et deux epochs A→B→A. Le faux fournisseur interdit explicitement `connect/search/borrow` ; aucun réseau ni mutation n'est attendu.
 
 Cette tranche prépare #4662 sans élargir la clôture de #4673, sans créer le parcours #3120 P2 et sans changer l'admission mutatrice de #3121.
+
+## Revalidation d'un choix explicite au clic — tranche complémentaire
+
+`LibraryService.revalidate_borrow_lender_choice(captured_preview, selected_option_id, expected_edition_id, observations, now)` ne reçoit **jamais** un prêteur par défaut. Elle exige un `option_id` issu du preview affiché, vérifie qu'il désigne **une seule** option exacte, recalcule un preview Core/SQLite frais et exige une égalité complète de la sélection (coordonnées, époque, libellé et état de transfert). Les cas A→B→A, déconnexion, remplacement de compte, claim déjà consommé, révision du fournisseur ou observation devenue vieille retournent `BorrowLenderSelection(status="revoked", reason_code="selection_stale", executable=False)`.
+
+Un choix toujours à jour retourne `status="current", reason_code="selection_current_unverified"`, **jamais** une autorisation de prêt ni une capacité de transférer. Aucun compte n'est activé ; aucune sélection d'une autre option n'est faite silencieusement ; aucune transaction n'est possible par cette API. La future action de confirmation doit garder son propre consentement, le claim durable et les guards du fournisseur, sans jamais interpréter ce résultat comme une admission mutatrice suffisante.
+
+La portée de l'option inclut maintenant l'**époque globale de source Core** et l'**époque locale de session** (combinaison injective non réversible en libellé) : un reconnect qui reproduit les mêmes credentials et le même compteur local ne rend pas valide le token d'avant déconnexion. Régression spécifique de session remplacée à epoch identique.

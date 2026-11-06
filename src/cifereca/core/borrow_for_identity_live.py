@@ -172,6 +172,14 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         session_epoch = state.get("_epoch", source_epoch)
         if type(session_epoch) is not int or session_epoch < 0:
             return None
+        # A reconnected session may reuse an identical local _epoch and
+        # credential. Include the Core's independent source-generation in
+        # the option ID: Cantor pairing is injective for nonnegative ints,
+        # unlike addition, and never exposes the two underlying counters.
+        pinned_epoch = (
+            (source_epoch + session_epoch) *
+            (source_epoch + session_epoch + 1) // 2 + session_epoch
+        )
         if (service._sessions.get(session_key) is not session
                 or _inert_session_state(session) is not state
                 or state.get("connected") is not True
@@ -186,7 +194,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             account=account, notice=item, capability=capability,
             eligibility=eligibility, lender_name=name,
             observed_at=row.observed_at, service_context_epoch=context_epoch,
-            source_epoch=session_epoch, edition_id=row.edition_id,
+            source_epoch=pinned_epoch, edition_id=row.edition_id,
             transfer_state=row.transfer_state,
         )
     except Exception:
@@ -242,4 +250,83 @@ def preview_live_borrow_for_current_identity(
     return result
 
 
-__all__ = ["ObservedBorrowOffer", "preview_live_borrow_for_current_identity"]
+@dataclass(frozen=True, slots=True)
+class BorrowLenderSelection:
+    """Non-authorizing proof that an explicit UI choice still matches Core.
+
+    It contains neither a borrower credential nor permission to mutate. A
+    separate consent/loan executor must obtain a fresh, durable action lease.
+    """
+
+    status: str  # current | revoked
+    reason_code: str  # selection_current_unverified | selection_stale
+    borrowing_identity_id: str | None = None
+    label: str | None = None
+    transfer_state: str = "unknown"
+    executable: bool = False
+
+
+def revalidate_live_borrow_lender_selection(
+    service, *, captured_preview: BorrowForIdentityPreview,
+    selected_option_id: str, expected_edition_id: str,
+    observations: object, now: int | None = None,
+) -> BorrowLenderSelection:
+    """Re-evaluate the *clicked* option, never pick the first eligible offer.
+
+    A previously opened GTK detail/menu can retain a valid-looking option_id
+    after an ABA identity switch or a source rebind. It must be rejected even
+    if the title, account label and notice ID look identical. This is only a
+    read-only click preflight, not the manual borrowing transaction.
+    """
+    stale = BorrowLenderSelection("revoked", "selection_stale")
+    if (type(captured_preview) is not BorrowForIdentityPreview
+            or captured_preview.executable is not False
+            or type(selected_option_id) is not str
+            or not selected_option_id.startswith("borrow-profile.v1:")
+            or type(expected_edition_id) is not str
+            or type(captured_preview.options) is not tuple):
+        return stale
+    selected = [
+        option for option in captured_preview.options
+        if option.option_id == selected_option_id
+        and option.executable is False
+        and option.edition_id == expected_edition_id
+    ]
+    if len(selected) != 1:
+        return stale
+    try:
+        fresh = preview_live_borrow_for_current_identity(
+            service, expected_edition_id=expected_edition_id,
+            observations=observations, now=now,
+        )
+        if (fresh.requesting_identity_id != captured_preview.requesting_identity_id
+                or fresh.executable is not False
+                or fresh.status != captured_preview.status
+                or fresh.requires_explicit_choice !=
+                    captured_preview.requires_explicit_choice):
+            return stale
+        matching = [
+            option for option in fresh.options
+            if option.option_id == selected_option_id
+        ]
+        # Compare the *whole* current option: a renamed account, changed
+        # edition, source, transfer restriction or claim is not the old click.
+        if len(matching) != 1 or matching[0] != selected[0]:
+            return stale
+        option = matching[0]
+        return BorrowLenderSelection(
+            "current", "selection_current_unverified",
+            borrowing_identity_id=option.borrowing_identity_id,
+            label=option.label, transfer_state=option.transfer_state,
+        )
+    except Exception:
+        # Malformed or stale evidence never falls back to another lender,
+        # and must not emit provider errors or account IDs to GTK.
+        return stale
+
+
+__all__ = [
+    "ObservedBorrowOffer", "BorrowLenderSelection",
+    "preview_live_borrow_for_current_identity",
+    "revalidate_live_borrow_lender_selection",
+]
