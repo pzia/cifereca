@@ -14,6 +14,7 @@
     "provider-bnf-pret",
     "provider-gallica",
     "provider-gutenberg",
+    "provider-kobo",
     "provider-numilog",
     "provider-paris",
     "provider-reference",
