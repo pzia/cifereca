@@ -360,6 +360,9 @@ def test_legacy_on_start_never_transfers_between_aliased_borrower_ids(
     service = _service(tmp_path)
     try:
         service.accounts[0] = replace(service.accounts[0], unique_id=first_id)
+        # The connected provider session must expose the same borrower as
+        # the Core model when the opt-in is initially recorded.
+        service._sessions[("kobo", "vault")].accounts = [service.accounts[0]]
         _enable_on_start(service)
         original = service.accounts[0]
         broker = SynchronizationBrokerImpl(service)
