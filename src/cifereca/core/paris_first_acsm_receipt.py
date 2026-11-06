@@ -81,7 +81,9 @@ def stage_paris_initial_acsm(service, session, account: Account, loan: Loan,
             return False
         return acsm_cache.remember_initial(
             candidate, directory, loan, account.identity_id, "primary",
-            borrow_claim=(claim_key, operation_id))
+            borrow_claim=(claim_key, operation_id),
+            admission_current=lambda: (
+                scope_current() is True and confirmed_claim_current()))
     except Exception:
         # The lender may have successfully created the loan already. Never
         # let a token retrieval failure trigger a retry of the mutating GET.
