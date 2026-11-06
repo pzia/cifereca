@@ -695,3 +695,83 @@ def test_nofollow_profile_open_rejects_parent_escape(tmp_path):
     outside.write_bytes(b"foreign")
     with pytest.raises(ValueError, match="relative"):
         _open_under_root_nofollow(root, outside)
+
+
+def test_retention_audit_counts_committed_and_pending_without_unlink(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        audit_derived_receipt_retention,
+    )
+    service, source, _ = _library(tmp_path)
+    try:
+        result = ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        assert result.artifact_id != source.artifact_id
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        committed = next(stage.glob("pending-*.json"))
+        pending = stage / ("pending-" + "f" * 32 + ".json")
+        pending.write_bytes(b"{}")
+        expected_bytes = committed.stat().st_size + pending.stat().st_size
+        report = audit_derived_receipt_retention(service, identity_id="id1")
+        assert report["identity_id"] == "id1"
+        assert report["count"] == 2
+        assert report["statuses"]["already_committed"] == 1
+        assert report["statuses"]["manual_review"] == 1
+        assert report["receipt_bytes_observed"] == expected_bytes
+        assert report["unknown_size_count"] == 0
+        assert report["has_more"] is False
+        assert report["destructive_cleanup_allowed"] is False
+        assert committed.exists() and pending.exists()
+        assert len(service.storage.artifact_variants()) == 1
+    finally:
+        service.storage.close()
+
+
+def test_retention_audit_paginates_and_never_deletes_foreign_data(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        audit_derived_receipt_retention, MAX_RECEIPTS,
+    )
+    service, source, _ = _library(tmp_path)
+    try:
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        stage.mkdir(parents=True)
+        for idx in range(MAX_RECEIPTS + 2):
+            (stage / ("pending-" + f"{idx:032x}" + ".json")).write_bytes(b"{}")
+        first = audit_derived_receipt_retention(service, identity_id="id1")
+        assert first["count"] == MAX_RECEIPTS
+        assert first["has_more"] is True
+        assert first["receipt_bytes_observed"] == 2 * MAX_RECEIPTS
+        second = audit_derived_receipt_retention(
+            service, identity_id="id1", after_cursor=first["next_cursor"],
+        )
+        assert second["count"] == 2
+        assert second["has_more"] is False
+        assert second["receipt_bytes_observed"] == 4
+        assert second["statuses"]["manual_review"] == 2
+        assert len(list(stage.glob("pending-*.json"))) == MAX_RECEIPTS + 2
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
+
+
+def test_retention_audit_reports_symlink_without_following_outside(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        audit_derived_receipt_retention,
+    )
+    service, source, _ = _library(tmp_path)
+    try:
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        stage.mkdir(parents=True)
+        foreign = tmp_path / "foreign.json"
+        foreign.write_bytes(b"do not read another profile")
+        journal = stage / ("pending-" + "b" * 32 + ".json")
+        journal.symlink_to(foreign)
+        report = audit_derived_receipt_retention(service, identity_id="id1")
+        assert report["count"] == 1
+        assert report["statuses"]["manual_review"] == 1
+        assert report["receipt_bytes_observed"] == 0
+        assert report["unknown_size_count"] == 1
+        assert foreign.read_bytes() == b"do not read another profile"
+        assert journal.is_symlink()
+    finally:
+        service.storage.close()
