@@ -648,7 +648,9 @@ def local_placements_for_sources(self, identity_id):
     typed_scopes = {}
     for owner, credential, account, edition in typed_rows:
         key = ("kobo", credential, edition)
-        typed_scopes.setdefault(key, set()).add((owner, account))
+        # Keep all rows, including multiple rights of one borrower. A
+        # three-coordinate public search key cannot pick a unique origin.
+        typed_scopes.setdefault(key, []).append((owner, account))
 
     # Provider OriginLinks, not legacy acquisition rows, authorize the
     # physical association of an already-typed Kobo search key. The helper
