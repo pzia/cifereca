@@ -67,3 +67,10 @@ Cette synthèse n'effectue aucune mutation, ne retire aucun reçu et expose touj
 ### Réattestation au moment du retrait SQL
 
 La suppression supervisée de l'intent relit et rehache le **reçu original une seconde fois sous `BEGIN IMMEDIATE`**. Une modification survenue entre l'examen de l'opérateur et le DELETE est refusée, même si la preuve de publication canonique existe ; le marqueur est conservé. Un test injecte cette altération à la frontière transactionnelle et vérifie l'absence de compaction.
+
+
+## Soupape de capacité locale non destructive (06/11/2026)
+
+Tant qu'une zone de reçus sous contrôle exclusif du Core et sa consolidation sûre ne sont pas disponibles, l'écrivain borne **localement** le nombre de noms `pending-*.json` dans chaque répertoire de staging à `MAX_RECEIPTS_PER_STAGING_DIRECTORY = 1024`. Il énumère les entrées via le descripteur du staging déjà épinglé. Si la capacité est atteinte, la tentative échoue **avant** création d'un nouveau reçu, d'un intent SQLite ou d'un lien physique de publication avec `derived_receipt_retention_capacity_exceeded`. Aucun reçu existant n'est supprimé, modifié ni réattribué ; des tests couvrent le dernier emplacement libre et le blocage à capacité.
+
+**Limites :** cette soupape est volontairement *fail-closed* et **par répertoire**. Elle n'impose pas de quota global en présence de multiples dossiers livres ; la simple énumération n'est pas un mécanisme atomique de réservation entre plusieurs processus concurrents. Elle ne constitue donc pas une solution de rétention physique complète. À capacité, un opérateur doit résoudre la politique de stockage/consolidation Core sûre ; ne pas augmenter silencieusement le seuil ni purger des fichiers. Le statut draft reste nécessaire.
