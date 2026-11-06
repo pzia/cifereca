@@ -381,6 +381,15 @@ class KoboCatalogService:
                 "evidence_id": f"kobo:{product_id}",
                 "evidence_strength": 100,
             }
+        # Invalid *object* values are poisoned catalogue input: quarantine
+        # this particular row instead of accidentally materializing it with
+        # a missing revision. Benign number/bool scalars are not version
+        # witnesses and must not be coerced to strings.
+        raw_revision = item.get("revision_id")
+        if raw_revision is not None and type(raw_revision) not in (
+            str, int, float, bool,
+        ):
+            raise ProviderError("Kobo-Vault : révision non vérifiable")
         return SearchResult(
             id=f"kobo:{self.credential_id}:{product_id}", record_id=product_id, docbase="KOBO",
             medium="digital", title=str(item.get("title") or "Sans titre"), author=author,
@@ -394,7 +403,18 @@ class KoboCatalogService:
             owned=owned_flag,
             downloadable=downloadable_flag,
             price=price, currency=currency,
-            revision_id=str(item.get("revision_id") or "").strip() or None,
+            # A revision is a typed provider witness for later migration,
+            # never a product-id substitute. Do not coerce ints/bools,
+            # trim ambiguous values or accept control characters.
+            revision_id=(
+                item["revision_id"]
+                if (type(item.get("revision_id")) is str
+                    and 0 < len(item["revision_id"]) <= 256
+                    and item["revision_id"] == item["revision_id"].strip()
+                    and not any(ord(c) < 32 or ord(c) == 127
+                                for c in item["revision_id"]))
+                else None
+            ),
             metadata=metadata,
         )
 
