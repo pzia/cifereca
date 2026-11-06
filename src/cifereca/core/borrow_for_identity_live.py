@@ -172,6 +172,14 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         session_epoch = state.get("_epoch", source_epoch)
         if type(session_epoch) is not int or session_epoch < 0:
             return None
+        # A reconnected session may reuse an identical local _epoch and
+        # credential. Include the Core's independent source-generation in
+        # the option ID: Cantor pairing is injective for nonnegative ints,
+        # unlike addition, and never exposes the two underlying counters.
+        pinned_epoch = (
+            (source_epoch + session_epoch) *
+            (source_epoch + session_epoch + 1) // 2 + session_epoch
+        )
         if (service._sessions.get(session_key) is not session
                 or _inert_session_state(session) is not state
                 or state.get("connected") is not True
@@ -186,7 +194,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             account=account, notice=item, capability=capability,
             eligibility=eligibility, lender_name=name,
             observed_at=row.observed_at, service_context_epoch=context_epoch,
-            source_epoch=session_epoch, edition_id=row.edition_id,
+            source_epoch=pinned_epoch, edition_id=row.edition_id,
             transfer_state=row.transfer_state,
         )
     except Exception:
