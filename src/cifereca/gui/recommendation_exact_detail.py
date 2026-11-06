@@ -24,6 +24,15 @@ def _loaded_item(window: Any, coords: dict[str, str]) -> SearchResult | None:
     return row if type(row) is SearchResult else None
 
 
+def _view_mapped(view: Any) -> bool:
+    """A detached plugin pane may retain an old clickable GTK button."""
+    try:
+        widget = view.widget
+        return callable(getattr(widget, "get_mapped", None)) and widget.get_mapped() is True
+    except Exception:
+        return False
+
+
 def present_loaded_search_detail_in_place(
     window: Any, *, view: Any,
     context_sections: tuple, is_current: Callable[[], bool],
@@ -40,6 +49,7 @@ def present_loaded_search_detail_in_place(
                   source_collection=source_collection, identity_id=identity_id)
     if (getattr(window, "_closed", False)
             or getattr(view, "_window", None) is not window
+            or not _view_mapped(view)
             or not callable(getattr(view, "show_existing_search_detail", None))
             or type(context_sections) is not tuple
             or len(context_sections) > 16
@@ -103,6 +113,7 @@ def present_loaded_search_detail_in_place(
     def deliver(detail: object) -> None:
         if (type(detail) is not ItemDetail
                 or not source_current()
+                or not _view_mapped(view)
                 or not is_current()
                 or _loaded_item(window, coords) is not item):
             return
