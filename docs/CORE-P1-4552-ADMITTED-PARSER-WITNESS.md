@@ -19,7 +19,8 @@ n'apparaît dans la sortie opaque.
 `NoticeSourceObservation`, puis **réadmet** le JSON/descripteur avec le
 contrat Core en vérifiant le contenu JSON canonique et la révision attendue.
 L'altération d'un champ du snapshot ou la substitution de JSON est refusée,
-pas qualifiée comme régression.
+pas qualifiée comme régression. Même un DTO forgé avec un JSON brut de plus
+de 64 KiB est refusé **avant décodage**, pour éviter toute allocation non bornée.
 
 Une baseline approuvée liée au même scope et au SHA réel des octets d'entrée
 peut donner `parser_regression_confirmed` si le nouveau parseur perd un
