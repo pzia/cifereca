@@ -13,7 +13,8 @@
     "provider-gallica",
     "provider-gutenberg",
     "provider-reference",
-    "recommendations"
+    "recommendations",
+    "transport-http"
   ],
   "dependencies": {
     "home-page": [
