@@ -2146,12 +2146,25 @@ class Storage:
                          # Reconciliation statuses still require the 0.8
                          # mirror for W4 confirmation/undo until migrated.
                          or merged.get("status") == "skipped_archived"
-                         # #3196 W1: an unprovable conflict cannot be
-                         # confirmed by W4 (which requires an exact historical
-                         # SHA AND a positive byte size). Archive it without
-                         # minting new rights, acquisition or local B facts.
-                         # Conflicts with both byte claims still retain W4.
-                         or (merged.get("status") == "reconcile_conflict"
+                         # #3196 W1: a conflict with no byte baseline
+                         # can never be repaired through W4. A similarly
+                         # unprovable reconcile_required is archive-only ONLY
+                         # when no connected owner of this exact credential
+                         # exists. An active Kobo manifest may still have
+                         # independently reported this account's OWN right:
+                         # until W2 produces typed rights instead of the 0.8
+                         # compatibility mirror, do NOT drop its discovery.
+                         # Neither case proves local B file presence.
+                         or ((merged.get("status") == "reconcile_conflict"
+                              or (merged.get("status") == "reconcile_required"
+                                  and db.execute(
+                                      "SELECT 1 FROM provider_connections "
+                                      "WHERE provider_id='kobo' AND "
+                                      "credential_id=? AND identity_id=? "
+                                      "LIMIT 1",
+                                      (merged.get("credential_id"),
+                                       merged.get("identity_id")),
+                                  ).fetchone() is None))
                              and (
                                  type(merged.get("sha256")) is not str
                                  or len(merged["sha256"]) != 64
