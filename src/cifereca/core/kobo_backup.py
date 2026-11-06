@@ -1719,6 +1719,10 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 self.storage.backup_put({
                     **previous,
                     "status": "reconcile_required",
+                    # A dangling symlink can be the sole discovered candidate
+                    # with no prior locator. Keep its name for supervised
+                    # reconciliation, never as evidence of a usable file.
+                    "local_path": previous.get("local_path") or str(artifact),
                     "updated_at": int(time.time()),
                     "error": "Emplacement Kobo historique hors profil ou non vérifiable",
                     "job_id": None,
