@@ -569,3 +569,62 @@ def test_recovery_rejects_invalid_pagination_cursor(tmp_path):
         assert len(review_pending_derived_receipts(service, identity_id="id1")) == 1
     finally:
         service.storage.close()
+
+
+def test_deeply_nested_profile_receipt_is_discovered_without_deletion(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        root = tmp_path / "library"
+        nested = root / "Genre" / "Author" / "Series" / "Volume"
+        nested.mkdir(parents=True)
+        journal = nested / ".cifereca-staging" / "variants"
+        journal.mkdir(parents=True)
+        candidate = journal / ("pending-" + "f" * 32 + ".json")
+        candidate.write_bytes(b"{}")
+        results = review_pending_derived_receipts(service, identity_id="id1")
+        assert len(results) == 1
+        assert results[0]["status"] == "manual_review"
+        assert results[0]["cursor"] == candidate.relative_to(root).as_posix()
+        assert candidate.read_bytes() == b"{}"
+    finally:
+        service.storage.close()
+
+
+def test_symlinked_nested_directory_is_never_traversed(tmp_path):
+    service, source, _ = _library(tmp_path)
+    try:
+        root = tmp_path / "library"
+        outside = tmp_path / "other-profile" / "Deep"
+        (outside / ".cifereca-staging" / "variants").mkdir(parents=True)
+        foreign = (
+            outside / ".cifereca-staging" / "variants"
+            / ("pending-" + "d" * 32 + ".json")
+        )
+        foreign.write_bytes(b"foreign")
+        (root / "Shortcut").symlink_to(outside, target_is_directory=True)
+        assert review_pending_derived_receipts(service, identity_id="id1") == ()
+        assert foreign.read_bytes() == b"foreign"
+    finally:
+        service.storage.close()
+
+
+def test_nested_receipt_walker_rejects_unbounded_depth_and_directory_count(
+    tmp_path, monkeypatch,
+):
+    service, source, _ = _library(tmp_path)
+    try:
+        from cifereca.core import derived_variant_recovery as recovery
+        deepest = tmp_path / "library"
+        for index in range(5):
+            deepest = deepest / f"level-{index}"
+            deepest.mkdir()
+        monkeypatch.setattr(recovery, "MAX_SCAN_DEPTH", 3)
+        with pytest.raises(ValueError, match="derived_recovery_depth_limit"):
+            recovery.review_pending_derived_receipts(service, identity_id="id1")
+        monkeypatch.setattr(recovery, "MAX_SCAN_DEPTH", 32)
+        monkeypatch.setattr(recovery, "MAX_SCAN_DIRECTORIES", 2)
+        with pytest.raises(ValueError, match="derived_recovery_directory_limit"):
+            recovery.review_pending_derived_receipts(service, identity_id="id1")
+        assert deepest.is_dir()
+    finally:
+        service.storage.close()
