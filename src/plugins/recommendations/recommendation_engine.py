@@ -316,14 +316,20 @@ def _profile_feedback_weights(
             2 if signal.preference == "liked" else 0
         )
     weights: list[int] = []
+    matched_keys: set[str] = set()
     for book in books:
         key = get_field(book, "key")
         owner = get_field(book, "identity_id")
-        weights.append(
-            by_key.get(key, 1)
-            if type(key) is str and owner == identity_id
-            else 1
-        )
+        if type(key) is str and owner == identity_id and key in by_key:
+            # One explicit preference targets one exact Core library row.
+            # Two rows with the same key are ambiguous, even if their title
+            # and ISBN agree: applying a weight to both doubles its effect.
+            if key in matched_keys:
+                raise ValueError("ambiguous_explicit_reading_signal_target")
+            matched_keys.add(key)
+            weights.append(by_key[key])
+        else:
+            weights.append(1)
     return weights
 
 
