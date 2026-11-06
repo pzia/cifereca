@@ -58,7 +58,10 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
         session = service._session_for_source(
             provider_id, item.source_credential)
         rows = _inert_session_accounts(session)
-        if rows is None or _inert_session_state(session) is None:
+        state = _inert_session_state(session)
+        if (rows is None or state is None
+                or state.get("connected") is not True
+                or state.get("_closed") is True):
             return reject("local_session_unavailable")
         candidates = [
             a for a in service.accounts
