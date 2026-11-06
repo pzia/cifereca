@@ -245,7 +245,8 @@ def manual_borrow(
             try:
                 from .paris_first_acsm_receipt import stage_paris_initial_acsm
                 stage_paris_initial_acsm(
-                    service, session, account, loan, scope_current=current)
+                    service, session, account, loan, scope_current=current,
+                    claim_key=key, operation_id=operation_id)
             except Exception:
                 # The borrow claim is already durably confirmed. A local
                 # staging/config/import fault cannot unconfirm it or reopen
