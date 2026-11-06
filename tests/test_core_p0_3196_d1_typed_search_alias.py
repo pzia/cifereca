@@ -46,7 +46,7 @@ def _legacy(service, artifact):
 
 
 def _typed(service, *, source_id="typed", owner="alice", account="buyer",
-           edition="book", right="purchase"):
+           edition="book", right="purchase", credential="vault"):
     with service.storage._lock, service.storage._connect() as db:
         db.execute(
             "INSERT INTO source_references("
@@ -54,7 +54,7 @@ def _typed(service, *, source_id="typed", owner="alice", account="buyer",
             "account_id,branch_id,edition_id,right_id,reference_kind,"
             "state,evidence_kind,evidence_ref,created_at,updated_at"
             ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (source_id, owner, "kobo", "vault", account, "purchases",
+            (source_id, owner, "kobo", credential, account, "purchases",
              edition, right, "purchase", "active",
              "provider_response", "synthetic-right-proof", 1, 1),
         )
@@ -204,4 +204,29 @@ def test_single_untyped_kobo_still_supports_previous_exact_account_reader(
     assert library_projection.local_placement_for_source(service,
         provider_id="kobo", credential_id="vault", item_id="book",
         identity_id="alice", account_id="buyer",
+    )["placement_id"] == placement
+
+
+@pytest.mark.parametrize("unrelated_scope", ["credential", "edition"])
+def test_d7_typed_source_scope_never_disables_unrelated_legacy_edition(
+        case, unrelated_scope):
+    """The typed-source veto must be exact, not provider- or profile-wide."""
+    service, artifact, placement, _ = case
+    _legacy(service, artifact)
+    _typed(
+        service,
+        edition="other-book" if unrelated_scope == "edition" else "book",
+        credential="other-vault" if unrelated_scope == "credential" else "vault",
+    )
+    alias = ("kobo", "vault", "book")
+    assert service.local_placements_for_sources("alice")[
+        alias
+    ]["placement_id"] == placement
+    assert service.local_placement_for_source(
+        provider_id="kobo", credential_id="vault", item_id="book",
+        identity_id="alice",
+    )["placement_id"] == placement
+    assert library_projection.local_placement_for_source(
+        service, provider_id="kobo", credential_id="vault",
+        item_id="book", identity_id="alice", account_id="buyer",
     )["placement_id"] == placement
