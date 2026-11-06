@@ -1090,6 +1090,27 @@ class UiLoadedSearchNoticeHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiExactSearchDetailHost(UiPageHost, Protocol):
+    """Optional #4664 in-place action route for an exact LOADED Search notice.
+
+    Caller passes only provenance coordinates and the existing public detail
+    view/context sections. Core reads the SearchResult, checks session scope,
+    and fetches holdings only after a deliberate click. The same Core
+    DetailPanel and action handlers are used without navigating tabs.
+    This does not accept a supplier action/offer from a plugin and never
+    grants borrow/obtain/transfer rights.
+    """
+
+    def present_loaded_search_detail_in_place(
+        self, *, view: UiBookMasterDetailView,
+        context_sections: tuple[DetailSection, ...],
+        is_current: Callable[[], bool],
+        provider: str, credential: str, record_id: str,
+        docbase: str, source_collection: str, identity_id: str,
+    ) -> bool: ...
+
+
+@runtime_checkable
 class UiKnownSearchNoticeHost(UiPageHost, Protocol):
     """Optional identity/edition-scoped navigation to a known SQLite notice.
 
