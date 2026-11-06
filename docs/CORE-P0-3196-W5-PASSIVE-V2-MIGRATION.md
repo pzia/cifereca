@@ -13,7 +13,8 @@ horodatages) mais ne crée aucune projection générique pour :
 - `kobo/skipped_archived`, y compris avec chemin ou SHA historique ;
 - `kobo/pending` et `kobo/queued` strictement passifs : zéro tentative,
   aucun horodatage de tentative, chemin, SHA, taille, erreur, attention,
-  stratégie ou exécuteur.
+  stratégie, exécuteur, job, profil ADEPT, emprunt ni échéance ; cette
+  classification s'applique uniquement à une ligne `owned`.
 
 Dès qu'un `pending/queued` porte **un indice de reprise**, l'ancien
 ledger reste temporairement disponible pour W2/W4 : cette tranche
