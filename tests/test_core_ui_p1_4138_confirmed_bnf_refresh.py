@@ -21,7 +21,7 @@ def _function(path, name, owner=None):
 
 def test_reprojection_reads_only_exact_visible_detail():
     method = _function(PANEL, "refresh_confirmed_borrow_detail", "DetailPanel")
-    namespace = {}
+    namespace = {"SearchResult": object}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])),
                  str(PANEL), "exec"), namespace)
     refresh = namespace["refresh_confirmed_borrow_detail"]
