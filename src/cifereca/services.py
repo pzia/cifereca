@@ -350,6 +350,26 @@ class LibraryService:
             observations=observations, now=now,
         )
 
+    def revalidate_borrow_lender_choice(
+        self, *, captured_preview, selected_option_id: str,
+        expected_edition_id: str, observations: object,
+        now: int | None = None,
+    ):
+        """#4662: revoke a stale explicit lender choice, without lending.
+
+        The returned selection is never an executor ticket or a permission
+        to copy a loan to a different reader; consent/claims remain separate.
+        """
+        from .core.borrow_for_identity_live import (
+            revalidate_live_borrow_lender_selection,
+        )
+        return revalidate_live_borrow_lender_selection(
+            self, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id,
+            observations=observations, now=now,
+        )
+
     def can_borrow_paris(self, item: SearchResult) -> bool:
         """Inert Paris action availability, without provider I/O."""
         from .core.manual_paris_borrow import manual_paris_borrow_available
