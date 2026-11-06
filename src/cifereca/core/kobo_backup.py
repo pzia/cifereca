@@ -2092,6 +2092,21 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
 
 
 
+def _kobo_typed_edition_exists(self, credential_id: str, edition_id: str) -> bool:
+    """Read-only veto: typed Kobo provenance is owned by canonical Core.
+
+    A typed SourceReference may belong to another borrower or profile.
+    Its presence is not proof of a local B nor permission to legacy GET.
+    """
+    with self.storage._lock, self.storage._connect() as db:
+        return db.execute(
+            "SELECT 1 FROM source_references "
+            "WHERE provider_id='kobo' AND credential_id=? AND edition_id=? "
+            "LIMIT 1",
+            (credential_id, edition_id),
+        ).fetchone() is not None
+
+
 def _manifest_archived(raw, current):
     # A fresh explicit unarchive can supersede a prior 409; omission cannot.
     return raw.get("archived") is True or (
@@ -2133,6 +2148,21 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         emit("skipped_archived", current=index + 1, total=total,
              title=title, item_id=product_id, code="archived_book",
              message="Livre archivé sur Kobo : acquisition ignorée")
+        return True
+
+    # W2 cutover: W1 deliberately stops writing backup_items once this exact
+    # edition has a typed canonical SourceReference. A missing/stale 0.7 row
+    # must NOT make the legacy executor issue a second GET for that edition.
+    # This is only a negative legacy admission: the actual Core rights and
+    # delivery state are decided by the canonical source flow.
+    if _kobo_typed_edition_exists(
+        self, str(base_record.get("credential_id") or ""), str(product_id)
+    ):
+        summary["skipped"] += 1
+        emit(
+            "skipped", current=index + 1, total=total, title=title,
+            item_id=product_id, code="kobo_canonical_source_authority",
+        )
         return True
 
     if current and str(current.get("status") or "") in {"reconcile_required", "reconcile_conflict"}:
@@ -2432,6 +2462,18 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
 def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger, *, item_guard=None):
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
+    # A canonical source can be committed between preflight and this legacy
+    # call. Repeat the read immediately before any 0.7 checkpoint or GET.
+    # No network/FS side effect and no success claim when Core owns the item.
+    if _kobo_typed_edition_exists(
+        self, str(base_record.get("credential_id") or ""), str(product_id)
+    ):
+        summary["skipped"] += 1
+        emit(
+            "skipped", current=index + 1, total=total, title=title,
+            item_id=product_id, code="kobo_canonical_source_authority",
+        )
+        return False
     summary["attempted"] += 1
     attempt_count = int(current.get("attempt_count") or 0) + 1 if current else 1
     attempted_at = int(time.time())
