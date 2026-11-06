@@ -14,8 +14,14 @@ MXC = "{info:lc/xmlns/marcxchange-v2}"
 MAX_XML_BYTES = 2_000_000
 MAX_RECORDS = 50
 MAX_FIELDS = 128
+# 329 is a *critical review*, not a standalone audience age field.
+# 333 is the audience note. Intermarc 833 mixes critical notes and CNLJ
+# audience metadata; raw evidence alone cannot discriminate subfield roles.
 AGE_TAGS = {"UNIMARC": frozenset({"329", "333"}),
             "INTERMARC": frozenset({"833"})}
+FIELD_ROLES = {("UNIMARC", "329"): "cnlj_critical_review_not_age",
+               ("UNIMARC", "333"): "audience_note_unqualified",
+               ("INTERMARC", "833"): "cnlj_mixed_review_or_audience"}
 ISBN_TAG = {"UNIMARC": "010", "INTERMARC": "020"}
 
 
@@ -121,6 +127,7 @@ def exact_edition_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
                 output.append({
                     "record_ark": ark, "own_isbn13": key, "marc_format": fmt,
                     "field_tag": tag, "raw_subfields": tuple(pairs),
+                    "evidence_role": FIELD_ROLES[(fmt, tag)],
                     "age_status": "unqualified_raw_evidence",
                 })
     return output
