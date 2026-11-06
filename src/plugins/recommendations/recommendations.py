@@ -560,6 +560,7 @@ class UxRecommendationsView:
         self._unsubscribe = None
         self._generation = 0
         self._busy = False
+        self._partial_warning_count = 0
         self._task_handle = None
         self._pending_partial = None
         self._partial_source_id = 0
@@ -1174,17 +1175,19 @@ class UxRecommendationsView:
 
         identity_id = self.selected_identity_id()
         if not identity_id:
-            self._summary.set_label("Aucun profil disponible.")
+            self._show_calculation_unavailable("Aucun profil disponible.")
             return False
         context = self.plugin.context
         if context is None:
-            self._summary.set_label("Plugin non activé.")
+            self._show_calculation_unavailable("Plugin non activé.")
             return False
         metadata_broker = context.broker("metadata")
         catalog_broker = context.broker("catalog")
         task_broker = context.broker("tasks")
         if metadata_broker is None or catalog_broker is None or task_broker is None:
-            self._summary.set_label("Core incompatible : brokers metadata/catalog/tasks indisponibles.")
+            self._show_calculation_unavailable(
+                "Core incompatible : brokers metadata/catalog/tasks indisponibles."
+            )
             return False
 
         generation = self._generation
@@ -1280,6 +1283,16 @@ class UxRecommendationsView:
 
         handle.add_done_callback(finished)
         return False
+
+    def _show_calculation_unavailable(self, message: str) -> None:
+        self._summary.set_label(message)
+        master = getattr(self, "_master", None)
+        if master is not None and not getattr(self, "_ranked", ()):
+            master.set_list_state("Recommandations indisponibles", message, "dialog-warning-symbolic")
+            master.empty_detail(
+                "Aucune recommandation sélectionnée",
+                "Les détails apparaîtront après un calcul réussi.",
+            )
 
     def refresh(self):
         # Detached pages can still receive late identity/toolbar signals
@@ -1470,6 +1483,9 @@ class UxRecommendationsView:
             parts.append("Provisoire · ordre susceptible d’évoluer")
         else:
             parts.append("Ordre diversifié")
+            warnings = getattr(self, "_partial_warning_count", 0)
+            if warnings:
+                parts.append(f"{warnings} recherche(s) partiellement en erreur")
         self._summary.set_label(" · ".join(parts))
 
     def _render(self, preserve_summary: bool = False) -> None:
@@ -1536,6 +1552,11 @@ class UxRecommendationsView:
                 getattr(self, "_detail_selection_generation", 0) + 1
             )
             self._reset_llm_selection(None)
+            if self._ranked:
+                self._master.set_list_state(
+                    "Aucun résultat pour ces filtres",
+                    "Modifiez les filtres pour afficher les recommandations déjà calculées.",
+                )
             self._master.empty_detail(
                 "Aucune recommandation sélectionnée",
                 "Modifiez les filtres ou relancez le calcul.",
@@ -2145,6 +2166,7 @@ class UxRecommendationsView:
         if generation != self._generation:
             return False
         self._busy = False
+        self._partial_warning_count = len(result.warnings) if result is not None and not error else 0
         self._refresh_button.set_sensitive(True)
         self._spinner.stop()
         if error or result is None:
@@ -2152,12 +2174,12 @@ class UxRecommendationsView:
             # An error may originate in an untrusted provider or backend.
             # Never reflect raw provider messages into the GTK status/toast.
             message = "Calcul impossible. Réessayez ou vérifiez les catalogues connectés."
-            self._summary.set_label(message)
+            self._render()
+            self._show_calculation_unavailable(message)
             try:
                 self.host.toast(message)
             except Exception:
                 pass
-            self._render()
             return False
 
         self._ranked = list(result.ranked)
@@ -2165,14 +2187,15 @@ class UxRecommendationsView:
         self._reload_languages(self._ranked)
         if self._reference_book is None and result.profile_books:
             self._reload_reference_books(result.profile_books)
+        empty_reason = None
         if not result.books_count:
-            self._summary.set_label("Le profil ne contient aucun livre exploitable.")
+            empty_reason = "Le profil ne contient aucun livre exploitable."
         elif not result.providers:
-            self._summary.set_label("Aucun catalogue connecté ne permet la recherche.")
+            empty_reason = "Aucun catalogue connecté ne permet la recherche."
         elif not result.queries:
-            self._summary.set_label("Pas assez de métadonnées pour construire des recommandations.")
+            empty_reason = "Pas assez de métadonnées pour construire des recommandations."
         elif not result.ranked:
-            self._summary.set_label("Aucune recommandation trouvée avec les catalogues actuellement connectés.")
+            empty_reason = "Aucune recommandation trouvée avec les catalogues actuellement connectés."
         else:
             suffix = f" · {len(result.warnings)} recherche(s) partiellement en erreur" if result.warnings else ""
             if self._reference_book is not None:
@@ -2183,6 +2206,10 @@ class UxRecommendationsView:
             else:
                 self._summary.set_label(f"{len(result.ranked)} recommandations à partir de {result.books_count} livres et {len(result.queries)} signaux{suffix}")
         self._render(preserve_summary=True)
+        if empty_reason is not None:
+            self._summary.set_label(empty_reason)
+            if not self._ranked:
+                self._master.set_list_state("Aucune recommandation", empty_reason)
         return False
 
     def _progress_complete(self, generation, result, error):

@@ -368,6 +368,8 @@ def test_untrusted_authors_never_create_public_metadata_or_duplicate_values():
 
 def test_empty_filter_invalidates_previous_detail_without_selection_callback():
     view, rows, details, empties = _make_view({"title": "Old book"})
+    states = []
+    view._master.set_list_state = lambda *args: states.append(args)
     view._render(preserve_summary=True)
     view._selected_row(rows[0])
     assert len(details) == 1
@@ -379,6 +381,7 @@ def test_empty_filter_invalidates_previous_detail_without_selection_callback():
     view._matches = lambda _ranked: False
     view._render(preserve_summary=True)
     assert empties[-1][0] == "Aucune recommandation sélectionnée"
+    assert states[-1][0] == "Aucun résultat pour ces filtres"
     assert view._detail_selection_generation > previous_generation
     assert view._llm_selection_key is None
     assert view._llm_selected_row is None

@@ -265,6 +265,7 @@ def main():
         view = state["view"]
         assert view._master._page.store.get_n_items() == 0
         assert view._master._page.selection.get_selected_item() is None
+        assert view._master._page.empty_page.get_title() == "Aucun résultat pour ces filtres"
         state["old_action"].emit("clicked")
         assert len(state["searches"]) == 1
         capture("03-no-match")

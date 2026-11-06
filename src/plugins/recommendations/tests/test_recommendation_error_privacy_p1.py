@@ -8,6 +8,7 @@ import json
 from types import SimpleNamespace as NS
 
 from recommendations import UxRecommendationsView
+from recommendation_service import RecommendationResult
 
 
 class Label:
@@ -71,6 +72,8 @@ def test_error_status_and_toast_redact_even_untrusted_explicit_error():
     view._spinner = NS(stop=lambda: None)
     view._summary = Label()
     view._render = lambda: None
+    states = []
+    view._master = NS(set_list_state=lambda *args: states.append(args), empty_detail=lambda *_: None)
     toasts = []
     view.host = NS(toast=toasts.append)
     private_error = (
@@ -84,6 +87,50 @@ def test_error_status_and_toast_redact_even_untrusted_explicit_error():
         "Calcul impossible. Réessayez ou vérifiez les catalogues connectés."
     )
     assert toasts == [view._summary.value]
+    assert states == [("Recommandations indisponibles", view._summary.value, "dialog-warning-symbolic")]
     assert "PRIVATE" not in json.dumps((view._summary.value, toasts))
     assert view._base_complete(2, None, private_error) is False
     assert toasts == [view._summary.value]
+
+
+def test_empty_success_replaces_loading_message_with_the_actual_reason():
+    view = object.__new__(UxRecommendationsView)
+    view._generation = 5
+    view._busy = True
+    view._refresh_button = NS(set_sensitive=lambda _enabled: None)
+    view._spinner = NS(stop=lambda: None)
+    view._summary = Label()
+    view._reference_book = None
+    view._reload_providers = lambda _providers: None
+    view._reload_languages = lambda _rows: None
+    view._render = lambda **_options: None
+    states = []
+    view._master = NS(set_list_state=lambda *args: states.append(args))
+
+    result = RecommendationResult(books_count=0, queries=(), ranked=(), providers=())
+    assert view._base_complete(5, result, None) is False
+    assert not view._busy
+    assert states == [("Aucune recommandation", "Le profil ne contient aucun livre exploitable.")]
+
+
+def test_final_partial_warning_remains_visible_after_filtering():
+    view = object.__new__(UxRecommendationsView)
+    view._generation = 6
+    view._refresh_button = NS(set_sensitive=lambda _enabled: None)
+    view._spinner = NS(stop=lambda: None)
+    view._summary = Label()
+    view._reference_book = None
+    view._reload_providers = lambda _providers: None
+    view._reload_languages = lambda _rows: None
+    view._render = lambda **_options: None
+    view._matches = lambda _row: False
+    view._view_filters = lambda: ("Dumas", (), ())
+    result = RecommendationResult(
+        books_count=1, queries=("Dumas",), ranked=(object(),),
+        providers=(("catalogue", "Catalogue"),), warnings=("provider error",),
+    )
+    view._base_complete(6, result, None)
+    view._update_view_summary(provisional=False)
+    assert view._summary.value == (
+        "0 sur 1 · « Dumas » · Ordre diversifié · 1 recherche(s) partiellement en erreur"
+    )
