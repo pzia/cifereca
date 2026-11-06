@@ -31,10 +31,16 @@ def harness(monkeypatch):
 
     def local(*args, **kwargs):
         counters["local"] += 1
+        diagnostic = kwargs.pop("diagnostic", None)
         assert kwargs == {
             "provider_id": "paris", "docbase": "DILICOM",
             "primary_id": "",
         }
+        if diagnostic is not None:
+            diagnostic["reason_code"] = (
+                "local_action_available_provider_unknown"
+                if choices["local"] else "local_admission_unavailable"
+            )
         return choices["local"]
 
     monkeypatch.setattr(paris, "_normal_paris_source_current", scope)
