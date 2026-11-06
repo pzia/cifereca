@@ -314,8 +314,26 @@ def _without_redundant_merged(self, sessions: list[ProviderSession], *, field: s
     ]
 
 
-def _search_sessions_for_active_identity(self, sessions: list[ProviderSession],
-                                         identity: object) -> list[ProviderSession]:
+def _configured_paris_primary_for_search(self, identity: object) -> str | None:
+    """Read a local Paris primary preference; this never authorizes a loan."""
+    identity_id = getattr(identity, "identity_id", None)
+    if type(identity_id) is not str or not identity_id:
+        return None
+    try:
+        saved = self.config.identity(identity_id)
+        primary = saved.get("primary_paris_connection_id") if type(saved) is dict else None
+    except (AttributeError, LookupError, TypeError, ValueError):
+        return None
+    if (type(primary) is not str or not primary or len(primary) > 256
+            or primary != primary.strip() or not primary.isprintable()):
+        return None
+    return primary
+
+
+def _search_sessions_for_active_identity(
+    self, sessions: list[ProviderSession], identity: object, *,
+    paris_primary: str | None = None,
+) -> list[ProviderSession]:
     """Select one source per provider, preferring the active reader's account.
 
     A provider-wide catalogue is not account-independent when a session
@@ -327,10 +345,12 @@ def _search_sessions_for_active_identity(self, sessions: list[ProviderSession],
     """
     active = getattr(identity, "identity_id", None)
     chosen: dict[str, ProviderSession] = {}
-    preferred: set[str] = set()
+    ranking: dict[str, int] = {}
     for session in sessions:
         provider = session.provider_id
-        if provider in preferred:
+        # Another linked account may be the Paris primary even when an
+        # account of the same identity was connected first.
+        if ranking.get(provider) == (3 if provider == "paris" else 2):
             continue
         is_active = False
         credential = getattr(session, "credential_id", None)
@@ -343,10 +363,12 @@ def _search_sessions_for_active_identity(self, sessions: list[ProviderSession],
             except (AttributeError, LookupError, TypeError, ValueError):
                 # Unknown owner cannot be treated as belonging to the reader.
                 pass
-        if provider not in chosen or is_active:
+        rank = 2 if is_active else 1
+        if provider == "paris" and is_active and credential == paris_primary:
+            rank = 3
+        if rank > ranking.get(provider, 0):
             chosen[provider] = session
-        if is_active:
-            preferred.add(provider)
+            ranking[provider] = rank
     return list(chosen.values())
 
 
@@ -474,6 +496,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     def sources_current() -> bool:
         if not source_leases:
             return True
+        if (paris_source_selected
+                and _configured_paris_primary_for_search(self, identity)
+                != configured_paris_primary):
+            return False
         try:
             registered = tuple(self._sessions.values())
         except RuntimeError:
@@ -504,10 +530,20 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         and self._provider_enabled_for_identity(session.provider_id)
         and (requested_provider == "all" or session.provider_id == requested_provider)
     ]
-    searchable = _search_sessions_for_active_identity(self, available, identity)
+    configured_paris_primary = (
+        _configured_paris_primary_for_search(self, identity)
+        if any(session.provider_id == "paris" for session in available)
+        else None
+    )
+    searchable = _search_sessions_for_active_identity(
+        self, available, identity, paris_primary=configured_paris_primary,
+    )
     searchable = self._without_redundant_merged(
         searchable, field=field, scope=provider_scope,
         include_redundant_merged=include_redundant_merged,
+    )
+    paris_source_selected = any(
+        session.provider_id == "paris" for session in searchable
     )
     source_leases = tuple(
         (session, _inert_search_source_state(session))
@@ -1047,12 +1083,22 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         and self._provider_enabled_for_identity(session.provider_id)
         and (not requested or session.provider_id in requested)
     ]
-    searchable = _search_sessions_for_active_identity(self, available, identity)
+    configured_paris_primary = (
+        _configured_paris_primary_for_search(self, identity)
+        if any(session.provider_id == "paris" for session in available)
+        else None
+    )
+    searchable = _search_sessions_for_active_identity(
+        self, available, identity, paris_primary=configured_paris_primary,
+    )
     searchable = self._without_redundant_merged(
         searchable, field=field, scope=scope,
         include_redundant_merged=include_redundant_merged,
     )
     searchable.sort(key=lambda row: row.provider_id)
+    paris_source_selected = any(
+        session.provider_id == "paris" for session in searchable
+    )
     source_leases = tuple(
         (session, _inert_search_source_state(session))
         for session in searchable
@@ -1072,9 +1118,11 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         if (search_generation != self._search_generation
                 or self.current_identity is not identity):
             return False
-        # A provider can be reconnected without a profile transition. Its
-        # old in-flight worker is then no longer authorized to publish a
-        # batch, a stream event, a mirror or an unscoped cache result.
+        # A reconnect or a changed Paris primary revokes old results.
+        if (paris_source_selected
+                and _configured_paris_primary_for_search(self, identity)
+                != configured_paris_primary):
+            return False
         try:
             registered = tuple(self._sessions.values())
         except RuntimeError:
