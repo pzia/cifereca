@@ -188,3 +188,40 @@ def test_forget_initial_does_not_unlink_replaced_sidecar(
     assert observed == []
     assert manifest.is_symlink()
     assert outside.read_text(encoding="utf-8") == "unrelated"
+
+
+def test_initial_receipt_refuses_revoked_scope_before_replace(
+        first_offer, monkeypatch):
+    """Revocation after hashing cannot publish a new valid receipt."""
+    import os
+
+    directory, path, loan = first_offer
+    original_replace = os.replace
+    admission = {"ok": True, "checks": 0}
+    replaced = []
+
+    def current():
+        admission["checks"] += 1
+        # Admission is revoked only after the initial verification and hash,
+        # at the last gate immediately before publishing the sidecar.
+        return admission["checks"] < 3
+
+    def watch_replace(*args, **kwargs):
+        replaced.append(args)
+        return original_replace(*args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", watch_replace)
+    assert not acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        now=100, admission_current=current)
+    assert admission["checks"] >= 3
+    assert replaced == []
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_initial_receipt_refuses_revoked_scope_at_admission(first_offer):
+    directory, path, loan = first_offer
+    assert not acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        admission_current=lambda: False)
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
