@@ -1,0 +1,109 @@
+<?xml version='1.0' encoding='utf-8'?>
+<srw:searchRetrieveResponse xmlns:mxc="info:lc/xmlns/marcxchange-v2" xmlns:srw="http://www.loc.gov/zing/srw/">
+  <srw:version>1.2</srw:version>
+  <srw:numberOfRecords>105</srw:numberOfRecords>
+  <srw:records>
+    <srw:record>
+      <srw:recordSchema>marcxchange</srw:recordSchema>
+      <srw:recordPacking>xml</srw:recordPacking>
+      <srw:recordData>
+        <mxc:record format="UNIMARC" id="ark:/12148/cb34376695h" type="Bibliographic">
+          <mxc:datafield tag="101" ind1="0" ind2=" ">
+            <mxc:subfield code="a">fre</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="200" ind1="1" ind2=" ">
+            <mxc:subfield code="a">[Melle âge tendre]</mxc:subfield>
+            <mxc:subfield code="b">Texte imprimé</mxc:subfield>
+          </mxc:datafield>
+        </mxc:record>
+      </srw:recordData>
+      <srw:recordIdentifier>ark:/12148/cb34376695h</srw:recordIdentifier>
+      <srw:recordPosition>1</srw:recordPosition>
+    </srw:record>
+    <srw:record>
+      <srw:recordSchema>marcxchange</srw:recordSchema>
+      <srw:recordPacking>xml</srw:recordPacking>
+      <srw:recordData>
+        <mxc:record format="UNIMARC" id="ark:/12148/cb34376696v" type="Bibliographic">
+          <mxc:datafield tag="101" ind1="0" ind2=" ">
+            <mxc:subfield code="a">fre</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="200" ind1="1" ind2=" ">
+            <mxc:subfield code="a">[Age tendre]</mxc:subfield>
+            <mxc:subfield code="b">Texte imprimé</mxc:subfield>
+          </mxc:datafield>
+        </mxc:record>
+      </srw:recordData>
+      <srw:recordIdentifier>ark:/12148/cb34376696v</srw:recordIdentifier>
+      <srw:recordPosition>2</srw:recordPosition>
+    </srw:record>
+    <srw:record>
+      <srw:recordSchema>marcxchange</srw:recordSchema>
+      <srw:recordPacking>xml</srw:recordPacking>
+      <srw:recordData>
+        <mxc:record format="UNIMARC" id="ark:/12148/cb342301601" type="Bibliographic">
+          <mxc:datafield tag="101" ind1="0" ind2=" ">
+            <mxc:subfield code="a">fre</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="200" ind1="1" ind2=" ">
+            <mxc:subfield code="a">Âge tendre</mxc:subfield>
+            <mxc:subfield code="b">Texte imprimé</mxc:subfield>
+          </mxc:datafield>
+        </mxc:record>
+      </srw:recordData>
+      <srw:recordIdentifier>ark:/12148/cb342301601</srw:recordIdentifier>
+      <srw:recordPosition>3</srw:recordPosition>
+    </srw:record>
+    <srw:record>
+      <srw:recordSchema>marcxchange</srw:recordSchema>
+      <srw:recordPacking>xml</srw:recordPacking>
+      <srw:recordData>
+        <mxc:record format="UNIMARC" id="ark:/12148/cb34380158p" type="Bibliographic">
+          <mxc:datafield tag="101" ind1="0" ind2=" ">
+            <mxc:subfield code="a">fre</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="200" ind1="1" ind2=" ">
+            <mxc:subfield code="a">Ok! Âge tendre</mxc:subfield>
+            <mxc:subfield code="b">Texte imprimé</mxc:subfield>
+          </mxc:datafield>
+        </mxc:record>
+      </srw:recordData>
+      <srw:recordIdentifier>ark:/12148/cb34380158p</srw:recordIdentifier>
+      <srw:recordPosition>4</srw:recordPosition>
+    </srw:record>
+    <srw:record>
+      <srw:recordSchema>marcxchange</srw:recordSchema>
+      <srw:recordPacking>xml</srw:recordPacking>
+      <srw:recordData>
+        <mxc:record format="UNIMARC" id="ark:/12148/cb46753205j" type="Bibliographic">
+          <mxc:datafield tag="101" ind1="0" ind2=" ">
+            <mxc:subfield code="a">fre</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="200" ind1="1" ind2=" ">
+            <mxc:subfield code="a">Age tendre </mxc:subfield>
+          </mxc:datafield>
+        </mxc:record>
+      </srw:recordData>
+      <srw:recordIdentifier>ark:/12148/cb46753205j</srw:recordIdentifier>
+      <srw:recordPosition>5</srw:recordPosition>
+    </srw:record>
+    <srw:record>
+      <srw:recordSchema>marcxchange</srw:recordSchema>
+      <srw:recordPacking>xml</srw:recordPacking>
+      <srw:recordData>
+        <mxc:record format="UNIMARC" id="ark:/12148/cb38312925h" type="Bibliographic">
+          <mxc:datafield tag="101" ind1="0" ind2=" ">
+            <mxc:subfield code="a">fre</mxc:subfield>
+          </mxc:datafield>
+          <mxc:datafield tag="200" ind1="1" ind2=" ">
+            <mxc:subfield code="a">Age tendre</mxc:subfield>
+            <mxc:subfield code="b">Images animées</mxc:subfield>
+          </mxc:datafield>
+        </mxc:record>
+      </srw:recordData>
+      <srw:recordIdentifier>ark:/12148/cb38312925h</srw:recordIdentifier>
+      <srw:recordPosition>6</srw:recordPosition>
+    </srw:record>
+  </srw:records>
+  <srw:nextRecordPosition>7</srw:nextRecordPosition>
+</srw:searchRetrieveResponse>

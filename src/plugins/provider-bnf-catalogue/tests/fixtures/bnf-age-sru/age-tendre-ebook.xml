@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<srw:searchRetrieveResponse xmlns:srw="http://www.loc.gov/zing/srw/">
+  <srw:version>1.2</srw:version>
+  <srw:numberOfRecords>0</srw:numberOfRecords>
+  <srw:records />
+</srw:searchRetrieveResponse>

@@ -12,6 +12,7 @@ spec.loader.exec_module(probe)
 SRU = "http://www.loc.gov/zing/srw/"
 MXC = "info:lc/xmlns/marcxchange-v2"
 ISBN = "9782377314652"
+PUBLIC_FIXTURES = Path(__file__).with_name("fixtures") / "bnf-age-sru"
 
 
 def response(*records, total=None):
@@ -132,6 +133,42 @@ def test_contradictory_or_unknown_marc_subfield_is_not_interpreted():
     result = probe.exact_edition_age_fields(response(tampered), ISBN)
     assert result[0]["raw_subfields"] == (("z", "JAg1399"),)
     assert result[0]["age_status"] == "unqualified_raw_evidence"
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be", "utf-32"])
+def test_other_xml_encodings_cannot_bypass_entity_rejection(encoding):
+    payload = response(record(ages=["&audience;"])).decode("utf-8")
+    payload = '<!DOCTYPE srw:searchRetrieveResponse [<!ENTITY audience "Synthetic">]>' + payload
+    with pytest.raises(ValueError, match="invalid_sru_encoding"):
+        probe.exact_edition_age_fields(payload.encode(encoding), ISBN)
+
+
+@pytest.mark.parametrize(("name", "isbn", "tag", "pair", "count"), [
+    ("age-tendre", ISBN, "333", ("a", "À partir de 13 ans"), 1),
+    ("age-tendre-intermarc", ISBN, "833", ("m", "JAg1399"), 2),
+    ("carre-unimarc", "9791040120971", "333", ("a", "De 0 à 3 ans"), 1),
+    ("carre-intermarc", "9791040120971", "833", ("m", "JAg0003"), 2),
+    ("conflicting-intermarc", "9782362901645", "833", ("m", "JAg0699"), 2),
+])
+def test_public_sru_age_evidence_preserves_actual_fields(name, isbn, tag, pair, count):
+    data = (PUBLIC_FIXTURES / f"{name}.xml").read_bytes()
+    evidence = probe.exact_edition_age_fields(data, isbn)
+    assert sum(row["field_tag"] == tag and pair in row["raw_subfields"]
+               for row in evidence) == count
+
+
+@pytest.mark.parametrize(("name", "isbn"), [
+    ("baby", "9782324036668"), ("age-tendre-ebook", "9782377315123"), ("homonyms", ISBN),
+])
+def test_public_sru_responses_without_exact_age_do_not_supply_evidence(name, isbn):
+    data = (PUBLIC_FIXTURES / f"{name}.xml").read_bytes()
+    assert probe.exact_edition_age_fields(data, isbn) == []
+
+
+def test_public_sru_record_processing_diagnostic_is_not_empty_evidence():
+    data = (PUBLIC_FIXTURES / "conflicting.xml").read_bytes()
+    with pytest.raises(ValueError, match="sru_diagnostics"):
+        probe.exact_edition_age_fields(data, "9782362901645")
 
 
 def test_unimarc_audience_note_333_is_distinct_from_cnlj_review_329():
