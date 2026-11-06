@@ -57,6 +57,72 @@ def _lender_label(value: object) -> str:
     return "Profil prêteur" if label == "Compte bibliothèque" else label
 
 
+def _observation_route(row: ObservedBorrowOffer) -> tuple[str, ...] | None:
+    """Local identity/account/edition scope for contradictory observations.
+
+    A publisher may observe an exact *negative* without collecting a complete
+    account-wide readiness report. Use either independently scoped fact to
+    locate that denial; never convert it to a positive option.
+    """
+    item, evidence, exact = row.notice, row.evidence, row.edition_evidence
+    if type(item) is not SearchResult or type(row.edition_id) is not str:
+        return None
+    if type(evidence) is BorrowerOperationEvidence:
+        owner = (evidence.identity_id, evidence.provider_id,
+                 evidence.credential_id, evidence.account_id, evidence.branch)
+    elif type(exact) is ExactEditionBorrowerEvidence:
+        owner = (exact.identity_id, exact.provider_id,
+                 exact.credential_id, exact.borrower_id, exact.docbase)
+    else:
+        return None
+    coords = owner[:4] + (
+        item.docbase, item.record_id, item.source_collection or "",
+        row.edition_id,
+    )
+    if (any(type(x) is not str or len(x) > 1024 or "\x00" in x
+            for x in coords)
+            or not all(coords[i] for i in (0, 1, 2, 4, 5, 7))
+            or (item.source_provider, item.source_credential,
+                item.docbase) != (owner[1], owner[2], owner[4])):
+        return None
+    # The edition-only fact also pins the book, not just the borrower.
+    # A denial for another record/collection is never a veto here.
+    if type(evidence) is not BorrowerOperationEvidence and (
+            item.record_id != exact.record_id
+            or item.source_collection != exact.source_collection):
+        return None
+    return coords
+
+def _noncontradictory_observations(
+    observations: tuple[ObservedBorrowOffer, ...] | list[ObservedBorrowOffer],
+) -> tuple[ObservedBorrowOffer, ...]:
+    """Do not let an old positive survive a denial for the exact same route.
+
+    Only same-identity/credential/borrower/book/collection candidates
+    conflict. A separate lender or edition stays independently selectable.
+    Duplicate observations with identical facts are harmless; distinct
+    freshness, permissions, delivery policy or medium are ambiguous.
+    """
+    seen: dict[tuple[str, ...], ObservedBorrowOffer] = {}
+    contradictions: set[tuple[str, ...]] = set()
+    for row in observations:
+        route = _observation_route(row)
+        if route is None or route in contradictions:
+            continue
+        previous = seen.get(route)
+        if previous is None:
+            seen[route] = row
+            continue
+        if ((previous.evidence, previous.edition_evidence,
+             previous.observed_at, previous.transfer_state,
+             previous.notice.medium) !=
+            (row.evidence, row.edition_evidence, row.observed_at,
+             row.transfer_state, row.notice.medium)):
+            contradictions.add(route)
+            del seen[route]
+    return tuple(seen.values())
+
+
 def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
              source_epoch: int) -> BorrowForIdentityWitness | None:
     """Rebind every coordinate to in-memory Core and owned SQLite state.
@@ -246,8 +312,12 @@ def preview_live_borrow_for_current_identity(
     if type(context) is not int or context < 0:
         raise ValueError("invalid_cross_profile_borrow_context")
     source = source_context_epoch(service)
+    # A newer denial or unknown status for one exact borrower/edition must
+    # not be discarded while retaining an older positive witness. Refuse
+    # contradictory duplicates before converting them to admissible options.
+    scoped = _noncontradictory_observations(observations)
     witnesses = tuple(
-        witness for row in observations
+        witness for row in scoped
         if (witness := _witness(
             service, row, context_epoch=context, source_epoch=source,
         )) is not None

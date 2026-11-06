@@ -46,3 +46,33 @@ Le verdict positif par `lending_capabilities.assess_borrower_operation_eligibili
 L'argument `edition_evidence` est facultatif dans la signature pour préserver les clients du DTO ; absent, incomplet, mal qualifié, sur une autre édition/collection, ou attestant un refus, il donne **zéro option**. Une preuve de compte A sous DILICOM ne permet plus de proposer un livre B de DILICOM. La revalidation du clic recalcule ces deux évaluations : une offre qui devient inconnue ou indisponible est révoquée.
 
 Les deux structures portent le même nom `BorrowerOperationEvidence`, mais **leurs contrats sont différents** ; elles sont vérifiées chacune par le validateur public correspondant. Les champs ne sont jamais synthétisés à partir de `CanLoan`, d'un titre, du succès de connexion ou de l'inventaire des prêts. Même un double positif demeure consultatif (`executable=False`) et n'autorise jamais la copie vers un autre profil.
+
+## Observations contradictoires d'une offre exacte
+
+Le producteur peut recevoir deux lectures concurrentes : l'une annonce une
+offre admissible et l'autre la marque indisponible, inconnue, quota épuisé,
+ou transfert restreint. Filtrer seulement les témoins négatifs puis conserver
+un témoin positif plus ancien **fabriquerait un faux choix actif**.
+
+Avant tout calcul de preview, `_noncontradictory_observations` regroupe les
+observations par `identity/provider/credential/account/docbase/record_id/
+collection/edition`. Des doublons **identiques** (mêmes preuves, horodatage,
+état de transfert et support numérique) sont dédupliqués ; des observations
+distinctes de la même route sont conservativement **retirées toutes**.
+L'ambiguïté affecte cette offre, pas les autres comptes ni collections.
+Le moteur n'effectue aucune préférence arbitraire par ordre de liste,
+fraîcheur présumée ou statut positif. Le callback de #4810 réévalue la même
+règle et révoque un choix ancien devenu contradictoire.
+
+Une preuve d'un autre compte/emprunteur n'est pas une négation du prêteur
+courant. Des entrées sans identité de prêt suffisamment portée restent
+non admissibles ; elles n'autorisent ni interdiction globale ni offre positive.
+Aucun nouveau flux de récupération de données fournisseur n'est ajouté.
+
+Une observation **négative par édition seulement** (sans bilan complet du compte)
+est aussi reliée à la bonne route depuis les coordonnées
+`edition_evidence.identity_id/provider_id/credential_id/borrower_id/
+docbase/record_id/source_collection` : un refus fournisseur précis ne
+disparaît pas simplement parce que les données de quota ou d'abonnement
+sont inconnues. Un refus relatif à un autre emprunteur ou à un autre livre
+ne peut en revanche invalider la permission du prêteur exact.
