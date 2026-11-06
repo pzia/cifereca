@@ -61,35 +61,44 @@ def retire_canonical_kobo_legacy_in_sync(
     }
     if not matched:
         return 0
+    # Iterate only the POSITIVELY observed editions, not the earliest
+    # historical backup IDs. A legacy-only row alphabetically before an
+    # eligible canonical B must not starve the migration on every Sync.
+    # Chunk by 200 IDs (below old SQLite bind limits), cap actual writes
+    # to four and leave all unverifiable archives untouched for review.
+    eligible: list[tuple[str, str]] = []
+    rights_ids = sorted(matched)
     try:
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN")
-            # The single old PK omits branch/borrower. Always read using
-            # this current registered identity+credential+account, then
-            # revalidate all ownership and physical facts in the writer.
-            candidates = db.execute(
-                "SELECT item_id,revision_id FROM backup_items "
-                "WHERE provider_id='kobo' AND identity_id=? "
-                "AND credential_id=? AND account_id=? AND status='complete' "
-                "ORDER BY item_id LIMIT ?",
-                (snapshot.scope.identity_id, snapshot.scope.credential_id,
-                 snapshot.scope.account_id, _MAX_PER_SYNC + 1),
-            ).fetchall()
+            for offset in range(0, len(rights_ids), 200):
+                ids = rights_ids[offset:offset + 200]
+                placeholders = ",".join("?" for _ in ids)
+                records = db.execute(
+                    "SELECT item_id,revision_id FROM backup_items "
+                    "WHERE provider_id='kobo' AND identity_id=? "
+                    "AND credential_id=? AND account_id=? AND status='complete' "
+                    f"AND item_id IN ({placeholders})",
+                    (snapshot.scope.identity_id, snapshot.scope.credential_id,
+                     snapshot.scope.account_id, *ids),
+                ).fetchall()
+                for item, revision in records:
+                    observed = matched.get(item)
+                    if (observed is not None
+                            and type(revision) is str
+                            and revision == observed.provider_revision_id):
+                        eligible.append((item, observed.right_id))
+                if len(eligible) >= _MAX_PER_SYNC:
+                    break
     except (sqlite3.Error, OSError, ValueError, TypeError, RuntimeError):
         return 0
-    # Never silently treat a truncated set as an exhaustive retirement batch.
-    # The remaining work can be revisited in a later source Sync.
     retired = 0
-    for item, revision in candidates[:_MAX_PER_SYNC]:
+    for item, right_id in eligible[:_MAX_PER_SYNC]:
         if context_current() is not True:
             break
-        observed = matched.get(item)
-        if (observed is None or type(revision) is not str
-                or revision != observed.provider_revision_id):
-            continue
         result = retire_attested_legacy_kobo_backup(
             storage, library_root=library_root,
-            snapshot=snapshot, item_id=item, right_id=observed.right_id,
+            snapshot=snapshot, item_id=item, right_id=right_id,
             context_current=context_current,
         )
         retired += int(result.status == "retired" and result.changed)
