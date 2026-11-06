@@ -118,3 +118,20 @@ def test_no_receipt_preserves_ordinary_existing_loan_delivery(setup):
     (path.parent / acsm_cache.INITIAL_MANIFEST).unlink()
     session.loans = lambda _: pytest.fail("no inventory read without a receipt")
     assert stage(setup) is None
+
+def test_other_paris_borrower_keeps_existing_selected_right_path(setup):
+    service, session, account, source, attempt, path, claim, loan = setup
+    other = replace(account, unique_id="reader-B")
+    alternate, _ = new_source(
+        "identity-A", provider="paris", credential="credential-A",
+        account="reader-B", branch="dilicom", edition="edition-1",
+        right="right-1", kind="loan",
+    )
+    session.loans = lambda _: pytest.fail(
+        "no borrow inventory for non-primary first-offer receipt"
+    )
+    assert stage_first_paris_acsm(
+        service, session, other, alternate, attempt=attempt,
+        admission_current=lambda: True,
+    ) is None
+    assert list(attempt.iterdir()) == []

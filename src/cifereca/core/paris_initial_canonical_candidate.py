@@ -26,8 +26,13 @@ def stage_first_paris_acsm(service, session, account: Account, source, *,
     if (scope.provider_id != "paris" or source.kind != "loan"
             or source.branch != "dilicom"):
         return None
+    # Only the implicit primary Paris account can have a first-offer
+    # receipt from the confirmed manual borrow action. Other borrowers
+    # legitimately use ordinary canonical selected-right acquisition;
+    # absence of this special receipt must never block their delivery.
+    if type(account) is Account and account.unique_id != "":
+        return None
     if (type(account) is not Account
-            or account.unique_id != ""
             or (account.identity_id, account.provider_id,
                 account.credential_id, account.unique_id) != (
                 scope.identity_id, scope.provider_id,
