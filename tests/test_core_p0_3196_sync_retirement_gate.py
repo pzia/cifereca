@@ -142,3 +142,25 @@ def test_actual_core_rights_stage_uses_its_held_sync_lease_without_second_get(ri
     assert storage.backup_get("kobo", "card-a", "book") is None
     assert _canonical(storage) == original
     assert path.read_bytes() == BYTES
+
+
+def test_unmatched_earlier_legacy_archive_never_starves_exact_retirement(rig):
+    storage, _root, _file, _snapshot, lock_path = rig
+    # The A snapshot sees only 'book'. Historical rows preceding it in
+    # lexical SQLite order must not consume the four-row bounded work queue.
+    with storage._lock, storage._connect() as db:
+        for item in ("000-history", "001-history", "002-history", "003-history", "004-history"):
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,title,status,revision_id,"
+                "identity_id,account_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                ("kobo", "card-a", item, "Old", "complete", "old",
+                 "A", "buyer", 1),
+            )
+    with InterProcessLock(lock_path) as lease:
+        assert _call(rig, lease) == 1
+    assert storage.backup_get("kobo", "card-a", "book") is None
+    assert len([
+        row for row in storage.backup_list("kobo", "card-a")
+        if row["item_id"].endswith("-history")
+    ]) == 5
