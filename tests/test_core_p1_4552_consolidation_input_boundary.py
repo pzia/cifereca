@@ -83,7 +83,7 @@ def test_conflicting_duplicate_proof_fails_closed():
       "source_revision": "rev1", "account": "private"}],
     [fact(value="x" * 2049)],
     [fact(edition="private url?token=secret")],
-    [fact(value="\\ud800")],
+    [fact(value=chr(0xD800))],
     [None],
 ])
 def test_unqualified_rows_do_not_enter_either_provenance_bucket(source):
