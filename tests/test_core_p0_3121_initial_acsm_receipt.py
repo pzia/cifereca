@@ -342,3 +342,84 @@ def test_initial_receipt_rejects_revoked_lease_at_entry(first_offer):
         admission_current=lambda: False,
     )
     assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_receipt_cleanup_rejects_symlink_swapped_at_open(first_offer, tmp_path, monkeypatch):
+    """Cleanup must not read or unlink a swapped foreign receipt."""
+    import os
+
+    directory, path, loan = first_offer
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    outside = tmp_path / "unrelated.json"
+    outside.write_bytes(manifest.read_bytes())
+    original_open = os.open
+    switched = False
+
+    def swap_at_open(target, flags, *args, **kwargs):
+        nonlocal switched
+        if target == acsm_cache.INITIAL_MANIFEST and not switched:
+            switched = True
+            manifest.unlink()
+            manifest.symlink_to(outside)
+        return original_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_at_open)
+    acsm_cache.forget_initial(path)
+    assert switched
+    assert manifest.is_symlink()
+    assert outside.is_file()
+
+
+def test_receipt_cleanup_rejects_inode_replaced_after_read(first_offer, tmp_path, monkeypatch):
+    """A changed pathname before the final check cannot be deleted."""
+    import os
+
+    directory, path, loan = first_offer
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    original_stat = os.stat
+    swapped = False
+
+    def swap_before_stat(target, *args, **kwargs):
+        nonlocal swapped
+        if (target == acsm_cache.INITIAL_MANIFEST
+                and kwargs.get("follow_symlinks") is False
+                and not swapped):
+            swapped = True
+            manifest.unlink()
+            manifest.write_text('{"file":"foreign.acsm"}', encoding="utf-8")
+        return original_stat(target, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", swap_before_stat)
+    acsm_cache.forget_initial(path)
+    assert swapped
+    assert manifest.exists()
+    assert manifest.read_text(encoding="utf-8") == '{"file":"foreign.acsm"}'
+
+
+@pytest.mark.parametrize("corrupt", ["too_large", "directory", "other_file"])
+def test_receipt_cleanup_fails_closed_on_invalid_manifest(first_offer, corrupt):
+    directory, path, loan = first_offer
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    if corrupt == "too_large":
+        manifest.write_bytes(b" " * 16385)
+    elif corrupt == "directory":
+        manifest.unlink()
+        manifest.mkdir()
+    else:
+        manifest.write_text('{"file":"other.acsm"}', encoding="utf-8")
+    acsm_cache.forget_initial(path)
+    assert manifest.exists()
+
+
+def test_receipt_cleanup_removes_exact_valid_manifest(first_offer):
+    directory, path, loan = first_offer
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100)
+    acsm_cache.forget_initial(path)
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
