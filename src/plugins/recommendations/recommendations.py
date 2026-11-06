@@ -1025,6 +1025,10 @@ class UxRecommendationsView:
             return False
         if languages and set(languages).isdisjoint(_candidate_languages(ranked.item)):
             return False
+        controls = getattr(self, "_query_controls", None)
+        matches_document = getattr(controls, "matches_document", None)
+        if callable(matches_document) and not matches_document(ranked.item):
+            return False
         needle = normalize(text)
         if needle:
             item = ranked.item
@@ -1084,6 +1088,12 @@ class UxRecommendationsView:
             self._language.set_selected(selected)
         finally:
             self._reloading_languages = False
+
+    def _reload_document_choices(self) -> None:
+        controls = getattr(self, "_query_controls", None)
+        set_documents = getattr(controls, "set_document_choices", None)
+        if callable(set_documents):
+            set_documents(ranked.item for ranked in self._ranked)
 
     @staticmethod
     def _candidate_key(ranked: Any) -> str:
@@ -1310,6 +1320,7 @@ class UxRecommendationsView:
                 if controls is not None:
                     controls.set_choices(sources=(), languages=())
                     self._provider_labels.clear()
+                self._reload_document_choices()
                 self._master.show_rows((), total_count=0)
             if not self._ranked:
                 self._master.set_list_state(
@@ -1424,6 +1435,7 @@ class UxRecommendationsView:
 
         self._ranked = self._stable_partial(list(snapshot.ranked))
         self._reload_languages(self._ranked)
+        self._reload_document_choices()
         self._set_provisional(True)
 
         units = (
@@ -2149,6 +2161,7 @@ class UxRecommendationsView:
         self._spinner.stop()
         if error or result is None:
             self._ranked = []
+            self._reload_document_choices()
             # An error may originate in an untrusted provider or backend.
             # Never reflect raw provider messages into the GTK status/toast.
             message = "Calcul impossible. Réessayez ou vérifiez les catalogues connectés."
@@ -2163,6 +2176,7 @@ class UxRecommendationsView:
         self._ranked = list(result.ranked)
         self._reload_providers(result.providers)
         self._reload_languages(self._ranked)
+        self._reload_document_choices()
         if self._reference_book is None and result.profile_books:
             self._reload_reference_books(result.profile_books)
         if not result.books_count:
