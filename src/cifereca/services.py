@@ -2750,7 +2750,11 @@ class LibraryService:
                             if (linked.is_file() or linked.is_symlink()) and linked not in candidates:
                                 candidates.append(linked)
                     existing = self.storage.backup_get("kobo", item.source_credential, item.record_id)
-                    if existing:
+                    if existing and _admission is None:
+                        # #3196 D3: only the unadmitted legacy direct call is
+                        # fenced by a historical opaque attempt. A separately
+                        # validated fresh Core _admission (owned_library_download)
+                        # cannot be vetoed by a stale backup_items row alone.
                         # #3196 D3: a legacy row is NOT a local-presence proof,
                         # but an unresolved physical/attempt claim is a veto on
                         # issuing another independent GET. A moved/vanished
