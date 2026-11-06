@@ -303,12 +303,12 @@ def test_successful_manifest_prune_preserves_local_artifact_and_history(tmp_path
 
         assert summary["errors"] == 0
         assert summary["legacy_entitlements_inactivated"] == 0
-        # #3196 W3: a complete remote manifest cannot remove the last
-        # un-migrated file locator; the no-path obsolete projection can prune.
-        assert summary["legacy_pruned"] == 1
+        # #3196 W3: neither file locator nor no-path archive is pruned;
+        # only independently attested migration may retire a legacy row.
+        assert summary["legacy_pruned"] == 0
         assert summary["legacy_local_preserved"] == 0
         assert service.storage.backup_get("kobo", "vault-1", "old-local") == local_history
-        assert service.storage.backup_get("kobo", "vault-1", "old-remote") is None
+        assert service.storage.backup_get("kobo", "vault-1", "old-remote") is not None
         assert local.is_file()
 
         stale_entitlements = [
