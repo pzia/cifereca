@@ -75,20 +75,64 @@ def acquisition_work_dir(storage_path, identity_id, provider_id, loan_id=None, *
 
 
 def cleanup_acsm_after_success(path, *, loan_id, forget, logger):
+    """Remove only the verified input in its pinned private staging folder.
+
+    No pathname unlink or symlink follow. Refuse a renamed parent before
+    invoking a pathname-based cache forget, and never remove a replaced dir.
+    """
     if path is None:
         return
+    parent_fd = None
     try:
-        path.unlink(missing_ok=True)
-        forget(path)
-        logger.info('TRACE download acsm cleanup request_ref=%s action=deleted', unbound_loan_trace_ref(loan_id))
-        # Remove only the now-empty directory containing the input.
         parent = path.parent
-        try:
-            parent.rmdir()
-        except OSError:
-            pass
-    except OSError as exc:
-        logger.warning('TRACE download acsm cleanup request_ref=%s action=keep reason=delete_failed', unbound_loan_trace_ref(loan_id))
+        parent_fd = os.open(
+            parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        pinned = os.fstat(parent_fd)
+        if (not stat.S_ISDIR(pinned.st_mode)
+                or pinned.st_uid != os.geteuid()):
+            raise PermissionError('untrusted_acsm_cleanup_directory')
+        leaf = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(leaf.st_mode)
+                or leaf.st_uid != os.geteuid()):
+            raise PermissionError('untrusted_acsm_cleanup_input')
+
+        def same_parent():
+            try:
+                current = os.stat(parent, follow_symlinks=False)
+                return (stat.S_ISDIR(current.st_mode)
+                        and (current.st_dev, current.st_ino)
+                        == (pinned.st_dev, pinned.st_ino))
+            except OSError:
+                return False
+
+        if not same_parent():
+            raise PermissionError('acsm_cleanup_parent_changed')
+        os.unlink(path.name, dir_fd=parent_fd)
+        # Another actor could rebind the directory after unlink. Cache
+        # forget operates by pathname, and must never reach that new tree.
+        if not same_parent():
+            logger.warning(
+                'TRACE download acsm cleanup request_ref=%s action=keep reason=delete_failed',
+                unbound_loan_trace_ref(loan_id))
+            return
+        forget(path)
+        logger.info(
+            'TRACE download acsm cleanup request_ref=%s action=deleted',
+            unbound_loan_trace_ref(loan_id))
+        # Only remove the now-empty original folder while its inode is still
+        # bound to the supplied name. A failed rmdir is harmless.
+        if same_parent():
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+    except OSError:
+        logger.warning(
+            'TRACE download acsm cleanup request_ref=%s action=keep reason=delete_failed',
+            unbound_loan_trace_ref(loan_id))
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def cleanup_old_acsm_work(storage_path, *, max_age_seconds=None, config_get, clock, forget, logger):
