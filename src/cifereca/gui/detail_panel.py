@@ -1090,6 +1090,63 @@ class DetailPanel(Gtk.Box):
         self._append_content(group)
         self._rendered_search_detail = (item, detail)
 
+    def show_cross_profile_borrow_detail(
+        self, preview, *, expected_item: SearchResult,
+        expected_edition_id: str, expected_context_epoch: int,
+        expected_source_epoch: int,
+    ) -> bool:
+        """#4662: append neutral lender rows only to the same visible detail.
+
+        A late GTK callback cannot attach account A's lender information to
+        an identity B, a replaced provider session or a different edition.
+        No provider I/O, action button, loan claim or copy is generated.
+        """
+        from ..core.borrow_for_identity_detail import (
+            cross_profile_borrow_detail_section,
+        )
+        section = cross_profile_borrow_detail_section(preview)
+        if (section is None
+                or type(expected_item) is not SearchResult
+                or type(expected_edition_id) is not str
+                or not expected_edition_id
+                or type(expected_context_epoch) is not int
+                or type(expected_source_epoch) is not int
+                or expected_context_epoch < 0 or expected_source_epoch < 0
+                or any(option.edition_id != expected_edition_id
+                       for option in preview.options)):
+            return False
+
+        def current() -> bool:
+            try:
+                service = self.window.service
+                rendered = self._rendered_search_detail
+                return bool(
+                    type(rendered) is tuple and len(rendered) == 2
+                    and rendered[0] is expected_item
+                    and service.current_identity is not None
+                    and service.current_identity.identity_id ==
+                        preview.requesting_identity_id
+                    and service._account_context_epoch == expected_context_epoch
+                    and service._source_context_epoch == expected_source_epoch
+                )
+            except Exception:
+                return False
+
+        if not current():
+            return False
+        group = Adw.PreferencesGroup()
+        group.set_title(section.title)
+        for field in section.fields:
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_title(field.label)
+            row.set_subtitle(str(field.value))
+            group.add(row)
+        if not current():
+            return False
+        self._append_content(group)
+        return True
+
     def refresh_confirmed_borrow_detail(self, item: SearchResult) -> bool:
         """Reproject the exact visible detail from Core state, without I/O.
 
