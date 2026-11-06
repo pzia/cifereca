@@ -653,8 +653,9 @@ class Storage:
                 keys = [
                     "provider_id", "credential_id", "item_id", "revision_id", "title", "author",
                     "format", "local_path", "status", "size", "sha256", "updated_at", "error",
-                    "account_id", "entitlement_type", "loan_id", "expires_at", "acquisition_strategy",
-                    "executor", "attempt_count", "last_attempt_at", "attention_code",
+                    "job_id", "adept_profile", "account_id", "entitlement_type", "loan_id",
+                    "expires_at", "acquisition_strategy", "executor", "attempt_count",
+                    "last_attempt_at", "attention_code",
                 ]
                 rows = db.execute("SELECT " + ",".join(keys) + " FROM backup_items").fetchall()
                 for values in rows:
