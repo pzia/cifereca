@@ -156,3 +156,15 @@ def test_forged_giant_raw_json_is_refused_before_decode():
         review_admitted_source_parse_witness(
             witness(), observation=forged, input_sha256=BODY_SHA,
         )
+
+
+
+def test_forged_deep_json_is_rejected_as_invalid_observation():
+    # 10k nested arrays fit inside 64 KiB but exceed json decoder recursion.
+    raw = '{"x":' + "[" * 10000 + "1" + "]" * 10000 + "}"
+    assert len(raw) < 65536
+    forged = replace(observation(), raw_json=raw)
+    with pytest.raises(ValueError, match="invalid_admitted_source_observation"):
+        review_admitted_source_parse_witness(
+            witness(), observation=forged, input_sha256=BODY_SHA,
+        )
