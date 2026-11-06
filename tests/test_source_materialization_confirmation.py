@@ -570,3 +570,70 @@ def test_source_change_during_normalization_is_rejected_before_provider_resoluti
     result = case.broker.materialize_source(case.source, token)
     assert not result.ok and result.changed == 0 and not case.downloaded
     assert not any(s.resolve_calls for s in case.sessions)
+
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_legacy_checkpoint_update_is_not_positive_completion_evidence(
+    case, monkeypatch, interrupt,
+):
+    """#3196 D2: a 0.7 status/locator can change without a delivered file.
+
+    No Core GET or completed-delivery event occurs; reporting positive
+    progress from the backup_items delta would manufacture a success.
+    """
+    token = _prepare(case)
+
+    def legacy_checkpoint_only(service, **kwargs):
+        assert kwargs["credential_id"] == "vault-2"
+        service.storage.backup_put({
+            "provider_id": "kobo", "credential_id": "vault-2",
+            "identity_id": "reader-2", "account_id": "PRIVATE-account-2",
+            "item_id": "PRIVATE-book-1", "revision_id": "r1",
+            "title": "Historical status only", "status": "complete",
+            "local_path": str(case.root / "EBooks" / "reader-2" / "ghost.epub"),
+            "sha256": "a" * 64, "size": 47,
+        })
+        if interrupt:
+            raise OSError("PRIVATE no delivery result")
+        return {
+            "sources": [{"status": "complete"}],
+            "downloaded": 0, "unchanged": 0, "skipped": 0,
+            "skipped_archived": 0, "errors": 0, "pending": 0,
+            "attention_required": 0,
+        }
+
+    monkeypatch.setattr(kobo_backup, "_sync_kobo_backup_locked",
+                        legacy_checkpoint_only)
+    result = case.broker.materialize_source(case.source, token)
+    assert result.changed == 0
+    assert result.facts["status"] == ("interrupted" if interrupt else "success")
+    assert result.ok is (not interrupt)
+    assert bool(result.facts.get("completion_unknown")) is interrupt
+    assert case.service.storage.backup_get(
+        "kobo", "vault-2", "PRIVATE-book-1"
+    )["status"] == "complete"
+    assert not case.downloaded
+    assert not (case.root / "EBooks" / "reader-2" / "ghost.epub").exists()
+
+
+def test_executor_report_remains_authoritative_without_backup_completed_rows(
+    case, monkeypatch,
+):
+    """The real Core report, not 0.7 status, controls success changed count."""
+    token = _prepare(case)
+
+    def report_without_legacy_row(service, **kwargs):
+        return {
+            "sources": [{"status": "complete"}],
+            "downloaded": 1, "unchanged": 0, "skipped": 0,
+            "skipped_archived": 0, "errors": 0, "pending": 0,
+            "attention_required": 0,
+        }
+
+    monkeypatch.setattr(kobo_backup, "_sync_kobo_backup_locked",
+                        report_without_legacy_row)
+    result = case.broker.materialize_source(case.source, token)
+    assert result.ok and result.changed == 1
+    assert case.service.storage.backup_list("kobo", "vault-2") == []
+    assert not case.downloaded
