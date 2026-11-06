@@ -234,7 +234,7 @@ def review_admitted_source_parse_witness(
         scope = admitted_source_scope_sha256(
             observation.key, parser_id=observation.parser_id,
         )
-    except (ValueError, TypeError, KeyError, UnicodeError) as exc:
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError) as exc:
         raise ValueError("invalid_admitted_source_observation") from exc
     return review_parse_witness(
         baseline,
