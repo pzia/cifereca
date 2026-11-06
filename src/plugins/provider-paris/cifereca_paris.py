@@ -1689,6 +1689,7 @@ class ParisProviderSession(ProviderSession):
                 delivery_loan, account, target_dir,
                 scope_guard=scope_current, borrower_uid=borrower_uid,
                 initial_offer_only=initial_offer_only,
+                selected_offer_only=expected_right_id is not None,
                 selected_stage_fd=selected_stage_fd,
                 **({"stream_admission_current": scope_current}
                    if admission_current is not None else {}),
@@ -1705,7 +1706,8 @@ class ParisProviderSession(ProviderSession):
                                       borrower_uid=None,
                                       selected_stage_fd=None,
                                       stream_admission_current=None,
-                                      initial_offer_only=False) -> tuple[Path, str]:
+                                      initial_offer_only=False,
+                                      selected_offer_only=False) -> tuple[Path, str]:
         """Network + validated staging, guarded by download_digital in service."""
         def ensure_scope():
             if scope_guard is not None and not scope_guard():
@@ -1788,6 +1790,17 @@ class ParisProviderSession(ProviderSession):
                 # already. No redirect or fallback may replay that endpoint.
                 raise ProviderConfigurationError("paris_initial_acsm_replay_denied")
             self.client._validate_pnb_redirect_url(current)
+            if selected_offer_only and (
+                "assaredirect" in unquote(urlparse(current).path).casefold()
+                or "downloaddigitaldocument" in unquote(urlparse(current).path).casefold()
+            ):
+                # A selected, ALREADY existing right can never traverse a
+                # lender's borrow/quota re-evaluation endpoint. Check each
+                # qualified redirect target BEFORE its next network request,
+                # not only the initial URL. The first-offer staged receipt
+                # is consumed separately by Core without any second GET.
+                raise ProviderConfigurationError(
+                    "paris_selected_delivery_mutating_redirect_denied")
             if current in visited_urls:
                 # The signed URL may carry borrower tokens: do not re-GET or log it.
                 raise ProviderConfigurationError("Boucle de redirections PNB détectée")
