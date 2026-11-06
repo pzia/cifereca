@@ -84,11 +84,12 @@ def test_orphaned_kobo_byte_evidence_is_readonly_during_prune(
         storage.close()
 
 
+@pytest.mark.parametrize("initial_status", ["complete", "error", "pending"])
 def test_manifest_disappearance_then_return_quarantines_orphaned_completion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial_status: str,
 ):
     edition = {
-        "product_id": "book-without-locator", "revision_id": "old-revision",
+        "product_id": "book-without-locator", "revision_id": "new-remote-revision",
         "title": "Synthetic", "format": "EPUB",
     }
     service, session = _service(tmp_path, [edition])
@@ -104,7 +105,7 @@ def test_manifest_disappearance_then_return_quarantines_orphaned_completion(
     try:
         service.storage.backup_put(_legacy(
             "book-without-locator", credential="vault-1",
-            status="complete", sha256="a" * 64, size=128,
+            status=initial_status, sha256="a" * 64, size=128,
         ))
         before = service.storage.backup_get(
             "kobo", "vault-1", "book-without-locator",
@@ -124,8 +125,12 @@ def test_manifest_disappearance_then_return_quarantines_orphaned_completion(
         returned = service.sync_kobo_backup_account("vault-1")
         assert returned["attempted"] == 0
         assert returned["downloaded"] == 0
-        assert service.storage.backup_get(
+        last = service.storage.backup_get(
             "kobo", "vault-1", "book-without-locator",
-        )["status"] == "reconcile_required"
+        )
+        assert last["status"] == "reconcile_required"
+        assert last["revision_id"] == "old-revision"
+        assert last["sha256"] == before["sha256"]
+        assert last["size"] == before["size"]
     finally:
         service.close()
