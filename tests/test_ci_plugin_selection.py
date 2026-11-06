@@ -1,4 +1,5 @@
 import importlib.util
+import re
 import json
 from pathlib import Path
 import subprocess
@@ -1394,10 +1395,12 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertIn("dependency closure", reason)
 
     def test_kobo_no_undeclared_cross_package_python_imports(self):
-        tokens = (
-            "from cifereca_kobo import", "from cifereca_kobo_",
-            "import cifereca_kobo.", "import cifereca_kobo_",
-            "provider.kobo.catalog", "org.cifereca.provider.kobo",
+        tokens = ("provider.kobo.catalog", "org.cifereca.provider.kobo")
+        # The distinct ADEPT runtime's own modules are named
+        # cifereca_kobo_adept_*. They are NOT imports of Kobo provider code.
+        provider_import = re.compile(
+            r"(?m)^\\s*(?:from|import)\\s+cifereca_kobo"
+            r"(?:\\b|_(?!adept(?:_|\\b))|\\.)"
         )
         root = ROOT / "src/plugins"
         for package_dir in sorted(root.iterdir()):
@@ -1409,7 +1412,8 @@ class PluginSelectionTests(unittest.TestCase):
                 ):
                     data = file.read_text(encoding="utf-8", errors="replace")
                     self.assertFalse(
-                        any(token in data for token in tokens),
+                        any(token in data for token in tokens)
+                        or provider_import.search(data) is not None,
                         f"New Kobo provider plugin consumer: {file}",
                     )
 
