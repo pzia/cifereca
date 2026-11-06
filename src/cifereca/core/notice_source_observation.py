@@ -90,7 +90,7 @@ def _valid_key(key: object) -> bool:
     # a supplier credential. The record ID is an attested artifact coordinate.
     return (_id(key.identity_id) and key.credential_id is None
             and key.account_id is None
-            and key.record_id.startswith("sha256:"))
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", key.record_id) is not None)
 
 
 def _safe_scalar(text: str) -> bool:
