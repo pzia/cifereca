@@ -10,6 +10,7 @@ import hashlib
 import pytest
 
 from tests.test_core_library_placement_identity_scope import _service, _placement
+from cifereca.core import library_projection
 
 
 BODY = b"same epub contents"
@@ -160,7 +161,7 @@ def test_single_kobo_lookup_discards_legacy_after_typed_source_without_origin(
         provider_id="kobo", credential_id="vault", item_id="book",
         identity_id="alice",
     ) is None
-    assert service.local_placement_for_source(
+    assert library_projection.local_placement_for_source(service,
         provider_id="kobo", credential_id="vault", item_id="book",
         identity_id="alice", account_id="buyer",
     ) is None
@@ -178,20 +179,20 @@ def test_single_kobo_lookup_requires_origin_and_exact_selected_borrower(case):
     assert service.local_placement_for_source(
         **args,
     )["placement_id"] == placement
-    assert service.local_placement_for_source(
+    assert library_projection.local_placement_for_source(service,
         **args, account_id="buyer",
     )["placement_id"] == placement
-    assert service.local_placement_for_source(
+    assert library_projection.local_placement_for_source(service,
         **args, account_id="other-buyer",
     ) is None
     _typed(service, source_id="other", account="other-buyer")
     # The public three-coordinate key has become ambiguous, but an exact
     # borrower may still use her original canonical receipt and physical B.
     assert service.local_placement_for_source(**args) is None
-    assert service.local_placement_for_source(
+    assert library_projection.local_placement_for_source(service,
         **args, account_id="buyer",
     )["placement_id"] == placement
-    assert service.local_placement_for_source(
+    assert library_projection.local_placement_for_source(service,
         **args, account_id="other-buyer",
     ) is None
 
@@ -200,7 +201,7 @@ def test_single_untyped_kobo_still_supports_previous_exact_account_reader(
         case):
     service, artifact, placement, _ = case
     _legacy(service, artifact)
-    assert service.local_placement_for_source(
+    assert library_projection.local_placement_for_source(service,
         provider_id="kobo", credential_id="vault", item_id="book",
         identity_id="alice", account_id="buyer",
     )["placement_id"] == placement
