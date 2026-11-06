@@ -92,6 +92,8 @@ def test_multiple_valid_candidates_do_not_attrib_single_candidate_failure():
     assert seen == {
         "eligible_candidate_count": 2,
         "qualification_reason": "eligible_count_not_one",
+        "candidate_selection": "multiple_eligible_candidates",
+        "candidate_rejection_counts": {},
     }
 
 
@@ -104,7 +106,8 @@ def test_descriptor_scope_failure_is_not_attributed_to_candidate():
     assert seen == {"qualification_reason": "descriptor_scope_conflict"}
 
 
-def test_real_provider_preflight_logs_rejection_without_delegated_post(caplog):
+@pytest.mark.parametrize("multiple", [False, True])
+def test_real_provider_preflight_logs_rejection_without_delegated_post(caplog, multiple):
     session, vault, _broker, account, posts = setup()
     session.runtime_capabilities = SimpleNamespace(
         acquisition=lambda _provider: SimpleNamespace(
@@ -117,7 +120,12 @@ def test_real_provider_preflight_logs_rejection_without_delegated_post(caplog):
         posts.append((product_id, opts))
         candidate = kdrm_candidate(product_id)
         candidate["kobo"]["source"] = "content_access_book"
-        return descriptor(product=product_id, candidate=candidate)
+        payload = descriptor(product=product_id, candidate=candidate)
+        if multiple:
+            plain = descriptor(product=product_id)["acquisition"]["candidates"][0]
+            plain["media_format"] = "unknown"
+            payload["acquisition"]["candidates"].append(plain)
+        return payload
 
     vault.acquisition = observed_descriptor
     try:
@@ -135,10 +143,17 @@ def test_real_provider_preflight_logs_rejection_without_delegated_post(caplog):
         assert len(records) == 1
         record = records[0]
         assert "reason=descriptor_candidate_unqualified" in record
-        assert "qualification_reason=kdrm_source_unsupported" in record
-        assert "candidate_source=content_access_book" in record
-        assert "candidate_media_format=kepub" in record
-        assert "candidate_source_format=kepub" in record
+        assert "candidate_selection=no_eligible_candidates" in record
+        if multiple:
+            assert "qualification_reason=eligible_count_not_one" in record
+            assert ("candidate_rejection_counts=candidate_format_pair_unqualified:1,"
+                    "kdrm_source_unsupported:1") in record
+        else:
+            assert "qualification_reason=kdrm_source_unsupported" in record
+            assert "candidate_source=content_access_book" in record
+            assert "candidate_media_format=kepub" in record
+            assert "candidate_source_format=kepub" in record
+            assert "candidate_rejection_counts=kdrm_source_unsupported:1" in record
         assert "delegated_resolver_called=False" in record
         assert "token=" not in record and "https://" not in record
     finally:

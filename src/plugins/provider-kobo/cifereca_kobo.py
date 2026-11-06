@@ -1468,6 +1468,14 @@ class KoboSession(ProviderSession):
                 qualification_diagnostic.get("candidate_media_format", "not_applicable"),
                 qualification_diagnostic.get("candidate_source_format", "not_applicable"),
             )
+            if "candidate_rejection_counts" in qualification_diagnostic:
+                counts = qualification_diagnostic["candidate_rejection_counts"]
+                summary = ",".join(
+                    f"{reason}:{count}" for reason, count in sorted(counts.items())
+                )
+                detail += " candidate_selection=%s candidate_rejection_counts=%s" % (
+                    qualification_diagnostic["candidate_selection"], summary or "none",
+                )
         _TRACE_LOG.info(
             "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
