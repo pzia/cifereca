@@ -65,13 +65,13 @@ def test_orphaned_kobo_byte_evidence_is_readonly_during_prune(
 
         result = storage.backup_prune_missing("kobo", "vault", set())
         assert result == {
-            "pruned": 1, "local_preserved": 0,
+            "pruned": 0, "local_preserved": 0,
             "entitlements_inactivated": 0,
         }
         assert storage.backup_get(
             "kobo", "vault", "previously-acquired",
         ) == original
-        assert storage.backup_get("kobo", "vault", "empty-unproven") is None
+        assert storage.backup_get("kobo", "vault", "empty-unproven") is not None
         assert storage.backup_get("kobo", "another", "other-credential") == other
         assert storage.backup_get("other", "vault", "other-provider")
         assert _canonical_snapshot(storage) == canonical

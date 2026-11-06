@@ -37,11 +37,11 @@ def _production_legacy_calls() -> dict[str, set[str]]:
 
 
 def test_only_reviewed_kobo_compatibility_pipeline_calls_legacy_writer():
-    # New direct writers are a cutover regression. The two calls remain
-    # allowed ONLY pending the transactional migration in P0 #3196.
+    # The Kobo W3 caller has been retired: any new direct prune call is a
+    # cutover regression. W2 backup_put remains until migration #3196.
     assert _production_legacy_calls() == {
         "backup_put": {"core/kobo_backup.py"},
-        "backup_prune_missing": {"core/kobo_backup.py"},
+        "backup_prune_missing": set(),
     }
 
 

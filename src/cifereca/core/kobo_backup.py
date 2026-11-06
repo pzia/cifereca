@@ -1364,8 +1364,6 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         return info
 
     abort_all = False
-    authoritative_manifest_ids: dict[str, set[str]] = {}
-    prunable_credentials: set[str] = set()
     source_metrics = (
         "scanned", "attempted", "downloaded", "unchanged",
         "already_local_declared", "pending", "skipped_archived",
@@ -1463,7 +1461,6 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 product_id for product_id, count in manifest_product_counts.items()
                 if count > 1
             }
-            authoritative_manifest_ids[session.credential_id] = set(manifest_product_counts)
             emit("manifest", credential_id=session.credential_id, total=len(manifest))
         except Exception as exc:
             summary["errors"] += 1
@@ -1638,18 +1635,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         # this credential even if another credential remains in the batch.
         emit("source_done", credential_id=session.credential_id,
              status=source_status, manifest_items=source_total, **delta)
-        if not malformed and not abort_all and processed == source_total and source_status in {"complete", "attention_required"}:
-            prunable_credentials.add(session.credential_id)
         if abort_all:
             break
 
-    # ``backup_items`` is a current-manifest compatibility projection.
-    # Prune it only after the complete Kobo run succeeded: a failed/partial
-    # sync must never make a remote title disappear merely because its
-    # manifest could not be observed.  Artifacts/placements/catalog rows are
-    # deliberately preserved by Storage.backup_prune_missing().
-    if not confirmed:
-        _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, prunable_credentials=prunable_credentials)
+    # #3196/W3: the Kobo 0.7 projection is an archive, not a derived
+    # current-manifest cache. No remote manifest can prune historical rows.
+    # Deprecated legacy_pruned counters remain zero for caller compatibility.
     summary["attempts_saved"] = sum(
         max(0, int(getattr(session, "_cifereca_delegation_attempts_saved", 0))
             - delegation_saved_before.get(id(session), 0))
@@ -1851,25 +1842,6 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
     if summary["recovered_unparsed"]:
         emit("recovered_unparsed", count=summary["recovered_unparsed"])
 
-
-
-def _prune_successful_manifest(self, summary, authoritative_manifest_ids, emit, *, prunable_credentials=None):
-    # Preserve compatibility for callers without an explicit authority set.
-    if prunable_credentials is None:
-        prunable_credentials = (
-            set(authoritative_manifest_ids)
-            if not summary.get("errors") and not summary.get("aborted") else set()
-        )
-    for source_credential, seen_ids in authoritative_manifest_ids.items():
-        if source_credential not in prunable_credentials:
-            continue
-        pruned = self.storage.backup_prune_missing("kobo", source_credential, seen_ids)
-        summary["legacy_pruned"] += int(pruned.get("pruned") or 0)
-        summary["legacy_local_preserved"] += int(pruned.get("local_preserved") or 0)
-        summary["legacy_entitlements_inactivated"] += int(pruned.get("entitlements_inactivated") or 0)
-        if pruned.get("pruned"):
-            emit("legacy_pruned", credential_id=source_credential,
-                 count=pruned.get("pruned"), local_preserved=pruned.get("local_preserved"))
 
 
 _KOBO_DIAGNOSTIC_METRICS = frozenset({

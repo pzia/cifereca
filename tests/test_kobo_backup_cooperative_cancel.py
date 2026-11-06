@@ -86,8 +86,8 @@ def test_cancel_between_books_persists_checkpoint_and_restart_resumes_only_missi
         assert resumed["attempted"] == 2
         assert resumed_calls == ["item-2", "item-3"]
         assert saved_path.read_bytes() == saved_bytes
-        assert resumed["legacy_pruned"] == 1
-        assert restarted.storage.backup_get("kobo", "vault-1", "historical") is None
+        assert resumed["legacy_pruned"] == 0
+        assert restarted.storage.backup_get("kobo", "vault-1", "historical") is not None
         for i in range(1, 4):
             assert restarted.storage.backup_get("kobo", "vault-1", f"item-{i}")["status"] == "complete"
     finally:

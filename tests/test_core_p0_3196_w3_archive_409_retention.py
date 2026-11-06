@@ -43,10 +43,10 @@ def test_archive_receipt_survives_empty_manifest_without_touching_rights(
         receipts = storage.acquisitions()
         result = storage.backup_prune_missing("kobo", "vault", set())
         assert result == {
-            "pruned": 1, "local_preserved": 0, "entitlements_inactivated": 0,
+            "pruned": 0, "local_preserved": 0, "entitlements_inactivated": 0,
         }
         assert storage.backup_get("kobo", "vault", "archived") == archive
-        assert storage.backup_get("kobo", "vault", "normal") is None
+        assert storage.backup_get("kobo", "vault", "normal") is not None
         assert storage.backup_get("external", "vault", "unrelated-provider")
         assert storage.entitlements() == rights
         assert storage.acquisitions() == receipts

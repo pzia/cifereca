@@ -98,10 +98,10 @@ def test_kobo_prune_preserves_historical_padded_id_not_in_manifest(tmp_path):
         before_ledger = storage.acquisitions(provider_id="kobo")
         before_padded = storage.backup_get("kobo", "vault", " book ")
         assert storage.backup_prune_missing("kobo", "vault", {"another"}) == {
-            "pruned": 1, "local_preserved": 0,
+            "pruned": 0, "local_preserved": 0,
             "entitlements_inactivated": 0,
         }
-        assert storage.backup_get("kobo", "vault", "stale") is None
+        assert storage.backup_get("kobo", "vault", "stale") is not None
         assert storage.backup_get("kobo", "vault", " book ") == before_padded
         assert storage.entitlements(provider_id="kobo") == before_rights
         assert storage.acquisitions(provider_id="kobo") == before_ledger

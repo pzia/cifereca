@@ -1,17 +1,51 @@
-# Core P0 #3196 — admission du prune historique Kobo
+# Core P0 #3196 — W3 retiré : aucun prune des archives Kobo 0.7
 
-`Storage.backup_prune_missing(provider, credential, seen_item_ids)` **ne modifie plus les droits**, même si l'identité, le compte et le manifest fournisseur sont parfaitement concordants. `backup_items` est une projection transitoire v0.7 et n'atteste ni la complétude d'un inventaire canonique, ni un retour de prêt, ni une révocation d'achat. Les entitlements miroirs, SourceReferences, OriginLinks, Artifacts, Placements et reçus historiques sont conservés. L'ancien champ de bilan `entitlements_inactivated` reste présent avec la valeur **0** pour la compatibilité des consommateurs.
+**Cutover W3 du 06/11/2026.** Le manifeste Kobo, même complet et admis,
+n'est jamais une autorité de suppression de la projection historique
+`backup_items`. Le synchroniseur ne déclenche plus
+`_prune_successful_manifest` : la fonction et le plan de prune Kobo ont
+été retirés. `Storage.backup_prune_missing("kobo", credential, seen_ids)`
+reste une API de compatibilité **strictement sans lecture ni écriture
+SQLite**, avec résultat `pruned=0, local_preserved=0,
+entitlements_inactivated=0`, pour tout manifeste valide.
 
-## Frontière de prune
+Les lignes v0.7 sont désormais **des archives / checkpoints de reprise**
+tant qu'elles n'ont pas été migrées sur une provenance Core exacte,
+transactionnelle et rejouable. Cette conservation inclut les lignes
+`pending` sans chemin, les reçus `complete`, les interruptions,
+`reconcile_required/conflict`, les SHA/taille sans chemin, les révisions
+anciennes, les 403 de délégation et les 409 archivés. Une absence au manifeste
+ne garantit ni disparition des octets, ni révocation, ni révision identique,
+ni identité/compte courant. Aucune copie et aucun droit ne sont créés par ce
+retrait. Les statistiques de synchronisation `legacy_pruned` et
+`legacy_local_preserved` restent présentes, à zéro, pour compatibilité UI.
 
-Le synchroniseur Kobo ne peut éliminer les lignes de **projection** absentes qu'après son inventaire admis comme complet, **et uniquement sans `local_path` historique non vide**. Une ligne à chemin renseigné, même pour un fichier actuellement absent ou hors ligne, doit subsister tant que son édition n'a pas été migrée/archivée avec preuve exacte. **Une ligne Kobo sans chemin mais portant un SHA non vide ou une taille d'artefact positive subsiste aussi** : la disparition du manifeste ne peut effacer ce dernier indice d'une acquisition ancienne. Au retour de l'édition, W2 requalifie alors même une ancienne ligne `error` / `pending` en `reconcile_required` **avant tout nouveau GET**, en conservant la révision historique acquise plutôt que la révision distante. Ces champs sont des indices à rapprocher, jamais des preuves de présence B ni des droits. **Une ligne Kobo sans chemin mais en `acquiring`, `pending_acquisition`, `reconcile_required` ou `reconcile_conflict` doit également subsister : elle documente une acquisition interrompue ou un problème de rapprochement non résolu**, notamment plusieurs candidats physiques. L'inventaire fournisseur ne démontre ni l'inexistence du fichier ni la résolution du conflit. À la frontière SQLite, les IDs doivent rester un `set`, `list` ou `tuple` de 100 000 éléments au plus, exclusivement des chaînes non vides de 1 024 caractères au plus sans NUL/CR/LF. Un manifeste partiel ou malformé (`None`, chaîne, dictionnaire, itérateur ou mélange invalide) est rejeté **avant toute mutation**. Un ensemble vide valide supprime seulement les lignes de projection éligibles, sans jamais toucher aux droits ni aux pointeurs locaux Kobo non migrés.
+## Frontières conservées
 
-**Refus de délégation durable :** `attention_required` avec `attention_code=missing_delegation_scope` est conservé même sans `local_path` quand un manifeste complet omet temporairement l'édition. Sinon sa réapparition redéclencherait un GET automatique malgré le refus 403 antérieur. Le checkpoint ne cède qu'à la reprise explicite propre au compte ou à la migration canonique attestée. Les états `attention_required` sans ce code ne bénéficient pas de ce veto supplémentaire ; la règle est propre à Kobo. Test de non-régression : `tests/test_core_p0_3196_w3_scope_denial_retention.py`.
+- La validation des IDs soumis à `backup_prune_missing` reste fermée :
+  `set/list/tuple`, 100 000 entrées au maximum, chaînes non vides,
+  1 024 caractères au maximum, aucun NUL/CR/LF ; un payload invalide
+  lève `ValueError` **avant tout accès SQLite**.
+- Pour les **autres fournisseurs**, le prune historique reste opérationnel
+  sous `BEGIN IMMEDIATE`, uniquement sur `backup_items` ; les droits,
+  `acquisition_ledger`, `artifacts`, `origin_links` et `placements`
+  ne sont pas modifiés. Leur comportement antérieur n'est pas retiré.
+- La lecture des archives Kobo, les gardes contre un second GET ADEPT et
+  la récupération explicite des acquisitions non migrées restent actives
+  pendant les prochains cutovers W1/W2/D1–D5 et W4/W5.
+- Aucun `DROP TABLE`, retrait physique de fichier, inférence de droit,
+  ou réécriture arbitraire de la révision historique n'est autorisé.
 
-**Archive Kobo attestée :** une édition `skipped_archived` à la suite d'un refus 409, ou une ancienne projection `attention_required / archived_book`, demeure en archive lorsque le manifeste complet l'omet temporairement. Sinon la réapparition sans attribut `archived` pourrait relancer une acquisition précédemment refusée. Seul un manifeste frais `archived=False` lève cette protection de livraison, sans créer de droit ni supprimer de fichier. Test de non-régression : `tests/test_core_p0_3196_w3_archive_409_retention.py`.
+## Preuves et portée
 
-L'opération est atomique sous `BEGIN IMMEDIATE`. Les fichiers sont seulement constatés pour le compteur `local_preserved`, jamais effacés ni promus en preuves vérifiées. Un renouvellement d'acquisition doit être attribué par des preuves positives typées `#3171` et une éventuelle conclusion négative dépend de son **propre** contrat exhaustif et scoper `#3197`, non d'un prune v0.7.
+`tests/test_core_p0_3196_w3_prune_retired.py` vérifie le non-accès
+SQLite par cette API et l'absence d'appel au prune dans la synchronisation.
+Les tests W3 existants vérifient maintenant que même les lignes
+apparemment obsolètes survivent aux manifestes complets et partiels.
+`tests/test_core_p0_3196_prune_exact_right_scope.py` couvre le
+comportement préservé des autres fournisseurs.
 
-## Recette / limites
-
-`tests/test_core_p0_3196_prune_exact_right_scope.py` couvre les achats et prêts sous owner exact, les collisions, les rebonds d'identité/compte, la conservation des reçus et les manifestes invalides. Il ne s'agit ni d'une migration des writers `backup_put`, ni d'une preuve fournisseur live. La migration et reprise crash 0.7/0.8 restent nécessaires. Aucun DROP TABLE.
+Ce retrait constitue **une véritable coupure W3**, mais **pas** la fermeture
+du P0 #3196 : `Storage.backup_put` et l'exécuteur 0.7 restent actifs
+pour les sessions sans ABI canonique complète ; le rapprochement W4 et la
+relocalisation W5 requièrent encore migration, reprise et preuve exacte.

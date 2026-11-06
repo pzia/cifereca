@@ -38,13 +38,13 @@ def test_interrupted_no_path_kobo_row_is_not_pruned_on_empty_manifest(
         other_credential = store.backup_get("kobo", "other", "other-credential")
         rights = store.entitlements()
         ledger = store.acquisitions()
-        for expected_pruned in (1, 0):
+        for expected_pruned in (0, 0):
             assert store.backup_prune_missing("kobo", "vault", set()) == {
                 "pruned": expected_pruned,
                 "local_preserved": 0, "entitlements_inactivated": 0,
             }
             assert store.backup_get("kobo", "vault", "interrupted") == original
-            assert store.backup_get("kobo", "vault", "stale-pending") is None
+            assert store.backup_get("kobo", "vault", "stale-pending") is not None
             assert store.backup_get("kobo", "other", "other-credential") == other_credential
             assert store.backup_get("external", "vault", "other-provider") is not None
             assert store.entitlements() == rights
@@ -128,22 +128,22 @@ def test_stale_kobo_projection_keeps_exact_interrupted_ledger_pointer(
         rights = store.entitlements()
         ledger = store.acquisitions()
         assert store.backup_prune_missing("kobo", "vault", set()) == {
-            "pruned": 1, "local_preserved": 0,
+            "pruned": 0, "local_preserved": 0,
             "entitlements_inactivated": 0,
         }
         assert store.backup_get("kobo", "vault", "ledger-interrupted") == before
-        assert store.backup_get("kobo", "vault", "ordinary-stale") is None
+        assert store.backup_get("kobo", "vault", "ordinary-stale") is not None
         assert store.entitlements() == rights
         assert store.acquisitions() == ledger
-        # After the exact ledger is resolved, the no-path legacy projection
-        # may again be retired by an admitted complete empty manifest.
+        # Even after the ledger resolves, a manifest cannot erase an
+        # unqualified historical row without a separate migration.
         with store._lock, store._connect() as db:
             db.execute(
                 "UPDATE acquisition_ledger SET status='complete' WHERE "
                 "provider_id='kobo' AND credential_id='vault' "
                 "AND item_id='ledger-interrupted'",
             )
-        assert store.backup_prune_missing("kobo", "vault", set())["pruned"] == 1
-        assert store.backup_get("kobo", "vault", "ledger-interrupted") is None
+        assert store.backup_prune_missing("kobo", "vault", set())["pruned"] == 0
+        assert store.backup_get("kobo", "vault", "ledger-interrupted") == before
     finally:
         store.close()

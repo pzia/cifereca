@@ -67,11 +67,11 @@ def test_typed_source_protects_absent_legacy_projection_by_credential_edition(
         canonical = _canonical_state(storage)
         result = storage.backup_prune_missing("kobo", "vault", set())
         assert result == {
-            "pruned": 1, "local_preserved": 0,
+            "pruned": 0, "local_preserved": 0,
             "entitlements_inactivated": 0,
         }
         assert storage.backup_get("kobo", "vault", "book") == historical
-        assert storage.backup_get("kobo", "vault", "obsolete") is None
+        assert storage.backup_get("kobo", "vault", "obsolete") is not None
         assert _canonical_state(storage) == canonical
         assert original.read_bytes() == b"unmodified-book"
     finally:
@@ -83,7 +83,7 @@ def test_typed_source_protects_absent_legacy_projection_by_credential_edition(
     {"credential": "another-vault"},
     {"edition": "different-book"},
 ])
-def test_unrelated_typed_source_does_not_block_exact_kobo_prune(
+def test_unrelated_typed_source_does_not_enable_retired_kobo_prune(
     tmp_path, reference,
 ):
     storage = Storage(tmp_path / "legacy.sqlite3")
@@ -91,8 +91,8 @@ def test_unrelated_typed_source_does_not_block_exact_kobo_prune(
         _backup(storage, "book")
         _source(storage, **reference)
         canonical = _canonical_state(storage)
-        assert storage.backup_prune_missing("kobo", "vault", set())["pruned"] == 1
-        assert storage.backup_get("kobo", "vault", "book") is None
+        assert storage.backup_prune_missing("kobo", "vault", set())["pruned"] == 0
+        assert storage.backup_get("kobo", "vault", "book") is not None
         assert _canonical_state(storage) == canonical
     finally:
         storage.close()
