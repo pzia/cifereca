@@ -99,9 +99,18 @@ def present_loaded_search_detail_in_place(
     except Exception:
         return False
 
+    # Only the latest explicit click in this SAME plugin detail may render
+    # Search actions. Two holdings tasks can complete out of order without a
+    # profile, search or recommendation generation change. This lease is a
+    # plain Python token; worker checks do not inspect GTK widget state.
+    request_token = object()
+    view._cifereca_exact_detail_request_token = request_token
+
     def source_current() -> bool:
         """Worker-safe service and scalar checks, without GTK access."""
-        if (getattr(window, "_closed", False)
+        if (getattr(view, "_cifereca_exact_detail_request_token", None)
+                is not request_token
+                or getattr(window, "_closed", False)
                 or window._identity_context_generation != generation
                 or window._search_generation != search_generation
                 or getattr(window, "_shell_page_rebuild_token", None) is not shell_token
@@ -161,7 +170,7 @@ def present_loaded_search_detail_in_place(
         )
 
     def failed(_error: BaseException) -> None:
-        if source_current() and is_current():
+        if (source_current() and is_current() and _view_mapped(view)):
             window.toast("Disponibilités indisponibles pour cette notice.", 5)
 
     try:
