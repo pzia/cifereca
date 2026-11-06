@@ -568,7 +568,10 @@ def kobo_backup_preview(
         # independently delivered B placement; require supervised
         # reconciliation rather than reporting "already local".
         # Offline previews retain the 0.7 advisory link classification.
-        if (refresh_manifest and not reason and current
+        # W2 still consumes _item_reasons as its legacy execution preflight.
+        # Keep that internal ABI unchanged until W2 is replaced with typed
+        # admission; this cutover applies only to the public read-only view.
+        if (refresh_manifest and _item_reasons is None and not reason and current
                 and current.get("status") in {"ok", "complete"}
                 and path_raw):
             reason = "needs_reconciliation"
