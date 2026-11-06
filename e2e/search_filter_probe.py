@@ -616,14 +616,19 @@ def main() -> int:
         # Force a new request with the exact same text. The former result,
         # actions and cache must be cleared BEFORE the worker finishes.
         device.click_widget(window.search_global_button)
+        paris_deadline[0] = monotonic() + 6
+        # XTEST injects asynchronously: the GTK event loop must first process
+        # the physical button click before checking synchronous action removal.
+        later(100, check_disconnected_alex_cleared)
+
+    def check_disconnected_alex_cleared():
         assert window._remote_search_results == []
         assert window.search_page.store.get_n_items() == 0
         assert not any(
             button.get_label() == "Emprunter"
             for button in window.search_page.detail._action_buttons
         )
-        paris_deadline[0] = monotonic() + 6
-        later(230, finish_disconnected_alex)
+        later(130, finish_disconnected_alex)
 
     def finish_disconnected_alex():
         if not window.search_global_button.get_sensitive():
