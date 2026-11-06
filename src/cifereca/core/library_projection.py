@@ -628,12 +628,52 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
 
 
 def local_placements_for_sources(self, identity_id):
-    """One snapshot for search; only unique acquisition-attested placements."""
+    """Read-only search aliases; typed Kobo sources require provider provenance.
+
+    The old 0.7 acquisition ledger has no canonical right/borrower binding.
+    It remains a compatibility read only for editions with no typed source.
+    """
+    # A typed Kobo edition is identified by credential + edition, even if
+    # the SourceReference belongs to another borrower or identity. The
+    # catalogue's account-free search key cannot choose between sources.
+    with self.storage._lock, self.storage._connect() as db:
+        typed_rows = db.execute(
+            "SELECT identity_id,credential_id,account_id,edition_id "
+            "FROM source_references WHERE provider_id='kobo' "
+            "ORDER BY source_reference_id LIMIT 100001"
+        ).fetchall()
+    if len(typed_rows) > 100000:
+        # A truncated typed-source set must never reactivate an old alias.
+        return {}
+    typed_scopes = {}
+    for owner, credential, account, edition in typed_rows:
+        key = ("kobo", credential, edition)
+        typed_scopes.setdefault(key, set()).add((owner, account))
+
+    # Provider OriginLinks, not legacy acquisition rows, authorize the
+    # physical association of an already-typed Kobo search key. The helper
+    # checks Core origin/SourceReference evidence, artifact identity and
+    # current owner; local_book_path below independently checks physical B.
+    canonical_artifacts = {}
+    for artifact, owner, provider, credential, account, edition, _kind in (
+        _verified_provider_origin_coordinates(
+            self.storage, identity_id=identity_id, with_kind=True,
+        )
+    ):
+        key = (provider, credential, edition)
+        if provider == "kobo" and key in typed_scopes:
+            canonical_artifacts.setdefault(key, set()).add(
+                (owner, account, artifact),
+            )
+
     artifacts = {}
     borrower_scopes = {}
     for row in self.storage.acquisitions(status='complete'):
         if row.get('identity_id') != identity_id or not row.get('artifact_id'): continue
         key = (row.get('provider_id'), row.get('credential_id'), str(row.get('item_id') or ''))
+        if key in typed_scopes:
+            # A legacy receipt cannot supply a missing or contradictory B link.
+            continue
         artifacts.setdefault(key, set()).add(row['artifact_id'])
         # Search's old three-coordinate key has no borrower/account field.
         # Two exact completed receipts for different accounts are NOT a
@@ -650,18 +690,36 @@ def local_placements_for_sources(self, identity_id):
             placements.setdefault(row.get('artifact_id'), []).append(row)
     linked = {}
     for key, ids in artifacts.items():
-        # An identical SHA is not proof that one borrower's completed
-        # acquisition can decorate another borrower's catalogue result.
         accounts = borrower_scopes.get(key, ())
-        # An ill-typed legacy account marker (SQLite permits int/bool) is
-        # not an attested borrower, even if it is the only ledger receipt.
-        # Keep None for the unchanged legacy unknown-account compatibility
-        # path and "" for Paris's explicit primary borrower.
         if len(accounts) != 1 or ("invalid", None) in accounts: continue
         rows = [row for artifact_id in ids for row in placements.get(artifact_id, [])]
         if len(rows) != 1: continue
         try: self.local_book_path(rows[0]['placement_id'], identity_id=identity_id)
         except ProviderConfigurationError: continue
+        linked[key] = rows[0]
+    for key, scopes in typed_scopes.items():
+        # The source identity and borrower must be uniquely known; a
+        # second typed source (even for another profile) is not an alias.
+        if len(scopes) != 1 or next(iter(scopes))[0] != identity_id:
+            continue
+        owner, account = next(iter(scopes))
+        matched = {
+            artifact for origin_owner, origin_account, artifact
+            in canonical_artifacts.get(key, ())
+            if (origin_owner, origin_account) == (owner, account)
+        }
+        if len(matched) != 1:
+            continue
+        rows = [
+            row for artifact in matched
+            for row in placements.get(artifact, ())
+        ]
+        if len(rows) != 1:
+            continue
+        try:
+            self.local_book_path(rows[0]['placement_id'], identity_id=identity_id)
+        except ProviderConfigurationError:
+            continue
         linked[key] = rows[0]
     return linked
 
