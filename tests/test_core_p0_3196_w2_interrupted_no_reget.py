@@ -139,3 +139,79 @@ def test_raw_acquiring_checkpoint_without_remnant_scan_never_restarts_get(
         assert summary == {"reconcile_pending": 1, "reconcile_skipped": 1}
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("status,attention,error", [
+    ("acquiring", None, None),
+    ("pending_acquisition", "interrupted_acquisition_review", None),
+    ("pending_acquisition", None,
+     "Acquisition locale interrompue avant finalisation ; reprise ambiguë"),
+])
+def test_archived_manifest_cannot_clear_interrupted_at_most_once_marker(
+        tmp_path, monkeypatch, status, attention, error):
+    """An archive is not proof that a previous Kobo GET was never sent."""
+    from cifereca.core.kobo_backup import _skip_manifest_item
+    service = _service(tmp_path, manifest=[_manifest_row()])
+    try:
+        service.storage.backup_put(_checkpoint(
+            status=status, attention_code=attention, error=error,
+            attempts=2,
+        ))
+        _forbid_download(service, monkeypatch)
+        current = service.storage.backup_get("kobo", "vault-1", "book-1")
+        item = ("rev-new", "Book One", "account", current,
+                {**current, "revision_id": "rev-new"})
+        summary = {"skipped_archived": 0, "reconcile_pending": 0,
+                   "reconcile_skipped": 0}
+        assert _skip_manifest_item(
+            service, item, {**_manifest_row(), "archived": True},
+            tmp_path, {}, True, {}, 0, 1, summary,
+            lambda *_a, **_kw: None,
+        ) is True
+        assert summary["skipped_archived"] == 1
+        assert service.storage.backup_get(
+            "kobo", "vault-1", "book-1",
+        ) == current
+        # Even after unarchive, no second GET is admitted.
+        assert _skip_manifest_item(
+            service, item, {**_manifest_row(), "archived": False},
+            tmp_path, {}, True, {}, 0, 1, summary,
+            lambda *_a, **_kw: None,
+        ) is True
+        assert summary["reconcile_pending"] == 1
+        assert service.storage.backup_get(
+            "kobo", "vault-1", "book-1",
+        ) == current
+        assert service.storage.backup_prune_missing(
+            "kobo", "vault-1", set(),
+        )["pruned"] == 0
+    finally:
+        service.close()
+
+
+def test_ordinary_pending_archived_manifest_still_records_archive(
+        tmp_path, monkeypatch):
+    """Non-interrupted pending state retains the existing archive behavior."""
+    from cifereca.core.kobo_backup import _skip_manifest_item
+    service = _service(tmp_path, manifest=[_manifest_row()])
+    try:
+        service.storage.backup_put(_checkpoint(
+            status="pending_acquisition", attempts=0,
+            error="Kobo-Adept indisponible",
+        ))
+        _forbid_download(service, monkeypatch)
+        current = service.storage.backup_get("kobo", "vault-1", "book-1")
+        summary = {"skipped_archived": 0}
+        assert _skip_manifest_item(
+            service, ("rev-new", "Book One", "account", current,
+                      {**current, "revision_id": "rev-new"}),
+            {**_manifest_row(), "archived": True},
+            tmp_path, {}, True, {}, 0, 1, summary,
+            lambda *_a, **_kw: None,
+        ) is True
+        assert summary["skipped_archived"] == 1
+        assert service.storage.backup_get(
+            "kobo", "vault-1", "book-1",
+        )["status"] == "skipped_archived"
+    finally:
+        service.close()
