@@ -102,8 +102,13 @@ def test_legacy_unscoped_placement_is_not_auto_attested_as_new_owner(tmp_path):
         storage.backup_put(_book(identity=None, path=path))
         storage.backup_put(_book(identity="alice", path=path))
         assert len(storage.placements()) == 1
-        # A legacy NULL owner does not turn into an attested placement owner
-        # merely because a later compatibility projection named the path.
-        assert storage.placements()[0]["identity_id"] is None
+        # The unbound legacy row no longer manufactures an unverified
+        # canonical Placement at all. A subsequently bound 0.7 recovery
+        # may create a placeholder, but this is not attested local bytes.
+        assert storage.placements()[0]["identity_id"] == "alice"
+        assert storage.placements()[0]["state"] == "unverified"
+        assert storage.placements()[0]["last_seen_at"] is None
+        with storage._lock, storage._connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
     finally:
         storage.close()
