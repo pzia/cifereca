@@ -1480,6 +1480,14 @@ class KoboSession(ProviderSession):
                 detail += " candidate_route_comparison=%s" % (
                     qualification_diagnostic["candidate_route_comparison"],
                 )
+            if "candidate_rejection_profile_counts" in qualification_diagnostic:
+                profiles = qualification_diagnostic["candidate_rejection_profile_counts"]
+                # All parts of these keys are local closed categories, never
+                # raw descriptor text, URLs, tokens or account identifiers.
+                summary = ";".join(
+                    f"{shape}={count}" for shape, count in sorted(profiles.items())
+                )
+                detail += " candidate_rejection_profile_counts=%s" % (summary or "none")
             if "candidate_shape_counts" in qualification_diagnostic:
                 shapes = qualification_diagnostic["candidate_shape_counts"]
                 # Values are only short, locally whitelisted categories from
