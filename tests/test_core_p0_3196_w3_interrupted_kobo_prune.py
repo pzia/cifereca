@@ -103,3 +103,47 @@ def test_empty_manifest_recovery_is_durable_and_makes_no_download(tmp_path, monk
         assert service.storage.backup_get("kobo", "vault-1", "interrupted") == receipt
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("ledger_state", [
+    "acquiring", "downloading", "pending_acquisition",
+    "reconcile_required", "reconcile_conflict",
+])
+@pytest.mark.parametrize("legacy_state", ["pending", "complete"])
+def test_stale_kobo_projection_keeps_exact_interrupted_ledger_pointer(
+        tmp_path, ledger_state, legacy_state):
+    """The SQLite ledger, not a stale backup status, owns crash recovery."""
+    store = Storage(tmp_path / "db.sqlite3")
+    try:
+        store.backup_put(_record("ledger-interrupted", status=legacy_state))
+        store.backup_put(_record("ordinary-stale", status="pending"))
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE acquisition_ledger SET status=? WHERE "
+                "provider_id='kobo' AND credential_id='vault' "
+                "AND item_id='ledger-interrupted'",
+                (ledger_state,),
+            )
+        before = store.backup_get("kobo", "vault", "ledger-interrupted")
+        rights = store.entitlements()
+        ledger = store.acquisitions()
+        assert store.backup_prune_missing("kobo", "vault", set()) == {
+            "pruned": 1, "local_preserved": 0,
+            "entitlements_inactivated": 0,
+        }
+        assert store.backup_get("kobo", "vault", "ledger-interrupted") == before
+        assert store.backup_get("kobo", "vault", "ordinary-stale") is None
+        assert store.entitlements() == rights
+        assert store.acquisitions() == ledger
+        # After the exact ledger is resolved, the no-path legacy projection
+        # may again be retired by an admitted complete empty manifest.
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE acquisition_ledger SET status='complete' WHERE "
+                "provider_id='kobo' AND credential_id='vault' "
+                "AND item_id='ledger-interrupted'",
+            )
+        assert store.backup_prune_missing("kobo", "vault", set())["pruned"] == 1
+        assert store.backup_get("kobo", "vault", "ledger-interrupted") is None
+    finally:
+        store.close()
