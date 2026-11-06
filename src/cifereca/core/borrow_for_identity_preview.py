@@ -186,8 +186,11 @@ def preview_borrow_for_identity(
         )
         route = (item.medium, w.source_epoch)
         full = coordinates + route
+        # An A→B→A identity/session navigation can reproduce the exact same
+        # lender coordinates. Never let a callback from the first CoreUI
+        # context reuse the option identifier in the later context.
         option_id = "borrow-profile.v1:" + sha256(json.dumps(
-            (requesting_identity_id, full), ensure_ascii=True,
+            (requesting_identity_id, context_epoch, full), ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
         label = ("Emprunter" if a.identity_id == requesting_identity_id else
