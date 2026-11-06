@@ -92,20 +92,38 @@ def test_size_change_quarantined_even_with_no_historical_checksum(tmp_path, monk
         service.close()
 
 
-def test_historical_complete_without_integrity_baseline_is_verified_once(tmp_path, monkeypatch):
+@pytest.mark.parametrize("sha,size", [
+    (None, None), (None, 125), ("invalid", 125),
+    ("z" * 64, 125), ("f" * 64, None), ("f" * 64, 0),
+])
+def test_historical_complete_without_integrity_baseline_requires_explicit_reconciliation(
+    tmp_path, monkeypatch, sha, size,
+):
+    # Neither a matching filename nor valid EPUB structure may invent the
+    # SHA baseline for the old Kobo edition. Preserve the file and legacy
+    # claim; do not open/hash the bytes and do not perform a second GET.
     service = _service(tmp_path, manifest=[_manifest_row()])
     path = service._kobo_backup_target_dir("default") / "legacy.epub"
     _write_epub(path, marker=b"historic-valid-file")
-    _complete_local_backup(service, path, sha256=None, size=None)
+    original = path.read_bytes()
+    _complete_local_backup(service, path, sha256=sha, size=size)
     _no_download(monkeypatch, service)
+    monkeypatch.setattr(
+        service, "_observed_backup_artifact",
+        lambda *_a, **_k: pytest.fail("unattested filename must never be hashed"),
+    )
     try:
         summary = service.sync_kobo_backup_account("vault-1")
-        assert summary["status"] == "complete"
-        assert summary["unchanged"] == 1
-        assert summary["attempted"] == 0
+        assert summary["unchanged"] == summary["attempted"] == summary["downloaded"] == 0
+        assert summary["reconcile_skipped"] >= 1
         stored = service.storage.backup_get("kobo", "vault-1", "book-1")
-        assert stored["status"] == "complete"
-        assert stored["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
-        assert stored["size"] == path.stat().st_size
+        assert stored["status"] == "reconcile_required"
+        assert stored["sha256"] == sha and stored["size"] == size
+        assert stored["local_path"] == str(path)
+        assert path.read_bytes() == original
+        repeated = service.sync_kobo_backup_account("vault-1")
+        assert repeated["unchanged"] == repeated["attempted"] == repeated["downloaded"] == 0
+        assert service.storage.backup_get("kobo", "vault-1", "book-1")["sha256"] == sha
+        assert path.read_bytes() == original
     finally:
         service.close()
