@@ -29,6 +29,10 @@ def test_canonical_paris_consumes_first_confirmed_acsm_without_second_get(
         "cifereca.core.canonical_selected_delivery.acquisition_lock_file",
         lambda: tmp_path / "state" / "acquisition.lock",
     )
+    monkeypatch.setattr(
+        "cifereca.core.canonical_selected_offers.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
     service, db, root = rig
     account = Account(
         identity_id="A", provider_id="paris",
