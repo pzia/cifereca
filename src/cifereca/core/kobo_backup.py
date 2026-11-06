@@ -63,6 +63,24 @@ def _kobo_legacy_unlocated_byte_evidence(current: dict[str, Any] | None) -> bool
     )
 
 
+def _kobo_legacy_has_integrity_baseline(current: dict[str, Any] | None) -> bool:
+    """Historical *claim* adequate for byte comparison, never proof of B.
+
+    A filename and a current EPUB hash cannot retroactively provide the
+    missing SHA/size of an opaque Kobo delivery. This predicate is shared
+    by the private W2 admission preview and the legacy sync executor so
+    that an explicit confirmation cannot bypass the sync quarantine.
+    """
+    if not isinstance(current, dict):
+        return False
+    digest, size = current.get("sha256"), current.get("size")
+    return (
+        type(digest) is str
+        and re.fullmatch(r"[0-9a-fA-F]{64}", digest) is not None
+        and type(size) is int and size > 0
+    )
+
+
 def _kobo_legacy_current_path_scoped(
     service: Any, path: Path, target_dir: Path, *, identity_id: str,
 ) -> bool:
@@ -571,6 +589,16 @@ def kobo_backup_preview(
         if (_item_reasons is None and not reason and current
                 and current.get("status") in {"ok", "complete"}
                 and path_raw):
+            reason = "needs_reconciliation"
+        # #3196 W2/D1: the private _item_reasons plan historically treated
+        # any old complete+filename as already linked, even if the original
+        # download left no usable SHA/size. The actual sync now quarantines
+        # that row before opening its bytes (#4812). Keep the *private*
+        # admission consistent: a candidate file cannot invent an original
+        # delivery baseline or authorize a legacy confirmation.
+        if (not reason and _item_reasons is not None and current
+                and current.get("status") in {"ok", "complete"} and path_raw
+                and not _kobo_legacy_has_integrity_baseline(current)):
             reason = "needs_reconciliation"
         if path_raw and not reason:
             linked = Path(path_raw)
@@ -2288,12 +2316,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             # establish the original Kobo bytes or create its own baseline.
             # Require a prior exact SHA and positive size *before* opening
             # today's file; otherwise retain the path for supervised review.
-            historical_sha = current.get("sha256")
-            historical_size = current.get("size")
-            if (type(historical_sha) is not str
-                    or re.fullmatch(r"[0-9a-fA-F]{64}", historical_sha) is None
-                    or type(historical_size) is not int
-                    or historical_size <= 0):
+            if not _kobo_legacy_has_integrity_baseline(current):
                 self.storage.backup_put({
                     **current,
                     "status": "reconcile_required",

@@ -357,3 +357,59 @@ def test_fresh_kobo_right_does_not_turn_legacy_sha_into_b_presence(
             assert private not in public
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("status", ["complete", "ok"])
+@pytest.mark.parametrize("verify", [False, True])
+@pytest.mark.parametrize("baseline", [
+    "no_sha_or_size", "no_sha", "malformed_sha", "no_size", "zero_size",
+])
+def test_private_w2_preflight_refuses_complete_without_original_integrity_baseline(
+    tmp_path: Path, monkeypatch, status, verify, baseline,
+):
+    """#3196: W2 private admission must agree with actual legacy sync fence."""
+    manifest = [{"product_id": "historical", "revision_id": "r1",
+                 "title": "Historical", "format": "EPUB",
+                 "downloadable": True}]
+    service, session = _service(tmp_path, manifest)
+    historical = service._kobo_backup_target_dir("default") / "historical.epub"
+    _write_epub(historical)
+    original = historical.read_bytes()
+    size = len(original)
+    sha = hashlib.sha256(original).hexdigest()
+    options = {
+        "no_sha_or_size": (None, None),
+        "no_sha": (None, size),
+        "malformed_sha": ("bad-hash", size),
+        "no_size": (sha, None),
+        "zero_size": (sha, 0),
+    }
+    old_sha, old_size = options[baseline]
+    _backup(
+        service, "historical", status=status, local_path=historical,
+        sha256=old_sha, size=old_size,
+    )
+    before = service.storage.backup_get("kobo", "vault-1", "historical")
+    _forbid_mutation_and_acquisition(service, session, monkeypatch)
+    from cifereca.core import kobo_backup
+    monkeypatch.setattr(
+        kobo_backup, "_observed_backup_artifact",
+        lambda *_a, **_kw: pytest.fail("unproven old B file must not be inspected"),
+    )
+    try:
+        reasons = {}
+        plan = kobo_backup.kobo_backup_preview(
+            service, "vault-1", refresh_manifest=True, verify_local_files=verify,
+            _item_reasons=reasons,
+        )
+        assert reasons == {"historical": "needs_reconciliation"}
+        assert plan["counts"]["needs_reconciliation"] == 1
+        assert plan["counts"]["already_local_linked"] == 0
+        assert plan["counts"]["already_local_verified"] == 0
+        assert plan["counts"]["potentially_missing"] == 0
+        assert plan["blocking_items"] == 1
+        assert plan["acquisition_authorized"] is False
+        assert service.storage.backup_get("kobo", "vault-1", "historical") == before
+        assert historical.read_bytes() == original
+    finally:
+        service.close()
