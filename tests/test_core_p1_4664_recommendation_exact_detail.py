@@ -359,3 +359,41 @@ def test_second_click_before_first_worker_prevents_stale_get(monkeypatch, known_
     assert f.calls == []
     second_success(second_work())
     assert len(f.calls) == 1 and len(f.outputs) == 1
+
+
+
+@pytest.mark.parametrize("revision_point", ["before_worker", "before_delivery"])
+def test_shared_nested_known_mirror_mutation_revokes_exact_actions(
+    monkeypatch, revision_point,
+):
+    f = _fixture(monkeypatch)
+    # A shallow copy of this row keeps the nested dictionary aliased to the
+    # adapter. Editing the known-v2 revision must invalidate the old click.
+    row = {"metadata": {"source_collection": "collection-1",
+                        "edition_revision": "r1"}}
+    monkeypatch.setattr(
+        port, "_known_item", lambda window, coords: (f.item, row),
+    )
+    f.kwargs["known_source"] = True
+    work, success, failure = _start(f)
+    if revision_point == "before_worker":
+        row["metadata"]["edition_revision"] = "r2"
+        with pytest.raises(Cancelled):
+            work()
+        assert f.calls == []
+    else:
+        assert work() is f.detail
+        row["metadata"]["edition_revision"] = "r2"
+        success(f.detail)
+    assert f.outputs == []
+
+
+def test_unmodified_shared_known_mirror_keeps_exact_core_actions(monkeypatch):
+    f = _fixture(monkeypatch)
+    row = {"metadata": {"edition_revision": "r1"}}
+    monkeypatch.setattr(port, "_known_item", lambda win, coords: (f.item, row))
+    f.kwargs["known_source"] = True
+    work, success, failure = _start(f)
+    assert work() is f.detail
+    success(f.detail)
+    assert len(f.outputs) == 1
