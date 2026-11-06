@@ -2146,12 +2146,13 @@ class Storage:
                          # Reconciliation statuses still require the 0.8
                          # mirror for W4 confirmation/undo until migrated.
                          or merged.get("status") == "skipped_archived"
-                         # #3196 W1: an unprovable conflict cannot be
-                         # confirmed by W4 (which requires an exact historical
+                         # #3196 W1: an unprovable reconciliation cannot
+                         # be confirmed by W4 (which requires an exact historical
                          # SHA AND a positive byte size). Archive it without
-                         # minting new rights, acquisition or local B facts.
-                         # Conflicts with both byte claims still retain W4.
-                         or (merged.get("status") == "reconcile_conflict"
+                         # minting rights, acquisition or local B facts.
+                         # Reconciliation rows with both byte claims retain W4.
+                         or (merged.get("status") in
+                             {"reconcile_required", "reconcile_conflict"}
                              and (
                                  type(merged.get("sha256")) is not str
                                  or len(merged["sha256"]) != 64
