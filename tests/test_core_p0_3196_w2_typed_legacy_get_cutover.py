@@ -33,6 +33,13 @@ def _typed(service, *, credential="vault-1", edition="book-1",
         )
 
 
+def _source_rows(service):
+    with service.storage._lock, service.storage._connect() as db:
+        return db.execute(
+            "SELECT * FROM source_references ORDER BY source_reference_id"
+        ).fetchall()
+
+
 @pytest.mark.parametrize("owner,account", [
     ("default", "account"),
     ("default", "other-borrower"),
@@ -45,13 +52,13 @@ def test_real_sync_typed_edition_never_creates_backup_or_gets(
     try:
         _typed(service, owner=owner, account=account)
         _forbid_download(service, monkeypatch)
-        sources = service.storage.source_references()
+        sources = _source_rows(service)
         rights = service.storage.entitlements()
         result = service.sync_kobo_backup()
         assert result["attempted"] == result["downloaded"] == 0
         assert result["skipped"] == 1
         assert service.storage.backup_get("kobo", "vault-1", "book-1") is None
-        assert service.storage.source_references() == sources
+        assert _source_rows(service) == sources
         assert service.storage.entitlements() == rights
         assert service.storage.placements() == []
     finally:
