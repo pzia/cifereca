@@ -3,7 +3,7 @@
 ## Frontière
 
 `LibraryService.preview_borrow_for_current_identity(expected_edition_id=..., observations=..., now=...)`
-expose désormais le preview 0/1/N existant à partir de sessions/comptes **enregistrés dans le Core et SQLite**. Les entrées `ObservedBorrowOffer` contiennent une notice d'édition exacte, la preuve d'emprunteur **préalablement observée** `BorrowerOperationEvidence`, sa date et le statut prudent du transfert (`unknown` par défaut).
+expose désormais le preview 0/1/N existant à partir de sessions/comptes **enregistrés dans le Core et SQLite**. Les entrées `ObservedBorrowOffer` contiennent une notice d'édition exacte, deux preuves d'emprunteur **préalablement observées** — `lending_capabilities.BorrowerOperationEvidence` pour la branche et le compte, et `lending_borrower_eligibility.BorrowerOperationEvidence` dans `edition_evidence` pour l'offre exacte (collection/record_id) —, leur date d'observation et le statut prudent du transfert (`unknown` par défaut).
 
 **Aucune découverte de prêteur, connexion distante, recherche réseau, vérification HTTP, emprunt, import ADEPT ni copie n'est effectuée par le preview.** Une simple notice Paris `CanLoan`, un quota inconnu, la connexion d'une carte ou un score Recommandations ne fabriquent jamais un témoin éligible. Sans preuve positive reliée au bon `identity_id / provider / credential / account / docbase / operation`, le résultat est `none`.
 
@@ -38,3 +38,11 @@ Cette tranche prépare #4662 sans élargir la clôture de #4673, sans créer le 
 Un choix toujours à jour retourne `status="current", reason_code="selection_current_unverified"`, **jamais** une autorisation de prêt ni une capacité de transférer. Aucun compte n'est activé ; aucune sélection d'une autre option n'est faite silencieusement ; aucune transaction n'est possible par cette API. La future action de confirmation doit garder son propre consentement, le claim durable et les guards du fournisseur, sans jamais interpréter ce résultat comme une admission mutatrice suffisante.
 
 La portée de l'option inclut maintenant l'**époque globale de source Core** et l'**époque locale de session** (combinaison injective non réversible en libellé) : un reconnect qui reproduit les mêmes credentials et le même compteur local ne rend pas valide le token d'avant déconnexion. Régression spécifique de session remplacée à epoch identique.
+
+## Fermeture de l'écart « compte positif, édition non attestée »
+
+Le verdict positif par `lending_capabilities.assess_borrower_operation_eligibility` ne qualifie que le **compte et sa branche**, pas un ouvrage précis. Le preview exige **en plus** `assess_borrower_eligibility(capability, account, notice, edition_evidence).status == "eligible"` pour le **même record_id, docbase et source_collection**, ainsi que le même compte et credential.
+
+L'argument `edition_evidence` est facultatif dans la signature pour préserver les clients du DTO ; absent, incomplet, mal qualifié, sur une autre édition/collection, ou attestant un refus, il donne **zéro option**. Une preuve de compte A sous DILICOM ne permet plus de proposer un livre B de DILICOM. La revalidation du clic recalcule ces deux évaluations : une offre qui devient inconnue ou indisponible est révoquée.
+
+Les deux structures portent le même nom `BorrowerOperationEvidence`, mais **leurs contrats sont différents** ; elles sont vérifiées chacune par le validateur public correspondant. Les champs ne sont jamais synthétisés à partir de `CanLoan`, d'un titre, du succès de connexion ou de l'inventaire des prêts. Même un double positif demeure consultatif (`executable=False`) et n'autorise jamais la copie vers un autre profil.
