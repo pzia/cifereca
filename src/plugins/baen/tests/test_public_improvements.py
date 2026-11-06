@@ -44,6 +44,33 @@ class BaenImprovements(unittest.TestCase):
         self.assertEqual(metadata["published_at"], "2/1/2000")
         self.assertEqual(metadata["isbns"], ["0671578499", "9781668073407"])
 
+    def test_age_like_title_and_product_copy_are_not_age_attestations(self):
+        # No Baen product-page age field has been qualified by exact edition.
+        # The existing detail scraper may only claim author/date/ISBN.
+        markup = """<html><head><title>For Ages 8-12 by Jane Example - WebScription Ebook</title></head>
+        <body><p>Young Adult, Ages 13+</p>
+        <p>Published: 2/1/2000</p><p>ISBN: 9781668073407</p>
+        <p>Recommended age: 8 to 12</p></body></html>"""
+        extracted = BaenSession._detail_metadata(markup)
+        self.assertEqual(set(extracted), {"author", "published_at", "isbns"})
+        self.assertEqual(extracted["isbns"], ["9781668073407"])
+        self.assertFalse(any(key in extracted for key in (
+            "recommended_age", "youth_age_ranges", "attested_age_ranges",
+            "attested_age_status", "public_age_range_label",
+        )))
+
+    def test_age_like_detail_cannot_promote_edition_identity(self):
+        markup = """<title>Children's book for ages 6+ by Jane Example - WebScription Ebook</title>
+        <p>ISBN: 9781668073407</p><p>Grade 2 / middle grade</p>"""
+        item = SimpleNamespace(author=None, published_at=None, metadata={})
+        enriched = BaenSession._enrich_item_from_detail(item, markup)
+        self.assertIs(enriched, item)
+        self.assertEqual(item.metadata["isbns"], ["9781668073407"])
+        self.assertEqual(item.metadata["metadata_evidence"], "baen.public_product_page")
+        for key in ("isbn_digital", "recommended_age", "youth_age_ranges",
+                    "attested_age_ranges", "attested_age_status"):
+            self.assertNotIn(key, item.metadata)
+
     def test_holdings_enriches_search_result_without_private_account_data(self):
         session = BaenSession(
             credential_id="public",
