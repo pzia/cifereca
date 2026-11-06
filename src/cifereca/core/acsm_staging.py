@@ -185,6 +185,21 @@ def cleanup_old_acsm_work(storage_path, *, max_age_seconds=None, config_get, clo
                 except OSError:
                     pass
             dirs[:] = safe_dirs
+
+            def directory_current():
+                # The root may be stable while a nested loan directory has
+                # been renamed/rebound. Cache cleanup must not use its old
+                # pathname unless it still resolves to this pinned fd.
+                try:
+                    observed = os.stat(
+                        root / relative, follow_symlinks=False)
+                    held = os.fstat(current_fd)
+                    return (stat.S_ISDIR(observed.st_mode)
+                            and (observed.st_dev, observed.st_ino)
+                            == (held.st_dev, held.st_ino))
+                except OSError:
+                    return False
+
             for name in filenames:
                 if not name.endswith('.acsm'):
                     continue
@@ -199,14 +214,14 @@ def cleanup_old_acsm_work(storage_path, *, max_age_seconds=None, config_get, clo
                         continue
                     # A root rename/symlink swap must not redirect cache
                     # forget() through a now-untrusted original pathname.
-                    if not root_current():
+                    if not root_current() or not directory_current():
                         kept += 1
                         continue
                     os.unlink(name, dir_fd=current_fd)
                     deleted += 1
                     # Cache cleanup uses a pathname, not our pinned fd.
                     # Skip it if the root was rebound after the unlink.
-                    if root_current():
+                    if root_current() and directory_current():
                         forget(root / relative / name)
                 except OSError:
                     kept += 1
