@@ -329,8 +329,22 @@ def main():
         header = p.content.get_first_child()
         summary = header.get_next_sibling()
         assert header.has_css_class("detail-heading"), "En-tête du Détail absent"
-        assert any(isinstance(node, Adw.PreferencesGroup) and node.get_title() == "Essentiel"
-                   for node in walk(header)), "Essentiel hors de l’en-tête"
+        # #4682: the approved mockup removes the *visual* Essentiel heading.
+        # Check the original source/format/action rows remain in the cover
+        # header; a blank group must not mask or relocate the metadata.
+        essential_groups = [
+            node for node in walk(header)
+            if isinstance(node, Adw.PreferencesGroup)
+            and any(isinstance(child, Adw.ActionRow) and child.get_title() == "Source"
+                    for child in walk(node))
+        ]
+        assert len(essential_groups) == 1, "Champs essentiels absents de l’en-tête"
+        assert essential_groups[0].get_title() == "", (
+            "Titre visuel Essentiel non supprimé", essential_groups[0].get_title(),
+        )
+        assert not any(isinstance(node, Adw.PreferencesGroup)
+                       and node.get_title() == "Essentiel"
+                       for node in walk(header)), "Titre Essentiel encore visible"
         assert isinstance(summary, Adw.PreferencesGroup) and summary.get_title() == "Résumé", (
             "Résumé hors du premier emplacement sous l’en-tête",
             [node.get_title() for node in walk(p.content) if isinstance(node, Adw.PreferencesGroup)],
