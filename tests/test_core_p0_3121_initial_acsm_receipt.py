@@ -387,3 +387,36 @@ def test_claimed_initial_receipt_never_unlinks_replaced_symlink(
     assert not unlinks
     assert manifest.is_symlink()
     assert other.read_text(encoding="utf-8") == "unrelated"
+
+
+@pytest.mark.parametrize("corruption", ["symlink", "malformed", "oversized"])
+def test_unmarked_standard_cache_rejects_unreadable_initial_receipt(
+        first_offer, tmp_path, corruption):
+    """An existing broken receipt cannot turn claim-bound bytes ordinary."""
+    directory, path, loan = first_offer
+    claim = ("loan.borrow.v1:" + "a" * 64, "op-A")
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        now=100, borrow_claim=claim)
+    assert acsm_cache.remember(
+        path, directory, loan, "identity-A", "primary", now=101)
+    initial = directory / acsm_cache.INITIAL_MANIFEST
+    if corruption == "symlink":
+        outside = tmp_path / "outside.json"
+        outside.write_bytes(initial.read_bytes())
+        initial.unlink()
+        initial.symlink_to(outside)
+    elif corruption == "malformed":
+        initial.write_text("{malformed", encoding="utf-8")
+    else:
+        initial.write_bytes(b"x" * 16385)
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary", now=102) is None
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary", now=102,
+        claim_state=lambda _key: {
+            "schema": 1, "operation": "loan.borrow",
+            "status": "confirmed", "operation_id": "op-A",
+            "request_accepted": True, "verification": "positive_active_loan",
+            "verified_loan_id": loan.id,
+        }) is None
