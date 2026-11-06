@@ -604,3 +604,41 @@ def test_new_explicit_denial_rejects_held_click_even_if_old_positive_remains(har
     assert stale.reason_code == "selection_stale"
     assert stale.executable is False
     assert session.calls == 0
+
+
+def test_exact_negative_without_account_wide_report_still_revokes_positive(harness):
+    service, account, session = harness
+    positive = _candidate()
+    # A supplier can attest a specific book is unavailable without knowing
+    # subscription/quota. That negative must still defeat an old positive.
+    negative = replace(
+        positive, evidence=None,
+        edition_evidence=replace(
+            positive.edition_evidence,
+            account_state="unknown", quota_state="unknown",
+            item_offer="unavailable", permission="unknown",
+        ),
+    )
+    for ordered in ((positive, negative), (negative, positive)):
+        assert _preview(service, *ordered).options == ()
+    assert session.calls == 0
+
+
+def test_negative_for_other_borrower_or_book_cannot_veto_positive(harness):
+    service, account, session = harness
+    positive = _candidate()
+    foreign_borrower = replace(
+        positive, evidence=None, edition_evidence=replace(
+            positive.edition_evidence,
+            borrower_id="another-reader", item_offer="unavailable",
+        ),
+    )
+    foreign_edition = replace(
+        positive, evidence=None, edition_evidence=replace(
+            positive.edition_evidence,
+            record_id="other-edition", item_offer="unavailable",
+        ),
+    )
+    assert _preview(service, positive, foreign_borrower).status == "external"
+    assert _preview(service, positive, foreign_edition).status == "external"
+    assert session.calls == 0
