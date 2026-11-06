@@ -10,8 +10,11 @@ le même credential avec un emprunteur/provider account différent.
 Coupure D4 :
 
 - le compte session **actuellement connecté** doit être unique, avec
-  `provider_id`, `credential_id`, `identity_id` et `unique_id` tous
-  identiques aux quatre champs de la source explicitement consentie ;
+  `provider_id`, `credential_id`, `unique_id` identiques aux champs de
+  la source explicitement consentie. L'identité doit correspondre au
+  propriétaire SQLite actuel ; seule l'ancienne valeur d'adaptateur
+  `identity_id="default"` est acceptée comme alias non probant, **après**
+  vérification indépendante de l'unique connexion/owner exact ;
 - session sans cache de comptes, plusieurs comptes ou fournisseur changé
   => planification **manual_only**, aucun GET ;
 - le parcours d'ouverture recontrôle l'identité de **la même instance**
