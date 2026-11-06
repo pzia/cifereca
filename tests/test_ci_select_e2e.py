@@ -174,7 +174,9 @@ class SelectionTests(unittest.TestCase):
 
     def test_local_widget(self):
         self.assertEqual(mod.select(["src/cifereca/gui/book_widgets.py"]),
-                         ("search-filter-p0",) + mod.BOOK_DETAIL + mod.BNF_COVERS)
+                         ("search-filter-p0",) + mod.BOOK_DETAIL + mod.RECOMMENDATIONS_GTK + mod.BNF_COVERS)
+        self.assertEqual(mod.select(["src/cifereca/gui/cover_loader.py"]),
+                         mod.BOOK_DETAIL + mod.RECOMMENDATIONS_GTK + mod.BNF_COVERS)
 
     def test_1269_diagnostics_shared_probe_keeps_transitive_consumers(self):
         self.assertEqual(
