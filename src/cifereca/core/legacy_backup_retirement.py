@@ -116,6 +116,21 @@ def retire_attested_legacy_kobo_backup(
             db.execute("BEGIN IMMEDIATE")
             if context_current() is not True:
                 return blocked("source_context_changed")
+            # A settings/UI task may revoke source Sync independently of
+            # the in-memory session epoch. Read the durable exact-account
+            # switch in this SAME write transaction before retiring history.
+            # The absence of a switch retains the established legacy
+            # default-enabled inventory semantics; an explicit OFF is a veto.
+            from .source_auto_consent_bridge import _source_id
+            from .source_enablement import source_enabled
+            enabled = db.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                ("sync.source.enabled." + _source_id(scope),),
+            ).fetchone()
+            _require(
+                source_enabled(enabled[0] if enabled else None),
+                "source_disabled",
+            )
             existing_audit = db.execute(
                 "SELECT value FROM metadata WHERE key=?", (archive_key,),
             ).fetchone()
