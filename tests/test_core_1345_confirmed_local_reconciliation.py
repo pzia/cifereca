@@ -790,3 +790,105 @@ def test_unrelated_legacy_catalogue_with_broken_metadata_blocks_relink(
     ):
         _run(case)
     assert _dump(case) == before
+
+
+def test_w4_file_evidence_is_append_only_and_not_rights_proof(case):
+    """A real private file is attested separately from the old 0.7 ledger."""
+    before = _dump(case)
+    plan = _run(case)
+    assert plan["status"] == "preview"
+    assert not [
+        k for k, _ in _dump(case)["metadata"]
+        if k.startswith(repair._FILE_EVIDENCE_JOURNAL)
+    ]
+    applied = _run(case, confirmation=plan["plan_token"])
+    key = repair._FILE_EVIDENCE_JOURNAL + applied["operation_id"]
+    audit_text = case.storage.metadata_get(key)
+    record = json.loads(audit_text)
+    assert record["schema"] == "kobo.offline-file-observation/1"
+    assert record["operation_id"] == applied["operation_id"]
+    assert record["source"] == {
+        "identity_id": "default", "provider_id": "kobo",
+        "credential_id": "vault-1", "account_id": "PRIVATE-account",
+        "edition_id": "PRIVATE-product", "legacy_revision_id": "r1",
+    }
+    assert record["file"]["path"] == str(case.target)
+    assert record["file"]["sha256"] == case.sha
+    assert record["file"]["size"] == case.target.stat().st_size
+    assert record["file"]["inode"] == case.target.stat().st_ino
+    assert record["file"]["device"] == case.target.stat().st_dev
+    assert record["authority"] == "historical_local_file_only"
+    assert record["rights_attested"] is False
+    assert record["canonical_delivery_attested"] is False
+    assert _dump(case)["entitlements"] == before["entitlements"]
+    assert _dump(case)["source_references"] == before["source_references"]
+    assert _dump(case)["origin_links"] == before["origin_links"]
+    # Idempotent confirm must not emit or rewrite the observation.
+    assert _run(case, confirmation=plan["plan_token"])["status"] == "already_linked"
+    assert case.storage.metadata_get(key) == audit_text
+    undo_preview = _run(case, path=None, undo_operation=applied["operation_id"])
+    assert _run(case, path=None, undo_operation=applied["operation_id"],
+                confirmation=undo_preview["plan_token"])["status"] == "undone"
+    assert case.storage.metadata_get(key) == audit_text
+    assert json.loads(case.storage.metadata_get(
+        repair._JOURNAL + applied["operation_id"]
+    ))["state"] == "undone"
+    assert case.original.is_file() and case.target.is_file()
+
+
+@pytest.mark.parametrize("metadata", [
+    '{}', '{"schema":"another.core-stage"}',
+    '{"legacy_status":123}', '{"legacy_status":"reconcile_required","extra":"value"}',
+    None,
+])
+def test_w4_rejects_nonlegacy_acquisition_without_touching_projections(
+        case, metadata):
+    """Even absent typed SourceReference, W4 cannot overwrite another ledger."""
+    with case.storage._lock, case.storage._connect() as db:
+        db.execute("UPDATE acquisition_ledger SET metadata_json=? "
+                   "WHERE provider_id='kobo' AND credential_id='vault-1'",
+                   (metadata,))
+    before = _dump(case)
+    with pytest.raises(
+        repair.ReconciliationRejected,
+        match="^legacy_acquisition_provenance_missing$",
+    ):
+        _run(case)
+    assert _dump(case) == before
+    assert case.target.is_file() and case.original.is_file()
+
+
+def test_file_evidence_insert_failure_rolls_back_relink_and_journal(case):
+    """An inability to write the separate attestation must not confirm W4."""
+    plan = _run(case)
+    with case.storage._lock, case.storage._connect() as db:
+        db.execute(
+            "CREATE TRIGGER reject_w4_file_audit "
+            "BEFORE INSERT ON metadata "
+            "WHEN NEW.key LIKE 'core.kobo.local-file-evidence.%' "
+            "BEGIN SELECT RAISE(ABORT,'synthetic_w4_audit_failure'); END"
+        )
+    before = _dump(case)
+    with pytest.raises(
+        repair.ReconciliationRejected, match="^local_storage_unavailable$",
+    ):
+        _run(case, confirmation=plan["plan_token"])
+    assert _dump(case) == before
+    assert case.target.is_file() and case.original.is_file()
+
+
+def test_old_w4_journal_without_file_evidence_remains_undoable(case):
+    """Pre-cutover historical confirmations do not require new audit rows."""
+    applied = _apply(case)
+    with case.storage._lock, case.storage._connect() as db:
+        db.execute(
+            "DELETE FROM metadata WHERE key=?",
+            (repair._FILE_EVIDENCE_JOURNAL + applied["operation_id"],),
+        )
+    plan = _run(case, path=None, undo_operation=applied["operation_id"])
+    result = _run(case, path=None, undo_operation=applied["operation_id"],
+                  confirmation=plan["plan_token"])
+    assert result["status"] == "undone"
+    assert case.storage.metadata_get(
+        repair._FILE_EVIDENCE_JOURNAL + applied["operation_id"]
+    ) is None
