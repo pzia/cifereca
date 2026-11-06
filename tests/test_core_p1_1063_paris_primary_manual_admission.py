@@ -5,10 +5,12 @@ before the UI click and again during supplier descriptive preflight. Neither
 a pending claim nor a borrow button activates Adobe or infers entitlement.
 """
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from cifereca.core.borrow_action_scope import borrow_claim_key
+from tests.test_library_reconciliation import epub
 from tests.test_paris_manual_borrow_dispatch import setup, attempt
 
 
@@ -65,6 +67,73 @@ def test_two_sources_need_selection_and_selected_one_is_only_borrower(tmp_path):
         assert service.can_borrow_paris(item)
         assert attempt(service, account, item)["status"] == "confirmed"
         assert state["mutations"] == 1
+    finally:
+        service.close()
+
+
+def test_selected_primary_loan_reuses_acsm_under_its_bound_profile(tmp_path, monkeypatch):
+    service, session, account, item, state = setup(tmp_path)
+    try:
+        add_secondary(service)
+        select(service, "card-A")
+        secondary = replace(account, credential_id="card-B")
+        service.accounts.append(secondary)
+        service.storage.adept_profile_binding_set("identity", "default", "primary-profile")
+        service.storage.adept_profile_binding_set("identity", "alex", "other-profile")
+        monkeypatch.setattr(service, "kobo_profiles", lambda: [
+            {"profile_id": "primary-profile", "name": "primary-cli", "fetch_capable": True},
+            {"profile_id": "other-profile", "name": "other-cli", "fetch_capable": True},
+        ])
+
+        observed_loans = []
+        provider_borrow = session.borrow_explicit_with_claim
+
+        def observe_borrow(*args, **kwargs):
+            loan = provider_borrow(*args, **kwargs)
+            observed_loans.append(loan)
+            return loan
+
+        monkeypatch.setattr(session, "borrow_explicit_with_claim", observe_borrow)
+        assert attempt(service, account, item)["status"] == "confirmed"
+        observed, = observed_loans
+        assert (observed.id, observed.record_id, observed.source_credential,
+                observed.source_account_id) == ("loan-exact", "edition", "card-A", "primary")
+        assert state["mutations"] == 1
+        assert state["calls"].count("/numerique/synthetic.acsm") == 1
+        calls_after_borrow = state["calls"].copy()
+
+        # The refreshed inventory can lack the signed first-offer URL. A
+        # foreground identity switch must not affect the retained token owner.
+        loan = replace(observed, ebook_url=None)
+        service._persist_active_loans("default", [loan])
+        service.current_identity = service.identity_by_id("alex")
+        runtime_requests = []
+
+        def fulfill(request):
+            runtime_requests.append(request)
+            source = Path(request["source"]["path"])
+            assert b"application/epub+zip" in source.read_bytes()
+            destination = Path(request["destination"])
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            epub(destination, title="Synthetic Paris")
+            return {
+                "ok": True, "profile": "primary-cli", "loan_id": "synthetic-adept-loan",
+                "artifact": {"path": str(destination), "format": "epub", "drm": "none"},
+            }
+
+        monkeypatch.setattr(service, "execute_acquisition_request", fulfill)
+        monkeypatch.setattr(service, "runtime_diagnostic", lambda *_: {})
+        assert service._acquire_active_loan_automatically(loan)["status"] == "complete"
+        request, = runtime_requests
+        assert request["profile"] == "primary-cli"
+        assert state["calls"] == calls_after_borrow
+        row, = service.storage.acquisitions(status="complete", provider_id="paris")
+        assert (row["identity_id"], row["credential_id"], row["account_id"]) == (
+            "default", "card-A", "primary",
+        )
+        binding = row["metadata"]["adept_binding"]
+        assert binding["adept_profile_id"] == "primary-profile"
+        assert binding["adept_loan_id"] == "synthetic-adept-loan"
     finally:
         service.close()
 
