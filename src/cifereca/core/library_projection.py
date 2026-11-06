@@ -577,6 +577,45 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
                   and row.get('provider_id')==provider_id and row.get('credential_id')==credential_id
                   and str(row.get('item_id') or '')==str(item_id)
                   and (account_id is None or row.get('account_id')==account_id)}
+    if provider_id == 'kobo':
+        # The single-item reader is also used to admit an exact-account
+        # targeted action. Once an edition is typed, the legacy ledger
+        # cannot provide either a public alias or positive local proof.
+        with self.storage._lock, self.storage._connect() as db:
+            typed = db.execute(
+                "SELECT identity_id,account_id FROM source_references "
+                "WHERE provider_id='kobo' AND credential_id=? "
+                "AND edition_id=? LIMIT 1001",
+                (credential_id, str(item_id)),
+            ).fetchall()
+        if typed:
+            if len(typed) > 1000:
+                return None
+            matching = [
+                row for row in typed
+                if row[0] == identity_id and (
+                    account_id is None or row[1] == account_id
+                )
+            ]
+            if len(matching) != 1 or (account_id is None and len(typed) != 1):
+                return None
+            exact_account = matching[0][1]
+            origins = {
+                artifact for artifact, owner, provider, credential,
+                account, edition, _kind in (
+                    _verified_provider_origin_coordinates(
+                        self.storage, identity_id=identity_id,
+                        with_kind=True,
+                    )
+                )
+                if (owner, provider, credential, account, edition) == (
+                    identity_id, 'kobo', credential_id,
+                    exact_account, str(item_id),
+                )
+            }
+            if len(origins) != 1:
+                return None
+            artifact_ids = origins
     rows=[row for row in self.storage.placements() if row.get('state')=='present'
           and row.get('identity_id')==identity_id and row.get('artifact_id') in artifact_ids]
     if len(rows)!=1:return None
