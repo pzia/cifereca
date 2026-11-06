@@ -333,6 +333,23 @@ class LibraryService:
             expected_account=expected_account,
         )
 
+    def preview_borrow_for_current_identity(
+        self, *, expected_edition_id: str, observations: object,
+        now: int | None = None,
+    ):
+        """#4662: exact lender opportunities from observed facts, read-only.
+
+        No account switch, provider I/O, loan, copy, or action authorization.
+        Callers must not render executable buttons from this advisory DTO.
+        """
+        from .core.borrow_for_identity_live import (
+            preview_live_borrow_for_current_identity,
+        )
+        return preview_live_borrow_for_current_identity(
+            self, expected_edition_id=expected_edition_id,
+            observations=observations, now=now,
+        )
+
     def can_borrow_paris(self, item: SearchResult) -> bool:
         """Inert Paris action availability, without provider I/O."""
         from .core.manual_paris_borrow import manual_paris_borrow_available

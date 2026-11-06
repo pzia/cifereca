@@ -1,0 +1,245 @@
+"""#4662: bind observed borrow opportunities to *live* Core lender sessions.
+
+This read-only producer accepts previously collected, exact borrower evidence.
+It never discovers a lender, authenticates, borrows, transfers, refreshes a
+source or treats a catalogue's CanLoan as a personal permission. The returned
+options are non-executable; a later explicit action must revalidate everything.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from time import time
+
+from ..models import Account, SearchResult
+from ..plugin_api.lending_capabilities import (
+    BorrowerOperationEvidence, assess_borrower_operation_eligibility,
+    assess_lending_operation,
+)
+from ..providers.base import ProviderDescriptor
+from .borrow_action_scope import borrow_claim_key
+from .borrow_for_identity_preview import (
+    BorrowForIdentityPreview, BorrowForIdentityWitness,
+    _display_account_label, preview_borrow_for_identity,
+)
+from .loan_action_scope import _inert_session_accounts, _inert_session_state
+from .manual_paris_borrow import _normal_paris_source_current
+from .source_context import source_context_epoch
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ObservedBorrowOffer:
+    """An already-observed candidate; evidence is not a permission token.
+
+    The producer must have independently observed the borrower operation for
+    precisely this branch. A bare SearchResult is never sufficient.
+    """
+
+    notice: SearchResult
+    evidence: BorrowerOperationEvidence | None
+    edition_id: str
+    observed_at: int
+    # A provider loan does not imply any transferable use/copy entitlement.
+    transfer_state: str = "unknown"
+
+
+def _lender_label(value: object) -> str:
+    # A profile label is user-configurable and may itself contain a login.
+    label = _display_account_label(value)
+    return "Profil prêteur" if label == "Compte bibliothèque" else label
+
+
+def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
+             source_epoch: int) -> BorrowForIdentityWitness | None:
+    """Rebind every coordinate to in-memory Core and owned SQLite state.
+
+    Never invoke session.accounts, source getters, provider operations, or
+    remote eligibility checks. An unknown fact is a rejected preview option.
+    """
+    item, evidence = row.notice, row.evidence
+    if (type(item) is not SearchResult
+            or type(evidence) is not BorrowerOperationEvidence
+            or type(row.edition_id) is not str
+            or type(row.observed_at) is not int
+            or row.transfer_state not in ("unknown", "blocked")
+            or type(evidence.identity_id) is not str
+            or type(evidence.provider_id) is not str
+            or type(evidence.credential_id) is not str
+            or type(evidence.account_id) is not str
+            or evidence.operation != "loan.borrow"
+            or (evidence.provider_id, evidence.credential_id,
+                evidence.branch) != (
+                    item.source_provider, item.source_credential, item.docbase,
+                )
+            or item.medium != "digital"):
+        return None
+
+    try:
+        # All cross-profile lenders must already be known locally; never
+        # use the active reader's session as a substitute.
+        if (service.identity_by_id(evidence.identity_id) is None
+                or service.storage.identity_for_connection(
+                    evidence.provider_id, evidence.credential_id,
+                ) != evidence.identity_id):
+            return None
+        connections = service.storage.provider_connections(
+            identity_id=evidence.identity_id,
+        )
+        if (type(connections) is not list or len(connections) > 512
+                or sum(
+                    type(conn) is dict
+                    and conn.get("provider_id") == evidence.provider_id
+                    and conn.get("credential_id") == evidence.credential_id
+                    and conn.get("identity_id") == evidence.identity_id
+                    and conn.get("enabled") is True
+                    for conn in connections
+                ) != 1):
+            return None
+
+        accounts = service.accounts
+        if type(accounts) not in (list, tuple) or len(accounts) > 512:
+            return None
+        matches = [
+            account for account in accounts
+            if type(account) is Account and account.is_primary is True
+            and (account.identity_id, account.provider_id,
+                 account.credential_id, account.unique_id) == (
+                     evidence.identity_id, evidence.provider_id,
+                     evidence.credential_id, evidence.account_id,
+                 )
+        ]
+        if len(matches) != 1:
+            return None
+        account = matches[0]
+        session_key = service._session_key(
+            evidence.provider_id, evidence.credential_id,
+        )
+        session = service._sessions.get(session_key)
+        state = _inert_session_state(session)
+        rows = _inert_session_accounts(session)
+        if (state is None or rows is None
+                or state.get("connected") is not True
+                or state.get("_closed") is True
+                or state.get("provider_id") != evidence.provider_id
+                or state.get("credential_id") != evidence.credential_id
+                or sum(other is account for other in rows) != 1):
+            return None
+
+        # Paris's normal borrow contract supports exactly the selected
+        # primary. Other profiles are NEVER activated to inspect this fact.
+        if (evidence.provider_id == "paris"
+                and not _normal_paris_source_current(
+                    service, item, evidence.identity_id,
+                )):
+            return None
+
+        plugin_id = service._provider_plugin_ids.get(evidence.provider_id)
+        manager = service._plugin_manager
+        if type(plugin_id) is not str or not plugin_id or manager is None:
+            return None
+        plugin_status = manager.status(plugin_id)
+        declaration = plugin_status.descriptor
+        if (plugin_status.enabled is not True
+                or plugin_status.state != "ready"
+                or declaration.id != plugin_id
+                or declaration.type != "provider.library"):
+            return None
+        enabled_for = getattr(manager, "enabled_for_identity", None)
+        if callable(enabled_for) and enabled_for(
+                plugin_id, evidence.identity_id) is not True:
+            return None
+        descriptor = state.get("descriptor")
+        if (type(descriptor) is not ProviderDescriptor
+                or descriptor.id != evidence.provider_id):
+            return None
+        capability = assess_lending_operation(
+            "loan.borrow",
+            manifest_capabilities=declaration.capabilities,
+            descriptor=descriptor, session=session, account=account,
+        )
+        eligibility = assess_borrower_operation_eligibility(
+            capability, account=account, branch=item.docbase,
+            evidence=evidence,
+        )
+        if eligibility.state != "eligible_observed":
+            return None
+        key = borrow_claim_key(account, item)
+        if key is None or service.storage.metadata_get(key) is not None:
+            return None
+
+        # The context/source generation must be stable throughout reads.
+        # This avoids publishing even a non-executable stale option after
+        # an ABA switch or a credential/session replacement.
+        session_epoch = state.get("_epoch", source_epoch)
+        if type(session_epoch) is not int or session_epoch < 0:
+            return None
+        if (service._sessions.get(session_key) is not session
+                or _inert_session_state(session) is not state
+                or state.get("connected") is not True
+                or state.get("_epoch", source_epoch) != session_epoch
+                or service.storage.identity_for_connection(
+                    evidence.provider_id, evidence.credential_id,
+                ) != evidence.identity_id):
+            return None
+        lender = service.identity_by_id(evidence.identity_id)
+        name = _lender_label(getattr(lender, "label", None))
+        return BorrowForIdentityWitness(
+            account=account, notice=item, capability=capability,
+            eligibility=eligibility, lender_name=name,
+            observed_at=row.observed_at, service_context_epoch=context_epoch,
+            source_epoch=session_epoch, edition_id=row.edition_id,
+            transfer_state=row.transfer_state,
+        )
+    except Exception:
+        # A failed local fact lookup is UNKNOWN, never a reason to offer an
+        # action or to expose the provider exception in UI/diagnostics.
+        return None
+
+
+def preview_live_borrow_for_current_identity(
+    service, *, expected_edition_id: str,
+    observations: object, now: int | None = None,
+) -> BorrowForIdentityPreview:
+    """Project live Core owner/session facts without switching identities.
+
+    This is a UI read model. It is deliberately not an executor: even a
+    positive borrower observation is not current supplier permission or a
+    license for copying to another identity.
+    """
+    if now is None:
+        now = int(time())
+    if (type(observations) not in (tuple, list)
+            or len(observations) > 64
+            or any(type(row) is not ObservedBorrowOffer
+                   for row in observations)):
+        raise ValueError("invalid_cross_profile_borrow_observations")
+
+    identity = service.current_identity
+    requesting = getattr(identity, "identity_id", None)
+    context = getattr(service, "_account_context_epoch", None)
+    if type(context) is not int or context < 0:
+        raise ValueError("invalid_cross_profile_borrow_context")
+    source = source_context_epoch(service)
+    witnesses = tuple(
+        witness for row in observations
+        if (witness := _witness(
+            service, row, context_epoch=context, source_epoch=source,
+        )) is not None
+    )
+    # The pure preview validates all user-provided edition/time identifiers.
+    result = preview_borrow_for_identity(
+        requesting_identity_id=requesting,
+        expected_edition_id=expected_edition_id,
+        witnesses=witnesses, now=now, context_epoch=context,
+    )
+    if (service.current_identity is not identity
+            or getattr(service, "_account_context_epoch", None) != context
+            or source_context_epoch(service) != source):
+        return preview_borrow_for_identity(
+            requesting_identity_id=requesting,
+            expected_edition_id=expected_edition_id,
+            witnesses=(), now=now, context_epoch=context,
+        )
+    return result
+
+
+__all__ = ["ObservedBorrowOffer", "preview_live_borrow_for_current_identity"]
