@@ -83,6 +83,7 @@ def test_generator_rows_are_projected_once_and_keep_original_keys():
     assert produced == [a, b]
     assert [r.key for r in view._page.rows] == ["a", "b"]
     assert view._page.total_count == 11
+    assert view._page.rows[0]._public_row_content == ("Alpha", "Auteur", "paris", "Livre", None)
     for row in view._page.rows:
         view._page.selected(row)
     assert chosen == [a, b]

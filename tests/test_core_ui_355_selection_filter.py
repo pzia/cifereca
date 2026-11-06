@@ -86,6 +86,23 @@ def test_existing_selected_book_is_restored_by_key():
     assert page.selection.calls == [INVALID, 1]
 
 
+def test_public_row_with_updated_content_is_replaced_at_the_same_selection():
+    show_rows = _show_rows()
+    original = BookListItem("b")
+    original._public_row_content = ("Livre B", "Affinité 42/100")
+    page = _page(original)
+    equivalent = BookListItem("b")
+    equivalent._public_row_content = original._public_row_content
+    show_rows(page, [equivalent])
+    assert page.store.get_item(0) is original and page.selection.calls == []
+
+    replacement = BookListItem("b")
+    replacement._public_row_content = ("Livre B", "Affinité 95/100")
+    show_rows(page, [replacement])
+    assert page.store.get_item(0) is replacement
+    assert page.selection.calls == [INVALID, 0]
+
+
 def test_initial_population_does_not_implicitly_select_first_row():
     show_rows = _show_rows()
     page = _page(None)

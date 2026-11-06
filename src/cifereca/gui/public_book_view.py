@@ -52,14 +52,16 @@ class PublicBookMasterDetailView:
                     presented_key = f"{key}::row-{suffix}"
                 reserved.add(presented_key)
             mapped[presented_key] = row
-            ui_rows.append(BookListItem(
-                presented_key,
+            presentation = (
                 str(row.title or "Sans titre"),
                 str(row.subtitle or ""),
                 str(row.meta or ""),
                 str(row.badge or ""),
                 getattr(row, "thumbnail_url", None),
-            ))
+            )
+            item = BookListItem(presented_key, *presentation)
+            item._public_row_content = presentation
+            ui_rows.append(item)
         # Publish mapping before GTK selection notifications during show_rows.
         self._rows = mapped
         self._page.show_rows(ui_rows, total_count=total_count)
