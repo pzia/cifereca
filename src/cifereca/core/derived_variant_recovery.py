@@ -21,6 +21,9 @@ MAX_RECEIPTS = 128
 MAX_BYTES = 8192
 MAX_SCAN_DIRECTORIES = 8192
 MAX_SCAN_DEPTH = 32
+# Conservative local safety valve until Core-private sealed storage is available.
+# This is per staging directory, not a global quota across all book folders.
+MAX_RECEIPTS_PER_STAGING_DIRECTORY = 1024
 
 
 def _stamp(path: Path) -> tuple[int, int, int, int] | None:
@@ -187,6 +190,19 @@ def write_pending_derived_receipt(staged: Path, published: Path, *,
         raise ValueError("derived_receipt_invalid") from exc
     if len(raw) > MAX_BYTES:
         raise ValueError("derived_receipt_too_large")
+    # No unlink-based eviction: a malicious or concurrent profile writer
+    # could replace a receipt name between inode validation and unlink.
+    # Fail before creating a new receipt/intent or destination hardlink when
+    # this local staging directory has exhausted its retention budget.
+    # Counting by pinned dirfd prevents following replacement directory links.
+    receipt_count = 0
+    with os.scandir(stage_dir_fd) as entries:
+        for entry in entries:
+            if (entry.name.startswith("pending-")
+                    and entry.name.endswith(".json")):
+                receipt_count += 1
+                if receipt_count >= MAX_RECEIPTS_PER_STAGING_DIRECTORY:
+                    raise ValueError("derived_receipt_retention_capacity_exceeded")
     journal = staged.parent / ("pending-" + secrets.token_hex(16) + ".json")
     fd = os.open(journal.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                  | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=stage_dir_fd)
