@@ -115,11 +115,8 @@ def manual_paris_borrow_diagnostic(service, item: SearchResult) -> dict[str, obj
 
 
 def manual_paris_borrow_available(service, item: SearchResult) -> bool:
-    identity_id = getattr(getattr(service, "current_identity", None), "identity_id", None)
-    if not _normal_paris_source_current(service, item, identity_id):
-        return False
-    return manual_borrow_available(
-        service, item, provider_id="paris", docbase="DILICOM", primary_id="")
+    # UI and the read-only diagnostic consume exactly the same admission.
+    return manual_paris_borrow_diagnostic(service, item)["local_action_possible"] is True
 
 
 def manual_paris_borrow(
