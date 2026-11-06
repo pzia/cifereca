@@ -61,6 +61,18 @@ holdings Core et le même renderer de détail/action s'appliquent, sans
 navigation d'onglet. L'ancienne navigation vers Recherche reste disponible
 comme solution de repli et pour les notices non qualifiées.
 
+### Plusieurs consultations successives du même détail
+
+Chaque clic explicite dans un panneau Recommandations établit un jeton local
+de demande. Une consultation plus récente **du même panneau** révoque les
+callbacks de la précédente, même lorsque la notice, le profil, la session
+et les générations Recherche sont identiques. L'ancien worker est annulé
+avant le GET s'il n'a pas commencé ; s'il avait déjà fini, son résultat
+et son erreur tardifs ne remplacent jamais la fiche plus récente.
+Le contrôle est un état scalaire CoreUI, sans accès GTK dans le worker,
+sans nouvelle mutation ni droit fournisseur. Le cache/transport conserve
+ses règles habituelles de concurrence.
+
 ## Couverture, suites et non-objectifs
 
 Tests headless Core/Plugins : aucun GET au rendu, clic explicite seulement,
