@@ -597,6 +597,12 @@ def compact_committed_derived_intent(
     key = _pending_intent_key(journal)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        # Reattest the same receipt bytes after acquiring the SQL writer
+        # lock. An owner modifying JSON between preview and commit cannot
+        # cause the original intent to be retired under stale approval.
+        latest = _read_receipt_nofollow(journal, profile_root=folder)
+        if hashlib.sha256(latest).hexdigest() != approved_receipt_sha256:
+            raise ValueError("derived_compaction_receipt_changed")
         valid = db.execute(
             "SELECT 1 FROM placements p "
             "JOIN origin_links o ON o.artifact_id=p.artifact_id "
