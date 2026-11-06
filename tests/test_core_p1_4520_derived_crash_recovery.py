@@ -1010,3 +1010,67 @@ def test_sql_compaction_rejects_receipt_swap_inside_writer_transaction(
         assert receipt.exists()
     finally:
         service.storage.close()
+
+
+def test_retention_capacity_refuses_new_variant_without_unlink_or_sql_origin(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core import derived_variant_recovery as recovery
+    service, source, _ = _library(tmp_path)
+    try:
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        stage.mkdir(parents=True, exist_ok=True)
+        receipts = [
+            stage / ("pending-" + f"{index:032x}" + ".json")
+            for index in range(2)
+        ]
+        for receipt in receipts:
+            receipt.write_bytes(b"retained original evidence")
+        monkeypatch.setattr(
+            recovery, "MAX_RECEIPTS_PER_STAGING_DIRECTORY", 2,
+        )
+        with pytest.raises(
+            ValueError, match="derived_receipt_retention_capacity_exceeded",
+        ):
+            ArtifactExecutionBrokerImpl(service).execute_transform(
+                TransformRequest(source, "optimize"), control=Control(),
+            )
+        assert sorted(stage.glob("pending-*.json")) == receipts
+        assert all(
+            path.read_bytes() == b"retained original evidence"
+            for path in receipts
+        )
+        assert service.storage.artifact_variants() == []
+        assert [p for p in service.storage.placements()
+                if p["artifact_id"] != source.artifact_id] == []
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute(
+                "SELECT COUNT(*) FROM metadata WHERE key LIKE "
+                "'derived.publication.pending.v1:%'",
+            ).fetchone()[0] == 0
+    finally:
+        service.storage.close()
+
+
+def test_retention_capacity_allows_final_slot_without_eviction(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core import derived_variant_recovery as recovery
+    service, source, _ = _library(tmp_path)
+    try:
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        stage.mkdir(parents=True, exist_ok=True)
+        retained = stage / ("pending-" + "f" * 32 + ".json")
+        retained.write_bytes(b"untouched evidence")
+        monkeypatch.setattr(
+            recovery, "MAX_RECEIPTS_PER_STAGING_DIRECTORY", 2,
+        )
+        result = ArtifactExecutionBrokerImpl(service).execute_transform(
+            TransformRequest(source, "optimize"), control=Control(),
+        )
+        assert result.artifact_id != source.artifact_id
+        assert len(list(stage.glob("pending-*.json"))) == 2
+        assert retained.read_bytes() == b"untouched evidence"
+        assert len(service.storage.artifact_variants()) == 1
+    finally:
+        service.storage.close()
