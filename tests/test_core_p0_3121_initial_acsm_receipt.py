@@ -115,3 +115,45 @@ def test_first_offer_is_never_remembered_without_exact_paris_scope(first_offer):
     assert not acsm_cache.remember_initial(path, directory, loan,
                                             "identity-A", "other")
     assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_initial_manifest_rejects_oversize_and_non_regular_file(first_offer):
+    directory, path, loan = first_offer
+    assert acsm_cache.remember_initial(path, directory, loan, "identity-A",
+                                       "primary", now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    manifest.write_bytes(b" " * 16385)
+    assert acsm_cache.reuse_initial(directory, loan, "identity-A",
+                                    "primary", now=101) is None
+    manifest.unlink()
+    manifest.mkdir()
+    assert acsm_cache.reuse_initial(directory, loan, "identity-A",
+                                    "primary", now=101) is None
+
+
+def test_initial_manifest_swapped_to_symlink_at_open_is_rejected(
+        first_offer, tmp_path, monkeypatch):
+    """A pathname race must not redirect the receipt read outside its dir."""
+    import os
+
+    directory, path, loan = first_offer
+    assert acsm_cache.remember_initial(path, directory, loan, "identity-A",
+                                       "primary", now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    outside = tmp_path / "external.json"
+    outside.write_bytes(manifest.read_bytes())
+    original_open = os.open
+    switched = False
+
+    def swap_at_open(target, flags, *args, **kwargs):
+        nonlocal switched
+        if target == acsm_cache.INITIAL_MANIFEST and not switched:
+            switched = True
+            manifest.unlink()
+            manifest.symlink_to(outside)
+        return original_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_at_open)
+    assert acsm_cache.reuse_initial(directory, loan, "identity-A",
+                                    "primary", now=101) is None
+    assert switched
