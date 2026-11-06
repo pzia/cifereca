@@ -83,7 +83,13 @@ le chemin B sans projeter une acquisition dans `backup_items`.
    révision / SourceKey / borrower / reçu terminé / OriginLink / Placement
    / SHA-inode du bon profil peut être reconnue comme doublon historique.
    L'inspection #4510 ne vérifie pas encore l'égalité de **révision** : elle
-   ne donne donc **pas** une permission de migration exécutable.
+   ne donne donc **pas** une permission de migration exécutable. L'extension
+   descriptive optionnelle `provider_revision_id` aux observations Core v1/v2
+   conserve désormais une révision fournisseur exacte à travers l'adaptateur,
+   sans fabriquer une attestation : il faut que **le plugin d'un fournisseur
+   authentifié la fournisse**, puis la comparer au reçu historique sous le
+   verrou de migration, avec toutes les autres preuves B. Champ absent =
+   comparaison impossible ; champ présent ≠ permission de mutation.
 3. **Gérer le cas non encore publié en B.** Ni `backup_items.complete`,
    ni `sha256`, ni le titre, ni l'ISBN ne créent un droit, un fichier B ou
    un `CompletedDelivery`. Obtenir une offre actuelle + consentement +
