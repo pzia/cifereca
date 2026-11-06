@@ -202,11 +202,12 @@ def test_unprovable_required_patch_preserves_previous_typed_canonical_evidence(t
         storage.close()
 
 
+@pytest.mark.parametrize("status", ("reconcile_required", "reconcile_conflict"))
 @pytest.mark.parametrize("connected_owner,mirrored", [
     (None, False), ("alice", True), ("bob", False),
 ])
-def test_unprovable_required_retains_active_source_discovery_only_for_its_owner(
-    tmp_path, connected_owner, mirrored,
+def test_unprovable_reconciliation_retains_active_source_discovery_only_for_owner(
+    tmp_path, connected_owner, mirrored, status,
 ):
     """Do not suppress legitimate Kobo OWN-manifest discoveries before W2."""
     storage = Storage(tmp_path / "state.sqlite3")
@@ -220,7 +221,7 @@ def test_unprovable_required_retains_active_source_discovery_only_for_its_owner(
             "provider_id": "kobo", "credential_id": "vault",
             "identity_id": "alice", "account_id": "account-a",
             "item_id": "edition", "revision_id": "r1",
-            "status": "reconcile_required",
+            "status": status,
             "title": "Local candidate without verified bytes",
             "sha256": None, "size": None,
         })

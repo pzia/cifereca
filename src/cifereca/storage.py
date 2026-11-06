@@ -2146,25 +2146,24 @@ class Storage:
                          # Reconciliation statuses still require the 0.8
                          # mirror for W4 confirmation/undo until migrated.
                          or merged.get("status") == "skipped_archived"
-                         # #3196 W1: a conflict with no byte baseline
-                         # can never be repaired through W4. A similarly
-                         # unprovable reconcile_required is archive-only ONLY
-                         # when no connected owner of this exact credential
-                         # exists. An active Kobo manifest may still have
-                         # independently reported this account's OWN right:
-                         # until W2 produces typed rights instead of the 0.8
-                         # compatibility mirror, do NOT drop its discovery.
-                         # Neither case proves local B file presence.
-                         or ((merged.get("status") == "reconcile_conflict"
-                              or (merged.get("status") == "reconcile_required"
-                                  and db.execute(
-                                      "SELECT 1 FROM provider_connections "
-                                      "WHERE provider_id='kobo' AND "
-                                      "credential_id=? AND identity_id=? "
-                                      "LIMIT 1",
-                                      (merged.get("credential_id"),
-                                       merged.get("identity_id")),
-                                  ).fetchone() is None))
+                         # #3196 W1: a SHA-less/size-less 0.7 repair or
+                         # conflict cannot attest local bytes and is archive-
+                         # only if the credential has NO currently bound
+                         # source for the recorded identity. An active Kobo
+                         # OWN manifest can legitimately discover this source
+                         # right even while multiple local candidates need
+                         # manual review. Until W2 writes typed source rights,
+                         # preserve that connected source's 0.8 mirror.
+                         # This is not B presence or a right from the file.
+                         or (merged.get("status") in
+                             {"reconcile_required", "reconcile_conflict"}
+                             and db.execute(
+                                 "SELECT 1 FROM provider_connections "
+                                 "WHERE provider_id='kobo' AND "
+                                 "credential_id=? AND identity_id=? LIMIT 1",
+                                 (merged.get("credential_id"),
+                                  merged.get("identity_id")),
+                             ).fetchone() is None
                              and (
                                  type(merged.get("sha256")) is not str
                                  or len(merged["sha256"]) != 64

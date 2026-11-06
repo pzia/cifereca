@@ -236,6 +236,26 @@ def test_multiple_local_candidates_become_conflict_without_deletion(tmp_path: Pa
         assert summary["reconcile_conflicts"] == 1
         assert record is not None
         assert record["status"] == "reconcile_conflict"
+        assert record["sha256"] is None
+        # A freshly connected OWN manifest independently reports this exact
+        # account's right; two ambiguous local files cannot erase discovery.
+        # A right is NOT a proof of which (if either) local file was delivered.
+        rights = [
+            row for row in service.storage.entitlements(provider_id="kobo")
+            if row["credential_id"] == "vault-1"
+            and row["item_id"] == "book-1" and row["identity_id"] == "default"
+        ]
+        assert len(rights) == 1
+        assert rights[0]["entitlement_type"] == "owned"
+        assert rights[0]["state"] == "active"
+        receipts = [
+            row for row in service.storage.acquisitions(provider_id="kobo")
+            if row["credential_id"] == "vault-1" and row["item_id"] == "book-1"
+        ]
+        assert len(receipts) == 1
+        assert receipts[0]["status"] == "discovered"
+        assert receipts[0]["artifact_id"] is None
+        assert receipts[0]["attempt_count"] == 0
         assert base.is_file()
         assert suffixed.is_file()
     finally:
