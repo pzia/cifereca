@@ -1235,14 +1235,14 @@ def _verified_canonical_kobo_unlinked_exemptions(
 
 
 def kobo_unlinked_local_count(self, identity_id: str) -> int:
-    """Block true unlinked local books, not copies received from another ID.
+    """Count actual local books without independently attested provenance.
 
-    Cross-identity copies are neither Kobo B rights nor backup receipts:
-    if B's manifest contains that product, _indexed_kobo_catalog_paths still
-    blocks *that item* for explicit reconciliation, not the entire batch.
+    A historical 0.7 backup_items.local_path is only an archive/recovery
+    locator, including when status='complete'. It cannot certify a file or
+    suppress this count. A separately attested received copy or exact Core B
+    SourceReference+OriginLink+currently hashed Placement remains exempt.
+    _indexed_kobo_catalog_paths still gates per-edition reconciliation.
     """
-    known = {str(Path(r["local_path"]).resolve()) for r in self.storage.backup_list("kobo")
-             if r.get("identity_id") == identity_id and r.get("local_path")}
     default_id = self.identities[0].identity_id if self.identities else None
     placements = {
         str(row.get("placement_id") or ""): row
@@ -1256,7 +1256,7 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
         if (owner == identity_id and row.get("local_state") == "local"
                 and str(row.get("provider_id") or "local") in {"local", "kobo"} and raw):
             path = Path(raw)
-            if path.is_file() and str(path.resolve()) not in known:
+            if path.is_file():
                 if _attested_received_kobo_copy(
                     row, path, identity_id=identity_id, placements=placements,
                 ):

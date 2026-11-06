@@ -73,18 +73,61 @@ def test_only_exact_current_verified_kobo_b_is_not_unlinked(
     assert file.is_file()
 
 
-def test_legacy_kobo_path_stays_known_without_canonical_source(store, tmp_path):
+@pytest.mark.parametrize("status", [
+    "complete", "reconcile_required", "reconcile_conflict",
+    "pending_acquisition", "skipped_archived",
+])
+def test_legacy_kobo_path_is_not_positive_linkage_without_canonical_origin(
+    store, tmp_path, status,
+):
     register(store, "A", "kobo", "card-a", account="buyer")
     root = tmp_path / "EBooks"
     path = target(tmp_path, "A")
     store.backup_put({
         "provider_id": "kobo", "credential_id": "card-a",
         "identity_id": "A", "account_id": "buyer",
-        "item_id": "book", "title": "Legacy", "status": "complete",
+        "item_id": "book", "title": "Legacy", "status": status,
         "local_path": str(path),
     })
     _catalog(store, path)
+    # A 0.7 path, regardless of status or synthetic mirrored rights, cannot
+    # clear an orphan warning. This is advisory, not a GET authorization.
+    assert kobo_unlinked_local_count(_service(store, root), "A") == 1
+    assert store.backup_get("kobo", "card-a", "book") is not None
+    assert path.read_bytes() == BYTES
+
+
+def test_canonical_exact_b_overrides_unproven_legacy_path_for_same_profile(
+    store, tmp_path,
+):
+    register(store, "A", "kobo", "card-a", account="buyer")
+    source, snapshot = new_source(
+        "A", provider="kobo", credential="card-a", account="buyer",
+        edition="book", right="purchase",
+    )
+    root = tmp_path / "EBooks"
+    path = target(tmp_path, "A")
+    store.backup_put({
+        "provider_id": "kobo", "credential_id": "card-a",
+        "identity_id": "A", "account_id": "buyer",
+        "item_id": "book", "title": "Historical",
+        "status": "skipped_archived", "local_path": str(path),
+    })
+    published = publish(store, root, path, source, snapshot)
+    _catalog(
+        store, path, placement=published.placement_id,
+        artifact=published.artifact_id,
+    )
+    # Neither a still-present 0.7 archive nor its later retirement determines
+    # whether this physically present B is counted.
     assert kobo_unlinked_local_count(_service(store, root), "A") == 0
+    with store._lock, store._connect() as db:
+        db.execute(
+            "DELETE FROM backup_items WHERE provider_id='kobo' "
+            "AND credential_id='card-a' AND item_id='book'"
+        )
+    assert kobo_unlinked_local_count(_service(store, root), "A") == 0
+    assert path.read_bytes() == BYTES
 
 
 def test_other_profile_kobo_origin_does_not_attest_this_profiles_bytes(
