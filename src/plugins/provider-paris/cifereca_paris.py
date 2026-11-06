@@ -56,6 +56,32 @@ def _paris_core_admission_current(admission_current):
         return False
 
 
+def _paris_mutating_pnb_endpoint(url: str) -> bool:
+    """Reject borrower/quota endpoints even when the path is percent-encoded.
+
+    Supplier gateways may decode paths more than once. A single unquote()
+    would miss ASSA%2552edirect after its first decoding pass. Limit decoding
+    work and refuse an excessively encoded path instead of guessing that the
+    resulting GET is read-only. This has no network or URL-logging side effect.
+    """
+    try:
+        path = urlparse(url).path
+        if type(path) is not str:
+            return True
+        for _ in range(8):
+            folded = path.casefold()
+            if ("assaredirect" in folded
+                    or "downloaddigitaldocument" in folded):
+                return True
+            decoded = unquote(path)
+            if decoded == path:
+                return False
+            path = decoded
+    except (TypeError, ValueError):
+        return True
+    return True  # Decoding depth unknown: fail closed.
+
+
 def _pnb_direct_url_observed(raw: object, *, client: object) -> bool:
     """Only an actionable link at a supplier host; no remote GET or right test.
 
@@ -1782,18 +1808,14 @@ class ParisProviderSession(ProviderSession):
         visited_urls: set[str] = set()
         for hop in range(12):
             ensure_scope()
-            if initial_offer_only and (
-                "assaredirect" in unquote(urlparse(current).path).casefold()
-                or not direct_url
-            ):
-                # The first borrow consumed its mutating ASSARedirect
-                # already. No redirect or fallback may replay that endpoint.
+            mutating_endpoint = _paris_mutating_pnb_endpoint(current)
+            if initial_offer_only and (mutating_endpoint or not direct_url):
+                # The first borrow already consumed its mutating endpoint.
+                # Neither ASSARedirect nor DownloadDigitalDocument is safe to
+                # replay, even behind multiple layers of percent-encoding.
                 raise ProviderConfigurationError("paris_initial_acsm_replay_denied")
             self.client._validate_pnb_redirect_url(current)
-            if selected_offer_only and (
-                "assaredirect" in unquote(urlparse(current).path).casefold()
-                or "downloaddigitaldocument" in unquote(urlparse(current).path).casefold()
-            ):
+            if selected_offer_only and mutating_endpoint:
                 # A selected, ALREADY existing right can never traverse a
                 # lender's borrow/quota re-evaluation endpoint. Check each
                 # qualified redirect target BEFORE its next network request,
