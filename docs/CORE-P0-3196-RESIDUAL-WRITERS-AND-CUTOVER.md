@@ -101,6 +101,23 @@ Réception : `tests/test_core_1345_confirmed_local_reconciliation.py`.
 | D6 | `core/kobo_local_audit.py`, `kobo_backup_diagnostic`, `kobo_backup_preview`, `kobo_backup_records`, `core/backup_projection_audit.py` et `core/legacy_backup_migration_inventory.py` | Consultation/inventaire/admission à revue **sans preuve d'origine B**. Ces lecteurs peuvent rester pour l'archive, à condition de rester strictement passifs. |
 | D7 | `core/library_projection.py::local_placements_for_sources` (recherche publique) **et** `local_placement_for_source` (cible individuelle) | **Cutover lecture typée :** si une `SourceReference` Kobo existe pour `credential/edition`, aucun des deux lecteurs n'infère un fichier local depuis un vieux `acquisition_ledger.complete`. L'alias public sans compte exige une SourceReference unique du profil, un OriginLink fournisseur et un Placement ouvrable sous l'identité ; toute deuxième source/droit/emprunteur bloque l'alias. Le lecteur à compte exact sélectionne la seule SourceReference du bon borrower, son OriginLink et le même Artifact, puis conserve sa vérification physique SHA/taille du fichier. Si l'OriginLink manque, les octets sont absents ou le scope est ambigu : aucun match. Les éditions non typées continuent la projection legacy en lecture seule, sans création de droit. |
 
+**Cutover D1 — aperçu après manifeste frais :** lorsque la source
+fournisseur vient d'être rafraîchie, un `backup_items.complete/ok`
+et son `local_path` ne suffisent plus à produire
+`already_local_linked` ou `already_local_verified`, **même si le SHA
+et la taille du fichier correspondent à l'ancienne ligne**. La ligne est
+`needs_reconciliation`, sans permission de GET ni fabrication d'un
+OriginLink. La prévisualisation strictement offline conserve les catégories
+historiques pour la consultation 0.7 ; elle n'atteste pas B. Le préflight
+**interne** de W2 (qui fournit `_item_reasons` pour décider de l'exécution)
+conserve temporairement l'ancien classement : changer sa sémantique sans
+migrer son contrat provoquerait un refus `reconciliation_required` sur
+des téléchargements explicitement confirmés. Ce cutover vise **uniquement
+la vue publique de diagnostic**. Les éditions déjà typées restent soumises
+au garde SourceReference antérieur. Ce changement ne retire ni le lecteur
+legacy, ni W2/W4. Test :
+`tests/test_kobo_backup_preview.py`.
+
 **Cutover D1 — compteur « Kobo locaux non reliés » :** après publication A/B canonique, l'archive `backup_items` peut être retirée par une migration exacte, sans que ce fichier ressurgisse comme « orphelin ». `kobo_unlinked_local_count` reconnaît désormais une exception **uniquement** si le profil possède un Placement `present`, un Artifact dont les octets actuels SHA/taille/inode sont revérifiés sous le répertoire enregistré, un OriginLink `provider` et une SourceReference Kobo `provider_response` active pour un compte actuellement rattaché et activé. Ni le nom du fichier, ni la fiche catalogue ni une origine d'un autre profil ne suffisent. Le lecteur historique `backup_items` reste temporairement consulté pour les éditions sans provenance canonique ; le cutover D1 total dépend encore de W2/W4. Test `tests/test_core_p0_3196_d1_canonical_unlinked_count.py`.
 
 **Lectures négatives à préserver :** `canonical_promotion`,

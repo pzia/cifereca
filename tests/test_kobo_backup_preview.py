@@ -122,7 +122,8 @@ def test_refresh_preview_reads_only_manifest_and_handles_malformed_items(tmp_pat
         assert result["manifest_items"] == 7
         assert result["known_item_count"] == 4
         counts = result["counts"]
-        assert counts["already_local_linked"] == 1
+        assert counts["already_local_linked"] == 0
+        assert counts["needs_reconciliation"] == 1
         assert counts["potentially_missing"] == 1
         assert counts["attention_required"] == 0
         assert counts["skipped_archived"] == 1
@@ -286,5 +287,62 @@ def test_preview_quarantines_prior_complete_row_missing_any_link(
         assert result["counts"]["potentially_missing"] == 0
         assert result["blocking_items"] == 1
         assert result["acquisition_authorized"] is False
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("status", ["complete", "ok"])
+@pytest.mark.parametrize("verify", [False, True])
+def test_fresh_kobo_right_does_not_turn_legacy_sha_into_b_presence(
+        tmp_path: Path, monkeypatch, status, verify):
+    """Fresh A + historical SHA/size is not a B delivery/OriginLink."""
+    manifest = [{"product_id": "historical", "revision_id": "r1",
+                 "title": "Historical", "format": "EPUB",
+                 "downloadable": True}]
+    service, session = _service(tmp_path, manifest)
+    file = service._kobo_backup_target_dir("default") / "historical.epub"
+    _write_epub(file)
+    original = file.read_bytes()
+    _backup(
+        service, "historical", status=status, local_path=file,
+        sha256=hashlib.sha256(original).hexdigest(), size=len(original),
+    )
+    before = service.storage.backup_get("kobo", "vault-1", "historical")
+    monkeypatch.setattr(session, "backup_manifest", lambda: list(manifest))
+    _forbid_mutation_and_acquisition(service, session, monkeypatch)
+    try:
+        offline = service.kobo_backup_preview(
+            "vault-1", verify_local_files=verify,
+        )
+        assert offline["counts"]["already_local_verified" if verify
+                                  else "already_local_linked"] == 1
+        fresh = service.kobo_backup_preview(
+            "vault-1", refresh_manifest=True, verify_local_files=verify,
+        )
+        # W2 still supplies a mutable reason sink for its internal legacy
+        # execution preflight; do not change that ABI until W2 is migrated.
+        from cifereca.core.kobo_backup import kobo_backup_preview
+
+        internal_reasons = {}
+        internal = kobo_backup_preview(
+            service, "vault-1", refresh_manifest=True, verify_local_files=verify,
+            _item_reasons=internal_reasons,
+        )
+        assert internal_reasons["historical"] == (
+            "already_local_verified" if verify else "already_local_linked"
+        )
+        assert internal["acquisition_authorized"] is False
+        assert fresh["counts"]["already_local_linked"] == 0
+        assert fresh["counts"]["already_local_verified"] == 0
+        assert fresh["counts"]["needs_reconciliation"] == 1
+        assert fresh["counts"]["potentially_missing"] == 0
+        assert fresh["blocking_items"] == 1
+        assert fresh["acquisition_authorized"] is False
+        assert service.storage.backup_get("kobo", "vault-1", "historical") == before
+        assert file.read_bytes() == original
+        public = json.dumps(fresh)
+        for private in ("vault-1", "historical.epub", str(file),
+                        hashlib.sha256(original).hexdigest()):
+            assert private not in public
     finally:
         service.close()

@@ -561,6 +561,20 @@ def kobo_backup_preview(
         else:
             reason = "skipped_archived" if _manifest_archived(raw, current) else ""
         path_raw = str((current or {}).get("local_path") or "").strip()
+        # #3196 D1: a fresh provider manifest attests a current *source
+        # offer*, not the origin of bytes recorded by backup_items 0.7.
+        # Even a matching local SHA only compares the file against another
+        # historical value. A current provider offer + old path is NOT an
+        # independently delivered B placement; require supervised
+        # reconciliation rather than reporting "already local".
+        # Offline previews retain the 0.7 advisory link classification.
+        # W2 still consumes _item_reasons as its legacy execution preflight.
+        # Keep that internal ABI unchanged until W2 is replaced with typed
+        # admission; this cutover applies only to the public read-only view.
+        if (refresh_manifest and _item_reasons is None and not reason and current
+                and current.get("status") in {"ok", "complete"}
+                and path_raw):
+            reason = "needs_reconciliation"
         if path_raw and not reason:
             linked = Path(path_raw)
             if linked.is_symlink():
