@@ -2159,6 +2159,20 @@ class Storage:
                         "acquiring", "pending_acquisition",
                         "reconcile_required", "reconcile_conflict",
                     ))
+                    # A stale backup_items projection can say "pending" or
+                    # "complete" while a separate canonical/legacy ledger
+                    # still owns an interrupted acquisition for this exact
+                    # credential + edition. The manifest cannot attest that
+                    # checkpoint's resolution. Preserve the historical
+                    # pointer until the ledger owner explicitly resolves it.
+                    and not (provider == "kobo" and db.execute(
+                        "SELECT 1 FROM acquisition_ledger WHERE "
+                        "provider_id='kobo' AND credential_id=? AND item_id=? "
+                        "AND status IN ('acquiring','downloading',"
+                        "'pending_acquisition','reconcile_required',"
+                        "'reconcile_conflict') LIMIT 1",
+                        (credential, item_id),
+                    ).fetchone() is not None)
                     and item_id.strip() not in seen)
             ]
             local_preserved = 0
