@@ -156,3 +156,16 @@ def test_forged_admitted_scope_rejected_before_digest(scope):
 def test_unvalidated_selected_schema_cannot_be_used_as_cache_key():
     with pytest.raises(ValueError, match="invalid_lineage_scope"):
         key([row()], selected=replace(SELECTED, schema_id="bad schema"))
+
+
+@pytest.mark.parametrize("change", [
+    {"exact": None},
+    {"inherited": []},
+    {"rejected_count": 513},
+    {"rejected_count": True},
+])
+def test_invalid_lineage_bucket_shape_or_rejected_budget_fails_closed(change):
+    with pytest.raises(ValueError, match="invalid_lineage_size"):
+        descriptive_lineage_key(
+            selection=SELECTED, admitted=replace(admitted([row()]), **change),
+        )
