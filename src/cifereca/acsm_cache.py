@@ -247,18 +247,56 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
         return False
 
 
+def _read_initial_manifest(directory: Path) -> dict | None:
+    """Read a bounded regular manifest through pinned, no-follow descriptors.
+
+    Both directory and manifest are opened without following symlinks. A
+    concurrent replacement of the pathname cannot redirect this read to an
+    arbitrary target; a malformed or unstable read is rejected.
+    """
+    import stat
+    parent_fd = manifest_fd = None
+    try:
+        parent_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        parent = os.fstat(parent_fd)
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid():
+            return None
+        manifest_fd = os.open(
+            INITIAL_MANIFEST, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        before = os.fstat(manifest_fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                or not 0 < before.st_size <= 16384):
+            return None
+        with os.fdopen(manifest_fd, 'rb', closefd=False) as stream:
+            raw = stream.read(16385)
+        after = os.fstat(manifest_fd)
+        if (len(raw) != before.st_size or before.st_dev != after.st_dev
+                or before.st_ino != after.st_ino
+                or before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns):
+            return None
+        row = json.loads(raw.decode('utf-8'))
+        return row if type(row) is dict else None
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+    finally:
+        if manifest_fd is not None:
+            os.close(manifest_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
+
+
 def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
                   *, now=None) -> Path | None:
     """Read a first-offer receipt by loan provenance, not an expiring URL."""
     now = time.time() if now is None else now
     try:
         owner = _initial_scope(loan, identity_id, account_id)
-        manifest = directory / INITIAL_MANIFEST
-        if (owner is None or not _active(loan, now)
-                or directory.is_symlink() or manifest.is_symlink()
-                or manifest.stat().st_size > 16384):
+        if owner is None or not _active(loan, now):
             return None
-        row = json.loads(manifest.read_text(encoding='utf-8'))
+        row = _read_initial_manifest(directory)
+        if row is None:
+            return None
         if (type(row) is not dict or row.get('schema') != 1
                 or row.get('scope') != owner):
             return None
