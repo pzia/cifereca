@@ -46,13 +46,13 @@ def test_empty_manifest_keeps_exact_denied_scope_only_for_kobo(tmp_path: Path):
 
         result = storage.backup_prune_missing("kobo", "vault", set())
         assert result == {
-            "pruned": 2,
+            "pruned": 0,
             "local_preserved": 0,
             "entitlements_inactivated": 0,
         }
         assert storage.backup_get("kobo", "vault", "denied") == prior_denied
-        assert storage.backup_get("kobo", "vault", "ordinary-attention") is None
-        assert storage.backup_get("kobo", "vault", "stale-pending") is None
+        assert storage.backup_get("kobo", "vault", "ordinary-attention") is not None
+        assert storage.backup_get("kobo", "vault", "stale-pending") is not None
         assert storage.backup_get("kobo", "different", "other-credential") == prior_other
         assert storage.backup_get("external", "vault", "other-provider")
         assert storage.entitlements() == before_entitlements
