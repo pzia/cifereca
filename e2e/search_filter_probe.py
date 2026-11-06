@@ -577,7 +577,14 @@ def main() -> int:
         source = paris[identity]
         book = window._remote_search_results[0]
         assert book.source_credential == source.credential_id
+        # Read-only, exact Core diagnostic: no supplier GET or POST. Publish
+        # only the closed code through a source-reviewed allowlist in runner.
+        diagnosis = core.library.paris_borrow_diagnostic(book)
+        result["p0_4673_local_reason"] = diagnosis["reason_code"]
+        result["p0_4673_stage"] = "admission_" + identity
+        assert diagnosis["local_action_possible"] is True
         assert core.library.can_borrow_paris(book) is True
+        result["p0_4673_stage"] = "button_" + identity
         actions = [
             button for button in window.search_page.detail._action_buttons
             if button.get_label() == "Emprunter"
