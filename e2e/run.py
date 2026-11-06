@@ -607,6 +607,35 @@ def main() -> int:
                                     width, height = item.get("width"), item.get("height")
                                     if type(width) is int and type(height) is int and 0 <= width <= 5000 and 0 <= height <= 5000:
                                         print(f"UX611_NUMERIC {route}.{family}={width}x{height}", flush=True)
+                # #774: Recommandations probes use synthetic titles/identities,
+                # but neither a traceback nor a GTK label may reach Actions.
+                # Export a strictly closed checkpoint vocabulary and numeric
+                # geometry only; the private per-scenario verdict is retained
+                # locally by the runner, not uploaded.
+                if (name in {"recommendations-detail-1366",
+                             "recommendations-detail-1600"}
+                        and report_data.get("status") != "PASS"):
+                    allowed = frozenset({
+                        "setup", "initial_capture", "display_geometry",
+                        "gtk_geometry", "image_pixels", "source_filters",
+                        "format_counter", "support_counter", "keyboard_focus",
+                        "keyboard_type", "keyboard_verdict",
+                        "original_scenarios",
+                    })
+                    phase = report_data.get("p1_774_phase")
+                    if type(phase) is str and phase in allowed:
+                        print("P1_774_CLOSED_FAILURE_STAGE=" + phase, flush=True)
+                    dimensions = report_data.get("p1_774_geometry")
+                    if type(dimensions) is dict and set(dimensions) == {
+                        "display_width", "display_height",
+                        "window_width", "window_height",
+                    } and all(type(v) is int and 0 <= v <= 4096
+                              for v in dimensions.values()):
+                        for key in sorted(dimensions):
+                            print(
+                                "P1_774_NUMERIC_" + key + "=" +
+                                str(dimensions[key]), flush=True,
+                            )
                 # #4673: a fixed checkpoint code from our own synthetic GTK
                 # probe is the only failure detail emitted to public Actions
                 # logs. Never echo report.error, widget labels or tracebacks.
