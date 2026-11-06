@@ -9,11 +9,25 @@ from __future__ import annotations
 import hashlib
 import json
 
-from .notice_consolidation_inputs import ConsolidationInputs, SourceFact
-from .notice_consolidator_selection import ExplicitSelection
+from .notice_consolidation_inputs import (
+    ConsolidationInputs, SourceFact, MAX_VALUE_BYTES,
+    _identifier as _source_identifier,
+)
+from .notice_consolidator_selection import (
+    ExplicitSelection, _identifier as _selected_identifier,
+)
 
 MAX_CACHE_FACTS = 512
 _KEY_DOMAIN = "cifereca.notice-c.descriptive-lineage.v1"
+
+
+def _bounded_fact_value(value: str) -> bool:
+    """Mirror the Core source-admission text budget, even for forged DTOs."""
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    return 0 < size <= MAX_VALUE_BYTES
 
 
 def descriptive_lineage_key(
@@ -28,13 +42,25 @@ def descriptive_lineage_key(
     """
     if type(selection) is not ExplicitSelection or type(admitted) is not ConsolidationInputs:
         raise ValueError("invalid_consolidation_context")
+    if (not _selected_identifier(selection.canonical_type)
+            or not _selected_identifier(selection.scope, max_len=160)
+            or not _selected_identifier(selection.plugin_id)
+            or not _selected_identifier(selection.version)
+            or not _selected_identifier(selection.schema_id)
+            or not all(_source_identifier(x) for x in (
+                admitted.target_edition_id, admitted.canonical_type,
+                admitted.consolidator_id, admitted.consolidator_version,
+            ))):
+        raise ValueError("invalid_lineage_scope")
     if (selection.canonical_type != admitted.canonical_type
             or selection.plugin_id != admitted.consolidator_id
             or selection.version != admitted.consolidator_version):
         raise ValueError("consolidator_context_mismatch")
-    if (len(admitted.exact) + len(admitted.inherited) > MAX_CACHE_FACTS
+    if (type(admitted.exact) is not tuple
+            or type(admitted.inherited) is not tuple
+            or len(admitted.exact) + len(admitted.inherited) > MAX_CACHE_FACTS
             or type(admitted.rejected_count) is not int
-            or admitted.rejected_count < 0):
+            or not 0 <= admitted.rejected_count <= MAX_CACHE_FACTS):
         raise ValueError("invalid_lineage_size")
     seen: set[tuple[str, str, str]] = set()
     fact_rows = []
@@ -45,6 +71,12 @@ def descriptive_lineage_key(
             if (type(fact) is not SourceFact
                     or fact.inherited is not inherited
                     or fact.canonical_type != selection.canonical_type
+                    or not all(_source_identifier(x) for x in (
+                        fact.source_id, fact.edition_id, fact.evidence_id,
+                        fact.source_revision,
+                    ))
+                    or type(fact.value) is not str
+                    or not _bounded_fact_value(fact.value)
                     or (not inherited and
                         (fact.edition_id != admitted.target_edition_id
                          or fact.relation != "exact"
@@ -52,7 +84,7 @@ def descriptive_lineage_key(
                     or (inherited and
                         (fact.edition_id == admitted.target_edition_id
                          or fact.relation != "strong_attested"
-                         or not fact.relation_proof_id))):
+                         or not _source_identifier(fact.relation_proof_id)))):
                 raise ValueError("invalid_lineage_fact")
             key = (fact.source_id, fact.edition_id, fact.evidence_id)
             if key in seen:

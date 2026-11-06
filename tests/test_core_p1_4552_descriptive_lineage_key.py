@@ -113,3 +113,59 @@ def test_context_and_bucket_tampering_are_rejected_before_hashing():
             selection=SELECTED,
             admitted=replace(valid, inherited=valid.exact),
         )
+
+
+@pytest.mark.parametrize("change", [
+    {"source_id": "bad whitespace"},
+    {"edition_id": "bad edition"},
+    {"evidence_id": "bad evidence"},
+    {"source_revision": "bad revision"},
+    {"value": ""},
+    {"value": "x" * 2049},
+    {"value": "invalid\ud800"},
+    {"value": None},
+])
+def test_directly_constructed_source_fact_cannot_bypass_admission(change):
+    valid = admitted([row()])
+    forged = replace(valid, exact=(replace(valid.exact[0], **change),))
+    with pytest.raises(ValueError, match="invalid_lineage_fact"):
+        descriptive_lineage_key(selection=SELECTED, admitted=forged)
+
+
+def test_unverified_inherited_relation_proof_does_not_enter_lineage():
+    valid = admitted([row(edition=RELATED)])
+    forged = replace(valid, inherited=(
+        replace(valid.inherited[0], relation_proof_id="bad proof"),
+    ))
+    with pytest.raises(ValueError, match="invalid_lineage_fact"):
+        descriptive_lineage_key(selection=SELECTED, admitted=forged)
+
+
+@pytest.mark.parametrize("scope", [
+    {"target_edition_id": "bad edition"},
+    {"consolidator_id": "bad plugin"},
+])
+def test_forged_admitted_scope_rejected_before_digest(scope):
+    valid = admitted([row()])
+    with pytest.raises(ValueError, match="invalid_lineage_scope"):
+        descriptive_lineage_key(
+            selection=SELECTED, admitted=replace(valid, **scope),
+        )
+
+
+def test_unvalidated_selected_schema_cannot_be_used_as_cache_key():
+    with pytest.raises(ValueError, match="invalid_lineage_scope"):
+        key([row()], selected=replace(SELECTED, schema_id="bad schema"))
+
+
+@pytest.mark.parametrize("change", [
+    {"exact": None},
+    {"inherited": []},
+    {"rejected_count": 513},
+    {"rejected_count": True},
+])
+def test_invalid_lineage_bucket_shape_or_rejected_budget_fails_closed(change):
+    with pytest.raises(ValueError, match="invalid_lineage_size"):
+        descriptive_lineage_key(
+            selection=SELECTED, admitted=replace(admitted([row()]), **change),
+        )

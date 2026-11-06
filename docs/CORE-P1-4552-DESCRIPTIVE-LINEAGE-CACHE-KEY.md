@@ -4,6 +4,8 @@
 
 Le format de sérialisation est un tableau JSON structuré et stable : aucune concaténation ambiguë de segments, aucun ordre de réponse fournisseur ne détermine la clé. Les doublons identiques sont déjà dédupliqués par `admit_descriptive_facts` ; les doublons de preuves dans une entrée falsifiée sont refusés ici. Changer une preuve descriptive, une relation forte attestée, la version du consolidateur, sa portée ou le schéma produit une autre clé (ou un rejet de contexte).
 
+**Vérification des entrées :** même lorsqu'un objet `ConsolidationInputs` ou `SourceFact` a été construit directement hors du chemin `admit_descriptive_facts`, la clé refuse les identifiants malformés, chaînes de valeur vides, non UTF-8 ou supérieures à 2 KiB, preuves de relation invalides et buckets non typés/surdimensionnés. Cette vérification structurelle n'authentifie pas la provenance : le Core doit toujours attester les sources avant l'admission.
+
 **Limites strictes :** cette clé **n'autorise pas** la réutilisation de permissions, de prêts, de sessions, de quotas, d'actions, d'offres ou de données personnelles. Un cache futur doit conserver des objets descriptifs Core-only, vérifier la validité de son plugin/ABI, le contexte utilisateur quand applicable, les générations de source, et appliquer une politique de stockage/invalidation. Le hash seul n'est ni une preuve de sécurité ni un droit. Les éventuelles informations de source ou de profil non admises ne sont jamais incorporées.
 
 Cette tranche n'installe aucun cache, n'exécute aucun plugin et ne publie pas de notice C. Elle prépare une invalidation déterministe du travail de consolidation *descriptif* ; le registre de types, la persistance, le worker asynchrone et la recette restent dans #4552.
