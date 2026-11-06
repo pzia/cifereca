@@ -238,9 +238,12 @@ def compute_recommendations(
     profile_started = time.perf_counter()
     # Trusted Core explicit feedback is optional: no implicit extraction from
     # purchases, loans, EPUB data or catalogue provenance.
-    profile = build_profile(
-        books, identity_id=identity_id, explicit_signals=explicit_signals,
-    )
+    # Preserve the original call contract for the default path (including
+    # instrumentation that wraps build_profile(books) with one positional arg).
+    profile = (build_profile(books) if explicit_signals is None
+               else build_profile(
+                   books, identity_id=identity_id, explicit_signals=explicit_signals,
+               ))
     queries = build_queries(books, max_queries=max_queries, profile=profile)
     profile_ms = (time.perf_counter() - profile_started) * 1000.0
 
