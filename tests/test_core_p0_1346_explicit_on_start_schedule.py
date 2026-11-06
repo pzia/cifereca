@@ -526,3 +526,38 @@ def test_startup_rechecks_exact_session_after_attempt_clock_before_legacy_get(
         assert kobo_on_start_sessions(service) == (old_session,)
     finally:
         service.close()
+
+
+def test_legacy_kobo_default_label_does_not_replace_exact_sqlite_owner():
+    """A provider's default identity label is not a second borrower."""
+    core = NS(provider_id="kobo", credential_id="vault-reader",
+              identity_id="reader", unique_id="actual-buyer")
+    provider = NS(provider_id="kobo", credential_id="vault-reader",
+                  identity_id="default", unique_id="actual-buyer")
+    session = NS(provider_id="kobo", credential_id="vault-reader",
+                 connected=True, capabilities=NS(backup=True),
+                 accounts=[provider])
+    sid = SynchronizationBrokerImpl._source_id(core)
+    store = NS(
+        metadata_get=lambda key: "1" if key == policy_key(sid) else None,
+        identity_for_connection=lambda p, c: (
+            "reader" if (p, c) == ("kobo", "vault-reader") else None
+        ),
+        provider_connections=lambda identity_id: [{
+            "provider_id": "kobo", "credential_id": "vault-reader",
+            "enabled": True,
+        }] if identity_id == "reader" else [],
+    )
+    service = NS(
+        accounts=[core], storage=store, _sessions={("kobo", "vault-reader"): session},
+        sync_source_enabled=lambda account: True,
+    )
+    assert kobo_on_start_sessions(service) == (session,)
+    # The legacy default normalization is valid only with the current
+    # credential's independently verified Core owner, never across accounts.
+    store.identity_for_connection = lambda *_: "other"
+    assert kobo_on_start_sessions(service) == ()
+    store.identity_for_connection = lambda *_: "reader"
+    session.accounts = [NS(provider_id="kobo", credential_id="vault-reader",
+                           identity_id="default", unique_id="different-buyer")]
+    assert kobo_on_start_sessions(service) == ()
