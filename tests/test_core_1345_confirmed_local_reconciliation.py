@@ -695,3 +695,39 @@ m.reconcile_kobo_local(service,**options)
     assert result.returncode == 17, result.stderr
     assert _dump(case) == before
     assert _run(case, confirmation=plan["plan_token"])["status"] == "applied"
+
+
+@pytest.mark.parametrize("duplicate", ["path", "nested"])
+def test_legacy_catalogue_duplicate_json_keys_never_authorize_relink(
+        case, duplicate):
+    """A catalogue source cannot hide a conflicting historical path in JSON."""
+    placement = case.storage.placement_put({
+        "path": str(case.target), "identity_id": "default",
+        "provider_id": "local", "source_item_id": "local-id",
+        "state": "unverified",
+    })
+    cid = case.storage.catalog_entry_put({
+        "placement_id": placement, "identity_id": "default",
+        "provider_id": "local", "item_id": "local-id",
+        "title": "Synthetic", "local_state": "unverified",
+        "metadata": {"path": str(case.target)},
+    })
+    if duplicate == "path":
+        raw = json.dumps({"path": "/wrong/foreign.epub"})[:-1] + (
+            ',"path":' + json.dumps(str(case.target)) + '}'
+        )
+    else:
+        raw = '{"path":' + json.dumps(str(case.target)) + (
+            ',"details":{"source":"one","source":"two"}}'
+        )
+    with case.storage._lock, case.storage._connect() as db:
+        db.execute("UPDATE catalog_entries SET metadata_json=? "
+                   "WHERE catalog_entry_id=?", (raw, cid))
+    before = _dump(case)
+    with pytest.raises(
+        repair.ReconciliationRejected,
+        match="^ambiguous_catalogue_metadata$",
+    ):
+        _run(case)
+    assert _dump(case) == before
+    assert case.target.is_file() and case.original.is_file()
