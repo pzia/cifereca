@@ -51,6 +51,7 @@ def test_raw_unimarc_age_is_not_promoted_to_numeric_age():
         "marc_format": "UNIMARC",
         "field_tag": "329",
         "raw_subfields": (("a", "À partir de 13 ans"),),
+        "evidence_role": "cnlj_critical_review_not_age",
         "age_status": "unqualified_raw_evidence",
     }]
     assert not any("min_age" in value or "max_age" in value for value in result)
@@ -63,6 +64,7 @@ def test_intermediate_age_833_and_isbn10_conversion():
     assert converted == "9780306406157"
     data = response(record(isbn=other, fmt="INTERMARC", ages=["9+"]))
     assert probe.exact_edition_age_fields(data, converted)[0]["field_tag"] == "833"
+    assert probe.exact_edition_age_fields(data, converted)[0]["evidence_role"] == "cnlj_mixed_review_or_audience"
 
 
 @pytest.mark.parametrize("field_isbn", [None, "9782377314653", "0000000000000"])
@@ -129,4 +131,14 @@ def test_contradictory_or_unknown_marc_subfield_is_not_interpreted():
                               '<mxc:subfield code="z">JAg1399</mxc:subfield>')
     result = probe.exact_edition_age_fields(response(tampered), ISBN)
     assert result[0]["raw_subfields"] == (("z", "JAg1399"),)
+    assert result[0]["age_status"] == "unqualified_raw_evidence"
+
+
+def test_unimarc_audience_note_333_is_distinct_from_cnlj_review_329():
+    xml = response(record(ages=["critique"]) .replace(
+        'tag="329"', 'tag="333"'))
+    result = probe.exact_edition_age_fields(xml, ISBN)
+    assert len(result) == 1
+    assert result[0]["evidence_role"] == "audience_note_unqualified"
+    assert result[0]["field_tag"] == "333"
     assert result[0]["age_status"] == "unqualified_raw_evidence"
