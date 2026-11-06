@@ -314,6 +314,42 @@ def _without_redundant_merged(self, sessions: list[ProviderSession], *, field: s
     ]
 
 
+def _search_sessions_for_active_identity(self, sessions: list[ProviderSession],
+                                         identity: object) -> list[ProviderSession]:
+    """Select one source per provider, preferring the active reader's account.
+
+    A provider-wide catalogue is not account-independent when a session
+    carries a credential (Paris): the result's source_credential drives
+    downstream borrowing guards. Insertion order must not assign another
+    reader's credential to a locally actionable result. Missing owner
+    metadata preserves the legacy first-session fallback for public sources.
+    No account is rebound and no capability is granted.
+    """
+    active = getattr(identity, "identity_id", None)
+    chosen: dict[str, ProviderSession] = {}
+    preferred: set[str] = set()
+    for session in sessions:
+        provider = session.provider_id
+        if provider in preferred:
+            continue
+        is_active = False
+        credential = getattr(session, "credential_id", None)
+        if type(active) is str and active and type(credential) is str and credential:
+            try:
+                is_active = (
+                    self.storage.identity_for_connection(provider, credential)
+                    == active
+                )
+            except (AttributeError, LookupError, TypeError, ValueError):
+                # Unknown owner cannot be treated as belonging to the reader.
+                pass
+        if provider not in chosen or is_active:
+            chosen[provider] = session
+        if is_active:
+            preferred.add(provider)
+    return list(chosen.values())
+
+
 def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[str, str], ...]:
     """Partition remote search cache by the active configured source account.
 
@@ -458,22 +494,17 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             )
 
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
-    # Search is global: one connected session per provider is queried,
-    # independently of the reader account currently selected in the GUI.
-    searchable: list[ProviderSession] = []
-    seen_provider: set[str] = set()
+    # Search remains global by provider, but the selected reader's own
+    # credential takes precedence when several sessions share that provider.
+    # This also binds source_credential, holdings and actions to the reader.
     requested_provider = str(provider_id or "all").strip().lower()
-    for session in self._sessions.values():
-        if not session.connected or not session.capabilities.search:
-            continue
-        if not self._provider_enabled_for_identity(session.provider_id):
-            continue
-        if requested_provider != "all" and session.provider_id != requested_provider:
-            continue
-        if session.provider_id in seen_provider:
-            continue
-        seen_provider.add(session.provider_id)
-        searchable.append(session)
+    available = [
+        session for session in self._sessions.values()
+        if session.connected and session.capabilities.search
+        and self._provider_enabled_for_identity(session.provider_id)
+        and (requested_provider == "all" or session.provider_id == requested_provider)
+    ]
+    searchable = _search_sessions_for_active_identity(self, available, identity)
     searchable = self._without_redundant_merged(
         searchable, field=field, scope=provider_scope,
         include_redundant_merged=include_redundant_merged,
@@ -1010,18 +1041,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     requested = {str(x).strip().lower() for x in (provider_ids or ()) if str(x).strip() and str(x).strip().lower() != "local"}
     single = str(provider_id or "all").strip().lower()
     if single != "all": requested.add(single)
-    searchable: list[ProviderSession] = []
-    seen_provider: set[str] = set()
-    for session in self._sessions.values():
-        if not session.connected or not session.capabilities.search:
-            continue
-        if not self._provider_enabled_for_identity(session.provider_id):
-            continue
-        if requested and session.provider_id not in requested:
-            continue
-        if session.provider_id in seen_provider:
-            continue
-        seen_provider.add(session.provider_id); searchable.append(session)
+    available = [
+        session for session in self._sessions.values()
+        if session.connected and session.capabilities.search
+        and self._provider_enabled_for_identity(session.provider_id)
+        and (not requested or session.provider_id in requested)
+    ]
+    searchable = _search_sessions_for_active_identity(self, available, identity)
     searchable = self._without_redundant_merged(
         searchable, field=field, scope=scope,
         include_redundant_merged=include_redundant_merged,
