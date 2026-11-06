@@ -201,7 +201,12 @@ def test_single_local_candidate_is_quarantined_as_reconcile_required(tmp_path: P
         assert record["sha256"] is None
         assert record["size"] is None
         assert target.is_file()
-        assert service.storage.artifacts() == []
+        # Catalog scan may independently index these bytes, but no Kobo
+        # acquisition Artifact may be projected from the missing 0.7 hash.
+        assert not [
+            artifact for artifact in service.storage.artifacts()
+            if artifact["metadata"].get("imported_from") == "backup_items"
+        ]
         repeated = service.sync_kobo_backup()
         after = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert repeated["attempted"] == repeated["downloaded"] == 0
@@ -412,7 +417,7 @@ def test_legacy_remnant_outside_own_profile_is_never_hashed_or_adopted(
         def forbidden_hash(*args, **kwargs):
             raise AssertionError("unscoped legacy bytes must never be hashed")
 
-        monkeypatch.setattr(backup_module, "try_sha256_file", forbidden_hash)
+        monkeypatch.setattr(backup_module, "sha256_file", forbidden_hash)
         before_bytes = foreign.read_bytes()
         report = service.sync_kobo_backup()
         row = service.storage.backup_get(
@@ -450,7 +455,7 @@ def test_legacy_remnant_symlink_ancestor_is_quarantined_without_hash(
         })
 
         monkeypatch.setattr(
-            backup_module, "try_sha256_file",
+            backup_module, "sha256_file",
             lambda *_a, **_kw: (_ for _ in ()).throw(
                 AssertionError("never hash through a linked ancestor")),
         )
