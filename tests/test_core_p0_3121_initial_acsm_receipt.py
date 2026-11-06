@@ -157,3 +157,68 @@ def test_initial_manifest_swapped_to_symlink_at_open_is_rejected(
     assert acsm_cache.reuse_initial(directory, loan, "identity-A",
                                     "primary", now=101) is None
     assert switched
+
+
+def test_claimed_initial_receipt_rechecks_confirmed_operation(first_offer):
+    """A private file with valid bytes is not proof of an active borrow."""
+    directory, path, loan = first_offer
+    key = "loan.borrow.v1:" + "a" * 64
+    operation = "operation-1"
+    state = {
+        "schema": 1, "operation": "loan.borrow",
+        "status": "confirmed", "operation_id": operation,
+        "request_accepted": True, "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        borrow_claim=(key, operation))
+    recorded = json.loads(
+        (directory / acsm_cache.INITIAL_MANIFEST).read_text())
+    assert recorded["borrow_claim"] == [key, operation]
+    assert "https://" not in json.dumps(recorded)
+    verify = lambda candidate: state if candidate == key else None
+    assert acsm_cache.reuse_initial(
+        directory, replace(loan, ebook_url=None), "identity-A", "primary",
+        now=101, claim_state=verify) == path
+
+    # Malformed, missing or foreign checkpoints do not authorize reuse.
+    for changed in (
+        None,
+        {**state, "status": "verification_unavailable"},
+        {**state, "operation_id": "another-operation"},
+        {**state, "verified_loan_id": "another-right"},
+        {**state, "request_accepted": False},
+        {**state, "verification": "not_checked"},
+        {**state, "schema": 2},
+    ):
+        assert acsm_cache.reuse_initial(
+            directory, loan, "identity-A", "primary",
+            now=101, claim_state=lambda _key, row=changed: row) is None
+
+
+def test_legacy_initial_receipt_not_adopted_as_confirmed_claim(first_offer):
+    directory, path, loan = first_offer
+    # Historical receipts had no durable claim identity. Their bytes may
+    # exist but cannot be promoted by Core under the new strict reader.
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100)
+    assert acsm_cache.reuse_initial(
+        directory, loan, "identity-A", "primary",
+        now=101, claim_state=lambda _key: {
+            "schema": 1, "status": "confirmed"}) is None
+
+
+@pytest.mark.parametrize("claim", [
+    ("loan.borrow.v1:" + "x" * 64, "operation-1"),
+    ("loan.borrow.v1:" + "a" * 64, ""),
+    ("loan.borrow.v1:" + "a" * 64, "x" * 129),
+    ("loan.borrow.v1:" + "a" * 64, "invalid operation"),
+    ("not-a-checkpoint", "operation-1"),
+])
+def test_invalid_claim_cannot_create_initial_receipt(first_offer, claim):
+    directory, path, loan = first_offer
+    assert not acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        now=100, borrow_claim=claim)
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()

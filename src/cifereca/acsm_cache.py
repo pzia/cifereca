@@ -209,7 +209,7 @@ def _initial_scope(loan, identity_id: str, account_id: str) -> dict | None:
 
 
 def remember_initial(path: Path, directory: Path, loan, identity_id: str,
-                     account_id: str, *, now=None) -> bool:
+                     account_id: str, *, now=None, borrow_claim=None) -> bool:
     """Remember validated first-offer ACSM bytes, never their bearer URL.
 
     An initial receipt is not a new loan or evidence of ADEPT fulfillment.
@@ -223,8 +223,25 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
         if (owner is None or digest is None or not _active(loan, now)
                 or directory.is_symlink() or path.parent != directory):
             return False
+        # A production first-offer receipt also records the opaque Core
+        # at-most-once claim. Neither the operation ID nor hashed claim key
+        # grants a loan; the reader must recheck the confirmed SQLite state.
+        if borrow_claim is not None:
+            if (type(borrow_claim) is not tuple or len(borrow_claim) != 2
+                    or type(borrow_claim[0]) is not str
+                    or not borrow_claim[0].startswith("loan.borrow.v1:")
+                    or len(borrow_claim[0]) != len("loan.borrow.v1:") + 64
+                    or any(ch not in "0123456789abcdef"
+                           for ch in borrow_claim[0][len("loan.borrow.v1:"):])
+                    or type(borrow_claim[1]) is not str
+                    or not 0 < len(borrow_claim[1]) <= 128
+                    or not all(ch.isascii() and (ch.isalnum() or ch in "_-")
+                               for ch in borrow_claim[1])):
+                return False
         row = dict(schema=1, scope=owner, file=path.name, sha256=digest,
                    created_at=now)
+        if borrow_claim is not None:
+            row["borrow_claim"] = list(borrow_claim)
         temporary = directory / (INITIAL_MANIFEST + '.' + uuid.uuid4().hex + '.tmp')
         try:
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -287,7 +304,7 @@ def _read_initial_manifest(directory: Path) -> dict | None:
 
 
 def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
-                  *, now=None) -> Path | None:
+                  *, now=None, claim_state=None) -> Path | None:
     """Read a first-offer receipt by loan provenance, not an expiring URL."""
     now = time.time() if now is None else now
     try:
@@ -300,6 +317,31 @@ def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
         if (type(row) is not dict or row.get('schema') != 1
                 or row.get('scope') != owner):
             return None
+        # Callers with a live Core storage broker MUST present a confirmed
+        # claim for the very operation that created the one-shot token.
+        # An existing legacy receipt without this binding is not an
+        # independent entitlement and cannot be adopted by this strict path.
+        if claim_state is not None:
+            claim = row.get("borrow_claim")
+            if (type(claim) is not list or len(claim) != 2
+                    or type(claim[0]) is not str
+                    or not claim[0].startswith("loan.borrow.v1:")
+                    or len(claim[0]) != len("loan.borrow.v1:") + 64
+                    or any(ch not in "0123456789abcdef"
+                           for ch in claim[0][len("loan.borrow.v1:"):])
+                    or type(claim[1]) is not str or not claim[1]
+                    or not callable(claim_state)):
+                return None
+            state = claim_state(claim[0])
+            if (type(state) is not dict
+                    or state.get("schema") != 1
+                    or state.get("operation") != "loan.borrow"
+                    or state.get("operation_id") != claim[1]
+                    or state.get("status") != "confirmed"
+                    or state.get("request_accepted") is not True
+                    or state.get("verification") != "positive_active_loan"
+                    or state.get("verified_loan_id") != loan.id):
+                return None
         created_at = row['created_at']
         if (type(created_at) not in (float, int)
                 or not 0 <= now - created_at < TTL):

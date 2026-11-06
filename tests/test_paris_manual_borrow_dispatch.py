@@ -397,8 +397,14 @@ def test_first_offer_staged_and_reused_without_reborrowing_or_reusing_url(tmp_pa
         later_loan = replace(staged_loans[0], ebook_url=None)
         directory = service._acquisition_work_dir("default", "paris", "loan-exact")
         staged = acsm_cache.reuse_initial(
-            directory, later_loan, "default", "primary")
+            directory, later_loan, "default", "primary",
+            claim_state=service.storage.loan_borrow_state)
         assert staged is not None and staged.read_bytes() == token
+        # The receipt is not authority by itself: a missing durable claim
+        # cannot be promoted to an acquisition, even with matching bytes.
+        assert acsm_cache.reuse_initial(
+            directory, later_loan, "default", "primary",
+            claim_state=lambda _key: None) is None
         service.acquisition.run_post_download = Mock()
         outcome2 = service.acquire_digital_loan(later_loan)
         assert outcome2.kind == "acsm"
