@@ -45,7 +45,9 @@ def canonical_isbn(raw: object) -> str | None:
     return None
 
 
-def exact_edition_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
+def exact_edition_age_fields(
+    xml: bytes, isbn: str, *, _matched_arks: set[str] | None = None,
+) -> list[dict[str, object]]:
     """Inspect BnF MarcXchange fields without guessing an age interval.
 
     Results are raw, bounded subfield pairs with exact bibliographic ARK and
@@ -122,6 +124,10 @@ def exact_edition_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
         # the age metadata describes. Exact same-ISBN aliases are harmless.
         if set(own_isbns) != {key}:
             continue
+        # Exact ISBN records without age fields still create ambiguity.
+        # This optional internal collector preserves the public raw API.
+        if _matched_arks is not None:
+            _matched_arks.add(ark)
         for field in fields:
             tag = field.get("tag")
             if tag not in AGE_TAGS[fmt]:
@@ -166,7 +172,8 @@ def qualified_observed_age_fields(xml: bytes, isbn: str) -> list[dict[str, objec
     Historical 329 critical reviews are not audience fields and do not veto
     a verified 333. No digital support or Core age range is inferred.
     """
-    observed = exact_edition_age_fields(xml, isbn)
+    matched_arks: set[str] = set()
+    observed = exact_edition_age_fields(xml, isbn, _matched_arks=matched_arks)
     audience = [
         row for row in observed
         if (row["marc_format"], row["field_tag"]) in {
@@ -177,8 +184,7 @@ def qualified_observed_age_fields(xml: bytes, isbn: str) -> list[dict[str, objec
         return []
     # Multiple ARKs with the same own ISBN are not proof of the one
     # manifestation meant by the caller; never pick the first SRU hit.
-    arks = {row["record_ark"] for row in observed}
-    if len(arks) != 1:
+    if len(matched_arks) != 1:
         return []
 
     candidates: list[dict[str, object]] = []

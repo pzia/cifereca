@@ -349,3 +349,36 @@ def test_exact_observed_public_positive_fixtures_still_qualify_after_hardening()
             low, high,
         )
         assert rows[0]["core_youth_age_range_authorized"] is False
+
+
+def test_secondary_own_isbn_record_without_age_still_vetoes_single_ark():
+    first = _synthetic_cnlj_333()
+    # The second exact-own-ISBN bibliographic record has no 333/833.
+    # It must not disappear from the ambiguity check.
+    secondary = record(ark="ark:/12148/cb465971481", ages=[])
+    payload = response(first, secondary)
+    assert len(probe.exact_edition_age_fields(payload, ISBN)) == 1
+    assert probe.qualified_observed_age_fields(payload, ISBN) == []
+
+
+def test_repeated_same_ark_without_audience_is_not_a_distinct_edition():
+    first = _synthetic_cnlj_333()
+    same_ark = record(ark="ark:/12148/cb465971480", ages=[])
+    payload = response(first, same_ark)
+    assert len(probe.exact_edition_age_fields(payload, ISBN)) == 1
+    claims = probe.qualified_observed_age_fields(payload, ISBN)
+    assert len(claims) == 1
+    assert claims[0]["core_youth_age_range_authorized"] is False
+
+
+def test_own_isbn_match_collector_includes_no_age_record_without_changing_raw():
+    first = _synthetic_cnlj_333()
+    secondary = record(ark="ark:/12148/cb465971481", ages=[])
+    matched: set[str] = set()
+    raw = probe.exact_edition_age_fields(
+        response(first, secondary), ISBN, _matched_arks=matched,
+    )
+    assert len(raw) == 1
+    assert matched == {
+        "ark:/12148/cb465971480", "ark:/12148/cb465971481",
+    }
