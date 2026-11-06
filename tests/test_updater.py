@@ -35,7 +35,7 @@ def test_cifereca_python_launcher_tracks_active_release_and_preserves_argv(
         executable.parent.mkdir(parents=True)
         executable.write_text(
             "#!/bin/sh\n"
-            f'printf "%s\\\n" "{name}" "$@"\n'
+            f'printf "%s\n" "{name}" "$@"\n'
             'if [ "$1" = "--fail" ]; then exit 23; fi\n',
             encoding="utf-8",
         )
