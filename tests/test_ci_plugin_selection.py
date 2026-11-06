@@ -131,21 +131,45 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(graph["external"], set())
 
     def test_real_kobo_optional_ids_do_not_fake_a_runtime_dependency(self):
-        # The three provider manifests recommend drm.ade, while the
-        # in-repository ADEPT package declares runtime.kobo-adept instead.
-        # Treating those distinct plugin IDs as aliases would be unsound.
-        # The runtime package remains UNAUDITED: changing it still selects
-        # the full plugin test suite, covering the optional consumers.
+        # The manifests recommend drm.ade, but the local runtime declares
+        # runtime.kobo-adept: these plugin IDs are NOT aliases.
+        # Conservative explicit edges document the actual Core broker
+        # interactions with Kobo/Paris/Numilog and diagnostics-page.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertNotIn("runtime-kobo-adept", audited)
-        self.assertFalse({
-            "provider-kobo", "provider-paris", "provider-numilog",
-        } & set(selector.affected_packages({"runtime-kobo-adept"}, graph)))
-        names, reason = selector.select([
-            ("M", "src/plugins/runtime-kobo-adept/cifereca_kobo_adept.py"),
-        ], ROOT)
-        self.assertEqual(names, [])
-        self.assertIn("not audited", reason)
+        self.assertIn("runtime-kobo-adept", audited)
+        expected = [
+            "diagnostics-page", "home-page", "provider-kobo",
+            "provider-numilog", "provider-paris", "runtime-kobo-adept",
+        ]
+        self.assertEqual(
+            selector.affected_packages({"runtime-kobo-adept"}, graph),
+            expected,
+        )
+        for module in ("cifereca_kobo_adept_runtime.py",
+                       "cifereca_kobo_adept_profiles.py",
+                       "cifereca_kobo_adept_health.py"):
+            with self.subTest(module=module):
+                names, reason = selector.select([
+                    ("M", f"src/plugins/runtime-kobo-adept/{module}"),
+                ], ROOT)
+                self.assertEqual(names,
+                                 [f"src/plugins/{name}" for name in expected])
+                self.assertIn("dependency closure", reason)
+        for consumer in ("provider-kobo", "provider-paris",
+                         "provider-numilog", "diagnostics-page"):
+            self.assertIn("runtime-kobo-adept", graph[consumer])
+        for changes in (
+            [("M", "src/plugins/runtime-kobo-adept/cifereca-plugin.json")],
+            [("M", "src/plugins/runtime-kobo-adept/tests/conftest.py")],
+            [("D", "src/plugins/runtime-kobo-adept/cifereca_kobo_adept_runtime.py")],
+            [("R100", "src/plugins/runtime-kobo-adept/cifereca_kobo_adept_runtime.py")],
+            [("M", "src/plugins/runtime-kobo-adept/cifereca_kobo_adept_runtime.py"),
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
+        ):
+            with self.subTest(changes=changes):
+                names, reason = selector.select(changes, ROOT)
+                self.assertEqual(names, [])
+                self.assertTrue(reason.startswith("full:"), reason)
 
     def test_cycle_converges_and_union_is_stable(self):
         graph, _ = selector.dependency_graph(self.root)
@@ -279,7 +303,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-bnf-pret", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "transport-http"})
+        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-bnf-pret", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "runtime-kobo-adept", "transport-http"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -287,7 +311,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-bnf-pret", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "transport-http"})
+        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-bnf-pret", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "runtime-kobo-adept", "transport-http"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
