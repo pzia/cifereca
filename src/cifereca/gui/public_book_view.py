@@ -30,6 +30,15 @@ class PublicBookMasterDetailView:
     def append_toolbar(self, widget: object) -> None:
         self._page.toolbar.append(widget)
 
+    def _revoke_pending_exact_detail(self) -> None:
+        """Cancel an unstarted #4664 holdings lookup when its pane is reset.
+
+        The Core exact-detail worker checks this token before its provider
+        call; the late GTK result checks it again. A normal Search detail
+        publication does not reset the lease, only a plugin redraw does.
+        """
+        self._cifereca_exact_detail_request_token = None
+
     def show_rows(self, rows, total_count: int | None = None) -> None:
         # Materialize exactly once: public plugins may supply a generator.
         # The prior dict/list double iteration consumed it before GTK saw it.
@@ -67,6 +76,7 @@ class PublicBookMasterDetailView:
         self._page.show_rows(ui_rows, total_count=total_count)
 
     def set_list_state(self, title: str, description: str = "", icon_name: str = "system-search-symbolic") -> None:
+        self._revoke_pending_exact_detail()
         self._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
         self._page.empty_page.set_title(str(title))
         self._page.empty_page.set_description(str(description or ""))
@@ -79,6 +89,7 @@ class PublicBookMasterDetailView:
         self._page.connect_selected(selected)
 
     def show_detail(self, detail) -> None:
+        self._revoke_pending_exact_detail()
         panel = self._page.detail
         panel.show_presentation(detail)
         buttons = []
@@ -165,5 +176,6 @@ class PublicBookMasterDetailView:
         title: str = "Aucun document sélectionné",
         description: str = "Sélectionnez un document pour afficher ses détails.",
     ) -> None:
+        self._revoke_pending_exact_detail()
         self._page.detail.empty(title, description)
 
