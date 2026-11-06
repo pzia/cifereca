@@ -199,6 +199,10 @@ def main():
             ("fixture", "Premier"), ("second", "Deuxième"), ("third", "Troisième"),
         ))
         view._reload_languages(view._ranked)
+        view._ranked[1].item["format"] = "PDF"
+        view._ranked[2].item["format"] = ""
+        view._ranked[2].item["medium"] = "physical"
+        view._reload_document_choices()
         view._render()
         query = view._query_controls
         store = view._master._page.store
@@ -212,8 +216,17 @@ def main():
         assert view._generation == generation and not state["searches"]
         report["checks"]["shared_multisource_filter_is_local"] = True
         query.provider.set_values(())
+        query.types.buttons["pdf"].set_active(True)
+        assert store.get_n_items() == 1 and store.get_item(0).title == "Livre B"
+        query.types.set_values(())
+        query.scope.set_selected(1)
+        assert store.get_n_items() == 1 and store.get_item(0).title == "Livre C"
+        query.scope.set_selected(0)
+        assert view._generation == generation and not state["searches"]
+        report["checks"]["shared_document_filters_are_local"] = True
         assert store.get_n_items() == 3
         view._ranked.pop()
+        view._reload_document_choices()
         view._render()
         assert view._master._page.store.get_n_items() == 2
         view._master._page.selection.set_selected(0)
