@@ -128,7 +128,14 @@ def main():
 
     def capture(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
-        assert image.width == args.width
+        # #774: the requested --width is not evidence of the Xvfb or GTK
+        # allocation. Verify the captured *actual* display and toplevel.
+        expected_height = 900 if args.width == 1366 else 1000
+        assert image.size == (args.width, expected_height)
+        window = state["window"]
+        actual_width, actual_height = window.get_width(), window.get_height()
+        assert args.width - 100 <= actual_width <= args.width
+        assert 500 <= actual_height <= expected_height
         colors = image.getcolors(maxcolors=2)
         assert colors is None or len(colors) > 1
         image_path = out / (stage + ".png")
@@ -141,7 +148,10 @@ def main():
             "identity": view.selected_identity_id(),
             "rows": view._master._page.store.get_n_items(),
             "selected": view._master._page.selection.get_selected(),
-            "window_width": state["window"].get_width(),
+            "window_width": actual_width,
+            "window_height": actual_height,
+            "display_width": image.width,
+            "display_height": image.height,
         })
         save()
 
@@ -227,6 +237,7 @@ def main():
         query = view._query_controls
         store = view._master._page.store
         generation = view._generation
+        state["filter_generation"] = generation
         assert query.widget.get_mapped() and store.get_n_items() == 3
         query.provider.buttons["fixture"].set_active(True)
         assert store.get_n_items() == 1
@@ -238,12 +249,45 @@ def main():
         query.provider.set_values(())
         query.types.buttons["pdf"].set_active(True)
         assert store.get_n_items() == 1 and store.get_item(0).title == "Livre B"
+        assert "PDF" in view._summary.get_text()
         query.types.set_values(())
+        assert "PDF" not in view._summary.get_text()
         query.scope.set_selected(1)
         assert store.get_n_items() == 1 and store.get_item(0).title == "Livre C"
+        assert "Type · Physique" in view._summary.get_text()
         query.scope.set_selected(0)
+        assert "Type · Physique" not in view._summary.get_text()
+        report["checks"]["P1_774_real_gtk_shared_filter_counter_parity"] = True
         assert view._generation == generation and not state["searches"]
         report["checks"]["shared_document_filters_are_local"] = True
+        assert store.get_n_items() == 3
+        # A real XTEST typing event, not entry.set_text()/emit(): local
+        # filtering must work with keyboard and without a new Core search.
+        assert query.entry.get_mapped()
+        assert query.entry.grab_focus() is not False
+        later(160, type_filter_by_keyboard)
+
+    def type_filter_by_keyboard():
+        view = state["view"]
+        query = view._query_controls
+        assert query.entry.has_focus()
+        state["device"].type_text("Livre B")
+        later(200, after_keyboard_filter)
+
+    def after_keyboard_filter():
+        view = state["view"]
+        query = view._query_controls
+        store = view._master._page.store
+        assert query.entry.get_text() == "Livre B"
+        assert store.get_n_items() == 1
+        assert store.get_item(0).title == "Livre B"
+        assert "1 sur 3" in view._summary.get_text()
+        assert "Livre B" in view._summary.get_text()
+        assert view._generation == state.get("filter_generation")
+        assert not state["searches"]
+        report["checks"]["P1_774_real_gtk_xtest_keyboard_local_filter"] = True
+        capture("00b-keyboard-local-filter")
+        query.entry.set_text("")
         assert store.get_n_items() == 3
         view._ranked.pop()
         view._reload_document_choices()
