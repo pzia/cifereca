@@ -312,7 +312,18 @@ def complete_selected_delivery(
                     guarded = True
                 if not current():
                     raise ValueError("canonical_delivery_source_rebound")
-        candidate = getattr(session, reader_name)(
+        # #3121: a confirmed manual Paris borrow may have already staged
+        # its exact one-shot ACSM. The canonical executor must consume that
+        # claim-bound token before asking the provider for another signed URL.
+        # Only an exact, current, private receipt bypasses the candidate GET.
+        from .paris_initial_canonical_candidate import stage_first_paris_acsm
+        first_acsm = stage_first_paris_acsm(
+            service, session, account, source, attempt=attempt,
+            admission_current=current,
+        )
+        candidate = (
+            (first_acsm, "") if first_acsm is not None
+            else getattr(session, reader_name)(
             account, edition_id=source.edition_id,
             **({"resource_id": source.right_id,
                 "selected_offer_id": offer.delivery_offer_id}
@@ -325,14 +336,16 @@ def complete_selected_delivery(
             **({"admission_current": admission_current} if guarded else {}),
             **({"execute_runtime": execute_selected_runtime} if runtime_guarded else {}),
         )
+        )
         if not current():
             raise ValueError("canonical_delivery_source_rebound_after_get")
         if not attempt_current():
             raise ValueError("canonical_delivery_staging_replaced")
         if not physical_owner_unique():
             raise ValueError("canonical_delivery_profile_directory_ambiguous")
-        if reader_name in {"downloadable_selected_delivery_candidate", guarded_name,
-                           runtime_guarded_name}:
+        if first_acsm is None and reader_name in {
+                "downloadable_selected_delivery_candidate", guarded_name,
+                runtime_guarded_name}:
             expected = SourceReference(
                 scope, source.branch, source.edition_id, source.right_id, source.kind,
             )
