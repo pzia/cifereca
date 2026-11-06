@@ -20,8 +20,14 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 
 @pytest.mark.parametrize("invalid_receipt", [False, True])
 def test_canonical_paris_consumes_first_confirmed_acsm_without_second_get(
-    rig, tmp_path, invalid_receipt,
+    rig, tmp_path, invalid_receipt, monkeypatch,
 ):
+    # The selected executor verifies the SAME existing acquisition lock as
+    # sync_coordination; the shared rig patches its own module only.
+    monkeypatch.setattr(
+        "cifereca.core.canonical_selected_delivery.acquisition_lock_file",
+        lambda: tmp_path / "state" / "acquisition.lock",
+    )
     service, db, root = rig
     account = Account(
         identity_id="A", provider_id="paris",
