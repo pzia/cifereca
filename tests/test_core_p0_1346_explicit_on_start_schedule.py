@@ -204,6 +204,8 @@ def test_multiple_identities_are_never_fused_into_one_credential():
     ]
     sessions = {
         key: NS(provider_id="kobo", credential_id=key, connected=True,
+                accounts=[account for account in accounts
+                          if account.credential_id == key],
                 capabilities=NS(backup=True))
         for key in ("c1", "c2")
     }
@@ -311,6 +313,8 @@ def test_three_identities_have_independent_default_manual_and_explicit_on_start(
     ]
     sessions = {
         credential: NS(provider_id="kobo", credential_id=credential, connected=True,
+                       accounts=[account for account in accounts
+                                 if account.credential_id == credential],
                        capabilities=NS(backup=True))
         for credential in credentials
     }
@@ -386,5 +390,83 @@ def test_legacy_on_start_never_transfers_between_aliased_borrower_ids(
         # silently rewrite or destroy its historical preference.
         service.accounts[0] = original
         assert len(kobo_on_start_sessions(service)) == 1
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("mutation", [
+    "other_borrower", "other_identity", "other_credential", "other_provider",
+    "missing_account", "duplicate_accounts", "missing_inventory",
+])
+def test_startup_consent_cannot_cross_a_reconnected_session_account(
+    tmp_path, monkeypatch, mutation,
+):
+    """#3196 D4: old ON bit cannot authorize GET on a different Kobo account."""
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
+        account = service.accounts[0]
+        sid = SynchronizationBrokerImpl._source_id(account)
+        session = service._sessions[("kobo", "vault")]
+        assert kobo_on_start_sessions(service) == (session,)
+        if mutation == "other_borrower":
+            session.accounts = [replace(account, unique_id="rebound-borrower")]
+        elif mutation == "other_identity":
+            session.accounts = [replace(account, identity_id="other-reader")]
+        elif mutation == "other_credential":
+            session.accounts = [replace(account, credential_id="other-vault")]
+        elif mutation == "other_provider":
+            session.accounts = [replace(account, provider_id="another-provider")]
+        elif mutation == "missing_account":
+            session.accounts = []
+        elif mutation == "duplicate_accounts":
+            session.accounts = [account, replace(account, unique_id="second")]
+        else:
+            del session.accounts
+
+        assert service.storage.metadata_get(policy_key(sid)) == "1"
+        assert kobo_on_start_sessions(service) == ()
+        broker = SynchronizationBrokerImpl(service)
+        with pytest.raises(ValueError):
+            broker.set_local_materialization_schedule(sid, "on_start")
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda *_a, **_k: pytest.fail("rebound source cannot inherit GET"),
+        )
+        opened = service._opening_sync_locked(deep=False)
+        assert opened["kobo_decision"]["scheduled_kobo"] == 0
+        assert opened["kobo_decision"]["status"] == "manual_only"
+        # Reconnect back to the exact approved account; keep the persisted
+        # preference without migrating it or writing an attempt timestamp.
+        session.accounts = [account]
+        assert kobo_on_start_sessions(service) == (session,)
+    finally:
+        service.close()
+
+
+def test_startup_consent_matches_upstream_borrower_even_if_credential_is_stable(
+    tmp_path, monkeypatch,
+):
+    """The session's account is authoritative for dispatch, not a stale UI row."""
+    service = _service(tmp_path)
+    try:
+        _enable_on_start(service)
+        account = service.accounts[0]
+        old_session = service._sessions[("kobo", "vault")]
+        assert kobo_on_start_sessions(service) == (old_session,)
+        new_borrower = replace(account, unique_id="successor")
+        # A stale service.accounts entry still points at the former borrower.
+        old_session.accounts = [new_borrower]
+        assert kobo_on_start_sessions(service) == ()
+        # Explicitly connecting B and selecting B cannot reuse A's SID/ON.
+        service.accounts = [new_borrower]
+        assert kobo_on_start_sessions(service) == ()
+        assert service.storage.metadata_get(policy_key(
+            SynchronizationBrokerImpl._source_id(account),
+        )) == "1"
+        assert service.storage.metadata_get(policy_key(
+            SynchronizationBrokerImpl._source_id(new_borrower),
+        )) is None
     finally:
         service.close()
