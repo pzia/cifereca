@@ -33,14 +33,47 @@ def _stamp(path: Path) -> tuple[int, int, int, int] | None:
     return None
 
 
+def _open_under_root_nofollow(root: Path, path: Path, *,
+                              directory: bool = False) -> int:
+    """Open each path component relative to a pinned profile FD.
+
+    O_NOFOLLOW on only the final file does not protect intermediate symlink
+    substitutions. This chain refuses every symlink component and never uses
+    the ambient working directory or a path outside the approved profile.
+    """
+    relative = path.relative_to(root)
+    parts = relative.parts
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise ValueError("derived_recovery_invalid_relative_path")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    dir_flags = flags | os.O_DIRECTORY
+    fd = os.open(root, dir_flags)
+    try:
+        for index, part in enumerate(parts):
+            next_fd = os.open(
+                part, dir_flags if index + 1 < len(parts) or directory else flags,
+                dir_fd=fd,
+            )
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def _verified_sha(path: Path, expected_stamp: tuple[int, ...],
-                  expected_sha: str) -> bool:
+                  expected_sha: str, *, profile_root: Path | None = None) -> bool:
     """Hash exactly the O_NOFOLLOW inode, checking fstat before/after read."""
     if (_stamp(path) != expected_stamp or type(expected_sha) is not str
             or len(expected_sha) != 64):
         return False
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = (
+            _open_under_root_nofollow(profile_root, path)
+            if profile_root is not None
+            else os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        )
         try:
             before = os.fstat(fd)
             signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns)
@@ -59,13 +92,19 @@ def _verified_sha(path: Path, expected_stamp: tuple[int, ...],
         return False
 
 
-def _read_receipt_nofollow(journal: Path) -> bytes:
+def _read_receipt_nofollow(
+    journal: Path, *, profile_root: Path | None = None,
+) -> bytes:
     """Read a bounded, stable regular file, never an attacker-controlled link."""
     expected = _stamp(journal)
     if expected is None or expected[2] > MAX_BYTES:
         raise ValueError("derived_receipt_invalid_file")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(journal, flags)
+    fd = (
+        _open_under_root_nofollow(profile_root, journal)
+        if profile_root is not None
+        else os.open(journal, flags)
+    )
     try:
         before = os.fstat(fd)
         signature = lambda st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
