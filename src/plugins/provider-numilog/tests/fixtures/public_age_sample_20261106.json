@@ -18,7 +18,6 @@
       "age_source_text": "12-15 ans",
       "age_source_scope": "product_page_editorial_text",
       "age_normalized_attested": false,
-      "structured_typical_age_range_observed": false,
       "structured_typical_age_range_status": "not_checked_in_raw_jsonld",
       "isbn_epub_field": "EAN EPUB SANS DRM",
       "isbn_paper_field": "EAN papier"
@@ -36,7 +35,6 @@
       "age_source_text": "12-15 ans",
       "age_source_scope": "product_page_editorial_text",
       "age_normalized_attested": false,
-      "structured_typical_age_range_observed": false,
       "structured_typical_age_range_status": "not_checked_in_raw_jsonld",
       "isbn_epub_field": "EAN EPUB SANS DRM",
       "isbn_paper_field": "EAN papier"
@@ -54,7 +52,6 @@
       "age_source_text": "À partir de 8 ans.",
       "age_source_scope": "product_page_editorial_text",
       "age_normalized_attested": false,
-      "structured_typical_age_range_observed": false,
       "structured_typical_age_range_status": "not_checked_in_raw_jsonld",
       "isbn_epub_field": "EAN EPUB SANS DRM",
       "isbn_paper_field": "EAN papier"
@@ -72,7 +69,6 @@
       "age_source_text": "À partir de 8 ans.",
       "age_source_scope": "product_page_editorial_text",
       "age_normalized_attested": false,
-      "structured_typical_age_range_observed": false,
       "structured_typical_age_range_status": "not_checked_in_raw_jsonld",
       "isbn_epub_field": "EAN EPUB SANS DRM",
       "isbn_paper_field": "EAN papier"
