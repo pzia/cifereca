@@ -602,7 +602,11 @@ def main() -> int:
         assert source.borrow_calls == 0
         assert paris["alex" if identity == "camille" else "camille"].borrow_calls == 0
         result["checks"]["P0_4673_gtk_" + identity + "_exact_borrow_action"] = True
-        capture_stage("08-paris-" + identity)
+        capture_stage(
+            "10-paris-camille-return"
+            if identity == "camille" and paris.get("returned_from_alex")
+            else "08-paris-" + identity
+        )
         if identity == "alex":
             disconnect_alex()
             return
