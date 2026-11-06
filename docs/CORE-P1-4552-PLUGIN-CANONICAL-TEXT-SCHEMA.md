@@ -15,7 +15,8 @@ dupliquées même identiques, et n'effectue jamais de choix opportuniste.
 Une sélection déclarée mais non installée retourne `None` (inconnu).
 
 Le contrat descriptif actuel est **texte UTF-8 non vide uniquement** :
-- longueur maximale déclarée, bornée à 2 KiB ;
+- longueur maximale déclarée, bornée à 2 KiB, **octet NUL interdit**
+  dans les valeurs proposées et dans les énumérations déclarées ;
 - ensemble énuméré facultatif (au maximum 128 valeurs explicites, sans doublon) ;
 - `inherited_allowed=False` pour interdire une proposition héritée.
 
