@@ -33,7 +33,9 @@ def record(isbn=ISBN, fmt="UNIMARC", ages=None, ark="ark:/12148/cb465971480",
     extra = (f'<mxc:datafield tag="{isbntag}"><mxc:subfield code="a">'
              f'{extra_isbn}</mxc:subfield></mxc:datafield>') if extra_isbn else ""
     return (
-        f'<srw:record><srw:recordData><mxc:record id="{ark}" '
+        f'<srw:record><srw:recordSchema>marcxchange</srw:recordSchema>'
+        f'<srw:recordPacking>xml</srw:recordPacking>'
+        f'<srw:recordData><mxc:record id="{ark}" '
         f'format="{fmt}" type="{bib_type}">'
         f'<mxc:datafield tag="{isbntag}"><mxc:subfield code="a">'
         f'{isbn}</mxc:subfield></mxc:datafield>{extra}{age_rows}'
@@ -102,3 +104,29 @@ def test_record_limit_and_no_http_import():
         probe.exact_edition_age_fields(response(*(record() for _ in range(51))), ISBN)
     source = PATH.read_text(encoding="utf-8")
     assert "httpx" not in source and "requests" not in source
+
+
+def test_bnf_sru_wrapper_schema_and_packing_are_required():
+    good = record(ages=["13 ans"])
+    assert probe.exact_edition_age_fields(response(good), ISBN)
+    assert probe.exact_edition_age_fields(response(
+        good.replace("<srw:recordSchema>marcxchange</srw:recordSchema>",
+                     "<srw:recordSchema>dublincore</srw:recordSchema>")), ISBN) == []
+    assert probe.exact_edition_age_fields(response(
+        good.replace("<srw:recordPacking>xml</srw:recordPacking>",
+                     "<srw:recordPacking>string</srw:recordPacking>")), ISBN) == []
+
+
+@pytest.mark.parametrize("count", ["", "-1", "abc", "2x", "0"])
+def test_sru_count_is_not_inferred_from_wrapped_records(count):
+    with pytest.raises(ValueError):
+        probe.exact_edition_age_fields(response(record(ages=["13 ans"]), total=count), ISBN)
+
+
+def test_contradictory_or_unknown_marc_subfield_is_not_interpreted():
+    source = record(ages=["13 ans"])
+    tampered = source.replace('<mxc:subfield code="a">13 ans</mxc:subfield>',
+                              '<mxc:subfield code="z">JAg1399</mxc:subfield>')
+    result = probe.exact_edition_age_fields(response(tampered), ISBN)
+    assert result[0]["raw_subfields"] == (("z", "JAg1399"),)
+    assert result[0]["age_status"] == "unqualified_raw_evidence"
