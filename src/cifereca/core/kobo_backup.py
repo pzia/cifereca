@@ -21,7 +21,7 @@ from ..kobo import KoboAdeptError
 from ..kobo.executor import execute_kobo_acquisition
 from ..kobo.vault import KoboVaultError
 from ..locking import InterProcessLock, LockBusyError
-from ..library_files import safe_library_component, sha256_file, try_sha256_file
+from ..library_files import safe_library_component, sha256_file
 from ..artifact_inspection import inspect_artifact
 from ..paths import acquisition_lock_file
 from ..models import SearchResult
@@ -1826,28 +1826,20 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 emit("reconcile_required", item_id=previous.get("item_id"),
                      title=previous.get("title"), path=stored_path or str(artifact))
                 continue
-            # Never dereference a symlink (including dangling links) when
-            # recovering an unverified local artifact.
-            ordinary_file = artifact.is_file() and not artifact.is_symlink()
+            # #3196 W2: an interrupted/invalid-response GET offers no
+            # trustworthy byte baseline. A single surviving filename may
+            # identify *where to investigate*, never which bytes Kobo
+            # actually delivered. Do not hash, stat-for-size or mint SHA
+            # from the candidate (even provisionally): W4 might later
+            # interpret the synthetic hash as historical acquisition proof.
+            # Retain any pre-interruption baseline exactly; the quarantine
+            # blocks automatic reGET until provider/receipt review.
             self.storage.backup_put({
                 **previous,
                 "status": "reconcile_required",
                 "local_path": str(artifact),
-                # #3196 D1: a quarantine is NOT permission to synthesize
-                # missing historical SHA/size from a candidate file. Even an
-                # initially absent baseline must stay absent across repeated
-                # runs. Only interrupted/unparsed attempts may still collect
-                # a *provisional* byte observation pending W2 migration.
-                "size": (
-                    previous.get("size")
-                    if previous_status in {"reconcile_required", "reconcile_conflict"}
-                    else artifact.stat().st_size if ordinary_file else None
-                ),
-                "sha256": (
-                    previous.get("sha256")
-                    if previous_status in {"reconcile_required", "reconcile_conflict"}
-                    else try_sha256_file(artifact) if ordinary_file else None
-                ),
+                "size": previous.get("size"),
+                "sha256": previous.get("sha256"),
                 "updated_at": int(time.time()),
                 "error": (
                     "Artefact local présent après une acquisition Adept non réconciliée ; "
