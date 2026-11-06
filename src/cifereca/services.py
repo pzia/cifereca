@@ -2750,10 +2750,45 @@ class LibraryService:
                             if (linked.is_file() or linked.is_symlink()) and linked not in candidates:
                                 candidates.append(linked)
                     existing = self.storage.backup_get("kobo", item.source_credential, item.record_id)
-                    if existing and existing.get("local_path"):
-                        local = Path(str(existing["local_path"]))
-                        if local.is_file() or local.is_symlink():
-                            candidates.append(local)
+                    if existing and _admission is None:
+                        # #3196 D3: only the unadmitted legacy direct call is
+                        # fenced by a historical opaque attempt. A separately
+                        # validated fresh Core _admission (owned_library_download)
+                        # cannot be vetoed by a stale backup_items row alone.
+                        # #3196 D3: a legacy row is NOT a local-presence proof,
+                        # but an unresolved physical/attempt claim is a veto on
+                        # issuing another independent GET. A moved/vanished
+                        # historical path must not become a fresh acquisition.
+                        # Likewise the W2/W3 orphaned SHA/size checkpoint,
+                        # prior interrupted attempt, archive or delegated 403.
+                        historical_status = existing.get("status")
+                        historical_attention = existing.get("attention_code")
+                        historical_digest = existing.get("sha256")
+                        historical_size = existing.get("size")
+                        has_historical_pointer = (
+                            bool(str(existing.get("local_path") or "").strip())
+                            or (type(historical_digest) is str
+                                and bool(historical_digest.strip()))
+                            or (type(historical_size) is int
+                                and historical_size > 0)
+                        )
+                        unresolved_attempt = (
+                            historical_status in {
+                                "complete", "ok", "acquiring",
+                                "reconcile_required", "reconcile_conflict",
+                                "skipped_archived",
+                            }
+                            or (historical_status == "pending_acquisition"
+                                and historical_attention == "interrupted_acquisition_review")
+                            or (historical_status == "attention_required"
+                                and historical_attention in {
+                                    "missing_delegation_scope", "archived_book",
+                                })
+                        )
+                        if has_historical_pointer or unresolved_attempt:
+                            raise ProviderConfigurationError(
+                                "kobo_legacy_direct_reconciliation_required"
+                            )
                     if candidates:
                         raise ProviderConfigurationError(
                             "Kobo : fichier local candidat déjà présent ; rapprochement requis avant téléchargement"
