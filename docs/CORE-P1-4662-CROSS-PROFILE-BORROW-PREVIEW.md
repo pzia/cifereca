@@ -27,7 +27,9 @@ l'epoch de contexte Core dans son empreinte, pour qu'un changement A→B→A
 ne réutilise pas le même identifiant de bouton même si les coordonnées
 prêteur/compte/édition semblent identiques. Le Core doit **toujours**
 revalider le contexte au clic : ce mécanisme seul n'autorise aucun prêt.
-Les credentials et comptes ne sont jamais dans les libellés affichés.
+L'ordre des options reste fondé sur leurs coordonnées stables, **jamais**
+sur l'empreinte renouvelée, afin de conserver les mêmes « choix 1/2 » après
+un changement d'époque. Les credentials et comptes ne sont jamais dans les libellés affichés.
 
 Tout candidat périmé (plus de 300 secondes), venant d'une autre édition,
 sans capacité de prêt publiée et session prête, avec observation de permission
