@@ -908,3 +908,58 @@ def test_compaction_rejects_other_active_profile(tmp_path):
             )
     finally:
         service.storage.close()
+
+
+
+def test_bounded_retention_summary_aggregates_pages_without_deletion(tmp_path):
+    from cifereca.core.derived_variant_recovery import (
+        summarize_derived_receipt_retention, MAX_RECEIPTS,
+    )
+    service, source, _ = _library(tmp_path)
+    try:
+        stage = tmp_path / "library" / ".cifereca-staging" / "variants"
+        stage.mkdir(parents=True, exist_ok=True)
+        for idx in range(MAX_RECEIPTS + 3):
+            (stage / ("pending-" + f"{idx:032x}" + ".json")).write_bytes(b"{}")
+        first = summarize_derived_receipt_retention(
+            service, identity_id="id1", max_pages=1,
+        )
+        assert first["complete"] is False
+        assert first["pages_scanned"] == 1
+        assert first["receipt_count_observed"] == MAX_RECEIPTS
+        assert first["receipt_bytes_observed"] == MAX_RECEIPTS * 2
+        assert first["statuses"]["manual_review"] == MAX_RECEIPTS
+        assert first["next_cursor"]
+        rest = summarize_derived_receipt_retention(
+            service, identity_id="id1", after_cursor=first["next_cursor"],
+        )
+        assert rest["complete"] is True
+        assert rest["pages_scanned"] == 1
+        assert rest["receipt_count_observed"] == 3
+        assert rest["next_cursor"] is None
+        assert rest["destructive_cleanup_allowed"] is False
+        full = summarize_derived_receipt_retention(
+            service, identity_id="id1",
+        )
+        assert full["receipt_count_observed"] == MAX_RECEIPTS + 3
+        assert full["statuses"]["manual_review"] == MAX_RECEIPTS + 3
+        assert full["receipt_bytes_observed"] == 2 * (MAX_RECEIPTS + 3)
+        assert len(list(stage.glob("pending-*.json"))) == MAX_RECEIPTS + 3
+        assert service.storage.artifact_variants() == []
+    finally:
+        service.storage.close()
+
+
+@pytest.mark.parametrize("bad", [0, -1, 65, "3", None, True])
+def test_retention_summary_rejects_invalid_work_limits(tmp_path, bad):
+    from cifereca.core.derived_variant_recovery import (
+        summarize_derived_receipt_retention,
+    )
+    service, source, _ = _library(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="derived_retention_invalid_page_limit"):
+            summarize_derived_receipt_retention(
+                service, identity_id="id1", max_pages=bad,
+            )
+    finally:
+        service.storage.close()
