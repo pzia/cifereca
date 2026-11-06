@@ -100,7 +100,9 @@ def test_two_profiles_and_two_accounts_never_default_to_first():
     assert len({x.option_id for x in a.options}) == 3
     assert all(x.executable is False for x in a.options)
     assert {x.label for x in a.options} == {
-        "Emprunter avec Alice", "Emprunter avec Charlie",
+        "Emprunter avec Alice · Bibliothèque · choix 1/2",
+        "Emprunter avec Alice · Bibliothèque · choix 2/2",
+        "Emprunter avec Charlie",
     }
     assert "card-" not in repr(a)
 
@@ -217,3 +219,61 @@ def test_same_exact_collection_conflicting_source_epoch_still_fails_closed():
     stale = replace(original, source_epoch=2)
     with pytest.raises(ValueError, match="conflicting_cross_profile_borrow_offer"):
         project(original, stale)
+
+
+def test_distinct_display_account_names_yield_readable_options_not_secret_ids():
+    first = witness("alice", "card-secret-A", "PRIVATE_ACCOUNT_A")
+    second = witness("alice", "card-secret-B", "PRIVATE_ACCOUNT_B")
+    first = replace(first, account=replace(
+        first.account, display_name="Réseau municipal",
+    ))
+    second = replace(second, account=replace(
+        second.account, display_name="Bibliothèque universitaire",
+    ))
+    result = project(first, second)
+    assert result.status == "choose"
+    assert {x.label for x in result.options} == {
+        "Emprunter avec Alice · Réseau municipal",
+        "Emprunter avec Alice · Bibliothèque universitaire",
+    }
+    assert all("PRIVATE_ACCOUNT" not in x.label and "card-secret" not in x.label
+               for x in result.options)
+    assert result.executable is False
+
+
+def test_sensitive_or_duplicate_account_display_falls_back_to_safe_ordinals():
+    primary = witness("alice", "card-A", "PRIVATE_ACCOUNT_A")
+    secondary = witness("alice", "card-B", "PRIVATE_ACCOUNT_B")
+    for unsafe in ("alice@example.com", "123456789012", "https://secret.test"):
+        first = replace(primary, account=replace(
+            primary.account, display_name=unsafe,
+        ))
+        second = replace(secondary, account=replace(
+            secondary.account, display_name=unsafe,
+        ))
+        result = project(first, second)
+        assert len({x.label for x in result.options}) == 2
+        assert all("Compte bibliothèque · choix " in x.label for x in result.options)
+        assert all(unsafe not in x.label for x in result.options)
+        assert all(x.executable is False for x in result.options)
+
+
+def test_single_source_keeps_simple_label_and_no_account_hints_in_hash():
+    result = project(witness("alice"))
+    assert result.label == "Emprunter avec Alice"
+    assert result.options[0].label == "Emprunter avec Alice"
+    assert result.options[0].option_id.startswith("borrow-profile.v1:")
+    assert "Bibliothèque" not in result.options[0].option_id
+
+
+def test_same_account_different_collections_also_disambiguate_without_choice_by_order():
+    first = witness("alice")
+    second = replace(first, notice=replace(
+        first.notice, source_collection="collection-2",
+    ))
+    direct, reversed_options = project(first, second), project(second, first)
+    assert direct == reversed_options
+    assert direct.status == "choose"
+    assert len({x.label for x in direct.options}) == 2
+    assert len({x.option_id for x in direct.options}) == 2
+    assert direct.requires_explicit_choice is True
