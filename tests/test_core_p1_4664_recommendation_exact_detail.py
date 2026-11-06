@@ -323,6 +323,9 @@ def test_same_selection_second_click_revokes_older_holdings_and_actions(
         f.kwargs["known_source"] = True
     first_work, first_success, first_failed = _start(f)
     assert first_work() is f.detail
+    # _start verifies no GET has occurred *before each new click*.
+    # The first explicit request has already been executed in this case.
+    f.calls.clear()
 
     # The selected notice, session, identity and Search generation are STILL
     # identical. Only an explicit newer click may revoke this pending result.
