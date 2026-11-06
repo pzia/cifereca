@@ -423,3 +423,37 @@ def test_receipt_cleanup_removes_exact_valid_manifest(first_offer):
         path, directory, loan, "identity-A", "primary", now=100)
     acsm_cache.forget_initial(path)
     assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+@pytest.mark.parametrize("corruption", ["symlink", "malformed", "oversized"])
+def test_unmarked_posthook_cache_refuses_broken_initial_provenance(
+        first_offer, tmp_path, corruption):
+    """Corrupting a claim receipt cannot promote its ACSM to ordinary cache."""
+    directory, path, loan = first_offer
+    key = "loan.borrow.v1:" + "a" * 64
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        borrow_claim=(key, "operation-1"))
+    assert acsm_cache.remember(
+        path, directory, loan, "identity-A", "primary", now=101)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    if corruption == "symlink":
+        foreign = tmp_path / "foreign.json"
+        foreign.write_bytes(manifest.read_bytes())
+        manifest.unlink()
+        manifest.symlink_to(foreign)
+    elif corruption == "malformed":
+        manifest.write_text("{broken", encoding="utf-8")
+    else:
+        manifest.write_bytes(b"x" * 16385)
+    confirmed = {
+        "schema": 1, "operation": "loan.borrow",
+        "status": "confirmed", "operation_id": "operation-1",
+        "request_accepted": True, "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary", now=102) is None
+    assert acsm_cache.reuse(
+        directory, loan, "identity-A", "primary", now=102,
+        claim_state=lambda _key: confirmed) is None
