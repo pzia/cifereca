@@ -811,28 +811,36 @@ class ArtifactExecutionBrokerImpl:
         )
 
         def attest_prelink(candidate: Path, stage_fd: int) -> None:
-            receipt, receipt_sha256, receipt_stamp = write_pending_derived_receipt(
-                path, candidate, stage_dir_fd=stage_fd,
-                source_path=source_path,
-                source_stamp=lease.source_stamp,
-                source_artifact_id=source.artifact_id,
-                source_sha256=source.sha256,
-                source_placement_id=lease.source_placement_id,
-                identity_id=lease.source_identity_id,
-                output_sha256=actual_sha, output_size=actual_size,
-                media_format=result.output_format.format
-                or lease.output_format.format or suffix.lstrip("."),
-                mime_type=result.output_format.media_type
-                or lease.output_format.media_type,
-                variant_kind=lease.variant_kind or "derived",
-                transformer_id=transformer_plugin_id,
-                transformer_version=self._version_for_plugin(transformer_plugin_id),
-                profile_id=profile_plugin_id,
-                profile_version=self._version_for_plugin(profile_plugin_id),
-                options_fingerprint=options_fingerprint,
-                book_id=source.book_id, warnings=result.warnings,
-                facts=dict(result.facts),
-            )
+            try:
+                receipt, receipt_sha256, receipt_stamp = write_pending_derived_receipt(
+                    path, candidate, stage_dir_fd=stage_fd,
+                    source_path=source_path,
+                    source_stamp=lease.source_stamp,
+                    source_artifact_id=source.artifact_id,
+                    source_sha256=source.sha256,
+                    source_placement_id=lease.source_placement_id,
+                    identity_id=lease.source_identity_id,
+                    output_sha256=actual_sha, output_size=actual_size,
+                    media_format=result.output_format.format
+                    or lease.output_format.format or suffix.lstrip("."),
+                    mime_type=result.output_format.media_type
+                    or lease.output_format.media_type,
+                    variant_kind=lease.variant_kind or "derived",
+                    transformer_id=transformer_plugin_id,
+                    transformer_version=self._version_for_plugin(transformer_plugin_id),
+                    profile_id=profile_plugin_id,
+                    profile_version=self._version_for_plugin(profile_plugin_id),
+                    options_fingerprint=options_fingerprint,
+                    book_id=source.book_id, warnings=result.warnings,
+                    facts=dict(result.facts),
+                )
+            except ValueError as error:
+                if str(error) != "derived_receipt_retention_capacity_exceeded":
+                    raise
+                raise _VariantConflict(
+                    "Capacité de reçus de publication atteinte",
+                    code="artifact_variant_receipt_capacity_exceeded",
+                ) from error
             # Independent SQLite intent is durable BEFORE link publication.
             # Receipt bytes alone never authorize a later derived OriginLink.
             register_pending_derived_receipt(
