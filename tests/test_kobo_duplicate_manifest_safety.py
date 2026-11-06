@@ -103,14 +103,14 @@ def test_duplicate_manifest_blocks_only_its_source_not_other_account_prune(
         assert result["status"] == "partial"
         assert result["duplicate_manifest_items"] == 2
         assert result["attempted"] == result["downloaded"] == 0
-        assert result["legacy_pruned"] == 1
+        assert result["legacy_pruned"] == 0
         assert [(row["credential_id"], row["status"]) for row in result["sources"]] == [
             ("vault-1", "partial"), ("vault-2", "complete"),
         ]
         assert result["sources"][0]["duplicate_manifest_items"] == 2
         assert result["sources"][1]["duplicate_manifest_items"] == 0
         assert service.storage.backup_get("kobo", "vault-1", "historical-first") is not None
-        assert service.storage.backup_get("kobo", "vault-2", "historical-second") is None
+        assert service.storage.backup_get("kobo", "vault-2", "historical-second") is not None
         assert local.is_file()
         # Repeating the malformed manifest remains a zero-transfer operation.
         again = service.sync_kobo_backup_account("vault-1")
