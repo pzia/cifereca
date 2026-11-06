@@ -204,6 +204,8 @@ def test_multiple_identities_are_never_fused_into_one_credential():
     ]
     sessions = {
         key: NS(provider_id="kobo", credential_id=key, connected=True,
+                accounts=[account for account in accounts
+                          if account.credential_id == key],
                 capabilities=NS(backup=True))
         for key in ("c1", "c2")
     }
@@ -311,6 +313,8 @@ def test_three_identities_have_independent_default_manual_and_explicit_on_start(
     ]
     sessions = {
         credential: NS(provider_id="kobo", credential_id=credential, connected=True,
+                       accounts=[account for account in accounts
+                                 if account.credential_id == credential],
                        capabilities=NS(backup=True))
         for credential in credentials
     }
@@ -356,6 +360,9 @@ def test_legacy_on_start_never_transfers_between_aliased_borrower_ids(
     service = _service(tmp_path)
     try:
         service.accounts[0] = replace(service.accounts[0], unique_id=first_id)
+        # The connected provider session must expose the same borrower as
+        # the Core model when the opt-in is initially recorded.
+        service._sessions[("kobo", "vault")].accounts = [service.accounts[0]]
         _enable_on_start(service)
         original = service.accounts[0]
         broker = SynchronizationBrokerImpl(service)
@@ -388,3 +395,169 @@ def test_legacy_on_start_never_transfers_between_aliased_borrower_ids(
         assert len(kobo_on_start_sessions(service)) == 1
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("mutation", [
+    "other_borrower", "other_identity", "other_credential", "other_provider",
+    "missing_account", "duplicate_accounts", "missing_inventory",
+])
+def test_startup_consent_cannot_cross_a_reconnected_session_account(
+    tmp_path, monkeypatch, mutation,
+):
+    """#3196 D4: old ON bit cannot authorize GET on a different Kobo account."""
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
+        account = service.accounts[0]
+        sid = SynchronizationBrokerImpl._source_id(account)
+        session = service._sessions[("kobo", "vault")]
+        assert kobo_on_start_sessions(service) == (session,)
+        if mutation == "other_borrower":
+            session.accounts = [replace(account, unique_id="rebound-borrower")]
+        elif mutation == "other_identity":
+            session.accounts = [replace(account, identity_id="other-reader")]
+        elif mutation == "other_credential":
+            session.accounts = [replace(account, credential_id="other-vault")]
+        elif mutation == "other_provider":
+            session.accounts = [replace(account, provider_id="another-provider")]
+        elif mutation == "missing_account":
+            session.accounts = []
+        elif mutation == "duplicate_accounts":
+            session.accounts = [account, replace(account, unique_id="second")]
+        else:
+            del session.accounts
+
+        assert service.storage.metadata_get(policy_key(sid)) == "1"
+        assert kobo_on_start_sessions(service) == ()
+        broker = SynchronizationBrokerImpl(service)
+        with pytest.raises(ValueError):
+            broker.set_local_materialization_schedule(sid, "on_start")
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda *_a, **_k: pytest.fail("rebound source cannot inherit GET"),
+        )
+        opened = service._opening_sync_locked(deep=False)
+        assert opened["kobo_decision"]["scheduled_kobo"] == 0
+        assert opened["kobo_decision"]["status"] == "manual_only"
+        # Reconnect back to the exact approved account; keep the persisted
+        # preference without migrating it or writing an attempt timestamp.
+        session.accounts = [account]
+        assert kobo_on_start_sessions(service) == (session,)
+    finally:
+        service.close()
+
+
+def test_startup_consent_matches_upstream_borrower_even_if_credential_is_stable(
+    tmp_path, monkeypatch,
+):
+    """The session's account is authoritative for dispatch, not a stale UI row."""
+    service = _service(tmp_path)
+    try:
+        _enable_on_start(service)
+        account = service.accounts[0]
+        old_session = service._sessions[("kobo", "vault")]
+        assert kobo_on_start_sessions(service) == (old_session,)
+        new_borrower = replace(account, unique_id="successor")
+        # A stale service.accounts entry still points at the former borrower.
+        old_session.accounts = [new_borrower]
+        assert kobo_on_start_sessions(service) == ()
+        # Explicitly connecting B and selecting B cannot reuse A's SID/ON.
+        service.accounts = [new_borrower]
+        assert kobo_on_start_sessions(service) == ()
+        assert service.storage.metadata_get(policy_key(
+            SynchronizationBrokerImpl._source_id(account),
+        )) == "1"
+        assert service.storage.metadata_get(policy_key(
+            SynchronizationBrokerImpl._source_id(new_borrower),
+        )) is None
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("switch", [
+    "borrower", "new_session_same_credential", "missing_session_account",
+])
+def test_startup_rechecks_exact_session_after_attempt_clock_before_legacy_get(
+    tmp_path, monkeypatch, switch,
+):
+    """#3196 D4: an account swap inside clock write cannot launch old GET."""
+    from cifereca.core import source_materialization_schedule as schedule
+    service = _service(tmp_path)
+    try:
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
+        account = service.accounts[0]
+        old_session = service._sessions[("kobo", "vault")]
+        assert kobo_on_start_sessions(service) == (old_session,)
+        attempts = []
+
+        def swap_during_clock(current_service, current_account):
+            assert current_service is service and current_account is account
+            attempts.append(True)
+            if switch == "borrower":
+                old_session.accounts = [replace(account, unique_id="new-borrower")]
+            elif switch == "missing_session_account":
+                old_session.accounts = []
+            else:
+                service._sessions[("kobo", "vault")] = NS(
+                    connected=True, provider_id="kobo", credential_id="vault",
+                    accounts=[account], capabilities=NS(backup=True),
+                )
+            return True
+
+        monkeypatch.setattr(schedule, "mark_on_start_attempt", swap_during_clock)
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda *_a, **_kw: pytest.fail("stale startup authorization reached GET"),
+        )
+        result = service._opening_sync_locked(deep=False)
+        assert attempts == [True]
+        assert result["kobo"]["status"] == "partial"
+        assert result["kobo"]["errors"] == 1
+        assert result["kobo"]["attempted"] == result["kobo"]["downloaded"] == 0
+        assert service.storage.metadata_get(policy_key(
+            SynchronizationBrokerImpl._source_id(account),
+        )) == "1"
+        # Restoring the original account and original session preserves its
+        # explicit consent rather than transferring it to the replacement.
+        service._sessions[("kobo", "vault")] = old_session
+        old_session.accounts = [account]
+        assert kobo_on_start_sessions(service) == (old_session,)
+    finally:
+        service.close()
+
+
+def test_legacy_kobo_default_label_does_not_replace_exact_sqlite_owner():
+    """A provider's default identity label is not a second borrower."""
+    core = NS(provider_id="kobo", credential_id="vault-reader",
+              identity_id="reader", unique_id="actual-buyer")
+    provider = NS(provider_id="kobo", credential_id="vault-reader",
+                  identity_id="default", unique_id="actual-buyer")
+    session = NS(provider_id="kobo", credential_id="vault-reader",
+                 connected=True, capabilities=NS(backup=True),
+                 accounts=[provider])
+    sid = SynchronizationBrokerImpl._source_id(core)
+    store = NS(
+        metadata_get=lambda key: "1" if key == policy_key(sid) else None,
+        identity_for_connection=lambda p, c: (
+            "reader" if (p, c) == ("kobo", "vault-reader") else None
+        ),
+        provider_connections=lambda identity_id: [{
+            "provider_id": "kobo", "credential_id": "vault-reader",
+            "enabled": True,
+        }] if identity_id == "reader" else [],
+    )
+    service = NS(
+        accounts=[core], storage=store, _sessions={("kobo", "vault-reader"): session},
+        sync_source_enabled=lambda account: True,
+    )
+    assert kobo_on_start_sessions(service) == (session,)
+    # The legacy default normalization is valid only with the current
+    # credential's independently verified Core owner, never across accounts.
+    store.identity_for_connection = lambda *_: "other"
+    assert kobo_on_start_sessions(service) == ()
+    store.identity_for_connection = lambda *_: "reader"
+    session.accounts = [NS(provider_id="kobo", credential_id="vault-reader",
+                           identity_id="default", unique_id="different-buyer")]
+    assert kobo_on_start_sessions(service) == ()

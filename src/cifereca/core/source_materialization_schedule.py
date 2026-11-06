@@ -87,17 +87,37 @@ def _configured_binding(service: Any, account: Any) -> bool:
     if len(sessions) != 1:
         return False
     session = sessions[0]
+    # #3196 D4: the legacy on_start preference is account-scoped, whereas
+    # _sync_kobo_backup_account_locked executes by *credential*. A reconnect
+    # may replace the upstream borrower while retaining that credential and
+    # its old ON bit. Never dispatch based only on the connected session key:
+    # the single cached provider account must match the consented identity,
+    # credential and upstream account EXACTLY. Unknown/ambiguous session
+    # account inventory is manual-only (no provider I/O is performed here).
+    if (not getattr(session, "connected", False)
+            or not getattr(getattr(session, "capabilities", None), "backup", False)):
+        return False
+    bound_accounts = getattr(session, "accounts", None)
+    if (not isinstance(bound_accounts, (list, tuple))
+            or len(bound_accounts) != 1):
+        return False
+    bound = bound_accounts[0]
+    # The historical Kobo Account model defaults identity_id="default"
+    # even when SQLite's credential owner is a named Core identity. That
+    # label is not ownership evidence; above we independently checked the
+    # exact enabled connection and owner. Permit ONLY that legacy default,
+    # never an unrelated explicit profile or borrower identifier.
+    if (getattr(bound, "provider_id", None) != "kobo"
+            or getattr(bound, "credential_id", None) != credential
+            or getattr(bound, "identity_id", None) not in {identity, "default"}
+            or getattr(bound, "unique_id", None) != upstream_id):
+        return False
     # #3196: on_start is strictly the historical Kobo backup_items writer.
     # A complete Core A->B source already has a single canonical executor.
     # Keep the preference persisted for audit/rollback, but never schedule
     # the independent legacy acquisition or advance its attempt clock.
     from .canonical_delivery_abi import has_complete_delivery_abi
-    if has_complete_delivery_abi(session):
-        return False
-    return bool(
-        getattr(session, "connected", False)
-        and getattr(getattr(session, "capabilities", None), "backup", False)
-    )
+    return not has_complete_delivery_abi(session)
 
 
 def can_enable_kobo_on_start(service: Any, account: Any) -> bool:

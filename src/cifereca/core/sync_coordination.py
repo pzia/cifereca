@@ -1519,12 +1519,23 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             account = scheduled_accounts[session.credential_id]
             # Settings/identity bindings may change while an opening task
             # progresses. A stale planned source never gains authorization.
-            if session.credential_id not in {
-                current.credential_id for current in kobo_on_start_sessions(self)
-            }:
+            if not any(
+                current is session for current in kobo_on_start_sessions(self)
+            ):
+                # A credential reused for a NEW session is not the same
+                # consented account, even if another ON entry is available.
                 executed.append({"status": "failed", "errors": 1, "sources": []})
                 continue
             if not mark_on_start_attempt(self, account):
+                executed.append({"status": "failed", "errors": 1, "sources": []})
+                continue
+            # #3196 D4: writing the retry clock may cross a reconnect or
+            # account switch. Recheck the exact live session *after* that
+            # write, immediately before the credential-scoped legacy GET.
+            # An old policy never follows a new Kobo borrower automatically.
+            if not any(
+                current is session for current in kobo_on_start_sessions(self)
+            ):
                 executed.append({"status": "failed", "errors": 1, "sources": []})
                 continue
             try:
