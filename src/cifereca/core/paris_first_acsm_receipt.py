@@ -16,7 +16,8 @@ from ..models import Account, Loan
 
 
 def stage_paris_initial_acsm(service, session, account: Account, loan: Loan,
-                             *, scope_current) -> bool:
+                             *, scope_current, claim_key: str,
+                             operation_id: str) -> bool:
     """Attempt one GET of a known first-offer URL; persist only staged bytes.
 
     False means no verified local candidate, not that the loan was not made.
@@ -36,8 +37,24 @@ def stage_paris_initial_acsm(service, session, account: Account, loan: Loan,
             or not loan.ebook_url):
         return False
     # No network activity is permitted without an exact signed ACSM URL from
-    # the first borrow attempt. The provider validates each redirect as well.
+    # the first borrow attempt AND its confirmed durable Core checkpoint.
+    # A loan model returned by a provider is never sufficient authority.
+    def confirmed_claim_current():
+        try:
+            receipt = service.storage.loan_borrow_state(claim_key)
+            return (type(receipt) is dict
+                    and receipt.get("status") == "confirmed"
+                    and receipt.get("request_accepted") is True
+                    and receipt.get("verification") == "positive_active_loan"
+                    and receipt.get("operation_id") == operation_id
+                    and receipt.get("verified_loan_id") == loan.id)
+        except Exception:
+            return False
+
     try:
+        if (type(claim_key) is not str or type(operation_id) is not str
+                or not confirmed_claim_current()):
+            return False
         parts = urlsplit(loan.ebook_url)
         if (parts.scheme != "https" or not parts.hostname
                 or not parts.path.casefold().endswith(".acsm")
@@ -60,10 +77,11 @@ def stage_paris_initial_acsm(service, session, account: Account, loan: Loan,
         inspection = inspect_artifact(candidate, expected_format="acsm")
         if inspection.valid is not True or inspection.media_format != "acsm":
             return False
-        if scope_current() is not True:
+        if scope_current() is not True or not confirmed_claim_current():
             return False
         return acsm_cache.remember_initial(
-            candidate, directory, loan, account.identity_id, "primary")
+            candidate, directory, loan, account.identity_id, "primary",
+            borrow_claim=(claim_key, operation_id))
     except Exception:
         # The lender may have successfully created the loan already. Never
         # let a token retrieval failure trigger a retry of the mutating GET.
