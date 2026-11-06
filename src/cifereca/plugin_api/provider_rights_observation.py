@@ -77,6 +77,9 @@ class ProviderRightObservation:
     delivery: DeliveryAvailability = "unknown"
     delivery_offer_id: str = ""
     delivery_unavailable_reason: Literal["", "archived"] = ""
+    # Optional exact provider revision for legacy 0.7 migration comparisons.
+    # Absence never means a match; it is not an entitlement or byte proof.
+    provider_revision_id: str | None = None
 
     def __post_init__(self) -> None:
         if not _token(self.edition_id) or not _token(self.right_id):
@@ -93,6 +96,12 @@ class ProviderRightObservation:
             raise ValueError("invalid_rights_observation_evidence")
         if self.observed_at is not None and not _timestamp(self.observed_at):
             raise ValueError("invalid_rights_observation_timestamp")
+        if (self.provider_revision_id is not None
+                and (not _token(self.provider_revision_id)
+                     or self.provider_revision_id != self.provider_revision_id.strip()
+                     or any(ord(c) < 32 or ord(c) == 127
+                            for c in self.provider_revision_id))):
+            raise ValueError("invalid_provider_revision_id")
         if self.evidence_kind != "legacy_unverified":
             if not self.evidence_ref or self.observed_at is None:
                 raise ValueError("unproven_rights_observation")
