@@ -59,15 +59,28 @@ def exact_edition_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
         raise ValueError("invalid_sru_xml") from exc
     if root.tag != SRU + "searchRetrieveResponse":
         raise ValueError("invalid_sru_root")
-    if root.find(SRU + "numberOfRecords") is None:
-        raise ValueError("missing_sru_count")
+    counts = root.findall(SRU + "numberOfRecords")
+    if (len(counts) != 1 or counts[0].text is None
+            or re.fullmatch(r"[0-9]{1,12}", counts[0].text.strip()) is None):
+        raise ValueError("invalid_sru_count")
+    declared_total = int(counts[0].text.strip())
     if root.find(".//" + SRU + "diagnostics") is not None:
         raise ValueError("sru_diagnostics")
     records = root.findall("./" + SRU + "records/" + SRU + "record")
     if len(records) > MAX_RECORDS:
         raise ValueError("sru_record_limit")
+    if records and declared_total == 0:
+        raise ValueError("sru_count_conflict")
     output: list[dict[str, object]] = []
     for wrapper in records:
+        # BnF SRU specifies MARC records via recordSchema=marcxchange and
+        # recordPacking=xml. Refuse missing/foreign wrappers, not just a
+        # plausible-looking nested mxc:record from another schema.
+        schemas = wrapper.findall(SRU + "recordSchema")
+        packings = wrapper.findall(SRU + "recordPacking")
+        if (len(schemas) != 1 or (schemas[0].text or "").strip().lower() != "marcxchange"
+                or len(packings) != 1 or (packings[0].text or "").strip() != "xml"):
+            continue
         data = wrapper.find(SRU + "recordData")
         if data is None or len(data) != 1:
             continue
