@@ -216,9 +216,9 @@ class LocalQueryControls(QueryControls):
     def __init__(self, changed, placeholder):
         super().__init__((), changed, self._changed, library=True)
         self.entry.set_placeholder_text(placeholder)
-        for widget in (self.field, self.scope, self.types):
+        for widget in (self.field, self.scope):
             widget.set_visible(False)
-        self.set_choices(languages=())
+        self.set_choices(languages=(), formats=())
 
     @property
     def widget(self):
@@ -233,13 +233,18 @@ class LocalQueryControls(QueryControls):
     def selected_languages(self):
         return self.languages.values()
 
-    def set_choices(self, *, sources=None, languages=None):
+    def selected_formats(self):
+        return self.types.values()
+
+    def set_choices(self, *, sources=None, languages=None, formats=None):
         self._programmatic_update = True
         try:
             if sources is not None:
                 self.set_provider_choices(sources)
             if languages is not None:
                 self.languages.set_choices(languages)
+            if formats is not None:
+                self.types.set_choices(formats)
         finally:
             self._programmatic_update = False
         self._last_notified_state = self.state()
