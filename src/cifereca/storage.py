@@ -2087,23 +2087,19 @@ class Storage:
     def backup_prune_missing(
         self, provider_id: str, credential_id: str, seen_item_ids: set[str] | list[str] | tuple[str, ...]
     ) -> dict[str, int]:
-        """Prune only the v0.7 compatibility projection after a complete manifest.
+        """Retire manifest-missing rows only for non-Kobo legacy providers.
 
-        A provider manifest admitted by the Kobo compatibility synchronizer
-        may retire obsolete backup_items rows without a historical locator,
-        recorded byte evidence or unresolved acquisition/reconciliation state.
-        An unmigrated Kobo row with a historical locator, SHA/size evidence,
-        acquiring/pending_acquisition checkpoint or unresolved
-        reconcile_required/conflict state is never pruned. Manifest absence cannot attest an
-        exact SourceReference right, entitlement revocation or removal of bytes.
-        Entitlements/OriginLinks/Placements/acquisition history are never
-        mutated by this obsolete projection. Negative canonical rights require
-        a separately scoped, typed provider contract under #3171/#3197.
+        #3196/W3: a Kobo 0.7 manifest can no longer DELETE even an apparently
+        empty backup row. An old projection is an archive/recovery checkpoint,
+        not a source of negative delivery evidence. In particular, a missing
+        record could be the only hint of an interrupted download, old revision
+        or lost local filename. The caller's bounded manifest is still
+        validated; the Kobo route performs no SQLite reads or writes.
+        Other providers retain their historical projection-only pruning.
+        Neither route changes canonical rights, ledger, OriginLinks or files.
         """
         provider = str(provider_id or "").strip()
         credential = str(credential_id or "").strip()
-        # A malformed/partial caller payload must never become an empty
-        # manifest. Preserve the existing all-or-nothing admission boundary.
         if type(seen_item_ids) not in (set, list, tuple) or len(seen_item_ids) > 100_000:
             raise ValueError("invalid_authoritative_manifest_item_ids")
         seen: set[str] = set()
@@ -2113,118 +2109,28 @@ class Storage:
                     or any(c in raw_item for c in "\x00\r\n")):
                 raise ValueError("invalid_authoritative_manifest_item_ids")
             seen.add(raw_item.strip())
-        if not provider or not credential:
-            return {"pruned": 0, "local_preserved": 0, "entitlements_inactivated": 0}
+        result = {"pruned": 0, "local_preserved": 0, "entitlements_inactivated": 0}
+        if not provider or not credential or provider == "kobo":
+            # No manifest is authoritative for removing a Kobo 0.7 archive.
+            # A future exact-source migration must retire it explicitly,
+            # with its own verified receipt and crash-safe transaction.
+            return result
 
         with self._lock, self._connect() as db:
-            # A single SQLite transaction protects the manifest projection
-            # against concurrent backup_put and ensures all stale rows retire
-            # together. Nothing in the canonical source/receipt tables is
-            # in this write set.
             db.execute("BEGIN IMMEDIATE")
-            # #3196 W3: no 0.7 manifest can revoke a typed Core source.
-            # The raw backup PK has no borrower/branch; preserve *any*
-            # historical projection whose credential/edition already has a
-            # SourceReference, even if that edition is missing from today's
-            # legacy manifest. A typed right is not a deletion authority.
-            protected_kobo_items = (
-                {edition for (edition,) in db.execute(
-                    "SELECT edition_id FROM source_references WHERE "
-                    "provider_id='kobo' AND credential_id=?", (credential,),
-                )}
-                if provider == "kobo" else set()
-            )
             rows = db.execute(
-                "SELECT item_id,local_path,status,attention_code,sha256,size "
-                "FROM backup_items WHERE provider_id=? AND credential_id=?",
+                "SELECT item_id,local_path FROM backup_items "
+                "WHERE provider_id=? AND credential_id=?",
                 (provider, credential),
             ).fetchall()
             stale = [
-                (item_id, path) for item_id, path, status, attention_code, digest, size in rows
-                # The admitted manifest IDs were stripped above. Apply the
-                # same normalization to historical SQLite keys for membership
-                # only: otherwise a still-seen legacy " book " is deleted
-                # while the manifest contains "book". Keep the original key
-                # unchanged for the exact DELETE below. Unlike current
-                # manifest IDs, old SQLite keys may be empty, overlong or
-                # contain control characters. Those rows have no admissible
-                # manifest counterpart: preserve them for explicit migration
-                # review instead of interpreting non-membership as absence.
+                (item_id, path) for item_id, path in rows
+                # Match an admitted manifest with whitespace-normalized
+                # historical keys, but preserve malformed old IDs rather
+                # than asserting their disappearance from a remote manifest.
                 if (type(item_id) is str and bool(item_id.strip())
                     and len(item_id) <= 1024
                     and not any(c in item_id for c in "\x00\r\n")
-                    # #3196: old Kobo keys padded in SQL cannot be
-                    # qualified by a current typed SourceKey. Never infer
-                    # their absence from a normalized manifest. Other
-                    # providers keep their historical prune semantics.
-                    and (provider != "kobo" or item_id == item_id.strip())
-                    and item_id not in protected_kobo_items
-                    # #3196 W3: the 0.7 row may be the ONLY durable pointer
-                    # to a downloaded historical book. Manifest absence is
-                    # neither a verified deletion of those bytes nor proof
-                    # that the row was migrated to a canonical OriginLink.
-                    # Keep any Kobo local_path claim (even if currently
-                    # offline/missing) for a separate attested cutover. Do
-                    # not stat or follow this untrusted historical pathname.
-                    and not (provider == "kobo" and type(path) is str
-                             and bool(path.strip()))
-                    # A complete old download may have lost its filename
-                    # while its recorded SHA or byte count survives. Even a
-                    # malformed nonempty hash is an unresolved historical
-                    # claim, NOT verified physical presence or a right.
-                    # Never erase that last byte-evidence pointer merely
-                    # because a later remote manifest omitted the edition.
-                    # The next seen manifest must quarantine it for manual
-                    # reconciliation, not silently issue another GET.
-                    and not (provider == "kobo" and (
-                        (type(digest) is str and bool(digest.strip()))
-                        or (type(size) is int and size > 0)
-                    ))
-                    # An interrupted 0.7 acquisition without an observed
-                    # local file must retain its last resumable checkpoint,
-                    # even if the edition is absent from the next manifest.
-                    # A manifest cannot certify that a prior download or
-                    # ADEPT staging completed, failed or is safe to retry.
-                    # The explicit manual-reconciliation quarantines share
-                    # this historical non-prune boundary.
-                    and not (provider == "kobo" and status in (
-                        "acquiring", "pending_acquisition",
-                        "reconcile_required", "reconcile_conflict",
-                    ))
-                    # #3196 W3: a delegation refusal is an explicit durable
-                    # per-edition no-auto-retry checkpoint. A temporarily
-                    # empty manifest cannot prove renewed authorization;
-                    # losing this row would retry the same blocked edition
-                    # as soon as it reappears. Keep the exact recorded
-                    # refusal until an explicit account-scoped retry or the
-                    # canonical migration resolves it.
-                    and not (provider == "kobo"
-                             and status == "attention_required"
-                             and attention_code == "missing_delegation_scope")
-                    # #3196 W3: a Kobo 409 archived_book remains a durable
-                    # provider delivery veto until a fresh manifest explicitly
-                    # reports archived=False. Losing skipped_archived (or an
-                    # older archived_book attention marker) at a manifest gap
-                    # would silently re-enable automatic acquisition.
-                    and not (provider == "kobo" and (
-                        status == "skipped_archived"
-                        or (status == "attention_required"
-                            and attention_code == "archived_book")
-                    ))
-                    # A stale backup_items projection can say "pending" or
-                    # "complete" while a separate canonical/legacy ledger
-                    # still owns an interrupted acquisition for this exact
-                    # credential + edition. The manifest cannot attest that
-                    # checkpoint's resolution. Preserve the historical
-                    # pointer until the ledger owner explicitly resolves it.
-                    and not (provider == "kobo" and db.execute(
-                        "SELECT 1 FROM acquisition_ledger WHERE "
-                        "provider_id='kobo' AND credential_id=? AND item_id=? "
-                        "AND status IN ('acquiring','downloading',"
-                        "'pending_acquisition','reconcile_required',"
-                        "'reconcile_conflict') LIMIT 1",
-                        (credential, item_id),
-                    ).fetchone() is not None)
                     and item_id.strip() not in seen)
             ]
             local_preserved = 0
@@ -2235,10 +2141,8 @@ class Storage:
                 db.execute(
                     "DELETE FROM backup_items WHERE provider_id=? "
                     "AND credential_id=? AND item_id=?",
-                    (provider, credential, str(item_id or "")),
+                    (provider, credential, item_id),
                 )
-            # Retain the old summary field for GUI/caller compatibility.
-            # A legacy manifest can never inactivate any canonical right.
             return {
                 "pruned": len(stale),
                 "local_preserved": local_preserved,
