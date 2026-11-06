@@ -291,3 +291,34 @@ def test_retention_directory_symlinks_cannot_redirect_pinned_walk(
     assert not own.exists()
     assert outside.read_bytes() == b'foreign'
     forget.assert_called_once_with(own)
+
+
+def test_retention_does_not_forget_through_rebound_root_after_unlink(
+        service, tmp_path, monkeypatch):
+    """Even a successful fd-relative unlink cannot authorize path-based forget."""
+    instance, forget, _ = service
+    owned = staged(instance, 'old.acsm', age=200)
+    root = instance.storage.path.parent / 'acquisition-work'
+    held = root.with_name('held-staging')
+    foreign = tmp_path / 'foreign'
+    foreign.mkdir()
+    external = foreign / 'old.acsm'
+    external.write_bytes(b'outside')
+    real_unlink = os.unlink
+    changed = []
+
+    def rebound_unlink(name, *args, **kwargs):
+        result = real_unlink(name, *args, **kwargs)
+        if name == 'old.acsm' and kwargs.get('dir_fd') is not None:
+            changed.append(True)
+            root.rename(held)
+            root.symlink_to(foreign, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(os, 'unlink', rebound_unlink)
+    assert instance._cleanup_old_acsm_work(max_age_seconds=100) == {
+        'deleted': 1, 'kept': 0}
+    assert changed
+    assert not (held / owned.relative_to(root)).exists()
+    assert external.read_bytes() == b'outside'
+    forget.assert_not_called()
