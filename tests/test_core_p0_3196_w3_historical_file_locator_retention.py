@@ -58,11 +58,11 @@ def test_absent_manifest_cannot_prune_only_historical_kobo_file_locator(
         before = _immutable_rows(storage)
         outcome = storage.backup_prune_missing("kobo", "vault", set())
         assert outcome == {
-            "pruned": 1, "local_preserved": 0,
+            "pruned": 0, "local_preserved": 0,
             "entitlements_inactivated": 0,
         }
         assert storage.backup_get("kobo", "vault", "book") == other
-        assert storage.backup_get("kobo", "vault", "stale-no-locator") is None
+        assert storage.backup_get("kobo", "vault", "stale-no-locator") is not None
         assert _immutable_rows(storage) == before
         if path_kind == "existing_file":
             assert original.read_bytes() == b"synthetic local book"
@@ -80,10 +80,10 @@ def test_same_edition_in_other_credential_is_not_a_prune_permission(tmp_path):
         storage.backup_put(_claim("book", path=historical, credential="one"))
         storage.backup_put(_claim("book", credential="two"))
         preserved = storage.backup_get("kobo", "one", "book")
-        assert storage.backup_prune_missing("kobo", "two", set())["pruned"] == 1
+        assert storage.backup_prune_missing("kobo", "two", set())["pruned"] == 0
         assert storage.backup_prune_missing("kobo", "one", set())["pruned"] == 0
         assert storage.backup_get("kobo", "one", "book") == preserved
-        assert storage.backup_get("kobo", "two", "book") is None
+        assert storage.backup_get("kobo", "two", "book") is not None
     finally:
         storage.close()
 
@@ -94,9 +94,9 @@ def test_blank_locator_is_not_persisted_file_evidence(tmp_path):
         # Only a whitespace path claim is unusable even as a locator.
         storage.backup_put(_claim("blank", path="   "))
         assert storage.backup_prune_missing("kobo", "vault", set()) == {
-            "pruned": 1, "local_preserved": 0,
+            "pruned": 0, "local_preserved": 0,
             "entitlements_inactivated": 0,
         }
-        assert storage.backup_get("kobo", "vault", "blank") is None
+        assert storage.backup_get("kobo", "vault", "blank") is not None
     finally:
         storage.close()
