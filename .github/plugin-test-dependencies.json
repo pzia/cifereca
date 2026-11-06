@@ -1,5 +1,6 @@
 {
   "audited_product_packages": [
+    "baen",
     "browser-recorder",
     "constellations",
     "dev-updater",
