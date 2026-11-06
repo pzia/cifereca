@@ -59,7 +59,7 @@ class BorrowForIdentityOption:
     transfer_state: str
     # Internal exact coordinates must NOT be rendered as a user-visible label.
     # Still no authority for a callback: re-resolve all facts in fresh Core.
-    _source_coordinates: tuple[str, str, str, str, str, str] = field(repr=False)
+    _source_coordinates: tuple[str, ...] = field(repr=False)
     executable: bool = False
 
 
@@ -152,7 +152,7 @@ def preview_borrow_for_identity(
             or type(witnesses) not in (list, tuple)
             or len(witnesses) > _MAX_OFFERS):
         raise ValueError("invalid_cross_profile_borrow_scope")
-    options: dict[tuple[str, str, str, str, str, str], BorrowForIdentityOption] = {}
+    options: dict[tuple[str, ...], BorrowForIdentityOption] = {}
     rejected = 0
     for w in witnesses:
         if type(w) is not BorrowForIdentityWitness:
@@ -168,9 +168,9 @@ def preview_borrow_for_identity(
         coordinates = (
             a.identity_id, a.provider_id, a.credential_id,
             a.unique_id, item.docbase, item.record_id,
+            item.source_collection or "", w.edition_id,
         )
-        route = (item.source_collection or "", item.medium,
-                 w.edition_id, w.source_epoch)
+        route = (item.medium, w.source_epoch)
         full = coordinates + route
         option_id = "borrow-profile.v1:" + sha256(json.dumps(
             (requesting_identity_id, full), ensure_ascii=True,

@@ -194,3 +194,26 @@ def test_transfer_unknown_remains_unknown_not_silently_enabled():
     one = project(witness())
     assert one.options[0].transfer_state == "unknown"
     assert one.executable is False
+
+
+def test_same_account_and_record_in_two_collections_are_distinct_offers():
+    original = witness()
+    second = replace(original, notice=replace(
+        original.notice, source_collection="collection-2",
+    ))
+    a = project(original, second)
+    b = project(second, original)
+    assert a == b
+    assert a.status == "choose"
+    assert a.requires_explicit_choice is True
+    assert len(a.options) == 2
+    assert len({x.option_id for x in a.options}) == 2
+    assert len({x._source_coordinates for x in a.options}) == 2
+    assert all(x.executable is False for x in a.options)
+
+
+def test_same_exact_collection_conflicting_source_epoch_still_fails_closed():
+    original = witness()
+    stale = replace(original, source_epoch=2)
+    with pytest.raises(ValueError, match="conflicting_cross_profile_borrow_offer"):
+        project(original, stale)
