@@ -157,8 +157,21 @@ def test_unmatched_earlier_legacy_archive_never_starves_exact_retirement(rig):
                 ("kobo", "card-a", item, "Old", "complete", "old",
                  "A", "buyer", 1),
             )
+    snapshot = rig[3]
+    # The provider ALSO reports those five old purchases as current. They
+    # lack exact OriginLinks and B Placements, however, so none may consume
+    # the bounded four-row retirement budget ahead of 'book'.
+    extras = tuple(
+        replace(
+            snapshot.rights[0], edition_id=item, right_id=item,
+            provider_revision_id="old",
+        )
+        for item in ("000-history", "001-history", "002-history",
+                     "003-history", "004-history")
+    )
+    expanded = replace(snapshot, rights=extras + snapshot.rights)
     with InterProcessLock(lock_path) as lease:
-        assert _call(rig, lease) == 1
+        assert _call(rig, lease, snap=expanded) == 1
     assert storage.backup_get("kobo", "card-a", "book") is None
     assert len([
         row for row in storage.backup_list("kobo", "card-a")
