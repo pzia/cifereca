@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from hashlib import sha256
+import json
 import math
 import re
 import unicodedata
@@ -131,6 +133,19 @@ def _identifier_scalar(value: Any) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", raw)).casefold()
 
 
+def _source_scope(item: Any) -> tuple[tuple[Any, Any, Any], bool]:
+    """Presence of even incomplete scoping facts forbids legacy fuzzy IDs."""
+    values = tuple(get_field(item, key, None) for key in (
+        "source_credential", "docbase", "source_collection",
+    ))
+    present = any(
+        (type(value) is str and bool(value))
+        or (value is not None and type(value) is not str)
+        for value in values
+    )
+    return values, present
+
+
 def identifier_values(item: Any) -> set[str]:
     """Return only strong, namespaced bibliographic identifiers.
 
@@ -211,7 +226,34 @@ def identifier_values(item: Any) -> set[str]:
 
     provider_key = _identifier_scalar(provider)
     source_key = _identifier_scalar(source_item)
-    if provider_key and source_key:
+
+    # A provider + record_id is NOT globally unique once the same provider
+    # serves several credentials, docbases or collections. The old generic
+    # key remains only for legacy rows without any scoping coordinates.
+    # With partially present coordinates, do not fall back to an ambiguous
+    # key and incorrectly mark a different offer as already owned.
+    scope, scoped = _source_scope(item)
+    if scoped:
+        exact_provider = get_field(item, "source_provider", None)
+        exact_record = get_field(item, "record_id", None)
+        credential, docbase, collection = scope
+        required = (exact_provider, exact_record, credential, docbase)
+        if (all(type(v) is str and 0 < len(v) <= 512
+                and v.isprintable() and v == v.strip()
+                for v in required)
+                and (collection is None or
+                     (type(collection) is str and len(collection) <= 512
+                      and collection.isprintable()
+                      and collection == collection.strip()))):
+            exact = (
+                exact_provider, credential, docbase,
+                collection or "", exact_record,
+            )
+            digest = sha256(json.dumps(
+                exact, ensure_ascii=True, separators=(",", ":"),
+            ).encode("utf-8")).hexdigest()
+            cleaned.add("source-exact.v1:" + digest)
+    elif provider_key and source_key:
         cleaned.add(f"source:{provider_key}:{source_key}")
     return cleaned
 
@@ -314,6 +356,10 @@ def is_already_present(profile: ProfileVector, item: Any) -> bool:
         # If the candidate carries identifiers and none match the library,
         # do not collapse a different edition merely because title/author match.
         return bool(profile.identifiers.intersection(ids))
+    if _source_scope(item)[1]:
+        # Partial or malformed source coordinates are not proof of ownership:
+        # never fall back to a homonymous title/author for a scoped notice.
+        return False
     title = normalize(get_field(item, "title", ""))
     auth = "/".join(sorted(normalize(a) for a in author_values(item) if normalize(a)))
     return bool(title and auth and f"{title}|{auth}" in profile.existing_pairs)
