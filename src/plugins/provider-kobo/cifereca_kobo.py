@@ -1476,6 +1476,10 @@ class KoboSession(ProviderSession):
                 detail += " candidate_selection=%s candidate_rejection_counts=%s" % (
                     qualification_diagnostic["candidate_selection"], summary or "none",
                 )
+            if "candidate_route_comparison" in qualification_diagnostic:
+                detail += " candidate_route_comparison=%s" % (
+                    qualification_diagnostic["candidate_route_comparison"],
+                )
             if "candidate_shape_counts" in qualification_diagnostic:
                 shapes = qualification_diagnostic["candidate_shape_counts"]
                 # Values are only short, locally whitelisted categories from
