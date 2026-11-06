@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import get_ident
 import os
+import sqlite3
 from typing import Callable
 
 from ..locking import InterProcessLock
@@ -35,7 +36,6 @@ def retire_canonical_kobo_legacy_in_sync(
     """
     if (type(snapshot) is not ProviderRightsSnapshot
             or snapshot.scope.provider_id != "kobo"
-            or snapshot.branch != "personal_manifest"
             or snapshot.status != "success" or snapshot.coverage != "complete"
             or snapshot.pagination_complete is not True
             or type(lease) is not InterProcessLock
@@ -75,7 +75,7 @@ def retire_canonical_kobo_legacy_in_sync(
                 (snapshot.scope.identity_id, snapshot.scope.credential_id,
                  snapshot.scope.account_id, _MAX_PER_SYNC + 1),
             ).fetchall()
-    except (OSError, ValueError, TypeError, RuntimeError):
+    except (sqlite3.Error, OSError, ValueError, TypeError, RuntimeError):
         return 0
     # Never silently treat a truncated set as an exhaustive retirement batch.
     # The remaining work can be revisited in a later source Sync.
