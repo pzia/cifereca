@@ -47,6 +47,7 @@ def _service(tmp_path: Path) -> LibraryService:
             connected=True,
             provider_id="kobo",
             credential_id="vault",
+            accounts=list(service.accounts),
             capabilities=SimpleNamespace(backup=True),
         )
     }
