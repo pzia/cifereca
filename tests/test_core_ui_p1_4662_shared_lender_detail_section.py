@@ -118,6 +118,10 @@ def test_standard_search_detail_has_opt_in_no_eager_provider_observation():
         if isinstance(node, ast.FunctionDef)
         and node.name == "show_cross_profile_borrow_detail"
     )
+    assert {a.arg for a in helper.args.kwonlyargs} == {
+        "expected_item", "expected_edition_id",
+        "expected_context_epoch", "expected_source_epoch",
+    }
     names = [
         node.func.id for node in ast.walk(helper)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
