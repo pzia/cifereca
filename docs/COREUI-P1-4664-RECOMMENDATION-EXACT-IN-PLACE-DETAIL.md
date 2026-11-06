@@ -79,6 +79,22 @@ Le contrôle est un état scalaire CoreUI, sans accès GTK dans le worker,
 sans nouvelle mutation ni droit fournisseur. Le cache/transport conserve
 ses règles habituelles de concurrence.
 
+## Catalogue filtré : mêmes notices actionnables que la sélection
+
+Le `MultiSelect` « Source » partagé avec Recherche filtre **les lignes déjà
+calculées** mais aussi les *variantes exactes* et les routes locales
+d'édition/ISBN qui alimentent le Détail Recommandations. Si un candidat
+regroupe Kobo et Paris, sélectionner seulement Paris ne doit pas conserver
+un bouton prêt/consultation Kobo dans cette fiche. L'affinité et le corpus
+d'origine restent inchangés, aucun GET ni recalcul n'est provoqué.
+
+Un changement de catalogues est épinglé dans l'état de sélection du détail,
+ce qui le reconstruit malgré une clé de livre inchangée ; les callbacks des
+anciennes variantes sont révoqués **même avant un rendu GTK ultérieur**.
+Un filtre de sources actif malformé refuse les routes exactes plutôt que de
+revenir implicitement à « Tous ». Cette contrainte de vue ne crée aucun
+droit fournisseur ; le Core garde toute la validation au clic.
+
 ## Couverture, suites et non-objectifs
 
 Tests headless Core/Plugins : aucun GET au rendu, clic explicite seulement,
