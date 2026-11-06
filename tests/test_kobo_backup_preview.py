@@ -312,9 +312,17 @@ def test_fresh_kobo_right_does_not_turn_legacy_sha_into_b_presence(
     monkeypatch.setattr(session, "backup_manifest", lambda: list(manifest))
     _forbid_mutation_and_acquisition(service, session, monkeypatch)
     try:
-        offline = service.kobo_backup_preview(
-            "vault-1", verify_local_files=verify,
-        )
+        # The PUBLIC offline preview is not a B file attestor: not even
+        # verify_local_files=True may open/hash an unproven 0.7 candidate.
+        from cifereca.core import kobo_backup
+        with monkeypatch.context() as no_file_observation:
+            no_file_observation.setattr(
+                kobo_backup, "_observed_backup_artifact",
+                lambda *_a, **_kw: pytest.fail("offline legacy preview must not hash the candidate"),
+            )
+            offline = service.kobo_backup_preview(
+                "vault-1", verify_local_files=verify,
+            )
         assert offline["counts"]["already_local_verified"] == 0
         assert offline["counts"]["already_local_linked"] == 0
         assert offline["counts"]["needs_reconciliation"] == 1
