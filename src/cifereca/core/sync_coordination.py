@@ -548,6 +548,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                         canonical = observe_canonical_rights_in_sync(
                             self, account, cancelled=cancelled_for_rights,
                             snapshot_sink=admitted_snapshots.append,
+                            retirement_lease=(None if inventory_only else sync_lease),
                         )
                     if canonical is not None:
                         result["canonical_rights"] = canonical
@@ -1174,6 +1175,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         ):
                             canonical = observe_canonical_rights_in_sync(
                                 self, account, snapshot_sink=admitted_snapshots.append,
+                                retirement_lease=_OPENING_CANONICAL_LEASE.get(),
                             )
                     finally:
                         _record_opening_observation_timing(
