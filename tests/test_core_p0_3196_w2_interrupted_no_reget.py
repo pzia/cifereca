@@ -274,7 +274,10 @@ def test_single_interrupted_candidate_never_mints_byte_baseline(
             **_checkpoint(status=status, revision="rev-1", error=error),
             "sha256": sha, "size": size,
         })
-        before_links = service.storage.origin_links()
+        def origin_rows():
+            with service.storage._lock, service.storage._connect() as db:
+                return db.execute("SELECT * FROM origin_links ORDER BY 1").fetchall()
+        before_links = origin_rows()
         _forbid_download(service, monkeypatch)
         # A recovered candidate must not be hashed to complete its previously
         # missing legacy SHA, including via the next reconciliation pass.
@@ -291,13 +294,13 @@ def test_single_interrupted_candidate_never_mints_byte_baseline(
         assert after["sha256"] == sha and after["size"] == size
         assert after["local_path"] == str(path)
         assert path.read_bytes() == original
-        assert service.storage.origin_links() == before_links
+        assert origin_rows() == before_links
         second = service.sync_kobo_backup_account("vault-1")
         again = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert second["attempted"] == second["downloaded"] == second["unchanged"] == 0
         assert again["sha256"] == sha and again["size"] == size
         assert again["local_path"] == str(path)
         assert path.read_bytes() == original
-        assert service.storage.origin_links() == before_links
+        assert origin_rows() == before_links
     finally:
         service.close()
