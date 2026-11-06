@@ -134,3 +134,38 @@ def test_manifest_disappearance_then_return_quarantines_orphaned_completion(
         assert last["size"] == before["size"]
     finally:
         service.close()
+
+
+def test_scope_denial_with_orphaned_sha_retains_stronger_403_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    edition = {
+        "product_id": "delegated-blocked", "revision_id": "remote-revision",
+        "title": "Synthetic", "format": "EPUB",
+    }
+    service, _session = _service(tmp_path, [edition])
+    monkeypatch.setattr(
+        service, "kobo_adept_state", lambda **_kw: _ready_adept_state(),
+    )
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_a, **_kw: pytest.fail("delegation denied: no second GET"),
+    )
+    try:
+        service.storage.backup_put({
+            **_legacy(
+                "delegated-blocked", credential="vault-1", status="attention_required",
+                sha256="a" * 64, size=64,
+            ),
+            "attention_code": "missing_delegation_scope",
+        })
+        result = service.sync_kobo_backup_account("vault-1")
+        assert result["attempted"] == 0
+        assert result["blocked_non_retryable"] == 1
+        row = service.storage.backup_get("kobo", "vault-1", "delegated-blocked")
+        assert row["status"] == "attention_required"
+        assert row["attention_code"] == "missing_delegation_scope"
+        assert row["revision_id"] == "old-revision"
+        assert row["sha256"] == "a" * 64
+    finally:
+        service.close()
