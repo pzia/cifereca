@@ -225,6 +225,64 @@ def candidate_key(item: Any) -> str:
     return f"ta:{title}|{'/'.join(authors)}"
 
 
+@dataclass(frozen=True, slots=True)
+class ExplicitReadingSignal:
+    """Caller-attested user preference, never inferred from a loan/purchase.
+
+    Only the trusted Core preference owner may provide these observations.
+    Catalogue or EPUB metadata must never be promoted into this DTO.
+    """
+
+    identity_id: str
+    library_key: str
+    preference: str  # liked | not_interested
+    provenance: str = "user_explicit"
+
+
+def _profile_feedback_weights(
+    books: Sequence[Any], *, identity_id: str | None,
+    explicit_signals: Sequence[ExplicitReadingSignal] | None,
+) -> list[int]:
+    """Keep all unselected books neutral; never join on title/ISBN/provider.
+
+    Invalid or conflicting explicit advice is rejected as a whole. Rejected
+    books still remain in the presence/exclusion projection; weighting only
+    changes descriptive query and ranking inputs.
+    """
+    if explicit_signals is None or len(explicit_signals) == 0:
+        return [1] * len(books)
+    if (type(identity_id) is not str or not 0 < len(identity_id) <= 160
+            or not identity_id.isprintable()
+            or type(explicit_signals) not in (tuple, list)
+            or len(explicit_signals) > 2048):
+        raise ValueError("invalid_explicit_reading_signal_scope")
+    by_key: dict[str, int] = {}
+    for signal in explicit_signals:
+        if (type(signal) is not ExplicitReadingSignal
+                or signal.identity_id != identity_id
+                or type(signal.library_key) is not str
+                or not 0 < len(signal.library_key) <= 256
+                or not signal.library_key.isprintable()
+                or signal.preference not in ("liked", "not_interested")
+                or signal.provenance != "user_explicit"):
+            raise ValueError("invalid_explicit_reading_signal")
+        if signal.library_key in by_key:
+            raise ValueError("conflicting_explicit_reading_signal")
+        by_key[signal.library_key] = (
+            2 if signal.preference == "liked" else 0
+        )
+    weights: list[int] = []
+    for book in books:
+        key = get_field(book, "key")
+        owner = get_field(book, "identity_id")
+        weights.append(
+            by_key.get(key, 1)
+            if type(key) is str and owner == identity_id
+            else 1
+        )
+    return weights
+
+
 @dataclass(frozen=True)
 class ProfileVector:
     authors: Counter[str]
@@ -244,7 +302,14 @@ class ProfileVector:
     total_books: int
 
 
-def build_profile(books: Sequence[Any]) -> ProfileVector:
+def build_profile(
+    books: Sequence[Any], *,
+    identity_id: str | None = None,
+    explicit_signals: Sequence[ExplicitReadingSignal] | None = None,
+) -> ProfileVector:
+    weights = _profile_feedback_weights(
+        books, identity_id=identity_id, explicit_signals=explicit_signals,
+    )
     authors: Counter[str] = Counter()
     subjects: Counter[str] = Counter()
     series: Counter[str] = Counter()
@@ -256,32 +321,39 @@ def build_profile(books: Sequence[Any]) -> ProfileVector:
     identifiers: set[str] = set()
     existing_pairs: set[str] = set()
 
-    for book in books:
+    for book, signal_weight in zip(books, weights):
         book_authors = {normalize(author): author for author in author_values(book)}
-        authors.update(book_authors.keys())
+        if signal_weight:
+            authors.update({key: signal_weight for key in book_authors})
         for key, author in book_authors.items():
             author_labels.setdefault(key, author)
         # The same descriptive fact may be projected at the top level, in
         # catalogue metadata and in EPUB metadata. Count books, not copies
         # of a fact. A title/description overlap is one lexical signal too.
-        subjects.update(sorted({
+        book_subjects = {
             token for subject in subject_values(book) for token in tokens(subject)
-        }))
+        }
+        if signal_weight:
+            subjects.update({token: signal_weight for token in sorted(book_subjects)})
         book_series: set[str] = set()
         for value in series_values(book):
             key = normalize(value)
             if key:
                 book_series.add(key)
                 series_labels.setdefault(key, value)
-        series.update(sorted(book_series))
+        if signal_weight:
+            series.update({key: signal_weight for key in sorted(book_series)})
         book_title = get_field(book, "title", "")
         title_tokens = tokens(book_title)
         description_tokens = tokens(
             get_field(book, "description", "") or metadata(book).get("description")
         )
-        title_terms.update(sorted(title_tokens))
-        description_terms.update(sorted(description_tokens))
-        lexical_terms.update(sorted(title_tokens | description_tokens))
+        if signal_weight:
+            title_terms.update({key: signal_weight for key in sorted(title_tokens)})
+            description_terms.update({key: signal_weight for key in sorted(description_tokens)})
+            lexical_terms.update({
+                key: signal_weight for key in sorted(title_tokens | description_tokens)
+            })
         identifiers.update(identifier_values(book))
         title = normalize(book_title)
         auth = "/".join(sorted(book_authors))
