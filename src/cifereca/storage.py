@@ -2135,12 +2135,12 @@ class Storage:
                 if provider == "kobo" else set()
             )
             rows = db.execute(
-                "SELECT item_id,local_path,status FROM backup_items "
+                "SELECT item_id,local_path,status,attention_code FROM backup_items "
                 "WHERE provider_id=? AND credential_id=?",
                 (provider, credential),
             ).fetchall()
             stale = [
-                (item_id, path) for item_id, path, status in rows
+                (item_id, path) for item_id, path, status, attention_code in rows
                 # The admitted manifest IDs were stripped above. Apply the
                 # same normalization to historical SQLite keys for membership
                 # only: otherwise a still-seen legacy " book " is deleted
@@ -2179,6 +2179,16 @@ class Storage:
                         "acquiring", "pending_acquisition",
                         "reconcile_required", "reconcile_conflict",
                     ))
+                    # #3196 W3: a delegation refusal is an explicit durable
+                    # per-edition no-auto-retry checkpoint. A temporarily
+                    # empty manifest cannot prove renewed authorization;
+                    # losing this row would retry the same blocked edition
+                    # as soon as it reappears. Keep the exact recorded
+                    # refusal until an explicit account-scoped retry or the
+                    # canonical migration resolves it.
+                    and not (provider == "kobo"
+                             and status == "attention_required"
+                             and attention_code == "missing_delegation_scope")
                     # A stale backup_items projection can say "pending" or
                     # "complete" while a separate canonical/legacy ledger
                     # still owns an interrupted acquisition for this exact
