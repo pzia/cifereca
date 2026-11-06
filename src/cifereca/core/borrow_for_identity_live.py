@@ -75,7 +75,7 @@ def _observation_route(row: ObservedBorrowOffer) -> tuple[str, ...] | None:
         item.docbase, item.record_id, item.source_collection or "",
         row.edition_id,
     )
-    if (any(type(x) is not str or len(x) > 1024 or "\\x00" in x
+    if (any(type(x) is not str or len(x) > 1024 or "\x00" in x
             for x in coords)
             or not all(coords[i] for i in (0, 1, 2, 4, 5, 7))
             or (item.source_provider, item.source_credential,
