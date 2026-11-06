@@ -18,11 +18,15 @@ identifiants de profils, credentials, comptes, éditions, URLs, jetons et
 « transfert bloqué » ou « transfert non vérifié » ; la section ne
 contient **aucune `UiBookDetailAction`, aucun lien ni callback**.
 
-`DetailPanel.show_item_detail(..., borrow_preview=None)` accepte désormais
-la section en option et l'insère dans **la présentation standard** avant
-rendu. Le comportement sans paramètre est inchangé et n'effectue aucun GET
-fournisseur ou recherche d'observation supplémentaire. Recommandations
-peut réutiliser le même `DetailSection` dans sa présentation existante.
+Pour préserver intégralement la signature publique et la projection AST
+de `DetailPanel.show_item_detail(item, detail)`, le contrôleur propose
+`DetailPanel.show_cross_profile_borrow_detail(preview)` : cet adaptateur
+**explicitement appelé après le détail normal** ajoute le même
+`DetailSection` dans un `Adw.PreferencesGroup` standard, sans bouton ni
+callback. Les textes sont rendus sans markup. Aucune requête fournisseur,
+recherche d'observation ou réinitialisation du Détail normal n'est ajoutée.
+Recommandations peut consommer ce même `DetailSection` dans sa présentation
+standard, sans importer de widget privé GTK.
 
 ## Limite explicite
 
