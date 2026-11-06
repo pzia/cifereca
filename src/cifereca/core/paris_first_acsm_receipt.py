@@ -63,7 +63,8 @@ def stage_paris_initial_acsm(service, session, account: Account, loan: Loan,
         if scope_current() is not True:
             return False
         return acsm_cache.remember_initial(
-            candidate, directory, loan, account.identity_id, "primary")
+            candidate, directory, loan, account.identity_id, "primary",
+            admission_current=scope_current)
     except Exception:
         # The lender may have successfully created the loan already. Never
         # let a token retrieval failure trigger a retry of the mutating GET.
