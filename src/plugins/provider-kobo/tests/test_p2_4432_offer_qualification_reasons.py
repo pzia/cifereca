@@ -94,6 +94,7 @@ def test_multiple_valid_candidates_do_not_attrib_single_candidate_failure():
         "qualification_reason": "eligible_count_not_one",
         "candidate_selection": "multiple_eligible_candidates",
         "candidate_rejection_counts": {},
+        "candidate_route_comparison": "same_route_same_url",
         "candidate_shape_counts": {
             "library_sync:kepub:kepub:kobo_kdrm": 2,
         },
@@ -159,5 +160,40 @@ def test_real_provider_preflight_logs_rejection_without_delegated_post(caplog, m
             assert "candidate_rejection_counts=kdrm_source_unsupported:1" in record
         assert "delegated_resolver_called=False" in record
         assert "token=" not in record and "https://" not in record
+    finally:
+        session.close()
+
+
+def test_multiple_valid_signed_urls_never_leak_to_real_provider_log(caplog):
+    session, vault, _broker, account, posts = setup()
+    secret_url = "https://cdn.kobo.com/different?token=DO_NOT_LOG_K1"
+
+    def observed_descriptor(product_id, **options):
+        posts.append((product_id, options))
+        payload = descriptor(product=product_id)
+        candidate = dict(payload["acquisition"]["candidates"][0])
+        candidate["url"] = secret_url
+        payload["acquisition"]["candidates"].append(candidate)
+        return payload
+
+    vault.acquisition = observed_descriptor
+    try:
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            snapshot = session.rights_delivery_offer_snapshot(
+                account, "book-1", explicit_user_action=True,
+            )
+        assert snapshot.rights[0].delivery == "unknown"
+        assert snapshot.rights[0].delivery_offer_id == ""
+        assert len(posts) == 1
+        records = [
+            record.getMessage() for record in caplog.records
+            if "EVENT kobo selected_offer" in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert "candidate_selection=multiple_eligible_candidates" in records[0]
+        assert "candidate_route_comparison=same_route_distinct_urls" in records[0]
+        assert secret_url not in records[0]
+        assert "DO_NOT_LOG_K1" not in records[0]
+        assert "https://" not in records[0]
     finally:
         session.close()
