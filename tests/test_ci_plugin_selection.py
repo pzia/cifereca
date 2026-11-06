@@ -225,9 +225,61 @@ class PluginSelectionTests(unittest.TestCase):
         self.add_package("broken", [{"id": "broken", "type": "broken", "requires": [{"plugin": "missing"}]}])
         self.assertEqual(self.names([("M", "src/plugins/provider/module.py")])[0], [])
 
+    def test_baen_audited_download_and_home_consumers(self):
+        # Baen is a provider.library consumer of transport.http; the
+        # home-page optional contract observes Baen's provider interface.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("baen", audited)
+        self.assertIn("transport-http", graph["baen"])
+        self.assertIn("baen", graph["home-page"])
+        self.assertEqual(
+            selector.affected_packages({"baen"}, graph),
+            ["baen", "home-page"],
+        )
+        for path in ("cifereca_baen.py",):
+            with self.subTest(path=path):
+                names, reason = selector.select(
+                    [("M", "src/plugins/baen/" + path)], ROOT,
+                )
+                self.assertEqual(names, [
+                    "src/plugins/baen", "src/plugins/home-page",
+                ])
+                self.assertIn("dependency closure", reason)
+        for changes in (
+            [("M", "src/plugins/baen/cifereca-plugin.json")],
+            [("M", "src/plugins/baen/tests/conftest.py")],
+            [("D", "src/plugins/baen/cifereca_baen.py")],
+            [("R100", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/baen/cifereca_baen.py"),
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
+        ):
+            with self.subTest(changes=changes):
+                targets, reason = selector.select(changes, ROOT)
+                self.assertEqual(targets, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_baen_has_no_unaudited_plugin_consumers(self):
+        tokens = (
+            "provider.baen", "org.cifereca.provider.baen",
+            "cifereca_baen", "BaenSession", "BaenPlugin",
+        )
+        root = ROOT / "src/plugins"
+        for package_dir in sorted(root.iterdir()):
+            if not package_dir.is_dir() or package_dir.name == "baen":
+                continue
+            for source in package_dir.rglob("*"):
+                if source.is_file() and source.suffix in {
+                    ".py", ".json", ".toml", ".yaml", ".yml", ".sh",
+                }:
+                    data = source.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in data for token in tokens),
+                        f"Unexpected Baen provider consumer: {source}",
+                    )
+
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "transport-http"})
+        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "transport-http"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -235,7 +287,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "transport-http"})
+        self.assertEqual(audited, {"baen", "browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "transport-http"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -247,13 +299,13 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertIn("dependency closure", reason)
         # All other product packages remain conservatively unaudited.
         chosen, reason = selector.select([
-            ("M", "src/plugins/baen/cifereca_baen.py"),
+            ("M", "src/plugins/provider-kobo/cifereca_kobo.py"),
         ], ROOT)
         self.assertEqual(chosen, [])
         self.assertIn("not audited", reason)
         chosen, reason = selector.select([
             ("M", "src/plugins/literary-criticism/criticism_feeds.py"),
-            ("M", "src/plugins/baen/cifereca_baen.py"),
+            ("M", "src/plugins/provider-kobo/cifereca_kobo.py"),
         ], ROOT)
         self.assertEqual(chosen, [])
         self.assertIn("not audited", reason)
@@ -299,9 +351,9 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertIn("dependency closure", reason)
         # A non-audited runtime change cannot piggy-back on a selected suite.
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/dev-updater/github_releases.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/dev-updater/cifereca-plugin.json")],
             [("D", "src/plugins/dev-updater/github_releases.py")],
             [("R100", "src/plugins/dev-updater/github_releases.py")],
@@ -355,9 +407,9 @@ class PluginSelectionTests(unittest.TestCase):
                 self.assertIn("dependency closure", reason)
         # All product packages not audited retain exhaustive selection.
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/maintenance-library-audit/cifereca_library_audits.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/maintenance-library-audit/cifereca-plugin.json")],
             [("M", "src/plugins/maintenance-library-audit/tests/conftest.py")],
             [("D", "src/plugins/maintenance-library-audit/cifereca_library_audits.py")],
@@ -416,9 +468,9 @@ class PluginSelectionTests(unittest.TestCase):
                 self.assertEqual(chosen, ["src/plugins/epub_optimizer"])
                 self.assertIn("dependency closure", reason)
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/epub_optimizer/cifereca_epub_optimizer_plugin.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/epub_optimizer/cifereca-plugin.json")],
             [("M", "src/plugins/epub_optimizer/tests/conftest.py")],
             [("D", "src/plugins/epub_optimizer/cifereca_epub_optimizer_plugin.py")],
@@ -482,9 +534,9 @@ class PluginSelectionTests(unittest.TestCase):
             self.assertEqual(chosen, ["src/plugins/home-page"])
             self.assertIn("dependency closure", reason)
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/home-page/cifereca_home.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/home-page/cifereca-plugin.json")],
             [("M", "src/plugins/home-page/tests/conftest.py")],
             [("D", "src/plugins/home-page/cifereca_home.py")],
@@ -535,9 +587,9 @@ class PluginSelectionTests(unittest.TestCase):
                 self.assertEqual(chosen, ["src/plugins/recommendations"])
                 self.assertIn("dependency closure", reason)
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/recommendations/recommendations.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/recommendations/cifereca-plugin.json")],
             [("M", "src/plugins/recommendations/tests/conftest.py")],
             [("D", "src/plugins/recommendations/recommendations.py")],
@@ -598,9 +650,9 @@ class PluginSelectionTests(unittest.TestCase):
             {"transport-http", "ebooksgratuits", "home-page"} <= set(affected),
         )
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/ebooksgratuits/cifereca-plugin.json")],
             [("M", "src/plugins/ebooksgratuits/tests/conftest.py")],
             [("D", "src/plugins/ebooksgratuits/cifereca_ebooksgratuits.py")],
@@ -663,9 +715,9 @@ class PluginSelectionTests(unittest.TestCase):
             {"transport-http", "provider-gallica", "home-page"} <= set(affected),
         )
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-gallica/cifereca_gallica.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-gallica/cifereca-plugin.json")],
             [("M", "src/plugins/provider-gallica/tests/conftest.py")],
             [("D", "src/plugins/provider-gallica/cifereca_gallica.py")],
@@ -725,9 +777,9 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(chosen, ["src/plugins/home-page"])
         self.assertIn("dependency closure", reason)
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-gutenberg/cifereca_gutenberg.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-gutenberg/cifereca-plugin.json")],
             [("M", "src/plugins/provider-gutenberg/tests/conftest.py")],
             [("D", "src/plugins/provider-gutenberg/cifereca_gutenberg.py")],
@@ -784,9 +836,9 @@ class PluginSelectionTests(unittest.TestCase):
         self.assertEqual(chosen, ["src/plugins/home-page"])
         self.assertIn("dependency closure", reason)
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-bnf-catalogue/cifereca-plugin.json")],
             [("M", "src/plugins/provider-bnf-catalogue/tests/conftest.py")],
             [("D", "src/plugins/provider-bnf-catalogue/cifereca_bnf_catalogue.py")],
@@ -838,9 +890,9 @@ class PluginSelectionTests(unittest.TestCase):
                 self.assertEqual(chosen, ["src/plugins/browser-recorder"])
                 self.assertIn("dependency closure", reason)
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/browser-recorder/browser_recorder.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/browser-recorder/cifereca-plugin.json")],
             [("M", "src/plugins/browser-recorder/tests/conftest.py")],
             [("D", "src/plugins/browser-recorder/browser_recorder.py")],
@@ -896,9 +948,9 @@ class PluginSelectionTests(unittest.TestCase):
                 self.assertEqual(targets, ["src/plugins/diagnostics-page"])
                 self.assertIn("dependency closure", reason)
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/diagnostics-page/diagnostics_ai.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/diagnostics-page/cifereca-plugin.json")],
             [("M", "src/plugins/diagnostics-page/tests/conftest.py")],
             [("D", "src/plugins/diagnostics-page/diagnostics_ai.py")],
@@ -953,9 +1005,9 @@ class PluginSelectionTests(unittest.TestCase):
                 self.assertEqual(chosen, ["src/plugins/constellations"])
                 self.assertIn("dependency closure", reason)
         for changes in (
-            [("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/constellations/constellations.py"),
-             ("M", "src/plugins/baen/cifereca_baen.py")],
+             ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/constellations/cifereca-plugin.json")],
             [("M", "src/plugins/constellations/tests/helpers.py")],
             [("D", "src/plugins/constellations/constellations_page.py")],
@@ -1009,7 +1061,7 @@ class PluginSelectionTests(unittest.TestCase):
     def test_reference_provider_keeps_exhaustive_fallbacks(self):
         product = "src/plugins/provider-reference/cifereca_reference.py"
         for changes in (
-            [("M", product), ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", product), ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-reference/cifereca-plugin.json")],
             [("M", "src/plugins/provider-reference/tests/conftest.py")],
             [("D", product)],
@@ -1066,7 +1118,7 @@ class PluginSelectionTests(unittest.TestCase):
     def test_transport_http_unaudited_mixed_changes_remain_full(self):
         product = "src/plugins/transport-http/cifereca_http_transport.py"
         for changes in (
-            [("M", product), ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", product), ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/transport-http/cifereca-plugin.json")],
             [("M", "src/plugins/transport-http/tests/conftest.py")],
             [("D", product)],
@@ -1120,7 +1172,7 @@ class PluginSelectionTests(unittest.TestCase):
     def test_numilog_manifest_and_unqualified_changes_still_force_full(self):
         product = "src/plugins/provider-numilog/cifereca_numilog.py"
         for changes in (
-            [("M", product), ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", product), ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-numilog/cifereca-plugin.json")],
             [("M", "src/plugins/provider-numilog/tests/conftest.py")],
             [("D", product)],
@@ -1178,7 +1230,7 @@ class PluginSelectionTests(unittest.TestCase):
     def test_paris_unaudited_mixed_and_shared_changes_force_full(self):
         product = "src/plugins/provider-paris/cifereca_paris_borrow.py"
         for changes in (
-            [("M", product), ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", product), ("M", "src/plugins/provider-kobo/cifereca_kobo.py")],
             [("M", "src/plugins/provider-paris/cifereca-plugin.json")],
             [("M", "src/plugins/provider-paris/tests/conftest.py")],
             [("D", product)],
