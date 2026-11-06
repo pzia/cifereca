@@ -54,3 +54,12 @@ raccordement d’un enrichisseur restent dans #4552 et #2385.
 [carre]: https://catalogue.bnf.fr/ark:/12148/cb47671506m
 [bebe]: https://catalogue.bnf.fr/ark:/12148/cb485104342
 [monde]: https://catalogue.bnf.fr/ark:/12148/cb47584428d
+
+
+## Qualification numérique **hors Core** — tranche du 06/11/2026
+
+La fonction pure `bnf_age_evidence_probe.qualified_observed_age_fields(xml, isbn)` construit à partir du contrôle d'ISBN **propre** existant une projection **strictement limitée aux valeurs déjà vues dans les extraits SRU publics** : UNIMARC `333$a` avec `$2=CNLJ` : « À partir de 13 ans » → minimum 13, sans maximum, « De 0 à 3 ans » → 0–3 ; INTERMARC `833$m` : `JAg1399` → minimum 13 sans maximum, `JAg0003` → 0–3, `JAg0699` → minimum 6 sans maximum. Ce sont des indications CNLJ de **public bibliographique destinataire**, pas des niveaux scolaires ni une preuve de droit.
+
+La sortie nomme les bornes `audience_age_min/max` pour **éviter** de créer un `YouthAgeRange` canonique. Elle expose explicitement `edition_support_verified=False` et `core_youth_age_range_authorized=False` : les notices positives observées sont des **supports imprimés**, et le résultat zéro sur l'ISBN EPUB distinct interdit de l'attribuer à la variante numérique. Les répétitions identiques sont dédupliquées ; un code non répertorié, une zone de critique `329`, une absence de marqueur d'autorité CNLJ ou des valeurs contradictoires ne sont jamais promus. Les données MARC brutes restent accessibles par `exact_edition_age_fields()`.
+
+**Portée :** qualification bibliographique bornée sur des documents publics déjà enregistrés, pas mesure de couverture ni branchement dans le catalogue, le filtre local ou la consolidation #4552. L'ajout d'autres codes JAg requiert leur vérification documentaire et des réponses exactes enregistrées. Aucune requête réseau, mutation, acquisition, calcul d'âge depuis un résumé ou transfert papier → EPUB.

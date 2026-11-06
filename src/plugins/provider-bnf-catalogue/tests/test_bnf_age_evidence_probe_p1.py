@@ -179,3 +179,99 @@ def test_unimarc_audience_note_333_is_distinct_from_cnlj_review_329():
     assert result[0]["evidence_role"] == "audience_note_unqualified"
     assert result[0]["field_tag"] == "333"
     assert result[0]["age_status"] == "unqualified_raw_evidence"
+
+
+@pytest.mark.parametrize(("name", "isbn", "minimum", "maximum", "field", "literal"), [
+    ("age-tendre", ISBN, 13, None, "333", "À partir de 13 ans"),
+    ("age-tendre-intermarc", ISBN, 13, None, "833", "JAg1399"),
+    ("carre-unimarc", "9791040120971", 0, 3, "333", "De 0 à 3 ans"),
+    ("carre-intermarc", "9791040120971", 0, 3, "833", "JAg0003"),
+    ("conflicting-intermarc", "9782362901645", 6, None, "833", "JAg0699"),
+])
+def test_public_observed_cnlj_age_is_bounded_without_core_promotion(
+    name, isbn, minimum, maximum, field, literal,
+):
+    result = probe.qualified_observed_age_fields(
+        (PUBLIC_FIXTURES / (name + ".xml")).read_bytes(), isbn,
+    )
+    assert len(result) == 1
+    claim = result[0]
+    assert claim["own_isbn13"] == isbn
+    assert claim["field_tag"] == field
+    assert claim["source_literal"] == literal
+    assert (claim["audience_age_min"], claim["audience_age_max"]) == (
+        minimum, maximum,
+    )
+    assert claim["evidence_role"] == "cnlj_bibliographic_target_audience"
+    assert claim["edition_support_verified"] is False
+    assert claim["core_youth_age_range_authorized"] is False
+    assert "age_min" not in claim and "age_max" not in claim
+
+
+@pytest.mark.parametrize(("name", "isbn"), [
+    ("baby", "9782324036668"),
+    ("age-tendre-ebook", "9782377315123"),
+    ("homonyms", ISBN),
+])
+def test_no_cnlj_claim_for_absent_field_or_distinct_digital_isbn(name, isbn):
+    assert probe.qualified_observed_age_fields(
+        (PUBLIC_FIXTURES / (name + ".xml")).read_bytes(), isbn,
+    ) == []
+
+
+def test_unimarc_329_critical_review_is_not_numerical_evidence():
+    content = response(record(ages=["À partir de 13 ans"]))
+    assert probe.exact_edition_age_fields(content, ISBN)
+    assert probe.qualified_observed_age_fields(content, ISBN) == []
+
+
+def test_cnlj_333_without_authority_is_not_an_age_assertion():
+    original = (PUBLIC_FIXTURES / "age-tendre.xml").read_bytes()
+    modified = original.replace(
+        b'<mxc:subfield code="2">CNLJ</mxc:subfield>',
+        b'<mxc:subfield code="2">Other</mxc:subfield>',
+    )
+    assert probe.qualified_observed_age_fields(modified, ISBN) == []
+
+
+@pytest.mark.parametrize(("name", "old", "new"), [
+    ("age-tendre-intermarc", b"JAg1399", b"JAg1398"),
+    ("carre-intermarc", b"JAg0003", b"JAg0004"),
+    ("age-tendre", "À partir de 13 ans".encode(), "Dès 13 ans".encode()),
+])
+def test_unknown_or_unqualified_age_shape_stays_raw_not_numeric(name, old, new):
+    data = (PUBLIC_FIXTURES / (name + ".xml")).read_bytes()
+    altered = data.replace(old, new)
+    assert probe.exact_edition_age_fields(
+        altered, ISBN if name != "carre-intermarc" else "9791040120971",
+    )
+    assert probe.qualified_observed_age_fields(
+        altered, ISBN if name != "carre-intermarc" else "9791040120971",
+    ) == []
+
+
+def test_conflicting_cnlj_codes_on_one_record_are_not_reconciled():
+    data = (PUBLIC_FIXTURES / "age-tendre-intermarc.xml").read_bytes()
+    # Two genuine repeated 833$m claims are present; changing one produces
+    # conflicting observed intervals (13+ versus 6+).
+    altered = data.replace(b"JAg1399", b"JAg0699", 1)
+    assert len(probe.exact_edition_age_fields(altered, ISBN)) == 2
+    assert probe.qualified_observed_age_fields(altered, ISBN) == []
+
+
+def test_invalid_sru_or_remote_processing_diagnostic_never_becomes_an_age():
+    with pytest.raises(ValueError, match="sru_diagnostics"):
+        probe.qualified_observed_age_fields(
+            (PUBLIC_FIXTURES / "conflicting.xml").read_bytes(),
+            "9782362901645",
+        )
+    with pytest.raises(ValueError, match="sru_entities_forbidden"):
+        probe.qualified_observed_age_fields(
+            b'<!DOCTYPE root [<!ENTITY x "x">]><root/>', ISBN,
+        )
+
+
+def test_age_qualifier_has_no_side_effectful_or_network_import():
+    source = PATH.read_text(encoding="utf-8")
+    assert "def qualified_observed_age_fields(" in source
+    assert "httpx" not in source and "requests" not in source
