@@ -139,3 +139,86 @@ def test_open_action_rechecks_path_at_click_and_reports_launch_error():
     assert "show_error" in text
     assert "materialize_to_identity" in text
     assert "execute_acquisition_request" not in text
+
+
+def _headless_main_window_placement_open(launch):
+    """Execute the real MainWindow method without loading GTK/GI."""
+    tree = ast.parse(
+        (Path(__file__).resolve().parents[1]
+         / "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+    )
+    owner = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "MainWindow"
+    )
+    method = next(
+        node for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_open_placement"
+    )
+    module = ast.fix_missing_locations(
+        ast.Module(body=[method], type_ignores=[])
+    )
+    namespace = {
+        "Gio": SimpleNamespace(
+            AppInfo=SimpleNamespace(launch_default_for_uri=launch),
+        ),
+    }
+    exec(compile(module, "<headless-main-window-open>", "exec"), namespace)
+    return namespace["_open_placement"]
+
+
+def test_mainwindow_missing_or_foreign_placement_never_launches_or_leaks():
+    private = "/home/private/identity-book.epub?token=PRIVATE_BOOK_TOKEN"
+    launches, messages, reads = [], [], []
+    open_placement = _headless_main_window_placement_open(
+        lambda uri, _context: launches.append(uri),
+    )
+
+    def read(placement_id, *, identity_id):
+        reads.append((placement_id, identity_id))
+        raise FileNotFoundError(private)
+
+    window = SimpleNamespace(
+        service=SimpleNamespace(
+            current_identity=SimpleNamespace(identity_id="alice"),
+            local_book_path=read,
+        ),
+        show_error=lambda message, title: messages.append((message, title)),
+    )
+    placement = {"placement_id": "missing", "identity_id": "alice"}
+    open_placement(window, placement)
+    assert reads == [("missing", "alice")]
+    assert not launches
+    assert messages == [
+        ("Ouverture locale indisponible.", "Ouverture du livre impossible")
+    ]
+    assert private not in repr(messages)
+
+    messages.clear()
+    reads.clear()
+    open_placement(window, {**placement, "identity_id": "bob"})
+    assert not reads and not launches
+    assert messages == [
+        ("Ouverture locale indisponible.", "Ouverture du livre impossible")
+    ]
+
+
+def test_mainwindow_live_placement_uses_exact_identity_guard_at_open():
+    launches, reads, messages = [], [], []
+    open_placement = _headless_main_window_placement_open(
+        lambda uri, _context: launches.append(uri),
+    )
+    path = Path("/tmp/synthetic-visible-book.epub")
+    window = SimpleNamespace(
+        service=SimpleNamespace(
+            current_identity=SimpleNamespace(identity_id="alice"),
+            local_book_path=lambda placement_id, *, identity_id: (
+                reads.append((placement_id, identity_id)) or path
+            ),
+        ),
+        show_error=lambda message, title: messages.append((message, title)),
+    )
+    open_placement(window, {"placement_id": "present", "identity_id": "alice"})
+    assert reads == [("present", "alice")]
+    assert launches == [path.as_uri()]
+    assert messages == []
