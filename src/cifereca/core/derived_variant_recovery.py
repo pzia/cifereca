@@ -290,10 +290,26 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
     # Cursor pagination is non-destructive and memory bounded. Successful
     # receipts are retained, so a global 128-file ceiling would otherwise
     # render recovery unusable after 128 ordinary transformations.
+    def entries_nofollow(directory: Path):
+        # Pin the complete path from the trusted profile root. scandir(fd)
+        # cannot be redirected if a concurrent actor swaps an intermediate
+        # directory for a symlink after enumeration starts.
+        fd = (
+            os.open(
+                folder, os.O_RDONLY | os.O_DIRECTORY
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            if directory == folder
+            else _open_under_root_nofollow(folder, directory, directory=True)
+        )
+        try:
+            with os.scandir(fd) as iterator:
+                for entry in iterator:
+                    yield entry.name, entry.is_dir(follow_symlinks=False)
+        finally:
+            os.close(fd)
+
     def iter_receipts():
-        # Walk the profile tree, not merely its immediate children. A DFS
-        # stack avoids recursive Python calls; symlink directories are never
-        # traversed and unbounded/untrusted trees fail explicitly.
         pending = [(folder, 0)]
         visited = 0
         while pending:
@@ -306,24 +322,22 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
             if (_directory(journal_root) and not journal_root.is_symlink()
                     and _directory(journal_dir)
                     and not journal_dir.is_symlink()):
-                for file in journal_dir.iterdir():
-                    if (file.name.startswith("pending-")
-                            and file.name.endswith(".json")):
+                for name, _ in entries_nofollow(journal_dir):
+                    if name.startswith("pending-") and name.endswith(".json"):
+                        file = journal_dir / name
                         key = file.relative_to(folder).as_posix()
                         if len(key) > 512:
                             raise ValueError("derived_recovery_cursor_limit")
                         if key > after_cursor:
                             yield key, file
 
-            # A user may legitimately place books in deeply nested genre /
-            # author paths. Never silently omit deeper receipts.
-            for child in subdir.iterdir():
-                if child.name == ".cifereca-staging":
+            for name, is_dir in entries_nofollow(subdir):
+                if name == ".cifereca-staging":
                     continue
-                if _directory(child) and not child.is_symlink():
+                if is_dir:
                     if depth >= MAX_SCAN_DEPTH:
                         raise ValueError("derived_recovery_depth_limit")
-                    pending.append((child, depth + 1))
+                    pending.append((subdir / name, depth + 1))
 
     page = heapq.nsmallest(
         MAX_RECEIPTS + 1, iter_receipts(), key=lambda item: item[0],
@@ -337,7 +351,9 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                    "status": "manual_review"}
         out.append(outcome)
         try:
-            receipt_bytes = _read_receipt_nofollow(journal)
+            receipt_bytes = _read_receipt_nofollow(
+                journal, profile_root=folder,
+            )
             receipt_digest = hashlib.sha256(receipt_bytes).hexdigest()
             data = json.loads(receipt_bytes)
             if (type(data) is not dict or data.get("schema") != SCHEMA
@@ -372,8 +388,14 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                     or data["output_size"] != output_stamp[2]):
                 continue
             if (source_stamp is None
-                    or not _verified_sha(target, output_stamp, data["output_sha256"])
-                    or not _verified_sha(source, source_stamp, data["source_sha256"])):
+                    or not _verified_sha(
+                        target, output_stamp, data["output_sha256"],
+                        profile_root=folder,
+                    )
+                    or not _verified_sha(
+                        source, source_stamp, data["source_sha256"],
+                        profile_root=folder,
+                    )):
                 continue
             parent = storage.placement_get(data["source_placement_id"])
             if (parent is None or parent.get("identity_id") != identity_id
@@ -415,8 +437,14 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                 outcome["status"] = "approval_required"
                 continue
             # Exact operator-approved journal, checked again before SQL.
-            if (not _verified_sha(target, output_stamp, data["output_sha256"])
-                    or not _verified_sha(source, source_stamp, data["source_sha256"])):
+            if (not _verified_sha(
+                        target, output_stamp, data["output_sha256"],
+                        profile_root=folder,
+                    )
+                    or not _verified_sha(
+                        source, source_stamp, data["source_sha256"],
+                        profile_root=folder,
+                    )):
                 outcome["status"] = "manual_review"
                 continue
             publish_derived_variant(
@@ -436,6 +464,7 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
                 expected_intent_sha256=receipt_digest,
                 expected_parent_stamp=source_stamp,
                 expected_output_stamp=output_stamp,
+                expected_profile_root=folder,
             )
             outcome["status"] = "recovered"
         except (OSError, ValueError, TypeError, KeyError, RuntimeError):
