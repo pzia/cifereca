@@ -1399,8 +1399,8 @@ class PluginSelectionTests(unittest.TestCase):
         # The distinct ADEPT runtime's own modules are named
         # cifereca_kobo_adept_*. They are NOT imports of Kobo provider code.
         provider_import = re.compile(
-            r"(?m)^\\s*(?:from|import)\\s+cifereca_kobo"
-            r"(?:\\b|_(?!adept(?:_|\\b))|\\.)"
+            r"(?m)^\s*(?:from|import)\s+cifereca_kobo"
+            r"(?:\b|_(?!adept(?:_|\b))|\.)"
         )
         root = ROOT / "src/plugins"
         for package_dir in sorted(root.iterdir()):
