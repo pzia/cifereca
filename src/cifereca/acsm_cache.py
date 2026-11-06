@@ -319,12 +319,13 @@ def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
 
 
 def forget_initial(path: Path) -> None:
-    """Remove only the receipt for this input after successful fulfillment."""
-    manifest = path.parent / INITIAL_MANIFEST
-    try:
-        if not manifest.is_symlink() and manifest.stat().st_size <= 16384:
-            row = json.loads(manifest.read_text(encoding='utf-8'))
-            if type(row) is dict and row.get('file') == path.name:
-                manifest.unlink()
-    except (OSError, ValueError, AttributeError):
-        pass
+    """Retain the first-offer receipt after cleanup; never unlink by pathname.
+
+    A final inode check followed by unlink is not an atomic compare-and-delete
+    on POSIX. Another actor controlling the staging directory could substitute
+    an unrelated file in the gap. The tiny URL-free receipt is intentionally
+    retained as evidence; reuse_initial still enforces TTL, loan expiry, exact
+    identity and the staged ACSM's SHA. Physical retention is separate from
+    cache admission and requires an explicitly designed exclusive janitor.
+    """
+    return None
