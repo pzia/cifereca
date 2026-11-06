@@ -365,16 +365,21 @@ class CoverLoader:
         now = time.monotonic()
         with self._lock:
             failed_until = self._fail_until.get(absolute, 0.0)
-            if not force and failed_until > now:
-                callback(None)
-                return request
-            callbacks = self._callbacks.setdefault(absolute, [])
-            callbacks.append(holder)
-            if absolute in self._queued:
-                self._stats["deduplicated"] += 1
-                return request
-            self._queued.add(absolute)
+            cooling_down = not force and failed_until > now
+            if not cooling_down:
+                callbacks = self._callbacks.setdefault(absolute, [])
+                callbacks.append(holder)
+                if absolute in self._queued:
+                    self._stats["deduplicated"] += 1
+                    return request
+                self._queued.add(absolute)
 
+        if cooling_down:
+            # A consumer may synchronously consult stats(), invalidate, or
+            # request a different cover in its fallback callback. Invoking
+            # it under _lock deadlocks the shared CoverLoader for all views.
+            callback(None)
+            return request
         self._queue.put((max(0, int(priority)), next(self._sequence), absolute))
         return request
 
