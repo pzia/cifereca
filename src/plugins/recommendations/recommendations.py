@@ -589,6 +589,11 @@ class UxRecommendationsView:
 
         toolbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         toolbox.set_hexpand(True)
+        build_filters = getattr(host, "build_local_query_controls", None)
+        self._query_controls = (
+            build_filters(changed=self._render, placeholder="Titre ou auteur")
+            if callable(build_filters) else None
+        )
 
         controls = Gtk.FlowBox()
         controls.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -611,24 +616,8 @@ class UxRecommendationsView:
         self._reference.connect("notify::selected", self._reference_changed)
         controls.insert(self._labeled("Référence", self._reference), -1)
 
-        self._provider_model = Gtk.StringList.new(["Tous les catalogues"])
-        self._provider = Gtk.DropDown(model=self._provider_model)
-        self._provider.set_tooltip_text("Filtre les recommandations déjà calculées")
-        self._provider.connect("notify::selected", lambda *_: self._render())
-        controls.insert(self._labeled("Catalogue", self._provider), -1)
-
-        self._language_model = Gtk.StringList.new(["Toutes"])
-        self._language = Gtk.DropDown(model=self._language_model)
-        self._language.set_tooltip_text(
-            "Filtre sur les langues explicitement fournies par les catalogues ; "
-            "« Toutes » conserve aussi les ouvrages sans langue connue"
-        )
-        self._language.connect("notify::selected", self._language_changed)
-        controls.insert(self._labeled("Langue", self._language), -1)
-
-        self._text = Gtk.SearchEntry(placeholder_text="Titre ou auteur")
-        self._text.connect("search-changed", lambda *_: self._render())
-        controls.insert(self._labeled("Filtrer", self._text), -1)
+        if self._query_controls is None:
+            self._append_legacy_filters(controls, Gtk)
 
         self._exclude_owned = Gtk.CheckButton(label="Exclure les possédés")
         self._exclude_owned.set_active(self._config_bool("exclude_owned", True))
@@ -682,6 +671,8 @@ class UxRecommendationsView:
             self._llm_button.connect("clicked", lambda *_: self._explain_selected())
             controls.insert(self._llm_button, -1)
         toolbox.append(controls)
+        if self._query_controls is not None:
+            toolbox.append(self._query_controls.widget)
         if self._llm_enabled:
             self._llm_hint = Gtk.Label(
                 label="IA facultative : choisissez une recommandation puis confirmez l'envoi "
@@ -718,6 +709,27 @@ class UxRecommendationsView:
         subscribe = getattr(host, "subscribe_identity_overview", None)
         if callable(subscribe):
             self._unsubscribe = subscribe(self._identity_overview_changed)
+
+    def _append_legacy_filters(self, controls, Gtk):
+        """Keep the installed plugin usable on Core versions before #3687."""
+        self._provider_model = Gtk.StringList.new(["Tous les catalogues"])
+        self._provider = Gtk.DropDown(model=self._provider_model)
+        self._provider.set_tooltip_text("Filtre les recommandations déjà calculées")
+        self._provider.connect("notify::selected", lambda *_: self._render())
+        controls.insert(self._labeled("Catalogue", self._provider), -1)
+
+        self._language_model = Gtk.StringList.new(["Toutes"])
+        self._language = Gtk.DropDown(model=self._language_model)
+        self._language.set_tooltip_text(
+            "Filtre sur les langues explicitement fournies par les catalogues ; "
+            "« Toutes » conserve aussi les ouvrages sans langue connue"
+        )
+        self._language.connect("notify::selected", self._language_changed)
+        controls.insert(self._labeled("Langue", self._language), -1)
+
+        self._text = Gtk.SearchEntry(placeholder_text="Titre ou auteur")
+        self._text.connect("search-changed", lambda *_: self._render())
+        controls.insert(self._labeled("Filtrer", self._text), -1)
 
     def _labeled(self, label: str, widget: Any):
         box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=5)
@@ -983,6 +995,20 @@ class UxRecommendationsView:
         index = int(self._language.get_selected())
         return self._language_ids[index] if 0 <= index < len(self._language_ids) else ""
 
+    def _view_filters(self) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+        controls = getattr(self, "_query_controls", None)
+        if controls is not None:
+            return (
+                controls.filter_text(), controls.selected_sources(),
+                controls.selected_languages(),
+            )
+        provider = self.selected_provider_id()
+        language = self.selected_language_id()
+        return (
+            self._text.get_text().strip(),
+            (provider,) if provider else (), (language,) if language else (),
+        )
+
     def _language_changed(self, *_args) -> None:
         if not self._reloading_languages:
             self._render()
@@ -994,13 +1020,12 @@ class UxRecommendationsView:
         score = _public_affinity_score(ranked.score)
         if score is None or score < int(self._score.get_value()):
             return False
-        provider = self.selected_provider_id()
-        if provider and provider not in ranked.sources:
+        text, sources, languages = self._view_filters()
+        if sources and set(sources).isdisjoint(_public_ranked_values(ranked.sources)):
             return False
-        language = self.selected_language_id()
-        if language and language not in _candidate_languages(ranked.item):
+        if languages and set(languages).isdisjoint(_candidate_languages(ranked.item)):
             return False
-        needle = normalize(self._text.get_text())
+        needle = normalize(text)
         if needle:
             item = ranked.item
             # The same attested author variants as the public detail must
@@ -1031,15 +1056,19 @@ class UxRecommendationsView:
         self._provider.set_selected(selected)
 
     def _reload_languages(self, ranked_rows) -> None:
-        selected_id = self.selected_language_id()
         available = {
             language
             for ranked in ranked_rows
             for language in _candidate_languages(ranked.item)
         }
+        controls = getattr(self, "_query_controls", None)
+        selected_id = self.selected_language_id() if controls is None else ""
         if selected_id:
             available.add(selected_id)
         ordered = sorted(available, key=lambda language: (_language_label(language).casefold(), language))
+        if controls is not None:
+            controls.set_choices(languages=tuple((lang, _language_label(lang)) for lang in ordered))
+            return
 
         self._reloading_languages = True
         try:
@@ -1090,10 +1119,6 @@ class UxRecommendationsView:
             self._provider_labels.get(source, source), limit=240,
         )
 
-    def _provider_label(self) -> str:
-        provider_id = self.selected_provider_id()
-        return self._display_source(provider_id) if provider_id else ""
-
     def _diagnostic_tooltip(self) -> str:
         return (
             "Progression du calcul : requêtes × catalogues, puis classement et diversification.\n"
@@ -1125,7 +1150,11 @@ class UxRecommendationsView:
             seen.add(provider_id)
             self._provider_labels[provider_id] = label
             safe.append((provider_id, label))
-        self._base_reload_providers(tuple(safe))
+        controls = getattr(self, "_query_controls", None)
+        if controls is not None:
+            controls.set_choices(sources=tuple(safe))
+        else:
+            self._base_reload_providers(tuple(safe))
 
     def _start_refresh(self):
         self._reset_llm_selection(None)
@@ -1277,6 +1306,10 @@ class UxRecommendationsView:
             if profile_changed:
                 self._ranked = []
                 self._ranked_by_key = {}
+                controls = getattr(self, "_query_controls", None)
+                if controls is not None:
+                    controls.set_choices(sources=(), languages=())
+                    self._provider_labels.clear()
                 self._master.show_rows((), total_count=0)
             if not self._ranked:
                 self._master.set_list_state(
@@ -1421,16 +1454,12 @@ class UxRecommendationsView:
         if not total:
             return
 
-        provider = self._provider_label()
-        language = self.selected_language_id()
-        text_filter = str(self._text.get_text() or "").strip()
+        text_filter, sources, languages = self._view_filters()
         filters = []
         if text_filter:
             filters.append(f"« {text_filter} »")
-        if provider:
-            filters.append(provider)
-        if language:
-            filters.append(_language_label(language))
+        filters.extend(self._display_source(source) for source in sources)
+        filters.extend(_language_label(language) for language in languages)
 
         if filters or visible != total:
             parts = [f"{visible} sur {total}"]

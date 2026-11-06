@@ -40,23 +40,23 @@ from recommendations import RecommendationsPlugin
 from x11_input import X11Input
 
 
-def ranked(book_id, title, isbn, *, score):
+def ranked(book_id, title, isbn, *, score, provider="fixture"):
     item = {
         "book_id": book_id, "record_id": book_id,
         "title": title, "author": "Autrice Attestée",
         "authors": ["Autrice Attestée", "Deuxième Auteur"],
         "description": "Description publique, sans donnée de compte.",
         "isbn": isbn, "language": "fr", "format": "EPUB",
-        "source_provider": "fixture", "source_credential": "fixture-public",
+        "source_provider": provider, "source_credential": "fixture-public",
     }
     variant = CatalogNoticeVariant(
-        item=item, source_provider="fixture",
+        item=item, source_provider=provider,
         source_credential="fixture-public", record_id=book_id,
         docbase="BOOKS", source_collection="catalog", isbn=isbn,
     )
     return RankedCandidate(
         item=item, score=score, reasons=("Auteur : Autrice Attestée",),
-        sources=("fixture",), notices=(variant,),
+        sources=(provider,), notices=(variant,),
     )
 
 
@@ -192,8 +192,28 @@ def main():
         capture("00-empty")
         view._ranked = [
             ranked("edition-a", "Livre A", "9780306406157", score=94),
-            ranked("edition-b", "Livre B", "9780140328721", score=85),
+            ranked("edition-b", "Livre B", "9780140328721", score=85, provider="second"),
+            ranked("edition-c", "Livre C", "9780140328721", score=60, provider="third"),
         ]
+        view._reload_providers((
+            ("fixture", "Premier"), ("second", "Deuxième"), ("third", "Troisième"),
+        ))
+        view._reload_languages(view._ranked)
+        view._render()
+        query = view._query_controls
+        store = view._master._page.store
+        generation = view._generation
+        assert query.widget.get_mapped() and store.get_n_items() == 3
+        query.provider.buttons["fixture"].set_active(True)
+        assert store.get_n_items() == 1
+        query.provider.buttons["second"].set_active(True)
+        assert query.selected_sources() == ("fixture", "second")
+        assert store.get_n_items() == 2
+        assert view._generation == generation and not state["searches"]
+        report["checks"]["shared_multisource_filter_is_local"] = True
+        query.provider.set_values(())
+        assert store.get_n_items() == 3
+        view._ranked.pop()
         view._render()
         assert view._master._page.store.get_n_items() == 2
         view._master._page.selection.set_selected(0)
@@ -237,7 +257,8 @@ def main():
         state["old_action"].emit("clicked")
         assert len(state["searches"]) == 1
         report["checks"]["stale_action_after_fast_selection"] = True
-        view._text.set_text("ABSENT-THIS-TITLE")
+        view._query_controls.entry.set_text("ABSENT-THIS-TITLE")
+        view._query_controls.entry.emit("activate")
         later(170, no_match)
 
     def no_match():
@@ -248,7 +269,8 @@ def main():
         assert len(state["searches"]) == 1
         capture("03-no-match")
         report["checks"]["zero_results_revoke_detail_and_actions"] = True
-        view._text.set_text("")
+        view._query_controls.entry.set_text("")
+        view._query_controls.entry.emit("activate")
         assert view._master._page.store.get_n_items() == 2
         view._master._page.selection.set_selected(0)
         view._identity.set_selected(1)
