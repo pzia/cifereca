@@ -2123,8 +2123,18 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 )
             ))
         ))
-        if not interrupted and (not current or current.get("status") not in {
-                "ok", "complete", "reconcile_required", "reconcile_conflict"}):
+        # Archive status cannot erase a prior delegated acquisition refusal:
+        # archived=True -> archived=False must not become an implicit GET
+        # after a persisted 403. Only an explicit account-scoped retry can
+        # re-authorize delivery.
+        scope_denied = bool(current and (
+            current.get("status") == "attention_required"
+            and current.get("attention_code") == "missing_delegation_scope"
+        ))
+        if not interrupted and not scope_denied and (
+                not current or current.get("status") not in {
+                    "ok", "complete", "reconcile_required", "reconcile_conflict"
+                }):
             self.storage.backup_put({
                 **(current or {}), **base_record, "status": "skipped_archived",
                 "error": None, "attention_code": None,
