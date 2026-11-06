@@ -58,3 +58,30 @@ Tests : `tests/test_kobo_backup_integrity_baseline.py`
 (SHA absent, corrompu, taille absente ou nulle ; pas de lecture
 de fichier, pas de re-GET, pas de mutation d'empreinte, répétition
 idempotente) et `tests/test_kobo_backup_guard.py`.
+
+
+
+## D1 complémentaire — aperçu public hors ligne non autoritaire
+
+`kobo_backup_preview(..., refresh_manifest=False)` ne classe plus
+`backup_items.ok/complete + local_path` comme
+`already_local_linked` ou `already_local_verified` dans la vue
+**publique**, même si `verify_local_files=True` et que le fichier
+est physiquement présent. La réponse signale
+`needs_reconciliation` **sans hacher ni ouvrir** ce fichier :
+l'archive locale n'atteste ni un droit fournisseur actif, ni le
+téléchargement de cette édition, ni son placement B.
+
+Les éditions déjà typées restent `attention_required`, sauf
+archivage explicitement observé dans un manifeste neuf ;
+les offres sans ancien reçu restent candidates/diagnostiques
+selon les règles antérieures. Cette tranche est **en lecture
+seule** ; elle n'autorise ni GET, ni suppression, ni publication
+canonique. Le préflight privé W2 basé sur `_item_reasons`
+conserve momentanément son comportement historique sous verrou,
+et doit être migré vers les preuves Core pour fermer #3196.
+
+Réception : `tests/test_kobo_backup_preview.py` et
+`tests/test_core_p0_3196_d1_typed_preview_fence.py`,
+incluant absence de hash des fichiers d'archives en aperçu public,
+profils distincts et séparation préflight interne/diagnostic.
