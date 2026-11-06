@@ -80,7 +80,9 @@ def validate_descriptive_result(
     refs = proposed["source_evidence_keys"]
     if (type(refs) not in (list, tuple)
             or not 1 <= len(refs) <= MAX_REFERENCES
-            or any(type(ref) not in (tuple, list) or len(ref) != 3\n                   or any(type(field) is not str for field in ref)\n                   for ref in refs)):
+            or any(type(ref) not in (tuple, list) or len(ref) != 3
+                   or any(type(field) is not str for field in ref)
+                   for ref in refs)):
         raise ValueError("invalid_result_references")
     # Keep the triple structured: a delimiter-joined string would let
     # different editions/providers collide when identifiers contain '/'.
