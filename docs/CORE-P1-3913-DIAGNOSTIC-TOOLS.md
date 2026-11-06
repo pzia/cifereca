@@ -247,3 +247,15 @@ Les wrappers environnementaux ne doivent pas être exécutés par le rôle backl
 `scripts/numilog_html_shape.py`, `src/plugins/recommendations/trace_report.py`,
 `pyproject.toml`. Requalifier la classe d'effets après toute mutation des
 parcours, pas seulement après changement de documentation.
+
+## Interpréteur Python du Core actif
+
+`cifereca-python` est publié dans le même répertoire de commandes que `cifereca` par l'Updater Core. Il exécute `current/.venv/bin/python` à chaque invocation et suit les mises à jour et rollbacks, sans se rabattre sur le Python système. Exemples :
+
+```sh
+cifereca-python --version
+cifereca-python -m cifereca.core.missing_placements_cli --help
+cifereca-python -c 'import sys, cifereca; print(sys.executable)'
+```
+
+Attention : `cifereca-python` est un interpréteur complet, **pas** une commande de diagnostic intrinsèquement non mutatrice. `missing_placements_cli` est en lecture seule ; d'autres modules peuvent lancer du réseau ou des mutations. Ne pas copier sorties contenant chemins privés ou identifiants dans les tickets. `pytest` exige que les tests et la dépendance soient présents, ce qui n'est pas garanti dans une installation.
