@@ -97,7 +97,7 @@ def test_typed_source_never_gains_local_presence_from_backup_row(
     {"item": "different-edition"},
     {"credential": "another-credential"},
 ])
-def test_unrelated_source_preserves_legacy_preview_compatibility(tmp_path, other):
+def test_unrelated_source_still_quarantines_legacy_offline_local_claim(tmp_path, other):
     service, session = _service(tmp_path, [])
     try:
         file = service._kobo_backup_target_dir("default") / "legacy.epub"
@@ -106,7 +106,8 @@ def test_unrelated_source_preserves_legacy_preview_compatibility(tmp_path, other
         _typed(service, **other)
         before = _persistent(service)
         result = service.kobo_backup_preview("vault-1")
-        assert result["counts"]["already_local_linked"] == 1
+        assert result["counts"]["already_local_linked"] == 0
+        assert result["counts"]["needs_reconciliation"] == 1
         assert result["counts"]["attention_required"] == 0
         assert _persistent(service) == before
     finally:
@@ -123,8 +124,9 @@ def test_mixed_preview_uses_core_for_typed_and_legacy_only_for_untyped(tmp_path)
         _typed(service)
         result = service.kobo_backup_preview("vault-1")
         assert result["counts"]["attention_required"] == 1
-        assert result["counts"]["already_local_linked"] == 1
-        assert result["blocking_items"] == 1
+        assert result["counts"]["already_local_linked"] == 0
+        assert result["counts"]["needs_reconciliation"] == 1
+        assert result["blocking_items"] == 2
         assert result["acquisition_authorized"] is False
     finally:
         service.close()
