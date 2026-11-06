@@ -327,14 +327,14 @@ def _launcher_content(command: str, root: Path) -> str:
         # Check active release at invocation time; never use system Python.
         quoted = shlex.quote(str(target))
         return (
-            "#!/bin/sh\\n"
-            f"if [ ! -x {quoted} ]; then\\n"
-            '  printf "%s\\n" "cifereca-python: active interpreter unavailable" >&2\\n'
-            "  exit 127\\n"
-            "fi\\n"
-            f'exec {quoted} "$@"\\n'
+            "#!/bin/sh\n"
+            f"if [ ! -x {quoted} ]; then\n"
+            '  echo "cifereca-python: active interpreter unavailable" >&2\n'
+            "  exit 127\n"
+            "fi\n"
+            f'exec {quoted} "$@"\n'
         )
-    return f'#!/bin/sh\\nexec "{target}" "$@"\\n'
+    return f'#!/bin/sh\nexec "{target}" "$@"\n'
 
 
 def _write_launchers(root: Path) -> dict[str, str]:
