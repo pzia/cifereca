@@ -308,3 +308,51 @@ def test_matching_known_v2_holdings_preserves_in_place_actions(monkeypatch):
     assert len(f.outputs) == 1
     assert f.outputs[0][0] == (f.item, f.detail)
 
+
+
+@pytest.mark.parametrize("known_source", [False, True], ids=["loaded", "known-v2"])
+def test_same_selection_second_click_revokes_older_holdings_and_actions(
+    monkeypatch, known_source,
+):
+    f = _fixture(monkeypatch)
+    if known_source:
+        monkeypatch.setattr(
+            port, "_known_item",
+            lambda window, coords: (f.item, {"revision": "v1"}),
+        )
+        f.kwargs["known_source"] = True
+    first_work, first_success, first_failed = _start(f)
+    assert first_work() is f.detail
+
+    # The selected notice, session, identity and Search generation are STILL
+    # identical. Only an explicit newer click may revoke this pending result.
+    f.scheduled.clear()
+    second_work, second_success, second_failed = _start(f)
+    first_success(f.detail)
+    first_failed(RuntimeError("stale failure"))
+    assert f.outputs == []
+    assert second_work() is f.detail
+    second_success(f.detail)
+    assert len(f.outputs) == 1
+    # A late older success must not overwrite the newer Core actions.
+    first_success(f.detail)
+    assert len(f.outputs) == 1
+
+
+@pytest.mark.parametrize("known_source", [False, True], ids=["loaded", "known-v2"])
+def test_second_click_before_first_worker_prevents_stale_get(monkeypatch, known_source):
+    f = _fixture(monkeypatch)
+    if known_source:
+        monkeypatch.setattr(
+            port, "_known_item",
+            lambda window, coords: (f.item, {"revision": "v1"}),
+        )
+        f.kwargs["known_source"] = True
+    first_work, _success, _failed = _start(f)
+    f.scheduled.clear()
+    second_work, second_success, _second_failed = _start(f)
+    with pytest.raises(Cancelled):
+        first_work()
+    assert f.calls == []
+    second_success(second_work())
+    assert len(f.calls) == 1 and len(f.outputs) == 1
