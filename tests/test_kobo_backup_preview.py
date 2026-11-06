@@ -122,7 +122,8 @@ def test_refresh_preview_reads_only_manifest_and_handles_malformed_items(tmp_pat
         assert result["manifest_items"] == 7
         assert result["known_item_count"] == 4
         counts = result["counts"]
-        assert counts["already_local_linked"] == 1
+        assert counts["already_local_linked"] == 0
+        assert counts["needs_reconciliation"] == 1
         assert counts["potentially_missing"] == 1
         assert counts["attention_required"] == 0
         assert counts["skipped_archived"] == 1
