@@ -1014,6 +1014,30 @@ class UxRecommendationsView:
         if not self._reloading_languages:
             self._render()
 
+    def _selected_catalogue_sources(self) -> tuple[str, ...]:
+        """Current view-only sources, never an account or rights decision.
+
+        Missing filters on a legacy/headless host mean "Tous". A malformed
+        active filter must NOT silently show all catalogues' action routes.
+        """
+        controls = getattr(self, "_query_controls", None)
+        try:
+            if controls is not None:
+                values = controls.selected_sources()
+            elif getattr(self, "_provider", None) is not None:
+                selected = self.selected_provider_id()
+                values = (selected,) if selected else ()
+            else:
+                values = ()
+        except Exception:
+            return ("\\x00",)
+        if (type(values) not in (list, tuple) or len(values) > 128
+                or any(type(x) is not str or not x or len(x) > 120
+                       or x != x.strip() or not x.isprintable() for x in values)):
+            return ("\\x00",)
+        return tuple(dict.fromkeys(values))
+
+
     def _matches(self, ranked: RankedCandidate) -> bool:
         # A corrupted score from a stale cache is not a legitimate ranking.
         # It must not execute an arbitrary comparison or become a selected
@@ -1504,6 +1528,7 @@ class UxRecommendationsView:
         if getattr(self, "_disposed", False):
             return
         visible = [row for row in self._ranked if self._matches(row)]
+        catalogue_sources = self._selected_catalogue_sources()
 
         rows = []
         mapping = {}
@@ -1530,7 +1555,8 @@ class UxRecommendationsView:
             author = ", ".join(_public_candidate_authors(item))
             source_labels = [
                 label for source in _public_ranked_values(ranked.sources)
-                if (label := self._display_source(source))
+                if (not catalogue_sources or source in catalogue_sources)
+                and (label := self._display_source(source))
             ]
             sources = " · ".join(dict.fromkeys(source_labels))
             reasons = " · ".join(_public_ranked_values(ranked.reasons))
@@ -1565,6 +1591,7 @@ class UxRecommendationsView:
             key = selection["key"]
             if key in mapping and (
                 selection["ranked"] is not mapping[key]
+                or selection.get("catalogue_sources") != catalogue_sources
                 or (not self._busy and (
                     selection["generation"] != self._generation
                     or selection["provisional"] != self._provisional_active
@@ -1626,18 +1653,20 @@ class UxRecommendationsView:
         # ranking generation. Returning A→B→A or switching profiles must
         # never reopen an old page or resurrect a clickable stale action.
         exact_identity = self.selected_identity_id()
+        catalogue_sources = self._selected_catalogue_sources()
         state = getattr(self, "_exact_notice_state", None)
         if not (
             type(state) is dict
             and state.get("key") == row.key
             and state.get("ranked") is ranked
             and state.get("identity") == exact_identity
+            and state.get("catalogue_sources") == catalogue_sources
             and state.get("generation") == self._generation
         ):
             state = {
                 "key": row.key, "ranked": ranked,
                 "identity": exact_identity, "generation": self._generation,
-                "page": 0,
+                "catalogue_sources": catalogue_sources, "page": 0,
             }
             self._exact_notice_state = state
         state["provisional"] = self._provisional_active
@@ -1654,7 +1683,8 @@ class UxRecommendationsView:
         reasons = " · ".join(_public_ranked_values(ranked.reasons))
         source_labels = tuple(dict.fromkeys(
             label for source in _public_ranked_values(ranked.sources)
-            if (label := self._display_source(source))
+            if (not catalogue_sources or source in catalogue_sources)
+            and (label := self._display_source(source))
         ))
         description = _public_candidate_description(item)
 
@@ -1741,6 +1771,10 @@ class UxRecommendationsView:
         seen_coordinates = set()
         for variant in variants:
             if type(variant) is not CatalogNoticeVariant:
+                continue
+            # The source MultiSelect is a view filter. It must also constrain
+            # the exact notice actions, not just keep the aggregated row.
+            if catalogue_sources and variant.source_provider not in catalogue_sources:
                 continue
             coordinates = (
                 variant.source_provider, variant.source_credential,
@@ -1979,7 +2013,7 @@ class UxRecommendationsView:
                         "go-next-symbolic",
                         callback=lambda: change_notice_page(page_index + 1),
                     ))
-            verified_isbns = _attested_catalogue_isbns(variants)
+            verified_isbns = _attested_catalogue_isbns(exact_variants)
             for isbn in verified_isbns:
                 def open_isbn(isbn=isbn):
                     if (
