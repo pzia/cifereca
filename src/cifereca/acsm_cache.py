@@ -137,7 +137,7 @@ def _initial_digest(path: Path, directory: Path, now: float) -> str | None:
     The standard cache retains its historical ABI; this new receipt is stricter.
     """
     import stat
-    if (type(path) is not Path or type(directory) is not Path
+    if (not isinstance(path, Path) or not isinstance(directory, Path)
             or path.parent != directory or path.suffix.casefold() != '.acsm'
             or not path.name or '/' in path.name or chr(92) in path.name):
         return None
