@@ -942,7 +942,9 @@ class DetailPanel(Gtk.Box):
         essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
         # This pure projector separates provider catalogue facts from
-        # attested medium and account-specific borrowing admission.
+        # attested medium and account-specific borrowing admission. It can
+        # show "Empruntable selon le catalogue · compte non vérifié" without
+        # changing the original action eligibility input below.
         paris_catalogue_candidate, visible_availability = (
             paris_catalogue_availability(item, availability)
         )
