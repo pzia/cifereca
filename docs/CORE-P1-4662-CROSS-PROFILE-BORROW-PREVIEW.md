@@ -9,6 +9,10 @@ fournissent un compte prêteur `Account`, une notice `SearchResult`,
 le Core**, ainsi que l'epoch de contexte, l'epoch de session, un horodatage
 borné et l'identifiant d'édition réclamé. L'éligibilité
 `eligible_observed` ne vaut **jamais** consentement ni autorisation de POST.
+Un résultat positif conserve désormais **l'identité, le fournisseur, le
+credential et le compte évalués** ; l'aperçu refuse une permission pourtant
+« éligible » si elle concerne un autre emprunteur de la même branche.
+Les identifiants sont internes, absents des libellés et du `repr`.
 
 La projection donne quatre états UX :
 

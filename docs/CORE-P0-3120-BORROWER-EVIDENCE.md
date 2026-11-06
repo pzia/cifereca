@@ -28,7 +28,11 @@ Syracuse/DILICOM n'est présumé par le Core.
   abonnement, quota positif et permission sont tous connus **pour la même
   portée exacte**. Ce verdict est un **affichage de preuves**, pas un permis
   de lancer `borrow`. L'action finale revalide toujours compte, consentement,
-  disponibilité et réponse fournisseur.
+  disponibilité et réponse fournisseur. Les identifiants de branche en
+  majuscules (`EBOOKS`) restent acceptés lorsqu'ils correspondent exactement
+  aux faits de source, sans normalisation implicite. Une éligibilité positive
+  épingle les quatre coordonnées du compte attesté ; les états négatifs ou
+  inconnus ne transportent aucun identifiant de compte privé.
 
 ## Frontière de cette tranche
 

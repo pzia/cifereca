@@ -38,7 +38,8 @@ def witness(identity="alice", credential="card-A", account="borrower-A",
     )
     elig = BorrowerOperationEligibility(
         "eligible_observed", "borrow_permission_observed", "loan.borrow",
-        docbase,
+        docbase, identity_id=identity, provider_id=a.provider_id,
+        credential_id=credential, account_id=account,
     )
     return BorrowForIdentityWitness(
         account=a, notice=item, capability=cap, eligibility=elig,
@@ -320,3 +321,32 @@ def test_same_lender_multi_account_ordinals_remain_stable_across_context_aba():
         x.option_id for x in after.options
     )
     assert all(x.executable is False for x in before.options + after.options)
+
+
+
+@pytest.mark.parametrize("field,wrong", [
+    ("identity_id", "bob"),
+    ("provider_id", "other-provider"),
+    ("credential_id", "other-card"),
+    ("account_id", "other-borrower"),
+])
+def test_other_borrower_eligibility_on_same_branch_does_not_qualify(field, wrong):
+    original = witness("alice")
+    changed = replace(
+        original, eligibility=replace(original.eligibility, **{field: wrong}),
+    )
+    result = project(changed)
+    assert result.status == "none"
+    assert result.options == ()
+    assert result.rejected_count == 1
+
+
+def test_legacy_unscoped_positive_status_cannot_qualify_cross_profile_loan():
+    original = witness("alice")
+    forged = replace(original, eligibility=BorrowerOperationEligibility(
+        "eligible_observed", "borrow_permission_observed", "loan.borrow",
+        original.notice.docbase,
+    ))
+    result = project(forged)
+    assert result.options == ()
+    assert result.rejected_count == 1
