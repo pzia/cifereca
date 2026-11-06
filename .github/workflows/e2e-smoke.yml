@@ -8,6 +8,7 @@ on:
       - 'src/cifereca/gui/**'
       - 'src/cifereca/brokers.py'
       - 'src/cifereca/core/source_materialization.py'
+      - 'src/cifereca/core/search_orchestration.py'
       - 'src/cifereca/core/numilog_materialization_startup.py'
       - 'src/cifereca/core/numilog_materialization_checkpoint.py'
       - 'src/cifereca/core/numilog_direct_acquisition.py'
