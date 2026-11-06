@@ -1029,12 +1029,12 @@ def test_retention_capacity_refuses_new_variant_without_unlink_or_sql_origin(
         monkeypatch.setattr(
             recovery, "MAX_RECEIPTS_PER_STAGING_DIRECTORY", 2,
         )
-        with pytest.raises(
-            ValueError, match="derived_receipt_retention_capacity_exceeded",
-        ):
+        from cifereca.plugin_api import Conflict
+        with pytest.raises(Conflict, match="Capacité de reçus") as refused:
             ArtifactExecutionBrokerImpl(service).execute_transform(
                 TransformRequest(source, "optimize"), control=Control(),
             )
+        assert refused.value.code == "artifact_variant_receipt_capacity_exceeded"
         assert sorted(stage.glob("pending-*.json")) == receipts
         assert all(
             path.read_bytes() == b"retained original evidence"
