@@ -13,7 +13,7 @@ import json
 import re
 
 from .notice_source_observation import (
-    NoticeSourceKey, NoticeSourceObservation, _valid_key, admit_source_notice,
+    NoticeSourceKey, NoticeSourceObservation, _valid_key, _id as _source_id, admit_source_notice,
 )
 
 _MAX_FIELDS = 32
@@ -188,8 +188,7 @@ def admitted_source_scope_sha256(
     Parser ID is part of the domain. Changing the parser VERSION does not
     change the scope, so regressions across versions remain comparable.
     """
-    if (not _valid_key(key) or type(parser_id) is not str
-            or _VERSION.fullmatch(parser_id) is None):
+    if not _valid_key(key) or not _source_id(parser_id):
         raise ValueError("invalid_admitted_source_scope")
     payload = (
         "cifereca.notice-c.parse-witness-scope.v1",
