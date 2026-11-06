@@ -293,7 +293,11 @@ class DetailPanel(Gtk.Box):
                 self._append_content(group)
             return
         group = Adw.PreferencesGroup()
-        group.set_title(title)
+        # #4682: the leading cover/title block already provides its heading.
+        # Keep the internal "Essentiel" section and all metadata rows, but
+        # don't render a redundant visual section heading above those rows.
+        # Other sections keep their original headings and action semantics.
+        group.set_title("" if title == "Essentiel" else title)
         grid = None
         if title in {"Essentiel","Notice","Catalogue","Notice EPUB","Bibliothèque","Catalogue connu","Récupération","Historique","Prêt","Réservation"}:
             grid = Gtk.FlowBox(); grid.set_selection_mode(Gtk.SelectionMode.NONE)
