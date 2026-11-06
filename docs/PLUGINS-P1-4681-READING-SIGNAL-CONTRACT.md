@@ -37,6 +37,10 @@ titre/auteur restent dans l'exclusion des œuvres déjà présentes.
   **clé de bibliothèque + identité** peut appliquer un signal.
 - Signal sans entrée correspondante ou entrée d'une autre identité :
   aucun poids appliqué.
+- Si deux entrées **du même profil** exposent la même clé ciblée par un
+  signal explicite, le calcul est refusé (`ambiguous_explicit_reading_signal_target`)
+  plutôt que d'amplifier ou d'annuler arbitrairement deux livres.
+  Les doublons non ciblés restent neutres pour préserver le calcul historique.
 - Projections fournies par un mauvais compte : ne jamais utiliser
   cet outil comme contrôle d'accès ; `library_entries(identity_id)` doit
   être autorisé et isolé préalablement par Core.
