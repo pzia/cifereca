@@ -941,6 +941,15 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
+        # Catalogue availability is not a personal Paris borrowing right.
+        paris_catalogue_candidate = (
+            item.source_provider == "paris" and item.medium == "digital"
+        )
+        visible_availability = (
+            "Empruntable selon le catalogue · compte non vérifié"
+            if paris_catalogue_candidate and availability == "Empruntable"
+            else availability
+        )
         usage = _commercial_search_usage(item, self.window.service)
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
@@ -954,7 +963,9 @@ class DetailPanel(Gtk.Box):
                     ("Format", fmt),
                     ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
-                    ("Disponibilité", availability),
+                    ("Disponibilité", visible_availability),
+                    *([("Compte Paris", "Éligibilité du prêt non vérifiée par le fournisseur")]
+                      if paris_catalogue_candidate else []),
                 ]),
                 ("Notice", [
                     ("Type", detail.type or item.type or ""),
@@ -1016,6 +1027,16 @@ class DetailPanel(Gtk.Box):
                         except Exception:
                             observation = None
                         explanation = bnf_borrow_claim_message(observation) or explanation
+                if item.source_provider == "paris":
+                    from .paris_borrow_status import paris_borrow_status_message
+                    reader = getattr(
+                        self.window.service, "paris_borrow_diagnostic", None,
+                    )
+                    try:
+                        diagnostic = reader(item) if callable(reader) else None
+                    except Exception:
+                        diagnostic = None
+                    explanation = paris_borrow_status_message(diagnostic)
                 row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)
