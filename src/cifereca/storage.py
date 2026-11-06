@@ -2124,19 +2124,21 @@ class Storage:
             ).fetchone()
             if persisted is None:
                 raise ValueError("backup_projection_handoff_missing")
-            # #3196 W1 cutover: a LIVE Kobo 0.7 projection is no longer a
-            # canonical acquisition writer. Its status, reported SHA and
-            # local_path cannot attest rights, OriginLinks, Artifacts or
-            # physical Placements. Keep the historic backup row for W2
-            # recovery and manual reconciliation, but do not mint/refresh
-            # entitlements or acquisition_ledger from it.
+            # #3196 W1: a legacy Kobo row with no proven borrower or profile
+            # is NOT eligible to mint a canonical entitlement, acquisition,
+            # Artifact or Placement. The old backup PK omits borrower and an
+            # unbound row is an archive/recovery hint only. Source-bound
+            # historical Kobo flows retain their mirror until W2/D1-D5 are
+            # migrated together; otherwise reconciliation and library UI
+            # lose their last 0.7 evidence.
             #
-            # The independently versioned v2->v14 startup migration still
-            # imports old receipts as explicitly tagged historical evidence;
-            # this runtime cutover only forbids NEW propagation. Other
-            # providers retain the existing compatibility mirror.
+            # This is checked on the persisted merged row: a partial patch
+            # with omitted owner/account must not demote an earlier exact
+            # owner in the backup projection.
             merged = dict(zip(keys, persisted))
-            if item.get("provider_id") == "kobo":
+            if (item.get("provider_id") == "kobo"
+                    and (merged.get("identity_id") is None
+                         or merged.get("account_id") is None)):
                 self._check_kobo_legacy_canonical_owner(db, merged)
             else:
                 self._mirror_backup_row(
