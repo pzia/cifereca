@@ -12,6 +12,10 @@ from hashlib import sha256
 import json
 import re
 
+from .notice_source_observation import (
+    NoticeSourceKey, NoticeSourceObservation, _valid_key, _id as _source_id, admit_source_notice, _MAX_BYTES as _MAX_SOURCE_JSON_BYTES,
+)
+
 _MAX_FIELDS = 32
 _MAX_DEPTH = 8
 _MAX_KEY = 96
@@ -176,7 +180,74 @@ def review_parse_witness(
     return ParseWitnessReview(status, tuple(misses))
 
 
+def admitted_source_scope_sha256(
+    key: NoticeSourceKey, *, parser_id: str,
+) -> str:
+    """Opaque identity/credential/edition scope for a Core-admitted witness.
+
+    Parser ID is part of the domain. Changing the parser VERSION does not
+    change the scope, so regressions across versions remain comparable.
+    """
+    if not _valid_key(key) or not _source_id(parser_id):
+        raise ValueError("invalid_admitted_source_scope")
+    payload = (
+        "cifereca.notice-c.parse-witness-scope.v1",
+        key.provider_id, key.visibility, key.identity_id,
+        key.credential_id, key.account_id, key.branch_id,
+        key.record_id, key.edition_id, key.manifestation_role,
+        parser_id,
+    )
+    raw = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    return sha256(raw.encode("ascii")).hexdigest()
+
+
+def review_admitted_source_parse_witness(
+    baseline: ParseWitness, *, observation: NoticeSourceObservation,
+    input_sha256: str | None,
+) -> ParseWitnessReview:
+    """Review one typed Core admission, not caller-provided loose coordinates.
+
+    The observation's SHA and raw JSON are round-trip checked before use:
+    manually altered or noncanonical DTOs cannot relabel a parser regression.
+    The Core must still hash the *actual authorized response bytes* to supply
+    input_sha256; a provider's string claim is never an authenticity proof.
+    """
+    if (type(observation) is not NoticeSourceObservation
+            or type(observation.raw_json) is not str
+            or len(observation.raw_json) > _MAX_SOURCE_JSON_BYTES):
+        # A forged DTO must never allocate an unbounded JSON tree before
+        # the Core's normal parsed-source size gate runs.
+        raise ValueError("invalid_admitted_source_observation")
+    try:
+        fields = observation.fields_copy()
+        replay = admit_source_notice(
+            key=observation.key,
+            parser_id=observation.parser_id,
+            parser_version=observation.parser_version,
+            observed_at=observation.observed_at,
+            raw_fields=fields,
+            status=observation.status,
+        )
+        if (replay.source_revision != observation.source_revision
+                or replay.raw_json != observation.raw_json):
+            raise ValueError("admitted_observation_changed")
+        scope = admitted_source_scope_sha256(
+            observation.key, parser_id=observation.parser_id,
+        )
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError) as exc:
+        raise ValueError("invalid_admitted_source_observation") from exc
+    return review_parse_witness(
+        baseline,
+        source_scope_sha256=scope,
+        input_sha256=input_sha256,
+        parser_version=observation.parser_version,
+        raw_fields=fields,
+        complete=observation.status == "complete",
+    )
+
+
 __all__ = [
     "CriticalParseField", "ParseWitness", "ParseWitnessReview",
     "field_digest", "review_parse_witness",
+    "admitted_source_scope_sha256", "review_admitted_source_parse_witness",
 ]
