@@ -19,6 +19,8 @@ from .derived_variant_publication import publish_derived_variant
 SCHEMA = "cifereca.derived-publication-pending/1"
 MAX_RECEIPTS = 128
 MAX_BYTES = 8192
+MAX_SCAN_DIRECTORIES = 8192
+MAX_SCAN_DEPTH = 32
 
 
 def _stamp(path: Path) -> tuple[int, int, int, int] | None:
@@ -250,22 +252,39 @@ def review_pending_derived_receipts(service: Any, *, identity_id: str,
     # receipts are retained, so a global 128-file ceiling would otherwise
     # render recovery unusable after 128 ordinary transformations.
     def iter_receipts():
-        directories = [
-            folder,
-            *(p for p in sorted(folder.iterdir())
-              if _directory(p) and not p.is_symlink()),
-        ]
-        for subdir in directories:
-            journal_dir = subdir / ".cifereca-staging" / "variants"
-            if not _directory(journal_dir) or not _directory(journal_dir.parent):
-                continue
-            if journal_dir.is_symlink() or journal_dir.parent.is_symlink():
-                continue
-            for file in journal_dir.iterdir():
-                if file.name.startswith("pending-") and file.name.endswith(".json"):
-                    key = file.relative_to(folder).as_posix()
-                    if key > after_cursor:
-                        yield key, file
+        # Walk the profile tree, not merely its immediate children. A DFS
+        # stack avoids recursive Python calls; symlink directories are never
+        # traversed and unbounded/untrusted trees fail explicitly.
+        pending = [(folder, 0)]
+        visited = 0
+        while pending:
+            subdir, depth = pending.pop()
+            visited += 1
+            if visited > MAX_SCAN_DIRECTORIES:
+                raise ValueError("derived_recovery_directory_limit")
+            journal_root = subdir / ".cifereca-staging"
+            journal_dir = journal_root / "variants"
+            if (_directory(journal_root) and not journal_root.is_symlink()
+                    and _directory(journal_dir)
+                    and not journal_dir.is_symlink()):
+                for file in journal_dir.iterdir():
+                    if (file.name.startswith("pending-")
+                            and file.name.endswith(".json")):
+                        key = file.relative_to(folder).as_posix()
+                        if len(key) > 512:
+                            raise ValueError("derived_recovery_cursor_limit")
+                        if key > after_cursor:
+                            yield key, file
+
+            # A user may legitimately place books in deeply nested genre /
+            # author paths. Never silently omit deeper receipts.
+            for child in subdir.iterdir():
+                if child.name == ".cifereca-staging":
+                    continue
+                if _directory(child) and not child.is_symlink():
+                    if depth >= MAX_SCAN_DEPTH:
+                        raise ValueError("derived_recovery_depth_limit")
+                    pending.append((child, depth + 1))
 
     page = heapq.nsmallest(
         MAX_RECEIPTS + 1, iter_receipts(), key=lambda item: item[0],
