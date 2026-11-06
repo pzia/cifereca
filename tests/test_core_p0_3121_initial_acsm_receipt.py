@@ -79,7 +79,11 @@ def test_first_offer_expiration_and_integrity_and_cleanup(first_offer):
     acsm_cache.forget_initial(directory / "other.acsm")
     assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
     acsm_cache.forget_initial(path)
-    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    # Receipt remains private provenance, while TTL still denies reuse.
+    assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
+    assert acsm_cache.reuse_initial(
+        directory, loan, "identity-A", "primary",
+        now=100 + acsm_cache.TTL) is None
 
 
 def test_first_offer_symlinks_or_forged_manifest_rejected(first_offer, tmp_path):
@@ -273,12 +277,24 @@ def test_posthook_promotion_needs_live_claim_and_cannot_drop_binding(first_offer
         path, directory, loan, "identity-A", "primary", now=101,
         initial_claim_bound=True, claim_state=lambda _key: None)
     assert not (directory / acsm_cache.MANIFEST).exists()
-    # The unrelated historical ordinary cache contract stays untouched.
+    # A retained initial receipt must never be silently downgraded into
+    # an unrelated, unmarked ordinary cache for the SAME filename.
     acsm_cache.forget_initial(path)
+    assert (directory / acsm_cache.INITIAL_MANIFEST).exists()
     assert acsm_cache.remember(
         path, directory, loan, "identity-A", "primary", now=102)
     assert acsm_cache.reuse(
-        directory, loan, "identity-A", "primary", now=103) == path
+        directory, loan, "identity-A", "primary", now=103) is None
+    # The existing ordinary cache remains supported in an independent
+    # work directory with no first-offer receipt.
+    ordinary = directory.parent / "ordinary"
+    ordinary.mkdir()
+    independent = ordinary / path.name
+    independent.write_bytes(TOKEN)
+    assert acsm_cache.remember(
+        independent, ordinary, loan, "identity-A", "primary", now=102)
+    assert acsm_cache.reuse(
+        ordinary, loan, "identity-A", "primary", now=103) == independent
 
 
 def test_legacy_unmarked_posthook_cache_cannot_bypass_existing_initial_receipt(first_offer):
@@ -342,3 +358,32 @@ def test_initial_receipt_rejects_revoked_lease_at_entry(first_offer):
         admission_current=lambda: False,
     )
     assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_claimed_initial_receipt_never_unlinks_replaced_symlink(
+        first_offer, tmp_path, monkeypatch):
+    """A raced receipt pathname must not delete an unrelated file."""
+    import os
+
+    directory, path, loan = first_offer
+    claim = ("loan.borrow.v1:" + "a" * 64, "operation-1")
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        borrow_claim=claim, now=100)
+    manifest = directory / acsm_cache.INITIAL_MANIFEST
+    other = tmp_path / "foreign.json"
+    other.write_text("unrelated", encoding="utf-8")
+    manifest.unlink()
+    manifest.symlink_to(other)
+    original = os.unlink
+    unlinks = []
+
+    def watched_unlink(*args, **kwargs):
+        unlinks.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", watched_unlink)
+    acsm_cache.forget_initial(path)
+    assert not unlinks
+    assert manifest.is_symlink()
+    assert other.read_text(encoding="utf-8") == "unrelated"
