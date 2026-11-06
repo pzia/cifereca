@@ -1163,6 +1163,10 @@ class KoboSession(ProviderSession):
                 evidence_kind="provider_response",
                 evidence_ref="kobo.personal_manifest",
                 observed_at=observed,
+                # Exact revision of this authenticated personal-library row,
+                # if present. The Core's optional v1/v2 transport preserves
+                # it only as a comparison witness; no B/file/right inference.
+                provider_revision_id=row.revision_id,
                 delivery="unavailable" if archived is True else "unknown",
                 # This exact manifest flag is a delivery fact, not a revoked
                 # purchase. Core #3662 consumes it as skipped_archived.
