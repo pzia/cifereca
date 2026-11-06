@@ -121,6 +121,43 @@ class PublicBookMasterDetailView:
             buttons.append(button)
         panel.add_actions(buttons)
 
+    def show_existing_search_detail(
+        self, item, detail, *, context_sections=(),
+    ) -> None:
+        """Render Core's actual Search detail/actions in this plugin panel.
+
+        The supplier result comes only from Core. Preserve contextual reasons
+        from the recommendation as *additional* read-only fields; none may
+        influence a borrowing or acquisition decision.
+        """
+        from ..book_detail_metadata import safe_detail_value
+        from ..plugin_api.models import DetailField, DetailSection
+
+        panel = self._page.detail
+        panel.show_item_detail(item, detail)
+        for section in context_sections[:16]:
+            if type(section) is not DetailSection:
+                continue
+            if (type(section.title) is not str
+                    or not 0 < len(section.title) <= 120):
+                continue
+            fields = []
+            for field in section.fields[:128]:
+                if type(field) is not DetailField or type(field.label) is not str:
+                    continue
+                if not 0 < len(field.label) <= 120:
+                    continue
+                value = safe_detail_value(field.value)
+                if not value or len(value) > 2048:
+                    continue
+                fields.append((field.label, value, field))
+            if fields:
+                panel._group(
+                    section.title,
+                    [(label, value) for label, value, _field in fields],
+                    fields=tuple(field for _label, _value, field in fields),
+                )
+
     def empty_detail(
         self,
         title: str = "Aucun document sélectionné",
