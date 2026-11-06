@@ -106,13 +106,20 @@ def reuse(directory: Path, loan, identity_id: str, account_id: str, *,
             # #4644/#4648 may have written an ordinary post-hook cache
             # before the claim-bound marker existed. Do not grandfather in
             # a same-file first-offer receipt as an unqualified cache hit.
-            initial_row = _read_initial_manifest(directory)
-            if (initial_row is not None and initial_row.get('file') == name):
-                if (claim_state is None or reuse_initial(
-                        directory, loan, identity_id, account_id,
-                        now=now, claim_state=claim_state,
-                ) != path):
+            # An existing but unreadable first-offer sidecar is not proof
+            # that this old unmarked cache came from an ordinary download.
+            # Refuse missing provenance rather than downgrading loan scope.
+            initial_manifest = directory / INITIAL_MANIFEST
+            if initial_manifest.is_symlink() or initial_manifest.exists():
+                initial_row = _read_initial_manifest(directory)
+                if initial_row is None:
                     return None
+                if initial_row.get('file') == name:
+                    if (claim_state is None or reuse_initial(
+                            directory, loan, identity_id, account_id,
+                            now=now, claim_state=claim_state,
+                    ) != path):
+                        return None
         return path
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         return None
