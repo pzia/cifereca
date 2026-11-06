@@ -197,7 +197,7 @@ class PluginSelectionTests(unittest.TestCase):
 
     def test_repository_graph_has_no_retired_youth_packages(self):
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-reference", "recommendations", "transport-http"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "transport-http"})
         self.assertFalse(any(name.startswith("youth-") for name in graph))
         self.assertTrue({"transport-http", "baen", "ebooksgratuits"} <= set(graph))
 
@@ -205,7 +205,7 @@ class PluginSelectionTests(unittest.TestCase):
         # Specific package proved independent. Any newly discovered consumer
         # must trigger an explicit graph audit before maintaining this scope.
         graph, audited = selector.dependency_graph(ROOT)
-        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-reference", "recommendations", "transport-http"})
+        self.assertEqual(audited, {"browser-recorder", "constellations", "dev-updater", "diagnostics-page", "ebooksgratuits", "epub_optimizer", "home-page", "literary-criticism", "maintenance-library-audit", "provider-bnf-catalogue", "provider-gallica", "provider-gutenberg", "provider-numilog", "provider-paris", "provider-reference", "recommendations", "transport-http"})
         self.assertEqual(
             selector.affected_packages({"literary-criticism"}, graph),
             ["literary-criticism"],
@@ -1122,6 +1122,61 @@ class PluginSelectionTests(unittest.TestCase):
                     self.assertFalse(
                         any(token in content for token in tokens),
                         f"New explicit Numilog plugin consumer: {file}",
+                    )
+
+    def test_audited_paris_provider_closes_to_home(self):
+        # Only the manifest-declared provider.library consumer is exercised
+        # by this audit; private Core acquisition/DRM code is not re-scoped.
+        graph, audited = selector.dependency_graph(ROOT)
+        self.assertIn("provider-paris", audited)
+        self.assertIn("provider-paris", graph["home-page"])
+        self.assertEqual(selector.affected_packages({"provider-paris"}, graph),
+                         ["home-page", "provider-paris"])
+        for module in ("cifereca_paris.py", "cifereca_paris_borrow.py",
+                       "cifereca_paris_client.py",
+                       "cifereca_paris_normalize.py"):
+            with self.subTest(module=module):
+                selected, reason = selector.select([
+                    ("M", f"src/plugins/provider-paris/{module}"),
+                ], ROOT)
+                self.assertEqual(
+                    selected,
+                    ["src/plugins/home-page", "src/plugins/provider-paris"],
+                )
+                self.assertIn("dependency closure", reason)
+
+    def test_paris_unaudited_mixed_and_shared_changes_force_full(self):
+        product = "src/plugins/provider-paris/cifereca_paris_borrow.py"
+        for changes in (
+            [("M", product), ("M", "src/plugins/baen/cifereca_baen.py")],
+            [("M", "src/plugins/provider-paris/cifereca-plugin.json")],
+            [("M", "src/plugins/provider-paris/tests/conftest.py")],
+            [("D", product)],
+            [("R100", product)],
+            [("M", product), ("M", "src/cifereca/services.py")],
+        ):
+            with self.subTest(changes=changes):
+                selected, reason = selector.select(changes, ROOT)
+                self.assertEqual(selected, [])
+                self.assertTrue(reason.startswith("full:"), reason)
+
+    def test_paris_specific_module_imports_have_no_plugin_consumers(self):
+        # Exclude generic diagnostic fixture labels ('provider.paris') since
+        # they only prove inventory rendering, not a Paris code import.
+        tokens = ("from cifereca_paris", "import cifereca_paris",
+                  "src/plugins/provider-paris/", "/provider-paris/")
+        source_root = ROOT / "src/plugins"
+        for package in sorted(source_root.iterdir()):
+            if not package.is_dir() or package.name == "provider-paris":
+                continue
+            for file in sorted(package.rglob("*")):
+                if file.is_file() and file.suffix in {
+                    ".py", ".json", ".toml", ".yml", ".yaml", ".sh",
+                }:
+                    content = file.read_text(encoding="utf-8", errors="replace")
+                    self.assertFalse(
+                        any(token in content for token in tokens),
+                        f"New direct Paris plugin module consumer: {file}",
                     )
 
     def git(self, *args):
