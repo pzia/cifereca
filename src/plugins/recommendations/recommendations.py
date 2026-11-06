@@ -1553,8 +1553,26 @@ class UxRecommendationsView:
                 )
             )
 
+        selection = getattr(self, "_exact_notice_state", None)
         self._ranked_by_key = mapping
         self._master.show_rows(tuple(rows), total_count=len(self._ranked))
+
+        # The shared list can keep its selected GTK item without emitting a
+        # signal when a progressive batch retains the same row keys. Refresh
+        # the detail only if that selection still belongs to this snapshot.
+        if (selection is not None and self._exact_notice_state is selection
+                and selection["identity"] == self.selected_identity_id()):
+            key = selection["key"]
+            if key in mapping and (
+                selection["ranked"] is not mapping[key]
+                or (not self._busy and (
+                    selection["generation"] != self._generation
+                    or selection["provisional"] != self._provisional_active
+                ))
+            ):
+                row = next(row for row in rows if row.key == key)
+                self._reset_llm_selection(None)
+                self._selected_row(row)
 
         if not rows:
             self._exact_notice_state = None
@@ -1622,6 +1640,7 @@ class UxRecommendationsView:
                 "page": 0,
             }
             self._exact_notice_state = state
+        state["provisional"] = self._provisional_active
         self._llm_selected_row = row
         if self._llm_button is not None:
             self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
@@ -2179,6 +2198,7 @@ class UxRecommendationsView:
             return False
         self._busy = False
         self._partial_warning_count = len(result.warnings) if result is not None and not error else 0
+        self._set_provisional(False)
         self._refresh_button.set_sensitive(True)
         self._spinner.stop()
         if error or result is None:
@@ -2287,7 +2307,6 @@ class UxRecommendationsView:
             )
         self._refresh_started_at = None
 
-        self._set_provisional(False)
         if error or result is None:
             if self._overview_refresh_pending:
                 self._schedule_overview_refresh()

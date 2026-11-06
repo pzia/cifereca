@@ -105,6 +105,38 @@ def test_navigation_callbacks_refuse_old_selection_or_ranking_generation():
     assert calls == []
 
 
+def test_retained_selection_refreshes_exact_actions_when_ranking_changes():
+    view, _, calls, original, row = _view((_variant(),))
+    old_action = next(a for a in original.actions if a.id.startswith("recommendation.search.isbn."))
+    previous = view._ranked_by_key[row.key]
+    details = []
+    view._master.show_detail = details.append
+    view._master.show_rows = lambda _rows, **_kwargs: None  # GTK retained the selection.
+    view._matches = lambda _ranked: True
+    view._candidate_key = lambda _ranked: row.key
+    view._ranked = [previous]
+    view._generation += 1
+    view._busy = True
+    view._reset_llm_selection(None)
+    view._render(preserve_summary=True)
+    assert not details and old_action.callback() is False
+
+    view._ranked = [RankedCandidate(
+        item=previous.item, score=95, reasons=("Raison mise à jour",),
+        sources=("kobo",), notices=(_variant(ISBN_2),),
+    )]
+
+    view._render(preserve_summary=True)
+
+    assert not calls and old_action.callback() is False
+    assert len(details) == 1 and "Affinité 95/100" in details[0].badges
+    new_action = next(a for a in details[0].actions if a.id.startswith("recommendation.search.isbn."))
+    assert new_action.callback() is True
+    assert calls[0][0] == (ISBN_2,)
+    view._render(preserve_summary=True)
+    assert len(details) == 1  # Filtering the same snapshot leaves the detail alone.
+
+
 def test_unresolved_or_invalid_variants_never_create_search_action():
     unresolved = _variant(credential="")
     invalid = _variant("9780000000000", credential="vault-1")
