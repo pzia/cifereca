@@ -224,6 +224,9 @@ def exact_kobo_offer_id(
                         else "other"
                     )
     eligible: list[tuple[str, str, str, str]] = []
+    # Private, transient URL comparison for K1 diagnostics only. Never emit
+    # signed URLs, hashes, tokens, or a guess of candidate equivalence.
+    eligible_urls: list[str] = []
     for candidate in candidates:
         if type(candidate) is not dict:
             skip("candidate_not_mapping")
@@ -388,6 +391,7 @@ def exact_kobo_offer_id(
         route = (fmt + ":" + source_fmt.strip().lower()
                  if _kdrm_raw_type(raw_drm) else fmt)
         eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
+        eligible_urls.append(candidate["url"])
     # Preserve a single proven plain, ACSM or library_sync route before
     # using the legacy delegated KDRM fallback. Do not choose between
     # multiple equally admissible routes by their upstream list order.
@@ -402,6 +406,16 @@ def exact_kobo_offer_id(
     # Multiple independent routes remain ambiguous.
     if len(eligible) != 1:
         if diagnostic is not None:
+            if len(eligible) > 1:
+                # No equivalence claim. Same route+URL can still carry
+                # distinct owner, expiry, or acquisition semantics.
+                routes = set(eligible)
+                urls = set(eligible_urls)
+                diagnostic["candidate_route_comparison"] = (
+                    "distinct_routes" if len(routes) > 1 else
+                    "same_route_distinct_urls" if len(urls) > 1 else
+                    "same_route_same_url"
+                )
             diagnostic["eligible_candidate_count"] = len(eligible)
             diagnostic["candidate_selection"] = (
                 "multiple_eligible_candidates" if eligible else "no_eligible_candidates"
