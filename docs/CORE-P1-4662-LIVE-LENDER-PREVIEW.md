@@ -68,3 +68,11 @@ Une preuve d'un autre compte/emprunteur n'est pas une négation du prêteur
 courant. Des entrées sans identité de prêt suffisamment portée restent
 non admissibles ; elles n'autorisent ni interdiction globale ni offre positive.
 Aucun nouveau flux de récupération de données fournisseur n'est ajouté.
+
+Une observation **négative par édition seulement** (sans bilan complet du compte)
+est aussi reliée à la bonne route depuis les coordonnées
+`edition_evidence.identity_id/provider_id/credential_id/borrower_id/
+docbase/record_id/source_collection` : un refus fournisseur précis ne
+disparaît pas simplement parce que les données de quota ou d'abonnement
+sont inconnues. Un refus relatif à un autre emprunteur ou à un autre livre
+ne peut en revanche invalider la permission du prêteur exact.
