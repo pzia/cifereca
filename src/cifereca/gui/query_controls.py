@@ -275,6 +275,31 @@ class LocalQueryControls(QueryControls):
             self._programmatic_update = False
         self._last_notified_state = self.state()
 
+    def active_document_labels(self):
+        """Optional public summary of currently active local document filters.
+
+        Return only labels from Core's available/attested facet choices.
+        The caller may display these alongside counts; this never filters,
+        queries a provider, rescales recommendations or infers permissions.
+        """
+        try:
+            scope = self._scope_values[self.scope.get_selected()]
+            formats = self.types.values()
+            if type(formats) is not tuple:
+                return ()
+            labels = []
+            if scope != 'all':
+                label = self._scope_labels.get(scope)
+                if type(label) is str and label:
+                    labels.append(label)
+            for value in formats:
+                label = self._format_labels.get(value)
+                if type(label) is str and label:
+                    labels.append(label)
+            return tuple(labels)
+        except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+            return ()
+
     def matches_document(self, item):
         scope = self._scope_values[self.scope.get_selected()]
         formats = self.types.values()

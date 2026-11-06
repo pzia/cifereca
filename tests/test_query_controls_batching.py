@@ -187,4 +187,23 @@ class QueryControlBatching(unittest.TestCase):
         self.assertEqual(len(calls),2)
         self.assertEqual(calls[-1].types,('epub','pdf','mp3'))
 
+    def test_local_document_filter_labels_reflect_selected_attested_choices(self):
+        calls = []
+        control = LocalQueryControls(lambda: calls.append(True), 'Filtre')
+        self.assertEqual(control.active_document_labels(), ())
+        control.set_document_choices((
+            {'medium': 'digital', 'format': 'application/epub+zip'},
+            {'medium': 'physical'},
+        ))
+        self.assertEqual(control.active_document_labels(), ())
+        control.types.set_values(('epub',))
+        self.assertEqual(control.active_document_labels(), ('EPUB',))
+        control.scope.set_selected(1)
+        self.assertEqual(control.active_document_labels(), ('Type · Physique', 'EPUB'))
+        control.types.set_values(())
+        self.assertEqual(control.active_document_labels(), ('Type · Physique',))
+        # Replacing observed choices silently resets an obsolete scope.
+        control.set_document_choices(({'medium': 'unknown'},))
+        self.assertEqual(control.active_document_labels(), ())
+
 if __name__ == '__main__': unittest.main()
