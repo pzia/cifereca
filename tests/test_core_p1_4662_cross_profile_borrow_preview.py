@@ -163,13 +163,17 @@ def test_offer_id_pins_edition_account_and_epoch_but_never_authorizes_replay():
     assert left._source_coordinates[0] == "alice"
 
 
-def test_ambiguous_same_account_two_branches_is_not_silently_chosen():
+def test_same_account_two_exact_branches_require_explicit_selection():
     a = witness()
     changed = replace(a, notice=replace(a.notice,
         docbase="OTHER", scenario="OTHER"),
         eligibility=replace(a.eligibility, branch="OTHER"))
-    with pytest.raises(ValueError, match="conflicting_cross_profile_borrow_offer"):
-        project(a, changed)
+    actual = project(a, changed)
+    assert actual.status == "choose"
+    assert actual.requires_explicit_choice is True
+    assert len(actual.options) == 2
+    assert len({x.option_id for x in actual.options}) == 2
+    assert all(x.executable is False for x in actual.options)
 
 
 def test_invalid_snapshot_is_rejected_before_any_action():
