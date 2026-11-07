@@ -33,6 +33,51 @@ class _KoboLegacySessionChanged(ProviderConfigurationError):
     """The issuing Kobo session/borrower changed during a legacy batch."""
 
 
+
+def _kobo_legacy_cas_unset(storage, identity_id, credential_id, account_id):
+    """A configured whole-source CAS policy retires the parallel W2 grant.
+
+    This is an exact, read-only SourceKey check; never use a 0.7 status,
+    selected GUI account or a legacy on-start preference as its substitute.
+    Unreadable consent fails closed, even if the provider ABI is partial.
+    """
+    from ..plugin_api.provider_rights_observation import ProviderRightsScope
+    from .source_sync_consent import read_policy
+
+    try:
+        scope = ProviderRightsScope(identity_id, "kobo", credential_id, account_id)
+        return read_policy(storage, scope).mode == "unset"
+    except Exception:
+        return False
+
+
+def _kobo_legacy_session_cas_unset(
+    service, session, *, identity_id=None, allow_unbound=False,
+):
+    """Re-observe the exact borrower on both sides of an opaque W2 GET."""
+    try:
+        credential = session.credential_id
+        owner = (identity_id if identity_id is not None else
+                 service.storage.identity_for_connection("kobo", credential))
+        accounts = tuple(session.accounts)
+        if len(accounts) != 1:
+            return allow_unbound
+        account = accounts[0]
+        if (getattr(account, "provider_id", None) != "kobo"
+                or getattr(account, "credential_id", None) != credential
+                or getattr(account, "identity_id", None) not in {owner, "default"}):
+            # For the initial preflight only, leave the classification of
+            # an already-invalid session to the existing source-binding
+            # refusal path (which yields an aborted summary, not a new
+            # public exception). No live GET is permitted by that path.
+            return allow_unbound
+        return _kobo_legacy_cas_unset(
+            service.storage, owner, credential, account.unique_id,
+        )
+    except Exception:
+        return False
+
+
 def _guarded_kobo_legacy_put(self, item, source_current):
     # The legacy checkpoint must never advance against a detached/rebound
     # provider session. A persisted acquiring row is deliberately left for
@@ -49,6 +94,16 @@ def _guarded_kobo_legacy_put(self, item, source_current):
         self.storage, item.get("credential_id"), item.get("item_id"),
     ):
         raise _KoboLegacySessionChanged("kobo_canonical_source_delivery_active")
+    # This is also reached by internal recovery writers with no session
+    # callback. Once a whole-source CAS policy exists, no stale 0.7 writer
+    # may advance that exact borrower, even if its provider ABI is partial.
+    if all(type(item.get(key)) is str for key in (
+        "identity_id", "credential_id", "account_id",
+    )) and not _kobo_legacy_cas_unset(
+        self.storage, item["identity_id"], item["credential_id"],
+        item["account_id"],
+    ):
+        raise _KoboLegacySessionChanged("kobo_legacy_canonical_consent_configured")
     if source_current is not None and not source_current():
         raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
     self.storage.backup_put(item)
@@ -1781,6 +1836,22 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         for session in self._sessions.values()
     ):
         raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
+    # A configured ON/OFF/invalid canonical CAS policy supersedes the
+    # independent legacy manual and on-start W2 permission. Refuse the
+    # selected source BEFORE local scans, ADEPT probes, manifest calls or
+    # backup_items writes. No complete-ABI fallback is implied.
+    if any(
+        getattr(session, "connected", None) is True
+        and getattr(session, "provider_id", None) == "kobo"
+        and (credential_id is None or
+             getattr(session, "credential_id", None) == credential_id)
+        and getattr(getattr(session, "capabilities", None), "backup", None)
+        and not _kobo_legacy_session_cas_unset(
+            self, session, allow_unbound=True,
+        )
+        for session in self._sessions.values()
+    ):
+        raise ProviderConfigurationError("kobo_legacy_canonical_consent_configured")
     confirmed = confirmed_manifest is not None
     if confirmed:
         if credential_id is None or source_guard is None or item_guard is None:
@@ -1966,6 +2037,12 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     and session.credential_id == pinned_credential
                     and getattr(session.capabilities, "backup", False)
                     and not has_complete_delivery_abi(session)
+                    # A policy configured after the initial preflight (or
+                    # after a UI progress callback) revokes this W2 batch.
+                    # Recheck before the GET AND before every final writer.
+                    and _kobo_legacy_session_cas_unset(
+                        self, session, identity_id=pinned_identity,
+                    )
                     and self._sessions.get(self._session_key(
                         "kobo", pinned_credential,
                     )) is session
@@ -2369,7 +2446,13 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 and row.get("credential_id") == source
                 and row.get("enabled") is True
             ]
-            if len(bindings) != 1:
+            if (len(bindings) != 1
+                    or not _kobo_legacy_session_cas_unset(
+                        self, session, identity_id=bound,
+                    )):
+                # The recovery-only reader has no batch-level acquisition
+                # gate. A configured/revoked canonical policy must not let
+                # a historical acquiring row rearm that legacy writer.
                 continue
             live[source] = (bound, accounts[0].unique_id, session)
         except (AttributeError, TypeError, ValueError):
@@ -2423,7 +2506,12 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 and row.get("credential_id") == source
                 and row.get("enabled") is True
             ]
-            return len(bindings) == 1
+            return (
+                len(bindings) == 1
+                and _kobo_legacy_session_cas_unset(
+                    self, session, identity_id=pinned[0],
+                )
+            )
         except (AttributeError, TypeError, ValueError, ProviderConfigurationError):
             return False
 

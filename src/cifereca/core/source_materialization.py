@@ -128,6 +128,19 @@ def _source(broker, source_id, *, allow_canonical=False):
     _require(len(session_accounts) == 1 and session_accounts[0].unique_id == account.unique_id, "ambiguous_account")
     _require(sum(a.provider_id == "kobo" and a.credential_id == account.credential_id
                  for a in service.accounts) == 1, "ambiguous_account")
+    if not has_complete_delivery_abi(session):
+        # A configured source-wide CAS policy, even OFF or unreadable,
+        # supersedes the old manually confirmed W2 backup grant. Even
+        # allow_canonical=True cannot skip this when prepare first probes
+        # a partial ABI; refuse before reading its provider manifest.
+        from .source_sync_consent import read_policy, scope_for_account
+        try:
+            legacy_unset = (
+                read_policy(service.storage, scope_for_account(account)).mode == "unset"
+            )
+        except Exception:
+            legacy_unset = False
+        _require(legacy_unset, "canonical_source_policy_configured")
     _require(not service.storage.metadata_get("identity-directory-migration-v1"), "directory_migration_pending")
     roots = _roots(service, account.identity_id)
     for root in roots:
