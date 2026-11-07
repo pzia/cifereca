@@ -23,7 +23,12 @@ qui protège la collision de propriétaire :
   métadonnées historiques (titre, couverture, date, statut, etc.) ;
 - si le statut demeure `complete|ok`, passer par
   `_check_kobo_legacy_canonical_owner` (veto négatif sur les collisions)
-  et **ne pas appeler `_mirror_backup_row`** ;
+  puis exécuter le **préflight en lecture seule** de
+  `_mirror_backup_row(..., archive_only=True)` : conservation de
+  tous les contrôles du reçu canonique (`CompletedDelivery`
+  JSON unique/borné, statut cohérent, propriétaire exact), **sans**
+  entrer dans ses `INSERT/UPDATE` de droits, artefacts, placements,
+  catalogue ou acquisitions ;
 - sur une première réception depuis `acquiring` ou sur une édition
   sans archive précédente, conserver temporairement le miroir W1 pour
   ne pas interrompre la seule voie de reprise 0.7 restante ;
@@ -53,3 +58,16 @@ utilise SQLite v14 et contrôle que :
 
 Le contrat cible l'**écriture canonique** et complète la réduction du
 compteur de présence W2 de #4990, sans modifier ses fichiers Core-A.
+
+## Échec de la première CI et correction
+
+Le premier HEAD `6f52057` a échoué sur **3 tests** (18 626 réussis) :
+le retour anticipé supprimait aussi deux contrôles négatifs d'un
+journal `canonical.completed-delivery.v1` malformé/contradictoire, et
+un ancien test attendait encore la réécriture du placeholder canonique
+sur une archive sans preuve A→B. La voie finale réutilise la phase de
+validation déjà présente dans `_mirror_backup_row`, en mode
+`archive_only` qui court-circuite uniquement ses mutations positives.
+Le test de catalogue conserve désormais sa projection canonique initiale,
+son propriétaire et son SHA, tout en acceptant la mise à jour descriptive
+de l'archive 0.7. Les tests de refus canonical JSON restent inchangés.
