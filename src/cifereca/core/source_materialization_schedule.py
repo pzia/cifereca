@@ -78,10 +78,12 @@ def _configured_binding(service: Any, account: Any) -> bool:
     # infer legacy W2 automatic-GET consent from an old, independent ON bit.
     # Missing v2 policy retains the bounded legacy compatibility schedule.
     # A malformed/unreadable configured row is NOT equivalent to unset.
-    if upstream_id:
-        from .source_sync_consent import read_policy, scope_for_account
-        if read_policy(storage, scope_for_account(account)).mode != "unset":
-            return False
+    # An empty upstream ID is a valid, exact primary Kobo borrower.
+    # Never skip the canonical CAS veto for that account: a configured
+    # ON/OFF/invalid policy must disable the independent legacy W2 schedule.
+    from .source_sync_consent import read_policy, scope_for_account
+    if read_policy(storage, scope_for_account(account)).mode != "unset":
+        return False
     connections = [
         row for row in storage.provider_connections(identity_id=identity)
         if row.get("provider_id") == "kobo" and row.get("credential_id") == credential
