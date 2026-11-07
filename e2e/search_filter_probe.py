@@ -199,6 +199,23 @@ def main() -> int:
     def verify_local_facets():
         """#3687: GTK facettes disponibles, sans appel fournisseur ni mutation."""
         from cifereca.gui.query_controls import LocalQueryControls
+        from cifereca.gui.master_detail import MasterDetailPage
+
+        # Real Gtk.Label + real shared MasterDetailPage counting method.
+        # A filter that hides every loaded item still reports the observed
+        # total; a genuinely empty source reports no stale total.
+        count_label = Gtk.Label()
+        count_page = SimpleNamespace(
+            store=SimpleNamespace(get_n_items=lambda: 0),
+            count_label=count_label, _total_count=0,
+            _count_total_only=False,
+            _item_count_label=MasterDetailPage._item_count_label,
+        )
+        MasterDetailPage._update_count(count_page, 7)
+        assert count_label.get_label() == "0 / 7 éléments"
+        MasterDetailPage._update_count(count_page, 0)
+        assert count_label.get_label() == ""
+        result["checks"]["zero_visible_count"] = True
 
         events = []
         local = LocalQueryControls(lambda: events.append("changed"), "Filtre local")
