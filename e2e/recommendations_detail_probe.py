@@ -167,6 +167,14 @@ def main():
         phase = report.get("p1_1354_phase")
         if type(phase) is str and phase in allowed:
             print("P1_1354_CLOSED_FAILURE_STAGE=" + phase, flush=True)
+        # Only a fixed vocabulary leaves the private GTK runner; never
+        # stringify provider errors, account IDs or the failing callback.
+        phase_4664 = report.get("p1_4664_phase")
+        if phase_4664 in {
+            "setup", "button", "key", "holdings", "download",
+            "obtain", "unavailable",
+        }:
+            print("P1_4664_CLOSED_FAILURE_STAGE=" + phase_4664, flush=True)
         report["status"] = "FAIL"
         report["error"] = str(exc)
         report["traceback"] = traceback.format_exc(limit=6)
