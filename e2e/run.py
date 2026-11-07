@@ -651,7 +651,8 @@ def main() -> int:
                     # raw GTK error/callback output remains private.
                     prior_stages = frozenset({
                         "probe_start", "initial", "long_detail", "scrolled",
-                        "exact_setup", "exact_button", "exact_focus", "exact_key",
+                        "exact_setup", "exact_button", "exact_overflow",
+                        "exact_overflow_ready", "exact_focus", "exact_key",
                         "exact_page_focus", "exact_page_key", "exact_page_verdict",
                         "exact_verdict", "exact_key_dispatch", "exact_navigation",
                         "exact_selection", "exact_no_search", "return_list",
