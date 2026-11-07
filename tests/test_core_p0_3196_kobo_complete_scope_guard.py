@@ -86,7 +86,8 @@ def test_legacy_complete_backup_still_accepts_trusted_flat_library_file(
     )
     try:
         result = service.sync_kobo_backup()
-        assert result["unchanged"] == 1
+        assert result["unchanged"] == 0
+        assert result["reconcile_pending"] >= 1
         assert result["attempted"] == result["downloaded"] == 0
         assert path.read_bytes() == payload
     finally:

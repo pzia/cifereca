@@ -138,7 +138,8 @@ def test_b_independent_kobo_receipt_can_explicitly_link_received_bytes_and_resyn
         # Same B entitlement/edition + already verified local bytes: no
         # second download, no duplicate placement and no transfer of A rights.
         second = service.sync_kobo_backup_account("vault-b")
-        assert second["unchanged"] == 1
+        assert second["unchanged"] == 0
+        assert second["reconcile_pending"] >= 1
         assert second["attempted"] == second["downloaded"] == 0
         assert len([p for p in service.storage.placements()
                     if p.get("identity_id") == "bob"]) == 1

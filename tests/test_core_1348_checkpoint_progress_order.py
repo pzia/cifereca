@@ -132,9 +132,10 @@ def test_checkpoint_write_failure_cannot_advertise_completed_item(tmp_path, monk
         # The item's durable row is still safe to reuse after recovery.
         monkeypatch.setattr(service.storage, "metadata_set", real_set)
         resumed = service.sync_kobo_backup_account("vault-1")
-        assert resumed["status"] == "complete"
+        assert resumed["status"] == "attention_required"
         assert resumed["attempted"] == 0
-        assert resumed["unchanged"] == 1
+        assert resumed["unchanged"] == 0
+        assert resumed["reconcile_pending"] == 1
         assert calls == ["good"]
     finally:
         service.close()
@@ -171,9 +172,10 @@ def test_large_manifest_resumes_after_117_without_redownloading(tmp_path, monkey
         # a second GET for this one without an explicit reconciliation.
         assert resumed["status"] == "attention_required"
         assert resumed["downloaded"] == 404
-        assert resumed["unchanged"] == 117
+        assert resumed["unchanged"] == 0
         assert resumed["attempted"] == 404
-        assert resumed["reconcile_pending"] == resumed["reconcile_skipped"] == 1
+        # 117 physically intact v0.7 receipts + 1 interrupted GET: none is B.
+        assert resumed["reconcile_pending"] == resumed["reconcile_skipped"] == 118
         assert len(downloaded) == len(set(downloaded)) == 521
         assert "book-0117" not in downloaded
         interrupted_row = service.storage.backup_get(
@@ -216,11 +218,12 @@ def test_resume_after_mid_manifest_checkpoint_failure_reuses_prior_files(tmp_pat
         assert json.loads(service.storage.metadata_get(key))["processed"] == 117
         monkeypatch.setattr(service.storage, "metadata_set", original_set)
         resumed = service.sync_kobo_backup_account("vault-1")
-        assert resumed["status"] == "complete"
+        assert resumed["status"] == "attention_required"
         assert resumed["attempted"] == 12
-        assert resumed["unchanged"] == 118
+        assert resumed["unchanged"] == 0
+        assert resumed["reconcile_pending"] == 118
         assert len(attempts) == len(set(attempts)) == 130
-        assert json.loads(service.storage.metadata_get(key))["status"] == "complete"
+        assert json.loads(service.storage.metadata_get(key))["status"] == "attention_required"
     finally:
         service.close()
 
@@ -258,9 +261,9 @@ def test_resume_after_closing_and_reopening_sqlite_service(tmp_path, monkeypatch
         result = second.sync_kobo_backup_account("vault-1")
         assert result["status"] == "attention_required"
         assert result["downloaded"] == 4
-        assert result["unchanged"] == 4
+        assert result["unchanged"] == 0
         assert result["attempted"] == 4
-        assert result["reconcile_pending"] == result["reconcile_skipped"] == 1
+        assert result["reconcile_pending"] == result["reconcile_skipped"] == 5
         assert len(downloaded) == len(set(downloaded)) == 8
         assert "book-0004" not in downloaded
         persisted = second.storage.backup_get("kobo", "vault-1", "book-0004")
@@ -338,9 +341,9 @@ def test_three_kobo_accounts_resume_only_interrupted_credential(tmp_path, monkey
         resumed = service.sync_kobo_backup_account("vault-2")
         assert resumed["status"] == "attention_required"
         assert resumed["downloaded"] == 404
-        assert resumed["unchanged"] == 117
+        assert resumed["unchanged"] == 0
         assert resumed["attempted"] == 404
-        assert resumed["reconcile_pending"] == resumed["reconcile_skipped"] == 1
+        assert resumed["reconcile_pending"] == resumed["reconcile_skipped"] == 118
         assert len(downloads) == len(set(downloads)) == 535
         assert "b-0117" not in downloads
         for credential, identity, expected in (

@@ -79,9 +79,10 @@ def test_cancel_between_books_persists_checkpoint_and_restart_resumes_only_missi
     monkeypatch.setattr(restarted, "_execute_kobo_acquisition", _fake_acquirer(resumed_calls))
     try:
         resumed = restarted.sync_kobo_backup_account("vault-1")
-        assert resumed["status"] == "complete"
+        assert resumed["status"] == "attention_required"
         assert restarted._kobo_backup_account_due("vault-1") is False
-        assert resumed["unchanged"] == 1
+        assert resumed["unchanged"] == 0
+        assert resumed["reconcile_pending"] >= 1
         assert resumed["downloaded"] == 2
         assert resumed["attempted"] == 2
         assert resumed_calls == ["item-2", "item-3"]

@@ -376,7 +376,8 @@ def test_backup_refreshes_cover_metadata_without_redownload(tmp_path: Path, monk
     try:
         summary = service.sync_kobo_backup()
 
-        assert summary["unchanged"] == 1
+        assert summary["unchanged"] == 0
+        assert summary["reconcile_pending"] >= 1
         assert summary["downloaded"] == 0
         assert summary["metadata_refreshed"] == 1
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
@@ -424,7 +425,8 @@ def test_missing_vault_cover_does_not_erase_existing_cover(tmp_path: Path, monke
     try:
         summary = service.sync_kobo_backup()
 
-        assert summary["unchanged"] == 1
+        assert summary["unchanged"] == 0
+        assert summary["reconcile_pending"] >= 1
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert row is not None
         assert row["cover_url"] == "https://cdn.example/existing.jpg"
