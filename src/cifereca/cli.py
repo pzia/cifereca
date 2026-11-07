@@ -226,6 +226,18 @@ def main(argv: list[str] | None = None) -> int:
         "--confirm-reauthorized", action="store_true",
         help="Je confirme avoir réautorisé/reconnecté ce compte avant le réessai de scope",
     )
+    # P0 #4858 D3: one edition only, using Core's same selected-offer A->B.
+    # The legacy kobo-resume command stays isolated from this route.
+    selected_kobo = sub.add_parser(
+        "kobo-sync-edition",
+        help="Livraison canonique d'une édition Kobo exacte (consentement requis)",
+    )
+    selected_kobo.add_argument("--credential", required=True)
+    selected_kobo.add_argument("--item", required=True)
+    selected_kobo.add_argument(
+        "--confirm", action="store_true",
+        help="Je confirme la livraison de cette édition par le Core",
+    )
     directory = sub.add_parser("identity-directory", help="Change le dossier d’une identité avec fusion et rescan")
     directory.add_argument("identity_id", nargs="?")
     directory.add_argument("directory_name", nargs="?")
@@ -453,6 +465,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 2
 
+    if a.cmd == "kobo-sync-edition":
+        # No Core startup or provider I/O for unconfirmed CLI invocations.
+        if not a.confirm or a.account or a.username:
+            print(json.dumps({
+                "status": "failed",
+                "code": ("explicit_edition_confirmation_required" if not a.confirm
+                         else "legacy_account_selector_unsupported"),
+            }))
+            return 2
+
     if a.cmd == "acquisition-audit":
         if a.username or a.account or not a.identity or not a.provider:
             print(json.dumps({"status": "failed", "code": "source_scope_required"}))
@@ -504,6 +526,26 @@ def main(argv: list[str] | None = None) -> int:
     core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
     service = core.library
     try:
+        if a.cmd == "kobo-sync-edition":
+            from .core.canonical_kobo_selected import SelectedKoboRejected
+            try:
+                # Reuse the existing exact-credential connect gate, never
+                # connect every Kobo account or infer source from an item.
+                # No provider activity happens without CLI --confirm.
+                service.connect_kobo_preview(a.credential)
+                result = service.synchronize_kobo_selected_edition(
+                    a.credential, a.item, explicit_user_action=True,
+                )
+            except SelectedKoboRejected as exc:
+                result = {"status": "failed", "ok": False, "changed": 0,
+                          "reason": exc.code}
+            except Exception:
+                # Provider errors can contain URLs, paths and private account
+                # names. Never emit their original messages.
+                result = {"status": "failed", "ok": False, "changed": 0,
+                          "reason": "selected_delivery_unavailable"}
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["ok"] else 2
         if a.cmd == "acquisition-audit":
             from types import SimpleNamespace
             from .core.sync_cli_contract import SyncSelectionError, require_unique_sync_account
