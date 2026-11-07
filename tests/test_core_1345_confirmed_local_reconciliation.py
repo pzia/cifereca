@@ -57,7 +57,7 @@ def _dump(case):
 
 
 def _run(case, **kwargs):
-    return repair.reconcile_kobo_local(case.service, **{**case.options, **kwargs})
+    return repair._historical_reconcile_kobo_local(case.service, **{**case.options, **kwargs})
 
 
 def _apply(case):
@@ -742,7 +742,7 @@ def crash(db,table,row,previous):
  original(db,table,row,previous)
  os._exit(17)
 m._write_row=crash
-m.reconcile_kobo_local(service,**options)
+m._historical_reconcile_kobo_local(service,**options)
 '''
     result = subprocess.run([sys.executable, "-c", script, str(case.tmp),
                              json.dumps({**case.options, "confirmation": plan["plan_token"]})],
