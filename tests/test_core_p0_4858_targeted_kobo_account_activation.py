@@ -192,3 +192,65 @@ def test_partial_abi_connect_preserves_existing_kobo_legacy_behavior(
         assert service._source_context_epoch == epoch
     finally:
         service.close()
+
+
+def test_confirmed_resume_cli_from_local_only_core_reaches_canonical_dispatch(
+    rig, monkeypatch, capsys,
+):
+    """Real v14 Core registry/dispatcher, mocked B executor; no provider GET."""
+    import json
+    from types import SimpleNamespace
+    from cifereca import cli
+    from cifereca.core.source_sync_consent import policy_key, scope_for_account
+
+    service, session = rig
+    # Only the local account is registered before the confirmed CLI call.
+    assert not any(row.provider_id == "kobo" for row in service.accounts)
+    assert session.accounts[0].identity_id == "default"
+    owner_before = service.primary
+    initial_accounts = tuple(service.accounts)
+    calls = []
+
+    def sync(account, control=None):
+        calls.append(account)
+        assert account is service.accounts[-1]
+        assert account.identity_id == "alice"
+        return {
+            "provider": "kobo", "account_id": account.unique_id,
+            "status": "success",
+            "canonical_execution": {
+                "downloaded": 0, "recovered": 0, "present_attested": 1,
+                "pending": 0, "blocked": 0, "failed": 0,
+                "cancelled": 0, "skipped_archived": 0, "inactive": 0,
+            },
+        }
+
+    monkeypatch.setattr(service, "sync_source_enabled", lambda row: row.provider_id == "kobo")
+    monkeypatch.setattr(service, "synchronize_account_source", sync)
+    # Configure an explicit, revocable source-wide ON for the exact borrower.
+    account = session.accounts[0]
+    account_scope = ProviderRightsScope("alice", "kobo", "vault-1", account.unique_id)
+    service.storage.metadata_set(
+        policy_key(account_scope),
+        json.dumps({
+            "schema": "cifereca.source-sync-consent/1",
+            "scope": ["alice", "kobo", "vault-1", account.unique_id],
+            "enabled": True, "revision": "a" * 32,
+        }),
+    )
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: SimpleNamespace(library=service, close=lambda: None),
+    )
+    result = cli.main([
+        "kobo-resume", "--credential", "vault-1", "--confirm-downloads",
+    ])
+    parsed = json.loads(capsys.readouterr().out)
+    assert result == 0 and parsed["status"] == "complete"
+    assert parsed["downloaded"] == 0
+    assert calls == [service.accounts[-1]]
+    assert tuple(service.accounts[:len(initial_accounts)]) == initial_accounts
+    assert service.primary is owner_before
+    assert service.current_account is owner_before
+    assert service.storage.backup_list() == []
+    assert service.storage.placements() == []
