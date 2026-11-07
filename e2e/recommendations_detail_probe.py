@@ -305,6 +305,17 @@ def main():
         assert view._generation == generation and not state["searches"]
         report["checks"]["P1_4761_shared_local_field_filter_gtk"] = True
         report["checks"]["P1_4761_local_field_filter_reversible"] = True
+        # #4761: an edited affinity threshold is itself a visible local
+        # filter and must disappear from the count when reset to its default.
+        view._score.set_value(95)
+        assert store.get_n_items() == 0
+        assert "0 sur 3" in view._summary.get_text()
+        assert "Affinité ≥ 95" in view._summary.get_text()
+        view._score.set_value(15)
+        assert store.get_n_items() == 3
+        assert "Affinité ≥" not in view._summary.get_text()
+        assert view._generation == generation and not state["searches"]
+        report["checks"]["P1_4761_affinity_filter_count_reversible_gtk"] = True
         view._ranked.pop()
         view._reload_document_choices()
         view._render()
