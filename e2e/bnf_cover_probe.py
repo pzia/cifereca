@@ -33,7 +33,6 @@ import httpx
 from PIL import ImageGrab
 
 from cifereca.core import CiferecaCore
-from cifereca.models import Loan
 from cifereca.gui.book_widgets import CoverView
 from cifereca.gui.main_window import MainWindow
 from cifereca.gui.query_model import QueryState
@@ -111,6 +110,41 @@ def main() -> int:
 
     session = bnf.BnfProviderSession(
         client=Client(), credential_id="bnf-e2e", label="BnF synthetic",
+        credentials={"username": "synthetic", "password": "synthetic"},
+        options={},
+    )
+    # The SAME provider's real Login -> active-loan HTML -> Loan projector
+    # supplies the GTK loan rows. The client is a no-network fixture:
+    # no SSO, image, ACSM, token or rights request leaves the process.
+    loan_activity = '<section class="active-loans">' + ''.join(
+        '<div class="js-loan"><a href="/resources/' + resource + '">'
+        'Synthetic ' + resource
+        + (f'<img class="cover" src="{COVERS[index]}">' if index < 2 else '')
+        + '</a><a href="/loans/synthetic-loan-' + resource + '">'
+        'Fichier</a></div>'
+        for index, resource in enumerate(RESOURCES)
+    ) + '</section>'
+    loan_calls: list[str] = []
+
+    class LoanClient:
+        def login(self, username, password):
+            assert username == password == "synthetic"
+            loan_calls.append("login")
+            return loan_activity
+
+        def activity(self):
+            loan_calls.append("activity")
+            return loan_activity
+
+        def clear(self):
+            pass
+
+        def close(self):
+            pass
+
+    loan_session = bnf.BnfProviderSession(
+        client=LoanClient(), credential_id="bnf-e2e-loans",
+        label="BnF loans synthetic",
         credentials={"username": "synthetic", "password": "synthetic"},
         options={},
     )
@@ -307,20 +341,29 @@ def main() -> int:
         window = app_window[0]
         identity = window.service.current_identity
         assert identity is not None and identity.identity_id
-        # The exact BnF Loan model is the same contract consumed by the real
-        # Mes emprunts controller. No upstream borrow, refresh or cover GET.
-        loans = [
-            Loan(
-                id="synthetic-loan-" + resource, provider="BNF_PRET",
-                medium="digital", record_id=resource,
-                title="Synthetic " + resource,
-                author="Author " + resource,
-                thumbnail_url=COVERS[index] if index < 2 else None,
-                source_provider="bnf-pret", source_credential="bnf-e2e",
-                source_account_id="borrower-1", identity_id=identity.identity_id,
-            )
-            for index, resource in enumerate(RESOURCES)
-        ]
+        # Execute the real BnF borrower/session parser and Loan projector,
+        # not a hand-written Loan DTO or cross-book title-based cover match.
+        account, = loan_session.connect()
+        account.identity_id = identity.identity_id
+        loans = loan_session.loans(account)
+        assert len(loans) == len(RESOURCES) == 3
+        assert loan_calls == ["login", "activity"]
+        assert {
+            (loan.record_id, loan.thumbnail_url)
+            for loan in loans
+        } == {
+            (RESOURCES[0], COVERS[0]),
+            (RESOURCES[1], COVERS[1]),
+            (RESOURCES[2], None),
+        }
+        assert all(
+            loan.identity_id == identity.identity_id
+            and loan.source_credential == "bnf-e2e-loans"
+            and loan.source_account_id == account.unique_id
+            and loan.id == "synthetic-loan-" + loan.record_id
+            for loan in loans
+        )
+        report["checks"]["real_bnf_provider_to_scoped_loan_projection"] = True
         window._populate_loans(loans)
         window.navigate("loans")
         await_condition(
@@ -393,6 +436,8 @@ def main() -> int:
         report["checks"]["missing_cover_no_image_get"] = True
         report["checks"]["cache_shared_search_detail"] = True
         report["checks"]["cache_shared_loans"] = True
+        assert loan_calls == ["login", "activity"]
+        report["checks"]["no_external_bnf_provider_io"] = True
         report["checks"]["missing_loan_cover_no_image_get"] = True
         report["checks"]["no_credential_or_token_network"] = True
         report["status"] = "PASS"
@@ -464,6 +509,7 @@ def main() -> int:
             patch_search.stop()
             try:
                 session.close()
+                loan_session.close()
             finally:
                 core.close()
             Gio.Application.do_shutdown(self)

@@ -54,7 +54,20 @@ def test_p1_4118_bnf_real_gtk_search_detail_two_cover_acceptance():
     ):
         assert marker in probe
     assert "session.borrow(" not in probe
-    assert "session.connect(" not in probe
+    # The original Search/detail-only session MUST remain disconnected.
+    # P1 #3104 added one explicitly separate in-memory borrower fixture
+    # so the real provider's Loan projection can be observed in GTK.
+    assert "loan_session.connect(" in probe
+    assert "session.connect(" not in probe.replace("loan_session.connect(", "")
+    for safe_fixture_marker in (
+        "class LoanClient:",
+        "def login(self, username, password):",
+        "def activity(self):",
+        "return loan_activity",
+        'assert loan_calls == ["login", "activity"]',
+        'report["checks"]["no_external_bnf_provider_io"]',
+    ):
+        assert safe_fixture_marker in probe
 
 
 def test_1127_real_gtk_llm_consent_cancel_and_lifetime_1366_1600():
