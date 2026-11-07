@@ -213,3 +213,33 @@ def test_capacity_refusal_is_atomic_and_writes_no_rights(preference_store):
     with store._lock, store._connect() as db:
         assert db.execute("SELECT count(*) FROM backup_items").fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM entitlements").fetchone()[0] == 0
+
+
+
+@pytest.mark.parametrize("ambiguous_payload", [
+    '{"schema":1,"schema":1,"revision":1,"preferences":{"artifact:one":"liked"}}',
+    '{"schema":1,"revision":1,"revision":2,"preferences":{"artifact:one":"liked"}}',
+    '{"schema":1,"revision":1,"preferences":{"artifact:one":"liked","artifact:one":"not_interested"}}',
+    '{"schema":1,"revision":1,"preferences":{"artifact:one":"liked"},"preferences":{}}',
+])
+def test_duplicate_json_keys_cannot_silently_replace_explicit_user_feedback(
+    preference_store, ambiguous_payload,
+):
+    store = preference_store
+    first = _change(store, "alice", key="artifact:one",
+                    preference="liked", revision=0)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "UPDATE metadata SET value=? WHERE key LIKE 'reading.preference.v1:%'",
+            (ambiguous_payload,),
+        )
+    with pytest.raises(ValueError, match="reading_preference_state_invalid"):
+        preference_snapshot(store, "alice")
+    with pytest.raises(ValueError, match="reading_preference_state_invalid"):
+        _change(store, "alice", key="artifact:one",
+                preference="not_interested", revision=first.revision)
+    # Rejected CAS writes cannot normalize or replace conflicting evidence.
+    with store._lock, store._connect() as db:
+        assert db.execute(
+            "SELECT value FROM metadata WHERE key LIKE 'reading.preference.v1:%'"
+        ).fetchone()[0] == ambiguous_payload
