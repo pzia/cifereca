@@ -73,17 +73,18 @@ def observed_cross_profile_borrow_progress(
             bindings = service.storage.provider_connections(
                 identity_id=a.identity_id,
             )
-            return (
-                type(bindings) is list and len(bindings) <= 512
-                and sum(
-                    type(binding) is dict
-                    and binding.get("identity_id") == a.identity_id
-                    and binding.get("provider_id") == a.provider_id
-                    and binding.get("credential_id") == a.credential_id
-                    and binding.get("enabled") is True
-                    for binding in bindings
-                ) == 1
-            )
+            if type(bindings) is not list or len(bindings) > 512:
+                return False
+            exact = [
+                binding for binding in bindings
+                if type(binding) is dict
+                and binding.get("identity_id") == a.identity_id
+                and binding.get("provider_id") == a.provider_id
+                and binding.get("credential_id") == a.credential_id
+            ]
+            # Even one enabled + one disabled duplicate is ambiguous: the
+            # read model must never choose the convenient historical row.
+            return len(exact) == 1 and exact[0].get("enabled") is True
 
         # The source may be disabled while an old positive receipt remains
         # durable. Do not expose its state to a different profile.
