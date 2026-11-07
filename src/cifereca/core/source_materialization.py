@@ -85,7 +85,7 @@ class MaterializationPlans:
         return row
 
 
-def _source(broker, source_id):
+def _source(broker, source_id, *, allow_canonical=False):
     # No fallback to the selected account, and no implicit connection.
     try:
         rows = [row for row in broker.service.accounts if broker._source_id(row) == source_id]
@@ -110,7 +110,7 @@ def _source(broker, source_id):
     # acquisition through the legacy, backup_items-authoritative worker.
     # Check on BOTH preview and execution, including an ABI added after a
     # confirmation token was issued.
-    _require(not has_complete_delivery_abi(session),
+    _require(allow_canonical or not has_complete_delivery_abi(session),
              "canonical_source_delivery_active")
     session_accounts = session.accounts
     _require(len(session_accounts) == 1 and session_accounts[0].unique_id == account.unique_id, "ambiguous_account")
@@ -221,10 +221,161 @@ def _evidence(service, account, manifest):
     return _digest({"tables": tables, "reasons": reasons, "files": files}), counts
 
 
+
+
+def _canonical_preview(service, account):
+    """Provider A + exact Core B presence, with zero legacy writers/readers.
+
+    This fingerprint is only a one-use user confirmation constraint. It is
+    never an admission to GET or a substitute for SourceReference/OriginLink.
+    The final Sync re-observes the resource, offer, consent and account under
+    its own acquisition lock.
+    """
+    from .rights_snapshot_read import read_account_rights_snapshot
+    from .convergence_verified_presence import plan_existing_verified_presence
+    snapshot = read_account_rights_snapshot(service, account)
+    _require(snapshot.status in {"success", "partial"}
+             and snapshot.branch
+             and snapshot.scope.identity_id == account.identity_id
+             and snapshot.scope.provider_id == account.provider_id
+             and snapshot.scope.credential_id == account.credential_id
+             and snapshot.scope.account_id == account.unique_id,
+             "canonical_observation_unavailable")
+    # Only supplier-authenticated positives enter a canonical plan. A failed,
+    # ambiguous or partially paginated source is never interpreted negatively.
+    _require(all(row.provider_attested for row in snapshot.rights),
+             "canonical_observation_unavailable")
+    plan = plan_existing_verified_presence(
+        service.storage, snapshot, library_root=service.library_dir(),
+    )
+    rows = sorted((
+        row.edition_id, row.right_id, row.kind, row.state,
+        row.provider_revision_id, row.evidence_kind,
+        row.delivery, row.delivery_unavailable_reason,
+    ) for row in snapshot.rights)
+    fingerprint = _digest({
+        "scope": [account.identity_id, account.provider_id,
+                  account.credential_id, account.unique_id],
+        "branch": snapshot.branch, "status": snapshot.status,
+        "coverage": snapshot.coverage, "items": rows,
+    })
+    counts = {name: 0 for name in _COUNTS}
+    counts["already_local_verified"] = sum(
+        d.provider_satisfied for d in plan.decisions
+    )
+    counts["potentially_missing"] = sum(
+        not d.provider_satisfied and d.state not in {
+            "inactive", "skipped_archived",
+        } for d in plan.decisions
+    )
+    counts["skipped_archived"] = sum(
+        d.state == "skipped_archived" for d in plan.decisions
+    )
+    return fingerprint, counts
+
+
+def _execute_canonical(broker, source_id, token, *, control=None):
+    """Consume one typed preview, then invoke exactly ONE Core source Sync.
+
+    A Core Sync owns its own acquisition lock. Releasing our preview lock
+    before that call avoids recursive locks; its session/consent/offer/B
+    publication admission is independent of this non-authoritative preview.
+    """
+    from .source_sync_consent import read_policy, scope_for_account
+    try:
+        with InterProcessLock(acquisition_lock_file()):
+            account, session, scope, configuration = _source(
+                broker, source_id, allow_canonical=True,
+            )
+            _require(has_complete_delivery_abi(session),
+                     "canonical_source_delivery_active")
+            stored = broker._materialization_plans.take(token, scope)
+            _require(type(stored[2]) is str
+                     and stored[2].startswith("canonical:")
+                     and type(stored[3]) is tuple and len(stored[3]) == 3
+                     and stored[3][1] == "canonical",
+                     "confirmation_unavailable")
+            policy = read_policy(
+                broker.service.storage, scope_for_account(account),
+            )
+            _require(policy.mode == "on"
+                     and policy.revision == stored[3][2],
+                     "canonical_consent_changed")
+            _require(configuration == stored[3][0], "source_changed")
+            fresh, _ = _canonical_preview(broker.service, account)
+            _require(stored[2] == "canonical:" + fresh, "preview_changed")
+            current = _source(broker, source_id, allow_canonical=True)
+            _require(current[1] is session
+                     and current[2:] == (scope, configuration),
+                     "source_changed")
+            _require(read_policy(
+                broker.service.storage, scope_for_account(account)
+            ).revision == policy.revision, "canonical_consent_changed")
+    except LockBusyError:
+        return _result("acquisition_busy")
+    except _Rejected as exc:
+        return _result(str(exc))
+    except Exception:
+        return _result("canonical_preflight_unavailable")
+
+    try:
+        # This broker method dispatches Core's canonical selected-offer
+        # executor under a fresh lock; NEVER call the legacy W2 worker.
+        report = broker.synchronize_source(source_id, control=control)
+        execution = getattr(report, "facts", {}).get("canonical_execution")
+        if (type(execution) is not dict
+                or set(execution) != {
+                    "downloaded", "recovered", "present_attested", "pending",
+                    "blocked", "failed", "cancelled", "skipped_archived",
+                    "inactive",
+                }
+                or any(type(n) is not int or n < 0 or n > 1_000_000
+                       for n in execution.values())):
+            # Successful inventory alone is not a completed delivery.
+            return _result("canonical_execution_unavailable")
+        downloaded = execution["downloaded"]
+        status = ("success" if report.ok
+                  and not any(execution[x] for x in (
+                      "pending", "blocked", "failed", "cancelled",
+                  )) else "partial")
+        return _result(
+            status, ok=status == "success", changed=downloaded,
+            counts=execution, execution_path="canonical",
+        )
+    except Exception:
+        return _result("canonical_execution_unavailable")
+
+
 def prepare(broker, source_id):
     try:
         with InterProcessLock(acquisition_lock_file()):
-            account, session, scope, configuration = _source(broker, source_id)
+            account, session, scope, configuration = _source(
+                broker, source_id, allow_canonical=True,
+            )
+            if has_complete_delivery_abi(session):
+                # Manual confirmation for a modern Kobo source must reuse the
+                # same Core A->B executor as Sync, never the 0.7 backup writer.
+                from .source_sync_consent import read_policy, scope_for_account
+                policy = read_policy(broker.service.storage, scope_for_account(account))
+                _require(policy.mode == "on" and type(policy.revision) is str,
+                         "canonical_source_delivery_active")
+                fingerprint, counts = _canonical_preview(broker.service, account)
+                current = _source(broker, source_id, allow_canonical=True)
+                _require(current[1] is session and current[2:] == (scope, configuration),
+                         "source_changed")
+                _require(read_policy(
+                    broker.service.storage, scope_for_account(account)
+                ).revision == policy.revision, "source_changed")
+                token = broker._materialization_plans.put(
+                    scope, "canonical:" + fingerprint,
+                    (configuration, "canonical", policy.revision),
+                )
+                return _result(
+                    "prepared", ok=True, counts=counts, confirmation_token=token,
+                    expires_in_seconds=_TTL, requires_explicit_confirmation=True,
+                    acquisition_authorized=False, manifest_refreshed=True,
+                    execution_path="canonical",
+                )
             manifest, manifest_hash = _manifest(session)
             evidence, counts = _evidence(broker.service, account, manifest)
             _require(_source(broker, source_id)[2:] == (scope, configuration), "source_changed")
@@ -241,6 +392,18 @@ def prepare(broker, source_id):
 
 
 def execute(broker, source_id, token, control=None):
+    # A v2/v1 complete delivery ABI has a single Core A->B writer. An old
+    # legacy token must not get a second 0.7 GET after an ABI upgrade.
+    try:
+        account, session, _, _ = _source(
+            broker, source_id, allow_canonical=True,
+        )
+        if has_complete_delivery_abi(session):
+            return _execute_canonical(broker, source_id, token, control=control)
+    except _Rejected as exc:
+        return _result(str(exc))
+    except Exception:
+        return _result("source_unavailable")
     downloaded = 0
     durable_downloaded = 0
     attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
