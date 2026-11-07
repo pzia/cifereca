@@ -566,6 +566,8 @@ def test_774_recommendations_e2e_closed_focus_geometry_diagnostics():
     for marker in (
         '"P1_774_CLOSED_FAILURE_STAGE=" + phase',
         '"P1_774_NUMERIC_" + key',
+        '"P1_774_PROBE_LINE=" + str(line)',
+        'report["p1_774_probe_line"] = frames[-1]',
         '"keyboard_focus", "keyboard_type", "keyboard_verdict"',
         'report["p1_774_geometry"] = {',
         'and all(type(value) is int and 0 <= value <= 4096',
