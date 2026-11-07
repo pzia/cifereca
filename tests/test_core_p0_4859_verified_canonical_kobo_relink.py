@@ -145,7 +145,10 @@ def test_unattested_or_poisoned_B_cannot_be_promoted(corrupt, fixture_b):
         elif corrupt == "missing_origin":
             db.execute("DELETE FROM origin_links WHERE origin_kind='provider'")
         elif corrupt == "origin_not_provider":
-            db.execute("UPDATE origin_links SET origin_kind='manual' WHERE origin_kind='provider'")
+            # Published origin coordinates are protected by an immutable SQL
+            # trigger. Removing that supplier proof is the valid negative
+            # case; do not mutate an OriginLink into a different origin_kind.
+            db.execute("DELETE FROM origin_links WHERE origin_kind='provider'")
         elif corrupt == "wrong_owner":
             db.execute("UPDATE placements SET identity_id='other' WHERE placement_id=?", (pid,))
         elif corrupt == "wrong_artifact":
