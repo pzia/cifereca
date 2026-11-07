@@ -57,8 +57,10 @@ domaines exclus.
 Les pages d'authentification sont un cas particulier de **protection
 commune à toutes les origines** (et non une exception fournisseur) :
 URL/redirect avec clés connues (`ticket`, `code`, `state`, `password`, etc.)
-sont expurgés de leurs valeurs avant rétention ; les corps de POST/PUT/PATCH
-et de réponse sur les routes d'authentification courantes (`/login`,
+sont expurgés de leurs valeurs avant rétention ; les champs identifiés comme
+secrets dans les corps JSON et formulaires sont masqués avant stockage, et
+les formulaires HTML susceptibles de contenir des credentials sont omis.
+Les corps de POST/PUT/PATCH et de réponse sur les routes d'authentification courantes (`/login`,
 `/oauth`, `/cas`, `/sso`, etc.) ne sont pas lus. Les autres échanges
 restent des données **privées** qui peuvent contenir des identifiants non
 reconnus : ne communiquer le ZIP direct qu'après examen et consentement.
