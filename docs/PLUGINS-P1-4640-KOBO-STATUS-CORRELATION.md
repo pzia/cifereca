@@ -1,7 +1,27 @@
 ## Diagnostic privé des URL candidates (P1 #4882, opt-in Trace)
 
 Lorsque **et seulement lorsque** le niveau de diagnostic effectif est `trace`,
-le provider Kobo écrit dans le **journal local** de Cifereca :
+le provider Kobo écrit dans le **journal local** de Cifereca.
+
+Pour une vérification **K1 exactement ciblée**, la CLI démarre normalement
+au niveau `detailed` ; le mode GUI ne se propage pas à un autre processus.
+La nouvelle option `--trace` l'active explicitement pour cette invocation
+confirmée (le niveau est restauré à la sortie) :
+
+```sh
+cifereca kobo-sync-edition --credential '<id-compte>' \\
+  --item '<id-édition-K1>' --confirm --trace
+```
+
+Pour **K3**, activer `trace` dans l'application puis lancer une
+synchronisation Kobo déjà consentie, ou utiliser la capture ciblée
+`cifereca-cli sync run --provider kobo --identity ID --credential ID
+--confirm --trace-export ... --confirm-trace-export`
+(ce ZIP contient **toute** la trace HTTP privée, distincte du simple journal).
+La qualification K3 demeure un POST descriptif, **sans téléchargement**.
+
+Format attendu du journal :
+
 
 ```text
 TRACE kobo private_candidate_url phase=offer product_id='...' candidate_index=0 handling=kobo_kdrm url='https://...?...'
