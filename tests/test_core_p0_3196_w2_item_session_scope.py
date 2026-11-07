@@ -13,7 +13,7 @@ import pytest
 from tests.test_kobo_backup_reconcile_prune import _manifest_row, _service
 
 
-@pytest.mark.parametrize("change", ("borrower", "disconnect", "owner", "epoch"))
+@pytest.mark.parametrize("change", ("borrower", "disconnect", "owner", "disabled", "epoch"))
 def test_progress_scan_rebind_aborts_before_any_legacy_item_write(
     tmp_path, monkeypatch, change,
 ):
@@ -34,6 +34,11 @@ def test_progress_scan_rebind_aborts_before_any_legacy_item_write(
             service.storage.provider_connection_put({
                 "identity_id": "other", "provider_id": "kobo",
                 "credential_id": "vault-1",
+            })
+        elif change == "disabled":
+            service.storage.provider_connection_put({
+                "identity_id": "default", "provider_id": "kobo",
+                "credential_id": "vault-1", "enabled": False,
             })
         else:
             session._epoch = 123
