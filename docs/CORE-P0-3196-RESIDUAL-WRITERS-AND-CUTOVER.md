@@ -49,6 +49,17 @@ dans `tests/test_core_p0_3196_sync_retirement_integration.py`.
 
 **Mise à jour W1 (06/11/2026) :** le checkpoint Kobo `skipped_archived` ne déclenche plus `_mirror_backup_row` lors de `backup_put`, même avec `identity_id/account_id` renseignés. L'archive reste dans `backup_items`, avec contrôle transactionnel de collision d'owner. Aucun nouveau droit, ledger, Artifact, Placement ou catalogue ne peut être créé/rafraîchi par cet état d'archivage. **Les statuts `reconcile_required` et `reconcile_conflict` conservent temporairement le miroir W1** : la première CI a révélé 46 échecs et 11 erreurs sur W4/confirmation et leurs consommateurs lorsqu'il était supprimé sans remplacement. Ils doivent être migrés avec W4, pas coupés isolément. Les autres états Kobo et fournisseurs restent compatibles. Aucune ancienne projection n'est supprimée. Test `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
 
+**Complément W1 (07/11/2026) — connexion désactivée :** pour les états
+`reconcile_required` et `reconcile_conflict` sans SHA/taille exploitables,
+la présence d'une liaison historique dans `provider_connections` ne suffit
+plus à réactiver le miroir d'entitlement/acquisition. La liaison
+`identity/credential` doit être **activée** dans la transaction de
+`backup_put`. Le reçu `backup_items` reste consultable et les garde-fous
+de collision d'owner restent actifs. Les dossiers avec empreinte et taille
+historiques complètes, W4 et les autres statuts demeurent dans le périmètre
+de migration ; ce n'est pas une preuve de droit ni un retrait global W1.
+Tests : `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
+
 **Mise à jour W3 (06/11/2026) :** l'intégralité du prune Kobo est retirée, y compris pour les enregistrements `pending` sans aucune preuve ; les détails historiques de garde W3 ci-dessous décrivent les protections antérieures désormais subsumées par la conservation de *toutes* les lignes. La migration transactionnelle seule pourra décider du retrait d'une archive.
 
 **Complément W2/W3 — orphelins avec indices d'octets :** un ancien enregistrement Kobo sans `local_path` mais avec `sha256` non vide et/ou `size` positive reste consultable après un manifeste sans l'édition. Ce sont des indices historiques, pas des fichiers attestés ni des droits. À la réapparition de l'édition, W2 reconnaît aussi `error`/`pending` portant ces indices, **fige la révision acquise**, conserve SHA/taille et impose `reconcile_required` sans GET automatique. Ce garde de conservation/quarantaine n'efface rien et ne réalise pas le cutover ; tests SQLite et service sans fournisseur réel dans `tests/test_core_p0_3196_w3_orphaned_byte_evidence.py`.
