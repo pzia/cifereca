@@ -159,3 +159,41 @@ def test_real_dimension_assertions_publish_only_the_last_completed_check(
     assert 'PRIVATE' not in repr(evidence)
     assert 'geometry' not in evidence
 
+
+
+
+@pytest.mark.parametrize(
+    "marker, expected",
+    [
+        ("native_declaration_revoked_verified", "declaration_revoked_verified"),
+        ("native_declaration_cleanup_started", "declaration_cleanup_started"),
+        ("native_declaration_cleanup_done", "declaration_cleanup_done"),
+        ("native_declaration_attested_started", "attested_started"),
+        ("native_declaration_attested_fixture_ready", "attested_fixture"),
+        ("native_declaration_attested_audit_complete", "attested_audit"),
+        ("native_declaration_attested_right_ready", "attested_right"),
+    ],
+)
+def test_774_attested_maintenance_phase_is_closed_boolean_only(
+    tmp_path, marker, expected,
+):
+    scenario = "maintenance-tools-1366"
+    source = tmp_path / "summary.json"
+    source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+    report = tmp_path / scenario / scenario / "screen.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({
+        "checks": {
+            "native_declaration_revoked": True,
+            marker: True,
+            "native_declaration_attested_right_ready": "PRIVATE_NOT_A_BOOLEAN",
+        },
+        "error": "PRIVATE_SIGNED_URL",
+        "failure_stack": "/home/private/SECRET",
+    }))
+    row = exporter.safe_summary(source)["results"][0]
+    assert row["maintenance_last_safe_checkpoint"] == expected
+    assert set(row) == {
+        "scenario", "status", "returncode", "maintenance_last_safe_checkpoint",
+    }
+    assert "PRIVATE" not in repr(row)
