@@ -2206,6 +2206,34 @@ class Storage:
                              "AND enabled<>1 LIMIT 1",
                              (merged.get("credential_id"),),
                          ).fetchone() is not None
+                         # An enabled connection can be rebound from
+                         # historical owner A to B. A stale 0.7 receipt for
+                         # A then remains an archive, never a fresh right.
+                         or db.execute(
+                             "SELECT 1 FROM provider_connections "
+                             "WHERE provider_id='kobo' AND credential_id=? "
+                             "AND identity_id<>? LIMIT 1",
+                             (merged.get("credential_id"),
+                              merged.get("identity_id")),
+                         ).fetchone() is not None
+                         # An exact Kobo borrower mapping, when present,
+                         # supersedes the unscoped 0.7 account claim. Do not
+                         # reclassify a foreign account as an acquisition;
+                         # historical rows without a mapping remain readable.
+                         or (db.execute(
+                             "SELECT 1 FROM provider_accounts "
+                             "WHERE provider_id='kobo' AND credential_id=? "
+                             "LIMIT 1",
+                             (merged.get("credential_id"),),
+                         ).fetchone() is not None
+                             and db.execute(
+                                 "SELECT 1 FROM provider_accounts "
+                                 "WHERE provider_id='kobo' AND credential_id=? "
+                                 "AND identity_id=? AND account_id=? LIMIT 1",
+                                 (merged.get("credential_id"),
+                                  merged.get("identity_id"),
+                                  merged.get("account_id")),
+                             ).fetchone() is None)
                          # #3196 W1 after W4 retirement: a
                          # reconcile_required/conflict 0.7 checkpoint is
                          # never independent provider A evidence, even with
