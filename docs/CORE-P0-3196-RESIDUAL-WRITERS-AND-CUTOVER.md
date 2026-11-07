@@ -111,10 +111,11 @@ ne remplace pas la suppression de l'autorité historique W5 après le cutover
 #4858/#4859.
 
 **W5 — retrait des réécritures de localisateur archivées Kobo
-(07/11/2026) :** `Storage.commit_directory_migration` conserve désormais
-**exactement** les champs `backup_items.local_path` et `updated_at`
-d'une ligne Kobo 0.7 pendant un changement de dossier, qu'il s'agisse
-d'une migration de profil ou d'une entrée de fichier. Une ancienne
+(07/11/2026) :** `Storage.commit_directory_migration` **et**
+`Storage.relocate_local_path` conservent désormais **exactement**
+`backup_items.local_path` et `updated_at` d'une ligne Kobo 0.7
+pendant un changement de dossier de profil, d'entrée de fichier ou
+un renommage local direct. Une ancienne
 déclaration de chemin ne prouve pas l'existence d'un nouveau fichier :
 c'est un reçu historique, pas un Placement canonique. Les autres
 fournisseurs conservent la réécriture compatible de leurs chemins ;
