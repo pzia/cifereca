@@ -493,6 +493,12 @@ def main():
         assert query.entry.get_text() == "Livre B"
         assert store.get_n_items() == 1
         assert store.get_item(0).title == "Livre B"
+        # Closed-source-line assertions separate an inconsistent *model* from
+        # a stale summary: no titles, account IDs or actual query are logged.
+        assert len(view._ranked) == 3
+        assert view._score.get_value() == 15
+        assert view._local_filter_state()[0] == "Livre B"
+        assert sum(1 for ranked in view._ranked if view._matches(ranked)) == 1
         assert "1 sur 3" in view._summary.get_text()
         assert "Livre B" in view._summary.get_text()
         assert view._generation == state["p1_774_filter_generation"]
