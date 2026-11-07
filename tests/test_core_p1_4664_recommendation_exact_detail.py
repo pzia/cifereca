@@ -152,6 +152,46 @@ def test_rebound_search_result_cannot_publish_stale_actions(monkeypatch):
     assert f.outputs == []
 
 
+@pytest.mark.parametrize("mutation", ["replace", "remove", "invalid_cache"])
+def test_queued_loaded_detail_never_fetches_after_search_row_revocation(
+    monkeypatch, mutation,
+):
+    """A queued worker must not fetch holdings after Core Search replaces it."""
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    if mutation == "replace":
+        f.window.search_objects["paris:search-1"] = _source()
+    elif mutation == "remove":
+        del f.window.search_objects["paris:search-1"]
+    else:
+        f.window.search_objects = []
+    with pytest.raises(Cancelled):
+        work()
+    assert f.calls == []
+    success(f.detail)
+    failure(RuntimeError("stale provider response"))
+    assert f.outputs == []
+
+
+def test_worker_loaded_row_check_does_not_query_gtk_search_filters(monkeypatch):
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("worker must not access GTK Search state")
+    monkeypatch.setattr(port, "loaded_notice_key", forbidden)
+    assert work() is f.detail
+    assert len(f.calls) == 1
+
+
+def test_loaded_detail_already_fetched_refuses_replaced_search_row(monkeypatch):
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    assert work() is f.detail
+    f.window.search_objects["paris:search-1"] = _source()
+    success(f.detail)
+    assert len(f.calls) == 1 and f.outputs == []
+
+
 def test_hidden_or_ambiguous_route_cannot_schedule_or_publish(monkeypatch):
     f = _fixture(monkeypatch)
     f.loaded[0] = False
