@@ -554,6 +554,48 @@ def test_1599_recommendations_real_gtk_identity_and_local_isbn_action():
         assert marker in probe
 
 
+def test_774_recommendations_e2e_closed_focus_geometry_diagnostics():
+    """Only bounded diagnostic evidence may reach public CI."""
+    import ast
+    runner = (ROOT / "e2e/run.py").read_text(encoding="utf-8")
+    probe = (ROOT / "e2e/recommendations_detail_probe.py").read_text(
+        encoding="utf-8"
+    )
+    ast.parse(runner)
+    ast.parse(probe)
+    for marker in (
+        '"P1_774_CLOSED_FAILURE_STAGE=" + phase',
+        '"P1_774_NUMERIC_" + key',
+        '"keyboard_focus", "keyboard_type", "keyboard_verdict"',
+        'report["p1_774_geometry"] = {',
+        'and all(type(value) is int and 0 <= value <= 4096',
+    ):
+        assert marker in runner + probe
+    assert 'print("P1_774_RAW_FAILURE' not in runner
+
+
+def test_774_real_gtk_recommendations_asserts_native_keyboard_and_geometry():
+    import ast
+    probe = (ROOT / "e2e/recommendations_detail_probe.py").read_text(
+        encoding="utf-8"
+    )
+    ast.parse(probe)
+    for marker in (
+        'assert image.size == (args.width, expected_height)',
+        'window_width, window_height = window.get_width(), window.get_height()',
+        'assert args.width - 100 <= window_width <= args.width',
+        'state["device"].click_widget(query.entry)',
+        'state["device"].type_text("Livre B")',
+        'assert query.entry.has_focus()',
+        'assert query.entry.get_text() == "Livre B"',
+        'assert store.get_n_items() == 1',
+        'assert view._generation == state["p1_774_filter_generation"]',
+        'report["checks"]["P1_774_real_gtk_xtest_keyboard_local_filter"] = True',
+        'capture("00b-keyboard-local-filter")',
+    ):
+        assert marker in probe
+
+
 def test_2027_numilog_consent_e2e_failures_have_stage_and_geometry_evidence():
     """Keep the real GTK assertions; failures must identify their exact gate."""
     import ast
