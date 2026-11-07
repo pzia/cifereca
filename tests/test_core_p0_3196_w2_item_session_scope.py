@@ -147,3 +147,37 @@ def test_rebind_at_delivery_keeps_interrupted_receipt_without_false_complete(
         assert service.storage.backup_get("kobo", "vault-1", "book-1")["status"] != "complete"
     finally:
         service.close()
+
+
+
+def test_declared_presence_verification_cannot_replace_outer_session_guard(
+    tmp_path, monkeypatch,
+):
+    """W2 epoch check survives the nested declared-presence callback."""
+    from cifereca.core import library_declared_links, library_declared_presence
+
+    service = _service(tmp_path, manifest=[_manifest_row()])
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    monkeypatch.setattr(
+        library_declared_links, "has_active_declared_link",
+        lambda *_a, **_kw: True,
+    )
+
+    def verify_and_rebind(*_args, **_kwargs):
+        session._epoch = 42
+        return SimpleNamespace(status="unverified")
+
+    monkeypatch.setattr(
+        library_declared_presence, "verify_declared_presence", verify_and_rebind,
+    )
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_a, **_kw: pytest.fail("stale declaration must not GET"),
+    )
+    try:
+        report = service.sync_kobo_backup_account("vault-1")
+        assert report["status"] == "aborted"
+        assert report["attempted"] == report["downloaded"] == 0
+        assert service.storage.backup_list("kobo", "vault-1") == []
+    finally:
+        service.close()
