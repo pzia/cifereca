@@ -553,6 +553,77 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     return session
 
 
+def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
+    """Connect ONE Kobo source and activate its exact *existing* Core binding.
+
+    Unlike connect_configured this never modifies provider_connections or
+    provider_accounts and never connects another source. Unlike a passive
+    Kobo preview, a confirmed canonical GET needs its Account registered in
+    service.accounts with the very same Account object held by the session.
+    A "default" provider identity is only a legacy model placeholder: the
+    enabled SQLite connection and borrower independently determine the owner.
+    """
+    from .canonical_delivery_abi import has_complete_delivery_abi
+
+    session = connect_kobo_preview(self, credential_id)
+    if not has_complete_delivery_abi(session):
+        # Preserve the legacy Kobo resume and readonly-preview behavior on
+        # partial ABIs; never fabricate a typed right/offer by registration.
+        return session
+    accounts = session.accounts
+    if (len(accounts) != 1 or type(accounts[0]) is not Account
+            or session.connected is not True
+            or session.provider_id != "kobo"
+            or session.credential_id != credential_id):
+        raise ProviderConfigurationError("kobo_canonical_account_unavailable")
+    account = accounts[0]
+    owner = self.storage.identity_for_connection("kobo", credential_id)
+    if (type(owner) is not str or not owner
+            or account.provider_id != "kobo"
+            or account.credential_id != credential_id
+            or type(account.unique_id) is not str
+            or account.identity_id not in {owner, "default"}
+            or self.identity_by_id(owner) is None
+            or self.storage.provider_scope_account_bound(
+                identity_id=owner, provider_id="kobo",
+                credential_id=credential_id, account_id=account.unique_id,
+            ) is not True):
+        raise ProviderConfigurationError("kobo_canonical_account_unavailable")
+    # Existing Core accounts MUST refer to this same source; do not replace
+    # or silently reassign a credential selected by another identity.
+    existing = [
+        row for row in self.accounts
+        if type(row) is Account and row.provider_id == "kobo"
+        and row.credential_id == credential_id
+    ]
+    if (len(existing) > 1
+            or (existing and (
+                existing[0].identity_id != owner
+                or existing[0].unique_id != account.unique_id
+            ))):
+        raise ProviderConfigurationError("kobo_canonical_account_ambiguous")
+
+    # Validate the provider's live roster again immediately before binding.
+    # All subsequent A/selected-GET/B operations independently re-admit the
+    # exact session, borrower, enabled Core source and revocable policy.
+    if (self._sessions.get(self._session_key("kobo", credential_id)) is not session
+            or len(session.accounts) != 1
+            or session.accounts[0] is not account
+            or session.connected is not True):
+        raise ProviderConfigurationError("kobo_canonical_account_changed")
+    account.identity_id = owner
+    if existing:
+        # A normal connected Core can have a distinct same-scoped Account
+        # object. Keep it: the rights reader checks the exact scope, while
+        # session.accounts binds the live authenticated borrower separately.
+        pass
+    else:
+        self.accounts.append(account)
+    # Revoke any stale in-memory admitted source from before this new bind.
+    self._source_context_epoch += 1
+    return session
+
+
 # Closed reason vocabulary: provider exception text, types, URLs and tokens
 # are NEVER forwarded into the raw journal. A recognized provider error.code
 # can explain a failed authentication without exposing its response body.
