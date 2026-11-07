@@ -119,7 +119,8 @@ def test_render_with_invalid_source_revokes_stale_selection_and_actions():
     instance = view(sources=[[Secret()]])
     instance._ranked = [item()]
     instance._ranked_by_key = {"old": instance._ranked[0]}
-    instance._exact_notice_state = {"key": "old"}
+    instance._exact_notice_state = {"key": "old", "identity": "alice"}
+    instance.selected_identity_id = lambda: "alice"
     instance._detail_selection_generation = 7
     instance._provisional_active = False
     instance._reset_llm_selection = lambda _key: None
