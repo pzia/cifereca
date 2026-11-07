@@ -34,5 +34,10 @@ Recherche conserve son compteur métier `Connu/Étendu`, sans renommer les
   à 2/3 puis 3/3, changement de résultat, mode total seul.
 - `e2e/search_filter_probe.py` : vraie `Gtk.Label` sous Xvfb et méthode
   commune de rendu, vérification du total affiché à zéro puis retiré.
-- Qualifier ensuite dans #774 les largeurs GTK effectives 1024/1366/1600,
-  le clavier/focus des filtres et la juxtaposition des deux pages.
+- `e2e/recommendations_detail_probe.py` : vrai panneau Recommandations,
+  champ Titre ne correspondant à aucun des trois livres, contrôle conjoint
+  du compteur local `0 sur 3` et du compteur de liste `0 / 3 éléments`.
+  La commande GTK « Effacer les filtres » restitue trois éléments et
+  `3 élément(s)`, sans accroître le numéro de génération ni rechercher un fournisseur.
+- Qualifier ensuite dans #774 la largeur GTK **effective** 1024/1366/1600,
+  la navigation clavier/focus complète et la juxtaposition des deux pages.
