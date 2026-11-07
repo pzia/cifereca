@@ -141,3 +141,73 @@ def test_recovery_disconnected_current_session_cannot_change_its_checkpoint(tmp_
         assert service.storage.backup_get("kobo", "vault-1", "disconnected") == before
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("switch", ("disconnect", "disable", "epoch", "typed"))
+def test_recovery_refuses_source_changed_during_candidate_scan(
+    tmp_path, monkeypatch, switch,
+):
+    """No stale W2 row can advance after the source check but before SQL."""
+    from cifereca.core.kobo_backup import _KoboLegacySessionChanged
+
+    service = _service(tmp_path, manifest=[])
+    try:
+        record = _interrupted("vault-1", "interrupted")
+        service.storage.backup_put(record)
+        before = service.storage.backup_get("kobo", "vault-1", "interrupted")
+        session = next(iter(service._sessions.values()))
+        original_scan = service._kobo_record_candidate_paths
+        mutation_done = False
+
+        def scan_then_change(*args, **kwargs):
+            nonlocal mutation_done
+            if not mutation_done:
+                mutation_done = True
+                if switch == "disconnect":
+                    session.connected = False
+                elif switch == "disable":
+                    service.storage.provider_connection_put({
+                        "identity_id": "default", "provider_id": "kobo",
+                        "credential_id": "vault-1", "enabled": False,
+                    })
+                elif switch == "epoch":
+                    service._source_context_epoch = (
+                        getattr(service, "_source_context_epoch", 0) + 1
+                    )
+                else:
+                    # Another borrower/Core pipeline publishes an exact
+                    # typed edition while the legacy candidate is scanned.
+                    with service.storage._lock, service.storage._connect() as db:
+                        db.execute(
+                            "INSERT INTO source_references("
+                            "source_reference_id,identity_id,provider_id,"
+                            "credential_id,account_id,branch_id,edition_id,"
+                            "right_id,reference_kind,created_at,updated_at)"
+                            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            (
+                                "source:concurrent", "other", "kobo",
+                                "vault-1", "borrower-b", "owned",
+                                "interrupted", "right-b", "purchase", 1, 1,
+                            ),
+                        )
+                        db.commit()
+            return original_scan(*args, **kwargs)
+
+        monkeypatch.setattr(
+            service, "_kobo_record_candidate_paths", scan_then_change,
+        )
+        with pytest.raises(
+            _KoboLegacySessionChanged,
+            match=(
+                "kobo_canonical_source_delivery_active"
+                if switch == "typed" else "kobo_legacy_session_changed"
+            ),
+        ):
+            _recover_only(service)
+
+        assert mutation_done
+        assert service.storage.backup_get(
+            "kobo", "vault-1", "interrupted",
+        ) == before
+    finally:
+        service.close()
