@@ -1140,3 +1140,120 @@ def test_real_chromium_static_flood_retains_ten_json_and_late_post(
     finally:
         stored.trace.destroy()
         trace.destroy()
+
+
+def test_real_chromium_two_consented_normal_origins_are_equally_observed(
+    fake_bookstore, monkeypatch,
+):
+    """Real headed Chromium, fictitious HTTPS-equivalent origins, no replay.
+
+    Loopback HTTP is accepted only by this test's explicit site_origin
+    override. Production still requires HTTPS domain origins.
+    """
+    from playwright.sync_api import sync_playwright
+    from browser_recorder_vault import _record
+    import browser_recorder_zip as zip_module
+
+    server, _stop, calls = fake_bookstore
+    primary = f"http://127.0.0.1:{server.server_port}"
+    visited = []
+    secret = "SYNTHETIC-PRIVATE-RETURN-TICKET"
+
+    class ExtraHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_args):
+            pass
+
+        def do_GET(self):
+            path = urlsplit(self.path).path
+            visited.append(path)
+            if path == "/step":
+                code, body, mime = 302, b"", "text/plain"
+                location = "/catalogue?ticket=" + secret
+            elif path == "/catalogue":
+                code, body, mime = 200, b'{"books":[{"title":"fictional"}]}', "application/json"
+                location = None
+            elif path == "/login":
+                code, body, mime = 200, b'<form><input name="password" value="SYNTHETIC-SECRET"></form>', "text/html"
+                location = None
+            else:
+                code, body, mime, location = 404, b"", "text/plain", None
+            self.send_response(code)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(body)))
+            if location:
+                self.send_header("Location", location)
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+            self.wfile.flush()
+
+    secondary_server = ThreadingHTTPServer(("127.0.0.1", 0), ExtraHandler)
+    secondary_server.daemon_threads = True
+    thread = Thread(target=secondary_server.serve_forever, daemon=True)
+    thread.start()
+    secondary = f"http://127.0.0.1:{secondary_server.server_port}"
+    original_site_origin = http_recorder.site_origin
+
+    def test_site_origin(url):
+        parsed = urlsplit(url)
+        if (parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+                and not parsed.username and not parsed.password):
+            if parsed.port == server.server_port:
+                return primary
+            if parsed.port == secondary_server.server_port:
+                return secondary
+        return original_site_origin(url)
+
+    monkeypatch.setattr(http_recorder, "site_origin", test_site_origin)
+    monkeypatch.setattr(zip_module, "site_origin", test_site_origin)
+    trace = http_recorder.PrivateHttpTrace((primary, secondary))
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=False)
+            try:
+                ctx = browser.new_context(service_workers="block")
+                try:
+                    ctx.on("request", trace.request)
+                    ctx.on("response", trace.response)
+                    ctx.on("requestfinished", trace.finished)
+                    ctx.on("requestfailed", trace.failed)
+                    primary_page = ctx.new_page()
+                    primary_page.goto(primary + "/welcome", wait_until="load")
+                    extra_page = ctx.new_page()
+                    extra_page.goto(secondary + "/step?genre=novel", wait_until="load")
+                    extra_page.wait_for_timeout(200)
+                    extra_page.goto(secondary + "/login?code=SYNTHETIC-SECRET", wait_until="load")
+                    extra_page.wait_for_timeout(200)
+                finally:
+                    ctx.close()
+            finally:
+                browser.close()
+        primary_rows = [e for e in trace.exchanges if e.url.startswith(primary)]
+        extra_rows = [e for e in trace.exchanges if e.url.startswith(secondary)]
+        assert primary_rows and extra_rows
+        assert any(e.mime == "text/html" and e.response_body for e in primary_rows)
+        assert any(e.mime == "application/json" and e.response_body
+                   and "fictional" in e.response_body for e in extra_rows)
+        assert any(e.status == 302 and e.redirect_to
+                   and "ticket=REDACTED" in e.redirect_to for e in extra_rows)
+        assert any(e.url.endswith("ticket=REDACTED") for e in extra_rows)
+        auth = [e for e in extra_rows if "/login" in e.url]
+        assert len(auth) == 1
+        assert auth[0].response_body_reason == "auth_redacted"
+        assert auth[0].response_body is None
+        assert not any(e.metadata_only for e in trace.exchanges)
+        assert {"/step", "/catalogue", "/login"}.issubset(set(visited))
+        assert all(e.url == "" or secret not in e.url for e in trace.exchanges)
+        assert secret not in _record(trace, "f" * 32, "completed").decode()
+        counts = trace.coverage_by_origin()
+        assert counts[primary]["requests"] >= 1
+        assert counts[secondary]["requests"] >= 3
+        assert counts[secondary]["text_responses"] >= 1
+        assert calls.count(("GET", "/welcome")) == 1
+    finally:
+        trace.destroy()
+        secondary_server.shutdown()
+        secondary_server.server_close()
+        thread.join(timeout=3)
