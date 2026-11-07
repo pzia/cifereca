@@ -1657,6 +1657,21 @@ class LibraryService:
                 holdings=[], source_provider="numilog",
                 source_credential="__public__",
             )
+        if (item.source_provider == "kobo"
+                and type(item.metadata) is dict
+                and item.metadata.get("catalogue_access") == "shared_read_only"):
+            # Public-only Kobo discovery does not license a foreign-account
+            # holdings or delivery GET, even when the same session is online.
+            return ItemDetail(
+                record_id=item.record_id, docbase=item.docbase,
+                title=item.title, author=item.author,
+                type=item.type, year=item.published_at,
+                thumbnail_url=item.thumbnail_url,
+                availability_status="unknown",
+                availability_label="Catalogue Kobo partagé · droits non consultés",
+                holdings=[], source_provider="kobo",
+                source_credential=item.source_credential,
+            )
         # An authenticated Paris catalogue may be browsed from another local
         # profile, but GetRecord/holdings may contain borrower-specific
         # CanLoan or availability. Never call B's account or reuse a cached
