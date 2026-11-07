@@ -232,6 +232,12 @@ def main():
             ranked("edition-c", "Livre C", "9780140328721", score=60, provider="third"),
         ]
         view._ranked[0].item["thumbnail_url"] = COVER_URL
+        view._ranked[0].item["metadata"] = {
+            "subjects": ["Astronomie"], "series": "Planètes",
+        }
+        view._ranked[1].item["metadata"] = {
+            "subjects": ["Navigation"], "series": "Océans",
+        }
         view._reload_providers((
             ("fixture", "Premier"), ("second", "Deuxième"), ("third", "Troisième"),
         ))
@@ -275,7 +281,26 @@ def main():
         assert view._generation == generation and not state["searches"]
         report["checks"]["shared_document_filters_are_local"] = True
         report["checks"]["shared_document_counter_reversible_gtk"] = True
+        # #4761: Search's SAME "Champ" dropdown is visible in the local
+        # recommendation controls. Switching title -> subject -> all
+        # only refilters existing rows, never requests the catalogue.
+        assert query.field.get_visible()
+        query.field.set_selected(4)  # Champ · Sujet
+        query.entry.set_text("astronomie")
+        assert store.get_n_items() == 1
+        assert store.get_item(0).title == "Livre A"
+        assert "Champ · Sujet" in view._summary.get_text()
+        query.field.set_selected(1)  # Champ · Titre
+        assert store.get_n_items() == 0
+        assert "0 sur 3" in view._summary.get_text()
+        assert "Champ · Titre" in view._summary.get_text()
+        query.entry.set_text("")
+        query.field.set_selected(0)  # Tous les champs (legacy title/author)
         assert store.get_n_items() == 3
+        assert query.active_document_labels() == ()
+        assert view._generation == generation and not state["searches"]
+        report["checks"]["P1_4761_shared_local_field_filter_gtk"] = True
+        report["checks"]["P1_4761_local_field_filter_reversible"] = True
         view._ranked.pop()
         view._reload_document_choices()
         view._render()
