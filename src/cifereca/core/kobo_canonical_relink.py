@@ -197,7 +197,10 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
         json.dumps(plan, ensure_ascii=True, separators=(",", ":"), default=list)
         .encode("utf-8"),
     ).hexdigest()
-    return token, old_path, before, signatures, directories[0], source_ref, artifact[0]
+    return (
+        token, old_path, before, signatures, directories[0],
+        source_ref, artifact[0], source[2], origin[0][1],
+    )
 
 
 def relink_verified_canonical_kobo(
@@ -240,7 +243,8 @@ def relink_verified_canonical_kobo(
                 "canonical_relink_scope_unavailable",
             )
             (token, old_path, observed, signatures,
-             owner_folder, source_ref, artifact_sha) = _inspect(
+             owner_folder, source_ref, artifact_sha,
+             source_evidence, origin_evidence) = _inspect(
                 db, library_root=library_root, scope=scope,
                 edition_id=edition_id, right_id=right_id,
                 branch_id=branch_id, placement_id=placement_id,
@@ -285,7 +289,7 @@ def relink_verified_canonical_kobo(
             # SQL triggers or injected maintenance must not transform a
             # canonical origin into an unrelated claim inside this transaction.
             source_now = db.execute(
-                "SELECT state,evidence_kind FROM source_references "
+                "SELECT state,evidence_kind,evidence_ref FROM source_references "
                 "WHERE source_reference_id=? AND identity_id=? "
                 "AND provider_id='kobo' AND credential_id=? AND account_id=? "
                 "AND branch_id=? AND edition_id=? AND right_id=? "
@@ -294,14 +298,18 @@ def relink_verified_canonical_kobo(
                  branch_id, edition_id, right_id),
             ).fetchall()
             origin_now = db.execute(
-                "SELECT 1 FROM origin_links WHERE origin_kind='provider' "
+                "SELECT evidence_ref FROM origin_links WHERE origin_kind='provider' "
                 "AND identity_id=? AND artifact_id=? AND source_reference_id=? "
                 "AND typeof(evidence_ref)='text' AND evidence_ref!='' LIMIT 2",
                 (identity_id, "sha256:" + artifact_sha, source_ref),
             ).fetchall()
             _require(
-                source_now == [("active", "provider_response")]
-                and len(origin_now) == 1
+                source_now == [("active", "provider_response", source_evidence)]
+                and origin_now == [(origin_evidence,)]
+                and db.execute(
+                    "SELECT directory_name FROM identities WHERE identity_id=?",
+                    (identity_id,),
+                ).fetchall() == [(owner_folder,)]
                 and _exact_borrower_bound_in_db(db, scope)
                 and _same_file(new_path, observed)
                 and (_directory_signature(library_root.resolve(strict=True)),
