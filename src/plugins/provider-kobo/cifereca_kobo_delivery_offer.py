@@ -89,6 +89,34 @@ def _kdrm_raw_type(value: Any) -> bool:
     )
 
 
+def effective_kobo_media_format(candidate: Any) -> str:
+    """Bounded Kobo-only presentation of the *explicit* media format (#4640).
+
+    Only KDRM + explicitly media=unknown / source=FLEPUB is presumed EPUB
+    under the owner's 2026-11-07 decision. The original Vault descriptor is
+    never mutated and does not itself grant rights or a runnable DRM recipe.
+    This same helper is used for offer IDs, the exact candidate and runtime.
+    """
+    if type(candidate) is not dict:
+        return ""
+    original = candidate.get("media_format")
+    if type(original) is not str:
+        return ""
+    media = original.strip().casefold()
+    if media != "unknown":
+        return media
+    source = candidate.get("source_format")
+    drm = candidate.get("drm")
+    raw = (drm.get("raw_type") if type(drm) is dict
+           else candidate.get("drm_type"))
+    if (candidate.get("handling") == "kobo_kdrm"
+            and _kdrm_raw_type(raw)
+            and type(source) is str
+            and source.strip().casefold() == "flepub"):
+        return "epub"
+    return media
+
+
 def kdrm_runtime_ready(session: object) -> bool:
     """Positive capability for Kobo KDRM; never probe private data."""
     try:
@@ -382,7 +410,12 @@ def exact_kobo_offer_id(
                                 for v in declared)):
             skip("candidate_format_missing_or_invalid")
             continue
-        fmt = declared[0].strip().lower()
+        # The canonical media presentation must match both the unique
+        # offer hash and the eventual selected-candidate/runtime adapter.
+        # A missing/empty/other media label is never inferred from FLEPUB.
+        fmt = (effective_kobo_media_format(candidate)
+               if type(candidate.get("media_format")) is str
+               else declared[0].strip().lower())
         source = candidate.get("source")
         if source is None and type(candidate.get("kobo")) is dict:
             source = candidate["kobo"].get("source")
