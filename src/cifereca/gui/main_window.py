@@ -264,7 +264,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---------- infrastructure ----------
     def _install_css(self) -> None:
         return shell_stylesheet_controller.install_css(
-            self, Gtk=Gtk, Gdk=Gdk,
+            self, Gtk=Gtk, Gdk=Gdk, Adw=Adw,
         )
 
     def _cancel_notification_hide(self) -> None:
