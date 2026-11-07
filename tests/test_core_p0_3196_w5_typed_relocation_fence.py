@@ -89,7 +89,8 @@ def test_unrelated_typed_source_preserves_legacy_rename_compatibility(
         )
         updated = store.backup_get("kobo", "vault", "edition-a")
         assert updated["identity_id"] == before["identity_id"] == "alice"
-        assert updated["local_path"] == str(new)
+        # W5: a 0.7 location remains a historical claim after a file rename.
+        assert updated["local_path"] == str(old)
         assert len(store.placements()) == 1
         assert store.placements()[0]["path"] == str(new)
     finally:
