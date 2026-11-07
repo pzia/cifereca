@@ -1164,7 +1164,7 @@ class UxRecommendationsView:
                 if field == "subject":
                     # Same one-character whole-word guard as Core Search.
                     if not all(
-                        bool(re.search(r"(?<!\\w)" + re.escape(token) + r"(?!\\w)", haystack))
+                        bool(re.search(r"(?<!\w)" + re.escape(token) + r"(?!\w)", haystack))
                         if len(token) == 1 else token in haystack
                         for token in tokens
                     ):
