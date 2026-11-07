@@ -142,6 +142,27 @@ def kdrm_delegated_runtime_ready(session: object) -> bool:
         return False
 
 
+def _candidate_url_relation(urls: list[str]) -> str:
+    """Closed structural relation only; NEVER a proof of identical bytes.
+
+    Compare already admitted HTTPS candidates in memory without resolving DNS,
+    issuing HTTP, serializing an URL or selecting any candidate.
+    """
+    if len(urls) < 2:
+        return "not_applicable"
+    try:
+        parsed = [urlsplit(url) for url in urls]
+        if len({part.netloc.casefold() for part in parsed}) != 1:
+            return "different_hosts"
+        if len({part.path for part in parsed}) != 1:
+            return "same_host_different_paths"
+        if len({(part.query, part.fragment) for part in parsed}) != 1:
+            return "same_host_path_different_query_or_fragment"
+        return "same_host_path_raw_encoding_difference"
+    except (ValueError, TypeError, AttributeError):
+        return "uncomparable"
+
+
 def exact_kobo_offer_id(
     payload: Any, *, identity_id: str, credential_id: str,
     account_id: str, product_id: str, kdrm_runtime_ready: bool = False,
@@ -554,6 +575,9 @@ def exact_kobo_offer_id(
                     "distinct_routes" if len(set(eligible)) > 1 else
                     "same_route_distinct_urls" if len(set(eligible_urls)) > 1
                     else "same_route_same_url"
+                )
+                diagnostic["candidate_url_relation"] = (
+                    _candidate_url_relation(eligible_urls)
                 )
         return reject(
             str(diagnostic.get("candidate_reason", "eligible_count_not_one"))
