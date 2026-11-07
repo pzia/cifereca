@@ -10,6 +10,10 @@ def test_multi_candidate_unknown_values_do_not_expose_secrets_or_pick_offer():
     payload = descriptor()
     first = payload["acquisition"]["candidates"][0]
     second = dict(first)
+    # A legacy/plain candidate may supply only a root source. Do not
+    # manufacture two conflicting aliases in this shape-redaction fixture:
+    # their contradiction has a separate fail-closed contract.
+    second.pop("kobo")
     second.update(
         media_format="epub", source_format="epub",
         source="other-account-private", handling="http_plain",
