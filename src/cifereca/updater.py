@@ -408,7 +408,7 @@ def _release_installed_at(release: Path) -> float | None:
     # Historic releases did not always persist the install time. The
     # directory mtime is the bounded fallback, not nested content mtimes.
     try:
-        return release.stat(follow_symlinks=False).st_mtime
+        return release.stat().st_mtime
     except OSError:
         return None
 
@@ -1426,12 +1426,36 @@ def status() -> dict[str, Any]:
             state = str(transaction.get("state") or "")
             if state in {"prepared", "applying", "restoring", "rolling_back", "restoration_incomplete"}:
                 incomplete.append({"id": str(transaction.get("id") or path.name), "state": state})
+    retained = _releases(root)
+    retention = {
+        "max_age_hours": RELEASE_RETENTION_SECONDS // 3600,
+        "minimum_generations": MIN_RETAINED_RELEASES,
+        "retained_generations": len(retained),
+        "last_cleanup_at": None,
+        "last_removed": None,
+    }
+    retention_state = root / RETENTION_STATE_FILE
+    if retention_state.is_file() and not retention_state.is_symlink():
+        try:
+            saved = json.loads(retention_state.read_text(encoding="utf-8"))
+            if type(saved) is dict:
+                if type(saved.get("last_cleanup_at")) is str:
+                    retention["last_cleanup_at"] = saved["last_cleanup_at"]
+                if type(saved.get("removed")) is int:
+                    retention["last_removed"] = saved["removed"]
+                if type(saved.get("minimum_generations")) is int:
+                    retention["effective_minimum_generations"] = max(
+                        MIN_RETAINED_RELEASES, saved["minimum_generations"],
+                    )
+        except (OSError, ValueError, UnicodeError):
+            pass  # --status must never trigger a repair or full SHA traversal.
     return {
         "ok": True,
         "install_root": str(root),
         "current": str(current or "") or None,
         "previous": str(_symlink_target(root / "previous") or "") or None,
-        "releases": [str(x) for x in _releases(root)],
+        "releases": [str(x) for x in retained],
+        "release_retention": retention,
         "launchers": {x: str(bin_dir() / x) for x in (*PUBLIC_COMMANDS, PYTHON_COMMAND)},
         "transaction": current_transaction,
         "incomplete_transactions": incomplete,
