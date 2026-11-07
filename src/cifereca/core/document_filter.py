@@ -128,7 +128,22 @@ def matches_classified_type(item: DocumentClassification, selected: str) -> bool
 
 
 def loaded_document_facets(item, formats: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
-    """Read the same support and file-format evidence used by loaded Search."""
+    """Read documentary facets without letting one bad supplier row break GTK.
+
+    A poisoned legacy metadata field or provider getter may throw while Search
+    projects formats. Unknown is the only safe result for THAT row: do not
+    reinterpret a failed classification as physical/digital or a file offer.
+    Other rows remain independently classifiable on a subsequent call.
+    """
+    try:
+        return _loaded_document_facets_unchecked(item, formats)
+    except Exception:
+        # Never stringify a supplier exception: it may contain credentials,
+        # private paths or signed URLs. This is a read-only view boundary.
+        return "unknown", ()
+
+
+def _loaded_document_facets_unchecked(item, formats: tuple[str, ...]) -> tuple[str, tuple[str, ...]]:
     from .search import available_formats, format_family, support_kind
     from ..models import SearchResult
 
