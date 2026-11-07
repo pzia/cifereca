@@ -113,3 +113,20 @@ routes `catalog` et `library` distinctes, en synchrone et progressif.
 Aucune évolution ni installation KVault, aucun essai de téléchargement et
 aucune permission ajoutée. L'identité propriétaire B conserve sa propre
 recherche privée quand B est le profil sélectionné.
+
+
+## Tranche : déconnexion et désactivation en cours de recherche
+
+La sélection initiale d'une session `connected=True` et d'un provider activé
+ne suffit pas à autoriser la publication ultérieure du résultat. Les chemins
+`search` et `search_progressive` réévaluent désormais **l'activation du
+fournisseur pour l'identité requérante** au même point de révocation que les
+leases de session, de propriétaire SQLite et de profil. Une désactivation en
+cours de requête entraîne une réponse annulée/non publiée, y compris pour les
+lots progressifs et le cache de recherche.
+
+Tests synthétiques croisés Paris / Numilog / Kobo : déconnexion avec cache
+chaud, fournisseur désactivé sur cache chaud, désactivation pendant la réponse
+fournisseur, puis reconnexion/réactivation. Les résultats admis demeurent
+`shared_read_only` ; aucun appel réel ni preuve GTK ou fournisseur n'est
+revendiqué. #4909 reste ouvert pour la recette terrain et les recommandations.
