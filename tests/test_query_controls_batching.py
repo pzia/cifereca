@@ -169,19 +169,26 @@ class QueryControlBatching(unittest.TestCase):
         source = (Path(__file__).resolve().parents[1] /
                   'src/plugins/recommendations/recommendations.py').read_text()
         tree = ast.parse(source)
+        view_class = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == 'UxRecommendationsView'
+        )
+        flush = next(
+            node for node in view_class.body
+            if isinstance(node, ast.FunctionDef) and node.name == '_flush_partial'
+        )
         calls = [
-            node for node in ast.walk(tree)
+            (node.func.attr, node.lineno)
+            for node in ast.walk(flush)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
-            and node.func.attr == '_reload_document_choices'
+            and node.func.attr in ('_set_provisional', '_reload_document_choices')
         ]
-        self.assertEqual(
-            sum(any(kw.arg == 'provisional' and isinstance(kw.value, ast.Constant)
-                    and kw.value.value is True for kw in call.keywords)
-                for call in calls),
-            1,
-        )
-        self.assertGreaterEqual(len(calls), 4)
+        self.assertEqual([name for name, _line in sorted(calls, key=lambda row: row[1])],
+                         ['_set_provisional', '_reload_document_choices'])
+        self.assertIn('provisional=bool(getattr(self, "_provisional_active", False))',
+                      source)
+        self.assertIn('def _reload_document_choices(self) -> None:', source)
 
     def test_local_choices_keep_surviving_filters_without_notifying(self):
         calls = []
