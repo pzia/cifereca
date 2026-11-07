@@ -36,9 +36,12 @@
 > `legacy_reconciliation_retired`. Les deux modes explicitement
 > sélectionnés `file_only=True` et `canonical_relink=True`
 > conservent leurs validations exactes et leurs fonctions propres.
-> L'ancienne primitive `reconcile_kobo_local` est conservée uniquement
-> pour les tests/archives tant que son retrait W4/D5 n'est pas finalisé ;
-> elle ne doit pas être utilisée par un code de production.
+> L'API directe `reconcile_kobo_local(...)` refuse elle aussi
+> immédiatement preview, confirmation et undo historiques, sans IO.
+> L'ancien exécuteur a été renommé `_historical_reconcile_kobo_local` :
+> **archive de tests seulement**, non appelé par la CLI, la GUI ou la
+> façade offline. Son code devra être supprimé lors de l'ultime retrait W1,
+> sans réintroduire de chemin de production vers le writer positif.
 
 `kobo-audit --credential CONNEXION --plan` reste un diagnostic en lecture seule.
 Ses comptes pseudonymisés et ses `case-*` éphémères ne peuvent jamais servir de
