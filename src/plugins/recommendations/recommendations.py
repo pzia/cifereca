@@ -1332,7 +1332,26 @@ class UxRecommendationsView:
         if badge is not None:
             badge.set_visible(self._provisional_active)
 
-    def _reload_providers(self, providers: tuple[tuple[str, str], ...]) -> None:
+    def _reload_providers(
+        self, providers: tuple[tuple[str, str], ...], ranked_rows=None,
+    ) -> None:
+        # The connected-provider inventory is NOT the result-set Source
+        # facet: a connected catalogue may have returned no recommendation.
+        # Supplying ranked_rows limits choices to sources actually present in
+        # this local projection; omitted means the legacy provider inventory
+        # contract for older callers/tests. Never synthesize missing sources.
+        available: set[str] | None = None
+        if ranked_rows is not None:
+            available = set()
+            rows = ranked_rows[:4096] if type(ranked_rows) in (list, tuple) else ()
+            for ranked in rows:
+                try:
+                    sources = getattr(ranked, "sources", ())
+                except Exception:
+                    continue
+                for source in _public_ranked_values(sources):
+                    if source_id := _public_candidate_text(source, limit=120):
+                        available.add(source_id)
         # Catalogue labels populate the GTK filter *before* a detail is
         # selected. Apply the same public text boundary already used by
         # _display_source; never stringify a provider object or iterate
@@ -1344,7 +1363,8 @@ class UxRecommendationsView:
             if type(entry) not in (list, tuple) or len(entry) != 2:
                 continue
             provider_id = _public_candidate_text(entry[0], limit=120)
-            if not provider_id or provider_id in seen:
+            if (not provider_id or provider_id in seen
+                    or (available is not None and provider_id not in available)):
                 continue
             label = _public_candidate_text(entry[1], limit=240) or provider_id
             seen.add(provider_id)
@@ -1632,10 +1652,10 @@ class UxRecommendationsView:
         self._diagnostic_network = snapshot.network_batches
         self._progress.set_tooltip_text(self._diagnostic_tooltip())
 
-        if snapshot.providers:
-            self._reload_providers(snapshot.providers)
-
         self._ranked = self._stable_partial(list(snapshot.ranked))
+        # Rebuild the source facet *after* replacing the partial projection.
+        # Prior connected catalogues with zero visible candidates disappear.
+        self._reload_providers(snapshot.providers, self._ranked)
         self._reload_languages(self._ranked)
         self._reload_document_choices()
         self._set_provisional(True)
@@ -2466,6 +2486,10 @@ class UxRecommendationsView:
         self._spinner.stop()
         if error or result is None:
             self._ranked = []
+            # The old result's Source/Langue facets are no longer available
+            # after a failed calculation, just like its Format/Support facets.
+            self._reload_providers((), ())
+            self._reload_languages(())
             self._reload_document_choices()
             # An error may originate in an untrusted provider or backend.
             # Never reflect raw provider messages into the GTK status/toast.
@@ -2479,7 +2503,7 @@ class UxRecommendationsView:
             return False
 
         self._ranked = list(result.ranked)
-        self._reload_providers(result.providers)
+        self._reload_providers(result.providers, self._ranked)
         self._reload_languages(self._ranked)
         self._reload_document_choices()
         if self._reference_book is None and result.profile_books:
