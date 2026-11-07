@@ -1202,6 +1202,7 @@ def main(argv: list[str] | None = None) -> int:
                     a.credential,
                     refresh_manifest=a.refresh_manifest,
                     verify_local_files=a.verify_files,
+                    offline_canonical_only=not a.refresh_manifest,
                 )
             except Exception:
                 # Diagnostic CLI boundary: provider responses, private paths,

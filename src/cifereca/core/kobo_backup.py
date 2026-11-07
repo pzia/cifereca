@@ -468,6 +468,15 @@ def _canonical_kobo_backup_offline_preview(
         raise ProviderConfigurationError("canonical_kobo_preview_unavailable") from None
     if not current():
         raise ProviderConfigurationError("canonical_kobo_preview_scope_changed")
+    return _canonical_kobo_offline_historical_report(
+        self, credential_id, identity_id, evidence,
+        verify_local_files=verify_local_files,
+    )
+
+def _canonical_kobo_offline_historical_report(
+    self, credential_id, identity_id, evidence, *, verify_local_files: bool,
+):
+    """One canonical B-only diagnostic shape for live and offline sources."""
     if (type(evidence) is not dict
             or evidence.get("scope") != "exact_source"
             or evidence.get("network") != "not_used"
@@ -511,6 +520,81 @@ def _canonical_kobo_backup_offline_preview(
             "inventory_truncated": evidence["truncated"],
         },
     }
+
+
+def _canonical_kobo_disconnected_offline_preview(
+    self, credential_id, identity_id, *, verify_local_files: bool,
+):
+    """Inspect persisted exact Kobo B without loading the provider or v0.7.
+
+    An offline account is a read-only coordinate object, never a Core
+    registration or a permission for rights A/GET. The storage join and
+    physical evidence are rechecked across the bounded canonical audit.
+    """
+    from ..models import Account
+    from .acquisition_audit import inspect_exact_source
+
+    storage = self.storage
+    epoch = source_context_epoch(self)
+    try:
+        records = storage.provider_accounts()
+        borrowers = [
+            row for row in records if type(row) is dict
+            and row.get("provider_id") == "kobo"
+            and row.get("credential_id") == credential_id
+        ]
+        if (len(borrowers) != 1
+                or borrowers[0].get("identity_id") != identity_id
+                or type(borrowers[0].get("account_id")) is not str
+                or self.identity_by_id(identity_id) is None):
+            raise ProviderConfigurationError("canonical_kobo_preview_scope_unavailable")
+        borrower = borrowers[0]["account_id"]
+        bound_id = borrowers[0].get("provider_account_id")
+        account = Account(
+            display_name="", unique_id=borrower,
+            provider_id="kobo", credential_id=credential_id,
+            provider_label="Kobo", identity_id=identity_id,
+        )
+
+        def current():
+            if (self.storage is not storage
+                    or source_context_epoch(self) != epoch
+                    or storage.identity_for_connection("kobo", credential_id) != identity_id
+                    or storage.provider_scope_account_bound(
+                        identity_id=identity_id, provider_id="kobo",
+                        credential_id=credential_id, account_id=borrower,
+                    ) is not True
+                    or self.identity_by_id(identity_id) is None):
+                return False
+            registered = [
+                row for row in storage.provider_accounts()
+                if type(row) is dict and row.get("provider_id") == "kobo"
+                and row.get("credential_id") == credential_id
+            ]
+            return bool(
+                len(registered) == 1
+                and registered[0].get("provider_account_id") == bound_id
+                and registered[0].get("identity_id") == identity_id
+                and registered[0].get("account_id") == borrower
+            )
+
+        if not current():
+            raise ProviderConfigurationError("canonical_kobo_preview_scope_unavailable")
+        evidence = inspect_exact_source(
+            storage, account,
+            library_root=self.library_dir() if verify_local_files else None,
+            verify_files=verify_local_files,
+        )
+        if not current():
+            raise ProviderConfigurationError("canonical_kobo_preview_scope_changed")
+    except ProviderConfigurationError:
+        raise
+    except Exception:
+        raise ProviderConfigurationError("canonical_kobo_preview_unavailable") from None
+    return _canonical_kobo_offline_historical_report(
+        self, credential_id, identity_id, evidence,
+        verify_local_files=verify_local_files,
+    )
 
 
 def _canonical_kobo_backup_preview(self, credential_id, identity_id, session):
@@ -636,6 +720,7 @@ def _canonical_kobo_backup_preview(self, credential_id, identity_id, session):
 def kobo_backup_preview(
     self, credential_id: str, *,
     refresh_manifest: bool = False, verify_local_files: bool = False,
+    offline_canonical_only: bool = False,
     _manifest_evidence: tuple[list, int] | None = None,
     _item_reasons: dict[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -655,6 +740,18 @@ def kobo_backup_preview(
     identity_id = self.storage.identity_for_connection("kobo", credential_id)
     if not credential_id or not identity_id:
         raise ProviderConfigurationError("Compte Kobo demandé non configuré")
+
+    # The CLI offline route never connects Kobo or promotes cached 0.7
+    # delivery statuses. Only already published Core B is audited; all
+    # acquisition-decision counters remain zero, even with verified bytes.
+    if offline_canonical_only:
+        if (refresh_manifest or _manifest_evidence is not None
+                or _item_reasons is not None):
+            raise ProviderConfigurationError("canonical_kobo_preview_scope_unavailable")
+        return _canonical_kobo_disconnected_offline_preview(
+            self, credential_id, identity_id,
+            verify_local_files=verify_local_files,
+        )
 
     session = next((
         value for value in self._sessions.values()

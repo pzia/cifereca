@@ -73,3 +73,35 @@ Recettes : `tests/test_core_p0_4858_targeted_kobo_account_activation.py`
 (sur Core initialement local-only + SQLite v14, lecture A positive,
 absence d'appel B/GET, refus profil étranger) et
 `tests/test_kobo_backup_preview_cli.py` (aucune connexion offline).
+
+
+## D1 — commande offline sans session Kobo
+
+Le mode `cifereca-cli kobo-resume-preview --credential <id>` utilise
+désormais la projection B historique **strictement canonique** même lorsque
+`CiferecaCore.open()` démarre sans session fournisseur ni compte Kobo
+inscrit au registre mémoire. Cette sélection CLI `offline_canonical_only`
+ne se substitue pas à une lecture courante des droits A et ne connecte
+**aucun** plugin.
+
+L'identité SQL doit posséder exactement un compte Kobo (y compris
+`account_id=""`), sur l'unique connexion activée. Une source ambiguë,
+désactivée, réaffectée ou dont le compte n'est plus lié répond
+`unavailable` **sans fallback vers `backup_items`**. Les preuves B
+(`SourceReference`, `OriginLink`, `Artifact`, `Placement`) sont lues en
+lecture seule, avec vérification physique SHA facultative via
+`--verify-files`, protection du répertoire propriétaire et recontrôle de la
+liaison SQL après l'audit.
+
+Le bilan est `historical_canonical_only=True`. Il rapporte séparément le
+nombre de preuves B anciennes et de copies physiquement vérifiées ; **aucun**
+compteur `already_local_verified` ni `potentially_missing` ne devient une
+permission de GET, aucun manifeste courant n'est présumé présent.
+Les autres invocations directes de `LibraryService.kobo_backup_preview`
+conservent leur comportement temporaire tant que les autres lecteurs D1–D4
+ne sont pas migrés.
+
+Tests : `tests/test_core_p0_4858_d1_canonical_offline_preview.py`
+(parcours CLI offline sur vrai Core/SQLite v14, preuve B préexistante,
+absence de connexion et de lecture `backup_items`, refus source désactivée,
+compte absent et propriétaire divergent).
