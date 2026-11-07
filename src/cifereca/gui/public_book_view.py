@@ -148,6 +148,11 @@ class PublicBookMasterDetailView:
 
         panel = self._page.detail
         panel.show_item_detail(item, detail)
+        # Search appends these Core-admitted local/open/send/owned actions
+        # after the same detail renderer. Keep that policy and its execution
+        # guards shared instead of rebuilding actions in Recommendations.
+        from .query_model import result_row
+        self._window._add_local_book_actions(panel, result_row(item))
         for section in context_sections[:16]:
             if type(section) is not DetailSection:
                 continue
