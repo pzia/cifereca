@@ -85,6 +85,26 @@ Pour les constats issus d'une **campagne exploratoire du rôle `ux`**, le backlo
 
 Cette règle ne limite **ni la création directe de tickets par `backlog` sur demande explicite, ni la remontée d'un risque grave**, et ne crée **aucune recette utilisateur préalable obligatoire** pour les merges ou clôtures de tickets implémentés. Référence : [rôle UX](ux.md#validation-utilisateur-avant-création-de-tickets-ux-p0-1449).
 
+## Découpage opératoire P0/P1 pour progresser pendant GitHub Actions
+
+**Règle Backlog de triage et d'ordonnancement, applicable à chaque revue P0/P1.** Examiner les gros tickets, leurs PR ouvertes, les chemins réellement modifiés, leurs dépendances et l'état des checks. Proposer ou créer des tickets enfants **si et seulement si** une séparation améliore le flux de livraison : lot atomique, propriétaire unique, tests et critères de réception propres, PR fusionnable indépendamment des travaux non encore intégrés. **Ne pas scinder uniquement sur une estimation de complexité, un numéro de lot ou pour gonfler la file.** Réutiliser d'abord les issues et PR déjà existantes.
+
+### Ticket parent et enfants
+
+- **Parent :** conserve le besoin métier, les critères de réception de bout en bout, la matrice des dépendances et la clôture globale. Son statut ne prouve pas la livraison des enfants.
+- **Enfant :** une résolution concrète et bornée avec rôle pilote, fichiers/contrats détenus, tests nécessaires, interdits, dépendances `blocking/blocked-by`, état `ready / doing / review-CI / blocked` et prochain handoff. Une PR principale par enfant est un objectif, pas une obligation comptable.
+- **Priorités autonomes :** ne pas recopier automatiquement le label P0/P1 du parent sur tous les enfants. P0 reste une urgence réelle ; P1 signifie tranche effectivement engagée et exécutable ; P2 est une tranche actionnable mais différée. Les comptages et quotas de promotion #4565 portent sur **toutes les issues ouvertes**, parents et enfants inclus. Ne pas déclasser mécaniquement des tickets déjà décidés par le propriétaire pour satisfaire un quota ; motiver individuellement chaque reclassement.
+- **Dépendance :** un enfant qui ne peut être intégré avant un autre peut préparer des fixtures et contrats réellement indépendants, mais ne doit pas être présenté comme `ready` pour fusion. Si aucune action utile autonome n'existe, marquer `blocked-by` sans créer artificiellement une deuxième PR. Les décisions `PU` restent suspensives et ne se contournent jamais par le découpage.
+- **Anti-concurrence :** séparer les responsabilités Core, Plugins, CoreUI, UX et CI/CD ; pas deux agents sur la même résolution, la même branche, le même contrat ou une transaction SQLite/FS indivisible. Les recouvrements de fichiers sont inspectés, pas présumés conflictuels.
+
+### Passage immédiat à la tâche suivante pendant les workflows
+
+Dès qu'une PR est soumise aux GitHub Actions, consigner dans **l'enfant** la PR, le HEAD SHA, les runs et gates attendus et l'état honnête `review-CI / pending`. **FOCUS passe immédiatement à une autre tâche P0/P1 indépendante et autorisée**, sans attendre ni sonder les Actions en boucle ; **CI/CD** suit, vérifie les gates du SHA exact, rebase si permis et fusionne. Si une PR échoue, le rôle propriétaire corrige ce lot ; les autres travaux indépendants continuent. `pending` n'autorise ni merge, ni fermeture, ni livraison déclarée.
+
+À chaque revue Backlog, maintenir une file courte d'enfants **réellement prêts** utilisables pendant les Actions ; repérer les parents dont tous les enfants sont `review/blocked`, dédupliquer, reprendre les dépendances, puis **réexaminer la priorité réelle** des parents et des enfants. Le rôle `backlog` réalise **uniquement le ticketing et le handoff**, sans code, tests, branches, PR ou merge. Références : [livraison asynchrone](../../docs/AGENT-DELIVERY-POLICY.md#enchaîner-les-opérations-pendant-lexécution-des-tests), [FOCUS](focus.md), [CI/CD](cicd.md), [coordination anti-concurrence](../../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889).
+
+---
+
 ## Coordination des résolutions et collision des PR (#889)
 
 - Avant d'attribuer un correctif, vérifier l'issue canonique, les PR ouvertes **et leurs chemins modifiés** ; dédupliquer non seulement les tickets, mais aussi les **solutions concurrentes**, y compris entre agents du même rôle.
