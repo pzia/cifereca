@@ -25,7 +25,10 @@ Avant **toute lecture** du `loan.borrow.v1:`, puis **après** lecture des
 deux checkpoints, le Core exige que le **profil demandeur reste le profil
 actif**, une seule connexion enregistrée pour
 `(identity_id, provider_id, credential_id)`, `enabled=True`, et une
-propriété/restauration de l'objet `Account` inchangées. Une liste ambiguë,
+propriété/restauration de l'objet `Account` inchangées. Les époques
+Core de contexte du lecteur et de source sont également épinglées avant
+lecture puis revérifiées, y compris pour les transitions ABA A→B→A ou
+déconnexion/reconnexion revenant au même identifiant. Une liste ambiguë,
 malformée, réaffectée ou désactivée rend uniquement le code fermé
 `lender_scope_unverified` (`loan=unknown`, `transfer=blocked`).
 Cela ne réarme jamais l'emprunt, ne purge pas le reçu historique et ne
