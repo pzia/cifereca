@@ -1189,9 +1189,15 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "kobo-resume-preview":
             try:
                 if a.refresh_manifest:
-                    # Only explicit --refresh-manifest may contact the Kobo
-                    # provider; offline preview uses persisted local state.
-                    service.connect_kobo_preview(a.credential)
+                    # Only the explicit refresh may read the remote Kobo A
+                    # inventory. A complete ABI also needs its one exact
+                    # already-bound Core Account: preview-only session
+                    # registration cannot satisfy the canonical A reader.
+                    # This memory-only bind does NOT grant GET/download:
+                    # the preview's pipeline is read-only and every actual
+                    # acquisition has independent CAS/confirmation gates.
+                    # Incomplete ABIs retain their bounded legacy preview.
+                    service.connect_kobo_canonical(a.credential)
                 result = service.kobo_backup_preview(
                     a.credential,
                     refresh_manifest=a.refresh_manifest,
