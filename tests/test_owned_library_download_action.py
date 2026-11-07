@@ -269,15 +269,25 @@ def test_p1_4664_queued_owned_download_cannot_run_or_publish_after_revocation(ch
     assert len(submissions) == 1
 
 
-def test_p1_4664_same_identity_source_lease_is_independent_from_identity_epoch():
-    window, actions, calls, submissions, _ = setup_action("numilog")
-    window._identity_context_generation = 3
-    window.service._source_context_epoch = 5
-    # Captured at widget construction: changing either is a revocation.
-    actions[0].click()
-    assert submissions == [] and calls == []
-    # New widget after reconnect captures the new source epoch.
-    window2, actions2, calls2, submissions2, target2 = setup_action("numilog")
-    window2.service._source_context_epoch = 7
-    actions2[0].click()
-    assert submissions2 == [] and calls2 == []  # old button refused
+def test_p1_4664_reconnected_source_only_allows_a_newly_rendered_owned_button():
+    window, entry, detail, actions, events, submissions, _, deps = _environment(
+        item={"provider_id": "numilog", "item_id": "book", "possessions": []},
+        local=False,
+    )
+    target = NS(identity_id="alice", provider_id="numilog", operation=None)
+    window.service._source_context_epoch = 7
+    window.service.owned_library_download_target = lambda _entry: target
+    calls = []
+    window.service.obtain_owned_library_item = (
+        lambda actual: calls.append(actual) or NS(path=None)
+    )
+    add_local_book_actions(window, detail, entry, **deps)
+    assert len(actions) == 1 and submissions == []
+    fresh = actions[0]
+    fresh.click()
+    assert len(submissions) == 1 and calls == []
+    submissions[0][0][1]()
+    assert calls == [target]
+    window.service._source_context_epoch = 8
+    fresh.click()
+    assert len(submissions) == 1 and calls == [target]
