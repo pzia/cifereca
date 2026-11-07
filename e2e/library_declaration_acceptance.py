@@ -171,6 +171,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
     def select_right():
         report['checks']['native_declaration_dialog_open'] = True
         checkpoint('maint_declaration_dialog_open')
+        if attested:
+            report['checks']['native_declaration_attested_dialog_open'] = True
         # P1 #2842 opens on unverified rights, not on an unrelated 50-item
         # inventory page. Keep exercising the explicit shortcut as well.
         assert guided_step().startswith('1/4')
@@ -200,6 +202,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
     def right_selected(row):
         report['checks']['native_declaration_right_is_selected'] = True
         if attested:
+            report['checks']['native_declaration_attested_right_selected'] = True
+        if attested:
             until(lambda: button('Préparer le rattachement').get_visible(),
                   choose_attested_file)
             return
@@ -221,6 +225,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
 
     def file_view_visible():
         report['checks']['native_declaration_manual_files_visible'] = True
+        if attested:
+            report['checks']['native_declaration_attested_file_view_visible'] = True
         assert guided_step().startswith('3/4')
         assert 'lecture seule' in guided_step()
         report['checks']['P1_2842_native_pair_step_no_auto_write'] = True
@@ -242,6 +248,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         until(lambda: button('Déclarer ce lien…').get_sensitive(), expand)
 
     def attested_prepare():
+        report['checks']['native_declaration_attested_preflight_reached'] = True
         assert service.storage.placement_for_path(book) is None
         assert {table: rows(table) for table in unchanged} == unchanged
         click(button('Préparer le rattachement'), lambda: until(
@@ -249,6 +256,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
             attested_revalidate))
 
     def attested_revalidate():
+        report['checks']['native_declaration_attested_preview_reached'] = True
         assert guided_step().startswith('3/4')
         assert 'lecture seule' in guided_step()
         assert {table: rows(table) for table in unchanged} == unchanged
