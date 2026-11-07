@@ -259,6 +259,9 @@ def core_contract_kit() -> dict[str, bytes]:
     provenance["plugin-dev-kit/LLM_GUIDE.md"] = (
         "src/plugins/browser-recorder/browser_recorder_devkit.py:_LLM_GUIDE"
     )
+    provenance["plugin-dev-kit/PROVIDER-AUTONOMOUS-DEVELOPMENT.md"] = (
+        "docs/PROVIDER-AUTONOMOUS-DEVELOPMENT.md"
+    )
     manifest = {
         "schema": _KIT_SCHEMA,
         "core_version": core_version or "unknown",
