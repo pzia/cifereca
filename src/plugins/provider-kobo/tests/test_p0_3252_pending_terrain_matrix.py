@@ -53,6 +53,7 @@ def test_multiple_plain_routes_prefer_unique_epub_but_never_two_epubs(media_form
             "candidate_selection": "multiple_eligible_candidates",
             "candidate_rejection_counts": {},
             "candidate_route_comparison": "same_route_distinct_urls",
+            "candidate_url_relation": "same_host_different_paths",
             "candidate_shape_counts": {
                 "content_access_book:epub:missing:http_plain": 2,
             },
