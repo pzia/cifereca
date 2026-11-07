@@ -600,6 +600,19 @@ def main():
                 cover for cover in walk(page.detail)
                 if isinstance(cover, CoverView)
             ]
+            # Fixed numeric counters from the shared Core loader only.
+            # This local fixture has no real provider URL or account.
+            cover_stats = cover_loader.stats()
+            cover_stat_keys = (
+                "requested", "cache_hit_valid", "download_ok",
+                "download_failed", "preview_created", "preview_hit",
+                "preview_fallback", "ui_applied", "ui_stale", "ui_failed",
+                "decode_failed", "cancelled_callbacks", "queue", "inflight_urls",
+            )
+            report["p1_774_cover_loader_state"] = {
+                key: min(100, max(0, int(cover_stats[key])))
+                for key in cover_stat_keys
+            }
             report["p1_774_cover_state"] = {
                 "attempt": min(30, attempt),
                 "list_found": min(20, len(all_list)),
