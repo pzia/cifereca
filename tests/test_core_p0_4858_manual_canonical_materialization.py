@@ -92,7 +92,12 @@ def canonical(case, monkeypatch):
             "canonical_execution": counts.copy(),
         })
 
-    monkeypatch.setattr(case.broker, "synchronize_source", core_sync)
+    # The real broker is slotted: patch its class method, never its instance.
+    # Failed instance patch registration can poison pytest's later undo stack.
+    monkeypatch.setattr(
+        type(case.broker), "synchronize_source",
+        lambda self, source_id, **kwargs: core_sync(source_id, **kwargs),
+    )
     return NS(case=case, policy=policy, snapshots=snapshots, calls=calls, counts=counts)
 
 
@@ -153,7 +158,10 @@ def test_empty_or_inventory_only_core_sync_is_not_false_completed_delivery(canon
         return SyncResult(ok=True, facts={"status": "success"})
     from pytest import MonkeyPatch
     with MonkeyPatch.context() as patch:
-        patch.setattr(case.broker, "synchronize_source", no_executor)
+        patch.setattr(
+            type(case.broker), "synchronize_source",
+            lambda self, source_id, **kwargs: no_executor(source_id, **kwargs),
+        )
         token = case.broker.prepare_local_materialization(
             case.source,
         ).facts["confirmation_token"]
@@ -175,13 +183,10 @@ def test_canonical_confirmation_rejects_same_account_session_aba(
         case.source,
     ).facts["confirmation_token"]
     if transition == "provider_epoch":
-        case.target._epoch = getattr(case.target, "_epoch", 0) + 1
+        initial = getattr(case.target, "_epoch", None)
+        case.target._epoch = initial + 1 if type(initial) is int else 1
     elif transition == "core_epoch":
         current = source_context.source_context_epoch(case.service)
-        monkeypatch.setattr(
-            materialize, "_source",
-            materialize._source,
-        )
         monkeypatch.setattr(
             source_context, "source_context_epoch",
             lambda _service: current + 1,
