@@ -6,6 +6,7 @@ External plugins should import from this package only.  Internal modules such as
 
 from cifereca.http_trace import HTTPX_TRANSPORT, TraceHTTPTransport, TraceAsyncHTTPTransport, TraceHTTPClient, TraceAsyncHTTPClient
 from .context import PluginContext
+from .usb_storage import USB_STAGE_CAPABILITY, UsbStorageStageWriter
 from cifereca.document_classification import (
     DOCUMENT_CLASSIFICATION_CONTRACT, ClassificationEvidence,
     DocumentClassification, classification_for_search_result,
@@ -122,7 +123,7 @@ __all__ = [
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
-    "StorageTarget", "StorageResult", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",
+    "StorageTarget", "StorageResult", "USB_STAGE_CAPABILITY", "UsbStorageStageWriter", "CategoryDefinition", "Dependency", "ContractRequirement", "ContractRequirementMode",
     "PluginDescriptor", "PluginDirectories", "PluginLifecycle", "PluginState", "InstantiationMode",
     "PluginStatus", "RequirementStatus", "ResolutionMode", "SystemRequirement",
     "ResolvedPluginService", "Provenance", "YouthAgeKind", "YouthAgeRange", "BookRef", "BookReferenceRecommendationService", "DetailField", "DetailSection", "CachedBookDetail", "BookDetailCacheEnricher", "BookDetailCacheNotifier", "FacetTag",
