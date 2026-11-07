@@ -230,9 +230,36 @@ def test_stop_then_restart_keeps_startup_aggregates_and_single_monitor():
     assert resumed["stats"]["startup.gtk_import"]["count"] == 1
     assert resumed["stats"]["startup.core_open"]["count"] == 1
     assert mon.capture_generation == 3
-    # Existing #1741 generation contract: detailed events are per active
-    # capture; accumulated startup timing aggregates remain exportable.
-    assert resumed["events"] == []
+    # Session startup observations stay in the bounded timeline, with their
+    # original epoch; restarted user-capture samples get the new epoch.
+    assert [event["phase"] for event in resumed["events"]] == [
+        "gtk_import", "core_open",
+    ]
+    assert {event["capture_generation"] for event in resumed["events"]} == {1}
     mon.record_phase("library", "render", 7)
-    assert mon.performance_report()["stats"]["startup.core_open"]["count"] == 1
-    assert mon.performance_report()["events"][0]["category"] == "library"
+    report = mon.performance_report()
+    assert report["stats"]["startup.core_open"]["count"] == 1
+    assert [event["category"] for event in report["events"]] == [
+        "startup", "startup", "library",
+    ]
+    assert report["events"][-1]["capture_generation"] == 3
+
+
+def test_many_followup_events_do_not_erase_startup_evidence():
+    mon = UiPerfMonitor(max_events=8)
+    mon.enable_detailed_capture(True)
+    for phase in ("gtk_import", "core_open", "shell_interactive"):
+        assert mon.record_phase("startup", phase, 1)
+    for index in range(200):
+        assert mon.record_phase("task", "worker", index)
+    report = mon.performance_report()
+    assert len(report["events"]) == 8
+    assert [row["phase"] for row in report["events"][:3]] == [
+        "gtk_import", "core_open", "shell_interactive",
+    ]
+    assert report["events_dropped"] == 195
+    mon.enable_detailed_capture(False)
+    mon.enable_detailed_capture(True)
+    assert [row["phase"] for row in mon.performance_report()["events"]] == [
+        "gtk_import", "core_open", "shell_interactive",
+    ]
