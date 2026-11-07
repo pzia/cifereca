@@ -20,6 +20,8 @@ COUNTS = {
     "potentially_missing": 0, "invalid_manifest_items": 0,
 }
 
+CANONICAL_COUNTS = {key: 0 for key in COUNTS}
+
 
 def _broker(*, broken_owner=False):
     service = FakeService()
@@ -36,11 +38,24 @@ def _broker(*, broken_owner=False):
     )
     calls = []
 
-    def preview(credential, *, refresh_manifest, verify_local_files):
-        calls.append((credential, refresh_manifest, verify_local_files))
+    def preview(credential, *, refresh_manifest, verify_local_files,
+                offline_canonical_only=False):
+        calls.append((credential, refresh_manifest, verify_local_files,
+                      offline_canonical_only))
         return {
-            "known_item_count": 6,
-            "counts": dict(COUNTS),
+            "known_item_count": 0,
+            "manifest_items": 0,
+            "counts": dict(CANONICAL_COUNTS),
+            "canonical_source": True,
+            "historical_canonical_only": True,
+            "historical_canonical": {
+                "recorded_rights": 6,
+                "previously_published_files_physically_verified": (
+                    3 if verify_local_files else 0
+                ),
+                "file_verification_requested": verify_local_files,
+                "inventory_truncated": False,
+            },
             "manifest_refreshed": False,
             "requires_manifest_validation": True,
             "acquisition_authorized": False,
@@ -69,9 +84,11 @@ def test_preflight_only_on_explicit_call_and_only_for_kobo_source():
     assert not calls and not service.storage.values
     receipt = broker.preview_local_materialization(target.source_id)
     assert receipt.ok and receipt.changed == 0
-    assert calls == [("vault-secret", False, False)]
-    assert receipt.facts["known_item_count"] == 6
-    assert receipt.facts["counts"] == COUNTS
+    assert calls == [("vault-secret", False, False, True)]
+    assert receipt.facts["known_item_count"] == 0
+    assert receipt.facts["counts"] == CANONICAL_COUNTS
+    assert receipt.facts["historical_canonical_only"] is True
+    assert receipt.facts["historical_canonical"]["recorded_rights"] == 6
     assert receipt.facts["acquisition_authorized"] is False
     assert receipt.facts["requires_manifest_validation"] is True
     assert receipt.facts["manifest_refreshed"] is False
@@ -79,10 +96,10 @@ def test_preflight_only_on_explicit_call_and_only_for_kobo_source():
         assert private not in repr(receipt)
     assert service.calls == [] and service.storage.values == {}
     label = sync_local_preflight_presentation(receipt)
-    assert "Notices connues : 6" in label
-    assert "liens de sauvegarde repérés : 3" in label
-    assert "Déclarations manuelles : non évaluées" in label
-    assert "à rapprocher : 2" in label
+    assert "Références Kobo B historiques : 6" in label
+    assert "copies physiquement vérifiées : 0" in label
+    assert "déclarations manuelles ne sont pas" in label
+    assert "liens de sauvegarde repérés" not in label
     assert "aucun téléchargement autorisé" in label
 
 
@@ -91,8 +108,8 @@ def test_preflight_may_check_local_files_but_never_refreshes_remote_manifest():
     receipt = broker.preview_local_materialization(target.source_id, verify_local_files=True)
     assert receipt.ok
     assert receipt.facts["files_verified"] is True
-    assert calls == [("vault-secret", False, True)]
-    assert "vérifiés par empreinte" in sync_local_preflight_presentation(receipt)
+    assert calls == [("vault-secret", False, True, True)]
+    assert "copies physiquement vérifiées : 3" in sync_local_preflight_presentation(receipt)
 
 
 def test_preflight_blocks_disabled_mismatched_or_unknown_sources_without_io():
@@ -118,6 +135,15 @@ def test_preflight_untrusted_local_report_or_errors_fail_closed():
     for override in (
         {"acquisition_authorized": True},
         {"manifest_refreshed": True},
+        {"canonical_source": False},
+        {"historical_canonical_only": False},
+        {"counts": dict(COUNTS)},
+        {"historical_canonical": {
+            "recorded_rights": 6,
+            "previously_published_files_physically_verified": 9,
+            "file_verification_requested": False,
+            "inventory_truncated": False,
+        }},
         {"requires_manifest_validation": False},
         {"counts": {**COUNTS, "already_local_linked": True}},
         {"counts": {**COUNTS, "needs_reconciliation": "PRIVATE_TOKEN"}},
