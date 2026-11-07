@@ -1828,6 +1828,8 @@ class LocalInspection:
         generation = self._manual_preview_generation
         case = self._cases.get(right_key) if self.valid() else None
         if case is not None and case.provider == 'kobo':
+            if self._kobo_transaction_inputs(right_key, file_key) is None:
+                return {'status': 'unavailable', 'read_only': True}
             # P0 #4859 W4: a matching 0.7 SHA, entitlement or historical
             # receipt is NOT a provider-attested A→B delivery. Never issue
             # a positive legacy reconciliation token from the GUI.
@@ -1877,6 +1879,8 @@ class LocalInspection:
             return {'status': 'unavailable', 'read_only': True}
         case = self._cases.get(right_key) if self.valid() else None
         if case is not None and case.provider == 'kobo':
+            if self._kobo_transaction_inputs(right_key, file_key) is None:
+                return {'status': 'unavailable', 'read_only': True}
             # Deny even a private token retained from the previous W4
             # implementation. No backup_items/ledger/Placement mutation.
             return {
@@ -1948,6 +1952,8 @@ class LocalInspection:
             return {'status': 'unavailable', 'read_only': True}
         case = self._cases.get(right_key) if self.valid() else None
         if case is not None and case.provider == 'kobo':
+            if self._kobo_transaction_inputs(right_key, file_key) is None:
+                return {'status': 'unavailable', 'read_only': True}
             # A historical 0.7 journal cannot authorize reversing an
             # independently published OriginLink or a later Placement.
             return {
@@ -1998,6 +2004,8 @@ class LocalInspection:
             return {'status': 'unavailable', 'read_only': True}
         case = self._cases.get(right_key) if self.valid() else None
         if case is not None and case.provider == 'kobo':
+            if self._kobo_transaction_inputs(right_key, file_key) is None:
+                return {'status': 'unavailable', 'read_only': True}
             # Ignore stale legacy W4 undo tokens; only independently
             # attested canonical B repairs may change a Placement.
             return {
