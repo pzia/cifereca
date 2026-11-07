@@ -449,3 +449,109 @@ def test_empty_primary_relink_never_admits_missing_or_aliased_borrower(
     with pytest.raises(CanonicalRelinkRejected):
         relink(store, **arguments)
     assert _read(store, "placements") == baseline
+
+
+def test_exact_published_kobo_loan_relinks_without_promoting_a_purchase(
+    store, tmp_path,
+):
+    """W4 relink of a canonical loan must retain its *loan* SourceReference."""
+    source, snapshot = new_source(
+        "A", provider="kobo", credential="vault-loan",
+        account="borrower-loan", branch="loans",
+        edition="loan-edition", right="borrowed-right", kind="loan",
+    )
+    register(store, "A", "kobo", "vault-loan", account="borrower-loan")
+    root = tmp_path / "EBooks"
+    original = target(tmp_path, "A", "original-loan.pdf")
+    completed = publish(store, root, original, source, snapshot)
+    moved = original.with_name("relocated-loan.pdf")
+    original.rename(moved)
+    kwargs = {
+        "library_root": root, "identity_id": "A",
+        "credential_id": "vault-loan", "account_id": "borrower-loan",
+        "edition_id": "loan-edition", "right_id": "borrowed-right",
+        "branch_id": "loans", "reference_kind": "loan",
+        "placement_id": completed.placement_id, "new_path": moved,
+    }
+    immutable = _unchanged(store)
+    placements = _read(store, "placements")
+
+    # A purchase with exactly the same other coordinates cannot borrow
+    # a preexisting loan origin or mutate its Placement.
+    with pytest.raises(CanonicalRelinkRejected, match="canonical_relink_right_unverified"):
+        relink(store, **{**kwargs, "reference_kind": "purchase"})
+    assert _unchanged(store) == immutable
+    assert _read(store, "placements") == placements
+
+    preview = relink(store, **kwargs)
+    assert preview["status"] == "preview"
+    assert _read(store, "placements") == placements
+    result = relink(store, confirmation=preview["plan_token"], **kwargs)
+    assert result["status"] == "relinked" and result["changed"] == 1
+    assert result["rights_mutations"] == 0
+    assert result["file_mutations"] == 0
+    assert result["legacy_backup_mutations"] == 0
+    assert _unchanged(store) == immutable
+    assert store.placement_get(completed.placement_id)["path"] == str(moved)
+    assert moved.read_bytes() == BYTES and not original.exists()
+
+
+@pytest.mark.parametrize("kind", ("", "Loan", None, "unknown", "loan "))
+def test_relink_rejects_invalid_reference_kind_before_sql_mutation(
+    published, kind,
+):
+    store, original, moved, args, _source, _completed = published
+    original.rename(moved)
+    before = _read(store, "placements")
+    with pytest.raises(CanonicalRelinkRejected, match="invalid_relink_request"):
+        relink(store, **{**args, "reference_kind": kind})
+    assert _read(store, "placements") == before
+
+
+def test_offline_cli_selects_canonical_loan_kind_without_core_start(
+    store, tmp_path, monkeypatch, capsys,
+):
+    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca import cli
+
+    source, snapshot = new_source(
+        "A", provider="kobo", credential="vault-loan-cli",
+        account="", edition="loan-edition-cli", right="loan-right",
+        branch="loans", kind="loan",
+    )
+    register(store, "A", "kobo", "vault-loan-cli", account="")
+    root = tmp_path / "EBooks"
+    original = target(tmp_path, "A", "loan-cli.pdf")
+    published = publish(store, root, original, source, snapshot)
+    moved = original.with_name("loan-cli-moved.pdf")
+    original.rename(moved)
+    profile = tmp_path / "profile-loan-cli.json"
+    profile.write_text(json.dumps({
+        "identities": [{"id": "A", "label": "A", "directory_name": "A"}],
+        "library": {"directory": str(root)},
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(repair, "config_file", lambda **_kw: profile)
+    monkeypatch.setattr(repair, "database_file", lambda **_kw: store.path)
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: pytest.fail("offline loan relink must not open Core"),
+    )
+    arguments = [
+        "kobo-relink-canonical", "--credential", "vault-loan-cli",
+        "--identity", "A", "--account-id", "",
+        "--item", "loan-edition-cli", "--right", "loan-right",
+        "--branch", "loans", "--kind", "loan",
+        "--placement", published.placement_id, "--path", str(moved),
+    ]
+    immutable = _unchanged(store)
+    assert cli.main(arguments) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["status"] == "preview"
+    assert _unchanged(store) == immutable
+    assert cli.main(arguments + ["--confirm", preview["plan_token"]]) == 0
+    done = json.loads(capsys.readouterr().out)
+    assert done["status"] == "relinked"
+    assert done["rights_mutations"] == 0
+    assert _unchanged(store) == immutable
+    assert store.placement_get(published.placement_id)["path"] == str(moved)
