@@ -52,8 +52,12 @@ def test_legacy_complete_matching_bytes_is_not_positive_w2_presence(
         assert current["sha256"] == previous["sha256"]
         assert current["size"] == previous["size"]
         assert current["local_path"] == previous["local_path"]
-        assert not service.storage.origin_links()
-        assert not service.storage.source_references(provider_id="kobo")
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
+            assert db.execute(
+                "SELECT COUNT(*) FROM source_references "
+                "WHERE provider_id='kobo'"
+            ).fetchone()[0] == 0
 
         # No W2 positive and no second GET after reopening the same manifest.
         second = service.sync_kobo_backup_account("vault-1")
