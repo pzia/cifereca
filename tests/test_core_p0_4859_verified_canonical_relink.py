@@ -186,13 +186,13 @@ def test_stale_inode_even_with_same_bytes_refuses_relink_after_preview(published
     assert _read(store, "placements") == before
 
 
-def test_changed_provider_origin_after_preview_invalidates_token(published):
+def test_changed_provider_source_evidence_after_preview_invalidates_token(published):
     store, original, path, args, source, finished = published
     original.rename(path)
     preview = relink(store, **args)
     with store._lock, store._connect() as db:
         db.execute(
-            "UPDATE origin_links SET evidence_ref='different-receipt' "
+            "UPDATE source_references SET evidence_ref='different-receipt' "
             "WHERE source_reference_id=?",
             (finished.source_reference_id,),
         )
@@ -373,7 +373,10 @@ def test_trigger_cannot_relabel_provider_receipt_during_relink(published):
         )
     try:
         with pytest.raises(
-            CanonicalRelinkRejected, match="canonical_relink_file_unverified",
+            # A trigger cannot rewrite an immutable provider OriginLink.
+            # SQLite raises before the post-update witness; the whole
+            # placement transaction still rolls back atomically.
+            CanonicalRelinkRejected, match="canonical_relink_unavailable",
         ):
             relink(store, confirmation=preview["plan_token"], **args)
         assert _read(store, "placements") == before
