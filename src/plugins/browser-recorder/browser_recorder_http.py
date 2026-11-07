@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import re
 from threading import Event, Lock
 from time import monotonic
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
 
 from browser_recorder import RecorderError, _playwright, site_origin
 from browser_recorder_download import (
@@ -32,6 +32,7 @@ _BODY_REASONS = frozenset((
     "captured", "redirect", "network_error", "unfinished", "compressed",
     "unsafe_headers", "size_unavailable", "over_budget", "unsupported_mime",
     "measured_mismatch", "text_invalid_or_limit", "read_failed",
+    "auth_redacted",
 ))
 _ALLOWED_MIME = frozenset((
     "application/json", "application/xml", "text/xml", "text/html",
@@ -50,6 +51,68 @@ _FORBIDDEN = frozenset((
     "x-api-key", "x-auth-token", "x-csrf-token", "x-xsrf-token",
 ))
 _HEADER_VALUES = re.compile(r"^[\x20-\x7e]{0,256}$")
+
+
+# Secret-bearing flows are guarded across *all* consented origins. This is
+# deliberately protocol-agnostic: no provider-specific URL or domain names.
+_AUTH_ROUTE = re.compile(
+    r"(?:^|[/_.-])(?:login|logon|signin|sign-in|sign_in|oauth|oidc|sso|"
+    r"saml|cas|authorize|callback|token|credential|authenticate|"
+    r"mfa|otp|session)(?:$|[/_.-])", re.IGNORECASE,
+)
+_SECRET_QUERY_KEYS = frozenset((
+    "ticket", "service", "password", "passwd", "pwd", "otp", "totp",
+    "code", "state", "csrf", "csrf_token", "authenticity_token",
+    "samlresponse", "samlrequest", "id_token", "access_token",
+    "refresh_token", "authorization", "client_secret", "session",
+    "session_state", "auth", "token", "assertion", "mfa",
+    "oauth_token", "api_key", "key",
+))
+_SAFE_QUERY_NAME = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$")
+_LONG_AUTH_PATH_SEGMENT = re.compile(r"/[a-zA-Z0-9_-]{24,}(?=/|$)")
+
+
+def _auth_flow(url: str) -> bool:
+    """True for structurally sensitive authentication endpoints."""
+    try:
+        return bool(_AUTH_ROUTE.search(urlsplit(url).path))
+    except (TypeError, ValueError):
+        return True
+
+
+def _safe_http_url(url: str) -> str:
+    """Remove secret-bearing query values before a URL enters the trace.
+
+    Regular catalogue URLs keep their normal private/reviewable fidelity.
+    Auth routes lose all query values; on other routes the same happens if
+    any key is sensitive (CAS return tickets, OAuth codes, etc.).
+    """
+    if type(url) is not str or len(url) > 8192:
+        return ""
+    try:
+        parts = urlsplit(url)
+        if parts.username is not None or parts.password is not None:
+            return ""
+        auth = bool(_AUTH_ROUTE.search(parts.path))
+        path = (_LONG_AUTH_PATH_SEGMENT.sub("/:value", parts.path)
+                if auth else parts.path)
+        query = parts.query
+        if query:
+            try:
+                fields = parse_qsl(query, keep_blank_values=True,
+                                   max_num_fields=32)
+            except ValueError:
+                return urlunsplit((parts.scheme, parts.netloc, path, "redacted", ""))
+            if auth or any(key.lower() in _SECRET_QUERY_KEYS
+                           for key, _value in fields):
+                query = "&".join(
+                    quote(key, safe="") + "=REDACTED"
+                    if _SAFE_QUERY_NAME.fullmatch(key)
+                    else "param=REDACTED" for key, _value in fields
+                )
+        return urlunsplit((parts.scheme, parts.netloc, path, query, ""))
+    except (TypeError, ValueError):
+        return ""
 
 
 def _mime(headers: dict) -> str:
@@ -434,8 +497,9 @@ class PrivateHttpTrace:
                 method = "OTHER"
             entry = PrivateExchange(
                 sequence=len(self.exchanges) + 1, method=method,
-                # Never retain the target host/path/query of a third party.
-                url="" if metadata_only else str(req.url),
+                # Consent is per origin, with identical privacy rules on all
+                # normal-capture origins. Meta-only remains completely opaque.
+                url="" if metadata_only else _safe_http_url(str(req.url)),
                 started_ms=int((monotonic() - self._begin) * 1000),
                 page_id=self._tab(req),
                 request_headers={} if metadata_only else _headers(req),
@@ -487,7 +551,7 @@ class PrivateHttpTrace:
                 try:
                     location = resp.headers.get("location", "")
                     if isinstance(location, str) and len(location) <= 2048:
-                        entry.redirect_to = location
+                        entry.redirect_to = _safe_http_url(location)
                 except (AttributeError, TypeError, ValueError):
                     pass
                 entry.response_body_state = "redirect"
@@ -507,6 +571,19 @@ class PrivateHttpTrace:
         entry.duration_ms = max(0, int((monotonic() - self._begin) * 1000)
                                 - entry.started_ms)
         if entry.metadata_only:
+            return
+        if _auth_flow(entry.url):
+            # Browser still performs the login, but the recorder never reads
+            # credential POSTs or IdP HTML/JSON response bodies, including
+            # those hosted on an explicitly authorized extra origin.
+            if entry.method in {"POST", "PUT", "PATCH"}:
+                entry.request_body = None
+                entry.request_body_state = "body_omitted"
+                entry.request_body_reason = "auth_redacted"
+            if entry.response_body_state != "redirect":
+                entry.response_body = None
+                entry.response_body_state = "body_omitted"
+                entry.response_body_reason = "auth_redacted"
             return
         sizes = _sizes(req)
         actual_request = sizes.get("requestBodySize")
