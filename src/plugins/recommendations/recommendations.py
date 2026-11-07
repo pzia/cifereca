@@ -1337,9 +1337,11 @@ class UxRecommendationsView:
     ) -> None:
         # The connected-provider inventory is NOT the result-set Source
         # facet: a connected catalogue may have returned no recommendation.
-        # Supplying ranked_rows limits choices to sources actually present in
-        # this local projection; omitted means the legacy provider inventory
-        # contract for older callers/tests. Never synthesize missing sources.
+        # Explicit rows (or the current saved projection) constrain the facet.
+        # Older headless hosts without a result projection keep the historical
+        # inventory contract. Never synthesize missing result sources.
+        if ranked_rows is None:
+            ranked_rows = getattr(self, "_ranked", None)
         available: set[str] | None = None
         if ranked_rows is not None:
             available = set()
@@ -1655,7 +1657,7 @@ class UxRecommendationsView:
         self._ranked = self._stable_partial(list(snapshot.ranked))
         # Rebuild the source facet *after* replacing the partial projection.
         # Prior connected catalogues with zero visible candidates disappear.
-        self._reload_providers(snapshot.providers, self._ranked)
+        self._reload_providers(snapshot.providers)
         self._reload_languages(self._ranked)
         self._reload_document_choices()
         self._set_provisional(True)
@@ -2488,8 +2490,12 @@ class UxRecommendationsView:
             self._ranked = []
             # The old result's Source/Langue facets are no longer available
             # after a failed calculation, just like its Format/Support facets.
-            self._reload_providers((), ())
-            self._reload_languages(())
+            if (getattr(self, "_query_controls", None) is not None
+                    or getattr(self, "_provider", None) is not None):
+                self._reload_providers(())
+            if (getattr(self, "_query_controls", None) is not None
+                    or getattr(self, "_language", None) is not None):
+                self._reload_languages(())
             self._reload_document_choices()
             # An error may originate in an untrusted provider or backend.
             # Never reflect raw provider messages into the GTK status/toast.
@@ -2503,7 +2509,7 @@ class UxRecommendationsView:
             return False
 
         self._ranked = list(result.ranked)
-        self._reload_providers(result.providers, self._ranked)
+        self._reload_providers(result.providers)
         self._reload_languages(self._ranked)
         self._reload_document_choices()
         if self._reference_book is None and result.profile_books:
