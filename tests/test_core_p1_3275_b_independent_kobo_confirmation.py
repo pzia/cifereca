@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from cifereca.core import kobo_local_reconciliation as repair
+from tests.kobo_legacy_reconciliation_archive import historical_reconcile_kobo_local
 from cifereca.library_files import sha256_file
 from cifereca.models import Account
 from tests.test_core_p1_3275_kobo_received_copy_preflight import _kobo_source
@@ -95,14 +96,14 @@ def test_b_independent_kobo_receipt_can_explicitly_link_received_bytes_and_resyn
             p for p in service.storage.placements()
             if p.get("identity_id") == "bob"
         ]
-        preview = repair._historical_reconcile_kobo_local(service, **args)
+        preview = historical_reconcile_kobo_local(service, **args)
         assert preview["status"] == "preview"
         assert preview["requires_explicit_confirmation"] is True
         assert service.storage.backup_get("kobo", "vault-b", "book-1")["status"] == "reconcile_required"
-        assert repair._historical_reconcile_kobo_local(
+        assert historical_reconcile_kobo_local(
             service, **args, confirmation=preview["plan_token"],
         )["status"] == "applied"
-        assert repair._historical_reconcile_kobo_local(service, **args)["status"] == "already_linked"
+        assert historical_reconcile_kobo_local(service, **args)["status"] == "already_linked"
 
         b_backup = service.storage.backup_get("kobo", "vault-b", "book-1")
         assert b_backup["status"] == "complete"
