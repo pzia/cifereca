@@ -54,6 +54,11 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         self._buttons = []; self._widths = {}; self._compact = None; self._budget = None
         self._overflow_visible_count = None
         self._overflow_width = None
+        # Full primary width stays attested when a narrow layout uses an
+        # abbreviated *visual* caption; accessibility retains the full text.
+        self._primary_full_width = None
+        self._primary_fit_budget = None
+        self._primary_variant = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.box.add_css_class('toolbar')
         self.box.set_halign(Gtk.Align.END)
@@ -100,6 +105,7 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         button.set_valign(Gtk.Align.CENTER)
         self._widths[button] = max(button.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 32)
         self._compact = None
+        self._primary_fit_budget = None
         self._overflow_visible_count = None
 
     def clear(self):
@@ -110,6 +116,9 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
             elif self.overflow and parent is self.overflow_box:
                 self.overflow_box.remove(button)
         self._buttons.clear(); self._widths.clear(); self._compact = None
+        self._primary_full_width = None
+        self._primary_fit_budget = None
+        self._primary_variant = None
         self._overflow_visible_count = None
         if self.overflow:
             parent = self.overflow_button.get_parent()
@@ -145,6 +154,76 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
             self._overflow_width = self.overflow_button.measure(Gtk.Orientation.HORIZONTAL, -1)[1]
             self.box.remove(self.overflow_button)
             self.overflow_button.set_visible(False)
+        # A long primary label plus the menu can exceed the *actual* detail
+        # pane, even though both widgets are GTK-mapped. At 1024 px this put
+        # the menu entirely outside its scrolled viewport. Shorten only the
+        # visual primary caption as much as needed; retain its full accessible
+        # label, tooltip, stable button identity and original callback.
+        if getattr(self, 'preserve_primary_label', False) and len(self._buttons) > 1:
+            primary = self._buttons[0]
+            full_label = getattr(primary, '_cifereca_action_label', None)
+            icon = getattr(primary, '_cifereca_action_icon', None)
+            if full_label and icon:
+                full_width = getattr(self, '_primary_full_width', None)
+                if full_width is None:
+                    full_width = self._widths[primary]
+                    self._primary_full_width = full_width
+                reserve = self.box.get_spacing() + self._overflow_width + 4
+                compact = full_width + reserve > budget
+                previous = getattr(self, '_primary_variant', None)
+                if compact and (previous is None
+                                or getattr(self, '_primary_fit_budget', None) != budget):
+                    for chars in (48, 36, 28, 20, 14):
+                        if len(full_label) <= chars:
+                            short = full_label
+                        else:
+                            prefix = full_label[:chars - 1].rsplit(' ', 1)[0]
+                            short = (prefix or full_label[:chars - 1]).rstrip() + '…'
+                        try:
+                            content = Adw.ButtonContent()
+                            content.set_label(short)
+                            content.set_icon_name(icon)
+                            primary.set_child(content)
+                        except (AttributeError, TypeError):
+                            primary.set_label(short)
+                        self._widths[primary] = max(
+                            primary.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 32,
+                        )
+                        if self._widths[primary] + reserve <= budget:
+                            break
+                    else:
+                        # No caption fits; keep the primary's full accessible
+                        # name and tooltip, showing its icon rather than
+                        # clipping the overflow button off-screen.
+                        primary.set_child(Gtk.Image.new_from_icon_name(icon))
+                        self._widths[primary] = max(
+                            primary.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 32,
+                        )
+                    primary.update_property(
+                        [Gtk.AccessibleProperty.LABEL], [full_label],
+                    )
+                    self._primary_variant = 'abbreviated'
+                    self._primary_fit_budget = budget
+                    self._overflow_visible_count = None
+                    self._compact = True
+                elif not compact and previous is not None:
+                    try:
+                        content = Adw.ButtonContent()
+                        content.set_label(full_label)
+                        content.set_icon_name(icon)
+                        primary.set_child(content)
+                    except (AttributeError, TypeError):
+                        primary.set_label(full_label)
+                    primary.update_property(
+                        [Gtk.AccessibleProperty.LABEL], [full_label],
+                    )
+                    self._widths[primary] = max(
+                        primary.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 32,
+                    )
+                    self._primary_variant = None
+                    self._primary_fit_budget = budget
+                    self._overflow_visible_count = None
+                    self._compact = False
         widths = [self._widths[button] for button in self._buttons]
         visible_count = visible_action_count(
             widths, budget, spacing=self.box.get_spacing(),
@@ -194,8 +273,11 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
         if budget != self._budget:
             self.set_size_request(budget, -1); self._budget = budget
         if self.overflow:
-            self._layout_overflow(budget)
-            if self.preserve_primary_label and self._buttons and self._compact is not False:
+            # Restore the complete caption before the first actual GTK
+            # measurement, not *after* a narrow layout has shortened it.
+            # Otherwise every tick would re-expand the button and eject
+            # « Plus d’actions » beyond the viewport again.
+            if self.preserve_primary_label and self._buttons and self._compact is None:
                 primary = self._buttons[0]
                 label = getattr(primary, '_cifereca_action_label', None)
                 icon = getattr(primary, '_cifereca_action_icon', None)
@@ -208,6 +290,7 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
                         primary.set_label(label)
                     primary.update_property([Gtk.AccessibleProperty.LABEL], [label])
                 self._compact = False
+            self._layout_overflow(budget)
             return True
         compact = compact_actions(self._widths.values(), budget)
         if compact != self._compact:
