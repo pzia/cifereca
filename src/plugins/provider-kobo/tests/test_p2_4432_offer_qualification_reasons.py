@@ -95,6 +95,7 @@ def test_multiple_valid_candidates_do_not_attrib_single_candidate_failure():
         "candidate_selection": "multiple_eligible_candidates",
         "candidate_rejection_counts": {},
         "candidate_route_comparison": "same_route_same_url",
+        "candidate_url_relation": "same_url",
         "candidate_shape_counts": {
             "library_sync:kepub:kepub:kobo_kdrm": 2,
         },

@@ -1053,7 +1053,9 @@ class KoboSession(ProviderSession):
         except Exception:
             return None
 
-    def rights_observation_snapshot(self, account: Account):
+    def rights_observation_snapshot(
+        self, account: Account, *, _diagnostic_titles: dict | None = None,
+    ):
         """Optional #3252 account-scoped read, NEVER a backup or entitlement.
 
         The existing library() already guards Vault GET, duplicate product
@@ -1117,6 +1119,7 @@ class KoboSession(ProviderSession):
             )
         observed = datetime.now(timezone.utc).isoformat()
         observed_rights = []
+        archived_notices = []
         for row in results:
             # A positive *file-capability flag* in this account's private
             # manifest merits an exact descriptor check even if the separate
@@ -1153,6 +1156,17 @@ class KoboSession(ProviderSession):
             archived = meta.get("archived")
             if archived is not None and type(archived) is not bool:
                 continue
+            # Title is an OPTIONAL local diagnostic, never a right,
+            # canonical status, offer selector or security decision.
+            # Bound length and quote it when logging to prevent line injection.
+            title = (
+                row.title[:256] if type(row.title) is str
+                and 0 < len(row.title) <= 4096 else ""
+            )
+            if _diagnostic_titles is not None:
+                _diagnostic_titles[row.record_id] = title
+            if archived is True:
+                archived_notices.append((row.record_id, title))
             observed_rights.append(ProviderRightObservation(
                 edition_id=row.record_id, right_id=row.record_id,
                 kind="purchase",
@@ -1183,6 +1197,15 @@ class KoboSession(ProviderSession):
                     account.credential_id, account.unique_id) != caller_scope):
             raise ProviderCapabilityError(
                 "Kobo-Vault : propriétaire modifié pendant la lecture"
+            )
+        # The final owner fence above must hold before any book title is
+        # written into a local diagnostic journal. No unverified or foreign
+        # manifest row is logged as an archived purchase.
+        for product_id, title in archived_notices:
+            _TRACE_LOG.info(
+                "EVENT kobo archived_purchase product_id=%s title=%r "
+                "delivery=unavailable reason=manifest_archived non_failure=true",
+                product_id, title or "titre indisponible",
             )
         # Vault's official page reader records its own successful final
         # cursor. An injected/legacy manifest client has no such proof.
@@ -1284,7 +1307,10 @@ class KoboSession(ProviderSession):
 
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
-        baseline = self.rights_observation_snapshot(account)
+        diagnostic_titles = {}
+        baseline = self.rights_observation_snapshot(
+            account, _diagnostic_titles=diagnostic_titles,
+        )
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
         right = baseline.exact(right_id, right_id, "purchase")
@@ -1453,6 +1479,18 @@ class KoboSession(ProviderSession):
         # trace session, after the account/identity owner fence. In particular,
         # show BOTH ambiguous K3 candidates without picking one or any GET.
         trace_kobo_descriptor_urls(payload, product_id=right_id)
+        if (
+            qualified_reason == "descriptor_candidate_unqualified"
+            and qualification_diagnostic.get("candidate_selection")
+            == "multiple_eligible_candidates"
+        ):
+            _TRACE_LOG.info(
+                "EVENT kobo ambiguous_candidates product_id=%s title=%r "
+                "candidate_count=%d outcome=pending non_failure=true",
+                right_id, diagnostic_titles.get(right_id)
+                or "titre indisponible",
+                qualification_diagnostic.get("eligible_candidate_count", 0),
+            )
         # Only record observed selection facts. A missing executable offer
         # is not proof of an HTTP 403 or of a failed Kobo-Adept download.
         acquisition = payload.get("acquisition") if type(payload) is dict else None
@@ -1505,6 +1543,10 @@ class KoboSession(ProviderSession):
             if "candidate_route_comparison" in qualification_diagnostic:
                 detail += " candidate_route_comparison=%s" % (
                     qualification_diagnostic["candidate_route_comparison"],
+                )
+            if "candidate_url_relation" in qualification_diagnostic:
+                detail += " candidate_url_relation=%s" % (
+                    qualification_diagnostic["candidate_url_relation"],
                 )
             if "candidate_rejection_profile_counts" in qualification_diagnostic:
                 profiles = qualification_diagnostic["candidate_rejection_profile_counts"]
