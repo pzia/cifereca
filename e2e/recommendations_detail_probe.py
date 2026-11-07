@@ -34,6 +34,9 @@ from PIL import Image, ImageGrab
 
 from cifereca.gui.book_widgets import BookListCell, CoverView
 from cifereca.gui.cover_loader import CoverLoader
+from cifereca.gui.action_widgets import action_button
+from cifereca.gui.main_window import MainWindow
+from cifereca.models import SearchResult, ItemDetail
 from cifereca.gui.plugin_ui_host import _UiHost
 from cifereca.gui.public_book_view import PublicBookMasterDetailView
 from cifereca.gui.exact_search_notice_navigation import (
@@ -97,6 +100,7 @@ def main():
         "real_host": "cifereca.gui.plugin_ui_host._UiHost",
         "source_data": "synthetic ranked candidates; ranking task disabled",
         "p1_1354_phase": "probe_start",
+        "p1_4664_phase": "unstarted",
     }
     app = Adw.Application(
         application_id="org.cifereca.E2ERecommendations",
@@ -106,7 +110,10 @@ def main():
              "device": None, "searches": [], "toasts": [],
              "old_action": None, "exact_navigations": [],
              "exact_selected": [], "exact_button": None, "exact_clicked": 0,
-             "stale_page_button": None}
+             "stale_page_button": None, "in_place_jobs": [],
+             "in_place_holdings": [], "in_place_obtain": [],
+             "in_place_activity": [], "in_place_item": None,
+             "in_place_detail": None, "in_place_download": None}
     image_requests = []
     cover_loader = None
     cover_bytes = BytesIO()
@@ -646,6 +653,265 @@ def main():
         report["checks"]["P1_1354_detached_pagination_is_inert"] = True
         report["checks"]["no_network_or_acquisition"] = True
         capture("06-return-to-list")
+        # Continue in the SAME production plugin and actual GTK detail panel:
+        # the old #1354 assertion only proved a redirect to Search.
+        later(160, in_place_setup)
+
+    def in_place_setup():
+        report["p1_4664_phase"] = "setup"
+        view = state["view"]
+        window = state["window"]
+        assert view.widget.get_mapped()
+        assert view.selected_identity_id() == "alice"
+        session = NS(
+            provider_id="fixture", credential_id="fixture-public",
+            connected=True,
+        )
+        service = window.service
+        service.storage = NS(
+            identity_for_connection=lambda provider, credential:
+                "alice" if (provider, credential) == (
+                    "fixture", "fixture-public",
+                ) else None,
+            provider_connections=lambda **kw: [{
+                "identity_id": "alice", "provider_id": "fixture",
+                "credential_id": "fixture-public", "enabled": True,
+            }] if kw.get("identity_id") == "alice" else [],
+        )
+        service._session_for_source = lambda provider, credential: (
+            session if (provider, credential) == (
+                "fixture", "fixture-public",
+            ) else None
+        )
+        service.searchable_providers = lambda: [("fixture", "Fixture")]
+        service._source_context_epoch = 4
+        service.current_identity = NS(identity_id="alice")
+        service.provider_display_name = lambda provider: "Fixture"
+        service.content_type_for = lambda _item: "ebook"
+        service.availability_display_label = (
+            lambda _item, _detail: "Disponible"
+        )
+        service.identities = [NS(identity_id="alice", label="Alice")]
+        service.local_placement_for_source = lambda **_kw: None
+        window._add_catalogue_action = lambda *_a: None
+        window._identity_context_generation = 8
+        window._search_generation = 9
+        window._shell_page_rebuild_token = object()
+        window._last_search_query = "édition"
+        window._account_context_generation = 2
+        window.plugin_manager = None
+        window.action_button = action_button
+        window.can_borrow_item = lambda _item: False
+        window._add_local_book_actions = (
+            MainWindow._add_local_book_actions.__get__(window)
+        )
+        window.download_direct_item = (
+            MainWindow.download_direct_item.__get__(window)
+        )
+        window._activity_result = state["in_place_activity"].append
+        service.obtain_search_item = lambda item: (
+            state["in_place_obtain"].append(item) or
+            NS(path=None, acquisition=NS(action="command"))
+        )
+        window.runner = NS(submit=lambda *a, **kw:
+                           state["in_place_jobs"].append((a, kw)))
+        item = SearchResult(
+            id="core-loaded-1", record_id="edition-reopened",
+            docbase="BOOKS", medium="digital", title="Livre Réactivé",
+            author="Autrice Attestée", type="book", format="epub",
+            publisher=None, published_at=None,
+            description="Notice publique exacte.", thumbnail_url=None,
+            friendly_url=None, scenario="BOOKS",
+            source_provider="fixture", source_credential="fixture-public",
+            source_collection="catalog",
+        )
+        detail = ItemDetail(
+            record_id="edition-reopened", docbase="BOOKS",
+            title="Livre Réactivé", author="Autrice Attestée", type="book",
+            year=None, thumbnail_url=None,
+            availability_status="available",
+            availability_label="Disponible", holdings=[],
+            source_provider="fixture", source_credential="fixture-public",
+        )
+        state["in_place_item"] = item
+        state["in_place_detail"] = detail
+        service.can_direct_download = lambda candidate: candidate is item
+        service.holdings = lambda candidate, _query, *, force=False: (
+            state["in_place_holdings"].append(candidate) or detail
+        )
+        window._loaded_search_context = (
+            "édition", "title", "all", "alice",
+        )
+        window._search_mode = "global"
+        window.search_controls = NS(
+            state=lambda: NS(text="édition", field="title", scope="all"),
+        )
+        window._remote_search_results = [item]
+        key = "fixture:core-loaded-1"
+        window.search_objects = {key: item}
+        window.search_page = NS(
+            store=NS(
+                get_n_items=lambda: 1,
+                get_item=lambda _index: NS(key=key),
+            ),
+            select_key=lambda target: target == key,
+        )
+        window.can_open_loaded_search_notice = lambda **coords: (
+            core_can_open_exact(window, **coords)
+        )
+        window.can_open_known_search_notice = lambda **_coords: False
+        view._ranked = [ranked(
+            "edition-reopened", "Livre Réactivé", "9780306406157",
+            score=90,
+        )]
+        view._render()
+        assert view._master._page.store.get_n_items() == 1
+        view._master._page.selection.set_selected(0)
+        later(160, in_place_ready)
+
+    def in_place_button():
+        view = state["view"]
+        buttons = [
+            widget for widget in walk(view._master._page.detail)
+            if isinstance(widget, Gtk.Button)
+            and str(getattr(widget, "_cifereca_action_id", "")).startswith(
+                "recommendation.loaded-in-place."
+            )
+        ]
+        assert len(buttons) == 1, "No exact in-place action in GTK"
+        return buttons[0]
+
+    def core_download_button():
+        panel = state["view"]._master._page.detail
+        buttons = [
+            widget for widget in walk(panel)
+            if isinstance(widget, Gtk.Button)
+            and str(getattr(widget, "_cifereca_action_label", "")).startswith(
+                "Télécharger"
+            )
+        ]
+        assert len(buttons) == 1, "Core's direct Search download action missing"
+        return buttons[0]
+
+    def in_place_ready():
+        report["p1_4664_phase"] = "button"
+        view = state["view"]
+        button = in_place_button()
+        assert button.get_mapped() and button.get_sensitive()
+        assert view._master._page.selection.get_selected() == 0
+        assert not state["in_place_jobs"]
+        assert not state["in_place_holdings"]
+        assert not state["in_place_obtain"]
+        assert button.grab_focus() is not False
+        later(170, in_place_press)
+
+    def in_place_press():
+        report["p1_4664_phase"] = "key"
+        button = in_place_button()
+        assert button.get_mapped() and button.has_focus()
+        state["device"].key("Return", True)
+        state["device"].key("Return", False)
+        later(220, in_place_deliver)
+
+    def in_place_deliver():
+        report["p1_4664_phase"] = "holdings"
+        jobs = state["in_place_jobs"]
+        assert len(jobs) == 1 and jobs[0][1]["kind"] == "holdings"
+        assert state["in_place_holdings"] == []
+        args, opts = jobs[0]
+        detail = args[1]()
+        assert detail is state["in_place_detail"]
+        assert state["in_place_holdings"] == [state["in_place_item"]]
+        args[2](detail)
+        panel = state["view"]._master._page.detail
+        assert panel._rendered_search_detail == (
+            state["in_place_item"], detail,
+        )
+        assert state["view"]._master._page.selection.get_selected() == 0
+        assert not state["exact_navigations"][1:]
+        assert any(
+            isinstance(widget, Adw.ActionRow)
+            and widget.get_title() == "Affinité"
+            for widget in walk(panel)
+        ), "Recommendation reasons disappeared from exact Core detail"
+        download = core_download_button()
+        assert download.get_mapped() and download.get_sensitive()
+        assert state["in_place_obtain"] == []
+        report["checks"]["P1_4664_gtk_in_place_core_holdings_and_reasons"] = True
+        report["checks"]["P1_4664_no_mutation_on_in_place_render"] = True
+        capture("07-exact-in-place-core-actions")
+        state["in_place_download"] = download
+        assert download.grab_focus() is not False
+        later(170, in_place_download_press)
+
+    def in_place_download_press():
+        report["p1_4664_phase"] = "download"
+        button = state["in_place_download"]
+        assert button.get_mapped() and button.has_focus()
+        state["device"].key("Return", True)
+        state["device"].key("Return", False)
+        later(200, in_place_download_work)
+
+    def in_place_download_work():
+        report["p1_4664_phase"] = "obtain"
+        jobs = state["in_place_jobs"]
+        assert len(jobs) == 2 and jobs[1][1]["kind"] == "obtain"
+        assert state["in_place_obtain"] == []  # Click schedules, no implicit POST
+        args, _opts = jobs[1]
+        result = args[1]()
+        assert state["in_place_obtain"] == [state["in_place_item"]]
+        args[2](result)
+        assert state["in_place_activity"] == [
+            "Commande d’obtention terminée"
+        ]
+        report["checks"]["P1_4664_gtk_real_core_download_handler"] = True
+        # Redraw the same recommendation; an old direct-download button
+        # is now detached. It must be inert, even if a GTK reference lives.
+        view = state["view"]
+        row = view._master._page.selection.get_selected_item()
+        assert row is not None
+        view._selected_row(row)
+        state["in_place_download"].emit("clicked")
+        assert len(jobs) == 2
+        later(140, in_place_failed_holdings)
+
+    def in_place_failed_holdings():
+        report["p1_4664_phase"] = "unavailable"
+        button = in_place_button()
+        assert button.get_mapped()
+        button.emit("clicked")
+        jobs = state["in_place_jobs"]
+        assert len(jobs) == 3 and jobs[2][1]["kind"] == "holdings"
+        assert len(state["in_place_holdings"]) == 1
+        error = RuntimeError("token=PRIVATE account=/home/private")
+        jobs[2][0][3](error)
+        panel = state["view"]._master._page.detail
+        assert any(
+            isinstance(widget, Adw.ActionRow)
+            and widget.get_title() == "Disponibilités non actualisées"
+            for widget in walk(panel)
+        )
+        assert core_download_button().get_mapped()
+        assert any(
+            isinstance(widget, Adw.ActionRow)
+            and widget.get_title() == "Affinité"
+            for widget in walk(panel)
+        )
+        assert state["toasts"][-1] == (
+            "Disponibilités indisponibles pour cette notice."
+        )
+        assert not any("PRIVATE" in value for value in state["toasts"])
+        assert len(state["in_place_obtain"]) == 1
+        report["checks"]["P1_4664_gtk_failure_preserves_core_actions"] = True
+        report["checks"]["P1_4664_no_provider_error_leak"] = True
+        capture("08-exact-in-place-unverified-holdings")
+        view = state["view"]
+        view._master._page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
+        jobs[2][0][2](state["in_place_detail"])
+        jobs[2][0][3](error)
+        assert view._master._page.selection.get_selected_item() is None
+        assert not state["in_place_obtain"][1:]
+        report["checks"]["P1_4664_gtk_stale_holdings_callback_inert"] = True
         state["plugin"].deactivate()
         report["status"] = "PASS"
         save()
