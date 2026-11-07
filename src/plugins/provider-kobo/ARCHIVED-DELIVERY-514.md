@@ -60,3 +60,30 @@ quatre 409 observés du grand compte sans leur vrai `error.code`.
 Une recette fournisseur réelle et les contrôles CI/install sur cette intégration
 restent requis avant de fermer #514.
 Les tests Plugins sont synthétiques, sans accès à un compte réel.
+
+
+## Livres inaccessibles chez Kobo, puis archivés (K1, 07/11/2026)
+
+Si le lecteur constate que l'ouvrage n'est pas ouvrable **même sur Kobo**
+et l'archive manuellement, Cifereca ne doit pas maintenir cette édition
+comme un échec de réception une fois le **nouveau manifeste authentifié**
+`archived=true` effectivement reçu. Le Core existant le classe
+`skipped_archived` (pas `failed`) et ne retente aucune réception.
+Le provider ajoute l'observation **informative** dans le journal privé :
+
+```text
+EVENT kobo archived_purchase product_id=... title='...' delivery=unavailable reason=manifest_archived non_failure=true
+```
+
+Le titre provient uniquement du **même** manifeste Kobo autorisé et accepté
+par les gardes d'owner ; il est limité à 256 caractères et encodé avec `%r`
+(aucune injection de lignes). L'événement est une observation fournisseur,
+**pas** un verdict Core ni une preuve d'archivage avant relecture. Pas
+d'identifiant de compte, de token ni d'URL dans cet événement.
+
+**Important** : une erreur HTTP de livraison, à elle seule, ne suffit
+jamais à marquer un ouvrage archivé ou à masquer un véritable échec.
+L'utilisateur doit archiver chez Kobo ; Cifereca n'effectue aucune mutation
+distante et n'infère jamais `archived` depuis un titre ou un historique
+`delivery_url_invalid`. Le droit d'achat n'est pas révoqué, et une édition
+déjà téléchargée conserve sa preuve locale.
