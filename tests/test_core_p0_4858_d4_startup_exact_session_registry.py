@@ -27,7 +27,9 @@ def test_detached_alias_cannot_run_legacy_startup_or_consume_clock(
         account = service.accounts[0]
         sid = SynchronizationBrokerImpl._source_id(account)
         clock = "sync.source.materialization.last_attempt." + sid
-        key = service._session_key("kobo", account.credential_id)
+        # This historical minimal fake uses a tuple key (unlike the real
+        # ProviderSession runtime); arbitrary aliases remain forbidden.
+        key = ("kobo", account.credential_id)
         session = service._sessions.pop(key)
         service._sessions[("kobo", "stale-alias")] = session
         assert session.connected and session.accounts == [account]
@@ -68,7 +70,7 @@ def test_stale_alias_cannot_create_new_legacy_auto_schedule(tmp_path):
             "enabled": True,
         })
         session = service._sessions.pop(
-            service._session_key("kobo", account.credential_id)
+            ("kobo", account.credential_id)
         )
         service._sessions[("kobo", "wrong-credential-index")] = session
         sid = SynchronizationBrokerImpl._source_id(account)
