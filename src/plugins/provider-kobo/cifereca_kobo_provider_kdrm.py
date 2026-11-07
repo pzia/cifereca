@@ -121,6 +121,11 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
     if type(kobo) is not dict:
         return None
     selected_source = kobo.get("source")
+    # Defensive second guard: the descriptor may have been re-observed or
+    # called directly. Its root alias cannot override the executor's
+    # nested source without invalidating the selected KDRM recipe.
+    if "source" in selected and selected["source"] != selected_source:
+        return None
     if selected_source not in {"library_sync", "content_access_book"}:
         return None
     if selected_source == "content_access_book" and kdrm_delegated_ready is not True:
