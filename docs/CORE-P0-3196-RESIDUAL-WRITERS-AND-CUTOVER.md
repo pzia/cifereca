@@ -110,6 +110,23 @@ n'est dérivé du nom du chemin ou de l'empreinte. Tests SQL transactionnels
 ne remplace pas la suppression de l'autorité historique W5 après le cutover
 #4858/#4859.
 
+**W5 — retrait des réécritures de localisateur archivées Kobo
+(07/11/2026) :** `Storage.commit_directory_migration` conserve désormais
+**exactement** les champs `backup_items.local_path` et `updated_at`
+d'une ligne Kobo 0.7 pendant un changement de dossier, qu'il s'agisse
+d'une migration de profil ou d'une entrée de fichier. Une ancienne
+déclaration de chemin ne prouve pas l'existence d'un nouveau fichier :
+c'est un reçu historique, pas un Placement canonique. Les autres
+fournisseurs conservent la réécriture compatible de leurs chemins ;
+les Placements/metadata de catalogue suivent leurs contrats propres.
+Les veto négatifs W5 contre autre identité, SourceReference déjà typée,
+collision de Placement ou `dedup_cleanup_pending` restent en vigueur.
+Cette coupure ne supprime aucune archive ni ne crée SourceReference,
+OriginLink, Artifact ou droit. Recette mixte
+`tests/test_core_p0_3196_w5_kobo_archive_path_immutable.py`,
+plus adaptation des assertions W5 existantes. La relocalisation
+d'un B déjà attesté est une opération distincte et confirmée (#4859).
+
 **W4 — observation physique indépendante (06/11/2026) :** le rapprochement
 manuel confirmé conserve désormais, dans la **même transaction SQLite** que son
 journal de confirmation/undo, une observation append-only
