@@ -1517,6 +1517,29 @@ class KoboSession(ProviderSession):
                     f"{shape}={count}" for shape, count in sorted(shapes.items())
                 )
                 detail += " candidate_shape_counts=%s" % (summary or "none")
+        # #4640: the owner-approved FLEPUB assumption must be auditable
+        # separately from upstream's explicit raw "unknown". All emitted
+        # values are fixed categories / bounded local counts, even when the
+        # selected offer is now available after delegated recipe validation.
+        assumptions = qualification_diagnostic.get(
+            "candidate_flepub_epub_assumptions",
+        )
+        if type(assumptions) is int and 1 <= assumptions <= 50:
+            detail += " candidate_flepub_epub_assumptions=%d" % assumptions
+            if qualification_diagnostic.get("candidate_media_format_effective") == "epub":
+                detail += (
+                    " candidate_media_format_raw=unknown"
+                    " candidate_media_format_effective=epub"
+                )
+            if (qualified_reason != "descriptor_candidate_unqualified"
+                    and "candidate_kvault_flepub_contract" in qualification_diagnostic):
+                detail += (
+                    " candidate_kvault_flepub_contract=%s"
+                    " candidate_kvault_format_alias=%s"
+                ) % (
+                    qualification_diagnostic["candidate_kvault_flepub_contract"],
+                    qualification_diagnostic["candidate_kvault_format_alias"],
+                )
         _TRACE_LOG.info(
             "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
