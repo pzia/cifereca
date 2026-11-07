@@ -336,12 +336,10 @@ def _search_sessions_for_active_identity(
 ) -> list[ProviderSession]:
     """Select one source per provider, preferring the active reader's account.
 
-    A provider-wide catalogue is not account-independent when a session
-    carries a credential (Paris): the result's source_credential drives
-    downstream borrowing guards. Insertion order must not assign another
-    reader's credential to a locally actionable result. Missing owner
-    metadata preserves the legacy first-session fallback for public sources.
-    No account is rebound and no capability is granted.
+    Bibliographic catalogues are shared between local identities, but a
+    foreign credential is never a loan or purchase permission. Prefer the
+    selected identity's Paris account and project foreign fallback results
+    as catalogue-only; preserve exact provenance and independent loan guards.
     """
     active = getattr(identity, "identity_id", None)
     chosen: dict[str, ProviderSession] = {}
@@ -362,14 +360,6 @@ def _search_sessions_for_active_identity(
             except (AttributeError, LookupError, TypeError, ValueError):
                 # Unknown owner cannot be treated as belonging to the reader.
                 pass
-        # Paris is an authenticated, account-scoped source. If SQLite
-        # explicitly ties this session to another reader, never use it as a
-        # fallback catalogue under the selected reader. A legitimate public
-        # source with no owner mapping retains the existing legacy fallback;
-        # none of these choices grants an actionable borrowing right.
-        if (provider == "paris" and type(active) is str and active
-                and owner is not None and owner != active):
-            continue
         rank = 2 if is_active else 1
         if provider == "paris" and is_active and credential == paris_primary:
             rank = 3
@@ -377,6 +367,42 @@ def _search_sessions_for_active_identity(
             chosen[provider] = session
             ranking[provider] = rank
     return list(chosen.values())
+
+
+def _paris_search_owner(self, session: ProviderSession) -> str | None:
+    """Inert SQLite owner check; unknown ownership never permits private data."""
+    credential = getattr(session, "credential_id", None)
+    if type(credential) is not str or not credential:
+        return None
+    try:
+        owner = self.storage.identity_for_connection("paris", credential)
+    except (AttributeError, LookupError, TypeError, ValueError):
+        return None
+    return owner if type(owner) is str and owner else None
+
+
+def _shared_paris_catalogue_row(
+    row: SearchResult, session: ProviderSession,
+) -> SearchResult | None:
+    """Only Paris search bibliography, never foreign entitlement or private URLs.
+
+    Preserve the exact source credential for provenance; never rebind to A.
+    Refuse inventory/purchase rows and unqualified provider responses.
+    """
+    if (type(row) is not SearchResult
+            or row.source_provider != "paris"
+            or row.source_credential != getattr(session, "credential_id", None)
+            or row.scenario not in {"EBOOKS", "CATALOGUE"}
+            or type(row.docbase) is not str or not row.docbase
+            or row.source_collection not in {None, "", "catalog"}):
+        return None
+    return replace(
+        row, owned=False, downloadable=False, download_url=None,
+        thumbnail_url=None, friendly_url=None,
+        price=None, currency=None, revision_id=None,
+        metadata={"catalogue_access": "shared_read_only"},
+        document_classification=None,
+    )
 
 
 def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[str, str], ...]:
@@ -499,6 +525,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     # The broker can replace/reconnect a provider without changing identity
     # or creating another search. Its in-flight old results are then revoked.
     source_leases: tuple[tuple[object, tuple[object, object, object] | None], ...] = ()
+    paris_owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
+    shared_paris_sessions: set[int] = set()
 
     def sources_current() -> bool:
         if not source_leases:
@@ -516,6 +544,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     or not any(candidate is session for candidate in registered)
                     or _inert_search_source_state(session) != expected):
                 return False
+        if any(_paris_search_owner(self, session) != owner
+               for session, owner in paris_owner_leases):
+            return False
         return True
 
     def request_current() -> bool:
@@ -552,6 +583,14 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     paris_source_selected = any(
         session.provider_id == "paris" for session in searchable
     )
+    paris_owner_leases = tuple(
+        (session, _paris_search_owner(self, session))
+        for session in searchable if session.provider_id == "paris"
+    )
+    active_id = getattr(identity, "identity_id", None)
+    shared_paris_sessions = {
+        id(session) for session, owner in paris_owner_leases if owner != active_id
+    }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
         for session in searchable
@@ -567,7 +606,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     )
     virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
     cache_key = hashlib.sha256(
-        f"search-v8\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        f"search-v9\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
     ).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
     if not force:
@@ -630,6 +669,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     session_rows = session.search(variant, provider_scope)
                 for raw_row in session_rows:
                     row = _provider_search_row(raw_row)
+                    if id(session) in shared_paris_sessions:
+                        row = _shared_paris_catalogue_row(row, session)
+                        if row is None:
+                            continue
                     key = _search_result_scope_key(row)
                     if key not in provider_seen:
                         provider_seen.add(key)
@@ -1106,6 +1149,14 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     paris_source_selected = any(
         session.provider_id == "paris" for session in searchable
     )
+    paris_owner_leases = tuple(
+        (session, _paris_search_owner(self, session))
+        for session in searchable if session.provider_id == "paris"
+    )
+    active_id = getattr(identity, "identity_id", None)
+    shared_paris_sessions = {
+        id(session) for session, owner in paris_owner_leases if owner != active_id
+    }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
         for session in searchable
@@ -1118,7 +1169,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
         if (entry := self.registry.virtual_entry(session.provider_id)) is not None
     )
-    cache_key = hashlib.sha256(f"search-v9-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
+    cache_key = hashlib.sha256(f"search-v10-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
@@ -1139,6 +1190,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     or not any(item is session for item in registered)
                     or _inert_search_source_state(session) != expected):
                 return False
+        if any(_paris_search_owner(self, session) != owner
+               for session, owner in paris_owner_leases):
+            return False
         return True
 
     def request_cancelled() -> bool:
@@ -1319,6 +1373,15 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 if request_cancelled():
                     cancelled = True
                     break
+                if id(session) in shared_paris_sessions:
+                    # Strip account-specific fields BEFORE callbacks, mirror
+                    # and cache. Facets from B are not certified public.
+                    provider_rows = [
+                        projected for raw in provider_rows
+                        if (projected := _shared_paris_catalogue_row(raw, session))
+                        is not None
+                    ]
+                    response_facets.clear()
                 # An inventory revision during a search invalidates any
                 # partial results from the former generation.
                 expected = streamed.get(session.provider_id)
