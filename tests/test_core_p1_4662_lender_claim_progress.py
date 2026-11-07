@@ -302,3 +302,40 @@ def test_lender_binding_disabled_during_receipt_reads_never_publishes(
     assert service.storage.loan_borrow_claim_once(
         borrow_claim_key(account, notice), "replay-forbidden",
     )[0] is False
+
+
+
+def test_lender_claim_status_requires_the_current_requesting_identity(
+    setup, monkeypatch,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    # The requester ID alone is not a permission to show B's receipt while
+    # a different profile is currently selected in the Core service.
+    service.current_identity = service.identity_by_id("alex")
+    monkeypatch.setattr(
+        service.storage, "metadata_get",
+        lambda *_args: pytest.fail("wrong active profile read lender claim"),
+    )
+    result = read(service, account, notice, requester="default")
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.loan == "unknown" and result.transfer == "blocked"
+
+
+def test_switching_active_profile_during_claim_read_revokes_observation(
+    setup, monkeypatch,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    original = service.storage.metadata_get
+
+    def switch_while_reading(*args):
+        receipt = original(*args)
+        service.current_identity = service.identity_by_id("alex")
+        return receipt
+
+    monkeypatch.setattr(service.storage, "metadata_get", switch_while_reading)
+    verdict = read(service, account, notice, requester="default")
+    assert verdict.reason_code == "lender_scope_unverified"
+    assert verdict.loan == "unknown" and verdict.transfer == "blocked"
+    assert verdict.retry_borrow is verdict.executable is False
