@@ -1513,6 +1513,13 @@ class MetadataBrokerImpl:
     service: Any
     def library_entries(self, **options: Any): return self.service.library_entries(**options)
     def scan(self, **options: Any): return self.service.catalog_scan(**options)
+    def reading_preference_snapshot(self, *, identity_id: str):
+        """Optional Core-only opt-in feedback snapshot, active identity required.
+
+        Plugins may request this only on an explicit preference-enabled path;
+        there is no automatic feedback ingestion from book or provider data.
+        """
+        return self.service.reading_preference_snapshot(identity_id=identity_id)
 
 
 @dataclass(slots=True)

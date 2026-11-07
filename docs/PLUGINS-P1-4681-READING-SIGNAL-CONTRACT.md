@@ -124,3 +124,33 @@ Cette tranche livre uniquement **le stockage et sa politique d'admission**.
 Le raccordement contrôlé au DTO `ExplicitReadingSignal`, le consentement
 observable dans l'UI, la suppression UX et l'invalidation du classement
 en cours après une écriture restent des étapes distinctes de #4681.
+
+
+## Tranche de raccordement opt-in Core → Plugin Recommandations
+
+Le broker Core `MetadataBrokerImpl.reading_preference_snapshot(identity_id=...)`
+projette le snapshot du **profil courant exclusivement**, sans donner accès
+au SQLite ou aux droits. La méthode est facultative pour les anciens brokers.
+
+Le moteur accepte `compute_recommendations(...,
+use_saved_explicit_preferences=True)` sur **invocation délibérée uniquement** :
+
+- lit l'instantané local et valide sa révision et chaque paire
+  clé/préférence ; construit les DTO `ExplicitReadingSignal` déjà admis
+  par le moteur, sans faire de jointure titre/ISBN/provider ;
+- refuse de combiner l'instantané Core avec `explicit_signals` fourni
+  manuellement, pour éviter de mixer deux autorités de préférence ;
+- revérifie la révision au fil des réponses du fournisseur et juste avant
+  publication du classement final ; si elle change, le calcul est
+  `cancelled` et **aucun résultat classé périmé n'est publié** ;
+- garde **strictement neutre par défaut** `use_saved_explicit_preferences=False`
+  et reste compatible avec les brokers historiques. Aucun UI ne passe
+  actuellement le nouveau booléen.
+
+Les tests intégrés Core SQLite + vrai broker Metadata + vrai moteur
+Recommandations + catalogues synthétiques Paris/Numilog/Kobo couvrent
+l'activation facultative, le retour au neutre, les notices
+`shared_read_only` sans droits du profil B et la révocation pendant un
+appel fournisseur. **La comparaison de pertinence en terrain**, le parcours
+UX de consentement et son invalidation GTK restent à faire avant fermeture
+de #4681.

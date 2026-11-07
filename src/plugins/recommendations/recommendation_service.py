@@ -228,6 +228,7 @@ def compute_recommendations(
     exploration: int = 25,
     exclude_owned: bool = True,
     explicit_signals: tuple[ExplicitReadingSignal, ...] | None = None,
+    use_saved_explicit_preferences: bool = False,
     snapshot_cache: LibrarySnapshotCache | None = None,
     progress: Callable[[int, int, str], None] | None = None,
     partial: Callable[[RecommendationPartial], None] | None = None,
@@ -248,6 +249,49 @@ def compute_recommendations(
         books = list(snapshot.books)
         snapshot_ms = snapshot.elapsed_ms
         snapshot_cached = snapshot.cached
+
+    # Opt-in only. Legacy and GUI callers do not read or apply persisted
+    # preferences unless they explicitly enable this mode. The Core broker
+    # rejects foreign/previous identities; invalid sources fail closed.
+    saved_revision: int | None = None
+    saved_reader = None
+    if type(use_saved_explicit_preferences) is not bool:
+        raise ValueError("reading_preference_mode_invalid")
+    if use_saved_explicit_preferences:
+        if explicit_signals is not None:
+            raise ValueError("reading_preference_modes_conflict")
+        saved_reader = getattr(metadata_broker, "reading_preference_snapshot", None)
+        if not callable(saved_reader):
+            raise ValueError("reading_preference_broker_unavailable")
+        saved = saved_reader(identity_id=identity_id)
+        saved_revision = getattr(saved, "revision", None)
+        values = getattr(saved, "preferences", None)
+        if (type(saved_revision) is not int or not 0 <= saved_revision < 2**63
+                or type(values) is not tuple or len(values) > 256):
+            raise ValueError("reading_preference_snapshot_invalid")
+        prepared = []
+        for row in values:
+            if (type(row) is not tuple or len(row) != 2
+                    or type(row[0]) is not str or not 0 < len(row[0]) <= 256
+                    or not row[0].isprintable()
+                    or type(row[1]) is not str
+                    or row[1] not in ("liked", "not_interested")):
+                raise ValueError("reading_preference_snapshot_invalid")
+            prepared.append(ExplicitReadingSignal(identity_id, row[0], row[1]))
+        explicit_signals = tuple(prepared)
+
+    def saved_epoch_changed() -> bool:
+        if saved_reader is None:
+            return False
+        try:
+            current = saved_reader(identity_id=identity_id)
+            return (type(getattr(current, "revision", None)) is not int
+                    or current.revision != saved_revision)
+        except Exception:
+            return True
+
+    def cancelled_or_revoked() -> bool:
+        return _cancelled(control) or saved_epoch_changed()
 
     profile_started = time.perf_counter()
     # Trusted Core explicit feedback is optional: no implicit extraction from
@@ -351,7 +395,7 @@ def compute_recommendations(
             )
 
     def emit_partial(query_index: int, provider_done: int) -> None:
-        if partial is None or _cancelled(control):
+        if partial is None or cancelled_or_revoked():
             return
         ranked = _provisional_head(
             provisional,
@@ -373,7 +417,7 @@ def compute_recommendations(
 
     catalog_started = time.perf_counter()
     for query_index, query in enumerate(queries, 1):
-        if _cancelled(control):
+        if cancelled_or_revoked():
             was_cancelled = True
             break
         grouped: dict[str, list[Any]] = {}
@@ -388,7 +432,7 @@ def compute_recommendations(
         if callable(progressive):
             def on_batch(batch: Any) -> None:
                 nonlocal provider_done, cache_batches, network_batches, results_seen, was_cancelled
-                if _cancelled(control):
+                if cancelled_or_revoked():
                     was_cancelled = True
                     return
                 provider_id = str(getattr(batch, "provider_id", "") or f"provider-{provider_done + 1}")
@@ -433,7 +477,7 @@ def compute_recommendations(
                 if bool(getattr(summary, "cancelled", False)):
                     was_cancelled = True
             except Exception as exc:
-                if _cancelled(control):
+                if cancelled_or_revoked():
                     was_cancelled = True
                 else:
                     warnings.append(f"{query}: {exc}")
@@ -447,7 +491,7 @@ def compute_recommendations(
                 batches.append(rows[: max(10, int(per_query))])
                 emit_partial(query_index, provider_total)
             except Exception as exc:
-                if _cancelled(control):
+                if cancelled_or_revoked():
                     was_cancelled = True
                 else:
                     warnings.append(f"{query}: {exc}")
@@ -460,14 +504,15 @@ def compute_recommendations(
                 f"{query} · requête {query_index}/{len(queries)} terminée · {results_seen} résultats · "
                 f"cache {cache_batches} / réseau {network_batches}",
             )
-        if was_cancelled or _cancelled(control):
+        if was_cancelled or cancelled_or_revoked():
             was_cancelled = True
             break
 
     catalog_ms = (time.perf_counter() - catalog_started) * 1000.0
 
     if was_cancelled:
-        provisional_rows = _provisional_head(provisional, max_results)
+        provisional_rows = ([] if saved_epoch_changed() else
+                            _provisional_head(provisional, max_results))
         trace_performance(catalog_ms=catalog_ms, cancelled=True)
         return RecommendationResult(
             len(books),
@@ -483,6 +528,20 @@ def compute_recommendations(
             observations_snapshot(),
         )
 
+    # A preference change after a provider batch, or even during the CPU
+    # ranking pass, must not publish a stale weighted result. This does not
+    # affect the historical neutral algorithm or the explicit caller DTO path.
+    def stale_result() -> RecommendationResult:
+        trace_performance(catalog_ms=catalog_ms, cancelled=True)
+        return RecommendationResult(
+            len(books), queries, (), providers,
+            tuple(dict.fromkeys(warnings)), cache_batches, network_batches,
+            cache_unknown_calls, True, tuple(books), observations_snapshot(),
+        )
+
+    if cancelled_or_revoked():
+        return stale_result()
+
     if progress:
         progress(total_units, total_units, "")
     rank_started = time.perf_counter()
@@ -495,6 +554,8 @@ def compute_recommendations(
         exclude_owned=exclude_owned,
     )
     rank_ms = (time.perf_counter() - rank_started) * 1000.0
+    if cancelled_or_revoked():
+        return stale_result()
     trace_performance(catalog_ms=catalog_ms, rank_ms=rank_ms)
     return RecommendationResult(
         len(books),
