@@ -47,6 +47,8 @@ def observed_cross_profile_borrow_progress(
                 or type(item) is not SearchResult
                 or not a.identity_id
                 or requesting_identity_id == a.identity_id
+                or getattr(service.current_identity, "identity_id", None)
+                   != requesting_identity_id
                 or item.medium != "digital"
                 or item.source_provider != a.provider_id
                 or item.source_credential != a.credential_id
@@ -68,6 +70,8 @@ def observed_cross_profile_borrow_progress(
                     a.provider_id, a.credential_id,
                 ) != a.identity_id
                     or service.identity_by_id(a.identity_id) is None
+                    or getattr(service.current_identity, "identity_id", None)
+                       != requesting_identity_id
                     or sum(row is a for row in service.accounts) != 1):
                 return False
             bindings = service.storage.provider_connections(
