@@ -409,6 +409,11 @@ class DetailPanel(Gtk.Box):
         return ''
 
     def _clear_actions(self):
+        # The GTK button may still be referenced by an asynchronous callback
+        # after a new Search/Recommendations selection replaces this detail.
+        # Revoke it before removing the action widgets from their container.
+        for button in getattr(self, "_action_buttons", ()):
+            button._cifereca_action_context_revoked = True
         # show_presentation()/empty() clear the whole detail body before this.
         self._cached_section_widgets = []
         self._cached_action_ids = set()
@@ -430,6 +435,14 @@ class DetailPanel(Gtk.Box):
             if callable(getter):
                 label = str(getter() or '')
         folded = label.casefold()
+        if identifier.startswith((
+            'recommendation.loaded-in-place.',
+            'recommendation.known-in-place.',
+        )):
+            # #4664: at narrow GTK widths the native action bar may show
+            # only one control. Keep exact in-panel actions reachable before
+            # the legacy redirect to Search, without inventing any right.
+            return 9
         if identifier in {'open-catalogue', 'open-notice'}:
             return 30
         if identifier == 'open-local' or folded.startswith('ouvrir'):
@@ -603,6 +616,12 @@ class DetailPanel(Gtk.Box):
                 if getattr(button, "_cifereca_action_id", "") not in old_ids
             ]
             self._clear_actions()
+            # This is only a cached-extension update: the same base Search
+            # detail retains its buttons. Re-admit those exact live buttons
+            # after revoking the discarded cached ones; a full book redraw
+            # never enters this path and keeps every old button revoked.
+            for button in kept:
+                button._cifereca_action_context_revoked = False
             self._actions(kept)
         buttons = []
         for contribution in contributions:

@@ -1770,12 +1770,36 @@ class MainWindow(Adw.ApplicationWindow):
 
     def download_direct_item(self, item: SearchResult, control: Gtk.Widget | None = None) -> None:
         from .search_snapshot_refresh import invalidate_search_snapshot
+        from ..core.source_context import source_context_epoch
+        # A detached GTK action from the previous Search/Recommendations
+        # book must never queue an obtain on a newer selection. The normal
+        # DetailPanel marks its old buttons as revoked before clearing them.
+        if control is not None:
+            if getattr(control, '_cifereca_action_context_revoked', False):
+                return
+            root = getattr(control, 'get_root', None)
+            mapped = getattr(control, 'get_mapped', None)
+            if ((callable(root) and root() is None)
+                    or (callable(mapped) and not mapped())):
+                return
+        try:
+            source_epoch = source_context_epoch(self.service)
+        except ValueError:
+            return
         identity_id = getattr(self.service.current_identity, 'identity_id', None)
         generation = self._identity_context_generation
         def current():
-            return (not getattr(self, '_closed', False)
-                    and identity_id == getattr(self.service.current_identity, 'identity_id', None)
-                    and generation == self._identity_context_generation)
+            if (getattr(self, '_closed', False)
+                    or identity_id != getattr(self.service.current_identity, 'identity_id', None)
+                    or generation != self._identity_context_generation
+                    or (control is not None and getattr(
+                        control, '_cifereca_action_context_revoked', False
+                    ))):
+                return False
+            try:
+                return source_context_epoch(self.service) == source_epoch
+            except ValueError:
+                return False
         def work():
             if not current():
                 from ..plugin_api import Cancelled

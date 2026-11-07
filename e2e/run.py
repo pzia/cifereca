@@ -644,6 +644,32 @@ def main() -> int:
                         code = report_data.get("p0_4673_local_reason")
                         if type(code) is str and code in local_reasons:
                             print("P0_4673_CLOSED_LOCAL_REASON=" + code, flush=True)
+                if (name in {"recommendations-detail-1366",
+                             "recommendations-detail-1600"}
+                        and report_data.get("status") != "PASS"):
+                    # Source probe stages are a reviewed fixed vocabulary;
+                    # raw GTK error/callback output remains private.
+                    prior_stages = frozenset({
+                        "probe_start", "initial", "long_detail", "scrolled",
+                        "exact_setup", "exact_button", "exact_overflow",
+                        "exact_overflow_ready", "exact_focus", "exact_key",
+                        "exact_page_focus", "exact_page_key", "exact_page_verdict",
+                        "exact_verdict", "exact_key_dispatch", "exact_navigation",
+                        "exact_selection", "exact_no_search", "return_list",
+                    })
+                    prior = report_data.get("p1_1354_phase")
+                    if type(prior) is str and prior in prior_stages:
+                        print("P1_1354_CLOSED_FAILURE_STAGE=" + prior, flush=True)
+                    # Only the reviewed, fixed synthetic checkpoint can leave
+                    # the private GTK sandbox. No assertion, title or source.
+                    allowed = frozenset({
+                        "setup", "button", "button_mapped", "button_selection",
+                        "button_jobs", "button_focus", "key", "holdings",
+                        "download", "obtain", "unavailable",
+                    })
+                    stage = report_data.get("p1_4664_phase")
+                    if type(stage) is str and stage in allowed:
+                        print("P1_4664_CLOSED_FAILURE_STAGE=" + stage, flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
                 if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-capture-session"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"

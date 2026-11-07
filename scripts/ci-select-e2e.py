@@ -44,7 +44,8 @@ SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "diagnostics-navigation-slow-1366")
 # MainWindow changes affect core/detail and Diagnostics navigation probes.
 MAINWINDOW = tuple(dict.fromkeys(
-    CORE + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366") + BNF_COVERS
+    CORE + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
+    + RECOMMENDATIONS_GTK + BNF_COVERS
 ))
 # The Diagnostics common probe is imported by every other Diagnostics probe;
 # navigation probes also implement both MainWindow baseline scenarios.
@@ -55,7 +56,7 @@ DIAG_STATES = ("diagnostics-states-1366", "diagnostics-navigation-1366",
 
 LOCAL_GUI = {
     "action_layout.py": BOOK_DETAIL,
-    "action_widgets.py": BOOK_DETAIL,
+    "action_widgets.py": BOOK_DETAIL + RECOMMENDATIONS_GTK,
     "book_facets.py": ("search-filter-p0",) + BOOK_DETAIL,
     "book_widgets.py": BOOK_DETAIL + ("search-filter-p0",) + RECOMMENDATIONS_GTK + BNF_COVERS,
     "cover_loader.py": BOOK_DETAIL + RECOMMENDATIONS_GTK + BNF_COVERS,
