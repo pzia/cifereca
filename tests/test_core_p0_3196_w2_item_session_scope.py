@@ -125,8 +125,12 @@ def test_rebind_at_delivery_keeps_interrupted_receipt_without_false_complete(
         assert receipt["sha256"] is None
         assert receipt["local_path"] is None
         assert path.exists() is (phase == "after_get")
-        # Once the same source reconnects, the interrupted receipt prevents
-        # an automatic second GET; it requires explicit reconciliation.
-        session._accounts = [replace(session.accounts[0], unique_id="account")]
+        # Restore the exact upstream session; an interrupted 0.7 attempt
+        # must not make a second content GET on the next manifest.
+        session._accounts = list(original_accounts)
+        repeat = service.sync_kobo_backup_account("vault-1")
+        assert repeat["downloaded"] == repeat["attempted"] == 0
+        assert calls == ([] if phase == "before_get" else ["GET"])
+        assert service.storage.backup_get("kobo", "vault-1", "book-1")["status"] != "complete"
     finally:
         service.close()
