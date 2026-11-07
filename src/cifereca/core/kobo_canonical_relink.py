@@ -14,13 +14,14 @@ from pathlib import Path
 import sqlite3
 import time
 import stat
+from contextlib import nullcontext
 from typing import Callable
 
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_publication import _stable, _same_file
-from .canonical_legacy_adoption import _directory_signature
+from .missing_placement_retirement import _directory_signature
 from .canonical_recovery import _exact_borrower_bound_in_db
 from .convergence_verified_presence import _verified_copy
 
@@ -242,7 +243,7 @@ def relink_verified_canonical_kobo(
     scope = ProviderRightsScope(identity_id, "kobo", credential_id, account_id)
     write = confirmation is not None
     try:
-        guard = InterProcessLock(acquisition_lock_file()) if write else __import__("contextlib").nullcontext()
+        guard = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
         with guard, storage._lock, storage._connect() as db:
             db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
             _require(
