@@ -1394,18 +1394,6 @@ class KoboSession(ProviderSession):
             "descriptor_offer_attested" if offer_id else
             "descriptor_candidate_unqualified"
         )
-        if (
-            qualified_reason == "descriptor_candidate_unqualified"
-            and qualification_diagnostic.get("candidate_selection")
-            == "multiple_eligible_candidates"
-        ):
-            _TRACE_LOG.info(
-                "EVENT kobo ambiguous_candidates product_id=%s title=%r "
-                "candidate_count=%d outcome=pending non_failure=true",
-                right_id, diagnostic_titles.get(right_id)
-                or "titre indisponible",
-                qualification_diagnostic.get("eligible_candidate_count", 0),
-            )
         delegated_resolver_called = False
         # Only the ONE descriptor candidate that reproduces the exact
         # runtime offer may be used for the delegated ContentKeys replay.
@@ -1491,6 +1479,18 @@ class KoboSession(ProviderSession):
         # trace session, after the account/identity owner fence. In particular,
         # show BOTH ambiguous K3 candidates without picking one or any GET.
         trace_kobo_descriptor_urls(payload, product_id=right_id)
+        if (
+            qualified_reason == "descriptor_candidate_unqualified"
+            and qualification_diagnostic.get("candidate_selection")
+            == "multiple_eligible_candidates"
+        ):
+            _TRACE_LOG.info(
+                "EVENT kobo ambiguous_candidates product_id=%s title=%r "
+                "candidate_count=%d outcome=pending non_failure=true",
+                right_id, diagnostic_titles.get(right_id)
+                or "titre indisponible",
+                qualification_diagnostic.get("eligible_candidate_count", 0),
+            )
         # Only record observed selection facts. A missing executable offer
         # is not proof of an HTTP 403 or of a failed Kobo-Adept download.
         acquisition = payload.get("acquisition") if type(payload) is dict else None
@@ -1543,6 +1543,10 @@ class KoboSession(ProviderSession):
             if "candidate_route_comparison" in qualification_diagnostic:
                 detail += " candidate_route_comparison=%s" % (
                     qualification_diagnostic["candidate_route_comparison"],
+                )
+            if "candidate_url_relation" in qualification_diagnostic:
+                detail += " candidate_url_relation=%s" % (
+                    qualification_diagnostic["candidate_url_relation"],
                 )
             if "candidate_rejection_profile_counts" in qualification_diagnostic:
                 profiles = qualification_diagnostic["candidate_rejection_profile_counts"]
