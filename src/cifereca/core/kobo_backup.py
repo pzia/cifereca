@@ -444,7 +444,11 @@ def _canonical_kobo_backup_offline_preview(
                 ) is True
                 and sum(row is account for row in self.accounts) == 1
                 and len(session.accounts) == 1
-                and session.accounts[0].identity_id == identity_id
+                # Kobo Vault's provider Account historically carries
+                # identity_id="default" even when the Core/SQLite owner is
+                # named. SQLite's exact enabled connection+borrower above is
+                # authoritative; accept only this known adapter default.
+                and session.accounts[0].identity_id in {identity_id, "default"}
                 and session.accounts[0].provider_id == "kobo"
                 and session.accounts[0].credential_id == credential_id
                 and session.accounts[0].unique_id == account.unique_id
