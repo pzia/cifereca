@@ -577,6 +577,15 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
             or session.credential_id != credential_id):
         raise ProviderConfigurationError("kobo_canonical_account_unavailable")
     account = accounts[0]
+    # Pin the mutable provider account and context *before* SQLite reads.
+    # The live source can rebind without changing its Account object.
+    original_scope = (
+        account.identity_id, account.provider_id,
+        account.credential_id, account.unique_id,
+    )
+    provider_epoch = getattr(session, "_epoch", None)
+    core_epoch = self._source_context_epoch
+    registry = self.accounts
     owner = self.storage.identity_for_connection("kobo", credential_id)
     if (type(owner) is not str or not owner
             or account.provider_id != "kobo"
@@ -609,6 +618,18 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
     if (self._sessions.get(self._session_key("kobo", credential_id)) is not session
             or len(session.accounts) != 1
             or session.accounts[0] is not account
+            or self.accounts is not registry
+            or self._source_context_epoch != core_epoch
+            or getattr(session, "_epoch", None) != provider_epoch
+            or (
+                account.identity_id, account.provider_id,
+                account.credential_id, account.unique_id,
+            ) != original_scope
+            or len([
+                row for row in self.accounts
+                if type(row) is Account and row.provider_id == "kobo"
+                and row.credential_id == credential_id
+            ]) != len(existing)
             or session.connected is not True):
         raise ProviderConfigurationError("kobo_canonical_account_changed")
     account.identity_id = owner
