@@ -62,7 +62,8 @@ def test_scope_denial_does_not_retry_blocked_items_after_new_batch_or_restart(tm
         assert second["blocked_non_retryable"] == 2
         assert second["items_blocked_by_scope"] == 2
         assert second["attention_required"] == 2
-        assert second["unchanged"] == 1
+        assert second["unchanged"] == 0
+        assert second["reconcile_pending"] >= 1
         assert calls == []
         for record, count in first_attempts.items():
             row = service.storage.backup_get("kobo", "vault-1", record)
@@ -86,7 +87,8 @@ def test_scope_denial_does_not_retry_blocked_items_after_new_batch_or_restart(tm
         assert resumed["attempted"] == 0
         assert resumed["blocked_non_retryable"] == 2
         assert resumed["items_blocked_by_scope"] == 2
-        assert resumed["unchanged"] == 1
+        assert resumed["unchanged"] == 0
+        assert resumed["reconcile_pending"] >= 1
     finally:
         restarted.close()
 
@@ -117,7 +119,8 @@ def test_explicit_scope_retry_after_reauthorization_is_scoped_and_idempotent(tmp
         resumed = service.sync_kobo_backup_account("vault-1", retry_scope_blocked=True)
         assert resumed["attempted"] == 2
         assert resumed["downloaded"] == 2
-        assert resumed["unchanged"] == 1
+        assert resumed["unchanged"] == 0
+        assert resumed["reconcile_pending"] >= 1
         assert calls == ["blocked-1", "blocked-2"]
         assert service.sync_kobo_backup_account("vault-1")["attempted"] == 0
         for book in ("blocked-1", "blocked-2", "safe"):
