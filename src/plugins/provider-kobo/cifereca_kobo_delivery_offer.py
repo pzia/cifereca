@@ -292,14 +292,14 @@ def exact_kobo_offer_id(
                                if type(producer) is dict else None)
                     diagnostic["candidate_kvault_descriptor_release"] = (
                         release if type(release) is str and
-                        re.fullmatch(r"[0-9]{1,3}(?:\\.[0-9]{1,4}){1,4}", release)
+                        re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,4}){1,4}", release)
                         else "unavailable"
                     )
                     revision = (producer.get("contract_revision")
                                 if type(producer) is dict else None)
                     diagnostic["candidate_kvault_descriptor_contract"] = (
                         revision if type(revision) is str and
-                        re.fullmatch(r"[0-9]{1,3}(?:\\.[0-9]{1,4}){1,4}", revision)
+                        re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,4}){1,4}", revision)
                         else "unavailable"
                     )
     eligible: list[tuple[str, str, str, str]] = []
