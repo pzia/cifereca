@@ -30,6 +30,59 @@ def test_library_render_passes_unfiltered_total_to_master_detail():
     assert "window.library_page.show_rows(rows, total_count=len(entries))" in source
 
 
+def test_p1_3687_zero_visible_keeps_attested_total_and_pluralization():
+    """An empty filtered projection is not an empty catalogue."""
+    update = _standalone("MasterDetailPage", "_update_count")
+    labels = []
+    page = NS(
+        store=NS(get_n_items=lambda: 0),
+        count_label=NS(set_label=labels.append),
+        _total_count=0,
+        _count_total_only=False,
+        _item_count_label=lambda n: f"{n} élément" if n == 1 else f"{n} éléments",
+    )
+    update(page, 0)
+    assert labels[-1] == ""  # Genuine empty result.
+    update(page, 1)
+    assert labels[-1] == "0 / 1 élément"
+    update(page, 20)
+    assert labels[-1] == "0 / 20 éléments"
+
+    # The History business-total policy never exposes the number of
+    # materialized rows, even before a paginated page arrives.
+    page._count_total_only = True
+    update(page, 20)
+    assert labels[-1] == "20 éléments"
+    page._count_total_only = False
+    update(page, 0)
+    assert labels[-1] == ""  # Identity switch / actual empty snapshot.
+    assert page._total_count == 0
+
+
+def test_p1_3687_filtered_count_returns_to_standard_after_reset():
+    update = _standalone("MasterDetailPage", "_update_count")
+    labels = []
+    visible = [0]
+    page = NS(
+        store=NS(get_n_items=lambda: visible[0]),
+        count_label=NS(set_label=labels.append),
+        _total_count=0,
+        _count_total_only=False,
+        _item_count_label=lambda n: f"{n} élément" if n == 1 else f"{n} éléments",
+    )
+    update(page, 3)
+    assert labels[-1] == "0 / 3 éléments"
+    visible[0] = 2
+    update(page, 3)
+    assert labels[-1] == "2 / 3 élément(s)"
+    visible[0] = 3
+    update(page, 3)
+    assert labels[-1] == "3 élément(s)"
+    visible[0] = 0
+    update(page, 0)
+    assert labels[-1] == ""
+
+
 def test_count_label_shows_filtered_over_total_only_when_reduced():
     update = _standalone("MasterDetailPage", "_update_count")
     labels = []
