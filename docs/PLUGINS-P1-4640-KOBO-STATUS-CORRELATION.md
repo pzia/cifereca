@@ -144,3 +144,43 @@ aucune offre exacte n'est sélectionnable, aucun contenu n'est téléchargé.
 Le titre **n'est pas connu depuis le journal antérieur à cette instrumentation**.
 Ne pas ajouter un fallback « premier candidat » et ne pas conclure à une
 même édition binaire sur la seule comparaison d'URL.
+
+
+## K3, 07/11/2026 : discriminer deux jetons de téléchargement
+
+Observation terrain ciblée : le tome 1 de « Trolls de Troy – Histoires
+Trolles » est `pending`, avec deux offres `library_sync:unknown:flepub:kobo_kdrm`
+sur `storedownloads.kobo.com/download`. Le seul paramètre variable est
+`downloadToken` ; **il s'agit de deux jetons de capacité opaques**, pas
+d'une preuve d'EPUB + PDF ni de fichiers binaires identiques.
+
+KVault `0.9.6.4` est la version effectivement déployée lors de cette
+observation. La version `0.9.8` du dépôt `pzia/KVault` normalise
+`FLEPUB → epub` et réduit les doublons `library_sync` par combinaison
+`handling / DRM family / media_format / source_format / Platform`.
+Cette politique ne garantit **pas** un candidat unique lorsque `Platform`
+diffère. En particulier, ne jamais dédupliquer deux URL signées sur le seul
+host/path : un jeton opaque peut désigner une variante différente.
+
+Pour observer la dimension manquante sans nouveau GET :
+
+```sh
+cifereca-cli kobo-sync-edition --credential 'kobo-2' \\
+  --item 'f4b22e3d-2980-4d33-bf0c-df75bfb1a24c' --confirm --trace
+grep -F "TRACE kobo private_candidate_url phase=offer" \\
+  "${XDG_STATE_HOME:-$HOME/.local/state}/cifereca/cifereca.log"
+```
+
+Chaque ligne Trace énonce désormais `platform=`, `profile=`, `source=`,
+`media=`, `source_format=`, `drm=` pour l'index `0` ou `1`, en
+plus de son URL privée déjà instrumentée. Les catégories sont **fermées**
+et ne peuvent inclure le texte brut non reconnu du descripteur.
+Pour partager le résultat, supprimer les valeurs `url=...` et tout
+`downloadToken`. Aucun autre log ne reçoit ces nouvelles métadonnées,
+et le comportement des critères Core A/B reste identique.
+
+**Interprétation** : deux plateformes différentes appellent une décision
+explicite fondée sur le profil du lecteur ; deux candidats de même
+plateforme nécessitent de comprendre la duplication fournisseur (puis
+éventuellement corriger KVault). Ne pas choisir le premier candidat
+dans Cifereca avant vérification.
