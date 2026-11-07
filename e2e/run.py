@@ -116,6 +116,13 @@ SCENARIOS = {
         "description": "P0 #2842 : parcours guidé et confirmations natives à 1728×895, sans réseau.",
         "runner": "gtk-maintenance", "width": 1728, "height": 895,
     },
+    "recommendations-detail-1024-hidpi": {
+        "plugin": "ui.page.recommendations",
+        "fixture": "search-filters",
+        "description": "P1 #3687/#774 : vraie recette GTK/XTEST HiDPI 2x, 1024×768 logiques dans un Xvfb 2048×1536.",
+        "runner": "gtk-recommendations",
+        "width": 1024, "height": 768, "scale": 2,
+    },
     "recommendations-detail-1024": {
         "plugin": "ui.page.recommendations",
         "fixture": "search-filters",
@@ -436,10 +443,17 @@ def main() -> int:
             if scenario.get("runner") == "gtk-recommendations":
                 width = scenario["width"]
                 height = scenario.get("height", 1000 if width == 1600 else 900)
+                scale = scenario.get("scale", 1)
+                # GTK measures logical units while XTEST and ImageGrab see
+                # physical pixels. Never emulate HiDPI by merely enlarging
+                # the window on an unscaled display.
+                env["GDK_SCALE"] = str(scale)
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x{height}x24",
+                    xvfb, "-a", "-s",
+                    f"-screen 0 {width * scale}x{height * scale}x24",
                     args.python, str(ROOT / "e2e/recommendations_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
+                    "--scale", str(scale),
                 ]
             elif scenario.get("runner") == "gtk-constellations":
                 width = scenario["width"]
@@ -618,7 +632,8 @@ def main() -> int:
                 # #774: export only closed phase codes and bounded numeric
                 # XTEST geometry for the synthetic Recommendations probe.
                 # Raw exceptions, search text and GTK widget labels stay local.
-                if (name in {"recommendations-detail-1024",
+                if (name in {"recommendations-detail-1024-hidpi",
+                             "recommendations-detail-1024",
                              "recommendations-detail-1366",
                              "recommendations-detail-1600"}
                         and report_data.get("status") != "PASS"):
@@ -696,7 +711,8 @@ def main() -> int:
                         code = report_data.get("p0_4673_local_reason")
                         if type(code) is str and code in local_reasons:
                             print("P0_4673_CLOSED_LOCAL_REASON=" + code, flush=True)
-                if (name in {"recommendations-detail-1024",
+                if (name in {"recommendations-detail-1024-hidpi",
+                             "recommendations-detail-1024",
                              "recommendations-detail-1366",
                              "recommendations-detail-1600"}
                         and report_data.get("status") != "PASS"):
