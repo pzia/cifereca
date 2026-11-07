@@ -1252,7 +1252,7 @@ class KoboSession(ProviderSession):
         from dataclasses import replace
         from cifereca_kobo_delivery_offer import (
             exact_kobo_offer_id, kdrm_runtime_ready,
-            kdrm_delegated_runtime_ready,
+            kdrm_delegated_runtime_ready, _equivalent_signed_kdrm_candidates,
         )
         from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
@@ -1417,6 +1417,15 @@ class KoboSession(ProviderSession):
                     kdrm_delegated_ready=kdrm_legacy_ready,
                 ) == offer_id
             ]
+            # The full descriptor has already passed exact offer attestation.
+            # When both KDRM routes are identical except for one rotating
+            # downloadToken, use the first for the single delegated replay.
+            # Keep all other multi-candidate patterns ambiguous.
+            if (
+                len(pinned) == 2 and len(described) == 2
+                and _equivalent_signed_kdrm_candidates(described)
+            ):
+                pinned = pinned[:1]
             if len(pinned) != 1:
                 offer_id = ""
                 qualified_reason = "pinned_candidate_ambiguous"
