@@ -137,7 +137,8 @@ def test_two_identities_must_not_claim_the_same_directory(case, monkeypatch, nat
     case.service.config.save()
     monkeypatch.setattr(repair, "_read_hash_within", lambda *args: pytest.fail("No hash for ambiguous folder ownership"))
     before = _dump(case)
-    with pytest.raises(repair.ReconciliationRejected, match="ambiguous_identity_directory"):
+    expected = "legacy_reconciliation_retired" if native else "ambiguous_identity_directory"
+    with pytest.raises(repair.ReconciliationRejected, match=expected):
         _native(case) if native else _run(case)
     assert _dump(case) == before
 
@@ -391,16 +392,28 @@ def _native(case, **options):
                                             **{**case.options, **options})
 
 
-def test_native_preview_does_not_chmod_config_purge_cache_or_create_lock(case):
+def test_retired_native_facade_never_reads_config_or_writes_legacy_sql(case, monkeypatch):
     case.service.config.save()
     case.service.config.path.chmod(0o640)
     config_before = case.service.config.path.stat()
     contents = case.service.config.path.read_bytes()
     before = _dump(case)
-    assert _native(case)["dry_run"]
+    # Retirement is decided before even resolving config/database paths.
+    monkeypatch.setattr(
+        repair, "config_file",
+        lambda **_kw: pytest.fail("retired W4 must not read configuration"),
+    )
+    monkeypatch.setattr(
+        repair, "database_file",
+        lambda **_kw: pytest.fail("retired W4 must not read SQLite"),
+    )
+    with pytest.raises(repair.ReconciliationRejected, match="legacy_reconciliation_retired"):
+        _native(case)
     assert _dump(case) == before
     after = case.service.config.path.stat()
-    assert (after.st_mode, after.st_mtime_ns, after.st_ctime_ns) == (config_before.st_mode, config_before.st_mtime_ns, config_before.st_ctime_ns)
+    assert (after.st_mode, after.st_mtime_ns, after.st_ctime_ns) == (
+        config_before.st_mode, config_before.st_mtime_ns, config_before.st_ctime_ns
+    )
     assert case.service.config.path.read_bytes() == contents
     assert not (case.tmp / "acquisition.lock").exists()
 
@@ -414,11 +427,11 @@ def test_missing_profile_is_not_created_as_a_side_effect(case, monkeypatch):
     assert not root.exists()
 
 
-def test_native_preview_does_not_migrate_an_old_database(case):
+def test_retired_native_facade_will_not_migrate_old_schema(case):
     case.service.config.save()
     case.storage.metadata_set("schema_version", "12")
     before = _dump(case)
-    with pytest.raises(repair.ReconciliationRejected, match="schema_upgrade_required"):
+    with pytest.raises(repair.ReconciliationRejected, match="legacy_reconciliation_retired"):
         _native(case)
     assert _dump(case) == before
 
@@ -437,30 +450,33 @@ def test_database_read_only_error_cannot_leave_partial_links(case, monkeypatch):
     assert _dump(case) == before
 
 
-def test_pending_directory_migration_is_not_recovered_and_no_file_is_opened(case, monkeypatch):
+def test_retired_native_facade_will_not_resume_pending_directory_migration(
+    case, monkeypatch,
+):
     case.service.config.save()
     case.storage.metadata_set("identity-directory-migration-v1", '{"phase":"prepared"}')
-    monkeypatch.setattr(repair, "_read_hash_within", lambda *args: pytest.fail("No hash while a migration is pending"))
+    monkeypatch.setattr(
+        repair, "_read_hash_within",
+        lambda *_a: pytest.fail("retired W4 cannot inspect any file"),
+    )
     before = _dump(case)
-    with pytest.raises(repair.ReconciliationRejected, match="directory_migration_pending"):
+    with pytest.raises(repair.ReconciliationRejected, match="legacy_reconciliation_retired"):
         _native(case)
     assert _dump(case) == before
 
 
-def test_native_apply_rechecks_configuration_from_disk_before_committing(case, monkeypatch):
+def test_retired_native_facade_refuses_old_confirm_and_undo_tokens(case, monkeypatch):
     case.service.config.save()
-    plan = _native(case)
     before = _dump(case)
-    original = repair._write_row
-    def write(db, table, row, previous):
-        original(db, table, row, previous)
-        if table == "catalog_entries":
-            data = json.loads(case.service.config.path.read_text())
-            data["library"]["directory"] = str(case.tmp / "other-library")
-            case.service.config.path.write_text(json.dumps(data))
-    monkeypatch.setattr(repair, "_write_row", write)
-    with pytest.raises(repair.ReconciliationRejected, match="source_configuration_changed"):
-        _native(case, confirmation=plan["plan_token"])
+    monkeypatch.setattr(
+        repair, "_write_row",
+        lambda *_a, **_kw: pytest.fail("retired facade cannot write positive W4"),
+    )
+    for extra in ({}, {"confirmation": "a" * 64},
+                  {"undo_operation": "b" * 64},
+                  {"confirmation": "a" * 64, "undo_operation": "b" * 64}):
+        with pytest.raises(repair.ReconciliationRejected, match="legacy_reconciliation_retired"):
+            _native(case, **extra)
     assert _dump(case) == before
 
 
