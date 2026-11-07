@@ -59,9 +59,14 @@ placeholder pour le prêt sans image, **exactement deux GET image simulés**
 et le même cache de couvertures entre Recherche, Détail et Emprunts.
 Les captures `01` à `07` et le rapport `screen.json` n'incluent
 aucun identifiant, chemin, token ou réponse fournisseur privée.
-La partie Emprunts reçoit directement trois `Loan` synthétiques déjà
-projetés ; elle **prouve le rendu GTK partagé**, pas la récupération
-réelle des métadonnées des deux cartes BnF par un compte installé.
+La partie Emprunts utilise une page HTML d'activité **synthétique** :
+`BnfProviderSession.connect()` puis `loans()` appellent le **véritable parseur
+BnF** et produisent les trois `Loan` liés à la ressource/credential/compte
+exacts, ensuite transmis au contrôleur CoreUI GTK. Le client HTTP du
+test est entièrement en mémoire : deux lectures locales (`login`, `activity`),
+aucun réseau, token, ACSM ou droits nouveaux. Cela prouve le chaînage
+parseur → fournisseur → modèle `Loan` → GTK, mais **pas** l'extraction
+réelle des deux cartes BnF depuis un compte installé.
 La recette ne prouve **ni** disponibilité effective du CDN public
 Feedbooks, **ni** état d'un compte BnF installé.
 
