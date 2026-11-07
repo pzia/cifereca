@@ -2350,15 +2350,17 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
         }
         before_cover = str(current.get("cover_url") or "").strip()
         after_cover = str(refreshed.get("cover_url") or "").strip()
-        if (
+        metadata_changed = (
             before_cover != after_cover
             or current.get("title") != refreshed.get("title")
             or current.get("author") != refreshed.get("author")
             or current.get("format") != refreshed.get("format")
             or current.get("identity_id") != refreshed.get("identity_id")
-        ):
-            summary["metadata_refreshed"] += 1
+        )
         backup_put(refreshed)
+        # A rejected stale-session write is never counted as a refresh.
+        if metadata_changed:
+            summary["metadata_refreshed"] += 1
         current = self.storage.backup_get("kobo", session.credential_id, product_id) or refreshed
 
     return _ManifestItem(revision_id, title, account_id, current, base_record)
