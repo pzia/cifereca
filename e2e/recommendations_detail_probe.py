@@ -448,11 +448,23 @@ def main():
         view = state["view"]
         query = view._query_controls
         store = view._master._page.store
-        if ((query.entry.get_text() != "Livre B" or store.get_n_items() != 1)
-                and state["p1_774_filter_retry"] < 3):
+        # SearchEntry notifications are debounced while GTK also rebuilds
+        # the live row model and its counter. Only the *complete*, coherent
+        # result may end this bounded wait; a correct row with a stale count
+        # is not a successful keyboard filter.
+        count_text = view._summary.get_text()
+        complete = (
+            query.entry.get_text() == "Livre B"
+            and store.get_n_items() == 1
+            and store.get_item(0).title == "Livre B"
+            and "1 sur 3" in count_text
+            and "Livre B" in count_text
+        )
+        if not complete and state["p1_774_filter_retry"] < 3:
             state["p1_774_filter_retry"] += 1
             later(150, after_keyboard_filter)
             return
+        assert complete, "GTK keyboard filter and counter did not converge"
         assert query.entry.get_text() == "Livre B"
         assert store.get_n_items() == 1
         assert store.get_item(0).title == "Livre B"
