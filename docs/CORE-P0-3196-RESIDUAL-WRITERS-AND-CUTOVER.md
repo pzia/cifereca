@@ -34,7 +34,7 @@
 | W2 | `core/kobo_backup.py` — `_refresh_manifest_record`, `_skip_manifest_item`, `_recover_local_remnants` et boucle de livraison 0.7 | Appels directs à `storage.backup_put` (manifest, archivage, reprise, réparation requise, réception/erreur) **uniquement pour les éditions encore sans SourceReference canonique** : les références typées sur le credential/édition interdisent la reprise, les mutations du manifest et le GET historique, même avec ABI partielle ; compte/identité alternatifs sont un veto conservateur. | `LibraryService.sync_kobo_backup`, synchronisation ciblée et reprise legacy restent exécutables pour le legacy pur sans référence typée. **Une session avec ABI v1/v2 complète est bloquée**. L'interruption historique demeure conservée, sans conversion en droit ni preuve de placement. **W2 durci** : une tentative `acquiring` sans fichier reconnue au scan devient `pending_acquisition` + code fermé `interrupted_acquisition_review` et **ne déclenche plus de GET** lorsque le même item est encore annoncé au manifeste ; le libellé historique de l'interruption conserve également ce veto. Un `pending_acquisition` simple issu d'un adaptateur indisponible avant toute tentative n'est pas bloqué. La révision historique n'est pas remplacée par celle du manifeste avant réconciliation. Reprise explicite, qualification des octets éventuels et migration canonique restent à implémenter. |
 | W3 | `Storage.backup_prune_missing` / ancien `_prune_successful_manifest` | **RETIRÉ pour Kobo : zéro suppression, même sur manifeste complet, et API de compatibilité sans accès SQL**. Les autres fournisseurs gardent leur prune de projection. | Aucune entrée Kobo atteignable : scheduler retiré, compatibilité retourne zéro sans transaction. Toutes les lignes v0.7 sont archivées jusqu'à migration explicite (même `pending` sans indices). Tests `tests/test_core_p0_3196_w3_prune_retired.py` et contrats W3 existants. |
 | W4 | `core/kobo_local_reconciliation.py::reconcile_kobo_local` | **API positive retirée avant IO** : preview/confirmation/undo publics, CLI, CoreUI et façade offline refusent les mutations 0.7. | **Exécuteur historique déplacé hors du Core livré** dans `tests/kobo_legacy_reconciliation_archive.py` (fixtures rétrospectives seulement). Restent les tests d'annulation/relink canonique et l'intégration W1/W2 ; des octets vérifiés ne créent aucun droit. |
-| W5 | `Storage.relocate_local_path`, `Storage.commit_directory_migration` et relocalisations historiques | La relocalisation ordinaire refuse de réécrire `backup_items.local_path` pour une édition Kobo déjà typée. **La migration de répertoire refuse désormais de fusionner deux Placements au même chemin cible si propriétaire, Artifact, état ou portée historique/canonique divergent** : seule la déduplication de deux Placements `present` locaux sans fournisseur, même SHA Artifact et aucune référence `backup_items` / `origin_links`, est conservée. Les vrais déplacements journalisés de répertoire (sans collision de Placements) restent possibles. | Les migrations de chemins ne prouvent pas les droits : les relinks canoniques disposent d'un opérateur distinct avec OriginLink/SourceKey/compte attestés. W5 n'est pas archivé globalement et les cas de collision avec preuve devront disposer d'une migration spécialisée. |
+| W5 | `Storage.relocate_local_path`, `Storage.commit_directory_migration` et relocalisations historiques | Les relocalisations ordinaires et migrations de répertoire conservent désormais `backup_items.local_path` et `updated_at` **pour toutes les archives Kobo 0.7**, même sans SourceReference typée ; elles ne déplacent que les Placements canoniques admissibles. **La migration de répertoire refuse désormais de fusionner deux Placements au même chemin cible si propriétaire, Artifact, état ou portée historique/canonique divergent** : seule la déduplication de deux Placements `present` locaux sans fournisseur, même SHA Artifact et aucune référence `backup_items` / `origin_links`, est conservée. Les vrais déplacements journalisés de répertoire (sans collision de Placements) restent possibles. | Les migrations de chemins ne prouvent pas les droits : les relinks canoniques disposent d'un opérateur distinct avec OriginLink/SourceKey/compte attestés. W5 n'est pas archivé globalement et les cas de collision avec preuve devront disposer d'une migration spécialisée. |
 
 **Autre entrée W5 retirée :** `LibraryService._migrate_legacy_flat_kobo_files`
 conserve sa signature privée de façade mais lève désormais immédiatement
@@ -104,13 +104,14 @@ pas le cutover fonctionnel final. Recette synthétique :
 
 **Complément W3 — refus de délégation :** `backup_prune_missing` conserve désormais un refus `attention_required` avec `attention_code=missing_delegation_scope`, même sans chemin local lorsque l'édition sort temporairement d'un manifeste complet. La disparition de l'édition ne démontre pas un nouveau scope ; le retour du manifeste ne doit jamais réarmer implicitement le GET refusé. Seule une reprise explicite du compte ou un cutover canonique attesté peut lever ce checkpoint ; test SQLite et synchronisation sans réseau dans `tests/test_core_p0_3196_w3_scope_denial_retention.py`.
 
-**Garde W4 sur le chemin cible :** si le Placement existe et que son
-Artifact a un OriginLink pour la même identité, le rapprochement 0.7 refuse
-la prévisualisation, la confirmation et l'annulation. Une autre édition ou
-connexion peut s'appuyer sur ce Placement, même quand l'édition Kobo legacy
-n'a aucune SourceReference. Une provenance d'une autre identité ne suffit
-pas à bloquer une copie indépendante. Les écritures W4 purement legacy
-restent accessibles.
+**Historique des gardes W4 (fixtures archivées uniquement) :** la
+transaction 0.7 refusait un Placement dont l'Artifact possède un OriginLink
+canonique de la même identité. Ce garde reste testé par l'archive
+`tests/kobo_legacy_reconciliation_archive.py` mais **n'est plus une voie de
+production** : `reconcile_kobo_local` refuse maintenant tout preview, toute
+confirmation et tout undo 0.7 avant I/O (#4924/#4928). Seuls l'observation
+physique **sans droit** et le relink d'un B déjà indépendamment attesté
+conservent une API exécutable distincte.
 
 **Gel de surface :** le test
 `tests/test_core_p0_3196_residual_writer_surface.py` détecte les nouveaux
@@ -150,24 +151,27 @@ OriginLink, Artifact ou droit. Recette mixte
 plus adaptation des assertions W5 existantes. La relocalisation
 d'un B déjà attesté est une opération distincte et confirmée (#4859).
 
-**W4 — observation physique indépendante (06/11/2026) :** le rapprochement
-manuel confirmé conserve désormais, dans la **même transaction SQLite** que son
-journal de confirmation/undo, une observation append-only
+**W4 — historique du rapprochement 0.7 (tests archivés seulement) :**
+la transaction manuelle anciennement confirmable conservait, dans la **même
+transaction SQLite** que son journal de confirmation/undo, une observation append-only
 `core.kobo.local-file-evidence.<operation>` contenant la portée exacte
 identité/credential/compte/édition/révision ancienne, le SHA/taille
 réellement relus dans le répertoire du profil et le fingerprint
 `device/inode/mtime/ctime`. Le preview ne crée rien, un échec du second
 INSERT annule toute la confirmation et l'undo conserve cette trace
 historique (le journal principal indique `undone`). Les anciens journaux
-W4 sans nouvelle observation restent réversibles. Une transaction W4 ne
+W4 sans nouvelle observation restent réversibles **dans les fixtures de
+régression historiques** ; ils ne sont plus annulables par une entrée publique
+0.7. Une transaction W4 historique ne
 peut désormais **plus écraser un ledger 0.8 qui n'est pas explicitement
 le miroir historique** (`metadata_json.legacy_status` unique).
 Cette observation **ne prouve ni droit Kobo, ni SourceReference, ni
 OriginLink, ni réception de téléchargement**, et ne permet aucun GET :
 une migration canonique future devra toujours obtenir A fournisseur frais,
-révision et reçu de livraison indépendants. Les états
-`reconcile_required/conflict` conservent W1/W2/W4 jusqu'à cette migration ;
-**la coupure finale reste ouverte**.
+révision et reçu de livraison indépendants. Les états `reconcile_required/conflict` conservent encore leurs dépendances
+**W1/W2**, pas l'exécuteur W4 retiré. L'opérateur distinct
+`observe_kobo_local_file_only` journalise uniquement des octets observés et
+ne crée aucune origine fournisseur ; **la coupure globale W1/W2 reste ouverte**.
 Réception : `tests/test_core_1345_confirmed_local_reconciliation.py`.
 
 ## 2. Lecteurs qui influencent encore une décision
@@ -251,7 +255,7 @@ le chemin B sans projeter une acquisition dans `backup_items`.
    bornée, revérifier account/revision/source, les collisions de chemins et
    les octets, committer de façon idempotente et pouvoir reprendre un crash.
    Les octets et la provenance restent distincts par identité.
-5. **Achever W2/D1–D4 et retirer l'archive W4.** L'API positive W4 et les façades sont coupées ; une entrée sans ABI v2 et toujours
+5. **Achever W2/D1–D4 ; conserver W4 comme archive non exécutable en production.** L'API positive W4 et les façades sont coupées ; une entrée sans ABI v2 et toujours
    opérationnelle **bloque la désactivation globale**. Passer chaque
    méthode de livraison (manuel, startup, confirmation, retry) au moteur
    canonique ; basculer l'undo/reconcile vers des références B exactes.
@@ -271,5 +275,4 @@ plus d'autorité positive à `backup_items`** ; aucune perte de reprise sur
 source legacy ni de provenance canonique. Les méthodes de lecture d'archives
 et les gardes négatifs peuvent persister sans empêcher la fermeture.
 
-**État du 06/11 : NON atteint.** **W1 bloque désormais le miroir canonique pour les reçus non liés, et W3 est retiré** : aucun manifeste ne supprime désormais une archive Kobo. W1 ne concerne encore que les éditions **déjà typées** ; les entrées 0.7 sans SourceReference n'ont pas été migrées et les writers W2, W4 et W5 restent accessibles dans leur périmètre. Les protections #4539–#4562 ne sont pas
-équivalentes à une coupure du writer.
+**État du 07/11 : NON atteint.** W3 est retiré pour Kobo et **W4 n'a plus de writer public positif**, même en ABI partielle. W5 conserve désormais les localisateurs d'archives Kobo inchangés ; les migrations de Placements restent contrôlées. W1 bloque le miroir pour les reçus incomplets et les rapprochements sans connexion active exacte, mais **la projection 0.7 sur source active demeure**. Les éditions historiques sans SourceReference n'ont pas migré : **W2 et D1–D4 internes restent le chemin critique**, pas l'undo W4 déjà retiré. Les garde-fous ne remplacent pas le cutover canonique A→B.
