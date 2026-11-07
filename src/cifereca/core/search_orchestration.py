@@ -220,7 +220,8 @@ def searchable_providers(self) -> list[tuple[str, str]]:
     for session in self._sessions.values():
         if not session.connected or not session.capabilities.search or session.provider_id in seen:
             continue
-        if not self._provider_enabled_for_identity(session.provider_id):
+        if (not self._provider_enabled_for_identity(session.provider_id)
+                or not _search_credential_enabled(self, session)):
             continue
         seen.add(session.provider_id)
         out.append((session.provider_id, session.descriptor.display_name))
@@ -241,7 +242,8 @@ def provider_search_capabilities(self) -> dict[str, ProviderSearchCapabilities]:
     for session in self._sessions.values():
         if not session.connected or not session.capabilities.search:
             continue
-        if not self._provider_enabled_for_identity(session.provider_id):
+        if (not self._provider_enabled_for_identity(session.provider_id)
+                or not _search_credential_enabled(self, session)):
             continue
         result.setdefault(session.provider_id, self._session_search_capabilities(session))
     return result
@@ -574,6 +576,35 @@ def _inert_search_source_state(session: object) -> tuple[object, object, object]
     return (provider, credential, connected)
 
 
+
+def _search_credential_enabled(self, session: object) -> bool:
+    """Check an exact account switch without consulting provider callbacks.
+
+    A connected session may outlive an account toggle until the next broker
+    reconnect. Neither the stored credential owner nor a public catalogue
+    fallback is a right to continue using an explicitly disabled source.
+    Absent registrations remain compatible with anonymous/legacy sources;
+    a registered false switch always revokes the session's search lease.
+    """
+    state = _inert_search_source_state(session)
+    if state is None or state[2] is not True:
+        return False
+    provider, credential, _ = state
+    if not credential or credential == "__public__":
+        return True
+    try:
+        configured = self.config.provider_accounts(provider)
+        if any(
+            type(row) is dict and row.get("id") == credential
+            and row.get("enabled", True) is not True
+            for row in configured
+        ):
+            return False
+        stored = self.storage.provider_connection_enabled(provider, credential)
+        return stored is not False
+    except (AttributeError, OSError, LookupError, TypeError, ValueError):
+        return False
+
 def search(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', field: str='all', content_types: tuple[str, ...] | list[str] | None=None, include_redundant_merged: bool=False, logger, facade_type) -> list[SearchResult]:
     # Capture before session discovery, which may run across an identity
     # transition. A query must not discover sources as A then run them as B.
@@ -607,7 +638,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             if (expected is None or expected[2] is not True
                     or not any(candidate is session for candidate in registered)
                     or _inert_search_source_state(session) != expected
-                    or not self._provider_enabled_for_identity(expected[0])):
+                    or not self._provider_enabled_for_identity(expected[0])
+                    or not _search_credential_enabled(self, session)):
                 return False
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
@@ -637,6 +669,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         session for session in self._sessions.values()
         if session.connected and session.capabilities.search
         and self._provider_enabled_for_identity(session.provider_id)
+        and _search_credential_enabled(self, session)
         and (requested_provider == "all" or session.provider_id == requested_provider)
     ]
     configured_paris_primary = (
@@ -1248,6 +1281,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         session for session in self._sessions.values()
         if session.connected and session.capabilities.search
         and self._provider_enabled_for_identity(session.provider_id)
+        and _search_credential_enabled(self, session)
         and (not requested or session.provider_id in requested)
     ]
     configured_paris_primary = (
@@ -1320,7 +1354,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             if (expected is None or expected[2] is not True
                     or not any(item is session for item in registered)
                     or _inert_search_source_state(session) != expected
-                    or not self._provider_enabled_for_identity(expected[0])):
+                    or not self._provider_enabled_for_identity(expected[0])
+                    or not _search_credential_enabled(self, session)):
                 return False
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
