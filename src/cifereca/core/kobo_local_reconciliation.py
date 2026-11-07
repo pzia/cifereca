@@ -736,6 +736,10 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
     Roots are reread from disk on validation, so another config save invalidates
     the plan if it changes the selected identity's directory or library root.
     """
+    # The new file-only channel has a dedicated, non-authoritative writer.
+    # The old W4 confirm/undo remains unchanged until its consumers migrate.
+    file_only = options.pop("file_only", False)
+    _require(type(file_only) is bool, "invalid_request")
     config_path = Path(config_path) if config_path is not None else config_file(create=False)
     database_path = Path(database_path) if database_path is not None else database_file(create=False)
 
@@ -779,7 +783,10 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
         storage = SimpleNamespace(path=database_path, _lock=threading.Lock(),
                                   _connect=lambda: connection, _stable_id=Storage._stable_id)
         service = SimpleNamespace(storage=storage, config=SimpleNamespace(get=get), identity_by_id=identity)
-        return reconcile_kobo_local(service, **options)
+        return (
+            observe_kobo_local_file_only(service, **options)
+            if file_only else reconcile_kobo_local(service, **options)
+        )
     except (OSError, sqlite3.Error, json.JSONDecodeError, UnicodeError):
         raise ReconciliationRejected("local_profile_unavailable") from None
     finally:
