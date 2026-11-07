@@ -95,6 +95,22 @@ Un filtre de sources actif malformé refuse les routes exactes plutôt que de
 revenir implicitement à « Tous ». Cette contrainte de vue ne crée aucun
 droit fournisseur ; le Core garde toute la validation au clic.
 
+## Garde supplémentaire : remplacement de ligne pendant l'attente du worker
+
+Sur le parcours `loaded Search`, l'objet `SearchResult` de la fiche
+initialement sélectionnée peut être retiré ou remplacé dans
+`window.search_objects` **après le clic et avant l'exécution de la tâche**,
+sans mutation de ses propres attributs. La seule comparaison des champs de
+l'ancien objet ne détectait pas cette révocation avant `holdings()`.
+
+Le Core capture désormais la **clé exacte déjà validée au clic** et vérifie
+dans le worker que son dictionnaire de lignes Search pointe toujours vers
+**le même objet**. Sinon la tâche est annulée avant le GET. Le worker ne
+consulte jamais les widgets GTK ou `loaded_notice_key` (qui inspecte les
+filtres et la liste graphique). À la publication GTK, les gardes plus forts
+de visibilité/édition déjà en place restent obligatoires. Le contrat
+`known-v2` n'est pas modifié. Aucun droit/action supplémentaire.
+
 ## Couverture, suites et non-objectifs
 
 Tests headless Core/Plugins : aucun GET au rendu, clic explicite seulement,
