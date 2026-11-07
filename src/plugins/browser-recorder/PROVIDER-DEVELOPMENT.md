@@ -65,6 +65,17 @@ Exemple **schématique** de manifeste (adapter versions, entrypoints, brokers, c
 
 Il s'agit d'une **cible illustrative non installée**, pas d'un provider ayant ses capacités prouvées. La catégorie `provider.library` est `cifereca.provider/1`. Le manifeste est validé par `src/cifereca/plugins/manifest.py` et `scripts/plugin_packaging.py` ; plusieurs providers dans un seul package sont pris en charge. Les capacités `catalog.search`, `catalog.detail`, `sync.loans`, `acquisition.borrow` ou `acquisition.download` ne doivent être ajoutées que lorsque le code et ses tests les réalisent, distinctement des permissions d'un compte.
 
+### Champs de configuration publics (contrat réel)
+
+La classe `ProviderDescriptor` du Core expose notamment `credential_fields: tuple[CredentialField, ...]`, `account_options: tuple[AccountOptionField, ...]`, `borrower_scoped_options: tuple[BorrowerScopedOptionField, ...]`, `interactive_authentication: bool` et `max_accounts_per_identity`. Le kit de capture inclut leur définition exacte dans `plugin-dev-kit/contracts/provider_base.py`, car ces classes, bien que définies dans `cifereca.providers.base`, sont **réexportées publiquement** par `cifereca.plugin_api`.
+
+- `CredentialField(key, label, secret, required, placeholder)` : déclarer les identifiants/secrets nécessaires à l'établissement ; le schéma d'authentification varie par provider et ne doit pas être partagé avec une autre source.
+- `AccountOptionField(key, label, default, required, secret, legacy_config_key, value_type, min_value, max_value, help_text)` : options de compte, par exemple une préférence ou un entier de politique; **pas** une autorité sur un quota réellement disponible.
+- `BorrowerScopedOptionField` : paramètres déclaratifs par emprunteur/branche seulement si un établissement expose plusieurs comptes liés ; ne pas inventer de sous-comptes.
+- `ProviderPlugin.create_session(*, credential_id, label, credentials, options, config, storage, diagnostics)` : signature historique exacte actuellement réexportée. **Le paramètre hérité `storage` n'autorise aucune écriture directe dans le Core** ; ne pas exploiter des détails internes de l'objet. `ProviderSession.connect()` renvoie les comptes upstream et `close()` invalide l'état de session ; vérifier les signatures et capacités du code fourni avec le kit, non de snippets anciens.
+
+Chaque façade d'établissement fixe son propre `ProviderDescriptor.id`, son `tenant_id` vérifié et ses champs de credentials. Pour un login interactif/SSO, `interactive_authentication=True` signale une connexion qui **ne doit pas être lancée automatiquement** par le balayage de démarrage. Les quotas et échéances effectifs restent des observations vivantes du compte, jamais un simple paramètre qui autorise `borrow()`.
+
 ## 3. Catalogue C, inventaire A, fichier B : ne jamais fusionner
 
 | Surface | Peut attester | Ne peut pas attester |
