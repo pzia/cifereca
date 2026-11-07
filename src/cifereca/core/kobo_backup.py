@@ -900,7 +900,7 @@ def kobo_backup_preview(
     # The latter is essential for local-only/offline callers with no sessions.
     if session is None or not has_complete_delivery_abi(session):
         from ..plugin_api.provider_rights_observation import ProviderRightsScope
-        from .source_sync_consent import configured
+        from .source_sync_consent import read_policy
         try:
             borrowers = {
                 row.unique_id for row in self.accounts
@@ -923,12 +923,19 @@ def kobo_backup_preview(
             borrowers.update(
                 row[0] for row in bound if type(row[0]) is str
             )
-            has_canonical_consent = any(
-                configured(self, ProviderRightsScope(
-                    identity_id, "kobo", credential_id, borrower,
-                ))
-                for borrower in borrowers
-            )
+            has_canonical_consent = False
+            for borrower in borrowers:
+                try:
+                    policy = read_policy(
+                        self.storage, ProviderRightsScope(
+                            identity_id, "kobo", credential_id, borrower,
+                        ),
+                    )
+                    has_canonical_consent |= policy.configured
+                except Exception:
+                    # Cannot infer that an unreadable configured CAS is
+                    # missing and thereby resurrect 0.7 preview authority.
+                    has_canonical_consent = True
         except ProviderConfigurationError:
             raise
         except Exception:
