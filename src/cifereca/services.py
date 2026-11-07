@@ -973,8 +973,12 @@ class LibraryService:
         return provider_sessions.connect_kobo_preview(self, credential_id)
 
     def connect_kobo_selected_edition(self, credential_id: str) -> ProviderSession:
-        """Prepare one canonical selected-edition CLI scope, not a preview."""
+        """Prepare a confirmed selected-edition scope without replacing Core accounts."""
         return provider_sessions.connect_kobo_selected_edition(self, credential_id)
+
+    def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
+        """Prepare one confirmed Kobo resume with exact SQLite borrower and ABI."""
+        return provider_sessions.connect_kobo_canonical(self, credential_id)
 
     def connect_configured(self) -> dict[str, Any]:
         """Public facade with its stable, no-argument compatibility contract."""
