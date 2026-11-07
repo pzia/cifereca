@@ -124,8 +124,28 @@ def _source(broker, source_id, *, allow_canonical=False):
     # confirmation token was issued.
     _require(allow_canonical or not has_complete_delivery_abi(session),
              "canonical_source_delivery_active")
+    # The session selected by provider+credential must also be the exact
+    # registered session, not a stale alias surviving a reconnect. A source
+    # manifest belongs to its issuing borrower, not merely to an upstream
+    # account_id that can be reused under another profile or provider.
+    _require(service._sessions.get(
+        service._session_key("kobo", account.credential_id)
+    ) is session, "source_changed")
     session_accounts = session.accounts
-    _require(len(session_accounts) == 1 and session_accounts[0].unique_id == account.unique_id, "ambiguous_account")
+    _require(
+        len(session_accounts) == 1
+        and session_accounts[0].provider_id == "kobo"
+        and session_accounts[0].credential_id == account.credential_id
+        and session_accounts[0].unique_id == account.unique_id
+        # Kobo-Vault's legacy Account model uses "default" as an adapter
+        # identity label even for a named Core profile; the actual owner is
+        # independently pinned by identity_for_connection above. Only this
+        # known adapter label may differ from the selected Core identity.
+        and session_accounts[0].identity_id in {
+            account.identity_id, "default",
+        },
+        "ambiguous_account",
+    )
     _require(sum(a.provider_id == "kobo" and a.credential_id == account.credential_id
                  for a in service.accounts) == 1, "ambiguous_account")
     if not has_complete_delivery_abi(session):
