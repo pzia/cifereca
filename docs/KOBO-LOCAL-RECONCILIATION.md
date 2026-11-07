@@ -2,6 +2,22 @@
 
 > **Document historique/partiel — 28/10/2026.** rattrapage Kobo ponctuel, pas un prérequis universel de la Sync. La cible normative est la **synchronisation automatique unique** décrite dans [ARCHITECTURE.md](ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) ; le rattrapage manuel #2797 reste exceptionnel. Conserver les gardes existants ; ne pas déduire qu'un OriginLink canonique/transaction Core est livré de cette seule recette.
 
+> **W4/D5 P0 #4859 — Commande legacy retirée.** `cifereca-cli kobo-reconcile-local`
+> refuse désormais **aperçu, confirmation et annulation** avec
+> `reason=legacy_reconciliation_retired` (code retour 2), sans accéder
+> aux fichiers ou à SQLite. Les anciennes écritures positives pouvaient
+> convertir un reçu 0.7 historique en `acquisition_ledger.complete`,
+> `Placement present` et index de catalogue sans attestation indépendante A→B.
+> Pour constater **uniquement les octets** d'un fichier avec emprunteur SQL exact :
+> `cifereca-cli kobo-observe-local` (avec `--size`, voir
+> [contrat file-only](CORE-P0-4859-FILE-ONLY-CLI.md)).
+> Pour déplacer le pointeur d'un **Placement B canonique déjà publié** :
+> `cifereca-cli kobo-relink-canonical` (voir
+> [contrat relink](CORE-P0-4859-CANONICAL-PLACEMENT-RELINK.md)).
+> Les sections suivantes documentent le comportement **historique**,
+> sans constituer une procédure exécutable après le retrait. L'ancien
+> opérateur Core et la GUI demeurent en migration dans #4859.
+
 `kobo-audit --credential CONNEXION --plan` reste un diagnostic en lecture seule.
 Ses comptes pseudonymisés et ses `case-*` éphémères ne peuvent jamais servir de
 cible d'exécution. `evidence_status` distingue les octets locaux vérifiés de
