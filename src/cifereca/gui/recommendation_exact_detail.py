@@ -105,6 +105,9 @@ def present_loaded_search_detail_in_place(
         loaded_snapshot = (
             deepcopy(_loaded_notice_facts(item)) if not known_source else None
         )
+        # Capture the exact Search row key already verified on the GTK click.
+        # The queued worker must not inspect GTK controls or list selection.
+        loaded_key = f"{provider}:{item.id}" if not known_source else None
         query = item.title if known_source else (
             getattr(window, "_last_search_query", "") or ""
         )
@@ -167,7 +170,13 @@ def present_loaded_search_detail_in_place(
         if known_source:
             return True
         try:
-            return _loaded_notice_facts(item) == loaded_snapshot
+            # Search may replace/remove the row without mutating the former
+            # SearchResult. Refuse before holdings GET, not only at delivery.
+            # The worker checks only the Core-owned dict; no GTK state.
+            objects = getattr(window, "search_objects", None)
+            return (type(objects) is dict
+                    and objects.get(loaded_key) is item
+                    and _loaded_notice_facts(item) == loaded_snapshot)
         except Exception:
             return False
 
