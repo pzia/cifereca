@@ -19,6 +19,12 @@ def test_cleanup_phase_preserves_call_and_transaction_rollback(tmp_path, monkeyp
     original_gc, calls = updater._gc, []
     def collect(actual_root, keep):
         calls.append((actual_root, keep))
+        # Cleanup must not run before plugins are applied and the Core +
+        # plugins transaction has been durably marked as successful.
+        current = updater._symlink_target(actual_root / "current")
+        assert current is not None
+        linked = updater._transaction_for_release(actual_root, current)
+        assert linked is not None and linked[1]["state"] == "applied"
         if fails:
             raise RuntimeError("PRIVATE-TOKEN /home/private/runtime")
         return original_gc(actual_root, keep)
