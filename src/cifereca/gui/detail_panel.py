@@ -409,6 +409,11 @@ class DetailPanel(Gtk.Box):
         return ''
 
     def _clear_actions(self):
+        # The GTK button may still be referenced by an asynchronous callback
+        # after a new Search/Recommendations selection replaces this detail.
+        # Revoke it before removing the action widgets from their container.
+        for button in getattr(self, "_action_buttons", ()):
+            button._cifereca_action_context_revoked = True
         # show_presentation()/empty() clear the whole detail body before this.
         self._cached_section_widgets = []
         self._cached_action_ids = set()
