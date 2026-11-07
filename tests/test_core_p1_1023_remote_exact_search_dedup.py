@@ -16,13 +16,19 @@ from tests.test_core043_progress_cache_stats import _FakeSession
 from tests.test_core_p0_1354_mirrored_source_scope import notice
 
 
+# #4909: this is a provider-agnostic exact-key contract. Do not use Paris:
+# authenticated foreign Paris credentials now enter a separate read-only
+# catalogue projection and cannot represent multiple accounts in one session.
+_PROVIDER = "fixture-shared-catalogue"
+
+
 def _notices():
-    base = notice()
+    base = replace(notice(), source_provider=_PROVIDER)
     return [
         base,
-        notice(credential="reader-B"),
-        notice(docbase="EDITION-2"),
-        notice(collection="catalogue-B"),
+        replace(notice(credential="reader-B"), source_provider=_PROVIDER),
+        replace(notice(docbase="EDITION-2"), source_provider=_PROVIDER),
+        replace(notice(collection="catalogue-B"), source_provider=_PROVIDER),
         # A real repeat of the same exact account + edition remains a duplicate.
         replace(base, id=base.id + ":repeated"),
     ]
@@ -41,19 +47,19 @@ def test_supplier_id_collisions_survive_fresh_query_batches_and_sqlite(
 ):
     service = _service(str(tmp_path))
     try:
-        session = _FakeSession("paris")
+        session = _FakeSession(_PROVIDER)
         received = _notices()
         calls = []
         def search(query, scope, *, field="all", content_types=()):
             calls.append((query, scope, field, content_types))
             return received
         session.search = search
-        service._sessions = {"paris": session}
+        service._sessions = {_PROVIDER: session}
         batches = []
 
         if progressive:
             summary = service.search_progressive(
-                "livre partagé", force=True, provider_id="paris",
+                "livre partagé", force=True, provider_id=_PROVIDER,
                 on_batch=batches.append,
             )
             assert not summary.cancelled
@@ -65,7 +71,7 @@ def test_supplier_id_collisions_survive_fresh_query_batches_and_sqlite(
             rows = service.last_search
         else:
             rows = service.search(
-                "livre partagé", force=True, provider_id="paris",
+                "livre partagé", force=True, provider_id=_PROVIDER,
             )
         assert calls, "must execute the selected provider, not only SQLite"
         assert len(rows) == 4
@@ -73,7 +79,7 @@ def test_supplier_id_collisions_survive_fresh_query_batches_and_sqlite(
         assert all(r.owned is None and r.downloadable is None for r in rows)
 
         saved = service.storage.catalog_entries(
-            provider_id="paris", identity_id="default",
+            provider_id=_PROVIDER, identity_id="default",
         )
         assert len(saved) == 4
         assert len({r["catalog_entry_id"] for r in saved}) == 4
@@ -88,7 +94,7 @@ def test_supplier_id_collisions_survive_fresh_query_batches_and_sqlite(
             ("reader-A", "EDITION-1", "catalogue-B"),
         }
         known = service.search_known_catalog(
-            "livre partagé", identity_id="default", provider_ids=["paris"],
+            "livre partagé", identity_id="default", provider_ids=[_PROVIDER],
         )
         assert len(known) == 4
         assert service.storage.entitlements() == []
