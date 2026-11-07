@@ -26,21 +26,23 @@ TARGET = "Books/Cifereca/" + SHA + ".epub"
 
 
 def setup(tmp_path, *, owner="alice", kind="provider", account="account-one",
-          source_kind="purchase", source_state="active", placement=True):
+          source_kind="purchase", source_state="active", placement=True, payload=PAYLOAD):
+    digest = sha256(payload).hexdigest()
+    artifact_id = "sha256:" + digest
     db = Storage(tmp_path / "library.sqlite3")
     db.identity_put(Identity("alice", "Alice"))
     db.identity_put(Identity("bob", "Bob"))
     db.artifact_put({
-        "artifact_id": ARTIFACT, "sha256": SHA, "size": len(PAYLOAD),
+        "artifact_id": artifact_id, "sha256": digest, "size": len(payload),
         "media_format": "epub", "metadata": {"artifact_kind": "file"},
     })
     root = tmp_path / owner
     root.mkdir()
     file = root / "book.epub"
-    file.write_bytes(PAYLOAD)
+    file.write_bytes(payload)
     if placement:
         db.placement_put({
-            "artifact_id": ARTIFACT, "path": str(file),
+            "artifact_id": artifact_id, "path": str(file),
             "identity_id": owner, "provider_id": "provider-one",
             "source_item_id": "item-one", "state": "present",
             "metadata": {"artifact_kind": "file"},
@@ -64,12 +66,12 @@ def setup(tmp_path, *, owner="alice", kind="provider", account="account-one",
             "origin_link_id,origin_kind,identity_id,artifact_id,"
             "source_reference_id,evidence_ref,created_at,updated_at)"
             "VALUES(?,?,?,?,?,?,?,?)",
-            ("origin:alice-one", kind, owner, ARTIFACT, SOURCE,
+            ("origin:alice-one", kind, owner, artifact_id, SOURCE,
              "verified-delivery", NOW, NOW),
         )
     witness = UsbCopyRightsEvidence(
         identity_id="alice", device_id="reader-a",
-        usb_fingerprint=UUID, artifact_id=ARTIFACT, sha256=SHA,
+        usb_fingerprint=UUID, artifact_id=artifact_id, sha256=digest,
         selected_format="epub", source_reference_id=SOURCE,
         provider_id="provider-one", account_id=account,
         source_kind=source_kind, policy_ref="provider-terms-copy-grant",
