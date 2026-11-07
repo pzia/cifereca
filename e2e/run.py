@@ -659,6 +659,20 @@ def main() -> int:
                         for key in sorted(dimensions):
                             print("P1_774_NUMERIC_" + key + "=" +
                                   str(dimensions[key]), flush=True)
+                    # Synthetic keyboard verdict: bounded boolean flags only.
+                    # Never export the actual query, summary or widget text.
+                    coherence = report_data.get("p1_774_keyboard_coherence")
+                    coherence_keys = frozenset({
+                        "text", "rows", "title", "count", "summary_title", "retries",
+                    })
+                    if (type(coherence) is dict and set(coherence) == coherence_keys
+                            and all(type(coherence[k]) is int and coherence[k] in (0, 1)
+                                    for k in coherence_keys - {"retries"})
+                            and type(coherence["retries"]) is int
+                            and 0 <= coherence["retries"] <= 30):
+                        for key in sorted(coherence_keys):
+                            print("P1_774_KEYBOARD_NUMERIC_" + key + "=" +
+                                  str(coherence[key]), flush=True)
                     # Eight screen-local bounded integers diagnose a clipped
                     # overflow button without leaking widget text, session,
                     # actions, account metadata or raw GTK tracebacks.
