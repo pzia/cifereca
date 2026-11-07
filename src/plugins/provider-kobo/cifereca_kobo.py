@@ -1479,6 +1479,15 @@ class KoboSession(ProviderSession):
                     qualification_diagnostic["candidate_kvault_flepub_contract"],
                     qualification_diagnostic["candidate_kvault_format_alias"],
                 )
+                # Version and live normalizer probe originate from the same
+                # descriptor response. Only locally closed/numeric values.
+                detail += (" candidate_kvault_flepub_producer_probe=%s"
+                           " candidate_kvault_descriptor_release=%s"
+                           " candidate_kvault_descriptor_contract=%s") % (
+                    qualification_diagnostic["candidate_kvault_flepub_producer_probe"],
+                    qualification_diagnostic["candidate_kvault_descriptor_release"],
+                    qualification_diagnostic["candidate_kvault_descriptor_contract"],
+                )
             if "candidate_rejection_counts" in qualification_diagnostic:
                 counts = qualification_diagnostic["candidate_rejection_counts"]
                 summary = ",".join(
