@@ -241,7 +241,7 @@ def test_invalid_or_secondary_blank_borrower_is_rejected_before_provider(
     account.is_primary = primary
     account.unique_id = borrower
     case.source = case.broker._source_id(account)
-    canonical.snapshots[0] = _snapshot(case)
+    # The invalid account is refused before supplier rights are read.
     preview = case.broker.prepare_local_materialization(case.source)
     assert not preview.ok and preview.facts["status"] == "invalid_source"
     assert "confirmation_token" not in preview.facts
