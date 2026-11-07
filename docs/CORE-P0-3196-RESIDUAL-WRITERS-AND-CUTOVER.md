@@ -82,6 +82,17 @@ inventé par les octets, ni un retrait global du miroir W1.
 Contrat : `docs/CORE-P0-3196-W1-DISCONNECTED-RECONCILIATION.md`.
 Tests : `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
 
+**Complément W1 (07/11/2026) — archive des refus fournisseur et tentatives interrompues :**
+les checkpoints 0.7 portant `attention_code=archived_book` (Kobo 409),
+`missing_delegation_scope` (portée interdite) ou
+`interrupted_acquisition_review` (tentative sans reçu indépendant) ne
+déclenchent plus de projection `entitlements/acquisition_ledger/artifacts/placements/catalog_entries`,
+**même lorsque le credential est encore activé et l'ancienne archive contient
+un SHA/taille complet**. Le refus est contrôlé sur le checkpoint fusionné
+et n'efface ni la ligne 0.7 ni un droit Core préexistant. Les autres statuts
+Kobo de source active restent temporairement sur W1 jusqu'au cutover A→B de W2.
+Tests : `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
+
 **Mise à jour W3 (06/11/2026) :** l'intégralité du prune Kobo est retirée, y compris pour les enregistrements `pending` sans aucune preuve ; les détails historiques de garde W3 ci-dessous décrivent les protections antérieures désormais subsumées par la conservation de *toutes* les lignes. La migration transactionnelle seule pourra décider du retrait d'une archive.
 
 **Cutover W2 après manifeste — scope de session exact (07/11/2026) :**
