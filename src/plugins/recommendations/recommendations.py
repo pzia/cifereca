@@ -1954,6 +1954,13 @@ class UxRecommendationsView:
         if getattr(self, "_disposed", False):
             return
         visible = [row for row in self._ranked if self._matches(row)]
+        # Synchronize the view counter before materializing GTK rows: real
+        # HiDPI reallocation and detail-selection callbacks can interrupt
+        # presentation after show_rows has changed the list model. The
+        # filtered count must not depend on successful detail rendering.
+        # Preserve the richer calculation summary for provisional updates.
+        if not preserve_summary and self._ranked:
+            self._update_view_summary(provisional=self._provisional_active)
         catalogue_sources = self._selected_catalogue_sources()
 
         rows = []
@@ -2061,8 +2068,6 @@ class UxRecommendationsView:
                 "Aucune recommandation sélectionnée",
                 "Modifiez les filtres ou relancez le calcul.",
             )
-        if not preserve_summary and self._ranked:
-            self._update_view_summary(provisional=self._provisional_active)
 
     def _selected_row(self, row: UiBookListEntry | None) -> None:
         if getattr(self, "_disposed", False):
