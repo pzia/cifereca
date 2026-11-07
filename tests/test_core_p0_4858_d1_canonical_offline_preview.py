@@ -182,3 +182,101 @@ def test_disabled_connection_denies_offline_audit(rig, monkeypatch):
     with pytest.raises(ProviderConfigurationError,
                        match="canonical_kobo_preview_scope_changed"):
         service.kobo_backup_preview("vault-1")
+
+
+def test_cli_offline_from_local_only_core_reads_only_existing_canonical_B(
+    rig, tmp_path, monkeypatch, capsys,
+):
+    """Disconnected CLI never calls Kobo A, old backup or materialization."""
+    import json
+    from types import SimpleNamespace
+    from cifereca import cli
+
+    service, session, account = rig
+    key, snapshot = new_source(
+        "alice", provider="kobo", credential="vault-1",
+        account="account", branch="purchases",
+        edition="offline-book", right="offline-right",
+    )
+    physical = tmp_path / "EBooks" / "alice" / "offline-book.pdf"
+    physical.parent.mkdir(parents=True, exist_ok=True)
+    physical.write_bytes(BYTES)
+    assert publish_completed_acquisition(
+        service.storage, library_root=tmp_path / "EBooks",
+        path=physical, source=key, snapshot=snapshot,
+        final_sha256=SHA,
+        delivery_receipt_ref="synthetic-offline-published-receipt",
+    ).changed
+
+    # Real CLI opens a local-only Core: no provider session or registered
+    # Kobo account; all inventory derives only from exact SQL B.
+    service.accounts = []
+    service._sessions = {}
+    _disable_backup_reads(service, monkeypatch)
+    monkeypatch.setattr(
+        service, "connect_kobo_canonical",
+        lambda *_a, **_kw: pytest.fail("offline CLI cannot connect provider"),
+    )
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: SimpleNamespace(library=service, close=lambda: None),
+    )
+    assert cli.main([
+        "kobo-resume-preview", "--credential", "vault-1", "--verify-files",
+    ]) == 0
+    reply = json.loads(capsys.readouterr().out)
+    assert reply["canonical_source"] is True
+    assert reply["historical_canonical_only"] is True
+    assert reply["manifest_refreshed"] is False
+    assert reply["preview_only"] is True
+    assert reply["acquisition_authorized"] is False
+    assert reply["counts"]["already_local_verified"] == 0
+    assert reply["counts"]["potentially_missing"] == 0
+    assert reply["historical_canonical"]["recorded_rights"] == 1
+    assert (reply["historical_canonical"]
+            ["previously_published_files_physically_verified"]) == 1
+    assert "vault-1" not in json.dumps(reply)
+    assert "offline-book" not in json.dumps(reply)
+    assert service.storage.placements()[0]["path"] == str(physical)
+    assert physical.read_bytes() == BYTES
+
+
+@pytest.mark.parametrize("mutation", ["disabled", "borrower_deleted", "foreign_owner"])
+def test_offline_cli_refuses_unbound_historical_scope_without_legacy_fallback(
+    rig, monkeypatch, capsys, mutation,
+):
+    import json
+    from types import SimpleNamespace
+    from cifereca import cli
+
+    service, session, account = rig
+    service.accounts = []
+    service._sessions = {}
+    if mutation == "disabled":
+        service.storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault-1", "enabled": False,
+        })
+    elif mutation == "borrower_deleted":
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute(
+                "DELETE FROM provider_accounts WHERE provider_id='kobo' "
+                "AND credential_id='vault-1'"
+            )
+    else:
+        monkeypatch.setattr(
+            service.storage, "identity_for_connection",
+            lambda *_a, **_kw: "bob",
+        )
+    _disable_backup_reads(service, monkeypatch)
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: SimpleNamespace(library=service, close=lambda: None),
+    )
+    assert cli.main(["kobo-resume-preview", "--credential", "vault-1"]) == 2
+    reply = json.loads(capsys.readouterr().out)
+    assert reply == {
+        "status": "unavailable", "code": "kobo_preview_unavailable",
+        "preview_only": True, "acquisition_authorized": False,
+    }
+    assert service.storage.placements() == []
