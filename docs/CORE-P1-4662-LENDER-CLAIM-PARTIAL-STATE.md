@@ -22,7 +22,8 @@ consultable depuis un autre profil : le compte prêteur peut avoir été
 **désactivé sans suppression de son historique de prêts**.
 
 Avant **toute lecture** du `loan.borrow.v1:`, puis **après** lecture des
-deux checkpoints, le Core exige une seule connexion enregistrée pour
+deux checkpoints, le Core exige que le **profil demandeur reste le profil
+actif**, une seule connexion enregistrée pour
 `(identity_id, provider_id, credential_id)`, `enabled=True`, et une
 propriété/restauration de l'objet `Account` inchangées. Une liste ambiguë,
 malformée, réaffectée ou désactivée rend uniquement le code fermé
