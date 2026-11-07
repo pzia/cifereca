@@ -223,3 +223,77 @@ def test_legacy_vault_without_optional_counters_still_opens():
             loaded.destroy()
     finally:
         trace.destroy()
+
+
+def test_credential_bodies_from_generic_companion_api_are_scrubbed_before_storage():
+    """Unstructured endpoints must not bypass cross-origin secret filtering."""
+    trace = PrivateHttpTrace((ORIGIN, FOREIGN))
+    try:
+        post = Request(
+            FOREIGN + "/api/query", method="POST",
+            headers={"content-type": "application/json"},
+            data=(
+                b'{"filter":"history","access_token":"SYNTHETIC_TOKEN_VALUE",'
+                b'"nested":{"password":"SYNTHETIC_PASSWORD_VALUE",'
+                b'"page":2}}'
+            ),
+        )
+        response = Response(
+            post, mime="application/json",
+            data=(
+                b'{"items":[{"id":214}],"refresh_token":"SYNTHETIC_REFRESH_VALUE"}'
+            ),
+        )
+        emit(trace, post, response)
+        row = trace.exchanges[0]
+        assert row.request_body is not None
+        assert row.response_body is not None
+        assert '"filter":"history"' in row.request_body
+        assert '"page":2' in row.request_body
+        assert '"access_token":"REDACTED"' in row.request_body
+        assert '"password":"REDACTED"' in row.request_body
+        assert '"refresh_token":"REDACTED"' in row.response_body
+        assert '"items"' in row.response_body
+
+        form = Request(
+            FOREIGN + "/submit", method="POST",
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            data=b"username=reader&password=SYNTHETIC_FORM_PASSWORD",
+        )
+        emit(trace, form, Response(form, data=b'{"success":true}'))
+        assert trace.exchanges[1].request_body == (
+            "username=REDACTED&password=REDACTED"
+        )
+
+        html = Request(FOREIGN + "/screen")
+        unsafe_html = Response(
+            html, mime="text/html",
+            data=b'<form><input type="password" name="password" '
+                 b'value="SYNTHETIC_HTML_PASSWORD"></form>',
+        )
+        emit(trace, html, unsafe_html)
+        assert trace.exchanges[2].response_body is None
+        assert trace.exchanges[2].response_body_reason == "auth_redacted"
+        assert unsafe_html.body_reads == 1
+        payload = _record(trace, ID, "completed").decode("utf-8")
+        for token in (
+            "SYNTHETIC_TOKEN_VALUE", "SYNTHETIC_PASSWORD_VALUE",
+            "SYNTHETIC_REFRESH_VALUE", "SYNTHETIC_FORM_PASSWORD",
+            "SYNTHETIC_HTML_PASSWORD",
+        ):
+            assert token not in payload
+    finally:
+        trace.destroy()
+
+
+def test_safe_body_sanitizer_preserves_ordinary_catalogue_json():
+    from browser_recorder_http import _safe_body_text
+    original = '{"items":[{"title":"Un été"}],"page":2}'
+    assert _safe_body_text(original, "application/json") == original
+    assert _safe_body_text("plain text", "text/plain") == "plain text"
+    assert _safe_body_text('{"secret":"HIDDEN"}', "application/json") == (
+        '{"secret":"REDACTED"}'
+    )
+    assert _safe_body_text("password=HIDDEN", "text/plain") is None
+    assert _safe_body_text("<input type='password' value='HIDDEN'>",
+                           "text/html") is None
