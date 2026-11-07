@@ -13,6 +13,7 @@ from cifereca.core import kobo_local_reconciliation as repair
 from tests.test_core_p0_4859_kobo_file_only_observation import (
     observation, _snapshot,
 )  # noqa: F401
+from tests.test_core_1345_confirmed_local_reconciliation import case  # noqa: F401
 
 
 def _invoke(observation, capsys, *, confirm=None, size=None, identity=None):
