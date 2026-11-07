@@ -1071,7 +1071,10 @@ def test_real_chromium_identity_negotiation_preserves_bounded_text_and_vault(
             assert private["content_negotiation"] == trace.content_negotiation
             assert private["compressed_responses_accepted"] is accept_compressed
             if prefer_identity or accept_compressed:
-                assert TOKEN in archive.read("trace.json").decode()
+                # Credential-bearing JSON is now scrubbed at capture time,
+                # including in the deliberately private, direct ZIP export.
+                assert TOKEN not in archive.read("trace.json").decode()
+                assert "REDACTED" in archive.read("trace.json").decode()
         review = IdentifierReview(stored.trace)
         for candidate in review.candidates():
             review.decide(candidate.key, "anonymize")
