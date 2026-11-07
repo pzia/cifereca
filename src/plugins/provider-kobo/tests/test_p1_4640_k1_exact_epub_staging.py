@@ -118,6 +118,11 @@ def test_k1_fresh_descriptor_drops_epub_and_never_executes_pdf(
             pytest.fail("Fresh PDF cannot replace selected EPUB")
         ), [],
     )
+    def original_k1(product, **options):
+        posts.append((product, options))
+        return _epub_and_pdf()
+
+    vault.acquisition = original_k1
     try:
         offered = admitted(session, account)
         assert offered.startswith("kobo.descriptor:")
