@@ -38,6 +38,26 @@ def epub_bytes():
     return out.getvalue()
 
 
+
+def test_synthetic_epub_zip_bytes_stable_across_clock_boundary(monkeypatch):
+    """#4421: literal received bytes must not change with DOS ZIP wall clock."""
+    monkeypatch.setattr(
+        zipfile.time, "localtime",
+        lambda *_args: (2026, 11, 7, 5, 17, 59, 5, 0, -1),
+    )
+    before = epub_bytes()
+    monkeypatch.setattr(
+        zipfile.time, "localtime",
+        lambda *_args: (2026, 11, 7, 5, 18, 0, 5, 0, -1),
+    )
+    after = epub_bytes()
+    assert before == after
+    with zipfile.ZipFile(BytesIO(after)) as archive:
+        assert {entry.date_time for entry in archive.infolist()} == {
+            (2020, 1, 1, 0, 0, 0)
+        }
+
+
 ACSM = (
     b'<?xml version="1.0"?><fulfillmentToken '
     b'xmlns="http://ns.adobe.com/adept"><resourceItemInfo>'
