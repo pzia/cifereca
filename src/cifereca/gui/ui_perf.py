@@ -48,7 +48,7 @@ def _process_resource_sample() -> dict[str, float | int | None]:
 _PERF_CATEGORIES = frozenset({
     "task", "opening-sync", "deep-sync", "source-sync", "source-materialize",
     "sync-preflight", "kobo-acquisition", "maintenance", "library", "recent",
-    "search", "plugin", "other",
+    "search", "plugin", "startup", "other",
     # Fixed Core UI/MainWindow task kinds already present at the submit call.
     # Without this exact allowlist, an opt-in 600-file Maintenance audit is
     # reported as "other.worker" despite being a known maintenance action.
@@ -62,6 +62,9 @@ _PERF_PHASES = frozenset({
     "queue_wait", "worker", "gtk_delivery_wait", "lock_wait", "provider",
     "storage", "projection", "row_projection", "facets", "model_update",
     "selection", "render", "frame_wait", "first_paint", "sections", "actions", "gc_gen0", "gc_gen1", "gc_gen2",
+    # Closed startup vocabulary. Never derived from GTK/plugin/provider names.
+    "gtk_import", "core_open", "shell_interactive", "window_presented",
+    "plugins_activation",
 })
 _PERF_TRIGGERS = frozenset({
     "automatic", "user", "navigation", "maintenance", "unspecified",
