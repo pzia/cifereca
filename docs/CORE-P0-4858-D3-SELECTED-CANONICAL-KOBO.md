@@ -2,7 +2,7 @@
 
 ## Contrat
 
-`cifereca kobo-sync-edition --credential <id> --item <edition> --confirm`
+`cifereca-cli kobo-sync-edition --credential <id> --item <edition> --confirm`
 ouvre **uniquement** le compte Kobo demandé et exécute une acquisition
 ciblée sous le verrou Core de maintenance/acquisition. Sans `--confirm`,
 la CLI refuse **avant le démarrage du Core**.
@@ -31,7 +31,7 @@ la CLI refuse **avant le démarrage du Core**.
 ## Usage
 
 ```sh
-cifereca kobo-sync-edition \
+cifereca-cli kobo-sync-edition \
   --credential mon-compte-kobo \
   --item edition-exacte \
   --confirm
