@@ -97,3 +97,94 @@ def test_foreign_profile_placement_never_builds_local_action():
     assert actions == []
     assert not any(event[0] == "path" for event in events)
     assert submissions == [] and launched == []
+
+
+
+def test_replaced_detail_cannot_launch_old_local_open_button():
+    w, item, panel, actions, events, submissions, launched, deps = _environment(
+        identities=("alice",),
+    )
+    add_local_book_actions(w, panel, item, **deps)
+    assert len(actions) == 1
+    button = actions[0]
+    button.click()
+    assert launched == ["file:///library/book.epub"]
+    button._cifereca_action_context_revoked = True
+    button.click()
+    assert launched == ["file:///library/book.epub"]
+    assert submissions == []
+
+
+def test_detached_local_open_button_never_launches_a_file():
+    w, item, panel, actions, events, submissions, launched, deps = _environment(
+        identities=("alice",),
+    )
+    add_local_book_actions(w, panel, item, **deps)
+    old = actions[0]
+    old.get_root = lambda: None
+    old.click()
+    assert launched == [] and submissions == []
+
+
+def test_replaced_detail_revokes_queued_send_and_late_success_same_identity():
+    w, item, panel, actions, events, submissions, launched, deps = _environment()
+    add_local_book_actions(w, panel, item, **deps)
+    sender = actions[1]
+    sender.click()
+    assert len(submissions) == 1
+    args, _kwargs = submissions[0]
+    sender._cifereca_action_context_revoked = True
+    with pytest.raises(Cancelled):
+        args[1]()
+    original = list(events)
+    args[2]("complete")
+    sender.click()
+    assert events == original and len(submissions) == 1
+    assert not any(event[0] == "send" for event in events)
+
+
+def test_replaced_artifact_menu_blocks_child_even_if_child_itself_survives():
+    operations = []
+    routing = NS(
+        targets=lambda _req: [NS(target=NS(label="Device", target_id="d"))],
+        plan=lambda req: operations.append(("plan", req.target_id)) or "plan",
+        transfer=lambda plan: operations.append(("transfer", plan)) or "complete",
+    )
+    manager = NS(broker=lambda kind: routing if kind == "artifact.routing" else None)
+    w, item, panel, actions, events, submissions, launched, deps = _environment(
+        manager=manager,
+    )
+    add_local_book_actions(w, panel, item, **deps)
+    menu = actions[-1]
+    child = menu.popover.child.children[0]
+    child.click()
+    assert len(submissions) == 1
+    menu._cifereca_action_context_revoked = True
+    args, _kwargs = submissions[0]
+    with pytest.raises(Cancelled):
+        args[1]()
+    original = list(events)
+    args[2]("complete")
+    args[3](RuntimeError("PRIVATE https://example.invalid?token=PRIVATE"))
+    child.click()
+    assert events == original and len(submissions) == 1 and operations == []
+
+
+@pytest.mark.parametrize("kind", ["send", "route"])
+def test_detached_or_unmapped_local_send_targets_cannot_schedule(kind):
+    routing = NS(
+        targets=lambda _req: [NS(target=NS(label="Device", target_id="d"))],
+    )
+    manager = NS(broker=lambda what: routing if what == "artifact.routing" else None)
+    w, item, panel, actions, events, submissions, launched, deps = _environment(
+        manager=manager,
+    )
+    add_local_book_actions(w, panel, item, **deps)
+    if kind == "send":
+        stale = actions[1]
+        stale.get_mapped = lambda: False
+    else:
+        stale = actions[-1].popover.child.children[0]
+        stale.get_root = lambda: None
+    stale.click()
+    assert submissions == []
