@@ -73,19 +73,26 @@ def test_passive_kobo_checkpoint_cannot_rebind_existing_canonical_owner(
 
 
 @pytest.mark.parametrize("status", ("reconcile_required", "reconcile_conflict"))
-def test_w4_reconciliation_mirror_remains_available_until_migrated(
+def test_disconnected_reconciliation_with_complete_sha_is_archive_only(
     tmp_path, status,
 ):
+    """W4 is retired: bytes in a v0.7 row cannot mint an offline right."""
     storage = Storage(tmp_path / "state.sqlite3")
     try:
-        storage.backup_put({
+        row = {
             "provider_id": "kobo", "credential_id": "vault",
             "identity_id": "alice", "account_id": "account-a",
             "item_id": "edition", "title": "Review",
             "status": status, "sha256": "a" * 64, "size": 42,
-        })
+            "local_path": str(tmp_path / "not-proof.epub"),
+        }
+        for _ in range(2):
+            storage.backup_put(row)
         assert storage.backup_get("kobo", "vault", "edition")["status"] == status
-        assert len(storage.acquisitions(provider_id="kobo")) == 1
+        assert storage.entitlements(provider_id="kobo") == []
+        assert storage.acquisitions(provider_id="kobo") == []
+        assert storage.artifacts() == []
+        assert storage.placements() == []
     finally:
         storage.close()
 
@@ -284,5 +291,67 @@ def test_disabling_connection_prevents_new_unproven_legacy_projection(
         assert storage.backup_get("kobo", "vault", "edition") is not None
         assert storage.acquisitions(provider_id="kobo") == []
         assert storage.entitlements(provider_id="kobo") == []
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("status", ("reconcile_required", "reconcile_conflict"))
+@pytest.mark.parametrize("connected_owner,expected_mirror", [
+    (None, False), ("alice", True), ("bob", False),
+])
+def test_legacy_reconcile_sha_never_bypasses_active_exact_source_binding(
+    tmp_path, status, connected_owner, expected_mirror,
+):
+    """Valid SHA/size cannot stand in for an enabled borrower/owner binding."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        if connected_owner:
+            storage.provider_connection_put({
+                "identity_id": connected_owner,
+                "provider_id": "kobo", "credential_id": "vault",
+                "enabled": True,
+            })
+        row = {
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "account_id": "primary",
+            "item_id": "edition", "revision_id": "old-revision",
+            "status": status, "sha256": "a" * 64, "size": 42,
+            "local_path": str(tmp_path / "unverified.epub"),
+        }
+        for i in range(2):
+            storage.backup_put({**row, "title": f"Old title {i}"})
+        assert storage.backup_get("kobo", "vault", "edition")["title"] == "Old title 1"
+        assert bool(storage.entitlements(provider_id="kobo")) is expected_mirror
+        assert bool(storage.acquisitions(provider_id="kobo")) is expected_mirror
+        assert bool(storage.placements()) is expected_mirror
+        if expected_mirror:
+            # W2 compatibility: only a legacy placeholder, never B presence.
+            assert storage.placements()[0]["state"] == "unverified"
+        else:
+            assert storage.artifacts() == []
+            assert storage.catalog_entries() == []
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("status", ("reconcile_required", "reconcile_conflict"))
+def test_disabled_exact_kobo_source_with_sha_is_archive_only(tmp_path, status):
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "enabled": False,
+        })
+        storage.backup_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "account_id": "primary",
+            "item_id": "edition", "revision_id": "old-revision",
+            "status": status, "sha256": "a" * 64, "size": 42,
+            "local_path": str(tmp_path / "unverified.epub"),
+        })
+        assert storage.backup_get("kobo", "vault", "edition") is not None
+        assert storage.entitlements(provider_id="kobo") == []
+        assert storage.acquisitions(provider_id="kobo") == []
+        assert storage.placements() == []
     finally:
         storage.close()
