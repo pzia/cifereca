@@ -706,6 +706,8 @@ def main() -> int:
         paris["alex"].connected = False
         before = paris["alex"].search_calls
         paris["alex_prior_queries"] = before
+        paris["camille_prior_queries"] = paris["camille"].search_calls
+        paris["camille_prior_holdings"] = paris["camille"].holdings_calls
         assert core.library.current_identity.identity_id == "alex"
         # Force a new request with the exact same text. The former result,
         # actions and cache must be cleared BEFORE the worker finishes.
@@ -717,8 +719,16 @@ def main() -> int:
 
     def check_disconnected_alex_cleared():
         result["p0_4673_stage"] = "clear_disconnected"
-        assert window._remote_search_results == []
-        assert window.search_page.store.get_n_items() == 0
+        # #4909: the old Alex notice must vanish, but the fresh Camille
+        # bibliography may already have arrived. Do not mistake the new
+        # shared catalogue for an illegal cross-profile loan.
+        rows = list(window._remote_search_results)
+        assert all(
+            row.source_credential == "card-camille"
+            and row.metadata.get("catalogue_access") == "shared_read_only"
+            for row in rows
+        )
+        assert window.search_page.store.get_n_items() <= 1
         assert not any(
             getattr(button, "_cifereca_action_label", None) == "Emprunter"
             for button in window.search_page.detail._action_buttons
@@ -732,11 +742,28 @@ def main() -> int:
                 later(100, finish_disconnected_alex)
                 return
             raise AssertionError("Paris disconnected search did not finish")
-        assert window._remote_search_results == []
+        rows = list(window._remote_search_results)
+        if len(rows) != 1 or window.search_page.store.get_n_items() != 1:
+            if monotonic() < paris_deadline[0]:
+                later(100, finish_disconnected_alex)
+                return
+            raise AssertionError("Paris shared bibliography not visible after disconnect")
+        book = rows[0]
+        assert book.source_credential == "card-camille"
+        assert book.metadata.get("catalogue_access") == "shared_read_only"
+        assert book.owned is False and book.downloadable is False
+        assert core.library.paris_borrow_diagnostic(book)["local_action_possible"] is False
+        assert core.library.can_borrow_paris(book) is False
+        assert not any(
+            getattr(button, "_cifereca_action_label", None) == "Emprunter"
+            for button in window.search_page.detail._action_buttons
+        )
         assert paris["alex"].search_calls == paris["alex_prior_queries"]
+        assert paris["camille"].search_calls > paris["camille_prior_queries"]
+        assert paris["camille"].holdings_calls == paris["camille_prior_holdings"]
         assert paris["camille"].borrow_calls == paris["alex"].borrow_calls == 0
-        result["checks"]["P0_4673_gtk_disconnected_no_foreign_fallback"] = True
-        capture_stage("09-paris-disconnected")
+        result["checks"]["P1_4909_gtk_shared_bibliography_no_foreign_rights"] = True
+        capture_stage("09-paris-shared-bibliography")
         paris["returned_from_alex"] = True
         window._activate_identity("camille")
         assert window._remote_search_results == []
