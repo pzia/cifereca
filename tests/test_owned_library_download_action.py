@@ -226,3 +226,58 @@ def test_p0_numilog_resume_ui_keeps_private_errors_redacted():
     assert messages[0].startswith("Reprise d’indexation indisponible.")
     assert "PRIVATE" not in str(raised.value) and "PRIVATE" not in messages[0]
     assert calls == []
+
+
+
+@pytest.mark.parametrize("change", [
+    "source_reconnect", "invalid_source_epoch", "detail_replaced",
+])
+def test_p1_4664_stale_owned_download_never_queues_after_source_or_detail_revocation(change):
+    window, actions, calls, submissions, _ = setup_action("numilog")
+    button = actions[0]
+    if change == "source_reconnect":
+        window.service._source_context_epoch = 1
+    elif change == "invalid_source_epoch":
+        window.service._source_context_epoch = "not-an-epoch"
+    else:
+        button._cifereca_action_context_revoked = True
+    button.click()
+    assert submissions == [] and calls == []
+
+
+@pytest.mark.parametrize("change", [
+    "source_reconnect", "invalid_source_epoch", "detail_replaced",
+])
+def test_p1_4664_queued_owned_download_cannot_run_or_publish_after_revocation(change):
+    window, actions, calls, submissions, _ = setup_action("kobo")
+    button = actions[0]
+    button.click()
+    assert len(submissions) == 1 and calls == []
+    if change == "source_reconnect":
+        window.service._source_context_epoch = 1
+    elif change == "invalid_source_epoch":
+        window.service._source_context_epoch = None
+    else:
+        button._cifereca_action_context_revoked = True
+    args, _kwargs = submissions[0]
+    with pytest.raises(RuntimeError, match="contexte"):
+        args[1]()
+    before = list(calls)
+    args[2](NS(path="synthetic"))
+    args[3](RuntimeError("PRIVATE /home/reader"))
+    assert calls == before == []
+    assert len(submissions) == 1
+
+
+def test_p1_4664_same_identity_source_lease_is_independent_from_identity_epoch():
+    window, actions, calls, submissions, _ = setup_action("numilog")
+    window._identity_context_generation = 3
+    window.service._source_context_epoch = 5
+    # Captured at widget construction: changing either is a revocation.
+    actions[0].click()
+    assert submissions == [] and calls == []
+    # New widget after reconnect captures the new source epoch.
+    window2, actions2, calls2, submissions2, target2 = setup_action("numilog")
+    window2.service._source_context_epoch = 7
+    actions2[0].click()
+    assert submissions2 == [] and calls2 == []  # old button refused
