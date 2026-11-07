@@ -30,6 +30,7 @@ class UsbCopyJournalEntry:
     phase: Literal["pending", "checkpointed", "completed"] = "pending"
     pin: UsbCopyRecoveryPin | None = None
     receipt: UsbManagedReceipt | None = None
+    final_version: tuple[int, ...] | None = None
 
 
 class UsbCopyJournal(Protocol):
@@ -188,7 +189,6 @@ def execute_usb_copy(
                 consent.identity_id, consent.device_id, consent.usb_fingerprint,
                 target, consent.sha256,
             )
-            completed = replace(entry, phase="completed", receipt=receipt)
             if not current() or entry.pin is None:
                 return UsbCopyExecution("recovery_required", "usb_copy_receipt_uncommitted")
             # Revalidation can outlive the publisher's check. Require the
@@ -200,6 +200,9 @@ def execute_usb_copy(
                     or _directory_stat(directory_fd, mount, target) is None
                     or not _same_file_at(directory_fd, final_name, verified, mount.mount_id)):
                 return UsbCopyExecution("recovery_required", "usb_copy_final_changed")
+            completed = replace(
+                entry, phase="completed", receipt=receipt, final_version=_file_version(verified),
+            )
             if (not _authorization_fresh(entry)
                     or _stage_service(plugin_manager, plugin_id, registry_generation) is not service
                     or journal.compare_and_set(entry, completed) is not True
