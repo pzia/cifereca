@@ -111,7 +111,11 @@ def test_rebind_at_delivery_keeps_interrupted_receipt_without_false_complete(
         # Normalization runs after the acquiring receipt and before GET.
         if phase == "before_get":
             rebind()
-        return SimpleNamespace(id="book-1")
+        return SimpleNamespace(
+            record_id="book-1", source_provider="kobo",
+            source_credential="vault-1", revision_id="rev-1",
+            owned=True, downloadable=True,
+        )
 
     def fake_delivery(*_args, **_kwargs):
         calls.append("GET")
