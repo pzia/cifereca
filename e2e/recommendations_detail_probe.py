@@ -201,6 +201,19 @@ def main():
         }
         if report.get("p1_774_phase") in closed_774:
             print("P1_774_CLOSED_FAILURE_STAGE=" + report["p1_774_phase"], flush=True)
+        # A line index *inside this fixed synthetic probe* is a bounded,
+        # non-private diagnostic; preserve it before capture('failure')
+        # overwrites the last phase with image_pixels.
+        try:
+            frames = [
+                frame.lineno for frame in traceback.extract_tb(exc.__traceback__)
+                if Path(frame.filename).name == "recommendations_detail_probe.py"
+                and 1 <= frame.lineno <= 1200
+            ]
+            if frames:
+                report["p1_774_probe_line"] = frames[-1]
+        except Exception:
+            pass
         report["status"] = "FAIL"
         report["error"] = str(exc)
         report["traceback"] = traceback.format_exc(limit=6)
