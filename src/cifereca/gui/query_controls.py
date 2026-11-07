@@ -227,7 +227,9 @@ class LocalQueryControls(QueryControls):
             for index, value in enumerate(self._scope_values)
         }
         self.set_document_choices(())
-        self.set_choices(languages=())
+        # No catalogue or language is selectable before the first loaded
+        # projection. Search's global QueryControls remain unchanged.
+        self.set_choices(sources=(), languages=())
 
     @property
     def widget(self):
@@ -338,8 +340,13 @@ class LocalQueryControls(QueryControls):
         try:
             if sources is not None:
                 self.set_provider_choices(sources)
+                # An empty facet is not an available filter: do not display
+                # a popover containing only 'Tous'. Keep selections while
+                # valid choices survive a progressive result refresh.
+                self.provider.set_visible(bool(self.provider.buttons))
             if languages is not None:
                 self.languages.set_choices(languages)
+                self.languages.set_visible(bool(self.languages.buttons))
         finally:
             self._programmatic_update = False
         self._last_notified_state = self.state()
