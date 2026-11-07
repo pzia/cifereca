@@ -55,7 +55,10 @@ def trace_kobo_descriptor_urls(payload: object, *, product_id: object) -> None:
         if raw is None:
             continue
         handling = row.get("handling")
-        handling = handling if handling in _HANDLING else "other"
+        handling = (
+            handling if type(handling) is str and handling in _HANDLING
+            else "other"
+        )
         try:
             _LOG.debug(
                 "TRACE kobo private_candidate_url phase=offer "
