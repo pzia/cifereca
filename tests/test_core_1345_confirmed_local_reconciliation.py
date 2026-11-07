@@ -57,7 +57,7 @@ def _dump(case):
 
 
 def _run(case, **kwargs):
-    return repair.reconcile_kobo_local(case.service, **{**case.options, **kwargs})
+    return repair._historical_reconcile_kobo_local(case.service, **{**case.options, **kwargs})
 
 
 def _apply(case):
@@ -742,7 +742,7 @@ def crash(db,table,row,previous):
  original(db,table,row,previous)
  os._exit(17)
 m._write_row=crash
-m.reconcile_kobo_local(service,**options)
+m._historical_reconcile_kobo_local(service,**options)
 '''
     result = subprocess.run([sys.executable, "-c", script, str(case.tmp),
                              json.dumps({**case.options, "confirmation": plan["plan_token"]})],
@@ -947,3 +947,39 @@ def test_old_w4_journal_without_file_evidence_remains_undoable(case):
     assert case.storage.metadata_get(
         repair._FILE_EVIDENCE_JOURNAL + applied["operation_id"]
     ) is None
+
+
+@pytest.mark.parametrize("extra", [
+    {}, {"confirmation": "a" * 64},
+    {"undo_operation": "b" * 64},
+    {"confirmation": "a" * 64, "undo_operation": "b" * 64},
+])
+def test_public_direct_kobo_reconciliation_is_retired_without_io(
+    case, monkeypatch, extra,
+):
+    """No direct Python import may mint an attested B from v0.7 evidence."""
+    before = _dump(case)
+    physical = case.target.read_bytes()
+    with monkeypatch.context() as guard:
+        guard.setattr(
+            case.storage, "_connect",
+            lambda: pytest.fail("public retired W4 must not open SQLite"),
+        )
+        guard.setattr(
+            repair, "_file",
+            lambda *_a, **_kw: pytest.fail("retired W4 must not open book"),
+        )
+        guard.setattr(
+            repair, "_write_row",
+            lambda *_a, **_kw: pytest.fail("retired W4 must not write SQL"),
+        )
+        with pytest.raises(
+            repair.ReconciliationRejected, match="legacy_reconciliation_retired",
+        ):
+            repair.reconcile_kobo_local(
+                case.service, **{**case.options, **extra},
+                cancelled=lambda: pytest.fail("retired W4 cannot poll cancellation"),
+                on_committed=lambda: pytest.fail("retired W4 cannot commit"),
+            )
+    assert _dump(case) == before
+    assert case.target.read_bytes() == physical

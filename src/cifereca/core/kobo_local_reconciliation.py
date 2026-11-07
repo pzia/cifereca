@@ -633,7 +633,16 @@ def observe_kobo_local_file_only(
 def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expected_sha256,
                          path=None, confirmation=None, undo_operation=None, identity_id=None,
                          cancelled=lambda: False, on_committed=None):
-    """Preview or explicitly confirm ONE reversible file-link transaction.
+    """Retired W4 entry: historical receipts never grant positive Core B."""
+    # Public direct callers must not reach SQL, filesystem or the old writer
+    # for preview/confirm/undo, even with a formerly valid plan token.
+    raise ReconciliationRejected("legacy_reconciliation_retired")
+
+
+def _historical_reconcile_kobo_local(service, *, credential_id, account_id, item_id, expected_sha256,
+                                     path=None, confirmation=None, undo_operation=None, identity_id=None,
+                                     cancelled=lambda: False, on_committed=None):
+    """ARCHIVE TEST-ONLY: historical reversible file-link transaction.
 
     A token binds exact DB evidence, file bytes/stat and configured roots.
     The common acquisition lock serializes writes with existing app writers;

@@ -95,14 +95,14 @@ def test_b_independent_kobo_receipt_can_explicitly_link_received_bytes_and_resyn
             p for p in service.storage.placements()
             if p.get("identity_id") == "bob"
         ]
-        preview = repair.reconcile_kobo_local(service, **args)
+        preview = repair._historical_reconcile_kobo_local(service, **args)
         assert preview["status"] == "preview"
         assert preview["requires_explicit_confirmation"] is True
         assert service.storage.backup_get("kobo", "vault-b", "book-1")["status"] == "reconcile_required"
-        assert repair.reconcile_kobo_local(
+        assert repair._historical_reconcile_kobo_local(
             service, **args, confirmation=preview["plan_token"],
         )["status"] == "applied"
-        assert repair.reconcile_kobo_local(service, **args)["status"] == "already_linked"
+        assert repair._historical_reconcile_kobo_local(service, **args)["status"] == "already_linked"
 
         b_backup = service.storage.backup_get("kobo", "vault-b", "book-1")
         assert b_backup["status"] == "complete"
