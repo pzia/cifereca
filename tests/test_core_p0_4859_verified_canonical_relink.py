@@ -299,3 +299,49 @@ def test_offline_config_cannot_rebind_profile_folder(published, tmp_path):
             path=str(path),
         )
     assert _read(store, "placements") == before
+
+
+
+def test_offline_profile_changed_during_sql_commit_rolls_back_B(
+    published, tmp_path, monkeypatch,
+):
+    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca.core import kobo_canonical_relink as canonical
+
+    store, original, path, args, source, finished = published
+    original.rename(path)
+    profile = _offline(published, tmp_path)
+    kwargs = {
+        "config_path": profile, "database_path": store.path,
+        "canonical_relink": True,
+        "credential_id": "vault-1", "identity_id": "A",
+        "account_id": "buyer-A", "edition_id": "book-1",
+        "right_id": "purchase", "branch_id": "purchases",
+        "placement_id": finished.placement_id, "path": str(path),
+    }
+    preview = repair.reconcile_existing_profile(**kwargs)
+    before = _read(store, "placements")
+    original_same = canonical._same_file
+    calls = []
+
+    def move_config_during_commit(file, earlier):
+        calls.append(str(file))
+        if len(calls) == 2:
+            data = json.loads(profile.read_text())
+            data["library"]["directory"] = str(tmp_path / "other-books")
+            profile.write_text(json.dumps(data))
+        return original_same(file, earlier)
+
+    monkeypatch.setattr(canonical, "_same_file", move_config_during_commit)
+    with pytest.raises(
+        CanonicalRelinkRejected, match="canonical_relink_plan_changed",
+    ):
+        repair.reconcile_existing_profile(
+            **{**kwargs, "confirmation": preview["plan_token"]},
+        )
+    assert _read(store, "placements") == before
+    with store._lock, store._connect() as db:
+        assert db.execute(
+            "SELECT count(*) FROM metadata WHERE key LIKE "
+            "'core.kobo.canonical-placement-relink.%'"
+        ).fetchone()[0] == 0
