@@ -27,6 +27,9 @@ SQLite déjà persistées :
 - unique `Account` Kobo fournisseur de même credential et même borrower ;
 - profil Core connu, connexion activée et borrower exact dans
   `provider_scope_account_bound` (lecture SQL, **aucune insertion**) ;
+- **même propriétaire** dans la configuration locale du credential actif et
+  dans SQLite : une réaffectation du compte de A vers B non encore réconciliée
+  ne peut réutiliser le consentement historique de A ;
 - identité fournisseur préexistante égale au propriétaire Core, ou au seul
   marqueur historique de modèle `default` ; toute identité explicite
   différente est refusée ;
