@@ -554,7 +554,11 @@ def main(argv: list[str] | None = None) -> int:
                 # Reuse the existing exact-credential connect gate, never
                 # connect every Kobo account or infer source from an item.
                 # No provider activity happens without CLI --confirm.
-                service.connect_kobo_preview(a.credential)
+                # Unlike a read-only preview, the canonical exact-edition
+                # executor needs one live Account bound to its persisted
+                # identity/source coordinates. This connector verifies that
+                # binding without enrolling or connecting unrelated accounts.
+                service.connect_kobo_selected_edition(a.credential)
                 result = service.synchronize_kobo_selected_edition(
                     a.credential, a.item, explicit_user_action=True,
                 )
