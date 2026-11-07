@@ -128,10 +128,11 @@ def _source(broker, source_id, *, allow_canonical=False):
     _require(len(session_accounts) == 1 and session_accounts[0].unique_id == account.unique_id, "ambiguous_account")
     _require(sum(a.provider_id == "kobo" and a.credential_id == account.credential_id
                  for a in service.accounts) == 1, "ambiguous_account")
-    if not allow_canonical:
+    if not has_complete_delivery_abi(session):
         # A configured source-wide CAS policy, even OFF or unreadable,
-        # supersedes the old manually confirmed W2 backup grant. Refuse
-        # the legacy preview before reading its provider manifest.
+        # supersedes the old manually confirmed W2 backup grant. Even
+        # allow_canonical=True cannot skip this when prepare first probes
+        # a partial ABI; refuse before reading its provider manifest.
         from .source_sync_consent import read_policy, scope_for_account
         try:
             legacy_unset = (
