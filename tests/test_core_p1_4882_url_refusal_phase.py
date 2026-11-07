@@ -50,7 +50,7 @@ def test_initial_url_closed_reason_before_network(
 
 
 @pytest.mark.parametrize(("location", "code", "category"), [
-    (CDN + "#", "delivery_url_invalid", "fragment_marker"),
+    (CDN + "#SYNTHETIC_PRIVATE_FRAGMENT", "delivery_url_invalid", "fragment_marker"),
     ("http://cdn-third-party.example/epub.epub?token=PRIVATE_CDN",
      "delivery_url_invalid", "scheme_not_https"),
     ("https://127.0.0.1/file.epub?token=PRIVATE_CDN",
