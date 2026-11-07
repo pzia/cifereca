@@ -849,3 +849,8 @@ le ZIP privé et les rapports de revue.
 `completed` signifie seulement **fin de la session de navigation** et
 **ne garantit pas la disponibilité de tous les corps**. Ce correctif ne
 récupère pas les corps devenus indisponibles et ne change pas le consentement.
+
+
+## Guide autonome de développement des providers (07/11/2026)
+
+Le guide source est [`docs/PROVIDER-AUTONOMOUS-DEVELOPMENT.md`](../../../docs/PROVIDER-AUTONOMOUS-DEVELOPMENT.md). Il détaille frontières Core/plugin, catalogues publics vs inventaires personnels, preuves de droits, isolation identité/tenant/credential/SSO/cache, offres, A→B, tests et bundles multi-providers. **Le même guide est embarqué dans les deux exports ZIP de Browser Recorder** sous `plugin-dev-kit/PROVIDER-AUTONOMOUS-DEVELOPMENT.md` : ZIP revu/filtré avec kit de contrats publics, et ZIP privé direct (attention, trace en clair). Les signatures exactes du Core installé restent celles du kit public ; le guide ne remplace pas les contrats.
