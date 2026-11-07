@@ -805,8 +805,30 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
                 root = Path.home() / root
             path = options.pop("path", None)
             _require(type(path) is str and bool(path), "invalid_path")
+
+            def profile_current():
+                # Raw Config reread only; no Storage call inside the writer's
+                # BEGIN IMMEDIATE or nonrecursive storage._lock.
+                try:
+                    check = identity(options["identity_id"])
+                    current_root = get("library.directory", "~/EBooks")
+                    if type(current_root) is not str or not current_root.strip():
+                        return False
+                    current_root = Path(os.path.expandvars(
+                        os.path.expanduser(current_root.strip()),
+                    ))
+                    if not current_root.is_absolute():
+                        current_root = Path.home() / current_root
+                    return (
+                        check.directory_name == selected.directory_name
+                        and current_root == root
+                    )
+                except Exception:
+                    return False
+
             return relink_verified_canonical_kobo(
-                storage, library_root=root, new_path=Path(path), **options,
+                storage, library_root=root, new_path=Path(path),
+                context_current=profile_current, **options,
             )
         return (
             observe_kobo_local_file_only(service, **options)
