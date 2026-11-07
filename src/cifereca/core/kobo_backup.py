@@ -404,6 +404,111 @@ def _kobo_manifest_flags_invalid(raw: dict[str, Any]) -> bool:
 
 
 
+def _canonical_kobo_backup_offline_preview(
+    self, credential_id, identity_id, session, *, verify_local_files: bool,
+):
+    """D1 offline modern preview: historical canonical B, NEVER 0.7 backup.
+
+    A persisted SourceReference/OriginLink is historical, not live provider A;
+    even a physically verified B cannot grant a new GET without refreshing
+    supplier rights and consent. Report separately verified old B copies,
+    with NO positive acquisition-decision counters or missing-right claims.
+    """
+    from ..models import Account
+    from .acquisition_audit import inspect_exact_source
+
+    accounts = [
+        row for row in self.accounts if type(row) is Account
+        and row.provider_id == "kobo"
+        and row.credential_id == credential_id
+        and row.identity_id == identity_id
+    ]
+    if len(accounts) != 1:
+        raise ProviderConfigurationError("canonical_kobo_preview_scope_unavailable")
+    account = accounts[0]
+    core_epoch = source_context_epoch(self)
+    provider_epoch = getattr(session, "_epoch", None)
+
+    def current():
+        try:
+            return bool(
+                source_context_epoch(self) == core_epoch
+                and self._sessions.get(self._session_key(
+                    "kobo", credential_id,
+                )) is session
+                and getattr(session, "_epoch", None) == provider_epoch
+                and session.connected is True
+                and self.storage.provider_scope_account_bound(
+                    identity_id=identity_id, provider_id="kobo",
+                    credential_id=credential_id, account_id=account.unique_id,
+                ) is True
+                and sum(row is account for row in self.accounts) == 1
+                and len(session.accounts) == 1
+                and session.accounts[0].identity_id == identity_id
+                and session.accounts[0].provider_id == "kobo"
+                and session.accounts[0].credential_id == credential_id
+                and session.accounts[0].unique_id == account.unique_id
+            )
+        except Exception:
+            return False
+
+    if not current():
+        raise ProviderConfigurationError("canonical_kobo_preview_scope_changed")
+    try:
+        evidence = inspect_exact_source(
+            self.storage, account,
+            library_root=(self.library_dir() if verify_local_files else None),
+            verify_files=verify_local_files,
+        )
+    except Exception:
+        raise ProviderConfigurationError("canonical_kobo_preview_unavailable") from None
+    if not current():
+        raise ProviderConfigurationError("canonical_kobo_preview_scope_changed")
+    if (type(evidence) is not dict
+            or evidence.get("scope") != "exact_source"
+            or evidence.get("network") != "not_used"
+            or evidence.get("mutations") != "none"
+            or type(evidence.get("truncated")) is not bool
+            or type(evidence.get("rights")) is not list
+            or len(evidence["rights"]) > 512):
+        raise ProviderConfigurationError("canonical_kobo_preview_unavailable")
+    rights = evidence["rights"]
+    # The audit is a *historical* projection: no right observed now, no
+    # legacy 0.7 manifest to promote, no claim that an edition is missing.
+    local_verified = sum(
+        type(row) is dict
+        and row.get("kind") == "purchase"
+        and row.get("classification") == "complete_local"
+        and row.get("file_verification") == "verified_sha256"
+        for row in rights
+    )
+    counts = {
+        "already_local_linked": 0, "already_local_verified": 0,
+        "needs_reconciliation": 0, "attention_required": 0,
+        "skipped_archived": 0, "blocked_scope": 0, "blocked_unlinked": 0,
+        "not_downloadable": 0, "candidate_unverified": 0,
+        "potentially_missing": 0, "invalid_manifest_items": 0,
+    }
+    return {
+        "scope": "account",
+        "source_id": _kobo_checkpoint_key(identity_id, credential_id).rsplit(".", 1)[-1],
+        "manifest_refreshed": False, "manifest_items": 0,
+        "known_item_count": 0, "provider_rejected_manifest_items": 0,
+        "checkpoint_status": "not_applicable",
+        "unlinked_local_books": 0, "unlinked_local_books_observed": False,
+        "counts": counts, "blocking_items": 0, "examples": [],
+        "preview_only": True, "acquisition_authorized": False,
+        "requires_manifest_validation": True, "manifest_valid": False,
+        "canonical_source": True, "historical_canonical_only": True,
+        "historical_canonical": {
+            "recorded_rights": len(rights),
+            "previously_published_files_physically_verified": local_verified,
+            "file_verification_requested": verify_local_files,
+            "inventory_truncated": evidence["truncated"],
+        },
+    }
+
+
 def _canonical_kobo_backup_preview(self, credential_id, identity_id, session):
     """D1 live preview from authenticated A + verified B, not backup_items.
 
@@ -560,11 +665,18 @@ def kobo_backup_preview(
     # projection. The 0.7 checkpoint is never read for a modern live preview.
     # An explicitly supplied legacy private manifest is excluded from this
     # dispatch; it cannot be rebranded as canonical evidence.
-    if (refresh_manifest and _manifest_evidence is None
-            and _item_reasons is None and session is not None
-            and has_complete_delivery_abi(session)):
-        return _canonical_kobo_backup_preview(
+    if (_manifest_evidence is None and _item_reasons is None
+            and session is not None and has_complete_delivery_abi(session)):
+        if refresh_manifest:
+            return _canonical_kobo_backup_preview(
+                self, credential_id, identity_id, session,
+            )
+        # Even an offline preview for a connected modern source must not
+        # classify legacy backup_items as authoritative delivery/presence.
+        # The Core B audit is physical/history-only until fresh A is read.
+        return _canonical_kobo_backup_offline_preview(
             self, credential_id, identity_id, session,
+            verify_local_files=verify_local_files,
         )
 
     # A fresh remote manifest must remain attached to this *same* Core
