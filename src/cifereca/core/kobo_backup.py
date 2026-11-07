@@ -2333,7 +2333,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
     # checkpoint. Only the one currently connected, exactly bound session
     # may run compatibility recovery. Missing legacy owner/account remains
     # a diagnostic hint; it never establishes ownership by itself.
-    live: dict[str, tuple[str, str]] = {}
+    live: dict[str, tuple[str, str, Any]] = {}
     ambiguous: set[str] = set()
     for session in self._sessions.values():
         if (getattr(session, "provider_id", None) != "kobo"
@@ -2371,7 +2371,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             ]
             if len(bindings) != 1:
                 continue
-            live[source] = (bound, accounts[0].unique_id)
+            live[source] = (bound, accounts[0].unique_id, session)
         except (AttributeError, TypeError, ValueError):
             continue
     for source in ambiguous:
@@ -2405,7 +2405,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             and getattr(session, "connected", None) is True
             and getattr(getattr(session, "capabilities", None), "backup", False)
         ]
-        if len(sessions) != 1:
+        if len(sessions) != 1 or sessions[0] is not pinned[2]:
             return False
         try:
             session = sessions[0]
