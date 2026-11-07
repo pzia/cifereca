@@ -15,6 +15,26 @@ Le reçu de prêt chez A n'atteste **ni fichier utilisable**, ni droit de lectur
 
 La sortie `CrossProfileBorrowProgress` ne comporte **aucune donnée fournisseur privée** : ni compte, ni URL signée, ni numéro de prêt, ni opération. Elle est constamment `executable=False` et `retry_borrow=False`. Aucun fournisseur n'est appelé, aucune copie n'est faite, aucune restauration de droit n'est publiée chez B.
 
+## Révocation de la connexion prêteuse (#4662)
+
+La propriété de la connexion SQLite ne suffit pas à rendre son reçu privé
+consultable depuis un autre profil : le compte prêteur peut avoir été
+**désactivé sans suppression de son historique de prêts**.
+
+Avant **toute lecture** du `loan.borrow.v1:`, puis **après** lecture des
+deux checkpoints, le Core exige une seule connexion enregistrée pour
+`(identity_id, provider_id, credential_id)`, `enabled=True`, et une
+propriété/restauration de l'objet `Account` inchangées. Une liste ambiguë,
+malformée, réaffectée ou désactivée rend uniquement le code fermé
+`lender_scope_unverified` (`loan=unknown`, `transfer=blocked`).
+Cela ne réarme jamais l'emprunt, ne purge pas le reçu historique et ne
+considère pas les catalogues communs comme des prêts partagés.
+
+Les tests contrôlent le refus **avant consultation du reçu** sur connexion
+désactivée/absente/dupliquée, le refus si la connexion devient désactivée
+pendant la lecture des checkpoints, et la reprise en lecture seule après
+réactivation du compte exact. Aucun accès fournisseur ni mutation de fichier.
+
 ## Frontière et recette
 
 Cette projection ne vaut **pas** exécution inter-profils, et n'appelle jamais `materialize_to_identity`. Les tests Core+SQLite `tests/test_core_p1_4662_lender_claim_progress.py` couvrent prêt confirmé, état ambigu, claim corrompu, reprise interdite, source étrangère, compte réaffecté et éditions/collections voisines.
