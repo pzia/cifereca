@@ -177,6 +177,13 @@ def main():
             "obtain", "unavailable",
         }:
             print("P1_4664_CLOSED_FAILURE_STAGE=" + phase_4664, flush=True)
+        stage_4761 = report.get("p1_4761_strip_phase")
+        if stage_4761 in {
+            "start", "empty", "rendered", "type", "child",
+            "orientation", "policy", "mapped", "parents",
+            "search_separate", "complete",
+        }:
+            print("P1_4761_STRIP_FAILURE_STAGE=" + stage_4761, flush=True)
         report["status"] = "FAIL"
         report["error"] = str(exc)
         report["traceback"] = traceback.format_exc(limit=6)
@@ -220,12 +227,14 @@ def main():
 
     def initial():
         report["p1_1354_phase"] = "initial"
+        report["p1_4761_strip_phase"] = "start"
         view = state["view"]
         assert view.selected_identity_id() == "alice"
         assert isinstance(view._master, PublicBookMasterDetailView)
         assert view._master._page.store.get_n_items() == 0
         assert not state["searches"]
         capture("00-empty")
+        report["p1_4761_strip_phase"] = "empty"
         view._ranked = [
             ranked("edition-a", "Livre A", "9780306406157", score=94),
             ranked("edition-b", "Livre B", "9780140328721", score=85, provider="second"),
@@ -247,28 +256,37 @@ def main():
         view._ranked[2].item["medium"] = "physical"
         view._reload_document_choices()
         view._render()
+        report["p1_4761_strip_phase"] = "rendered"
         query = view._query_controls
         store = view._master._page.store
         generation = view._generation
         # #4761: verify REAL GTK hierarchy, not merely a static builder.
         # Calculation options form one horizontal row with a scrollable
         # viewport. Search's own LocalQueryControls remains below it.
+        report["p1_4761_strip_phase"] = "type"
         strip = view._calculation_parameters_scroll
         parameters = view._calculation_parameters
         assert isinstance(strip, Gtk.ScrolledWindow)
+        report["p1_4761_strip_phase"] = "child"
         assert strip.get_child() is parameters
+        report["p1_4761_strip_phase"] = "orientation"
         assert parameters.get_orientation() == Gtk.Orientation.HORIZONTAL
+        report["p1_4761_strip_phase"] = "policy"
         assert strip.get_policy() == (
             Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER,
         )
+        report["p1_4761_strip_phase"] = "mapped"
         assert strip.get_mapped()
+        report["p1_4761_strip_phase"] = "parents"
         assert view._exclude_owned.get_parent() is parameters
         assert view._refresh_button.get_parent() is parameters
         assert view._score.get_parent().get_parent() is parameters
         assert view._identity.get_parent().get_parent() is parameters
         assert view._reference.get_parent().get_parent() is parameters
+        report["p1_4761_strip_phase"] = "search_separate"
         assert query.widget.get_parent() is not parameters
         assert query.widget.get_mapped() and store.get_n_items() == 3
+        report["p1_4761_strip_phase"] = "complete"
         report["checks"]["P1_4761_gtk_single_row_calculation_strip"] = True
         query.provider.buttons["fixture"].set_active(True)
         assert store.get_n_items() == 1
