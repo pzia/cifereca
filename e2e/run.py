@@ -644,6 +644,18 @@ def main() -> int:
                         code = report_data.get("p0_4673_local_reason")
                         if type(code) is str and code in local_reasons:
                             print("P0_4673_CLOSED_LOCAL_REASON=" + code, flush=True)
+                if (name in {"recommendations-detail-1366",
+                             "recommendations-detail-1600"}
+                        and report_data.get("status") != "PASS"):
+                    # Only the reviewed, fixed synthetic checkpoint can leave
+                    # the private GTK sandbox. No assertion, title or source.
+                    allowed = frozenset({
+                        "setup", "button", "key", "holdings", "download",
+                        "obtain", "unavailable",
+                    })
+                    stage = report_data.get("p1_4664_phase")
+                    if type(stage) is str and stage in allowed:
+                        print("P1_4664_CLOSED_FAILURE_STAGE=" + stage, flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
                 if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-capture-session"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
