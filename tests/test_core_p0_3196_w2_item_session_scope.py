@@ -81,6 +81,7 @@ def test_cover_metadata_rebind_cannot_refresh_existing_legacy_receipt(
         summary = service.sync_kobo_backup_account("vault-1")
         assert summary["status"] == "aborted"
         assert summary["attempted"] == summary["downloaded"] == 0
+        assert summary["metadata_refreshed"] == 0
         assert service.storage.backup_get("kobo", "vault-1", "book-1") == before
     finally:
         service.close()
