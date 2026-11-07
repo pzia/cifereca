@@ -77,10 +77,14 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
     }.get(report.get('width'), 'numilog')
     report['checks']['native_declaration_started'] = True
     checkpoint('maint_declaration_start')
+    if attested:
+        report['checks']['native_declaration_attested_started'] = True
     tmp = tempfile.TemporaryDirectory()
     service, book, directory, digest = _fixture(
         Path(tmp.name), provider_id, attested=attested,
     )
+    if attested:
+        report['checks']['native_declaration_attested_fixture_ready'] = True
     # Quiescent fixture snapshot; WAL replay has its own Core tests. The
     # subsequent preview/commit runs with real reusable writer connections.
     service.storage.close()
@@ -88,8 +92,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
     report['checks']['native_declaration_audit_done'] = True
     checkpoint('maint_declaration_audit_done')
     assert audit.redacted()['status'] == 'complete', audit.redacted().get('reasons')
+    if attested:
+        report['checks']['native_declaration_attested_audit_complete'] = True
     session = LocalInspection(audit, lambda: True, 'default', roots=(directory,), service=service)
     right, = session.page(state='rights_without_verified_file').cases
+    if attested:
+        report['checks']['native_declaration_attested_right_ready'] = True
     host = Adw.Window(transient_for=parent, modal=True, title='Synthetic declaration host')
     host.set_default_size(920, 620)
     host.service, host.runner = service, parent.runner
@@ -395,15 +403,18 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
         assert declarations()[0]['revoked_at'] is not None
         report['checks']['P0_2797_declaration_native_revoke_keeps_history'] = True
+        report['checks']['native_declaration_revoked_verified'] = True
         if provider_id in ('test.vendor-a', 'test.vendor-b'):
             report['checks']['P0_3171_native_opaque_provider_consent'] = True
         close_fixture()
 
     def close_fixture():
+        report['checks']['native_declaration_cleanup_started'] = True
         controller.clear()
         host.destroy()
         service.close()
         tmp.cleanup()
+        report['checks']['native_declaration_cleanup_done'] = True
         if attested:
             done()
         else:
