@@ -19,7 +19,7 @@ class QueryState:
 
 class Widget:
     def __init__(self, *args, **kwargs):
-        self.children=[]; self.signals={}; self.text=''; self.selected=0; self.active=False; self.label=kwargs.get('label','')
+        self.children=[]; self.signals={}; self.text=''; self.selected=0; self.active=False; self.label=kwargs.get('label',''); self.sensitive=True
     def connect(self, name, callback): self.signals.setdefault(name, []).append(callback)
     def emit(self, name):
         for callback in list(self.signals.get(name, ())): callback(self)
@@ -30,6 +30,7 @@ class Widget:
     def set_child(self, child): self.child=child
     def set_popover(self, popover): self.popover=popover
     def set_visible(self, visible): self.visible=visible
+    def set_sensitive(self, sensitive): self.sensitive=sensitive
     def get_model(self): return self.model
     def set_model(self, model): self.model=model
     def set_label(self, label): self.label=label
@@ -297,6 +298,83 @@ class QueryControlBatching(unittest.TestCase):
         control.types.buttons['mp3'].set_active(True)
         self.assertEqual(len(calls),2)
         self.assertEqual(calls[-1].types,('epub','pdf','mp3'))
+
+    def test_3687_shared_reset_restores_search_initial_scope_in_one_change(self):
+        calls = []
+        control = QueryControls(
+            [('paris', 'Paris')], lambda: calls.append(control.state()),
+            lambda: None,
+        )
+        initial = control.state()
+        self.assertEqual(initial.scope, 'digital')
+        self.assertFalse(control.clear_button.sensitive)
+        control.entry.set_text('Dumas')
+        control.field.set_selected(2)
+        control.scope.set_selected(1)
+        control.provider.set_values(('paris',))
+        control.languages.set_values(('fr',))
+        control.types.set_values(('epub',))
+        self.assertTrue(control.clear_button.sensitive)
+        calls.clear()
+        control.clear_button.emit('clicked')
+        self.assertEqual(control.state(), initial)
+        self.assertEqual(calls, [initial])
+        self.assertFalse(control.clear_button.sensitive)
+        control.clear_button.emit('clicked')
+        self.assertEqual(calls, [initial])
+
+    def test_3687_local_reset_clears_view_filters_not_available_facets(self):
+        calls = []
+        control = LocalQueryControls(
+            lambda: calls.append(control.state()), 'Filtrer les recommandations',
+        )
+        control.enable_field_filter()
+        control.set_choices(
+            sources=(('paris', 'Paris'), ('kobo', 'Kobo')),
+            languages=(('fr', 'Français'), ('en', 'English')),
+        )
+        control.set_document_choices((
+            {'medium': 'physical'},
+            {'medium': 'digital', 'format': 'application/pdf'},
+        ))
+        baseline = control.state()
+        self.assertEqual(baseline, QueryState())
+        control.entry.set_text('autrice')
+        control.field.set_selected(2)
+        control.provider.set_values(('paris',))
+        control.languages.set_values(('fr',))
+        control.scope.set_selected(control._scope_values.index('physical'))
+        control.types.set_values(('pdf',))
+        self.assertTrue(control.clear_button.sensitive)
+        calls.clear()
+        control.reset_filters()
+        self.assertEqual(control.state(), baseline)
+        self.assertEqual(calls, [baseline])
+        self.assertFalse(control.clear_button.sensitive)
+        self.assertEqual(tuple(control.provider.buttons), ('paris', 'kobo'))
+        self.assertEqual(tuple(control.languages.buttons), ('fr', 'en'))
+        self.assertEqual(tuple(control.types.buttons), ('pdf',))
+        self.assertTrue(control.matches_document({'medium': 'physical'}))
+        self.assertTrue(control.matches_document({'medium': 'digital', 'format': 'application/pdf'}))
+
+    def test_3687_silent_facet_reconciliation_updates_reset_availability(self):
+        calls = []
+        control = LocalQueryControls(lambda: calls.append(True), 'Filtre')
+        control.set_choices(sources=(('paris', 'Paris'),))
+        control.provider.set_values(('paris',))
+        self.assertTrue(control.clear_button.sensitive)
+        before = len(calls)
+        control.set_choices(sources=())
+        self.assertEqual(len(calls), before)
+        self.assertFalse(control.clear_button.sensitive)
+
+        control.set_document_choices(({'medium': 'digital', 'format': 'application/pdf'},))
+        control.types.set_values(('pdf',))
+        self.assertTrue(control.clear_button.sensitive)
+        before = len(calls)
+        control.set_document_choices(({'medium': 'physical'},))
+        self.assertEqual(len(calls), before)
+        self.assertFalse(control.clear_button.sensitive)
 
     def test_local_document_filter_labels_reflect_selected_attested_choices(self):
         calls = []
