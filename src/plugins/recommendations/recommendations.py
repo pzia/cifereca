@@ -1748,9 +1748,23 @@ class UxRecommendationsView:
                     "Les détails seront disponibles dès la première recommandation.",
                 )
             else:
-                self._summary.set_label(
-                    "Recalcul en cours · résultats précédents conservés jusqu’aux nouvelles propositions"
+                # Keep the local filtered count and attested facet labels
+                # visible while a new calculation is pending. Replacing the
+                # entire summary with a progress sentence obscured an exact
+                # 1/N counter even though the old GTK rows stayed visible.
+                # Preserve the richer unfiltered summary where applicable.
+                self._update_view_summary(
+                    provisional=False, preserve_unfiltered=True,
                 )
+                progress = (
+                    "Recalcul en cours · résultats précédents conservés "
+                    "jusqu’aux nouvelles propositions"
+                )
+                current = self._summary.get_label()
+                if progress not in current:
+                    self._summary.set_label(
+                        f"{current} · {progress}" if current else progress
+                    )
 
         value = self._start_refresh()
         if self._busy and not self._ranked:
