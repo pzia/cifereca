@@ -151,7 +151,15 @@ class UiPerfMonitor:
         with self._lock:
             if enabled and not self._detailed_capture:
                 self._capture_generation += 1
+                # Keep observed startup events through Settings stop/restart.
+                # Manual captures (no startup observations) still reset their
+                # detailed timeline; aggregate phase stats always persist.
+                startup_events = [
+                    event for event in self._phase_events
+                    if event["category"] == "startup"
+                ]
                 self._phase_events.clear()
+                self._phase_events.extend(startup_events)
                 self._events_dropped = 0
                 self._gc_samples_dropped = 0
                 self._started_at = self._clock()
@@ -249,8 +257,18 @@ class UiPerfMonitor:
                 or capture_generation == self._capture_generation
             ):
                 if len(self._phase_events) == self._max_events:
+                    # Pin a handful of early startup observations inside the
+                    # SAME bounded deque, even after heavy opening sync. Every
+                    # insertion still evicts exactly one old event at capacity.
+                    oldest_non_startup = next(
+                        (index for index, event in enumerate(self._phase_events)
+                         if event["category"] != "startup"),
+                        0,
+                    )
+                    del self._phase_events[oldest_non_startup]
                     self._events_dropped += 1
                 self._phase_events.append({
+                    "capture_generation": self._capture_generation,
                     "operation_id": operation_id,
                     "category": category,
                     "phase": phase,
