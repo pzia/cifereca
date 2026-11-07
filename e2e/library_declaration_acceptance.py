@@ -77,10 +77,14 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
     }.get(report.get('width'), 'numilog')
     report['checks']['native_declaration_started'] = True
     checkpoint('maint_declaration_start')
+    if attested:
+        report['checks']['native_declaration_attested_started'] = True
     tmp = tempfile.TemporaryDirectory()
     service, book, directory, digest = _fixture(
         Path(tmp.name), provider_id, attested=attested,
     )
+    if attested:
+        report['checks']['native_declaration_attested_fixture_ready'] = True
     # Quiescent fixture snapshot; WAL replay has its own Core tests. The
     # subsequent preview/commit runs with real reusable writer connections.
     service.storage.close()
@@ -88,8 +92,12 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
     report['checks']['native_declaration_audit_done'] = True
     checkpoint('maint_declaration_audit_done')
     assert audit.redacted()['status'] == 'complete', audit.redacted().get('reasons')
+    if attested:
+        report['checks']['native_declaration_attested_audit_complete'] = True
     session = LocalInspection(audit, lambda: True, 'default', roots=(directory,), service=service)
     right, = session.page(state='rights_without_verified_file').cases
+    if attested:
+        report['checks']['native_declaration_attested_right_ready'] = True
     host = Adw.Window(transient_for=parent, modal=True, title='Synthetic declaration host')
     host.set_default_size(920, 620)
     host.service, host.runner = service, parent.runner
@@ -163,6 +171,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
     def select_right():
         report['checks']['native_declaration_dialog_open'] = True
         checkpoint('maint_declaration_dialog_open')
+        if attested:
+            report['checks']['native_declaration_attested_dialog_open'] = True
         # P1 #2842 opens on unverified rights, not on an unrelated 50-item
         # inventory page. Keep exercising the explicit shortcut as well.
         assert guided_step().startswith('1/4')
@@ -192,6 +202,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
     def right_selected(row):
         report['checks']['native_declaration_right_is_selected'] = True
         if attested:
+            report['checks']['native_declaration_attested_right_selected'] = True
+        if attested:
             until(lambda: button('Préparer le rattachement').get_visible(),
                   choose_attested_file)
             return
@@ -213,6 +225,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
 
     def file_view_visible():
         report['checks']['native_declaration_manual_files_visible'] = True
+        if attested:
+            report['checks']['native_declaration_attested_file_view_visible'] = True
         assert guided_step().startswith('3/4')
         assert 'lecture seule' in guided_step()
         report['checks']['P1_2842_native_pair_step_no_auto_write'] = True
@@ -233,9 +247,8 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
             return
         until(lambda: button('Déclarer ce lien…').get_sensitive(), expand)
 
-    cancelled_placement = [False]
-
     def attested_prepare():
+        report['checks']['native_declaration_attested_preflight_reached'] = True
         assert service.storage.placement_for_path(book) is None
         assert {table: rows(table) for table in unchanged} == unchanged
         click(button('Préparer le rattachement'), lambda: until(
@@ -243,83 +256,39 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
             attested_revalidate))
 
     def attested_revalidate():
+        report['checks']['native_declaration_attested_preview_reached'] = True
         assert guided_step().startswith('3/4')
         assert 'lecture seule' in guided_step()
         assert {table: rows(table) for table in unchanged} == unchanged
+        # #4859 W4/D5 retired the historical 0.7 positive Kobo operation.
+        # Real GTK must now attest the *closed refusal* after an explicit
+        # fresh-preview click; no old receipt can grant a new Placement.
         click(button('Vérifier les preuves actuelles…'), lambda: until(
-            lambda: button('Confirmer le placement local…').get_visible()
-            and button('Confirmer le placement local…').get_sensitive(),
-            attested_preview))
+            lambda: guided_step().startswith(
+                '3/4 · Preuves insuffisantes · aucun placement autorisé.'
+            )
+            and any(
+                isinstance(widget, Gtk.Label) and widget.get_mapped()
+                and 'Kobo : le reçu historique ne prouve pas une livraison A→B'
+                in widget.get_text()
+                for widget in walk(controller.dialog)
+            ),
+            attested_historical_refused))
 
-    def attested_preview():
-        assert guided_step().startswith('4/4')
+    def attested_historical_refused():
         assert {table: rows(table) for table in unchanged} == unchanged
         assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
-        report['checks']['P0_2842_native_attested_preview_no_write'] = True
-        click(button('Confirmer le placement local…'), lambda: until(
-            lambda: message() is not None, attested_consent))
-
-    def attested_consent():
-        assert {table: rows(table) for table in unchanged} == unchanged
-        if not cancelled_placement[0]:
-            cancelled_placement[0] = True
-            click(button('Annuler', message()), lambda: until(
-                lambda: message() is None, attested_cancelled))
-            return
-        click(button('Confirmer le placement', message()), lambda: until(
-            lambda: service.storage.placement_for_path(book) is not None
-            and guided_step().startswith('Placement enregistré'),
-            attested_committed))
-
-    def attested_cancelled():
-        assert {table: rows(table) for table in unchanged} == unchanged
-        report['checks']['P0_2842_native_attested_cancel_no_write'] = True
-        attested_prepare()
-
-    def attested_committed():
-        placement = service.storage.placement_for_path(book)
-        assert placement['identity_id'] == 'default'
-        assert placement['provider_id'] == 'kobo'
-        assert placement['source_item_id'] == 'synthetic-item'
-        assert placement['artifact_id'] == 'sha256:' + digest
-        assert placement['state'] == 'present'
-        assert rows('entitlements') == unchanged['entitlements']
-        assert rows('artifacts') == unchanged['artifacts']
-        assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
+        assert service.storage.placement_for_path(book) is None
         assert not declarations()
-        # CoreUI #3275: an attested placement is NOT a manually declared
-        # right/file correspondence. The native detail must not reuse the
-        # manual-consent success label for this independent path.
-        visible_labels = '\n'.join(
-            w.get_text() for w in walk(controller.dialog)
-            if isinstance(w, Gtk.Label) and w.get_mapped()
-        )
-        assert 'Correspondance enregistrée comme déclaration utilisateur' not in visible_labels
-        assert guided_step().startswith('Placement enregistré')
-        report['checks']['P1_3275_native_attested_not_mislabelled_manual'] = True
-        report['checks']['P0_2842_native_attested_confirm_persists_placement'] = True
-        until(lambda: button('Annuler le dernier placement…').get_visible()
-              and button('Annuler le dernier placement…').get_sensitive(),
-              attested_undo)
-
-    def attested_undo():
-        click(button('Annuler le dernier placement…'), lambda: until(
-            lambda: message() is not None, attested_undo_consent))
-
-    def attested_undo_consent():
-        assert service.storage.placement_for_path(book) is not None
-        click(button('Confirmer l’annulation', message()), lambda: until(
-            lambda: service.storage.placement_for_path(book) is None
-            and message() is not None
-            and 'Annulation du placement confirmée' in message().get_body(),
-            attested_finished))
-
-    def attested_finished():
-        assert {table: rows(table) for table in unchanged} == unchanged
-        assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
-        report['checks']['P0_2842_native_attested_undo_restores_references'] = True
-        click(button('Fermer', message()), lambda: until(
-            lambda: message() is None, close_fixture))
+        assert not button('Confirmer le placement local…').get_visible()
+        assert not button('Confirmer le placement local…').get_sensitive()
+        assert not button('Annuler le dernier placement…').get_visible()
+        assert message() is None
+        # The same safety contract is independently asserted in Core pytest.
+        # The prior GTK step that demanded a legacy positive B was obsolete,
+        # not a permission to weaken the #4859 source-evidence boundary.
+        report['checks']['P0_4859_native_historical_kobo_refusal_no_B'] = True
+        close_fixture()
 
     def expand():
         report['checks']['native_declaration_right_selected'] = True
@@ -395,15 +364,18 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         assert hashlib.sha256(book.read_bytes()).hexdigest() == digest
         assert declarations()[0]['revoked_at'] is not None
         report['checks']['P0_2797_declaration_native_revoke_keeps_history'] = True
+        report['checks']['native_declaration_revoked_verified'] = True
         if provider_id in ('test.vendor-a', 'test.vendor-b'):
             report['checks']['P0_3171_native_opaque_provider_consent'] = True
         close_fixture()
 
     def close_fixture():
+        report['checks']['native_declaration_cleanup_started'] = True
         controller.clear()
         host.destroy()
         service.close()
         tmp.cleanup()
+        report['checks']['native_declaration_cleanup_done'] = True
         if attested:
             done()
         else:
