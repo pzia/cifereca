@@ -83,3 +83,36 @@ def test_stale_alias_cannot_create_new_legacy_auto_schedule(tmp_path):
         assert kobo_on_start_sessions(service) == ()
     finally:
         service.close()
+
+
+
+def test_real_provider_session_never_accepts_tuple_alias_as_registry_key(
+    tmp_path, monkeypatch,
+):
+    """Unlike old SimpleNamespace doubles, real ProviderSession is strict."""
+    from cifereca.providers import ProviderSession
+    from tests.test_kobo_backup_reconcile_prune import _service as provider_service
+
+    service = provider_service(tmp_path, manifest=[])
+    try:
+        key = service._session_key("kobo", "vault-1")
+        session = service._sessions[key]
+        assert isinstance(session, ProviderSession)
+        account = session.accounts[0]
+        service.accounts = [account]
+        service.storage.provider_connection_put({
+            "identity_id": account.identity_id,
+            "provider_id": "kobo",
+            "credential_id": account.credential_id,
+            "enabled": True,
+        })
+        monkeypatch.setattr(service, "sync_source_enabled", lambda _a: True)
+        assert can_enable_kobo_on_start(service, account)
+        assert kobo_on_start_sessions(service) == ()
+
+        service._sessions.pop(key)
+        service._sessions[("kobo", "vault-1")] = session
+        assert not can_enable_kobo_on_start(service, account)
+        assert kobo_on_start_sessions(service) == ()
+    finally:
+        service.close()
