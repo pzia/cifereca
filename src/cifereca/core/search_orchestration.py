@@ -405,6 +405,34 @@ def _shared_paris_catalogue_row(
     )
 
 
+def _numilog_search_owner(self, session: ProviderSession) -> str | None:
+    """Inert owner snapshot for an authenticated Numilog search session."""
+    credential = getattr(session, "credential_id", None)
+    if type(credential) is not str or not credential:
+        return None
+    try:
+        owner = self.storage.identity_for_connection("numilog", credential)
+    except (AttributeError, LookupError, TypeError, ValueError):
+        return None
+    return owner if type(owner) is str and owner else None
+
+
+def _shared_numilog_public_row(row: SearchResult) -> SearchResult | None:
+    """Anonymous Numilog catalogue only, never another profile's purchases."""
+    if (type(row) is not SearchResult or row.source_provider != "numilog"
+            or row.source_credential != "__public__"
+            or row.scenario != "NUMILOG_PUBLIC"
+            or row.source_collection != "public_catalog"
+            or row.docbase != "NUMILOG"):
+        return None
+    return replace(
+        row, owned=False, downloadable=False, download_url=None,
+        revision_id=None, thumbnail_url=None, friendly_url=None,
+        metadata={"catalogue_access": "shared_read_only"},
+        document_classification=None,
+    )
+
+
 def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[str, str], ...]:
     """Partition remote search cache by the active configured source account.
 
@@ -527,6 +555,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     source_leases: tuple[tuple[object, tuple[object, object, object] | None], ...] = ()
     paris_owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
     shared_paris_sessions: set[int] = set()
+    numilog_owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
+    shared_numilog_sessions: set[int] = set()
 
     def sources_current() -> bool:
         if not source_leases:
@@ -546,6 +576,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 return False
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
+            return False
+        if any(_numilog_search_owner(self, session) != owner
+               for session, owner in numilog_owner_leases):
             return False
         return True
 
@@ -591,6 +624,13 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     shared_paris_sessions = {
         id(session) for session, owner in paris_owner_leases if owner != active_id
     }
+    numilog_owner_leases = tuple(
+        (session, _numilog_search_owner(self, session))
+        for session in searchable if session.provider_id == "numilog"
+    )
+    shared_numilog_sessions = {
+        id(session) for session, owner in numilog_owner_leases if owner != active_id
+    }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
         for session in searchable
@@ -606,7 +646,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     )
     virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
     cache_key = hashlib.sha256(
-        f"search-v9\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        f"search-v10\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
     ).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
     if not force:
@@ -635,6 +675,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         effective_field, contract_warning = _effective_search_field(
             session, field, provider_scope, facade_type=facade_type,
         )
+        numilog_catalog_only = id(session) in shared_numilog_sessions
+        effective_search_scope = "catalog" if numilog_catalog_only else provider_scope
+        if numilog_catalog_only and effective_field is not None:
+            effective_field = "all"
         if contract_warning:
             warnings.append(contract_warning)
         if effective_field is None:
@@ -660,17 +704,21 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     kwargs = {"field": effective_field}
                     if "content_types" in parameters:
                         kwargs["content_types"] = tuple(content_types or ())
-                    session_rows = session.search(variant, provider_scope, **kwargs)
+                    session_rows = session.search(variant, effective_search_scope, **kwargs)
                 except TypeError as exc:
                     # 0.4 keeps source compatibility with small third-party
                     # provider prototypes that still implement the 0.3 signature.
                     if "field" not in str(exc) or "unexpected keyword" not in str(exc):
                         raise
-                    session_rows = session.search(variant, provider_scope)
+                    session_rows = session.search(variant, effective_search_scope)
                 for raw_row in session_rows:
                     row = _provider_search_row(raw_row)
                     if id(session) in shared_paris_sessions:
                         row = _shared_paris_catalogue_row(row, session)
+                        if row is None:
+                            continue
+                    if numilog_catalog_only:
+                        row = _shared_numilog_public_row(row)
                         if row is None:
                             continue
                     key = _search_result_scope_key(row)
@@ -940,6 +988,7 @@ def _search_provider_session(
     self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
     content_types: tuple[str, ...] = (), facade_type,
     response_facets: list[CatalogSearchFacet] | None = None,
+    numilog_catalogue_only: bool = False,
 ) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
@@ -957,6 +1006,11 @@ def _search_provider_session(
         warnings.append(contract_warning)
     if effective_field is None:
         return [], warnings, "", ""
+    if numilog_catalogue_only:
+        # This provider's default all/digital path calls private library().
+        effective_field = "all"
+        provider_scope = "catalog"
+        response_facets = None
     identity = getattr(self, "current_identity", None)
     credential = getattr(session, "credential_id", None)
     if _source_in_retry_after(self, session, identity):
@@ -997,6 +1051,10 @@ def _search_provider_session(
                 )
             for raw_row in session_rows:
                 row = _provider_search_row(raw_row)
+                if numilog_catalogue_only:
+                    row = _shared_numilog_public_row(row)
+                    if row is None:
+                        continue
                 key = _search_result_scope_key(row)
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
@@ -1157,6 +1215,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     shared_paris_sessions = {
         id(session) for session, owner in paris_owner_leases if owner != active_id
     }
+    numilog_owner_leases = tuple(
+        (session, _numilog_search_owner(self, session))
+        for session in searchable if session.provider_id == "numilog"
+    )
+    shared_numilog_sessions = {
+        id(session) for session, owner in numilog_owner_leases if owner != active_id
+    }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
         for session in searchable
@@ -1169,7 +1234,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
         if (entry := self.registry.virtual_entry(session.provider_id)) is not None
     )
-    cache_key = hashlib.sha256(f"search-v10-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
+    cache_key = hashlib.sha256(f"search-v11-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
@@ -1192,6 +1257,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 return False
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
+            return False
+        if any(_numilog_search_owner(self, session) != owner
+               for session, owner in numilog_owner_leases):
             return False
         return True
 
@@ -1306,7 +1374,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 break
             entry = self.registry.virtual_entry(session.provider_id)
             response_facets: list[CatalogSearchFacet] = []
-            if (
+            if id(session) in shared_numilog_sessions:
+                future = executor.submit(
+                    _search_provider_session, self, session, query, scope,
+                    field=field, content_types=tuple(content_types or ()),
+                    facade_type=type(self), numilog_catalogue_only=True,
+                )
+            elif (
                 entry is not None
                 and "catalog.search.stream" in entry.capabilities
                 and isinstance(session, ProviderSearchStream)
@@ -1379,6 +1453,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     provider_rows = [
                         projected for raw in provider_rows
                         if (projected := _shared_paris_catalogue_row(raw, session))
+                        is not None
+                    ]
+                    response_facets.clear()
+                if id(session) in shared_numilog_sessions:
+                    provider_rows = [
+                        projected for raw in provider_rows
+                        if (projected := _shared_numilog_public_row(raw))
                         is not None
                     ]
                     response_facets.clear()
