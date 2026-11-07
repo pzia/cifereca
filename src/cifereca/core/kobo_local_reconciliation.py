@@ -658,6 +658,26 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
     _require(type(file_only) is bool and type(canonical_relink) is bool
              and not (file_only and canonical_relink), "invalid_request")
     _require(file_only or canonical_relink, "legacy_reconciliation_retired")
+    # Reject malformed offline requests before touching Config, SQLite or
+    # private file paths. These two safe entry points have different exact
+    # contracts; silently forwarding extra/omitted kwargs to a downstream
+    # Python function exposes TypeError rather than a stable refusal.
+    # In particular, a caller cannot inject its own context_current callback
+    # or a legacy undo_operation into the canonical or file-only route.
+    provided = set(options)
+    if file_only:
+        required = {
+            "identity_id", "credential_id", "account_id", "item_id",
+            "expected_sha256", "expected_size", "path",
+        }
+        allowed = required | {"confirmation", "cancelled", "on_committed"}
+    else:
+        required = {
+            "identity_id", "credential_id", "account_id", "edition_id",
+            "right_id", "branch_id", "placement_id", "path",
+        }
+        allowed = required | {"confirmation", "reference_kind"}
+    _require(required <= provided <= allowed, "invalid_request")
     config_path = Path(config_path) if config_path is not None else config_file(create=False)
     database_path = Path(database_path) if database_path is not None else database_file(create=False)
 
