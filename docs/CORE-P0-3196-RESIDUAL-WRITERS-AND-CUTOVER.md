@@ -7,6 +7,19 @@
 > de copie de livres, de conversion de droits ou de désactivation du dernier
 > chemin de reprise.
 
+> **Mise à jour vérifiée le 07/11/2026 (PR #4922 et #4924 fusionnées).**
+> L'entrée Python publique `reconcile_kobo_local` refuse désormais toutes les
+> variantes legacy avant SQLite/FS ; les façades CLI, CoreUI et offline étaient
+> déjà retirées. L'algorithme `_historical_reconcile_kobo_local` reste
+> **physiquement dans le module de production comme archive pour anciens tests**,
+> mais aucun appel de production n'est admis. Ce n'est ni une publication A→B
+> ni la suppression définitive du writer archivé. La commande CLI
+> `kobo-resume-preview` **sans** `--refresh-manifest` lit désormais les preuves
+> canoniques B existantes dans SQLite, sans session Kobo ni lecture de
+> `backup_items` ; les appelants internes qui utilisent l'ancien aperçu
+> n'ont pas tous migré. **W1 et W2 restent ouverts**, avec les lecteurs D1–D4
+> internes, et la fermeture de #3196 exige toujours la recette intégrée.
+
 ## 1. Écritures actives (liste finie)
 
 | ID | Code / entrée | Mutation 0.7 restante | Pourquoi elle est encore atteignable |
@@ -14,7 +27,7 @@
 | W1 | `Storage.backup_put()` → `Storage._mirror_backup_row()` | **Coupure ciblée des reçus Kobo sans identité ou emprunteur lié** : la ligne `backup_items` subsiste, mais aucune écriture canonique n'est synthétisée tant que le tuple persistant `identity_id/account_id` est incomplet. Les contrôles de propriétaire canonique restent en lecture seule. Une ligne déjà liée ne perd pas son owner sur un patch partiel. Le miroir est **encore actif** pour les comptes Kobo liés, et pour les autres fournisseurs. | La tentative de couper W1 d'un coup a provoqué **124 échecs et 11 erreurs** dans la CI initiale (rapprochement manuel W4, bibliothèque et reprise), car ces composants utilisent encore le miroir historique. La PR est volontairement réduite : une coupure globale n'est possible qu'avec migration/reprise et remplacement W2/D1–D5. Le format des archives 0.7 reste consultable et le rollback de l'ancien schéma inchangé. |
 | W2 | `core/kobo_backup.py` — `_refresh_manifest_record`, `_skip_manifest_item`, `_recover_local_remnants` et boucle de livraison 0.7 | Appels directs à `storage.backup_put` (manifest, archivage, reprise, réparation requise, réception/erreur) **uniquement pour les éditions encore sans SourceReference canonique** : les références typées sur le credential/édition interdisent la reprise, les mutations du manifest et le GET historique, même avec ABI partielle ; compte/identité alternatifs sont un veto conservateur. | `LibraryService.sync_kobo_backup`, synchronisation ciblée et reprise legacy restent exécutables pour le legacy pur sans référence typée. **Une session avec ABI v1/v2 complète est bloquée**. L'interruption historique demeure conservée, sans conversion en droit ni preuve de placement. **W2 durci** : une tentative `acquiring` sans fichier reconnue au scan devient `pending_acquisition` + code fermé `interrupted_acquisition_review` et **ne déclenche plus de GET** lorsque le même item est encore annoncé au manifeste ; le libellé historique de l'interruption conserve également ce veto. Un `pending_acquisition` simple issu d'un adaptateur indisponible avant toute tentative n'est pas bloqué. La révision historique n'est pas remplacée par celle du manifeste avant réconciliation. Reprise explicite, qualification des octets éventuels et migration canonique restent à implémenter. |
 | W3 | `Storage.backup_prune_missing` / ancien `_prune_successful_manifest` | **RETIRÉ pour Kobo : zéro suppression, même sur manifeste complet, et API de compatibilité sans accès SQL**. Les autres fournisseurs gardent leur prune de projection. | Aucune entrée Kobo atteignable : scheduler retiré, compatibilité retourne zéro sans transaction. Toutes les lignes v0.7 sont archivées jusqu'à migration explicite (même `pending` sans indices). Tests `tests/test_core_p0_3196_w3_prune_retired.py` et contrats W3 existants. |
-| W4 | `core/kobo_local_reconciliation.py::reconcile_kobo_local` | Écrit sous confirmation explicite `backup_items`, acquisition, entitlement, Artifact et Placement via `_write_row` ; undo journalisé | Rapprochement manuel legacy avec compte/chemin/SHA exact. **Refuse désormais toute SourceReference canonique sur le même credential/édition, même autre emprunteur, ainsi que tout checkpoint `canonical.completed-delivery.v1`** : seuls les dossiers réellement legacy restent accessibles. Doit être remplacé avant coupure. |
+| W4 | `core/kobo_local_reconciliation.py::reconcile_kobo_local` et archive `_historical_reconcile_kobo_local` | **API positive retirée** : preview/confirmation/undo publics refusés avant toute lecture/écriture SQL/FS ; CLI, CoreUI et façade offline refusent déjà cette mutation 0.7. | **Dette de suppression réelle** : ancien exécuteur positif conservé comme fonction privée uniquement pour les tests historiques. Un garde statique interdit les appels de production ; son extraction/suppression et les tests de non-régression de l'undo canonique restent à mener, sans jamais transformer une observation physique en preuve fournisseur. |
 | W5 | `Storage.relocate_local_path`, `Storage.commit_directory_migration` et relocalisations historiques | La relocalisation ordinaire refuse de réécrire `backup_items.local_path` pour une édition Kobo déjà typée. **La migration de répertoire refuse désormais de fusionner deux Placements au même chemin cible si propriétaire, Artifact, état ou portée historique/canonique divergent** : seule la déduplication de deux Placements `present` locaux sans fournisseur, même SHA Artifact et aucune référence `backup_items` / `origin_links`, est conservée. Les vrais déplacements journalisés de répertoire (sans collision de Placements) restent possibles. | Les migrations de chemins ne prouvent pas les droits : les relinks canoniques disposent d'un opérateur distinct avec OriginLink/SourceKey/compte attestés. W5 n'est pas archivé globalement et les cas de collision avec preuve devront disposer d'une migration spécialisée. |
 
 **Autre entrée W5 retirée :** `LibraryService._migrate_legacy_flat_kobo_files`
@@ -156,7 +169,7 @@ Réception : `tests/test_core_1345_confirmed_local_reconciliation.py`.
 | D2 | `core/source_materialization.py` — `_evidence()`, `completed()` | Aperçu/confirmation legacy, empreintes d'historique et décompte post-exécution. Bloqué si ABI Core complète **ou si le manifeste contient une édition ayant déjà une `SourceReference` Kobo pour le même credential, même autre borrower/profil** : la préparation refuse toute confirmation 0.7 et l'exécution revérifie après token. Sans référence typée, cette voie dépend encore de la table historique. |
 | D3 | `services.py::_acquire_direct_item_impl` | `backup_get` et chemin local contribuent au veto de téléchargement manuel Kobo historique. **Une ABI complète ou une `SourceReference` typée sur le credential/édition (même autre borrower/identité) désactive désormais ce GET 0.7**, avec relecture sous verrou après admission ; l'UI ne propose plus cette action sur cette édition. Le legacy sans référence typée reste actif : **en l'absence d'une admission Core fraîche**, le D3 sous verrou refuse tout pointeur 0.7 `local_path` (même disparu), SHA/taille, ancienne acquisition `complete/acquiring/reconcile*`, interruption documentée, archive 409 ou refus de délégation 403 avant un autre GET. Cela ne prouve ni droit, ni présence B ; `pending` jamais commencé et sans indice reste admissible à l'action explicite. Une **admission Core actuelle**, déjà qualifiée par `owned_library_download`, conserve priorité : un vieux statut ou chemin 0.7 ne doit jamais opposer un veto à un droit fournisseur indépendamment attesté. Les tests couvrent les deux branches. Voir `tests/test_core_p0_3196_d3_legacy_recovery_checkpoint.py`. |
 | D4 | `core/source_materialization_schedule.py`, `core/sync_coordination.py`, façade `services.py` | Les préférences exact-source et le checkpoint pilotent toujours la **planification** de W2 en l'absence d'ABI complète. L'ancien booléen global n'autorise pas un GET. |
-| D5 | `core/kobo_local_reconciliation.py` | Préflight, transaction et undo du mécanisme W4 requièrent l'ancienne ligne : **non retirable par simple renommage**. |
+| D5 | `core/kobo_local_reconciliation.py`, façades CLI/CoreUI/offline | **Retiré en production pour les opérations W4 legacy.** Les lectures/file-only et relinks d'un B déjà canonique restent distincts. Le writer archivé n'est plus un lecteur décisionnel appelable par les façades ; il reste utilisé exclusivement par des tests historiques. |
 | D6 | `core/kobo_local_audit.py`, `kobo_backup_diagnostic`, `kobo_backup_preview`, `kobo_backup_records`, `core/backup_projection_audit.py` et `core/legacy_backup_migration_inventory.py` | Consultation/inventaire/admission à revue **sans preuve d'origine B**. Ces lecteurs peuvent rester pour l'archive, à condition de rester strictement passifs. |
 | D7 | `core/library_projection.py::local_placements_for_sources` (recherche publique) **et** `local_placement_for_source` (cible individuelle) | **Cutover lecture typée :** si une `SourceReference` Kobo existe pour `credential/edition`, aucun des deux lecteurs n'infère un fichier local depuis un vieux `acquisition_ledger.complete`. L'alias public sans compte exige une SourceReference unique du profil, un OriginLink fournisseur et un Placement ouvrable sous l'identité ; toute deuxième source/droit/emprunteur bloque l'alias. Le lecteur à compte exact sélectionne la seule SourceReference du bon borrower, son OriginLink et le même Artifact, puis conserve sa vérification physique SHA/taille du fichier. Si l'OriginLink manque, les octets sont absents ou le scope est ambigu : aucun match. Les éditions non typées continuent la projection legacy en lecture seule, sans création de droit. |
 
@@ -166,8 +179,13 @@ et son `local_path` ne suffisent plus à produire
 `already_local_linked` ou `already_local_verified`, **même si le SHA
 et la taille du fichier correspondent à l'ancienne ligne**. La ligne est
 `needs_reconciliation`, sans permission de GET ni fabrication d'un
-OriginLink. La prévisualisation strictement offline conserve les catégories
-historiques pour la consultation 0.7 ; elle n'atteste pas B. Le préflight
+OriginLink. La commande CLI **sans** `--refresh-manifest` utilise maintenant
+`offline_canonical_only=True` et inspecte uniquement B depuis SQLite,
+avec compte/emprunteur propriétaire exacts (même `account_id=""`),
+sans connexion Kobo ni accès `backup_items`. Ses compteurs de droit actuel
+et d'autorisation de GET restent nuls. Seuls les autres appelants
+**internes** de `kobo_backup_preview` conservent provisoirement les
+catégories 0.7 hors rafraîchissement : ils n'attestent pas B. Le préflight
 **interne** de W2 (qui fournit `_item_reasons` pour décider de l'exécution)
 conserve temporairement l'ancien classement : changer sa sémantique sans
 migrer son contrat provoquerait un refus `reconciliation_required` sur
@@ -224,7 +242,7 @@ le chemin B sans projeter une acquisition dans `backup_items`.
    bornée, revérifier account/revision/source, les collisions de chemins et
    les octets, committer de façon idempotente et pouvoir reprendre un crash.
    Les octets et la provenance restent distincts par identité.
-5. **Remplacer W2/D1–D4 puis W4.** Une entrée sans ABI v2 et toujours
+5. **Achever W2/D1–D4 et retirer l'archive W4.** L'API positive W4 et les façades sont coupées ; une entrée sans ABI v2 et toujours
    opérationnelle **bloque la désactivation globale**. Passer chaque
    méthode de livraison (manuel, startup, confirmation, retry) au moteur
    canonique ; basculer l'undo/reconcile vers des références B exactes.
