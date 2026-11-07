@@ -90,7 +90,7 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
     ).fetchone()
     _require(
         source is not None
-        and source[:3][0:2] == ("active", "provider_response")
+        and source[:2] == ("active", "provider_response")
         and type(source[2]) is str and bool(source[2])
         and source[3:] == (
             scope.identity_id, "kobo", scope.credential_id, scope.account_id,
@@ -140,10 +140,13 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
     # right to create another copy. Never mutate while its old pathname still
     # exists (including an unsafe symlink), even if the new file has same SHA.
     old_path = placement[0]
+    old_file = Path(old_path)
     _require(
-        Path(old_path).is_absolute()
-        and not os.path.lexists(old_path)
-        and old_path != str(new_path),
+        old_file.is_absolute()
+        and ".." not in old_file.parts
+        and old_file != new_path
+        and old_file.is_relative_to(owner_dir)
+        and not os.path.lexists(old_path),
         "canonical_relink_old_path_present",
     )
     existing = db.execute(
@@ -265,7 +268,7 @@ def relink_verified_canonical_kobo(
                     "schema": _SCHEMA, "source_reference_id": source_ref,
                     "identity_id": identity_id, "placement_id": placement_id,
                     "old_path": old_path, "new_path": str(new_path),
-                    "verified_file_sha": observed.st_size,
+                    "verified_file_size": observed.st_size,
                     "confirmed_at": now,
                 }, ensure_ascii=True, sort_keys=True)),
             )
