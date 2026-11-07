@@ -53,9 +53,9 @@ def _require(ok, code):
         raise CanonicalRelinkRejected(code)
 
 
-def _id(value, *, limit=256):
-    return (type(value) is str and 0 < len(value) <= limit
-            and value == value.strip()
+def _id(value, *, limit=256, empty=False):
+    return (type(value) is str and (empty or len(value) > 0)
+            and len(value) <= limit and value == value.strip()
             and all(ord(ch) >= 32 and ord(ch) != 127 for ch in value))
 
 
@@ -226,9 +226,12 @@ def relink_verified_canonical_kobo(
     """
     _require(
         all(_id(x) for x in (
-            identity_id, credential_id, account_id, edition_id,
+            identity_id, credential_id, edition_id,
             right_id, branch_id, placement_id,
         ))
+        # The empty upstream Kobo primary account is a literal exact scope,
+        # not a missing borrower; the SQL connection/borrower join still vets it.
+        and _id(account_id, empty=True)
         and isinstance(library_root, Path)
         and library_root.is_absolute()
         and isinstance(new_path, Path) and new_path.is_absolute()

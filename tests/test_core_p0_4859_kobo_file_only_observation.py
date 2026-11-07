@@ -200,3 +200,64 @@ def test_offline_entry_rejects_ambiguous_file_only_dispatch(observation, value):
             database_path=case.storage.path,
             file_only=value, **args,
         )
+
+
+def test_empty_primary_borrower_is_exact_file_only_evidence_without_right(
+    observation,
+):
+    case, args = observation
+    # An empty Kobo account ID is a valid primary borrower, not missing data.
+    # Keep the historic 0.7 rows intact: the observation must not consult or
+    # rewrite their potentially different borrower.
+    with case.storage._lock, case.storage._connect() as db:
+        db.execute(
+            "DELETE FROM provider_accounts WHERE provider_id='kobo' "
+            "AND credential_id='vault-1'"
+        )
+        connection_id = db.execute(
+            "SELECT connection_id FROM provider_connections "
+            "WHERE provider_id='kobo' AND credential_id='vault-1'"
+        ).fetchone()[0]
+    case.storage.provider_account_put({
+        "connection_id": connection_id, "provider_id": "kobo",
+        "credential_id": "vault-1", "identity_id": "default",
+        "account_id": "",
+    })
+    args = {**args, "account_id": ""}
+    before = _snapshot(case)
+    preview = _observe(case, args)
+    assert preview["status"] == "preview"
+    assert preview["rights_attested"] is False
+    assert _snapshot(case) == before
+    confirmed = _observe(case, args, confirmation=preview["plan_token"])
+    assert confirmed["status"] == "observed"
+    assert confirmed["rights_attested"] is False
+    assert confirmed["canonical_delivery_attested"] is False
+    assert confirmed["rights_mutations"] == 0
+    assert confirmed["legacy_backup_mutations"] == 0
+    assert _snapshot(case) == before
+    with case.storage._lock, case.storage._connect() as db:
+        journal = db.execute(
+            "SELECT value FROM metadata WHERE key LIKE "
+            "'core.kobo.local-file-only.%'"
+        ).fetchone()[0]
+    assert json.loads(journal)["claimed_scope"]["account_id"] == ""
+
+
+def test_empty_primary_must_not_match_another_registered_kobo_borrower(
+    observation, monkeypatch,
+):
+    case, args = observation
+    args = {**args, "account_id": ""}
+    monkeypatch.setattr(
+        repair, "_read_hash_within",
+        lambda *_a, **_kw: pytest.fail(
+            "unbound empty borrower cannot even start a file hash"
+        ),
+    )
+    before = _snapshot(case)
+    with pytest.raises(
+        repair.ReconciliationRejected, match="borrower_scope_unavailable",
+    ):
+        _observe(case, args)
+    assert _snapshot(case) == before
