@@ -670,6 +670,17 @@ def main() -> int:
                     stage = report_data.get("p1_4664_phase")
                     if type(stage) is str and stage in allowed:
                         print("P1_4664_CLOSED_FAILURE_STAGE=" + stage, flush=True)
+                    # #4761: only a fixed GTK-checkpoint label is emitted.
+                    # This says nothing about books, paths, providers,
+                    # screenshots, accounts or private exception contents.
+                    strip_allowed = frozenset({
+                        "start", "empty", "rendered", "type", "child",
+                        "orientation", "policy", "mapped", "parents",
+                        "search_separate", "complete",
+                    })
+                    strip_stage = report_data.get("p1_4761_strip_phase")
+                    if type(strip_stage) is str and strip_stage in strip_allowed:
+                        print("P1_4761_STRIP_FAILURE_STAGE=" + strip_stage, flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
                 if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-capture-session"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
