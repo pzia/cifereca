@@ -477,6 +477,25 @@ def exact_kobo_offer_id(
             if not legacy_kdrm(row)
         ]
         eligible = preferred
+    # #4640 K1: owner-approved preference between *already executable*
+    # plain-book routes only. Do not use upstream order, MIME assumptions,
+    # a DRM candidate or a product title to break an ambiguity. A second
+    # eligible EPUB (even with an identical opaque route) stays ambiguous.
+    if len(eligible) > 1 and all(
+        kind == "http" and handling == "http_plain"
+        and route.split(":", 1)[0] in {"epub", "pdf"}
+        for kind, handling, _drm, route in eligible
+    ):
+        epub_indices = [
+            index for index, row in enumerate(eligible)
+            if row[3].split(":", 1)[0] == "epub"
+        ]
+        if len(epub_indices) == 1:
+            index = epub_indices[0]
+            chosen, url = eligible[index], eligible_urls[index]
+            eligible, eligible_urls = [chosen], [url]
+            if diagnostic is not None:
+                diagnostic["candidate_selection"] = "unique_epub_preferred"
     # Multiple independent routes remain ambiguous.
     if len(eligible) != 1:
         if diagnostic is not None:

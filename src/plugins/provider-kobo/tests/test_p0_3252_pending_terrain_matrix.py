@@ -22,7 +22,7 @@ _SCOPE = {
 
 
 @pytest.mark.parametrize("media_format", ["epub", "pdf"])
-def test_multiple_plain_routes_remain_pending_even_if_opaque_ids_match(media_format):
+def test_multiple_plain_routes_prefer_unique_epub_but_never_two_epubs(media_format):
     envelope = descriptor()
     first = envelope["acquisition"]["candidates"][0]
     second = {**first, "media_format": media_format,
@@ -34,24 +34,29 @@ def test_multiple_plain_routes_remain_pending_even_if_opaque_ids_match(media_for
     envelope["acquisition"]["candidates"].append(second)
 
     diagnostic = {}
-    assert exact_kobo_offer_id(envelope, **_SCOPE, diagnostic=diagnostic) == ""
-    assert diagnostic == {
-        "eligible_candidate_count": 2,
-        "qualification_reason": "eligible_count_not_one",
-        "candidate_selection": "multiple_eligible_candidates",
-        "candidate_rejection_counts": {},
-        "candidate_route_comparison": (
-            "same_route_distinct_urls" if media_format == "epub"
-            else "distinct_routes"
-        ),
-        "candidate_shape_counts": (
-            {"content_access_book:epub:missing:http_plain": 2}
-            if media_format == "epub" else {
+    selected = exact_kobo_offer_id(envelope, **_SCOPE, diagnostic=diagnostic)
+    if media_format == "pdf":
+        # The owner explicitly prefers the one independently admitted EPUB.
+        assert selected == first_id
+        assert diagnostic == {
+            "candidate_shape_counts": {
                 "content_access_book:epub:missing:http_plain": 1,
                 "content_access_book:pdf:missing:http_plain": 1,
-            }
-        ),
-    }
+            },
+            "candidate_selection": "unique_epub_preferred",
+        }
+    else:
+        assert selected == ""
+        assert diagnostic == {
+            "eligible_candidate_count": 2,
+            "qualification_reason": "eligible_count_not_one",
+            "candidate_selection": "multiple_eligible_candidates",
+            "candidate_rejection_counts": {},
+            "candidate_route_comparison": "same_route_distinct_urls",
+            "candidate_shape_counts": {
+                "content_access_book:epub:missing:http_plain": 2,
+            },
+        }
 
 
 @pytest.mark.parametrize("reverse", [False, True])
