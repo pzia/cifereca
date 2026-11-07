@@ -89,6 +89,28 @@ def _kdrm_raw_type(value: Any) -> bool:
     )
 
 
+def _effective_kdrm_media_format(candidate: dict[str, Any], *, raw_drm: Any,
+                                 source: Any) -> Any:
+    """One strictly scoped Cifereca alias shared by offer, selection and runtime.
+
+    Kobo KDRM library_sync unknown/FLEPUB is presumed EPUB for the *format*
+    contract only. It is not a right, an execution grant or a byte receipt.
+    Never infer from missing/empty/other media, a sample or another DRM/source.
+    The unmodified descriptor stays available for redacted raw diagnostics.
+    """
+    media = candidate.get("media_format")
+    source_format = candidate.get("source_format")
+    if (type(media) is str and media.strip().casefold() == "unknown"
+            and type(source_format) is str
+            and source_format.strip().casefold() == "flepub"
+            and candidate.get("kind") == "http"
+            and candidate.get("handling") == "kobo_kdrm"
+            and _kdrm_raw_type(raw_drm)
+            and source == "library_sync"):
+        return "epub"
+    return media
+
+
 def kdrm_runtime_ready(session: object) -> bool:
     """Positive capability for Kobo KDRM; never probe private data."""
     try:
@@ -279,6 +301,7 @@ def exact_kobo_offer_id(
     eligible: list[tuple[str, str, str, str]] = []
     # Private transient comparison only; never persist or log signed URLs.
     eligible_urls: list[str] = []
+    normalized_count = 0
     for candidate in candidates:
         current_candidate = candidate
         if type(candidate) is not dict:
@@ -382,10 +405,17 @@ def exact_kobo_offer_id(
                                 for v in declared)):
             skip("candidate_format_missing_or_invalid")
             continue
-        fmt = declared[0].strip().lower()
         source = candidate.get("source")
         if source is None and type(candidate.get("kobo")) is dict:
             source = candidate["kobo"].get("source")
+        # Format-only repair, after scope/DRM/transport guards, before
+        # executable-pair admission. Shared with selected-candidate/runtime.
+        fmt = _effective_kdrm_media_format(
+            candidate, raw_drm=raw_drm, source=source,
+        )
+        fmt = fmt.strip().lower()
+        if fmt != declared[0].strip().lower():
+            normalized_count += 1
         if _kdrm_raw_type(raw_drm):
             # Pinned library_sync and legacy delegated ContentAccess are
             # separate ABI routes. Only a runtime explicitly advertising BOTH
@@ -454,6 +484,11 @@ def exact_kobo_offer_id(
                  if _kdrm_raw_type(raw_drm) else fmt)
         eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
         eligible_urls.append(candidate["url"])
+    # Raw shapes remain unchanged; this closed count is the effective EPUB
+    # alias among individually qualified KDRM source-format candidates, not
+    # an assertion that the resulting delivery is executable.
+    if diagnostic is not None and normalized_count:
+        diagnostic["candidate_kdrm_flepub_normalized_count"] = normalized_count
     # #4640 K1/K3: closed, bounded shape histogram from the *same* already
     # fetched descriptor. Never log a signed URL, account, bearer, raw opaque
     # format, product or source-provided text. This NEVER proves that two
