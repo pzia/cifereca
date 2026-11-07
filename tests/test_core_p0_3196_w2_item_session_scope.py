@@ -116,6 +116,13 @@ def test_rebind_at_delivery_keeps_interrupted_receipt_without_false_complete(
         rebind()
         return SimpleNamespace(path=path, account_id=None, metadata={})
 
+    # The minimal synthetic BackupSession has no provider-specific normalizer.
+    # Supply one here so the test reaches the actual pre- and post-GET fence.
+    monkeypatch.setattr(
+        session, "normalize_item",
+        lambda _raw, **_kw: SimpleNamespace(id="book-1"),
+        raising=False,
+    )
     monkeypatch.setattr(service, "_execute_kobo_acquisition", fake_delivery)
     monkeypatch.setattr(
         service, "_observed_backup_artifact",
