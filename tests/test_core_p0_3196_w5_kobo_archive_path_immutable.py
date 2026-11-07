@@ -100,3 +100,33 @@ def test_preserved_kobo_archive_is_not_borrower_or_b_proof(tmp_path):
                 assert tuple(db.execute("SELECT * FROM " + table)) == original
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("provider", ("kobo", "paris"))
+def test_direct_scoped_rename_preserves_only_kobo_archive_location(
+    tmp_path, provider,
+):
+    db = Storage(tmp_path / "rename.sqlite")
+    try:
+        old = tmp_path / "alice" / "before.epub"
+        new = tmp_path / "alice" / "after.epub"
+        db.backup_put({
+            "provider_id": provider, "credential_id": "card",
+            "identity_id": "alice", "account_id": "reader-a",
+            "item_id": "book-a", "title": "Synthetic", "status": "complete",
+            "local_path": str(old),
+        })
+        before = db.backup_get(provider, "card", "book-a")
+        db.relocate_local_path(
+            old, new, identity_id="alice", provider_id=provider,
+        )
+        after = db.backup_get(provider, "card", "book-a")
+        assert after["local_path"] == str(old if provider == "kobo" else new)
+        if provider == "kobo":
+            assert after == before
+        placements = db.placements()
+        assert len(placements) == 1
+        assert placements[0]["path"] == str(new)
+        assert placements[0]["identity_id"] == "alice"
+    finally:
+        db.close()
