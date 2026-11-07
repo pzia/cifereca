@@ -9,7 +9,7 @@ La nouvelle option `--trace` l'active explicitement pour cette invocation
 confirmée (le niveau est restauré à la sortie) :
 
 ```sh
-cifereca kobo-sync-edition --credential '<id-compte>' \\
+cifereca-cli kobo-sync-edition --credential '<id-compte>' \\
   --item '<id-édition-K1>' --confirm --trace
 ```
 
@@ -134,7 +134,7 @@ Aucune URL signée n'est incluse dans cette observation ; pour voir les URL
 complètes utiliser **uniquement** le mode Trace privé livré dans #4890 :
 
 ```sh
-cifereca kobo-sync-edition --credential '<compte>' \\
+cifereca-cli kobo-sync-edition --credential '<compte>' \\
   --item 'f4b22e3d-2980-4d33-bf0c-df75bfb1a24c' --confirm --trace
 ```
 
