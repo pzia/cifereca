@@ -155,3 +155,18 @@ def test_cached_extension_refresh_retains_live_core_action_but_revokes_removed_o
     assert base._cifereca_action_context_revoked is False
     assert removed._cifereca_action_context_revoked is True
     assert kept == [base]
+
+
+@pytest.mark.parametrize("mode", ["loaded", "known"])
+def test_exact_in_panel_action_precedes_legacy_search_redirect_at_narrow_width(mode):
+    priority = _method("detail_panel.py", "_detail_action_priority", cls="DetailPanel")
+    inline = NS(
+        _cifereca_action_id=f"recommendation.{mode}-in-place.17",
+        _cifereca_action_label="Consulter disponibilités et actions ici",
+    )
+    redirect = NS(
+        _cifereca_action_id=f"recommendation.{mode}-notice.17",
+        _cifereca_action_label="Voir les actions dans Recherche",
+    )
+    assert priority(inline) == 9
+    assert priority(redirect) > priority(inline)
