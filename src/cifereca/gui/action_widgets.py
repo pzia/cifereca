@@ -168,8 +168,16 @@ class AdaptiveActionBar(Gtk.ScrolledWindow):
                 if full_width is None:
                     full_width = self._widths[primary]
                     self._primary_full_width = full_width
-                reserve = self.box.get_spacing() + self._overflow_width + 4
-                compact = full_width + reserve > budget
+                spacing = self.box.get_spacing()
+                reserve = spacing + self._overflow_width + 4
+                full_total = (
+                    full_width
+                    + sum(self._widths[button] for button in self._buttons[1:])
+                    + spacing * (len(self._buttons) - 1)
+                )
+                # Never shorten a caption when all original action buttons
+                # already fit and no overflow control is actually needed.
+                compact = full_total > budget and full_width + reserve > budget
                 previous = getattr(self, '_primary_variant', None)
                 if compact and (previous is None
                                 or getattr(self, '_primary_fit_budget', None) != budget):
