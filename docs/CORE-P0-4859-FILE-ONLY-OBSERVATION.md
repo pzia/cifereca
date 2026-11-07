@@ -34,8 +34,10 @@ Le journal contient obligatoirement
 **Il n'est pas une source A, une livraison B, un droit, une autorisation
 de GET, un OriginLink ou un Placement.**
 
-L'ancien `reconcile_kobo_local` reste disponible pour compatibilité
-jusqu'à la livraison et la recette de la migration W4/D5 complète ; ce
+L'API `reconcile_kobo_local` refuse maintenant toute mutation historique,
+et l'ancien exécuteur positif réside **uniquement dans `tests/`** pour la
+recette de non-régression des journaux. L'observation file-only reste
+indépendante de ces archives ; ce
 premier opérateur ne suffit donc pas à fermer #4859 ni #3196.
 
 ## Recette
