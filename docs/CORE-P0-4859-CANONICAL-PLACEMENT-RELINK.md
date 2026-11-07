@@ -9,13 +9,15 @@ et d'un Placement Core du **même profil**. Elle n'utilise jamais les colonnes
 ## CLI hors réseau
 
 ```sh
-cifereca kobo-relink-canonical \
+cifereca-cli kobo-relink-canonical \
   --identity lecteur --credential compte-kobo \
   --account-id emprunteur-kobo \
-  --item edition-exacte --right achat-exact \
-  --branch purchases --placement id-placement-core \
+  --item edition-exacte --right droit-exact \
+  --branch purchases --kind purchase --placement id-placement-core \
   --path /bibliotheque/lecteur/livre-deplace.epub
 ```
+
+Le paramètre `--kind` sélectionne **exactement** la nature de la preuve fournisseur déjà publiée : `purchase` (défaut compatible avec les commandes précédentes) ou `loan` pour un prêt préexistant, par exemple `--branch loans --kind loan`. Le type figure dans la SourceReference et dans l'empreinte du plan ; une confirmation de prêt ne peut pas être réutilisée comme achat ni inversement. La relocalisation ne prolonge pas la durée ni la validité d'un prêt et ne crée aucune nouvelle preuve de droit.
 
 La commande lit le profil et la base SQLite existants, **sans démarrer
 Core, plugin ou fournisseur**. Elle renvoie un `plan_token` opaque sans
