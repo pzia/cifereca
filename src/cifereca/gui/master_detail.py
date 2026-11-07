@@ -282,10 +282,14 @@ class MasterDetailPage(Gtk.Box):
         displayed = self.store.get_n_items()
         total = int(total_count if total_count is not None else getattr(self, "_total_count", displayed))
         self._total_count = max(total, displayed)
-        if not displayed:
+        if not displayed and not self._total_count:
             self.count_label.set_label("")
         elif hasattr(self, "_count_total_only") and self._count_total_only:
             self.count_label.set_label(self._item_count_label(self._total_count))
+        elif not displayed:
+            # An empty *filtered* list is not an empty source collection.
+            # Keep the attested total visible when every row is hidden.
+            self.count_label.set_label(f"0 / {self._item_count_label(self._total_count)}")
         elif self._total_count > displayed:
             self.count_label.set_label(f"{displayed} / {self._total_count} élément(s)")
         else:
