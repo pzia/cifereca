@@ -15,9 +15,11 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 36)
+        self.assertEqual(len(mod.ALL), 37)
         self.assertEqual(runner.SCENARIOS["recommendations-detail-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["recommendations-detail-1024"]["height"], 768)
+        hidpi = runner.SCENARIOS["recommendations-detail-1024-hidpi"]
+        self.assertEqual((hidpi["width"], hidpi["height"], hidpi["scale"]), (1024, 768, 2))
         self.assertIn("maintenance-tools-920", mod.ALL)
         self.assertIn("maintenance-tools-1024", mod.ALL)
         self.assertIn("maintenance-tools-1728", mod.ALL)
@@ -158,6 +160,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_p1_774_recommendations_gtk_three_effective_widths(self):
         assert set(mod.RECOMMENDATIONS_GTK) == {
+            "recommendations-detail-1024-hidpi",
             "recommendations-detail-1024",
             "recommendations-detail-1366", "recommendations-detail-1600",
         }
