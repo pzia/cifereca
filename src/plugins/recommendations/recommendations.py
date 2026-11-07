@@ -1297,6 +1297,24 @@ class UxRecommendationsView:
         selected_id = self.selected_language_id() if controls is None else ""
         if selected_id:
             available.add(selected_id)
+        if controls is not None:
+            # A partial top-N is not an exhaustive language inventory. Keep
+            # only the user's currently selected languages that were already
+            # attested in an earlier loaded result of this view. Otherwise
+            # MultiSelect drops the choice and silently broadens to 'Toutes'.
+            # Final results (_busy=False) strictly prune absent languages.
+            previously_attested = getattr(self, "_attested_language_choices", frozenset())
+            reader = getattr(controls, "selected_languages", None)
+            if getattr(self, "_busy", False) and callable(reader):
+                try:
+                    selection = reader()
+                except Exception:
+                    selection = ()
+                if type(selection) in (tuple, list) and len(selection) <= 128:
+                    for language in selection:
+                        if type(language) is str and language in previously_attested:
+                            available.add(language)
+        self._attested_language_choices = frozenset(available)
         ordered = sorted(available, key=lambda language: (_language_label(language).casefold(), language))
         if controls is not None:
             controls.set_choices(languages=tuple((lang, _language_label(lang)) for lang in ordered))
