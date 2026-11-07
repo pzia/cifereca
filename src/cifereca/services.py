@@ -3918,6 +3918,18 @@ class LibraryService:
         Cancellation stops between items, never amid a file write. All local
         artifact and duplicate reconciliation guards remain enforced.
         """
+        # W2/D2 #4858: the old scoped resume is a *public* entry and can
+        # dispatch a complete typed Kobo delivery ABI directly to the same
+        # Core A→B Sync executor as generic Sync. The canonical Sync acquires
+        # the global lease itself; never nest it beneath the 0.7 backup lock.
+        # An incomplete ABI retains the historical guarded compatibility.
+        from .core.kobo_backup_canonical_dispatch import run_scoped_canonical_kobo_resume
+        canonical = run_scoped_canonical_kobo_resume(
+            self, credential_id, progress=progress, cancelled=cancelled,
+            retry_scope_blocked=retry_scope_blocked,
+        )
+        if canonical is not None:
+            return canonical
         return kobo_backup.sync_kobo_backup(
             self, progress, credential_id=credential_id, cancelled=cancelled,
             retry_scope_blocked=retry_scope_blocked,
