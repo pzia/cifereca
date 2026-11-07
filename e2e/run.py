@@ -708,6 +708,24 @@ def main() -> int:
                         for key in sorted(cover_keys):
                             print("P1_774_COVER_NUMERIC_" + key + "=" +
                                   str(cover[key]), flush=True)
+                    # Closed aggregate counters from the synthetic CoverLoader.
+                    # No URL, filesystem path, image bytes or account data.
+                    loader_state = report_data.get("p1_774_cover_loader_state")
+                    loader_keys = frozenset({
+                        "requested", "cache_hit_valid", "download_ok",
+                        "download_failed", "preview_created", "preview_hit",
+                        "preview_fallback", "ui_applied", "ui_stale", "ui_failed",
+                        "decode_failed", "cancelled_callbacks", "queue",
+                        "inflight_urls",
+                    })
+                    if (type(loader_state) is dict
+                            and set(loader_state) == loader_keys
+                            and all(type(loader_state[key]) is int
+                                    and 0 <= loader_state[key] <= 100
+                                    for key in loader_keys)):
+                        for key in sorted(loader_keys):
+                            print("P1_774_LOADER_NUMERIC_" + key + "=" +
+                                  str(loader_state[key]), flush=True)
                     # Eight screen-local bounded integers diagnose a clipped
                     # overflow button without leaking widget text, session,
                     # actions, account metadata or raw GTK tracebacks.
