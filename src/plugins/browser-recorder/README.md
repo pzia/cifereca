@@ -1,4 +1,4 @@
-# Browser Recorder — outil technique opt-in (0.2.17, ZIP privé en revue)
+# Browser Recorder — outil technique opt-in (0.2.24, ZIP privé et SDK providers)
 
 Plugin **désactivé par défaut**. Activez-le dans **Plugins**, puis ouvrez **Browser Recorder** (section Configuration).
 
