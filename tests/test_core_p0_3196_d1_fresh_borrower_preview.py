@@ -46,6 +46,13 @@ def test_fresh_private_preview_refuses_foreign_or_unbound_legacy_file(
     service, session, path = _rig(tmp_path, owner=owner, borrower=borrower)
     before = service.storage.backup_get("kobo", "vault-1", "book")
     _forbid_mutation_and_acquisition(service, session, monkeypatch)
+    from cifereca.core import kobo_backup
+    monkeypatch.setattr(
+        kobo_backup, "_observed_backup_artifact",
+        lambda *_a, **_kw: pytest.fail(
+            "a prior borrower's 0.7 file must not be inspected"
+        ),
+    )
     try:
         reasons = {}
         result = service.kobo_backup_preview(
