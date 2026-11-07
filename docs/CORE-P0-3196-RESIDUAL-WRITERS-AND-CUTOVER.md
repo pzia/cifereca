@@ -96,6 +96,20 @@ appels Python directs `.backup_put()` / `.backup_prune_missing()` hors de
 `core/kobo_backup.py`. Il ne prétend **pas** détecter toute écriture SQL
 dynamique (W4–W5) ; une revue de code de celles-ci reste indispensable.
 
+**W5 — migration des répertoires de profils et propriétaire des archives
+(07/11/2026) :** avant toute réécriture SQL des Placements/catalogues,
+`commit_directory_migration` refuse de réécrire le `local_path`
+d'une archive Kobo située dans le dossier déplacé si son `identity_id`
+n'est pas **exactement** le propriétaire indiqué par la migration. Ancien
+propriétaire nul, ancien nom de dossier prétendu propriétaire, traversée
+lexicale `..` et budget supérieur à 100 000 archives empêchent
+la transaction entière ; les autres dossiers et les archives au profil
+exact restent inchangés / relocalisables. Aucun propriétaire ni droit
+n'est dérivé du nom du chemin ou de l'empreinte. Tests SQL transactionnels
+`tests/test_core_p0_3196_w5_directory_foreign_archive.py`. Ce veto
+ne remplace pas la suppression de l'autorité historique W5 après le cutover
+#4858/#4859.
+
 **W4 — observation physique indépendante (06/11/2026) :** le rapprochement
 manuel confirmé conserve désormais, dans la **même transaction SQLite** que son
 journal de confirmation/undo, une observation append-only
