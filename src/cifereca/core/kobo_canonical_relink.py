@@ -14,6 +14,7 @@ from pathlib import Path
 import sqlite3
 import time
 import stat
+from typing import Callable
 
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
@@ -196,13 +197,14 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
         json.dumps(plan, ensure_ascii=True, separators=(",", ":"), default=list)
         .encode("utf-8"),
     ).hexdigest()
-    return token, old_path, before, signatures, directories[0], source_ref
+    return token, old_path, before, signatures, directories[0], source_ref, artifact[0]
 
 
 def relink_verified_canonical_kobo(
     storage, *, library_root: Path, identity_id: str, credential_id: str,
     account_id: str, edition_id: str, right_id: str, branch_id: str,
     placement_id: str, new_path: Path, confirmation: str | None = None,
+    context_current: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     """Preview/relink only an EXISTING provider B, never infer fresh ownership.
 
@@ -223,7 +225,8 @@ def relink_verified_canonical_kobo(
         and (confirmation is None or (
             type(confirmation) is str and len(confirmation) == 64
             and all(c in "0123456789abcdef" for c in confirmation)
-        )),
+        ))
+        and (context_current is None or callable(context_current)),
         "invalid_relink_request",
     )
     scope = ProviderRightsScope(identity_id, "kobo", credential_id, account_id)
@@ -232,8 +235,12 @@ def relink_verified_canonical_kobo(
         guard = InterProcessLock(acquisition_lock_file()) if write else __import__("contextlib").nullcontext()
         with guard, storage._lock, storage._connect() as db:
             db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+            _require(
+                context_current is None or context_current() is True,
+                "canonical_relink_scope_unavailable",
+            )
             (token, old_path, observed, signatures,
-             owner_folder, source_ref) = _inspect(
+             owner_folder, source_ref, artifact_sha) = _inspect(
                 db, library_root=library_root, scope=scope,
                 edition_id=edition_id, right_id=right_id,
                 branch_id=branch_id, placement_id=placement_id,
@@ -269,6 +276,7 @@ def relink_verified_canonical_kobo(
                     "identity_id": identity_id, "placement_id": placement_id,
                     "old_path": old_path, "new_path": str(new_path),
                     "verified_file_size": observed.st_size,
+                    "verified_file_sha256": artifact_sha,
                     "confirmed_at": now,
                 }, ensure_ascii=True, sort_keys=True)),
             )
@@ -278,6 +286,10 @@ def relink_verified_canonical_kobo(
                      _directory_signature(library_root.resolve(strict=True) / owner_folder)) == signatures
                 and not os.path.lexists(old_path),
                 "canonical_relink_file_unverified",
+            )
+            _require(
+                context_current is None or context_current() is True,
+                "canonical_relink_plan_changed",
             )
             return {
                 "schema": _SCHEMA, "status": "relinked", "ok": True,
