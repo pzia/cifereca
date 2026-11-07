@@ -107,34 +107,54 @@ def synchronize_selected_kobo_edition(
             )
             source_revision = policy.revision
 
-            def current() -> bool:
+            def memory_current() -> bool:
+                """Pure callback safe inside canonical publisher's SQLite lock."""
                 try:
-                    if (source_context_epoch(service) != epoch
-                            or service.accounts is not accounts
-                            or service._sessions is not sessions
-                            or service.storage is not storage
-                            or getattr(session, "_epoch", None) != session_epoch
-                            or session.connected is not True
-                            or service._sessions.get(
-                                service._session_key("kobo", credential_id),
-                            ) is not session
-                            or len([
-                                row for row in service.accounts
-                                if type(row) is Account
-                                and row.provider_id == "kobo"
-                                and row.credential_id == credential_id
-                            ]) != 1
-                            or len(session.accounts) != 1
-                            or (
-                                session.accounts[0].identity_id,
-                                session.accounts[0].provider_id,
-                                session.accounts[0].credential_id,
-                                session.accounts[0].unique_id,
-                            ) != (
-                                scope.identity_id, scope.provider_id,
-                                scope.credential_id, scope.account_id,
-                            )):
+                    return bool(
+                        source_context_epoch(service) == epoch
+                        and service.accounts is accounts
+                        and service._sessions is sessions
+                        and service.storage is storage
+                        and getattr(session, "_epoch", None) == session_epoch
+                        and session.connected is True
+                        and session.provider_id == scope.provider_id
+                        and session.credential_id == scope.credential_id
+                        and service._sessions.get(
+                            service._session_key("kobo", credential_id),
+                        ) is session
+                        and len([
+                            row for row in service.accounts
+                            if type(row) is Account
+                            and row.provider_id == "kobo"
+                            and row.credential_id == credential_id
+                        ]) == 1
+                        and len(session.accounts) == 1
+                        and (
+                            session.accounts[0].identity_id,
+                            session.accounts[0].provider_id,
+                            session.accounts[0].credential_id,
+                            session.accounts[0].unique_id,
+                        ) == (
+                            scope.identity_id, scope.provider_id,
+                            scope.credential_id, scope.account_id,
+                        )
+                        and (
+                            account.identity_id, account.provider_id,
+                            account.credential_id, account.unique_id,
+                        ) == (
+                            scope.identity_id, scope.provider_id,
+                            scope.credential_id, scope.account_id,
+                        )
+                    )
+                except Exception:
+                    return False
+
+            def current() -> bool:
+                """External admission; never called inside the SQLite writer."""
+                try:
+                    if not memory_current():
                         return False
+                    live_policy = read_policy(storage, scope)
                     return bool(
                         service.sync_source_enabled(account) is True
                         and storage.provider_scope_account_bound(
@@ -143,8 +163,8 @@ def synchronize_selected_kobo_edition(
                             credential_id=scope.credential_id,
                             account_id=scope.account_id,
                         ) is True
-                        and read_policy(storage, scope).mode == "on"
-                        and read_policy(storage, scope).revision == source_revision
+                        and live_policy.mode == "on"
+                        and live_policy.revision == source_revision
                     )
                 except Exception:
                     return False
@@ -181,8 +201,12 @@ def synchronize_selected_kobo_edition(
                 resume_cursor="",
             )
             _require(current(), "selected_source_changed")
+            # persist_attested_source_references holds storage._lock and
+            # validates the exact SQLite connection, borrower and enabled
+            # source itself. Its callback MUST be in-memory-only: calling a
+            # Storage getter here would deadlock the non-recursive DB lock.
             persist_attested_source_references(
-                storage, narrowed, context_current=current,
+                storage, narrowed, context_current=memory_current,
             )
             _require(current(), "selected_source_changed")
             counts = _run_observed_canonical_convergence(
