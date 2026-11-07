@@ -105,6 +105,11 @@ def present_loaded_search_detail_in_place(
         loaded_snapshot = (
             deepcopy(_loaded_notice_facts(item)) if not known_source else None
         )
+        # Capture the already qualified Core Search row key on the UI thread.
+        # The worker cannot call loaded_notice_key(): that function inspects
+        # GTK filters/store. A plain dict identity check below is sufficient
+        # to prevent a queued GET for a row since replaced in Core's cache.
+        loaded_key = f"{provider}:{item.id}" if not known_source else None
         query = item.title if known_source else (
             getattr(window, "_last_search_query", "") or ""
         )
@@ -167,7 +172,14 @@ def present_loaded_search_detail_in_place(
         if known_source:
             return True
         try:
-            return _loaded_notice_facts(item) == loaded_snapshot
+            # A Search refresh may replace the Core object while leaving the
+            # previous Python object and its metadata unchanged. Fail before
+            # the worker's holdings GET, not only on the eventual GTK callback.
+            # No GTK, provider request or search rerun from this worker guard.
+            objects = getattr(window, "search_objects", None)
+            return (type(objects) is dict
+                    and objects.get(loaded_key) is item
+                    and _loaded_notice_facts(item) == loaded_snapshot)
         except Exception:
             return False
 
