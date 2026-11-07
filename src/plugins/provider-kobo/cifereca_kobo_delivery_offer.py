@@ -305,6 +305,7 @@ def exact_kobo_offer_id(
                         "conflicting"
                     )
     eligible: list[tuple[str, str, str, str]] = []
+    assumed_epub_count = 0
     # Private transient comparison only; never persist or log signed URLs.
     eligible_urls: list[str] = []
     for candidate in candidates:
@@ -487,6 +488,19 @@ def exact_kobo_offer_id(
                  if _kdrm_raw_type(raw_drm) else fmt)
         eligible.append((kind, handling, raw_drm, route + ":" + (source or "")))
         eligible_urls.append(candidate["url"])
+        if (_kdrm_raw_type(raw_drm)
+                and type(candidate.get("media_format")) is str
+                and candidate["media_format"].strip().casefold() == "unknown"
+                and type(candidate.get("source_format")) is str
+                and candidate["source_format"].strip().casefold() == "flepub"
+                and fmt == "epub"):
+            # Count only candidates that survived ALL admission guards.
+            # This is a fixed numeric category, never an upstream value.
+            assumed_epub_count += 1
+    if diagnostic is not None and assumed_epub_count:
+        diagnostic["candidate_flepub_epub_assumptions"] = assumed_epub_count
+        if len(candidates) == 1:
+            diagnostic["candidate_media_format_effective"] = "epub"
     # #4640 K1/K3: closed, bounded shape histogram from the *same* already
     # fetched descriptor. Never log a signed URL, account, bearer, raw opaque
     # format, product or source-provided text. This NEVER proves that two
