@@ -275,3 +275,54 @@ def test_old_path_symlink_is_never_overwritten(fixture_b):
         _relink(fixture_b)
     assert _records(storage) == before
     assert old.is_symlink() and new.read_bytes() == BYTES
+
+
+def test_reverse_relink_requires_fresh_physical_proof_and_keeps_both_journals(
+    fixture_b,
+):
+    """Undo is another confirmed B relink, never a SQL undo of a provider right."""
+    storage, old, new, args = fixture_b
+    original_source = _records(storage)["source_references"]
+    original_origins = _records(storage)["origin_links"]
+    _moved(fixture_b)
+    forward = _relink(fixture_b)["plan_token"]
+    assert _relink(fixture_b, confirmation=forward)["status"] == "relinked"
+
+    # A reverse SQL pointer change must never pass while the physical file
+    # is still at the current canonical pathname.
+    with pytest.raises(
+        CanonicalRelinkRejected, match="canonical_relink_old_path_present",
+    ):
+        _relink(fixture_b, new_path=old)
+    new.rename(old)
+    reverse = _relink(fixture_b, new_path=old)["plan_token"]
+    assert reverse != forward
+    assert _relink(fixture_b, confirmation=reverse, new_path=old)["status"] == "relinked"
+    assert storage.placement_get(args["placement_id"])["path"] == str(old)
+    assert old.read_bytes() == BYTES and not new.exists()
+    after = _records(storage)
+    assert after["source_references"] == original_source
+    assert after["origin_links"] == original_origins
+    assert len([
+        key for key, _ in after["metadata"]
+        if key.startswith("core.kobo.canonical-placement-relink.")
+    ]) == 2
+
+
+def test_reverse_relink_cannot_erase_newly_rebound_provider_proof(
+    fixture_b,
+):
+    storage, old, new, _ = fixture_b
+    _moved(fixture_b)
+    first = _relink(fixture_b)["plan_token"]
+    assert _relink(fixture_b, confirmation=first)["status"] == "relinked"
+    new.rename(old)
+    with storage._lock, storage._connect() as db:
+        db.execute("UPDATE source_references SET state='inactive'")
+    before = _records(storage)
+    with pytest.raises(
+        CanonicalRelinkRejected, match="canonical_relink_right_unverified",
+    ):
+        _relink(fixture_b, new_path=old)
+    assert _records(storage) == before
+    assert old.read_bytes() == BYTES
