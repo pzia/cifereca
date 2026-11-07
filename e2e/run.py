@@ -618,7 +618,8 @@ def main() -> int:
                 # #774: export only closed phase codes and bounded numeric
                 # XTEST geometry for the synthetic Recommendations probe.
                 # Raw exceptions, search text and GTK widget labels stay local.
-                if (name in {"recommendations-detail-1366",
+                if (name in {"recommendations-detail-1024",
+                             "recommendations-detail-1366",
                              "recommendations-detail-1600"}
                         and report_data.get("status") != "PASS"):
                     allowed = frozenset({
@@ -680,7 +681,8 @@ def main() -> int:
                         code = report_data.get("p0_4673_local_reason")
                         if type(code) is str and code in local_reasons:
                             print("P0_4673_CLOSED_LOCAL_REASON=" + code, flush=True)
-                if (name in {"recommendations-detail-1366",
+                if (name in {"recommendations-detail-1024",
+                             "recommendations-detail-1366",
                              "recommendations-detail-1600"}
                         and report_data.get("status") != "PASS"):
                     # Source probe stages are a reviewed fixed vocabulary;
