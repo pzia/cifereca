@@ -386,7 +386,9 @@ def _public_cover_url(item: Any) -> str | None:
     return None
 
 
-def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
+def _attested_catalogue_isbns(
+    notices: Any, *, selected_sources: tuple[str, ...] = (), limit: int = 4,
+) -> tuple[str, ...]:
     """Edition selectors, NOT borrowing permissions or exact item actions.
 
     An ISBN here was checked by the recommendation engine. Recheck its form
@@ -397,10 +399,16 @@ def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
     # A restored/corrupted ranking may contain an arbitrary object with a
     # fabricated has_source_coordinates property. It cannot attest an edition.
     # The engine produces only immutable CatalogNoticeVariant records.
-    if type(notices) not in (tuple, list):
+    if (type(notices) not in (tuple, list)
+            or type(selected_sources) is not tuple
+            or len(selected_sources) > 128
+            or any(type(source) is not str or not source for source in selected_sources)
+            or type(limit) is not int or not 1 <= limit <= 32):
         return ()
     for notice in notices[:256]:
         if type(notice) is not CatalogNoticeVariant:
+            continue
+        if selected_sources and notice.source_provider not in selected_sources:
             continue
         # An ISBN selector must be backed by the SAME validated, bounded
         # original provider coordinates as an exact Search detail action.
@@ -423,9 +431,43 @@ def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
             continue
         if isbn not in selections:
             selections.append(isbn)
-        if len(selections) == 4:
+        if len(selections) == limit:
             break
     return tuple(selections)
+
+
+def _local_ranked_isbns(
+    ranked: RankedCandidate, sources: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Read ISBNs from the correct catalogue, never from another variant.
+
+    A recommendation may merge multiple exact editions into one ranked book.
+    The aggregate candidate's ISBN alone cannot identify the selected source.
+    Core's normal public Search ISBN selector still uses its historical
+    4-edition bound; this read-only filter may inspect up to 32 verified
+    editions among the same first 256 already represented in the detail.
+    """
+    try:
+        item = ranked.item
+        notices = getattr(ranked, "notices", ())
+    except Exception:
+        return ()
+    verified = _attested_catalogue_isbns(
+        notices, selected_sources=sources, limit=32,
+    )
+    item_isbns = _local_recommendation_field_values(item, "isbn")
+    if sources:
+        # In a merged multi-source record, only a typed *exact* notice
+        # can attest the ISBN of the selected catalogue. A candidate scalar
+        # may represent a different edition (even with the same book title).
+        if type(notices) in (tuple, list) and any(
+            type(notice) is CatalogNoticeVariant
+            for notice in notices[:256]
+        ):
+            return verified
+        source = _candidate_public_field(item, "source_provider", limit=120)
+        return item_isbns if source in sources else ()
+    return tuple(dict.fromkeys((*item_isbns, *verified)))[:32]
 
 
 _LANGUAGE_LABELS = {
@@ -1159,7 +1201,11 @@ class UxRecommendationsView:
                 if needle not in haystack:
                     return False
             else:
-                values = _local_recommendation_field_values(item, field)
+                values = (
+                    _local_ranked_isbns(ranked, sources)
+                    if field == "isbn" else
+                    _local_recommendation_field_values(item, field)
+                )
                 if not values:
                     return False
                 haystack = normalize(" ".join(values))
