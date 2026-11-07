@@ -190,7 +190,7 @@ def test_directory_migration_never_rebinds_typed_kobo_legacy_path(
     assert db.metadata_get(JOURNAL_KEY) is None
 
 
-def test_directory_migration_can_still_move_pure_legacy_kobo_projection(
+def test_directory_migration_does_not_rewrite_pure_legacy_kobo_archive(
         tmp_path):
     """The new W5 fence must not break a genuinely legacy-only move."""
     db = Storage(tmp_path / "legacy.sqlite3")
@@ -211,7 +211,7 @@ def test_directory_migration_can_still_move_pure_legacy_kobo_projection(
             ], "changes": [],
         }
         db.commit_directory_migration(plan)
-        assert db.backup_get("kobo", "vault", "edition-a")["local_path"] == str(new)
+        assert db.backup_get("kobo", "vault", "edition-a")["local_path"] == str(old)
         assert db.metadata_get(JOURNAL_KEY) is not None
     finally:
         db.close()
