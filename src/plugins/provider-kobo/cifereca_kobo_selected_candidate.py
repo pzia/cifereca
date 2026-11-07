@@ -20,6 +20,7 @@ from cifereca.plugin_api import (
 from cifereca_kobo_delivery_offer import (
     exact_kobo_offer_id, _safe_https_get, kdrm_runtime_ready,
     kdrm_delegated_runtime_ready, _effective_kdrm_media_format,
+    _equivalent_signed_kdrm_candidates,
 )
 from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 from cifereca_kobo_private_trace import trace_kobo_http_url
@@ -81,6 +82,15 @@ def _single_admitted_candidate(payload, offer_id, *, identity_id,
             kdrm_delegated_ready=kdrm_legacy_ready,
         ) == offer_id:
             matches.append(candidate)
+    # The full envelope has already reproduced the Core-selected offer.
+    # For two strictly equivalent signed KDRM routes the owner-approved
+    # policy takes ONLY the first, from this freshly revalidated descriptor.
+    # Never use a fallback GET if its token is rejected or expires.
+    if (
+        len(matches) == 2 and len(candidates) == 2
+        and _equivalent_signed_kdrm_candidates(candidates)
+    ):
+        matches = matches[:1]
     if len(matches) != 1:
         raise ProviderCapabilityError("kobo_candidate_descriptor_ambiguous")
     selected = matches[0]

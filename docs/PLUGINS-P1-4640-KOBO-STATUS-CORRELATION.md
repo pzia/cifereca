@@ -184,3 +184,41 @@ explicite fondée sur le profil du lecteur ; deux candidats de même
 plateforme nécessitent de comprendre la duplication fournisseur (puis
 éventuellement corriger KVault). Ne pas choisir le premier candidat
 dans Cifereca avant vérification.
+
+
+## Décision propriétaire K3 — deux offres métadonnées strictement identiques, 07/11/2026
+
+**Règle :** parmi **exactement deux** candidats KDRM individuellement
+admissibles et identiques sur **tous les champs du descripteur à l'exception
+de `url`**, choisir **le premier dans l'ordre renvoyé par le POST
+descriptif frais**, uniquement si leurs URL HTTPS ont les mêmes autorité,
+chemin, fragment (vide), et paramètres de query avec les mêmes valeurs **à
+l'exception d'un unique `downloadToken` opaque**. Le sélecteur ne déduit
+pas que les deux liens servent les mêmes octets ; c'est une politique
+opérateur de sélection d'une **route déclarée**.
+
+Le contrôle couvre notamment scope, DRM et protection, source, format brut,
+méthode, headers, plateforme et profil, extensions fournisseur non prévues,
+expiry et champs Kobo imbriqués. Le premier candidat doit survivre à
+l'admission complète. Toute différence hors jeton (format PDF/EPUB,
+plateforme, profil, chemin, hôte, en-tête, query indépendante, etc.) interdit
+cette règle. Il n'existe **aucun fallback vers le second lien** si le
+premier GET, son DRM ou sa validation échoue.
+
+La même politique est appliquée à **deux étapes** : qualification de
+l'offre (ID opaque inchangé pour une même route), puis revalidation du
+descripteur actualisé **avant GET**, qui sélectionne de nouveau son premier
+candidat. Aucun jeton ni URL dans l'ID d'offre, la base, les événements
+normaux ou les issues publiques.
+
+Diagnostic INFO lors de l'offre unique :
+`candidate_selection=equivalent_signed_first`.
+
+La capture HTTP du 07/11/2026 est **partielle**. Le seul GET HTTP 400
+`storedownloads.kobo.com/download` à 10:38:14 (Paris) appartient à
+**K1** (corrélation exacte du lien dans le journal), **pas à K3**.
+`x-amz-request-payer: requester` a été transmis ; le serveur a renvoyé
+`Content-Type: text/plain`, mais son corps n'a **pas** été lu
+(`state=not_read`). On ne peut donc pas conclure à un jeton expiré ou à
+une cause Kobo précise. Le Core a classé cette livraison K1
+`kobo_candidate_http_unavailable` ; aucune tentative GET K3 n'est attestée.
