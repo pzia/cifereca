@@ -1799,8 +1799,67 @@ def _store_kobo_checkpoint(
 
 
 def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: str | None = None):
+    # #3196 W2/D1: recovery used to iterate every stored Kobo credential,
+    # including disconnected/rebound accounts, before fetching a manifest.
+    # A historical backup row is not authority to mutate another source's
+    # checkpoint. Only the one currently connected, exactly bound session
+    # may run compatibility recovery. Missing legacy owner/account remains
+    # a diagnostic hint; it never establishes ownership by itself.
+    live: dict[str, tuple[str, str]] = {}
+    ambiguous: set[str] = set()
+    for session in self._sessions.values():
+        if (getattr(session, "provider_id", None) != "kobo"
+                or getattr(session, "connected", None) is not True
+                or not getattr(getattr(session, "capabilities", None), "backup", False)):
+            continue
+        source = getattr(session, "credential_id", None)
+        if type(source) is not str or not source:
+            continue
+        if credential_id is not None and source != credential_id:
+            continue
+        if source in live:
+            ambiguous.add(source)
+            continue
+        try:
+            accounts = session.accounts
+            bound = self.storage.identity_for_connection("kobo", source)
+            if (len(accounts) != 1 or type(bound) is not str or not bound
+                    or getattr(accounts[0], "provider_id", None) != "kobo"
+                    or accounts[0].credential_id != source
+                    # The old provider account may report the historical
+                    # "default" identity alias. Only the independently bound
+                    # SQLite owner below determines the current profile.
+                    or accounts[0].identity_id not in {bound, "default"}
+                    or type(accounts[0].unique_id) is not str
+                    or not accounts[0].unique_id):
+                continue
+            # An inactive/rebound connection must not drive 0.7 recovery.
+            # Check the live enabled source, not only its historical owner.
+            bindings = [
+                row for row in self.storage.provider_connections(identity_id=bound)
+                if row.get("provider_id") == "kobo"
+                and row.get("credential_id") == source
+                and row.get("enabled") is True
+            ]
+            if len(bindings) != 1:
+                continue
+            live[source] = (bound, accounts[0].unique_id)
+        except (AttributeError, TypeError, ValueError):
+            continue
+    for source in ambiguous:
+        live.pop(source, None)
+
+    def scoped(previous: dict[str, Any]) -> bool:
+        source = previous.get("credential_id")
+        owner = live.get(source) if type(source) is str else None
+        if owner is None:
+            return False
+        identity, account = previous.get("identity_id"), previous.get("account_id")
+        return ((identity is None or identity == owner[0])
+                and (account is None or account == owner[1]))
+
     for previous in self.storage.backup_list("kobo"):
-        if credential_id is not None and previous.get("credential_id") != credential_id:
+        if not scoped(previous):
             continue
         # Interruption recovery is also a writer: a prior 0.7 receipt cannot
         # update/claim a typed Core source before the manifest is inspected.
@@ -1942,8 +2001,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             continue
 
     recovery_rows = [
-        row for row in self.storage.backup_list("kobo")
-        if credential_id is None or row.get("credential_id") == credential_id
+        row for row in self.storage.backup_list("kobo") if scoped(row)
     ]
     summary["reconcile_pending"] = sum(
         1 for row in recovery_rows

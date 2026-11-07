@@ -79,6 +79,9 @@ def test_empty_manifest_recovery_is_durable_and_makes_no_download(tmp_path, monk
         service.storage.backup_put({
             **_record("interrupted", status="acquiring", credential="vault-1"),
             "identity_id": "default",
+            # The W3 recovery fixture must use the currently authenticated
+            # account; a previous borrower may not be resumed by this one.
+            "account_id": "account",
         })
         monkeypatch.setattr(
             service, "_execute_kobo_acquisition",
