@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import re
 
-from cifereca_kobo_delivery_offer import _safe_https_get, _kdrm_raw_type
+from cifereca_kobo_delivery_offer import (
+    _safe_https_get, _kdrm_raw_type, effective_kobo_media_format,
+)
 
 
 def _bounded_text(value, limit=8192):
@@ -131,11 +133,13 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
     if selected_source == "content_access_book" and kdrm_delegated_ready is not True:
         return None
     drm = selected.get("drm")
-    media = selected.get("media_format")
+    media = effective_kobo_media_format(selected)
     if (type(drm) is not dict or not _kdrm_raw_type(drm.get("raw_type"))
-            or type(media) is not str or media.casefold() not in ("kepub", "epub")):
+            or media not in ("kepub", "epub")):
         return None
     source_format = selected.get("source_format", media)
+    if type(source_format) is str:
+        source_format = source_format.strip()
     formats = {("kepub", "kepub"), ("epub", "flepub"), ("epub", "epub")}
     if selected_source == "content_access_book" and kdrm_delegated_ready is True:
         formats |= {("epub", "epub3"), ("epub", "epub3fl")}
@@ -172,9 +176,10 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
                     and _kdrm_raw_type(row_drm.get("raw_type"))
                     and row_drm.get("family") == "kobo_kdrm"
                     and row_drm.get("protected") is True
-                    and row.get("media_format") == media
+                    and effective_kobo_media_format(row) == media
                     and type(row.get("source_format")) is str
-                    and row["source_format"].casefold() == source_format.casefold()
+                    and row["source_format"].strip().casefold()
+                    == source_format.casefold()
                     and _safe_https_get(row)):
                 matches.append(row)
         if len(matches) != 1:
@@ -190,7 +195,7 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
         }
     pinned = {
         "url": selected["url"], "headers": candidate_headers,
-        "drm_type": "KDRM", "media_format": selected["media_format"].lower(),
+        "drm_type": "KDRM", "media_format": media,
         "source_format": source_format, "delivery_source": "library_sync",
     }
     if platform:
