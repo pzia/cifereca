@@ -222,6 +222,23 @@ def test_legacy_retry_switch_does_not_authorize_canonical_executor(rig):
     assert calls == []
 
 
+def test_vault_default_provider_identity_has_exact_core_sql_owner(rig):
+    service, session, account, _grant, calls = rig
+    session._accounts = [replace(account, identity_id="default")]
+    result = service.sync_kobo_backup_account("vault-1")
+    assert result["status"] == "complete"
+    assert calls == [("canonical", account)]
+
+
+def test_explicit_other_provider_identity_cannot_borrow_core_owner(rig):
+    service, session, account, _grant, calls = rig
+    session._accounts = [replace(account, identity_id="bob")]
+    with pytest.raises(ProviderConfigurationError,
+                       match="kobo_canonical_borrower_unverified"):
+        service.sync_kobo_backup_account("vault-1")
+    assert calls == []
+
+
 @pytest.mark.parametrize("tamper", ["duplicate_account", "foreign_borrower", "disabled"])
 def test_cross_owner_ambiguous_or_disabled_source_rejected_before_provider(rig, tamper):
     service, session, account, grant, calls = rig
