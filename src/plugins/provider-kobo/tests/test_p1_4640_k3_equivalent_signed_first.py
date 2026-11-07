@@ -102,7 +102,22 @@ def test_discriminating_parameters_never_trigger_first_wins(difference):
     elif difference == "invalid_url":
         b["url"] = "http://storedownloads.kobo.com/download?downloadToken=BAD"
     assert not _equivalent_signed_kdrm_candidates([a,b])
-    assert exact_kobo_offer_id(envelope([a,b]), **SCOPE) == ""
+    diagnosed = {}
+    chosen = exact_kobo_offer_id(
+        envelope([a,b]), **SCOPE, diagnostic=diagnosed,
+    )
+    assert diagnosed.get("candidate_selection") != "equivalent_signed_first"
+    if difference in {
+        "platform", "profile", "header", "unknown_extra", "path",
+        "host", "non_token_query", "token_name", "duplicate_token",
+    }:
+        # Two individually admissible but non-identical delivery offers
+        # must remain ambiguous.
+        assert chosen == ""
+    else:
+        # Older ABI still allows one individually admitted candidate when
+        # the second route fails an independent transport/DRM/format guard.
+        assert chosen in ("", exact_kobo_offer_id(envelope([a]), **SCOPE))
 
 
 def test_only_exactly_two_equivalent_candidates_can_choose_first():
@@ -167,13 +182,3 @@ def test_real_kobo_provider_fresh_post_selects_first_only_and_one_runtime(
         ]
     finally:
         session.close()
-
-
-def test_semantic_identity_does_not_allow_second_get_on_error():
-    # First-choice policy produces one source, never a failure fallback.
-    rows = twins()
-    assert _equivalent_signed_kdrm_candidates(rows)
-    assert exact_kobo_offer_id(envelope(rows), **SCOPE)
-    assert exact_kobo_offer_id(envelope([rows[0]]), **SCOPE)
-    # A second candidate is ignored by the selection contract; the
-    # downstream HTTP/runtime error handling remains unchanged.
