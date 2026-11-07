@@ -104,6 +104,14 @@ class QueryControls(Gtk.Box):
         self.entry.connect('search-changed', lambda _e: self._changed())
         self.entry.connect('activate', lambda _e: activate())
         self.primary.append(self.entry)
+        # A single reset for Search and every local consumer of this shared
+        # strip. Only the owning view decides how to react to the change.
+        self.clear_button = Gtk.Button(label='Effacer les filtres')
+        self.clear_button.set_tooltip_text(
+            'Revenir aux filtres initiaux de cette vue'
+        )
+        self.clear_button.connect('clicked', lambda *_: self.reset_filters())
+        self.primary.append(self.clear_button)
         filter_scroller = Gtk.ScrolledWindow()
         filter_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
         filter_scroller.set_propagate_natural_height(True)
@@ -160,6 +168,19 @@ class QueryControls(Gtk.Box):
         self.provider_status_notice.set_visible(False)
         self.append(self.provider_status_notice)
         self._last_notified_state = self.state()
+        self._initial_filter_state = self._last_notified_state
+        self._sync_clear_button()
+
+    def _sync_clear_button(self):
+        self.clear_button.set_sensitive(self.state() != self._initial_filter_state)
+
+    def reset_filters(self):
+        """Reset all view filters atomically to this control's initial scope.
+
+        Search defaults to digital; local views override their initial
+        state to all loaded documents. No provider I/O is performed here.
+        """
+        self.set_state(self._initial_filter_state)
 
     def set_provider_choices(self, choices):
         self.provider.set_choices(choices)
@@ -186,6 +207,7 @@ class QueryControls(Gtk.Box):
             return
         self._update_search_capability_hint()
         state = self.state()
+        self._sync_clear_button()
         if state == self._last_notified_state:
             return
         self._last_notified_state = state
@@ -210,6 +232,7 @@ class QueryControls(Gtk.Box):
             updater = getattr(self, "_update_search_capability_hint", None)
             if callable(updater):
                 updater()
+        self._sync_clear_button()
 
 
 class LocalQueryControls(QueryControls):
@@ -234,6 +257,10 @@ class LocalQueryControls(QueryControls):
         # No catalogue or language is selectable before the first loaded
         # projection. Search's global QueryControls remain unchanged.
         self.set_choices(sources=(), languages=())
+        # A local projection starts with every loaded document visible,
+        # unlike Search's default digital scope.
+        self._initial_filter_state = self.state()
+        self._sync_clear_button()
 
     @property
     def widget(self):
@@ -317,6 +344,7 @@ class LocalQueryControls(QueryControls):
         finally:
             self._programmatic_update = False
         self._last_notified_state = self.state()
+        self._sync_clear_button()
 
     def active_document_labels(self):
         """Optional public summary of currently active local document filters.
@@ -371,3 +399,4 @@ class LocalQueryControls(QueryControls):
         finally:
             self._programmatic_update = False
         self._last_notified_state = self.state()
+        self._sync_clear_button()
