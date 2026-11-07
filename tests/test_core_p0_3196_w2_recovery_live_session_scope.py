@@ -143,7 +143,7 @@ def test_recovery_disconnected_current_session_cannot_change_its_checkpoint(tmp_
         service.close()
 
 
-@pytest.mark.parametrize("switch", ("disconnect", "disable", "epoch", "typed"))
+@pytest.mark.parametrize("switch", ("disconnect", "disable", "epoch", "typed", "session_replaced"))
 def test_recovery_refuses_source_changed_during_candidate_scan(
     tmp_path, monkeypatch, switch,
 ):
@@ -174,6 +174,12 @@ def test_recovery_refuses_source_changed_during_candidate_scan(
                     service._source_context_epoch = (
                         getattr(service, "_source_context_epoch", 0) + 1
                     )
+                elif switch == "session_replaced":
+                    from copy import copy
+                    # Same declared account/credential but another session
+                    # object. Epoch-less facades must still fail closed.
+                    key = next(iter(service._sessions))
+                    service._sessions[key] = copy(session)
                 else:
                     # Another borrower/Core pipeline publishes an exact
                     # typed edition while the legacy candidate is scanned.
