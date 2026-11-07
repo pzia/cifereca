@@ -44,9 +44,8 @@ SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          "diagnostics-navigation-slow-1366")
 # MainWindow changes affect core/detail and Diagnostics navigation probes.
 MAINWINDOW = tuple(dict.fromkeys(
-    CORE + RECOMMENDATIONS_GTK
-    + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
-    + BNF_COVERS
+    CORE + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
+    + RECOMMENDATIONS_GTK + BNF_COVERS
 ))
 # The Diagnostics common probe is imported by every other Diagnostics probe;
 # navigation probes also implement both MainWindow baseline scenarios.
