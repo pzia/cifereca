@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import logging
 import os
 import sys
 from contextlib import nullcontext
@@ -534,10 +535,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     service = core.library
     trace_previous_level = None
+    trace_handlers_before = None
     try:
         if private_kobo_trace:
-            from .logging_utils import diagnostics_level, set_diagnostics_level
+            # The standalone CLI does not set up the GUI's file logger.
+            # Establish the same 0600 private journal only for explicit
+            # --trace, then remove newly installed handlers on exit.
+            from .logging_utils import (
+                configure_logging, diagnostics_level, set_diagnostics_level,
+            )
             trace_previous_level = diagnostics_level()
+            trace_handlers_before = tuple(logging.getLogger("cifereca").handlers)
+            configure_logging()
             set_diagnostics_level("trace")
         if a.cmd == "kobo-sync-edition":
             from .core.canonical_kobo_selected import SelectedKoboRejected
@@ -1224,6 +1233,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if trace_previous_level is not None:
             from .logging_utils import set_diagnostics_level
+            logger = logging.getLogger("cifereca")
+            for handler in tuple(logger.handlers):
+                if handler not in trace_handlers_before:
+                    logger.removeHandler(handler)
+                    handler.close()
             set_diagnostics_level(trace_previous_level)
         core.close()
 
