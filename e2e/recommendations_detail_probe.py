@@ -404,16 +404,28 @@ def main():
         state["device"].click_widget(query.entry)
         later(160, type_filter_by_keyboard)
 
+    def search_entry_has_native_focus(entry):
+        """GTK4 SearchEntry delegates keyboard focus to its inner GtkText."""
+        root = entry.get_root()
+        current = root.get_focus() if isinstance(root, Gtk.Window) else None
+        for _ in range(24):
+            if current is None:
+                return entry.has_focus()
+            if current is entry:
+                return True
+            current = current.get_parent()
+        return False
+
     def type_filter_by_keyboard():
         report["p1_774_phase"] = "keyboard_type"
         view = state["view"]
         query = view._query_controls
-        if not query.entry.has_focus() and state["p1_774_focus_retry"] < 2:
+        if not search_entry_has_native_focus(query.entry) and state["p1_774_focus_retry"] < 2:
             state["p1_774_focus_retry"] += 1
             state["device"].click_widget(query.entry)
             later(140, type_filter_by_keyboard)
             return
-        assert query.entry.has_focus()
+        assert search_entry_has_native_focus(query.entry)
         state["device"].type_text("Livre B")
         later(350, after_keyboard_filter)
 
