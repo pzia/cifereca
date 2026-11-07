@@ -606,7 +606,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         for session, expected in source_leases:
             if (expected is None or expected[2] is not True
                     or not any(candidate is session for candidate in registered)
-                    or _inert_search_source_state(session) != expected):
+                    or _inert_search_source_state(session) != expected
+                    or not self._provider_enabled_for_identity(expected[0])):
                 return False
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
@@ -1318,7 +1319,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session, expected in source_leases:
             if (expected is None or expected[2] is not True
                     or not any(item is session for item in registered)
-                    or _inert_search_source_state(session) != expected):
+                    or _inert_search_source_state(session) != expected
+                    or not self._provider_enabled_for_identity(expected[0])):
                 return False
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
