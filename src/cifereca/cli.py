@@ -1211,9 +1211,11 @@ def main(argv: list[str] | None = None) -> int:
                 }
                 exit_code = 2
         elif a.cmd == "kobo-resume":
-            # The targeted provider session is connected only after explicit
-            # download consent. Never connect Paris or other Kobo credentials.
-            service.connect_kobo_preview(a.credential)
+            # Only after --confirm-downloads: activate the exact existing
+            # borrower in Core memory for modern canonical A→B. Partial ABI
+            # remains on the old bounded compatibility route; no other
+            # provider/account is connected or registered in SQLite.
+            service.connect_kobo_canonical(a.credential)
             summary = service.sync_kobo_backup_account(
                 a.credential,
                 retry_scope_blocked=a.retry_scope_blocked,
