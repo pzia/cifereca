@@ -185,8 +185,8 @@ def test_774_attested_maintenance_phase_is_closed_boolean_only(
     report.write_text(json.dumps({
         "checks": {
             "native_declaration_revoked": True,
-            marker: True,
             "native_declaration_attested_right_ready": "PRIVATE_NOT_A_BOOLEAN",
+            marker: True,
         },
         "error": "PRIVATE_SIGNED_URL",
         "failure_stack": "/home/private/SECRET",
