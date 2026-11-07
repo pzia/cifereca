@@ -413,6 +413,10 @@ def exact_kobo_offer_id(
         fmt = _effective_kdrm_media_format(
             candidate, raw_drm=raw_drm, source=source,
         )
+        # A descriptor without an explicit media_format retains the legacy
+        # format-path rule; never invent the KDRM unknown/FLEPUB alias.
+        if fmt is None:
+            fmt = declared[0]
         fmt = fmt.strip().lower()
         if fmt != declared[0].strip().lower():
             normalized_count += 1
