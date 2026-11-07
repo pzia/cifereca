@@ -31,7 +31,10 @@ class _Cancel:
         if self.callback is None:
             return
         try:
-            if self.callback() is True:
+            # The historical Kobo cancellation contract treats every
+            # truthy callback value as cancellation. Requiring literal True
+            # could issue a GET after callers return 1 or a truthy wrapper.
+            if bool(self.callback()):
                 raise Cancelled("canonical_sync_cancelled")
         except Cancelled:
             raise
@@ -74,14 +77,18 @@ def _account_and_session(service, credential_id):
     if (not isinstance(session_accounts, (list, tuple))
             or len(session_accounts) != 1
             or type(session_accounts[0]) is not Account
+            # Vault's own Account defaults to identity_id="default".
+            # The Core owner is independently attested from enabled SQLite
+            # connection + exact borrower in _bound; do not misread this
+            # known adapter label as a foreign identity.
+            or session_accounts[0].identity_id not in {
+                account.identity_id, "default",
+            }
             or (
-                session_accounts[0].identity_id,
                 session_accounts[0].provider_id,
                 session_accounts[0].credential_id,
                 session_accounts[0].unique_id,
-            ) != (
-                account.identity_id, "kobo", credential_id, account.unique_id,
-            )):
+            ) != ("kobo", credential_id, account.unique_id)):
         raise ProviderConfigurationError("kobo_canonical_borrower_unverified")
     return account, session
 
@@ -103,13 +110,14 @@ def _bound(service, account, session, *, epoch, session_epoch, policy_revision):
             and row.credential_id == account.credential_id
         ]) == 1
         current = current and len(session.accounts) == 1
+        current = current and session.accounts[0].identity_id in {
+            scope.identity_id, "default",
+        }
         current = current and (
-            session.accounts[0].identity_id,
             session.accounts[0].provider_id,
             session.accounts[0].credential_id,
             session.accounts[0].unique_id,
-        ) == (scope.identity_id, scope.provider_id, scope.credential_id,
-              scope.account_id)
+        ) == (scope.provider_id, scope.credential_id, scope.account_id)
         current = current and service.sync_source_enabled(account) is True
         current = current and service.storage.identity_for_connection(
             "kobo", account.credential_id,

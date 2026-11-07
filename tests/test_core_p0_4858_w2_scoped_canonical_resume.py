@@ -203,9 +203,12 @@ def test_rebind_after_sync_refuses_complete(rig, monkeypatch, tamper):
         service.sync_kobo_backup_account("vault-1")
 
 
-def test_cancelled_before_canonical_sync_is_no_op(rig):
+@pytest.mark.parametrize("cancel_value", [True, 1, "cancelled"])
+def test_cancelled_before_canonical_sync_is_no_op(rig, cancel_value):
     service, _session, _account, _grant, calls = rig
-    result = service.sync_kobo_backup_account("vault-1", cancelled=lambda: True)
+    result = service.sync_kobo_backup_account(
+        "vault-1", cancelled=lambda: cancel_value,
+    )
     assert result["status"] == "cancelled"
     assert result["downloaded"] == 0
     assert calls == []
@@ -216,6 +219,23 @@ def test_legacy_retry_switch_does_not_authorize_canonical_executor(rig):
     with pytest.raises(ProviderConfigurationError,
                        match="kobo_canonical_legacy_scope_retry_unavailable"):
         service.sync_kobo_backup_account("vault-1", retry_scope_blocked=True)
+    assert calls == []
+
+
+def test_vault_default_provider_identity_has_exact_core_sql_owner(rig):
+    service, session, account, _grant, calls = rig
+    session._accounts = [replace(account, identity_id="default")]
+    result = service.sync_kobo_backup_account("vault-1")
+    assert result["status"] == "complete"
+    assert calls == [("canonical", account)]
+
+
+def test_explicit_other_provider_identity_cannot_borrow_core_owner(rig):
+    service, session, account, _grant, calls = rig
+    session._accounts = [replace(account, identity_id="bob")]
+    with pytest.raises(ProviderConfigurationError,
+                       match="kobo_canonical_borrower_unverified"):
+        service.sync_kobo_backup_account("vault-1")
     assert calls == []
 
 
