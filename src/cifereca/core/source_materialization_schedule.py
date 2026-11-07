@@ -7,6 +7,9 @@ No provider, file or ADEPT request is made when evaluating the policy.
 from __future__ import annotations
 
 from typing import Any
+import hashlib
+import json
+import secrets
 import time
 
 _PREFIX = "sync.source.materialization.on_start."
@@ -23,6 +26,116 @@ def retry_interval_key(source_id: str) -> str:
 def policy_key(source_id: str) -> str:
     """Source IDs are opaque digests from the existing Sync broker."""
     return _PREFIX + source_id
+
+
+# #4858 D4: an exact borrower-scoped, independent attempt journal is the
+# only positive permission to RETRY an already executed automatic W2 attempt.
+# Its "complete" state does NOT attest a provider right or delivered B.
+_ATTEMPT_PREFIX = "sync.source.materialization.attempt.v1."
+_ATTEMPT_SCHEMA = "core.kobo.startup-attempt/1"
+_ATTEMPT_STATES = frozenset({"in_flight", "complete", "manual_review"})
+_INVALID_ATTEMPT = object()
+
+
+def attempt_key(account: Any) -> str:
+    """Opaque exact-identity/credential/borrower key, never legacy v0.7 PK."""
+    coords = [
+        getattr(account, name, None) for name in (
+            "identity_id", "provider_id", "credential_id", "unique_id",
+        )
+    ]
+    if (coords[1] != "kobo" or any(type(v) is not str for v in coords)
+            or not coords[0] or not coords[2]):
+        raise ValueError("startup_attempt_scope_invalid")
+    return _ATTEMPT_PREFIX + hashlib.sha256(
+        json.dumps(coords, ensure_ascii=True, separators=(",", ":")).encode("ascii"),
+    ).hexdigest()
+
+
+def _unique_fields(pairs):
+    row = {}
+    for key, value in pairs:
+        if key in row:
+            raise ValueError("duplicate_startup_attempt_field")
+        row[key] = value
+    return row
+
+
+def _attempt(service: Any, account: Any):
+    key = attempt_key(account)
+    raw = service.storage.metadata_get(key)
+    if raw is None:
+        return None
+    if type(raw) is not str or len(raw) > 4096:
+        return _INVALID_ATTEMPT
+    try:
+        row = json.loads(raw, object_pairs_hook=_unique_fields)
+        expected = [
+            account.identity_id, "kobo",
+            account.credential_id, account.unique_id,
+        ]
+        if (type(row) is not dict
+                or set(row) != {"schema", "scope", "status", "updated_at", "generation"}
+                or row.get("schema") != _ATTEMPT_SCHEMA
+                or row.get("scope") != expected
+                or row.get("status") not in _ATTEMPT_STATES
+                or type(row.get("updated_at")) is not int
+                or not 0 < row["updated_at"] <= 4_102_444_800
+                or type(row.get("generation")) is not str
+                or len(row["generation"]) != 32
+                or any(c not in "0123456789abcdef" for c in row["generation"])):
+            return _INVALID_ATTEMPT
+        return row
+    except (ValueError, TypeError, KeyError, RecursionError):
+        return _INVALID_ATTEMPT
+
+
+def finish_on_start_attempt(service: Any, account: Any, report: Any) -> bool:
+    """After W2 finishes, record only a verified *terminal batch state*.
+
+    Crash, callback failure, scope switch, ambiguous/empty supplier evidence,
+    cancellation, partial GET, pending or conflict are not permission to
+    schedule another background GET. Those need an explicit manual review.
+    """
+    try:
+        current = _attempt(service, account)
+        if type(current) is not dict or current["status"] != "in_flight":
+            return False
+        rows = report.get("sources") if type(report) is dict else None
+        source = rows[0] if type(rows) is list and len(rows) == 1 else None
+        complete = (
+            type(report) is dict
+            and report.get("status") == "complete"
+            and report.get("sessions") == 1
+            and report.get("manifests_fetched") == 1
+            and report.get("errors") == 0
+            and report.get("pending") == 0
+            and report.get("attention_required") == 0
+            and report.get("remaining") == 0
+            and report.get("aborted") is False
+            and report.get("cancelled") is False
+            and type(source) is dict
+            and source.get("identity_id") == account.identity_id
+            and source.get("credential_id") == account.credential_id
+            and source.get("status") == "complete"
+            and source.get("errors") == 0
+            and source.get("pending") == 0
+            and source.get("remaining") == 0
+        )
+        next_status = "complete" if complete else "manual_review"
+        updated = {
+            **current, "status": next_status,
+            "updated_at": int(time.time()),
+        }
+        service.storage.metadata_set(
+            attempt_key(account),
+            json.dumps(updated, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+        )
+        return True
+    except Exception:
+        # Leaving in_flight is fail-closed, even if a supplier GET succeeded
+        # but the local terminal checkpoint itself could not be persisted.
+        return False
 
 
 def _account_id(account: Any) -> str:
@@ -181,8 +294,12 @@ def _source_retry_minutes(service: Any, account: Any) -> int | None:
 
 
 def on_start_due(service: Any, account: Any) -> bool:
-    """Independent clock for sources without a checkpoint or download rows."""
-    from .kobo_backup import _kobo_checkpoint_for
+    """Retry only a fresh source or a fully completed exact-source attempt.
+
+    The historical W2 checkpoint is a one-time negative quarantine for
+    installations without this journal. It can NEVER authorize another GET.
+    """
+    from .kobo_backup import _kobo_checkpoint_for, _kobo_checkpoint_key
     credential = account.credential_id
     identity = account.identity_id
     try:
@@ -204,10 +321,27 @@ def on_start_due(service: Any, account: Any) -> bool:
         # download attempt on every application startup.
         if last > 0 and now - last < interval * 60:
             return False
+        attempt = _attempt(service, account)
+        if attempt is _INVALID_ATTEMPT:
+            return False  # corrupt/mismatched exact-source journal
+        if attempt is not None:
+            # A crash can strand 'in_flight'; auto-retrying even after the
+            # cooldown risks a duplicate Kobo GET. Only a fully processed,
+            # scoped terminal observation allows the NEXT scheduled pass.
+            return (attempt["status"] == "complete"
+                    and attempt["updated_at"] <= now
+                    and now - attempt["updated_at"] >= interval * 60)
+        if last > 0:
+            # Old on_start clocks have no independent completion proof.
+            # Do not bless them with a second GET during the cutover.
+            return False
+        # Historical checkpoint means an earlier 0.7 attempt, not proof of
+        # its completion. It is a VETO only; a new exact-source journal is
+        # never seeded as 'complete' from that record.
         if _kobo_checkpoint_for(service, identity, credential) is not None:
-            return bool(service._kobo_backup_account_due(
-                credential, interval_minutes=interval,
-            ))
+            return False
+        if service.storage.metadata_get(_kobo_checkpoint_key(identity, credential)) is not None:
+            return False
         return True
     except Exception:
         # Inability to read the attempt clock is not permission to retry.
@@ -227,6 +361,32 @@ def mark_on_start_attempt(service: Any, account: Any) -> bool:
         interval = _source_retry_minutes(service, account)
         if interval is None:
             return False
+        prior = _attempt(service, account)
+        if prior is _INVALID_ATTEMPT or (
+            prior is not None and prior["status"] != "complete"
+        ):
+            return False
+        if prior is None and service.storage.metadata_get(
+            "sync.source.materialization.last_attempt." + source_id,
+        ) is not None:
+            return False
+        # This is written FIRST. Even if a later retry-clock write fails,
+        # the in-flight fence survives and forbids a second automatic GET.
+        # A terminal completion is never guessed from W2 backup_items.
+        journal = {
+            "schema": _ATTEMPT_SCHEMA,
+            "scope": [
+                account.identity_id, "kobo",
+                account.credential_id, account.unique_id,
+            ],
+            "status": "in_flight",
+            "updated_at": int(time.time()),
+            "generation": secrets.token_hex(16),
+        }
+        service.storage.metadata_set(
+            attempt_key(account),
+            json.dumps(journal, ensure_ascii=True, separators=(",", ":"), sort_keys=True),
+        )
         if service.storage.metadata_get(interval_key) is None:
             service.storage.metadata_set(interval_key, str(interval))
         service.storage.metadata_set(
