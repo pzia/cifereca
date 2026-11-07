@@ -206,5 +206,10 @@ def activate_startup_plugins(window, *, idle_add) -> bool:
             idle_add(window._connect_sources_if_open)
         duration_ms = (time.perf_counter() - started) * 1000.0
         window.ui_perf.record("startup.plugins_activation", duration_ms)
+        if window.ui_perf.detailed_capture_enabled:
+            window.ui_perf.record_phase(
+                "startup", "plugins_activation", duration_ms,
+                trigger="automatic", outcome="success",
+            )
         _TRACE_LOG.info("TRACE gui plugin-activation end duration_ms=%.1f", duration_ms)
     return False
