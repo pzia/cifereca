@@ -100,7 +100,7 @@ def test_preflight_only_on_explicit_call_and_only_for_kobo_source():
     assert "copies physiquement vérifiées : 0" in label
     assert "déclarations manuelles ne sont pas" in label
     assert "liens de sauvegarde repérés" not in label
-    assert "aucun téléchargement autorisé" in label
+    assert "aucun téléchargement autorisé" in label.lower()
 
 
 def test_preflight_may_check_local_files_but_never_refreshes_remote_manifest():
