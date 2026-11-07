@@ -771,10 +771,35 @@ def main():
             assert button.get_parent() is bar.overflow_box
             assert bar.overflow_button.get_visible()
             assert bar.overflow_button.get_mapped()
-            # Physical XTEST click: do not make a hidden action spuriously
-            # appear or manually invoke its callback.
-            state["device"].click_widget(bar.overflow_button)
-            later(190, lambda: exact_overflow_ready(button))
+            # At 1024 px this button lives in a horizontal ScrolledWindow.
+            # A mapped widget can be partly clipped, and the native-surface
+            # centre from compute_bounds(native) need not be GTK's hit target.
+            # Locate a *pick-verified* point inside the allocated toplevel
+            # before dispatching physical XTEST. Do not emit "clicked", call
+            # popup() or treat an inaccessible overflow as a passing test.
+            menu = bar.overflow_button
+            window = state["window"]
+            ok, bounds = menu.compute_bounds(window)
+            assert ok
+            target = None
+            for h in (0.5, 0.3, 0.7):
+                for v in (0.5, 0.3, 0.7):
+                    x = bounds.get_x() + bounds.get_width() * h
+                    y = bounds.get_y() + bounds.get_height() * v
+                    if not (0 <= x < window.get_width() and
+                            0 <= y < window.get_height()):
+                        continue
+                    picked = window.pick(x, y, Gtk.PickFlags.DEFAULT)
+                    while picked is not None and picked is not menu:
+                        picked = picked.get_parent()
+                    if picked is menu:
+                        target = state["device"].window_point(window, x, y)
+                        break
+                if target is not None:
+                    break
+            assert target is not None, "Overflow button has no accessible GTK hit target"
+            state["device"].click(*target)
+            later(320, lambda: exact_overflow_ready(button))
             return
         exact_button_ready(button)
 
