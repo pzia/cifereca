@@ -1439,11 +1439,14 @@ class UxRecommendationsView:
         finally:
             self._reloading_languages = False
 
-    def _reload_document_choices(self) -> None:
+    def _reload_document_choices(self, *, provisional: bool = False) -> None:
         controls = getattr(self, "_query_controls", None)
         set_documents = getattr(controls, "set_document_choices", None)
         if callable(set_documents):
-            set_documents(ranked.item for ranked in self._ranked)
+            set_documents(
+                (ranked.item for ranked in self._ranked),
+                provisional=provisional,
+            )
 
     @staticmethod
     def _candidate_key(ranked: Any) -> str:
@@ -1845,7 +1848,7 @@ class UxRecommendationsView:
         # Prior connected catalogues with zero visible candidates disappear.
         self._reload_providers(snapshot.providers)
         self._reload_languages(self._ranked)
-        self._reload_document_choices()
+        self._reload_document_choices(provisional=True)
         self._set_provisional(True)
 
         units = (
