@@ -12,8 +12,12 @@ def test_kobo_resume_preview_cli_only_connects_when_manifest_refresh_requested(m
     previews = []
     closed = []
 
-    def preview(credential_id, *, refresh_manifest=False, verify_local_files=False):
-        previews.append((credential_id, refresh_manifest, verify_local_files))
+    def preview(credential_id, *, refresh_manifest=False, verify_local_files=False,
+                offline_canonical_only=False):
+        previews.append((
+            credential_id, refresh_manifest, verify_local_files,
+            offline_canonical_only,
+        ))
         return {
             "source_id": "opaque",
             "manifest_refreshed": refresh_manifest,
@@ -35,7 +39,7 @@ def test_kobo_resume_preview_cli_only_connects_when_manifest_refresh_requested(m
     offline = json.loads(capsys.readouterr().out)
     assert offline["manifest_refreshed"] is False
     assert offline["acquisition_authorized"] is False
-    assert previews == [("vault-1", False, False)]
+    assert previews == [("vault-1", False, False, True)]
     assert connections == []
 
     assert cli.main([
@@ -45,7 +49,7 @@ def test_kobo_resume_preview_cli_only_connects_when_manifest_refresh_requested(m
     refreshed = json.loads(capsys.readouterr().out)
     assert refreshed["manifest_refreshed"] is True
     assert refreshed["verification"] == "artifact_hash"
-    assert previews[-1] == ("vault-1", True, True)
+    assert previews[-1] == ("vault-1", True, True, False)
     assert connections == ["vault-1"]
     assert len(closed) == 2
 
