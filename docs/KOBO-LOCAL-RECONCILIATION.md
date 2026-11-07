@@ -18,6 +18,18 @@
 > sans constituer une procédure exécutable après le retrait. L'ancien
 > opérateur Core et la GUI demeurent en migration dans #4859.
 
+> **Inspection locale / CoreUI : écriture W4 également retirée.**
+> La comparaison d'une édition Kobo et d'un EPUB reste consultable, mais
+> `preview_manual_attachment`, `confirm_manual_attachment`,
+> `preview_manual_undo` et `confirm_manual_undo` ne peuvent plus appeler
+> le writer historique `reconcile_kobo_local` ni transformer un SHA/entitlement
+> 0.7 en Placement vérifié. Ils refusent avec
+> `reason_code=kobo_canonical_evidence_required` quand un rapprochement
+> ancien serait invoqué ; les confirmations déjà mémorisées n'y dérogent pas.
+> La voie sûre reste l'observation d'octets ou le relink d'un B **déjà
+> indépendamment publié** via les deux commandes citées ci-dessus.
+> Aucune mutation ni suppression du journal historique n'est effectuée.
+
 `kobo-audit --credential CONNEXION --plan` reste un diagnostic en lecture seule.
 Ses comptes pseudonymisés et ses `case-*` éphémères ne peuvent jamais servir de
 cible d'exécution. `evidence_status` distingue les octets locaux vérifiés de
