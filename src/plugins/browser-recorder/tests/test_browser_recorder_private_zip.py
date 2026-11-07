@@ -166,6 +166,29 @@ def test_simple_llm_export_works_in_0755_folder_without_second_secret(tmp_path):
         save_session_llm_zip(session, downloads / "no-extension", confirmed=True)
     session.trace.destroy()
 
+def test_missing_public_core_kit_blocks_both_private_zip_exports(tmp_path, monkeypatch):
+    """A missing packaged guide must not produce an incomplete LLM ZIP."""
+    import browser_recorder_private_zip as private_zip
+    from browser_recorder import RecorderError
+
+    vault, session = stored(tmp_path)
+    output = tmp_path / "private"
+    output.mkdir(mode=0o700)
+    clear = tmp_path / "llm.zip"
+    monkeypatch.setattr(
+        private_zip, "core_contract_kit",
+        lambda: (_ for _ in ()).throw(RecorderError("core_kit_unavailable")),
+    )
+    with pytest.raises(VaultError, match="private_zip_kit_unavailable"):
+        save_session_llm_zip(session, clear, confirmed=True)
+    with pytest.raises(VaultError, match="private_zip_kit_unavailable"):
+        save_private_zip(session, output, PASSPHRASE, confirmed=True)
+    assert not clear.exists()
+    assert not list(output.iterdir())
+    assert len(vault.list_ids()) == 1
+    session.trace.destroy()
+
+
 def test_wrong_key_and_tampering_not_accepted(tmp_path):
     _, session = stored(tmp_path)
     folder = tmp_path / "chosen"
