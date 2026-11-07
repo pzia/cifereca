@@ -31,7 +31,10 @@ class _Cancel:
         if self.callback is None:
             return
         try:
-            if self.callback() is True:
+            # The historical Kobo cancellation contract treats every
+            # truthy callback value as cancellation. Requiring literal True
+            # could issue a GET after callers return 1 or a truthy wrapper.
+            if bool(self.callback()):
                 raise Cancelled("canonical_sync_cancelled")
         except Cancelled:
             raise
