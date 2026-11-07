@@ -222,3 +222,29 @@ needs-restart feedback after saving. The already sent delayed request is not
 undone by reset; the UI ignores its stale result. No distant test is accepted.
 Initial Tab focus is exercised; loss of focus after the disabled test button
 is recorded. This does not certify screen-reader speech or live HTTPS servers.
+
+
+### Recette P1 #4664 — actions exactes dans Recommandations
+
+Les scénarios `recommendations-detail-1366` et
+`recommendations-detail-1600` exécutent le plugin Recommandations et le
+`PublicBookMasterDetailView` **réels** sous GTK/XTEST. Après la recette
+de navigation #1354, le test clique au clavier sur
+`recommendation.loaded-in-place.*` d’une édition connue **déjà chargée
+dans Core Search**, passe par le port public `_UiHost`, et restitue
+`DetailPanel.show_item_detail` avec les raisons de la recommandation.
+
+Le bouton d’obtention est construit par le **même Core** que Recherche et
+fait appel à `MainWindow.download_direct_item` : le clic met seulement la
+tâche en file ; un résultat simulé est exécuté après vérification explicite
+de cette file. Le test provoque aussi l’échec des disponibilités et
+vérifie le repli `show_search(loading=False)`, les actions résiduelles,
+l’absence de fuite d’erreur fournisseur et la révocation d’un ancien
+bouton après redessin. Aucune demande réelle de droits, aucun GET fournisseur,
+POST, achat, emprunt ou téléchargement ; aucun compte privé.
+
+Cette recette prouve l’intégration GTK du **chemin chargé exact** et du
+handler direct Core avec une fixture d’admission positive. Elle ne prouve
+ni une offre réelle du fournisseur, ni toutes les variantes (mirroir v2,
+droits possédés, prêts et multi-profils #4662), ni l’éligibilité et la
+transaction sur un compte connecté. Ces critères restent ouverts sous #4664.
