@@ -424,6 +424,16 @@ def main():
         # The public verdict only exports bounded booleans and counts, never
         # raw label text, titles or user/provider data.
         state["p1_774_summary_events"] = []
+        state["p1_774_unexpected_action_clicks"] = 0
+        def observe_unexpected_action(*_args):
+            if report["p1_774_phase"] in (
+                "keyboard_focus", "keyboard_type", "keyboard_verdict",
+            ):
+                state["p1_774_unexpected_action_clicks"] += 1
+        # Guard against a HiDPI coordinate conversion that accidentally
+        # activates Recalculer or toggles Exclure les possédés.
+        view._refresh_button.connect("clicked", observe_unexpected_action)
+        view._exclude_owned.connect("toggled", observe_unexpected_action)
         def observe_summary(_label, _pspec):
             events = state["p1_774_summary_events"]
             if len(events) < 64:
@@ -506,6 +516,7 @@ def main():
             "ranked": min(100, len(view._ranked)),
             "matched": min(100, sum(1 for candidate in view._ranked if view._matches(candidate))),
             "label_length": min(512, len(current_summary)),
+            "unexpected_actions": min(10, state["p1_774_unexpected_action_clicks"]),
         }
         report["p1_774_keyboard_coherence"] = {
             "text": int(query.entry.get_text() == "Livre B"),
@@ -531,6 +542,9 @@ def main():
         assert "Livre B" in view._summary.get_text()
         assert view._generation == state["p1_774_filter_generation"]
         assert not state["searches"]
+        assert state["p1_774_unexpected_action_clicks"] == 0, (
+            "XTEST keyboard entry must not click recalculation or ownership controls"
+        )
         report["checks"]["P1_774_real_gtk_xtest_keyboard_local_filter"] = True
         capture("00b-keyboard-local-filter")
         # Restoring the old scenario via a normal entry reset is not the
