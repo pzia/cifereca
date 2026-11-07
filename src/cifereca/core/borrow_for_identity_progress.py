@@ -62,11 +62,43 @@ def observed_cross_profile_borrow_progress(
         if key is None:
             return uncertain
 
+        def lender_binding_current() -> bool:
+            """Read-only, exact owner+enabled guard; never a lending license."""
+            if (service.storage.identity_for_connection(
+                    a.provider_id, a.credential_id,
+                ) != a.identity_id
+                    or service.identity_by_id(a.identity_id) is None
+                    or sum(row is a for row in service.accounts) != 1):
+                return False
+            bindings = service.storage.provider_connections(
+                identity_id=a.identity_id,
+            )
+            return (
+                type(bindings) is list and len(bindings) <= 512
+                and sum(
+                    type(binding) is dict
+                    and binding.get("identity_id") == a.identity_id
+                    and binding.get("provider_id") == a.provider_id
+                    and binding.get("credential_id") == a.credential_id
+                    and binding.get("enabled") is True
+                    for binding in bindings
+                ) == 1
+            )
+
+        # The source may be disabled while an old positive receipt remains
+        # durable. Do not expose its state to a different profile.
+        if not lender_binding_current():
+            return uncertain
+
         # This scalar key is account+edition+collection scoped. Raw claim
         # bytes are never returned or logged, including loan identifiers,
         # receipt operation IDs and signed supplier links.
         raw = service.storage.metadata_get(key)
         checkpoint = service.storage.loan_borrow_state(key)
+        # Recheck after the SQLite reads: disabling/rebinding a lender
+        # during the observation must not publish even a positive status.
+        if not lender_binding_current():
+            return uncertain
         if raw is None:
             if checkpoint is not None:
                 return uncertain
