@@ -1487,6 +1487,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     # enabled, unambiguous account under the existing global acquisition lock.
     from .source_materialization_schedule import (
         kobo_on_start_sessions, on_start_due, mark_on_start_attempt,
+        finish_on_start_attempt,
     )
     from .kobo_backup import _kobo_checkpoint_key
     kobo_summary: dict[str, Any] | None = None
@@ -1539,16 +1540,23 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 executed.append({"status": "failed", "errors": 1, "sources": []})
                 continue
             try:
-                executed.append(
-                    self._sync_kobo_backup_account_locked(
-                        session.credential_id, progress=progress,
-                    )
+                source_result = self._sync_kobo_backup_account_locked(
+                    session.credential_id, progress=progress,
                 )
             except Exception:
                 logger.warning(
                     "TRACE kobo scheduled account sync error code=kobo_scheduled_sync_failed"
                 )
-                executed.append({"status": "failed", "errors": 1, "sources": []})
+                source_result = {"status": "failed", "errors": 1, "sources": []}
+            executed.append(source_result)
+            # A terminal completion requires one exact provider/source
+            # manifest, not an implicit W2 checkpoint. Persist it under the
+            # same opening acquisition lease BEFORE another startup can see
+            # this source as retryable. A crash leaves in_flight, manual-only.
+            if not finish_on_start_attempt(self, account, source_result):
+                logger.warning(
+                    "TRACE kobo scheduled attempt code=terminal_journal_unavailable"
+                )
         metric_keys = (
             "errors", "downloaded", "unchanged", "attempted", "pending",
             "attention_required", "skipped_archived", "remaining", "manifest_items",
