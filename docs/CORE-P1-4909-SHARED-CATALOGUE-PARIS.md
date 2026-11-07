@@ -54,3 +54,34 @@ distinction `numilog` / `numilog-catalog` reste à traiter dans son propre
 contrat. Les vignettes étrangères sont volontairement masquées jusqu'à une
 qualification d'URL strictement publique. Aucune action utilisateur ne doit
 être déclenchée par la seule présence d'une notice partagée.
+
+
+## Tranche Numilog : catalogue anonyme entre profils
+
+Le provider Numilog privé prend deux routes distinctes : `search(scope='all'
+ou 'digital')` appelle `library()` / `MesLivres` (achats personnels), alors
+que `search(scope='catalog')` appelle la recherche publique anonyme sans
+cookies de compte. Lorsque le credential Numilog sélectionné appartient à un
+**autre** profil (ou que son propriétaire n'est pas attesté), Core route
+**exclusivement** vers `catalog`, avec `field='all'` et post-filtrage local.
+
+Les seules lignes admises sont `numilog/NUMILOG_PUBLIC/public_catalog` avec
+`source_credential='__public__'` et `docbase='NUMILOG'`. Les indicateurs de
+possession, téléchargement, URL de livraison, vignette/lien fournisseur non
+vérifiés, métadonnées de compte et preuves de classification sont retirés.
+Une ligne `NUMILOG_LIBRARY` ou de provenance privée reste interdite même
+si le provider renvoie accidentellement un mélange. Les lots progressifs
+sont projetés avant publication, avec facettes privées bloquées.
+
+Le détail est purement bibliographique depuis la notice chargée, sans appel à
+la session privée B. Le retour à B réactive sa recherche `MesLivres` normale,
+sous sa propre identité et son cache ; A ne reçoit jamais ce contenu. Le
+cache Search passe en `v10` / `v11-progressive` pour invalider les anciens
+résultats non compartimentés. Les rotations de propriétaire SQLite annulent
+les requêtes en vol. Aucun fallback authentifié n'est permis si la recherche
+anonyme échoue ; la cause reste à traiter comme indisponibilité du catalogue.
+
+Limites : la découverte explicite du provider public `numilog-catalog` reste
+distincte, et les requêtes du catalogue public peuvent échouer selon le
+fournisseur ; un refus public ne déclenche pas la lecture des achats privés.
+Tests offline, aucun appel réseau réel.
