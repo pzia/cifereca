@@ -488,6 +488,10 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "kobo-sync-edition":
             from .core.canonical_kobo_selected import SelectedKoboRejected
             try:
+                # Reuse the existing exact-credential connect gate, never
+                # connect every Kobo account or infer source from an item.
+                # No provider activity happens without CLI --confirm.
+                service.connect_kobo_preview(a.credential)
                 result = service.synchronize_kobo_selected_edition(
                     a.credential, a.item, explicit_user_action=True,
                 )
