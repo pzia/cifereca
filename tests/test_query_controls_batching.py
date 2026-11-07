@@ -99,6 +99,90 @@ class QueryControlBatching(unittest.TestCase):
         self.assertTrue(control.matches_document(unknown))
         self.assertEqual(len(calls), 2)
 
+    def test_3687_provisional_document_facet_keeps_only_attested_selected_choices(self):
+        calls = []
+        control = LocalQueryControls(lambda: calls.append(control.state()), 'Filtre')
+        full = (
+            {'medium': 'physical'},
+            {'medium': 'digital', 'format': 'application/pdf'},
+            {'medium': 'digital', 'format': 'application/epub+zip'},
+        )
+        control.set_document_choices(full)
+        self.assertIn('physical', control._attested_document_scopes)
+        self.assertEqual(control._attested_document_formats, frozenset({'pdf', 'epub'}))
+        control.scope.set_selected(control._scope_values.index('physical'))
+        control.types.set_values(('pdf',))
+        before = len(calls)
+        self.assertEqual(control.state().scope, 'physical')
+        self.assertEqual(control.state().types, ('pdf',))
+
+        # A provisional top-N containing only EPUB/digital cannot silently
+        # turn active Physical/PDF into All and expose other rows/actions.
+        control.set_document_choices(
+            ({'medium': 'digital', 'format': 'application/epub+zip'},),
+            provisional=True,
+        )
+        self.assertEqual(control.state().scope, 'physical')
+        self.assertEqual(control.state().types, ('pdf',))
+        self.assertTrue(control.scope.visible)
+        self.assertTrue(control.types.visible)
+        self.assertEqual(len(calls), before)
+        self.assertFalse(control.matches_document(
+            {'medium': 'digital', 'format': 'application/epub+zip'},
+        ))
+        self.assertEqual(control.active_document_labels(), ('Type · Physique', 'PDF'))
+
+        # The final, exhaustive result removes absent choices with no
+        # synthetic user event; this reset must not become a remote query.
+        control.set_document_choices(({'medium': 'digital', 'format': 'application/epub+zip'},))
+        self.assertEqual(control.state().scope, 'all')
+        self.assertEqual(control.state().types, ())
+        self.assertEqual(tuple(control.types.buttons), ('epub',))
+        self.assertEqual(len(calls), before)
+
+    def test_3687_provisional_document_attestation_clears_on_identity_reset(self):
+        control = LocalQueryControls(lambda: None, 'Filtre')
+        control.set_document_choices((
+            {'medium': 'physical'},
+            {'medium': 'digital', 'format': 'application/pdf'},
+        ))
+        control.scope.set_selected(control._scope_values.index('physical'))
+        control.types.set_values(('pdf',))
+
+        control.set_document_choices((), provisional=True)
+        self.assertEqual(control.state().scope, 'physical')
+        self.assertEqual(control.state().types, ('pdf',))
+        control.set_document_choices(())  # completed error / A -> B switch
+        self.assertEqual(control._attested_document_scopes, frozenset())
+        self.assertEqual(control._attested_document_formats, frozenset())
+        self.assertEqual(control.state().scope, 'all')
+        self.assertEqual(control.state().types, ())
+        control.set_document_choices(
+            ({'medium': 'digital', 'format': 'application/epub+zip'},),
+            provisional=True,
+        )
+        self.assertEqual(control.state().scope, 'all')
+        self.assertNotIn('pdf', control.types.buttons)
+        self.assertNotIn('physical', control._scope_values)
+
+    def test_3687_recommendations_marks_partial_not_final_as_provisional(self):
+        source = (Path(__file__).resolve().parents[1] /
+                  'src/plugins/recommendations/recommendations.py').read_text()
+        tree = ast.parse(source)
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == '_reload_document_choices'
+        ]
+        self.assertEqual(
+            sum(any(kw.arg == 'provisional' and isinstance(kw.value, ast.Constant)
+                    and kw.value.value is True for kw in call.keywords)
+                for call in calls),
+            1,
+        )
+        self.assertGreaterEqual(len(calls), 4)
+
     def test_local_choices_keep_surviving_filters_without_notifying(self):
         calls = []
         control = LocalQueryControls(
