@@ -322,7 +322,7 @@
     "async": false
   },
   "MainWindow.__init__": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='app', annotation=Attribute(value=Name(id='Adw', ctx=Load()), attr='Application', ctx=Load())), arg(arg='config', annotation=Name(id='Config', ctx=Load())), arg(arg='service', annotation=Name(id='LibraryService', ctx=Load())), arg(arg='diagnostics', annotation=Name(id='Diagnostics', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='app', annotation=Attribute(value=Name(id='Adw', ctx=Load()), attr='Application', ctx=Load())), arg(arg='config', annotation=Name(id='Config', ctx=Load())), arg(arg='service', annotation=Name(id='LibraryService', ctx=Load())), arg(arg='diagnostics', annotation=Name(id='Diagnostics', ctx=Load()))], kwonlyargs=[arg(arg='ui_perf', annotation=BinOp(left=Name(id='UiPerfMonitor', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kw_defaults=[Constant(value=None)], defaults=[])",
     "returns": null,
     "decorators": [],
     "async": false
