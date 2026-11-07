@@ -270,3 +270,14 @@ prouve pas à lui seul la conformité visuelle à toutes les densités ni le
 HiDPI. Toute géométrie réelle hors du budget, action masquée ou échec clavier
 est un **échec de recette**, non une autorisation d'agrandir artificiellement
 la fenêtre ou d'ignorer l'étape. Voir #774 et #3687 pour la revue UX.
+
+**Régression du premier essai 1024 :** le menu « Plus d’actions » était
+mappé mais totalement hors de son viewport (x=982–1016, panneau se
+terminant à x=974). Le composant CoreUI `AdaptiveActionBar` ajuste
+désormais le seul libellé **visuel** de l'action principale lorsque sa largeur
+réelle plus la réserve du menu dépassent le budget. Le titre complet reste
+en propriété accessible et en infobulle ; identité, callback, priorité et
+ordre des boutons sont inchangés. Le titre complet revient dès que le
+budget GTK le permet. La sonde 1024 impose aussi une vérification explicite
+que **tout** le menu est dans le viewport, puis un clic XTEST sur une cible
+validée par `Gtk.Widget.pick` : un widget seulement `mapped` ne suffit pas.
