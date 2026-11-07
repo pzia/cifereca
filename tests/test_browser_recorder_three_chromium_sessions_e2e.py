@@ -176,7 +176,12 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
                 assert private_export.stat().st_mode & 0o777 == 0o600
                 with ZipFile(private_export) as archive:
                     assert archive.testzip() is None
-                    assert sorted(archive.namelist()) == ["README.txt", "trace.json"]
+                    assert {"README.txt", "trace.json",
+                            "plugin-dev-kit/PROVIDER-DEVELOPMENT.md",
+                            "plugin-dev-kit/manifest.json"} <= set(archive.namelist())
+                    assert b"ProviderPlugin.create_session" in archive.read(
+                        "plugin-dev-kit/PROVIDER-DEVELOPMENT.md"
+                    )
                     # Fictional bodies remain private, deliberately unredacted.
                     # Assert types/counters, not raw body text in a log.
                     data = json.loads(archive.read("trace.json"))
