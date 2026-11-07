@@ -117,8 +117,8 @@ def _capture_diagnostic_code(code: object) -> str:
     return code if code in {"capture_interrupted", "capture_limit"} else "capture_failed"
 
 
-def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
-    """Validate opt-in third-party origins; never echo private input in errors."""
+def _additional_origins(raw: str, primary: str) -> tuple[str, ...]:
+    """Validate individually consented additional origins without echoing input."""
     if type(raw) is not str or len(raw) > 512:
         raise RecorderError("invalid_origin")
     parts = [part.strip() for part in raw.split(",") if part.strip()]
@@ -135,6 +135,11 @@ def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
             raise RecorderError("invalid_origin")
         selected.append(origin)
     return tuple(selected)
+
+
+def _metadata_only_origins(raw: str, primary: str) -> tuple[str, ...]:
+    """Compatibility name for the restricted metadata-only consent."""
+    return _additional_origins(raw, primary)
 
 
 class PrivateReviewPanel:
@@ -197,6 +202,8 @@ class PrivateReviewPanel:
         root.append(self.status)
         self.coverage_status = Gtk.Label(label="", xalign=0, wrap=True)
         root.append(self.coverage_status)
+        self.origin_coverage_status = Gtk.Label(label="", xalign=0, wrap=True)
+        root.append(self.origin_coverage_status)
         if self.vault_directory is not None:
             self.vault_state = Gtk.Label(
                 label="Coffre fermé · saisir la phrase secrète une fois pour l'ouvrir.",
@@ -276,9 +283,22 @@ class PrivateReviewPanel:
             xalign=0, wrap=True,
         ))
         box.append(Gtk.Label(
-            label="Hôtes tiers facultatifs (HTTPS, séparés par des virgules) : "
-                  "métadonnées de requête seulement, jamais URL ni corps. "
-                  "Laissez vide pour exclure tout trafic tiers.",
+            label="Origines complémentaires en capture normale (HTTPS, séparées par "
+                  "des virgules) : même collecte HTTP, limites, revue et export "
+                  "que pour le site de départ. Consentement valable pour cette "
+                  "capture uniquement ; n’autorise aucun autre domaine.",
+            xalign=0, wrap=True,
+        ))
+        self.captured_origins = Gtk.Entry()
+        self.captured_origins.set_placeholder_text(
+            "https://catalogue.exemple.org, https://identite.exemple.org"
+        )
+        box.append(self.captured_origins)
+        box.append(Gtk.Label(
+            label="Origines complémentaires en métadonnées SEULEMENT (HTTPS, "
+                  "séparées par des virgules) : méthode et statut, jamais URL "
+                  "ni corps. Laissez les deux champs vides pour exclure "
+                  "tout trafic complémentaire.",
             xalign=0, wrap=True,
         ))
         self.third_party_origins = Gtk.Entry()
@@ -825,6 +845,31 @@ class PrivateReviewPanel:
             label += f" Plafond texte : {cap // 1024} Kio."
         self.coverage_status.set_label(label)
 
+    def _show_origin_coverage(self, trace):
+        """Show exact user-consented origins and bounded counts, never paths."""
+        if not hasattr(trace, "coverage_by_origin"):
+            self.origin_coverage_status.set_label("")
+            return
+        rows = trace.coverage_by_origin()
+        if type(rows) is not dict or len(rows) > 10:
+            return
+        lines = ["Couverture par origine HTTPS consentie :"]
+        for origin, row in rows.items():
+            if (type(origin) is not str or type(row) is not dict
+                    or row.get("mode") not in {"normal", "metadata_only"}
+                    or any(type(row.get(key)) is not int
+                           or not 0 <= row[key] <= 1_000_000
+                           for key in ("requests", "text_responses", "metadata_only"))):
+                return
+            mode = ("capture normale" if row["mode"] == "normal"
+                    else "métadonnées seules")
+            lines.append(
+                f"{origin} — {mode} : {row['requests']} requête(s), "
+                f"{row['text_responses']} réponse(s) texte, "
+                f"{row['metadata_only']} événement(s) méta-seulement."
+            )
+        self.origin_coverage_status.set_label("\n".join(lines))
+
     def _show_origin_diagnostics(self, trace):
         origins, overflow = trace.origin_diagnostics()
         if not origins and not overflow:
@@ -925,6 +970,9 @@ class PrivateReviewPanel:
                 )
         self.stop.set_sensitive(not self._closed and busy)
         self.third_party_origins.set_sensitive(
+            not self._closed and not busy and self._trace is None
+        )
+        self.captured_origins.set_sensitive(
             not self._closed and not busy and self._trace is None
         )
         can_pause = (not self._closed and busy and self._pause_control is not None
@@ -1126,13 +1174,21 @@ class PrivateReviewPanel:
         try:
             start_url = self.site.get_text().strip()
             primary = site_origin(start_url)
+            captured_origins = _additional_origins(
+                self.captured_origins.get_text(), primary,
+            )
             metadata_only_origins = _metadata_only_origins(
                 self.third_party_origins.get_text(), primary,
             )
+            if (len(captured_origins) + len(metadata_only_origins) > 4
+                    or set(captured_origins) & set(metadata_only_origins)):
+                raise RecorderError("invalid_origin")
         except RecorderError:
             self.status.set_label(
-                "Origines HTTPS invalides : saisir au plus 4 hôtes tiers, "
-                "sans chemin ni identifiant. Aucun navigateur lancé."
+                "Origines HTTPS invalides : au plus 4 origines complémentaires "
+                "distinctes au total, sans chemin ni identifiant. "
+                "Une origine ne peut pas figurer dans les deux modes. "
+                "Aucun navigateur lancé."
             )
             return
         passphrase = None
@@ -1169,6 +1225,9 @@ class PrivateReviewPanel:
         diagnose_origins = self.diagnose_origins.get_active()
         self.diagnose_origins.set_active(False)
         self.status.set_label("Navigateur HTTP privé en cours, sans export…")
+        # Consent applies to this session only, never pre-authorize the next.
+        self.captured_origins.set_text("")
+        self.third_party_origins.set_text("")
 
         def progress(metrics):
             # Worker passes only numeric counts. Late callbacks cannot restore
@@ -1187,6 +1246,8 @@ class PrivateReviewPanel:
                 "status": self._download_status,
                 "coverage_callback": progress,
             }
+            if captured_origins:
+                kwargs["origins"] = (primary, *captured_origins)
             if selected_body_limit != 32768:
                 kwargs["max_body"] = selected_body_limit
             if accept_compressed:
@@ -1260,6 +1321,7 @@ class PrivateReviewPanel:
                         return False
                     self._trace = result
                     self._show_coverage(result.coverage())
+                    self._show_origin_coverage(result)
                     self._show_origin_diagnostics(result)
                     try:
                         self._review = IdentifierReview(result)
@@ -1792,6 +1854,7 @@ class PrivateReviewPanel:
         self._discard_private()
         self._trace = stored.trace
         self._show_coverage(stored.trace.coverage())
+        self._show_origin_coverage(stored.trace)
         try:
             self._review = IdentifierReview(stored.trace)
         except Exception:
