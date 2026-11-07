@@ -260,7 +260,8 @@ def test_kobo_preview_obsolete_unlinked_override_never_restores_global_veto(
         {"product_id": "purchase", "revision_id": "r1", "format": "EPUB",
          "downloadable": True},
     ])
-    _backup(service, "purchase")
+    # A fresh manifest belongs to the same synthetic connected account.
+    _backup(service, "purchase", account_id="account")
     service.kobo_unlinked_local_count = lambda _id: 3
     service.config.set("kobo_backup.allow_unlinked_acquisition", malformed_opt_in)
     try:
