@@ -129,3 +129,23 @@ chaud, fournisseur désactivé sur cache chaud, désactivation pendant la répon
 fournisseur, puis reconnexion/réactivation. Les résultats admis demeurent
 `shared_read_only` ; aucun appel réel ni preuve GTK ou fournisseur n'est
 revendiqué. #4909 reste ouvert pour la recette terrain et les recommandations.
+
+
+## Désactivation de la connexion source B : révocation exacte
+
+La désactivation globale d'un plugin ne suffit pas : l'option
+`providers.accounts[*].enabled` et le commutateur persistant
+`provider_connections.enabled` peuvent changer alors qu'une session
+fournisseur demeure momentanément connectée. Une recherche du profil A ne
+doit alors ni lire le catalogue authentifié B, ni ressortir les notices déjà
+mises en cache sous A.
+
+Core contrôle désormais la **connexion exacte (provider, credential)** lors
+de la découverte des catalogues, de la sélection de sessions Search et des
+baux de publication synchrone/progressive, y compris après un appel réseau
+en cours. Un `enabled` Config non booléen est désactivé. Aucun droit n'est
+déduit de ce contrôle ; un catalogue anonyme, sans connexion persistée,
+conserve son contrat public. Les fixtures de régression P1 #4909 testent
+Paris, Numilog et Kobo hors réseau (cache chaud, désactivation Config/SQLite,
+révocation pendant la réponse, puis réactivation). Cela ne vaut pas recette
+fournisseur/GTK ni preuve de politique de partage des permissions.
