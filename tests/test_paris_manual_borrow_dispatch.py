@@ -4,6 +4,7 @@ The mutating ASSARedirect GET is checked at the transport boundary, including
 claim persistence after restart. No request reaches an actual lender.
 """
 import ast
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -69,6 +70,8 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
         ),
     ))
     state = {"active": existing, "calls": [], "mutations": 0, "before_holdings": lambda: None}
+    # Keep mock loans active independent of the calendar date of the CI run.
+    when_back_ms = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp() * 1000)
     href = "/numerique/Portal/ASSARedirect.ashx?url=" + quote("/fake/loan-book.ashx", safe="")
     def http(request):
         assert request.url.host == "bibliotheques.paris.fr"
@@ -90,7 +93,7 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
             assert request.method == "GET"
             assert request.url.params["userUniqueIdentifier"] == ""
             rows = [{"Id": "loan-exact", "RecordId": "edition", "State": loan_state,
-                     "WhenBack": "/Date(1794000000000)/"}] if state["active"] else []
+                     "WhenBack": f"/Date({when_back_ms})/"}] if state["active"] else []
             if result == "duplicate" and state["active"]:
                 rows *= 2
             return httpx.Response(200, json={"success": True, "d": {"Loans": rows}})
