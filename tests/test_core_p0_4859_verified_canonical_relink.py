@@ -384,3 +384,68 @@ def test_trigger_cannot_relabel_provider_receipt_during_relink(published):
     finally:
         with store._lock, store._connect() as db:
             db.execute("DROP TRIGGER relink_origin_swap")
+
+
+def test_empty_primary_kobo_borrower_relinks_only_preexisting_attested_B(
+    store, tmp_path,
+):
+    source, snapshot = new_source(
+        "A", provider="kobo", credential="vault-primary",
+        account="", edition="empty-primary-edition",
+        right="owned", branch="purchases",
+    )
+    register(store, "A", "kobo", "vault-primary", account="")
+    root = tmp_path / "EBooks"
+    original = target(tmp_path, "A", "primary-original.pdf")
+    published = publish(store, root, original, source, snapshot)
+    moved = original.with_name("primary-moved.pdf")
+    original.rename(moved)
+    kwargs = {
+        "library_root": root, "identity_id": "A",
+        "credential_id": "vault-primary", "account_id": "",
+        "edition_id": "empty-primary-edition", "right_id": "owned",
+        "branch_id": "purchases", "placement_id": published.placement_id,
+        "new_path": moved,
+    }
+    unchanged = _unchanged(store)
+    before = _read(store, "placements")
+    preview = relink(store, **kwargs)
+    assert preview["status"] == "preview"
+    assert _read(store, "placements") == before
+    confirmed = relink(store, confirmation=preview["plan_token"], **kwargs)
+    assert confirmed["status"] == "relinked"
+    assert confirmed["legacy_backup_mutations"] == 0
+    assert confirmed["rights_mutations"] == 0
+    assert confirmed["file_mutations"] == 0
+    assert _unchanged(store) == unchanged
+    assert store.placement_get(published.placement_id)["path"] == str(moved)
+    assert moved.read_bytes() == BYTES and not original.exists()
+
+
+@pytest.mark.parametrize("foreign", [
+    None, " ", "kobo:vault-primary:primary", "other-borrower",
+])
+def test_empty_primary_relink_never_admits_missing_or_aliased_borrower(
+    store, tmp_path, foreign,
+):
+    source, snapshot = new_source(
+        "A", provider="kobo", credential="vault-primary",
+        account="", edition="primary-edition", right="owned",
+    )
+    register(store, "A", "kobo", "vault-primary", account="")
+    root = tmp_path / "EBooks"
+    original = target(tmp_path, "A", "origin.pdf")
+    published = publish(store, root, original, source, snapshot)
+    moved = original.with_name("moved.pdf")
+    original.rename(moved)
+    arguments = {
+        "library_root": root, "identity_id": "A",
+        "credential_id": "vault-primary", "account_id": foreign,
+        "edition_id": "primary-edition", "right_id": "owned",
+        "branch_id": "purchases", "placement_id": published.placement_id,
+        "new_path": moved,
+    }
+    baseline = _read(store, "placements")
+    with pytest.raises(CanonicalRelinkRejected):
+        relink(store, **arguments)
+    assert _read(store, "placements") == baseline
