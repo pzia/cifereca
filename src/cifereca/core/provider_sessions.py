@@ -553,6 +553,56 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     return session
 
 
+def connect_kobo_selected_edition(self, credential_id: str) -> ProviderSession:
+    """Bind one already-persisted Kobo account for the exact edition CLI.
+
+    The preview path intentionally never populates `service.accounts`; the
+    canonical selected A->B executor requires this live in-memory binding.
+    Use only the exact credential selected by the caller. Never connect other
+    providers, create borrower/connection rows, or infer identity from a GUI
+    selection. The storage account relation must already be persisted.
+    """
+    # Preview itself verifies the exact enabled credential, its persisted
+    # connection owner, provider readiness and connected session semantics.
+    session = connect_kobo_preview(self, credential_id)
+    identity = self.storage.identity_for_connection("kobo", credential_id)
+    key = self._session_key("kobo", credential_id)
+    rows = session.accounts
+    if (
+        type(identity) is not str or not identity
+        or type(rows) is not list or len(rows) != 1
+        or type(rows[0]) is not Account
+        or session.connected is not True
+        or session.provider_id != "kobo"
+        or session.credential_id != credential_id
+        or self._sessions.get(key) is not session
+    ):
+        raise ProviderConfigurationError("Compte Kobo sélectionné non attesté")
+    account = rows[0]
+    if (
+        account.provider_id != "kobo"
+        or account.credential_id != credential_id
+        or not self.storage.provider_scope_account_bound(
+            identity_id=identity, provider_id="kobo",
+            credential_id=credential_id, account_id=account.unique_id,
+        )
+        or self.identity_by_id(identity) is None
+    ):
+        raise ProviderConfigurationError("Propriétaire Kobo sélectionné non attesté")
+
+    # Change only live memory, after attested SQLite account association;
+    # retain the exact original object shared with session.accounts.
+    # No access-token, account ID, title or external URL enters CLI output.
+    account.identity_id = identity
+    self.accounts = [account]
+    self.primary = account
+    self.current_account = account
+    self.current_identity = self.identity_by_id(identity)
+    self._active_session_key = key
+    self._source_context_epoch = getattr(self, "_source_context_epoch", 0) + 1
+    return session
+
+
 # Closed reason vocabulary: provider exception text, types, URLs and tokens
 # are NEVER forwarded into the raw journal. A recognized provider error.code
 # can explain a failed authentication without exposing its response body.

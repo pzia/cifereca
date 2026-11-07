@@ -49,3 +49,31 @@ Recette : `tests/test_core_p0_4858_d3_exact_kobo_selected.py` :
 un seul droit dans la livraison, journal v0.7 inaccessible, erreur de
 confirmation, emprunteur rebind, consentement retiré, source ambiguë,
 absence de succès inventé, sortie CLI expurgée.
+
+
+## Correctif D4 — compte Kobo connecté mais non enregistré en mémoire
+
+Cas réel observé le 07/11/2026 sur `kobo-2` :
+`cifereca-cli kobo-sync-edition --credential ... --item ... --confirm --trace`
+obtient `vault connected` mais s'interrompt aussitôt avec
+`selected_source_unavailable`, sans POST d'offre ni GET contenu.
+
+**Cause :** `connect_kobo_preview` crée volontairement une session sans
+peupler `LibraryService.accounts`. Le moteur canonique D3 cherche
+obligatoirement une ligne `Account` active de ce credential et retourne
+`selected_source_unavailable` quand la liste reste `[local]`.
+
+**Correction :** la CLI D3 doit appeler `connect_kobo_selected_edition`,
+et **non** `connect_kobo_preview`. Le Core réutilise l'unique connexion
+preview, puis revalide dans SQLite les coordonnées exactes
+`identity/kobo/credential/account` déjà enregistrées, l'unicité du compte,
+la connexion du plugin et l'identité active. Seulement après validation, il
+installe **en mémoire** l'objet `Account` appartenant à cette session,
+sans nouvelle requête réseau, sans écriture des tables de connections ni
+connexion d'autres providers. Si une preuve manque, échec fermé et
+aucune promotion de compte. Le moteur D3 réévalue toujours consentement,
+source activée, identité, offre et publication après cette étape.
+
+Un succès de connexion `provider_connect` n'est **pas** un succès d'acquisition
+ou de lecture du manifeste. Aucun résultat K3 n'est inféré de ce bug.
+
