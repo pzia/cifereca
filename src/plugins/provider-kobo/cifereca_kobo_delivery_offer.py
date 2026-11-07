@@ -276,32 +276,6 @@ def exact_kobo_offer_id(
                         and alias.strip().casefold() == "flepub" else
                         "conflicting"
                     )
-                    # This is an independent probe of the Worker actually
-                    # answering THIS descriptor POST, not the /status release
-                    # observed earlier at connect(). Older Workers omit it.
-                    producer = payload.get("producer_contract")
-                    probe = (producer.get("flepub_media_probe")
-                             if type(producer) is dict else None)
-                    diagnostic["candidate_kvault_flepub_producer_probe"] = (
-                        "absent" if probe is None else
-                        "epub" if type(probe) is str and probe == "epub" else
-                        "unknown" if type(probe) is str and probe == "unknown"
-                        else "other"
-                    )
-                    release = (producer.get("release")
-                               if type(producer) is dict else None)
-                    diagnostic["candidate_kvault_descriptor_release"] = (
-                        release if type(release) is str and
-                        re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,4}){1,4}", release)
-                        else "unavailable"
-                    )
-                    revision = (producer.get("contract_revision")
-                                if type(producer) is dict else None)
-                    diagnostic["candidate_kvault_descriptor_contract"] = (
-                        revision if type(revision) is str and
-                        re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,4}){1,4}", revision)
-                        else "unavailable"
-                    )
     eligible: list[tuple[str, str, str, str]] = []
     # Private transient comparison only; never persist or log signed URLs.
     eligible_urls: list[str] = []
