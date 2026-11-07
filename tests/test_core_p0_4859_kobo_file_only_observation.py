@@ -171,6 +171,9 @@ def test_offline_existing_profile_exposes_file_only_route_without_legacy_mutatio
     observation,
 ):
     case, args = observation
+    # Unlike the in-process service, the offline adapter reads its profile
+    # from disk. Explicitly persist the synthetic fixture before opening it.
+    case.service.config.save()
     before = _snapshot(case)
     run = lambda **extra: repair.reconcile_existing_profile(
         config_path=case.service.config.path,
