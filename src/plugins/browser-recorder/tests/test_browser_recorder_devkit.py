@@ -53,6 +53,11 @@ def test_kit_embeds_exact_public_contracts_and_provenance():
         assert row["bytes"] == len(body)
         assert row["source"] and not row["source"].startswith("/")
     assert b"PluginContext" in result["plugin-dev-kit/README.md"]
+    guide = result["plugin-dev-kit/PROVIDER-AUTONOMOUS-DEVELOPMENT.md"]
+    assert b"provider.library" in guide
+    assert b"catalog.service" in guide
+    assert b"OriginLink" in guide
+    assert b"BiblioAccess" in guide
     assert b"~route-NNNN~" in result["plugin-dev-kit/README.md"]
     assert sum(map(len, result.values())) < 550_000
 
@@ -98,6 +103,7 @@ def test_reviewed_zip_contains_sdk_in_exact_preview():
     assert "plugin-dev-kit/manifest.json" in names
     assert "plugin-dev-kit/contracts/models.py" in names
     assert "plugin-dev-kit/LLM_GUIDE.md" in names
+    assert "plugin-dev-kit/PROVIDER-AUTONOMOUS-DEVELOPMENT.md" in names
     assert not any("FAKE_PRIVATE_ACCOUNT" in row["text"] for row in docs)
     manifest = next(
         row for row in docs if row["name"] == "plugin-dev-kit/manifest.json"
