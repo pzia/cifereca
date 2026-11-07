@@ -2193,6 +2193,19 @@ class Storage:
                              "archived_book", "missing_delegation_scope",
                              "interrupted_acquisition_review",
                          }
+                         # An explicitly disabled Kobo connection is not a
+                         # live source of provider rights. Historical complete,
+                         # pending, acquiring or error rows cannot reactivate
+                         # its generic entitlement/ledger/Artifact projection.
+                         # A missing connection is left to the W2 cutover;
+                         # exact credential scope avoids affecting other
+                         # providers or unrelated Kobo accounts.
+                         or db.execute(
+                             "SELECT 1 FROM provider_connections "
+                             "WHERE provider_id='kobo' AND credential_id=? "
+                             "AND enabled<>1 LIMIT 1",
+                             (merged.get("credential_id"),),
+                         ).fetchone() is not None
                          # #3196 W1 after W4 retirement: a
                          # reconcile_required/conflict 0.7 checkpoint is
                          # never independent provider A evidence, even with
