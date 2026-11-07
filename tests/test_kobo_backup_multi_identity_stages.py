@@ -42,10 +42,10 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
     monkeypatch.setattr(service, '_execute_kobo_acquisition', lambda *_a, **_kw: pytest.fail('cache must not download'))
     try:
         failed = service.sync_kobo_backup()
-        assert failed['errors'] == 1 and failed['unchanged'] == 1
+        assert failed['errors'] == 1 and failed['unchanged'] == 0
         assert failed['status'] == 'partial'
         assert [(row['credential_id'], row['status']) for row in failed['sources']] == [
-            ('vault-1', 'complete'), ('vault-2', 'failed'),
+            ('vault-1', 'attention_required'), ('vault-2', 'failed'),
         ]
         assert failed['legacy_pruned'] == 0 and failed['attempted'] == 0
         assert service.storage.metadata_get('kobo_backup_last_success_at') is None
@@ -53,19 +53,19 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
         assert service.storage.backup_get('kobo', 'vault-2', 'stale') is not None
         assert json.loads(service.storage.metadata_get(
             _kobo_checkpoint_key('default', 'vault-1')
-        ))['status'] == 'complete'
+        ))['status'] == 'attention_required'
         assert json.loads(service.storage.metadata_get(
             _kobo_checkpoint_key('alex', 'vault-2')
         ))['status'] == 'failed'
         second._manifest_error = None
         recovered = service.sync_kobo_backup()
-        assert recovered['errors'] == 0 and recovered['unchanged'] == 2
-        assert recovered['status'] == 'complete'
-        assert {row['status'] for row in recovered['sources']} == {'complete'}
+        assert recovered['errors'] == 0 and recovered['unchanged'] == 0
+        assert recovered['status'] == 'attention_required'
+        assert {row['status'] for row in recovered['sources']} == {'attention_required'}
         assert recovered['attempted'] == 0 and recovered['legacy_pruned'] == 0
-        assert service.storage.metadata_get('kobo_backup_last_success_at') is not None
+        assert service.storage.metadata_get('kobo_backup_last_success_at') is None
         repeated = service.sync_kobo_backup()
-        assert repeated['errors'] == 0 and repeated['unchanged'] == 2
+        assert repeated['errors'] == 0 and repeated['unchanged'] == 0
         assert repeated['attempted'] == 0 and repeated['legacy_pruned'] == 0
         assert [p.read_bytes() for p in paths] == original
         for identity, credential, path in zip(['default', 'alex'], ['vault-1', 'vault-2'], paths):
@@ -124,7 +124,8 @@ def test_scoped_kobo_backup_excludes_other_identity_and_preserves_global_cache(t
         result = service.sync_kobo_backup_account("vault-1")
         assert result["scope"] == "account"
         assert result["sessions"] == 1
-        assert result["unchanged"] == 1
+        assert result["unchanged"] == 0
+        assert result["reconcile_pending"] == 1
         assert result["attempted"] == 0
         assert result["errors"] == 0
         assert len(result["sources"]) == 1
