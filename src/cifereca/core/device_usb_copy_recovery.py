@@ -159,12 +159,14 @@ def publish_usb_pending_copy(
 
 def inspect_usb_copy_recovery(
     *, directory_fd: int, mount: LinuxUsbMount, pin: UsbCopyRecoveryPin,
+    final_version: tuple[int, ...] | None = None,
 ) -> UsbCopyRecoveryReview:
     """Review the same mount's names without adopting, renaming or unlinking.
 
     A final match describes a physical candidate for supervised recovery.
     It never grants a managed-copy receipt or the right to remove the file.
     A reboot/remount requires a new inspection outside this narrow proof.
+    Withdrawal review additionally supplies the completed file's full version.
     """
     unknown = UsbCopyRecoveryReview("unverified", "usb_recovery_scope_unverified")
     if (not hasattr(os, "O_PATH") or type(mount) is not LinuxUsbMount or type(pin) is not UsbCopyRecoveryPin
@@ -197,10 +199,12 @@ def inspect_usb_copy_recovery(
                 version = _file_version(marker)
                 # Rename may advance ctime. An unchanged stage must match it
                 # exactly, and a final name must still match the inode + mtime.
-                matching = (
-                    version == pin.stage_version if stage_entries
-                    else version[:-1] == pin.stage_version[:-1]
-                )
+                if stage_entries:
+                    matching = version == pin.stage_version
+                elif final_version is not None:
+                    matching = version == final_version and version[:-1] == pin.stage_version[:-1]
+                else:
+                    matching = version[:-1] == pin.stage_version[:-1]
                 if (not matching or not stat.S_ISREG(marker.st_mode)
                         or linux_mount._fd_mount_id(marker_fd) != pin.mount_id):
                     return UsbCopyRecoveryReview("conflict", "usb_recovery_file_unattributed")
