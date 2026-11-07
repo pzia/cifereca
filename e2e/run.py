@@ -256,7 +256,7 @@ SCENARIOS = {
     "bnf-covers-1366": {
         "plugin": "provider.bnf-pret",
         "fixture": "search-filters",
-        "description": "P1 #4118 : 2 couvertures BnF visibles en Recherche et Détail GTK, une notice sans image ; transport HTTPX isolé.",
+        "description": "P1 #3104/#4118 : 2 couvertures BnF en Recherche, Détail et Mes emprunts GTK, une image absente ; transport HTTPX isolé.",
         "runner": "gtk-bnf-covers",
         "width": 1366,
     },
