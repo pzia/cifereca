@@ -335,7 +335,8 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
                                directory_stamp: tuple[int, int],
                                staging_directory_stamp: tuple[int, int],
                                staging_root_stamp: tuple[int, int],
-                               claimed_paths: frozenset[str]) -> Path:
+                               claimed_paths: frozenset[str],
+                               before_link: Any = None) -> Path:
     """Hardlink a verified staging inode atomically, with no replace path.
 
     Both directory descriptors pin the original physical locations. Even a
@@ -370,6 +371,10 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
             # Placement/other-owner claim. Never rebind that SQL path.
             if str(source_parent / candidate) in claimed_paths:
                 continue
+            # The durable, profile-scoped receipt precedes the hardlink.
+            # A killed process may later prove this exact inode and intent.
+            if before_link is not None:
+                before_link(source_parent / candidate, stage_fd)
             try:
                 os.link(staged.name, candidate, src_dir_fd=stage_fd,
                         dst_dir_fd=parent_fd, follow_symlinks=False)
@@ -394,7 +399,11 @@ def _publish_variant_exclusive(staged: Path, source_parent: Path, *,
                         or _variant_directory_stamp(source_parent) != directory_stamp):
                     raise _VariantConflict("Variante ou répertoire changé",
                                    code="artifact_variant_publish_race")
+                # A committed SQLite Placement must never outlive an
+                # unflushed hardlink directory entry on power loss.
+                os.fsync(parent_fd)
                 os.unlink(staged.name, dir_fd=stage_fd)
+                os.fsync(stage_fd)
                 return source_parent / candidate
             except Exception:
                 # The exclusive hardlink is our new entry; never touch a
@@ -797,8 +806,50 @@ class ArtifactExecutionBrokerImpl:
         claimed_paths = frozenset(
             str(row.get("path") or "") for row in self.service.storage.placements()
         )
+        from .core.derived_variant_recovery import (
+            write_pending_derived_receipt, register_pending_derived_receipt,
+        )
+
+        def attest_prelink(candidate: Path, stage_fd: int) -> None:
+            try:
+                receipt, receipt_sha256, receipt_stamp = write_pending_derived_receipt(
+                    path, candidate, stage_dir_fd=stage_fd,
+                    source_path=source_path,
+                    source_stamp=lease.source_stamp,
+                    source_artifact_id=source.artifact_id,
+                    source_sha256=source.sha256,
+                    source_placement_id=lease.source_placement_id,
+                    identity_id=lease.source_identity_id,
+                    output_sha256=actual_sha, output_size=actual_size,
+                    media_format=result.output_format.format
+                    or lease.output_format.format or suffix.lstrip("."),
+                    mime_type=result.output_format.media_type
+                    or lease.output_format.media_type,
+                    variant_kind=lease.variant_kind or "derived",
+                    transformer_id=transformer_plugin_id,
+                    transformer_version=self._version_for_plugin(transformer_plugin_id),
+                    profile_id=profile_plugin_id,
+                    profile_version=self._version_for_plugin(profile_plugin_id),
+                    options_fingerprint=options_fingerprint,
+                    book_id=source.book_id, warnings=result.warnings,
+                    facts=dict(result.facts),
+                )
+            except ValueError as error:
+                if str(error) != "derived_receipt_retention_capacity_exceeded":
+                    raise
+                raise _VariantConflict(
+                    "Capacité de reçus de publication atteinte",
+                    code="artifact_variant_receipt_capacity_exceeded",
+                ) from error
+            # Independent SQLite intent is durable BEFORE link publication.
+            # Receipt bytes alone never authorize a later derived OriginLink.
+            register_pending_derived_receipt(
+                self.service.storage, receipt, expected_sha256=receipt_sha256,
+            )
+
         final = _publish_variant_exclusive(
             path, source_path.parent, basename=stem + suffix,
+            before_link=attest_prelink,
             sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
             staging_directory_stamp=lease.staging_directory_stamp,
             staging_root_stamp=lease.staging_root_stamp,
@@ -859,6 +910,11 @@ class ArtifactExecutionBrokerImpl:
             identity_id=lease.source_identity_id,
         )
         if ref is None: raise RuntimeError("committed artifact disappeared")
+        # Preserve the fsynced receipt and its SQLite intent even on success.
+        # POSIX unlink cannot atomically compare-and-delete a named inode:
+        # concurrent profile writers could replace it after the final check.
+        # The supervised reviewer recognizes the exact derived OriginLink as
+        # already_committed. Retention policy remains deliberately explicit.
         return ref
 
     def abort_output(self, destination: Any) -> None:
