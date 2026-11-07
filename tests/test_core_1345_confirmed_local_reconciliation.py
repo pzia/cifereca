@@ -422,7 +422,7 @@ def test_missing_profile_is_not_created_as_a_side_effect(case, monkeypatch):
     root = case.tmp / "absent-profile"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(root / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(root / "data"))
-    with pytest.raises(repair.ReconciliationRejected, match="local_profile_unavailable"):
+    with pytest.raises(repair.ReconciliationRejected, match="legacy_reconciliation_retired"):
         repair.reconcile_existing_profile(**case.options)
     assert not root.exists()
 
