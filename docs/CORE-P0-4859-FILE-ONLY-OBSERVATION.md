@@ -23,11 +23,8 @@ est admissible pour la seule **preuve d'octets**.
   de fournisseur. Les archives et fichiers historiques ne sont jamais modifiés.
 
 Le point d'entrée offline `reconcile_existing_profile(file_only=True, ...)`
-appelle ce même opérateur avec une connexion SQLite sur la **base existante seulement**
-(`mode=rw`, sans création) et `PRAGMA query_only=ON` avant toute lecture en
-prévisualisation, puis `mode=rw` en confirmation explicite. La barrière SQL
-`query_only` empêche toute écriture même accidentelle de la prévisualisation,
-y compris en présence d'un journal WAL vivant ; aucun démarrage Core/Plugin,
+appelle ce même opérateur avec une connexion SQLite `mode=ro` en prévisualisation,
+puis `mode=rw` en confirmation explicite ; aucun démarrage Core/Plugin,
 aucun réseau. Le dispatch est opt-in et strictement booléen : il n'altère
 pas la sémantique existante de `reconcile_existing_profile`.
 
