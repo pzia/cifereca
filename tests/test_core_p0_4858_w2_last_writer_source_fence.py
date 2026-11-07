@@ -91,3 +91,34 @@ def test_w2_last_writer_cannot_override_another_borrowers_typed_source(tmp_path)
         assert storage.acquisitions(provider_id="kobo") == []
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("typed", (False, True))
+def test_w2_writer_without_session_callback_still_checks_canonical_source(
+    tmp_path, typed,
+):
+    """No callback is not permission to mutate an already typed edition."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        if typed:
+            _typed_source(storage)
+        row = {
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "alice", "account_id": "account-a",
+            "item_id": "edition", "status": "pending",
+        }
+        before = storage.backup_list("kobo")
+        context = (
+            pytest.raises(_KoboLegacySessionChanged, match="kobo_canonical_source_delivery_active")
+            if typed else _no_exception()
+        )
+        with context:
+            _guarded_kobo_legacy_put(SimpleNamespace(storage=storage), row, None)
+        assert storage.backup_list("kobo") == (before if typed else [storage.backup_get("kobo", "vault", "edition")])
+        if typed:
+            assert storage.entitlements(provider_id="kobo") == []
+            assert storage.acquisitions(provider_id="kobo") == []
+            assert storage.artifacts() == []
+            assert storage.placements() == []
+    finally:
+        storage.close()
