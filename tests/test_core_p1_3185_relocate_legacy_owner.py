@@ -83,7 +83,9 @@ def test_scoped_rename_changes_path_but_not_owner(tmp_path):
             original, target, identity_id="alice", provider_id="kobo",
         )
         assert _legacy(store)["identity_id"] == "alice"
-        assert _legacy(store)["local_path"] == str(target)
+        # The raw Kobo 0.7 path is preserved; a renamed physical Placement
+        # does not attest a fresh supplier right or rewrite its archive.
+        assert _legacy(store)["local_path"] == str(original)
         assert len(store.placements()) == 1
         assert store.placements()[0]["path"] == str(target)
         assert store.placements()[0]["identity_id"] == "alice"
