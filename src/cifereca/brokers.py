@@ -1025,8 +1025,10 @@ class SynchronizationBrokerImpl:
             or raw.get("requires_manifest_validation") is not True
             or raw.get("canonical_source") is not True
             or raw.get("historical_canonical_only") is not True
-            or raw.get("known_item_count") != 0
-            or raw.get("manifest_items") != 0
+            or type(raw.get("known_item_count")) is not int
+            or raw["known_item_count"] != 0
+            or type(raw.get("manifest_items")) is not int
+            or raw["manifest_items"] != 0
         ):
             return rejected("preview_unavailable")
         allowed = (
