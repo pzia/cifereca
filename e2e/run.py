@@ -621,6 +621,11 @@ def main() -> int:
                     phase = report_data.get("p1_774_phase")
                     if type(phase) is str and phase in allowed:
                         print("P1_774_CLOSED_FAILURE_STAGE=" + phase, flush=True)
+                    # Keep only a bounded numeric source line from our own
+                    # fixed synthetic probe. No traceback or path is exported.
+                    line = report_data.get("p1_774_probe_line")
+                    if type(line) is int and 1 <= line <= 1200:
+                        print("P1_774_PROBE_LINE=" + str(line), flush=True)
                     dimensions = report_data.get("p1_774_geometry")
                     if type(dimensions) is dict and set(dimensions) == {
                         "display_width", "display_height",
