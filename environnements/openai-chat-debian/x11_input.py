@@ -2,6 +2,18 @@
 import ctypes as C
 
 
+def _gtk_to_x11_offset(value: float, scale: int) -> int:
+    """Map GTK logical coordinates to physical X11 pixels.
+
+    XTranslateCoordinates returns a *physical* root origin while GTK4
+    compute_bounds / surface_transform are expressed in logical pixels.
+    XTEST always consumes physical screen pixels, including GDK_SCALE=2.
+    """
+    if type(scale) is not int or not 1 <= scale <= 4:
+        raise ValueError("invalid_gtk_x11_scale")
+    return round(value * scale)
+
+
 class X11Input:
     def __init__(self):
         self.x11 = C.CDLL("libX11.so.6")
@@ -74,11 +86,18 @@ class X11Input:
         ):
             raise RuntimeError("Could not translate X11 surface coordinates.")
         transform_x, transform_y = native.get_surface_transform()
-        # compute_bounds(native) describes the native widget allocation.
-        # Include its render offset inside the X11 surface. Subtracting it
-        # moves small targets outside their hit area on decorated windows.
-        x = round(origin_x.value + rect.get_x() + rect.get_width() / 2 + transform_x)
-        y = round(origin_y.value + rect.get_y() + rect.get_height() / 2 + transform_y)
+        # compute_bounds(native) and the surface transform are logical GTK
+        # coordinates. The X11 root origin is physical pixels, so apply
+        # the surface scale to offsets before sending XTEST pointer input.
+        # Include the render offset inside the surface to avoid missing small
+        # targets on decorated windows.
+        scale = int(widget.get_scale_factor())
+        x = origin_x.value + _gtk_to_x11_offset(
+            rect.get_x() + rect.get_width() / 2 + transform_x, scale,
+        )
+        y = origin_y.value + _gtk_to_x11_offset(
+            rect.get_y() + rect.get_height() / 2 + transform_y, scale,
+        )
         return x, y
 
     def resize_toplevel(self, window, width: int, height: int) -> None:
@@ -115,8 +134,8 @@ class X11Input:
 
         Gtk.Widget.compute_bounds(native) for a scrolled, nested button can
         diverge from its main-window hit test during GTK4 reallocation.
-        The audited window-local point is validated with Gtk.Widget.pick
-        before this conversion, then dispatched as genuine XTEST input.
+        The audited window-local *logical* point is validated with
+        Gtk.Widget.pick before conversion to *physical* XTEST pixels.
         """
         from math import isfinite
         width, height = window.get_width(), window.get_height()
@@ -129,8 +148,9 @@ class X11Input:
         ):
             raise RuntimeError("XTEST target outside allocated GTK toplevel")
         center_x, center_y = self.widget_point(window)
-        screen_x = round(center_x + x - width / 2)
-        screen_y = round(center_y + y - height / 2)
+        scale = int(window.get_scale_factor())
+        screen_x = center_x + _gtk_to_x11_offset(x - width / 2, scale)
+        screen_y = center_y + _gtk_to_x11_offset(y - height / 2, scale)
         if screen_x < 0 or screen_y < 0:
             raise RuntimeError("XTEST window target has no on-screen coordinates")
         return screen_x, screen_y
