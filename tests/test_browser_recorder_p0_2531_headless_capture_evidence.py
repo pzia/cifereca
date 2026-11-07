@@ -40,12 +40,14 @@ def test_loss_is_separate_from_capture_usefulness_without_private_values(
     monkeypatch.syspath_prepend(str(PLUGIN))
     from browser_recorder_http import PrivateHttpTrace
 
+    # Non-auth API path: deliberately failing body() still records read loss.
+    # Authentication routes intentionally skip the read entirely (#4932).
     class Request:
         method = "POST"
         resource_type = "fetch"
 
         def __init__(self):
-            self.url = "https://fictional.example.org/login?token=PRIVATE_URL"
+            self.url = "https://fictional.example.org/catalogue?token=PRIVATE_URL"
             self.headers = {"content-type": "application/json"}
             self._post_reads = 0
             self._response_bytes = 18
