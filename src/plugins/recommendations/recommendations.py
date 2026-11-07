@@ -1660,7 +1660,9 @@ class UxRecommendationsView:
         self._update_view_summary(provisional=True)
         return False
 
-    def _update_view_summary(self, *, provisional: bool) -> None:
+    def _update_view_summary(
+        self, *, provisional: bool, preserve_unfiltered: bool = False,
+    ) -> None:
         if getattr(self, "_disposed", False):
             return
         total = len(self._ranked)
@@ -1705,6 +1707,14 @@ class UxRecommendationsView:
                     filters.extend(labels)
             except Exception:
                 pass
+
+        # A completed calculation already has a richer unfiltered summary
+        # (profile books, signals and partial provider failures). Preserve it
+        # unless the actual local view differs or a facet is actively set.
+        # Otherwise a recalculation with retained filters misleadingly
+        # announces the *total* as if every recommendation were visible.
+        if preserve_unfiltered and not provisional and not filters and visible == total:
+            return
 
         if filters or visible != total:
             parts = [f"{visible} sur {total}"]
@@ -2493,6 +2503,10 @@ class UxRecommendationsView:
             else:
                 self._summary.set_label(f"{len(result.ranked)} recommandations à partir de {result.books_count} livres et {len(result.queries)} signaux{suffix}")
         self._render(preserve_summary=True)
+        if self._ranked:
+            self._update_view_summary(
+                provisional=False, preserve_unfiltered=True,
+            )
         if empty_reason is not None:
             self._summary.set_label(empty_reason)
             if not self._ranked:
