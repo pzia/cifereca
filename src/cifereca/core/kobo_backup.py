@@ -42,6 +42,41 @@ def _guarded_kobo_legacy_put(self, item, source_current):
     self.storage.backup_put(item)
 
 
+def _require_kobo_legacy_delivery_scope(
+    result: Any, *, credential_id: str, account_id: str | None,
+    product_id: str, revision_id: str | None,
+) -> None:
+    """A completed 0.7 GET must not be recorded for another borrower/book.
+
+    The old executor may omit a returned account ID; the live pinned session
+    remains the borrower. Explicit contradictory coordinates, including the
+    empty primary Kobo account, must instead abort *without* completing the
+    acquiring checkpoint. Never normalize or coerce a foreign source.
+    """
+    expected = (
+        ("provider_id", "kobo"),
+        ("credential_id", credential_id),
+        ("item_id", product_id),
+    )
+    for field, value in expected:
+        observed = getattr(result, field, None)
+        if observed is not None and (type(observed) is not str or observed != value):
+            raise _KoboLegacySessionChanged("kobo_legacy_delivery_scope_mismatch")
+    borrower = getattr(result, "account_id", None)
+    if borrower is not None and (
+        type(borrower) is not str or borrower != account_id
+    ):
+        raise _KoboLegacySessionChanged("kobo_legacy_delivery_scope_mismatch")
+    # W2 handles purchases only; a loan result cannot be relabeled 'owned'.
+    if getattr(result, "loan_id", None) is not None:
+        raise _KoboLegacySessionChanged("kobo_legacy_delivery_scope_mismatch")
+    metadata = getattr(result, "metadata", None)
+    if type(metadata) is dict and metadata.get("revision_id") is not None:
+        if (type(metadata["revision_id"]) is not str
+                or metadata["revision_id"] != revision_id):
+            raise _KoboLegacySessionChanged("kobo_legacy_delivery_scope_mismatch")
+
+
 class _ManifestItem(NamedTuple):
     revision_id: str | None
     title: str
@@ -3137,6 +3172,17 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         if source_current is not None and not source_current():
             raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
         result = self._execute_kobo_acquisition(search_item, session_target_dir)
+        # The provider executor has already performed its GET. On account,
+        # edition, revision or session mismatch, preserve the acquiring
+        # checkpoint; NEVER attribute its bytes to the manifest borrower or
+        # retry an opaque download automatically.
+        if source_current is not None and not source_current():
+            raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
+        _require_kobo_legacy_delivery_scope(
+            result, credential_id=session.credential_id,
+            account_id=account_id, product_id=product_id,
+            revision_id=revision_id,
+        )
         artifact = result.path
         if artifact is None or not artifact.is_file():
             raise ProviderConfigurationError("Acquisition Kobo sans fichier local")
@@ -3146,7 +3192,7 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
         backup_put({
             **base_record,
-            "account_id": result.account_id or account_id,
+            "account_id": account_id,
             "format": observed["format"],
             "status": "complete",
             "local_path": str(artifact),
