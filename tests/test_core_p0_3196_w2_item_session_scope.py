@@ -99,6 +99,7 @@ def test_rebind_at_delivery_keeps_interrupted_receipt_without_false_complete(
     service = _service(tmp_path, manifest=[_manifest_row()])
     session = service._sessions[service._session_key("kobo", "vault-1")]
     calls = []
+    original_accounts = tuple(session.accounts)
     path = tmp_path / "synthetic-download.epub"
 
     def rebind():
@@ -106,9 +107,11 @@ def test_rebind_at_delivery_keeps_interrupted_receipt_without_false_complete(
             replace(session.accounts[0], unique_id="other-borrower")
         ]
 
-    def on_progress(event):
-        if phase == "before_get" and event.get("event") == "acquiring":
+    def normalize_and_rebind(_raw, **_kwargs):
+        # Normalization runs after the acquiring receipt and before GET.
+        if phase == "before_get":
             rebind()
+        return SimpleNamespace(id="book-1")
 
     def fake_delivery(*_args, **_kwargs):
         calls.append("GET")
@@ -120,7 +123,7 @@ def test_rebind_at_delivery_keeps_interrupted_receipt_without_false_complete(
     # Supply one here so the test reaches the actual pre- and post-GET fence.
     monkeypatch.setattr(
         session, "normalize_item",
-        lambda _raw, **_kw: SimpleNamespace(id="book-1"),
+        normalize_and_rebind,
         raising=False,
     )
     monkeypatch.setattr(service, "_execute_kobo_acquisition", fake_delivery)
@@ -129,7 +132,7 @@ def test_rebind_at_delivery_keeps_interrupted_receipt_without_false_complete(
         lambda _path: {"format": "EPUB", "size": 42, "sha256": "a" * 64},
     )
     try:
-        summary = service.sync_kobo_backup_account("vault-1", progress=on_progress)
+        summary = service.sync_kobo_backup_account("vault-1")
         assert summary["status"] == "aborted"
         assert summary["downloaded"] == 0
         assert calls == ([] if phase == "before_get" else ["GET"])
