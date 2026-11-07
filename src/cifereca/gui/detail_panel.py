@@ -608,6 +608,12 @@ class DetailPanel(Gtk.Box):
                 if getattr(button, "_cifereca_action_id", "") not in old_ids
             ]
             self._clear_actions()
+            # This is only a cached-extension update: the same base Search
+            # detail retains its buttons. Re-admit those exact live buttons
+            # after revoking the discarded cached ones; a full book redraw
+            # never enters this path and keeps every old button revoked.
+            for button in kept:
+                button._cifereca_action_context_revoked = False
             self._actions(kept)
         buttons = []
         for contribution in contributions:
