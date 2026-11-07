@@ -201,3 +201,199 @@ def test_exact_claim_does_not_confirm_other_edition_collection_or_borrower(
     assert read(service, account, notice).loan == (
         "confirmed" if altered != "borrower" else "unknown"
     )
+
+
+
+@pytest.mark.parametrize("mutation", [
+    "disabled", "missing", "duplicate", "mixed_duplicate", "malformed",
+])
+def test_disabled_or_ambiguous_lender_connection_never_reads_private_claim(
+    setup, monkeypatch, mutation,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    connections = service.storage.provider_connections
+    if mutation == "disabled":
+        service.storage.provider_connection_put({
+            "identity_id": "alex", "provider_id": "paris",
+            "credential_id": "paris-lender", "label": "Synthetic",
+            "enabled": False, "metadata": {},
+        })
+    elif mutation == "missing":
+        monkeypatch.setattr(
+            service.storage, "provider_connections", lambda **_kw: [],
+        )
+    elif mutation in ("duplicate", "mixed_duplicate"):
+        original = connections(identity_id="alex")
+        exact = next(row for row in original
+                     if row.get("credential_id") == "paris-lender")
+        duplicate = dict(exact)
+        if mutation == "mixed_duplicate":
+            duplicate["enabled"] = False
+        monkeypatch.setattr(
+            service.storage, "provider_connections",
+            lambda **_kw: [*original, duplicate],
+        )
+    else:
+        monkeypatch.setattr(
+            service.storage, "provider_connections", lambda **_kw: (),
+        )
+    # A's UI must not even inspect B's durable at-most-once receipt if B's
+    # registered connection is no longer uniquely enabled.
+    monkeypatch.setattr(
+        service.storage, "metadata_get",
+        lambda *_args: pytest.fail("private lender metadata read after revocation"),
+    )
+    monkeypatch.setattr(
+        service.storage, "loan_borrow_state",
+        lambda *_args: pytest.fail("private lender receipt read after revocation"),
+    )
+    result = read(service, account, notice)
+    assert result == CrossProfileBorrowProgress(
+        "unknown", "unavailable", "blocked", "lender_scope_unverified",
+    )
+
+
+def test_reenabled_exact_lender_connection_can_again_observe_spent_receipt(setup):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    assert read(service, account, notice).loan == "confirmed"
+    service.storage.provider_connection_put({
+        "identity_id": "alex", "provider_id": "paris",
+        "credential_id": "paris-lender", "label": "Synthetic",
+        "enabled": False, "metadata": {},
+    })
+    assert read(service, account, notice).reason_code == "lender_scope_unverified"
+    service.storage.provider_connection_put({
+        "identity_id": "alex", "provider_id": "paris",
+        "credential_id": "paris-lender", "label": "Synthetic",
+        "enabled": True, "metadata": {},
+    })
+    result = read(service, account, notice)
+    assert result.loan == "confirmed"
+    assert result.transfer == "blocked" and result.retry_borrow is False
+
+
+@pytest.mark.parametrize("phase", ["metadata", "checkpoint"])
+def test_lender_binding_disabled_during_receipt_reads_never_publishes(
+    setup, monkeypatch, phase,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    getter_name = "metadata_get" if phase == "metadata" else "loan_borrow_state"
+    original = getattr(service.storage, getter_name)
+
+    def revoke_while_reading(*args):
+        value = original(*args)
+        service.storage.provider_connection_put({
+            "identity_id": "alex", "provider_id": "paris",
+            "credential_id": "paris-lender", "label": "Synthetic",
+            "enabled": False, "metadata": {},
+        })
+        return value
+
+    monkeypatch.setattr(service.storage, getter_name, revoke_while_reading)
+    result = read(service, account, notice)
+    assert result.loan == "unknown"
+    assert result.transfer == "blocked"
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.executable is False and result.retry_borrow is False
+    # Historical lender claims remain spent: no second borrow authorization.
+    assert service.storage.loan_borrow_claim_once(
+        borrow_claim_key(account, notice), "replay-forbidden",
+    )[0] is False
+
+
+
+def test_lender_claim_status_requires_the_current_requesting_identity(
+    setup, monkeypatch,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    # The requester ID alone is not a permission to show B's receipt while
+    # a different profile is currently selected in the Core service.
+    service.current_identity = service.identity_by_id("alex")
+    monkeypatch.setattr(
+        service.storage, "metadata_get",
+        lambda *_args: pytest.fail("wrong active profile read lender claim"),
+    )
+    result = read(service, account, notice, requester="default")
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.loan == "unknown" and result.transfer == "blocked"
+
+
+def test_switching_active_profile_during_claim_read_revokes_observation(
+    setup, monkeypatch,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    original = service.storage.metadata_get
+
+    def switch_while_reading(*args):
+        receipt = original(*args)
+        service.current_identity = service.identity_by_id("alex")
+        return receipt
+
+    monkeypatch.setattr(service.storage, "metadata_get", switch_while_reading)
+    verdict = read(service, account, notice, requester="default")
+    assert verdict.reason_code == "lender_scope_unverified"
+    assert verdict.loan == "unknown" and verdict.transfer == "blocked"
+    assert verdict.retry_borrow is verdict.executable is False
+
+
+
+@pytest.mark.parametrize("epoch", ["_account_context_epoch", "_source_context_epoch"])
+def test_lender_receipt_observation_rejects_aba_context_or_source_epoch(
+    setup, monkeypatch, epoch,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    original = service.storage.metadata_get
+
+    def bump_epoch_during_read(*args):
+        value = original(*args)
+        # An A -> B -> A switch may restore the same identity scalar.
+        # A source disconnect/reconnect can restore the same connection ID.
+        setattr(service, epoch, getattr(service, epoch) + 2)
+        return value
+
+    monkeypatch.setattr(
+        service.storage, "metadata_get", bump_epoch_during_read,
+    )
+    result = read(service, account, notice)
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.loan == "unknown"
+    assert result.transfer == "blocked"
+    assert result.retry_borrow is result.executable is False
+
+
+
+@pytest.mark.parametrize("change", ["reader_epoch", "source_epoch", "reader_identity"])
+def test_lender_binding_reader_side_effect_does_not_publish_old_claim(
+    setup, monkeypatch, change,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    original = service.storage.provider_connections
+
+    def changed_during_binding(*args, **kwargs):
+        rows = original(*args, **kwargs)
+        if change == "reader_epoch":
+            service._account_context_epoch += 2
+        elif change == "source_epoch":
+            service._source_context_epoch += 2
+        else:
+            service.current_identity = service.identity_by_id("alex")
+        return rows
+
+    monkeypatch.setattr(
+        service.storage, "provider_connections", changed_during_binding,
+    )
+    monkeypatch.setattr(
+        service.storage, "metadata_get",
+        lambda *_args: pytest.fail("private claim after binding switched"),
+    )
+    result = read(service, account, notice)
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.loan == "unknown"
+    assert result.transfer == "blocked" and result.retry_borrow is False
