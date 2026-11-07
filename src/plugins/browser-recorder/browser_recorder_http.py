@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 import re
 from threading import Event, Lock
 from time import monotonic
@@ -113,6 +114,91 @@ def _safe_http_url(url: str) -> str:
         return urlunsplit((parts.scheme, parts.netloc, path, query, ""))
     except (TypeError, ValueError):
         return ""
+
+
+# Body review still exists for ordinary IDs, but common authentication values
+# must be irreversibly replaced *before* assigning to PrivateExchange and
+# before the encrypted-vault snapshot or either ZIP can observe them.
+_SECRET_BODY_KEY = re.compile(
+    r"(?:^|[_\-.])(?:password|passwd|pwd|passphrase|secret|token|"
+    r"access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|"
+    r"authorization|csrf|xsrf|authenticity[_-]?token|"
+    r"samlresponse|samlrequest|assertion|ticket|otp|totp|mfa|"
+    r"session[_-]?key|session[_-]?token|client[_-]?secret)"
+    r"(?:$|[_\-.])", re.IGNORECASE,
+)
+_HTML_SECRET_INPUT = re.compile(
+    r"<input\b[^>]{0,1024}(?:type\s*=\s*[\"']?password|"
+    r"name\s*=\s*[\"']?(?:csrf|xsrf|token|password|secret))",
+    re.IGNORECASE,
+)
+_PLAIN_CREDENTIAL = re.compile(
+    r"(?i)(?:password|passwd|secret|access[_-]?token|"
+    r"refresh[_-]?token|samlresponse|authorization|"
+    r"csrf|otp|totp|mfa|bearer)\s*[:=]"
+)
+
+
+def _safe_body_text(value: str, mime: str) -> str | None:
+    """Redact known credentials in bounded text without publishing raw bytes.
+
+    Unparseable credential-like documents and HTML login forms are omitted
+    rather than copied verbatim into the trace. Other private identifiers
+    remain under the existing explicit review/export workflow.
+    """
+    if mime == "application/x-www-form-urlencoded":
+        try:
+            fields = parse_qsl(value, keep_blank_values=True, max_num_fields=256)
+        except ValueError:
+            return None
+        if any(_SECRET_BODY_KEY.search(key) for key, _ in fields):
+            if any(not _SAFE_QUERY_NAME.fullmatch(key) for key, _ in fields):
+                return None
+            return "&".join(quote(key, safe="") + "=REDACTED"
+                            for key, _ in fields)
+        return value
+    if mime in {"application/json", "text/json"} or mime.endswith("+json"):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError, RecursionError):
+            return None if _PLAIN_CREDENTIAL.search(value) else value
+
+        changed = [False]
+
+        def scrub(item, depth=0):
+            if depth > 16:
+                raise ValueError("nested_credentials_unverifiable")
+            if isinstance(item, dict):
+                replacement = {}
+                for key, child in item.items():
+                    if type(key) is not str:
+                        raise ValueError("invalid_json_key")
+                    if _SECRET_BODY_KEY.search(key):
+                        replacement[key] = "REDACTED"
+                        changed[0] = True
+                    else:
+                        replacement[key] = scrub(child, depth + 1)
+                return replacement
+            if isinstance(item, list):
+                return [scrub(child, depth + 1) for child in item]
+            if type(item) is str and re.search(r"\b(?:Bearer|Basic)\s+\S+", item):
+                changed[0] = True
+                return "REDACTED"
+            return item
+
+        try:
+            filtered = scrub(parsed)
+            return (json.dumps(filtered, ensure_ascii=False, separators=(",", ":"))
+                    if changed[0] else value)
+        except (TypeError, ValueError, RecursionError):
+            return None
+    if mime == "text/html":
+        if _HTML_SECRET_INPUT.search(value) or _PLAIN_CREDENTIAL.search(value):
+            return None
+    elif mime in {"text/plain", "application/xml", "text/xml"} or mime.endswith("+xml"):
+        if _PLAIN_CREDENTIAL.search(value):
+            return None
+    return value
 
 
 def _mime(headers: dict) -> str:
@@ -621,13 +707,18 @@ class PrivateHttpTrace:
                     if (type(raw) is bytes and len(raw) == actual_request
                             and (request_length is None
                                  or len(raw) <= request_length)):
-                        entry.request_body = self._take_text(raw)
+                        decoded = self._take_text(raw)
+                        entry.request_body = (
+                            _safe_body_text(decoded, _mime(entry.request_headers))
+                            if decoded is not None else None
+                        )
                         entry.request_body_state = (
                             "captured" if entry.request_body is not None
                             else "body_omitted"
                         )
                         entry.request_body_reason = (
                             "captured" if entry.request_body is not None
+                            else "auth_redacted" if decoded is not None
                             else "text_invalid_or_limit"
                         )
                     else:
@@ -712,7 +803,11 @@ class PrivateHttpTrace:
                 entry.response_body_reason = "measured_mismatch"
                 self.omitted["oversize"] += 1
             else:
-                entry.response_body = self._take_text(raw)
+                decoded = self._take_text(raw)
+                entry.response_body = (
+                    _safe_body_text(decoded, entry.mime)
+                    if decoded is not None else None
+                )
                 if static and entry.response_body is not None:
                     self._static_body_remaining -= len(raw)
                 entry.response_body_state = (
@@ -720,6 +815,7 @@ class PrivateHttpTrace:
                 )
                 entry.response_body_reason = (
                     "captured" if entry.response_body is not None
+                    else "auth_redacted" if decoded is not None
                     else "text_invalid_or_limit"
                 )
         except (AttributeError, TypeError, ValueError):
