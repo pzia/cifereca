@@ -12,7 +12,7 @@ import re
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 
 def _safe_https_get(candidate: dict[str, Any]) -> bool:
@@ -163,6 +163,57 @@ def _candidate_url_relation(urls: list[str]) -> str:
         return "same_host_path_raw_encoding_difference"
     except (ValueError, TypeError, AttributeError):
         return "uncomparable"
+
+
+def _equivalent_signed_kdrm_candidates(candidates: object) -> bool:
+    """Allow FIRST of two syntactically equivalent, fully declared Kobo routes.
+
+    URLs are *capabilities*, so only one differing downloadToken on the same
+    HTTPS endpoint can be ignored. Everything else (scope, HTTP method, DRM,
+    nested Kobo platform/profile, format, headers, timestamps and unknown
+    extension fields) must match exactly. This is not a byte-equivalence
+    assertion and must never trigger a second GET as fallback.
+    """
+    if type(candidates) is not list or len(candidates) != 2:
+        return False
+    first, second = candidates
+    if type(first) is not dict or type(second) is not dict:
+        return False
+    if not all(
+        row.get("handling") == "kobo_kdrm"
+        and _safe_https_get(row)
+        and type(row.get("url")) is str
+        for row in (first, second)
+    ):
+        return False
+    if (
+        {k: v for k, v in first.items() if k != "url"}
+        != {k: v for k, v in second.items() if k != "url"}
+    ):
+        return False
+    try:
+        a, b = urlsplit(first["url"]), urlsplit(second["url"])
+        if (
+            (a.scheme, a.netloc, a.path, a.fragment)
+            != (b.scheme, b.netloc, b.path, b.fragment)
+            or a.fragment or b.fragment
+        ):
+            return False
+        qa = parse_qsl(a.query, keep_blank_values=True)
+        qb = parse_qsl(b.query, keep_blank_values=True)
+        if (
+            len(qa) != len(qb)
+            or [k for k, _ in qa] != [k for k, _ in qb]
+            or sum(k == "downloadToken" for k, _ in qa) != 1
+        ):
+            return False
+        # Only the opaque token may vary, never any independent query setting.
+        return all(
+            x == y for (key, x), (_, y) in zip(qa, qb)
+            if key != "downloadToken"
+        )
+    except (TypeError, ValueError, AttributeError):
+        return False
 
 
 def exact_kobo_offer_id(
@@ -558,6 +609,20 @@ def exact_kobo_offer_id(
             eligible, eligible_urls = [chosen], [url]
             if diagnostic is not None:
                 diagnostic["candidate_selection"] = "unique_epub_preferred"
+    # #4640 K3 owner-approved rule: both *fully eligible* KDRM siblings
+    # have identical fields except one opaque signed downloadToken, on the
+    # exact same HTTPS endpoint. This is NOT a generic first-of-N or
+    # same-format preference: unlike K1 plain EPUB/PDF it requires structural
+    # equality of every other field including platform, profile and headers.
+    if (
+        len(candidates) == 2 and len(eligible) == 2
+        and eligible[0] == eligible[1]
+        and _equivalent_signed_kdrm_candidates(candidates)
+    ):
+        eligible, eligible_urls = eligible[:1], eligible_urls[:1]
+        if diagnostic is not None:
+            diagnostic["candidate_selection"] = "equivalent_signed_first"
+
     # Multiple independent routes remain ambiguous.
     if len(eligible) != 1:
         if diagnostic is not None:
