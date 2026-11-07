@@ -106,9 +106,9 @@ def test_candidate_scope_conflict_does_not_report_partial_counts():
 
 
 @pytest.mark.parametrize(("media_format", "reported"), [
-    ("unrecognized-format", "other"), ("unknown", "unknown"), ("FLEPUB", "flepub"),
+    ("unrecognized-format", "other"), ("FLEPUB", "flepub"),
 ])
-def test_observed_non_epub_flepub_pair_is_not_inferred_as_epub(media_format, reported):
+def test_unapproved_non_epub_flepub_pair_is_not_inferred_as_epub(media_format, reported):
     candidate = kdrm_candidate("book-1")
     candidate["media_format"] = media_format
     candidate["source_format"] = "flepub"
@@ -219,7 +219,9 @@ def test_k2_kvault_flepub_alias_diagnostic_is_closed_and_not_an_admission(
     assert diagnostic["candidate_kvault_format_alias"] == expected_alias
     assert "PRIVATE-API-TOKEN" not in str(diagnostic)
     assert "FLEPUB" not in str(diagnostic)
-    if expected_media == "normalized_epub":
+    if expected_media in {"normalized_epub", "media_unknown"}:
+        # The raw diagnostic stays UNKNOWN. The explicit owner decision
+        # changes only the local effective KDRM media presentation.
         assert offer.startswith("kobo.runtime:")
     else:
         assert offer == ""
