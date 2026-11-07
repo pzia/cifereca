@@ -26,6 +26,10 @@ STAMP = "2026-11-07T08:00:00+00:00"
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     service = _service(tmp_path)
+    service.config.set("providers.accounts", [{
+        "provider": "kobo", "id": "vault-1", "identity_id": "alice",
+        "label": "Synthetic Kobo", "enabled": True, "credentials": {},
+    }])
     session = service._sessions[service._session_key("kobo", "vault-1")]
     session._accounts[0].identity_id = "default"
     # V1 complete callable ABI without invoking any of these methods on
@@ -119,7 +123,7 @@ def test_targeted_bound_account_passes_generic_canonical_A_read(rig, monkeypatch
 @pytest.mark.parametrize("tamper", [
     "disabled_or_rebound_sql", "foreign_live_profile", "foreign_borrower",
     "duplicate_registered_account", "changed_session_during_admission",
-    "inplace_borrower_change_during_sql",
+    "inplace_borrower_change_during_sql", "config_owner_reassigned",
 ])
 def test_targeted_bind_refuses_ambiguous_or_unowned_source_without_core_mutation(
     rig, monkeypatch, tamper,
@@ -140,6 +144,14 @@ def test_targeted_bind_refuses_ambiguous_or_unowned_source_without_core_mutation
             replace(session.accounts[0], identity_id="alice"),
             replace(session.accounts[0], identity_id="alice"),
         ]
+    elif tamper == "config_owner_reassigned":
+        # The provider is still on the same credential, but the profile
+        # configuration now explicitly points to B while SQL still points A.
+        # Neither owner may inherit the other's old source-wide consent.
+        service.config.set("providers.accounts", [{
+            "provider": "kobo", "id": "vault-1", "identity_id": "bob",
+            "label": "Synthetic Kobo", "enabled": True, "credentials": {},
+        }])
     else:
         original = service.storage.provider_scope_account_bound
         def switched(**kw):
