@@ -238,12 +238,26 @@ def main():
         query.provider.set_values(())
         query.types.buttons["pdf"].set_active(True)
         assert store.get_n_items() == 1 and store.get_item(0).title == "Livre B"
+        # #774/#3687: assert the *real GTK* counter follows the same Core
+        # local document facet as the rows, without another recommendation
+        # calculation or provider search.
+        assert query.active_document_labels() == ("PDF",)
+        assert "1 sur 3" in view._summary.get_text()
+        assert "PDF" in view._summary.get_text()
         query.types.set_values(())
+        assert query.active_document_labels() == ()
+        assert store.get_n_items() == 3
+        assert "PDF" not in view._summary.get_text()
         query.scope.set_selected(1)
         assert store.get_n_items() == 1 and store.get_item(0).title == "Livre C"
+        assert query.active_document_labels() == ("Type · Physique",)
+        assert "Type · Physique" in view._summary.get_text()
         query.scope.set_selected(0)
+        assert query.active_document_labels() == ()
+        assert "Type · Physique" not in view._summary.get_text()
         assert view._generation == generation and not state["searches"]
         report["checks"]["shared_document_filters_are_local"] = True
+        report["checks"]["shared_document_counter_reversible_gtk"] = True
         assert store.get_n_items() == 3
         view._ranked.pop()
         view._reload_document_choices()
