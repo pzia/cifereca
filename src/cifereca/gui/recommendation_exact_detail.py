@@ -207,8 +207,27 @@ def present_loaded_search_detail_in_place(
         )
 
     def failed(_error: BaseException) -> None:
-        if (source_current() and is_current() and _view_mapped(view)):
-            window.toast("Disponibilités indisponibles pour cette notice.", 5)
+        # A canceled/obsolete lookup is not an availability failure; never
+        # replace a newer recommendation selection with its old book detail.
+        from ..plugin_api import Cancelled
+        if isinstance(_error, Cancelled):
+            return
+        if (not source_current() or not loaded_facts_current()
+                or not _view_mapped(view) or not is_current()):
+            return
+        if known_source:
+            current = _known_item(window, coords)
+            if current is None or current[1] != known_snapshot:
+                return
+        elif _loaded_item(window, coords) is not item:
+            return
+        # Same Search fallback when holdings cannot be refreshed: documentary
+        # notice + existing Core local/download actions, availability unverified.
+        # Do not project a fake ItemDetail or expose raw provider errors.
+        fallback = getattr(view, "show_existing_search_unavailable", None)
+        if callable(fallback):
+            fallback(item, context_sections=context_sections)
+        window.toast("Disponibilités indisponibles pour cette notice.", 5)
 
     try:
         window.runner.submit(

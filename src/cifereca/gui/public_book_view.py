@@ -143,16 +143,33 @@ class PublicBookMasterDetailView:
         from the recommendation as *additional* read-only fields; none may
         influence a borrowing or acquisition decision.
         """
-        from ..book_detail_metadata import safe_detail_value
-        from ..plugin_api.models import DetailField, DetailSection
-
         panel = self._page.detail
         panel.show_item_detail(item, detail)
-        # Search appends these Core-admitted local/open/send/owned actions
-        # after the same detail renderer. Keep that policy and its execution
-        # guards shared instead of rebuilding actions in Recommendations.
+        # Search appends these same Core local/open/send/owned actions after
+        # the same renderer. Rights remain with the common controller.
         from .query_model import result_row
         self._window._add_local_book_actions(panel, result_row(item))
+        self._append_recommendation_context(panel, context_sections)
+
+    def show_existing_search_unavailable(
+        self, item, *, context_sections=(),
+    ) -> None:
+        """Match Search's non-mutating detail fallback after holdings failure.
+
+        Only the exact-detail Core port invokes this after the user's click
+        and a fresh identity/source/selection lease check. Availability is
+        explicitly unverified; local/owned actions reuse Search's admission.
+        """
+        panel = self._page.detail
+        panel.show_search(item, loading=False)
+        from .query_model import result_row
+        self._window._add_local_book_actions(panel, result_row(item))
+        self._append_recommendation_context(panel, context_sections)
+
+    def _append_recommendation_context(self, panel, context_sections) -> None:
+        """Read-only recommendation explanations, identical in both states."""
+        from ..book_detail_metadata import safe_detail_value
+        from ..plugin_api.models import DetailField, DetailSection
         for section in context_sections[:16]:
             if type(section) is not DetailSection:
                 continue

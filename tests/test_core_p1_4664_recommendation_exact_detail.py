@@ -187,7 +187,7 @@ def test_core_panel_method_calls_canonical_search_renderer():
                   and x.name == "show_existing_search_detail")
     body = ast.unparse(method)
     assert "panel.show_item_detail(item, detail)" in body
-    assert "panel._group" in body
+    assert "self._append_recommendation_context(panel, context_sections)" in body
     assert "borrow_search_item" not in body
     assert "download_direct_item" not in body
 
