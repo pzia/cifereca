@@ -1641,6 +1641,22 @@ class LibraryService:
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
+        if (item.source_provider == "numilog"
+                and item.source_credential == "__public__"
+                and item.scenario == "NUMILOG_PUBLIC"
+                and item.source_collection == "public_catalog"):
+            # The public listing is already descriptive and has no borrower
+            # session. Never re-route a public record to B's MesLivres.
+            return ItemDetail(
+                record_id=item.record_id, docbase=item.docbase,
+                title=item.title, author=item.author,
+                type=item.type, year=item.published_at,
+                thumbnail_url=item.thumbnail_url,
+                availability_status="unknown",
+                availability_label="Catalogue public · achat non attesté",
+                holdings=[], source_provider="numilog",
+                source_credential="__public__",
+            )
         # An authenticated Paris catalogue may be browsed from another local
         # profile, but GetRecord/holdings may contain borrower-specific
         # CanLoan or availability. Never call B's account or reuse a cached
