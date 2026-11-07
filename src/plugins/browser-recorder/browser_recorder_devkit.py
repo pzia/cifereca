@@ -138,8 +138,11 @@ pas les vrais endpoints. Un corps omis ne décrit pas un schéma complet.
 - Utiliser `PluginContext.broker(...)` pour les dépendances disponibles :
   tâches/annulation, cache, transport, acquisition, diagnostics ; vérifier
   les Protocols correspondants dans les sources, ne pas deviner d'API privée.
-- N'émettre que des diagnostics expurgés, avec codes fermés ; jamais de
-  contenu HTTP privé, compte, livre ou ACSM dans logs et tests publics.
+- Appliquer le contrat de journalisation du Core : le journal brut local et les
+  diagnostics publics ont des responsabilités différentes. Les projections
+  publiques doivent rester bornées ; aucune trace HTTP privée ni credential
+  dans les fixtures, la CI ou un export non explicitement autorisé. Consulter
+  le guide PROVIDER-DEVELOPMENT.md et LOGGING-CONTRACT.md du dépôt.
 - Tester recherche/détail, erreurs 401/403/429, couverture des champs,
   pagination, auth consentie, annulation et non-rejeu des actions sensibles.
 - Valider le manifeste via l'outil officiel de packaging du dépôt cible et
