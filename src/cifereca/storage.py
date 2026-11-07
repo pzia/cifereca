@@ -2938,6 +2938,26 @@ class Storage:
             ).fetchone()
         return str(actual[0] if actual else connection_id)
 
+    def provider_connection_enabled(
+        self, provider_id: str, credential_id: str,
+    ) -> bool | None:
+        """Return the exact persisted connection switch; None means unregistered.
+
+        Read-only and credential-scoped. An absent connection is not proof
+        of permission; callers must still enforce their existing source
+        and user-identity boundaries.
+        """
+        if (type(provider_id) is not str or type(credential_id) is not str
+                or not provider_id or not credential_id):
+            return False
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT enabled FROM provider_connections "
+                "WHERE provider_id=? AND credential_id=? LIMIT 1",
+                (provider_id, credential_id),
+            ).fetchone()
+        return None if row is None else row[0] == 1
+
     def provider_connections(self, *, identity_id: str | None = None) -> list[dict[str, Any]]:
         columns = ["connection_id", "identity_id", "provider_id", "credential_id", "label", "enabled", "metadata_json", "created_at", "updated_at"]
         sql = "SELECT " + ",".join(columns) + " FROM provider_connections"
