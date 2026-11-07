@@ -1,0 +1,32 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.storage.usb",
+    "version": "1.0.0",
+    "name": "Stockage USB",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4.6,<2"
+  },
+  "plugins": [
+    {
+      "id": "storage.usb",
+      "type": "storage.target",
+      "version": "1.0.0",
+      "entrypoint": "cifereca_storage_usb:PLUGIN",
+      "display_name": "Stockage USB",
+      "description": "Prépare les octets d’une copie USB dans un fichier temporaire contrôlé par le Core.",
+      "help_text": "Utilisé par le parcours supervisé Liseuses. Le Core vérifie le volume, les droits et la confirmation, puis contrôle la publication du fichier.",
+      "enabled_by_default": true,
+      "priority": 100,
+      "instantiation": "singleton_public",
+      "requires": [],
+      "recommends": [],
+      "capabilities": [
+        "storage.usb.stage"
+      ],
+      "requires_brokers": [],
+      "requires_contracts": [],
+      "system_requires": []
+    }
+  ]
+}
