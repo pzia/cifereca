@@ -83,6 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), required=True)
+    parser.add_argument("--scale", type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -91,7 +92,7 @@ def main():
     start = monotonic()
     report = {
         "scenario": "recommendations-detail-gtk", "status": "RUNNING",
-        "width": args.width, "backend": "GTK4/X11/XTEST",
+        "width": args.width, "scale": args.scale, "backend": "GTK4/X11/XTEST",
         "git_sha": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
         ).strip(),
@@ -144,10 +145,18 @@ def main():
             "display_width": image.width, "display_height": image.height,
             "window_width": window_width, "window_height": window_height,
         }
-        assert image.size == (args.width, expected_height)
+        assert image.size == (
+            args.width * args.scale, expected_height * args.scale,
+        ), "Physical Xvfb screen must be sized in device pixels"
         report["p1_774_phase"] = "gtk_geometry"
-        assert args.width - 100 <= window_width <= args.width
+        assert window.get_scale_factor() == args.scale, (
+            "GTK must actually use the requested HiDPI scale"
+        )
+        assert args.width - 100 <= window_width <= args.width, (
+            "Toplevel logical width must remain in the 1024px layout budget"
+        )
         assert 500 <= window_height <= expected_height
+        report["checks"]["P1_774_real_gtk_logical_hidpi_geometry"] = True
         report["p1_774_phase"] = "image_pixels"
         colors = image.getcolors(maxcolors=2)
         assert colors is None or len(colors) > 1
@@ -164,7 +173,7 @@ def main():
             "window_width": window_width,
             "window_height": window_height,
             "display_width": image.width,
-            "display_height": image.height,
+            "display_height": image.height, "scale": args.scale,
         })
         save()
 
