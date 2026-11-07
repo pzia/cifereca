@@ -184,17 +184,41 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
         placement_id=placement['placement_id'];identity_id=current.identity_id
     if not identity_id:
         window._add_catalogue_action(detail, item); return
+    # A Search/Recommendations detail action may outlive its GTK selection,
+    # the active profile or a provider disconnect/reconnect (A -> B -> A).
+    # Capture both identity and Core source leases before creating callbacks.
+    from ..core.source_context import source_context_epoch
+    generation = getattr(window, '_identity_context_generation', None)
+    try:
+        source_epoch = source_context_epoch(window.service)
+    except ValueError:
+        return
+    def context_current():
+        if (getattr(window, '_closed', False)
+                or getattr(getattr(window.service, 'current_identity', None),
+                           'identity_id', None) != identity_id
+                or getattr(window, '_identity_context_generation', None)
+                    != generation):
+            return False
+        try:
+            return source_context_epoch(window.service) == source_epoch
+        except ValueError:
+            return False
+    if not context_current():
+        return
     try:window.service.local_book_path(placement_id,identity_id=identity_id)
     except Exception:
         window._add_catalogue_action(detail, item); return
     opening=window.action_button('Ouvrir','document-open-symbolic')
     opening._cifereca_action_id = 'open-local'
     def open_book(_button):
-        if getattr(window, '_closed', False):
+        if not context_current():
             return
         try:
-            # Recheck existence and identity at activation, then launch without a shell.
+            # Recheck placement and lease before launching an old UI action.
             uri=window.service.local_book_path(placement_id,identity_id=identity_id).as_uri()
+            if not context_current():
+                return
             Gio.AppInfo.launch_default_for_uri(uri,None)
         except Exception:
             if not getattr(window, '_closed', False):
@@ -246,13 +270,22 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
         button=window.action_button('Envoyer à '+target.label,'document-send-symbolic')
         button._cifereca_action_id = 'send-local:'+target.identity_id
         def send(_button,target_id=target.identity_id):
-            if getattr(window, '_closed', False):
+            if not context_current():
                 return
             def work():
+                if not context_current():
+                    raise Cancelled('Contexte du fichier local périmé.')
                 window.service.local_book_path(placement_id,identity_id=identity_id)
+                if not context_current():
+                    raise Cancelled('Contexte du fichier local périmé.')
                 return window.service.materialize_to_identity(placement_id,target_id)
+            def done(_result):
+                if context_current():
+                    window._activity_result('Livre envoyé')
+                    window.refresh_recent()
+                    window.refresh_library(False)
             window.runner.submit('Envoi du fichier local…',work,
-                lambda _result:(window._activity_result('Livre envoyé'),window.refresh_recent(),window.refresh_library(False)),
+                done,
                 control=_button,priority=TaskPriority.USER_ACTION,kind='materialize')
         button.connect('clicked',send);buttons.append(button)
     routing = manager.broker('artifact.routing') if manager else None
@@ -278,21 +311,30 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                 target_button = Gtk.Button(label=str(target.target.label or target.target.target_id))
                 target_button.add_css_class('flat')
                 def route(_button, target_id=target.target.target_id):
-                    if getattr(window, '_closed', False):
+                    if not context_current():
                         return
                     request = ArtifactRouteRequest(context.artifact, target_id=target_id, identity_id=identity_id or None)
                     def work():
+                        if not context_current():
+                            raise Cancelled('Contexte du transfert périmé.')
                         plan = routing.plan(request)
+                        if not context_current():
+                            raise Cancelled('Contexte du transfert périmé.')
                         return routing.transfer(plan)
                     def failed(exc):
-                        if getattr(window, '_closed', False):
+                        if not context_current():
                             return
                         # Only explicit user-facing errors have a safe message.
                         message = (exc.user_message if isinstance(exc, UserFacingError)
                                    else 'Envoi vers le stockage indisponible')
                         window.show_error(message, 'Envoi impossible')
+                    def done(_result):
+                        if context_current():
+                            window._activity_result('Livre envoyé')
+                            window.refresh_library(False)
+                            window.refresh_recent()
                     window.runner.submit('Envoi vers le stockage…', work,
-                        lambda _result:(window._activity_result('Livre envoyé'), window.refresh_library(False), window.refresh_recent()),
+                        done,
                         failed, control=_button,
                         priority=TaskPriority.USER_ACTION, kind='artifact-route')
                 target_button.connect('clicked', route); box.append(target_button)
