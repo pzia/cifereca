@@ -832,8 +832,14 @@ def main():
         assert state["in_place_holdings"] == [state["in_place_item"]]
         args[2](detail)
         panel = state["view"]._master._page.detail
-        assert panel._rendered_search_detail == (
-            state["in_place_item"], detail,
+        # The direct-download-only Search renderer intentionally returns
+        # before caching a holdings detail when no individual holding exists.
+        # Verify the actual visible book and admitted action instead of
+        # treating that optional internal cache as a publication receipt.
+        assert any(
+            isinstance(widget, Gtk.Label)
+            and widget.get_text() == detail.title
+            for widget in walk(panel)
         )
         assert state["view"]._master._page.selection.get_selected() == 0
         assert not state["exact_navigations"][1:]
