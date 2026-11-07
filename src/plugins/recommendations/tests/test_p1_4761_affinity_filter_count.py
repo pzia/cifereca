@@ -18,6 +18,9 @@ class Label:
     def set_label(self, value):
         self.text = value
 
+    def get_label(self):
+        return self.text
+
 
 def fixture(default=15):
     view = object.__new__(UxRecommendationsView)
@@ -103,3 +106,43 @@ def test_gtk_render_refreshes_filtered_summary_before_materializing_rows():
     selected_title[0] = "Absent"
     view._render()
     assert observed[-1] == ("0 sur 2 · Ordre diversifié", (), 2)
+
+
+
+def refresh_fixture():
+    view, selected = fixture()
+    view._clear_overview_refresh = lambda: None
+    view.selected_identity_id = lambda: "alice"
+    view._active_identity_id = "alice"
+    view._provisional_order = {}
+    view._set_provisional = lambda _value: None
+    view._set_catalogue_coverage = lambda: None
+    view._diagnostic_tooltip = lambda: "Synthétique"
+    view._progress = NS(set_tooltip_text=lambda _value: None)
+    view._master = NS(set_list_state=lambda *_args: None,
+                      empty_detail=lambda *_args: None)
+    view._start_refresh = lambda: None
+    view._busy = False
+    return view, selected
+
+
+def test_refresh_preserves_exact_filter_count_and_attested_affinity_without_network():
+    """#774: a delayed local refresh must not replace a correct filtered count."""
+    view, selected = refresh_fixture()
+    selected[0] = 95  # Zero visible, three already ranked
+    view._summary.set_label("Ancien état non synchronisé")
+    view.refresh()
+    assert "0 sur 3 · Affinité ≥ 95" in view._summary.get_label()
+    assert "Recalcul en cours" in view._summary.get_label()
+    assert view._ranked == [94, 85, 60]
+    view.refresh()
+    assert view._summary.get_label().count("Recalcul en cours") == 1
+
+
+def test_refresh_preserves_rich_unfiltered_summary_while_old_rows_remain():
+    view, _selected = refresh_fixture()
+    rich_summary = "3 recommandations à partir de 2 livres et 2 signaux"
+    view._summary.set_label(rich_summary)
+    view.refresh()
+    assert view._summary.get_label().startswith(rich_summary + " · ")
+    assert view._summary.get_label().count("Recalcul en cours") == 1
