@@ -2843,18 +2843,18 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
     fmt = str(raw.get("format") or "").upper() or None
     current = self.storage.backup_get("kobo", session.credential_id, product_id)
     account_id = session.accounts[0].unique_id if len(session.accounts) == 1 else None
-    # W2's v0.7 key is only (provider, credential, edition). A historical
-    # receipt can therefore belong to a DIFFERENT borrower/profile under
-    # the same credential. Never relabel its path/SHA/revision/status as the
-    # current source's B or use it to skip a GET. Even a missing old owner
-    # cannot be inferred from a newly connected session. The old row stays
-    # untouched for explicit provenance reconciliation.
+    # W2's v0.7 key is only (provider, credential, edition). A receipt
+    # explicitly owned by a DIFFERENT borrower/profile must never be
+    # relabelled with this session's path/SHA/revision/status. Missing owner
+    # fields are widespread in genuine 0.7 archives: retain their existing
+    # bounded reconciliation path, without treating them as typed A/B
+    # provenance. They require a separate attested retirement migration.
     if current is not None and (
-        type(current.get("identity_id")) is not str
-        or current["identity_id"] != session_identity.identity_id
-        or type(current.get("account_id")) is not str
-        or type(account_id) is not str
-        or current["account_id"] != account_id
+        (type(current.get("identity_id")) is str
+         and bool(current["identity_id"])
+         and current["identity_id"] != session_identity.identity_id)
+        or (type(current.get("account_id")) is str
+            and current["account_id"] != account_id)
     ):
         raise _KoboLegacySessionChanged("kobo_legacy_archive_owner_changed")
     fresh_cover_url = session.cover_url(raw) if hasattr(session, "cover_url") else None
