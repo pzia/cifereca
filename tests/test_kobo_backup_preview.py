@@ -105,7 +105,7 @@ def test_refresh_preview_reads_only_manifest_and_handles_malformed_items(tmp_pat
     service, session = _service(tmp_path, manifest)
     saved = service._kobo_backup_target_dir("default") / "saved.epub"
     _write_epub(saved)
-    _backup(service, "saved", status="complete", local_path=saved)
+    _backup(service, "saved", status="complete", local_path=saved, account_id="account")
     calls = []
     def only_manifest():
         calls.append("manifest")
@@ -139,7 +139,7 @@ def test_preview_never_creates_target_and_does_not_block_on_unrelated_import(tmp
     service, _session = _service(tmp_path, [])
     untouched = tmp_path / "never-created-by-preview"
     service.config.set("kobo_backup.directory", str(untouched))
-    _backup(service, "purchase")
+    _backup(service, "purchase", account_id="account")
     service.kobo_unlinked_local_count = lambda _id: 3
     try:
         result = service.kobo_backup_preview("vault-1")
@@ -260,7 +260,8 @@ def test_kobo_preview_obsolete_unlinked_override_never_restores_global_veto(
         {"product_id": "purchase", "revision_id": "r1", "format": "EPUB",
          "downloadable": True},
     ])
-    _backup(service, "purchase")
+    # A fresh manifest belongs to the same synthetic connected account.
+    _backup(service, "purchase", account_id="account")
     service.kobo_unlinked_local_count = lambda _id: 3
     service.config.set("kobo_backup.allow_unlinked_acquisition", malformed_opt_in)
     try:
@@ -307,6 +308,7 @@ def test_fresh_kobo_right_does_not_turn_legacy_sha_into_b_presence(
     _backup(
         service, "historical", status=status, local_path=file,
         sha256=hashlib.sha256(original).hexdigest(), size=len(original),
+        account_id="account",
     )
     before = service.storage.backup_get("kobo", "vault-1", "historical")
     monkeypatch.setattr(session, "backup_manifest", lambda: list(manifest))
@@ -387,7 +389,7 @@ def test_private_w2_preflight_refuses_complete_without_original_integrity_baseli
     old_sha, old_size = options[baseline]
     _backup(
         service, "historical", status=status, local_path=historical,
-        sha256=old_sha, size=old_size,
+        sha256=old_sha, size=old_size, account_id="account",
     )
     before = service.storage.backup_get("kobo", "vault-1", "historical")
     _forbid_mutation_and_acquisition(service, session, monkeypatch)
