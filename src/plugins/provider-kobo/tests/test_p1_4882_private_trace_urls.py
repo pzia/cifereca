@@ -176,5 +176,5 @@ def test_untrusted_rows_are_bounded_and_quoted_for_private_local_trace(
     assert len(lines) == 1
     assert "handling=other" in lines[0]
     assert "PRIVATE\\\\nFORGED WARNING" in lines[0]
-    assert "\\nFORGED WARNING" not in lines[0]
+    assert len(lines[0].splitlines()) == 1
     assert repr(malicious) in lines[0]
