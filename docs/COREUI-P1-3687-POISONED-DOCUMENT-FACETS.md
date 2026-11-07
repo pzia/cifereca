@@ -1,6 +1,6 @@
 # CoreUI P1 #3687 — Facettes documentaires locales et notices défectueuses
 
-Les vues Récherche, Bibliothèque et Recommandations utilisent le même composant `LocalQueryControls` pour décrire les supports et formats des éléments **déjà chargés**. Le parseur générique `loaded_document_facets` ne doit jamais faire échouer toute la barre GTK lorsqu'un fournisseur restitue un format opaque, un champ de métadonnées qui lève une exception ou une classification illisible.
+Les vues Recherche, Bibliothèque et Recommandations utilisent le même composant `LocalQueryControls` pour décrire les supports et formats des éléments **déjà chargés**. Le parseur générique `loaded_document_facets` ne doit jamais faire échouer toute la barre GTK lorsqu'un fournisseur restitue un format opaque, un champ de métadonnées qui lève une exception ou une classification illisible.
 
 Désormais, une erreur d'extraction ne touche que la **notice fautive** : `("unknown", ())`. Une notice voisine saine continue de proposer ses formats et son support. Une classification explicite `unknown` reste prioritaire par rapport à un champ legacy `format`/ `medium` contradictoire : aucune inférence de fichier, de droit ou de provenance n'est faite. Le message d'exception, potentiellement porteur de chemins locaux ou de secrets, n'est jamais repris dans le rendu.
 
