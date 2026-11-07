@@ -22,7 +22,10 @@ def test_holdings_cache_isolates_identical_records_by_collection_and_profile(tmp
         )
 
     service._session_for_source = lambda *_: SimpleNamespace(holdings=holdings)
-    first = notice(collection="catalogue-A")
+    # Generic cache-key regression: foreign Paris details are deliberately
+    # inert under P1 #4909 and tested separately with exact owner scopes.
+    first = replace(notice(collection="catalogue-A"),
+                    source_provider="fixture-shared-catalogue")
     second = replace(first, source_collection="catalogue-B")
     try:
         assert service.holdings(first).availability_label == "default:catalogue-A"
