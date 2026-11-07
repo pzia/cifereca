@@ -420,6 +420,20 @@ def main():
         # event. Gtk.SearchEntry.grab_focus() alone may lose focus before
         # an asynchronous callback; the test must use the visible pointer.
         state["p1_774_filter_generation"] = generation
+        # Read-only observer of Gtk.Label updates during genuine XTEST input.
+        # The public verdict only exports bounded booleans and counts, never
+        # raw label text, titles or user/provider data.
+        state["p1_774_summary_events"] = []
+        def observe_summary(_label, _pspec):
+            events = state["p1_774_summary_events"]
+            if len(events) < 64:
+                value = view._summary.get_text()
+                events.append((
+                    int("1 sur 3" in value),
+                    int("Livre B" in value),
+                    int("Ordre diversifié" in value),
+                ))
+        view._summary.connect("notify::label", observe_summary)
         state["p1_774_focus_retry"] = 0
         state["p1_774_filter_retry"] = 0
         report["p1_774_phase"] = "keyboard_focus"
@@ -479,6 +493,20 @@ def main():
             return
         # Closed, synthetic-only diagnostic: boolean coherence flags,
         # never user text, provider labels, or account information.
+        summary_events = state.get("p1_774_summary_events", ())
+        current_summary = view._summary.get_text()
+        report["p1_774_keyboard_summary_shape"] = {
+            "events": min(64, len(summary_events)),
+            "ever_count": int(any(event[0] for event in summary_events)),
+            "ever_title": int(any(event[1] for event in summary_events)),
+            "ever_order": int(any(event[2] for event in summary_events)),
+            "current_order": int("Ordre diversifié" in current_summary),
+            "current_provisional": int("Provisoire" in current_summary),
+            "current_recommendation": int("recommandation" in current_summary.lower()),
+            "ranked": min(100, len(view._ranked)),
+            "matched": min(100, sum(1 for candidate in view._ranked if view._matches(candidate))),
+            "label_length": min(512, len(current_summary)),
+        }
         report["p1_774_keyboard_coherence"] = {
             "text": int(query.entry.get_text() == "Livre B"),
             "rows": int(store.get_n_items() == 1),
