@@ -11,6 +11,19 @@ puis choisir « Enregistrer sous » : le ZIP ordinaire est créé en mode 0600. 
 retenues, **en clair** ; choisir volontairement à quel LLM le communiquer.
 Aucun envoi automatique.
 
+**Guide provider dans les deux exports :** le ZIP direct privé **et** le ZIP
+revu/filtré incluent maintenant `plugin-dev-kit/PROVIDER-DEVELOPMENT.md`,
+les contrats publics courants `plugin-dev-kit/contracts/*.py`, un exemple
+offline `catalog.service` et un `plugin-dev-kit/manifest.json` avec SHA-256.
+Lire ce guide AVANT de proposer un plugin : isolation du Core,
+catalogue public C ≠ inventaire de prêt/achat A ≠ fichier B, tenants et
+credentials distincts, pagination/quotas/DRM, tests autonomes. Source de
+référence dans le dépôt : `docs/PROVIDER-DEVELOPMENT.md` ; copie statique
+dans ce package identique byte pour byte, vérifiée en CI.
+Le ZIP **direct** reste non anonymisé et conserve `trace.json` ; la présence
+d'une documentation publique n'expurge pas la trace. Les deux ZIP sont
+préparés localement, sans navigation ni envoi supplémentaire.
+
 **Autre possibilité : le ZIP revu/filtré.** Décider chaque identifiant,
 préparer l'archive exacte en mémoire, examiner ses membres et confirmer son
 export local. Le filtrage peut écarter certaines informations utiles à
