@@ -357,6 +357,20 @@ def main():
         assert store.get_n_items() == 0
         assert "0 sur 3" in view._summary.get_text()
         assert "Champ · Titre" in view._summary.get_text()
+        assert view._master._page.count_label.get_text() == "0 / 3 éléments"
+        # A real GTK reset is local, atomic and does not create an implicit
+        # recommendation query, even when all three rows are filtered out.
+        assert query.clear_button.get_sensitive()
+        query.clear_button.emit("clicked")
+        assert query.entry.get_text() == ""
+        assert query.field.get_selected() == 0
+        assert query.selected_sources() == ()
+        assert query.selected_languages() == ()
+        assert not query.clear_button.get_sensitive()
+        assert store.get_n_items() == 3
+        assert view._master._page.count_label.get_text() == "3 élément(s)"
+        assert view._generation == generation and not state["searches"]
+        report["checks"]["P1_3687_shared_empty_count_and_reset_gtk"] = True
         query.entry.set_text("")
         query.entry.emit("activate")
         query.field.set_selected(0)  # Tous les champs (legacy title/author)
