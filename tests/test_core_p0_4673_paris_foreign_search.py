@@ -94,7 +94,7 @@ def test_b_only_is_visible_to_a_as_read_only_catalogue_and_cache_is_partitioned(
             _assert_shared(batches[0].results[0])
             assert batches[0].response_facets == ()
         before = bob.calls
-        _assert_shared(_run(service, progressive, force=False))
+        _assert_shared(_run(service, progressive, force=False)[0])
         assert bob.calls == before
 
         # B's own profile must not receive A's sanitised catalogue cache.
