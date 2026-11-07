@@ -587,6 +587,7 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
     registry = self.accounts
     if type(registry) is not list:
         raise ProviderConfigurationError("kobo_canonical_account_unavailable")
+    registry_snapshot = tuple(registry)
     owner = self.storage.identity_for_connection("kobo", credential_id)
     # A credential rebound in Config but not in SQLite must not inherit the
     # old account's consent. Missing or multiple enabled rows are ambiguous.
@@ -638,6 +639,8 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
             or getattr(session, "_epoch", None) != provider_epoch
             or session.connected is not True
             or self.accounts is not registry
+            or len(registry) != len(registry_snapshot)
+            or any(row is not old for row, old in zip(registry, registry_snapshot))
             or getattr(self, "_source_context_epoch", 0) != core_epoch
             or len(session.accounts) != 1
             or session.accounts[0] is not account
@@ -645,11 +648,11 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
                 account.identity_id, account.provider_id,
                 account.credential_id, account.unique_id,
             ) != original_scope
-            or tuple(
+            or len([
                 row for row in registry
                 if getattr(row, "provider_id", None) == "kobo"
                 and getattr(row, "credential_id", None) == credential_id
-            ) != tuple(existing)):
+            ]) != len(existing)):
         raise ProviderConfigurationError("kobo_canonical_account_changed")
     account.identity_id = owner
     if not existing:
