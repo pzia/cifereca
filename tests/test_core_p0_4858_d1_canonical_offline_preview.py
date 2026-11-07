@@ -77,7 +77,8 @@ def test_modern_offline_preview_does_not_read_backup_or_supplier(rig, monkeypatc
     assert result["counts"]["potentially_missing"] == 0
     assert result["historical_canonical"]["recorded_rights"] == 0
     assert "vault-1" not in json.dumps(result)
-    assert "account" not in json.dumps(result)
+    # 'scope=account' is a public enum, not the private borrower ID.
+    assert '"account_id": "account"' not in json.dumps(result)
 
 
 def test_canonical_published_B_is_historical_not_current_A(
