@@ -725,17 +725,28 @@ class UxRecommendationsView:
         if callable(enable_field):
             enable_field()
 
-        controls = Gtk.FlowBox()
-        controls.set_selection_mode(Gtk.SelectionMode.NONE)
-        controls.set_row_spacing(7)
-        controls.set_column_spacing(7)
-        controls.set_max_children_per_line(8)
+        # The same one-row + horizontal-scroll layout as Search's shared
+        # filters: this strip contains ONLY recommendation calculation
+        # parameters; the local Search widgets remain a separate row below.
+        # A wrapping FlowBox previously scattered the controls over two rows
+        # and changed their keyboard position as the window was resized.
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=7)
+        controls.set_halign(Gtk.Align.START)
+        self._calculation_parameters = controls
+        controls_scroll = Gtk.ScrolledWindow()
+        controls_scroll.set_name("recommendations-parameters-scroll")
+        controls_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        controls_scroll.set_propagate_natural_width(False)
+        controls_scroll.set_propagate_natural_height(True)
+        controls_scroll.set_hexpand(True)
+        controls_scroll.set_child(controls)
+        self._calculation_parameters_scroll = controls_scroll
 
         self._identity_model = Gtk.StringList.new([])
         self._identity = Gtk.DropDown(model=self._identity_model)
         self._identity.set_tooltip_text("Profil utilisé comme point de départ")
         self._identity.connect("notify::selected", self._identity_changed)
-        controls.insert(self._labeled("Profil", self._identity), -1)
+        controls.append(self._labeled("Profil", self._identity))
 
         self._reference_model = Gtk.StringList.new(["Bibliothèque entière"])
         self._reference = Gtk.DropDown(model=self._reference_model)
@@ -744,7 +755,7 @@ class UxRecommendationsView:
             "Point de départ : bibliothèque entière ou livre précis de ce profil"
         )
         self._reference.connect("notify::selected", self._reference_changed)
-        controls.insert(self._labeled("Référence", self._reference), -1)
+        controls.append(self._labeled("Référence", self._reference))
 
         if self._query_controls is None:
             self._append_legacy_filters(controls, Gtk)
@@ -756,7 +767,7 @@ class UxRecommendationsView:
             "Décochez pour les réafficher volontairement."
         )
         self._exclude_owned.connect("toggled", lambda *_: self.refresh())
-        controls.insert(self._exclude_owned, -1)
+        controls.append(self._exclude_owned)
 
         # The configured threshold is the baseline. A later user change
         # is an active *view* filter, not a new recommendation ranking.
@@ -772,7 +783,7 @@ class UxRecommendationsView:
             ["Seuil minimal d’affinité des recommandations"],
         )
         self._score.connect("value-changed", lambda *_: self._render())
-        controls.insert(self._labeled("Affinité ≥", self._score), -1)
+        controls.append(self._labeled("Affinité ≥", self._score))
 
         exploration_adjustment = Gtk.Adjustment(
             lower=0, upper=100, step_increment=5, page_increment=10,
@@ -784,12 +795,12 @@ class UxRecommendationsView:
             [Gtk.AccessibleProperty.LABEL],
             ["Diversité des recommandations"],
         )
-        controls.insert(self._labeled("Diversité", self._exploration), -1)
+        controls.append(self._labeled("Diversité", self._exploration))
 
         self._refresh_button = Gtk.Button(label="Recalculer", icon_name="view-refresh-symbolic")
         self._refresh_button.set_tooltip_text("Relancer le calcul en conservant les filtres de vue")
         self._refresh_button.connect("clicked", lambda *_: self.refresh())
-        controls.insert(self._refresh_button, -1)
+        controls.append(self._refresh_button)
 
         # Double opt-in: explicit plugin configuration AND an explicit click.
         # Opening the page/choosing a book never sends data to an LLM.
@@ -802,8 +813,8 @@ class UxRecommendationsView:
                 "(qui peut être distant) ; aucun titre, profil ou livre entier."
             )
             self._llm_button.connect("clicked", lambda *_: self._explain_selected())
-            controls.insert(self._llm_button, -1)
-        toolbox.append(controls)
+            controls.append(self._llm_button)
+        toolbox.append(controls_scroll)
         if self._query_controls is not None:
             toolbox.append(self._query_controls.widget)
         if self._llm_enabled:
@@ -849,7 +860,7 @@ class UxRecommendationsView:
         self._provider = Gtk.DropDown(model=self._provider_model)
         self._provider.set_tooltip_text("Filtre les recommandations déjà calculées")
         self._provider.connect("notify::selected", lambda *_: self._render())
-        controls.insert(self._labeled("Catalogue", self._provider), -1)
+        controls.append(self._labeled("Catalogue", self._provider))
 
         self._language_model = Gtk.StringList.new(["Toutes"])
         self._language = Gtk.DropDown(model=self._language_model)
@@ -858,11 +869,11 @@ class UxRecommendationsView:
             "« Toutes » conserve aussi les ouvrages sans langue connue"
         )
         self._language.connect("notify::selected", self._language_changed)
-        controls.insert(self._labeled("Langue", self._language), -1)
+        controls.append(self._labeled("Langue", self._language))
 
         self._text = Gtk.SearchEntry(placeholder_text="Titre ou auteur")
         self._text.connect("search-changed", lambda *_: self._render())
-        controls.insert(self._labeled("Filtrer", self._text), -1)
+        controls.append(self._labeled("Filtrer", self._text))
 
     def _labeled(self, label: str, widget: Any):
         box = self.Gtk.Box(orientation=self.Gtk.Orientation.HORIZONTAL, spacing=5)
