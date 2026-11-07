@@ -15,14 +15,21 @@ pouvait éviter à tort une acquisition réelle.
 ## Coupure bornée
 
 Avant de lire `cover_url`, de modifier le checkpoint ou de décider une
-acquisition, la présence d'une archive exige une égalité **exacte** entre
-`identity_id/account_id` persistés et identité/borrower courants.
-Un propriétaire manquant ou différent lève
+acquisition, une archive portant une **identité explicite non vide**
+ou un **emprunteur explicite** différent de la source courante lève
 `kobo_legacy_archive_owner_changed` et abandonne la source par la voie
 `_KoboLegacySessionChanged` existante. L'archive reste intacte, sans
 migration ni suppression. Un même credential avec deux borrowers n'est
-pas une preuve de continuité ; aucune identité ne se déduit du titre,
-chemin, SHA ou du manifest courant.
+pas une preuve de continuité.
+
+**Compatibilité 0.7 nécessaire :** les archives sans propriétaire
+(`identity_id` ou `account_id` absent) continuent leur ancienne
+reprise bornée ; elles ne sont **pas** promues en provenance typée A/B
+et nécessitent une migration attestée distincte. La première variante
+refusant aussi les propriétaires absents provoquait 29 échecs de
+régression Core (réconciliation locale et reprises sans téléchargement) ;
+la coupure a donc été volontairement limitée aux **contradictions
+explicites**, sans inventer une attribution aux archives inconnues.
 
 Le compte primaire Kobo `account_id=""` demeure valide **si la
 valeur persistée est exactement vide** et l'identité exacte. Le
@@ -31,7 +38,7 @@ mécanisme ne modifie pas les autres fournisseurs.
 ## Tests et sortie
 
 `tests/test_core_p0_4858_w2_foreign_archive_owner_fence.py` :
-sept portées étrangères/incomplètes, aucune écriture ni appel fournisseur,
+quatre portées explicitement contradictoires, aucune écriture ni appel fournisseur,
 continuité du compte exact et du primaire vide, archive SQLite inchangée.
 
 Ce garde négatif **ne constitue pas un cutover W2 complet**. La sortie
