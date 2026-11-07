@@ -670,29 +670,7 @@ class Storage:
                     # A pending record with any attempt/byte/strategy/error
                     # clue stays on the compatibility path until W2/W4
                     # migration can preserve interrupted delivery semantics.
-                    passive_kobo = (
-                        row["provider_id"] == "kobo"
-                        and (
-                            row["status"] == "skipped_archived"
-                            or (
-                                row["status"] in {"pending", "queued"}
-                                and row["attempt_count"] == 0
-                                and row["last_attempt_at"] is None
-                                and not row["local_path"]
-                                and not row["sha256"]
-                                and row["size"] is None
-                                and not row["error"]
-                                and not row["attention_code"]
-                                and not row["acquisition_strategy"]
-                                and not row["executor"]
-                                and not row["job_id"]
-                                and not row["adept_profile"]
-                                and row["entitlement_type"] == "owned"
-                                and not row["loan_id"]
-                                and not row["expires_at"]
-                            )
-                        )
-                    )
+                    passive_kobo = cls._passive_kobo_backup_receipt(row)
                     if passive_kobo:
                         continue
                     cls._mirror_backup_row(db, row, now=now, migration=True)
@@ -2014,6 +1992,39 @@ class Storage:
         out.update({"provider_id": provider_id, "credential_id": credential_id, "item_id": item_id})
         return out
 
+    @staticmethod
+    def _passive_kobo_backup_receipt(row: dict[str, Any]) -> bool:
+        """Archive-only Kobo v0.7 state, never authority for Core A/B.
+
+        Share the same classification between v2->v3 import and live
+        backup_put. A receipt with an attempt, byte/path, delegation, error
+        or borrower-specific loan clue is NOT passive; W2/W4 recovery keeps
+        its existing compatibility semantics until their cutover.
+        """
+        return bool(
+            row.get("provider_id") == "kobo"
+            and (
+                row.get("status") == "skipped_archived"
+                or (
+                    row.get("status") in {"pending", "queued"}
+                    and row.get("attempt_count") == 0
+                    and row.get("last_attempt_at") is None
+                    and not row.get("local_path")
+                    and not row.get("sha256")
+                    and row.get("size") is None
+                    and not row.get("error")
+                    and not row.get("attention_code")
+                    and not row.get("acquisition_strategy")
+                    and not row.get("executor")
+                    and not row.get("job_id")
+                    and not row.get("adept_profile")
+                    and row.get("entitlement_type") == "owned"
+                    and not row.get("loan_id")
+                    and not row.get("expires_at")
+                )
+            )
+        )
+
     @classmethod
     def _check_kobo_legacy_canonical_owner(
         cls, db: sqlite3.Connection, row: dict[str, Any],
@@ -2181,7 +2192,7 @@ class Storage:
                          # generic right, receipt or local content from it.
                          # Reconciliation statuses still require the 0.8
                          # mirror for W4 confirmation/undo until migrated.
-                         or merged.get("status") == "skipped_archived"
+                         or self._passive_kobo_backup_receipt(merged)
                          # #3196 W1: a SHA-less/size-less 0.7 repair or
                          # conflict cannot attest local bytes and is archive-
                          # only if the credential has NO currently bound
