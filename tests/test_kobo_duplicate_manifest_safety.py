@@ -49,7 +49,8 @@ def test_duplicate_product_versions_are_quarantined_before_any_acquisition(tmp_p
         assert summary["status"] == "partial"
         assert summary["errors"] == 0
         assert summary["attempted"] == summary["downloaded"] == 0
-        assert summary["unchanged"] == 1
+        assert summary["unchanged"] == 0
+        assert summary["reconcile_pending"] >= 1
         assert summary["malformed_manifest_items"] == 2
         assert summary["duplicate_manifest_items"] == 2
         assert summary["legacy_pruned"] == 0
@@ -108,7 +109,7 @@ def test_duplicate_manifest_blocks_only_its_source_not_other_account_prune(
         assert result["attempted"] == result["downloaded"] == 0
         assert result["legacy_pruned"] == 0
         assert [(row["credential_id"], row["status"]) for row in result["sources"]] == [
-            ("vault-1", "partial"), ("vault-2", "complete"),
+            ("vault-1", "partial"), ("vault-2", "attention_required"),
         ]
         assert result["sources"][0]["duplicate_manifest_items"] == 2
         assert result["sources"][1]["duplicate_manifest_items"] == 0
