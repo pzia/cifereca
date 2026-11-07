@@ -739,7 +739,9 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
     # The new file-only channel has a dedicated, non-authoritative writer.
     # The old W4 confirm/undo remains unchanged until its consumers migrate.
     file_only = options.pop("file_only", False)
-    _require(type(file_only) is bool, "invalid_request")
+    canonical_relink = options.pop("canonical_relink", False)
+    _require(type(file_only) is bool and type(canonical_relink) is bool
+             and not (file_only and canonical_relink), "invalid_request")
     config_path = Path(config_path) if config_path is not None else config_file(create=False)
     database_path = Path(database_path) if database_path is not None else database_file(create=False)
 
@@ -783,6 +785,29 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
         storage = SimpleNamespace(path=database_path, _lock=threading.Lock(),
                                   _connect=lambda: connection, _stable_id=Storage._stable_id)
         service = SimpleNamespace(storage=storage, config=SimpleNamespace(get=get), identity_by_id=identity)
+        if canonical_relink:
+            from .kobo_canonical_relink import relink_verified_canonical_kobo
+            # This offline path deliberately reads Config/SQLite, not any
+            # connected provider. The CURRENT on-disk profile mapping must
+            # match the exact identity's canonical SQLite directory.
+            selected = identity(options.get("identity_id"))
+            folder = connection.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?",
+                (selected.identity_id,),
+            ).fetchall()
+            _require(len(folder) == 1 and folder[0][0] == selected.directory_name,
+                     "identity_directory_unproven")
+            root = get("library.directory", "~/EBooks")
+            _require(type(root) is str and bool(root.strip()),
+                     "identity_directory_unproven")
+            root = Path(os.path.expandvars(os.path.expanduser(root.strip())))
+            if not root.is_absolute():
+                root = Path.home() / root
+            path = options.pop("path", None)
+            _require(type(path) is str and bool(path), "invalid_path")
+            return relink_verified_canonical_kobo(
+                storage, library_root=root, new_path=Path(path), **options,
+            )
         return (
             observe_kobo_local_file_only(service, **options)
             if file_only else reconcile_kobo_local(service, **options)
