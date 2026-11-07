@@ -159,7 +159,8 @@ def main():
         # user-entered text, source coordinates, GTK labels or traceback.
         allowed = {
             "probe_start", "initial", "long_detail", "scrolled",
-            "exact_setup", "exact_button", "exact_focus", "exact_key",
+            "exact_setup", "exact_button", "exact_overflow",
+            "exact_overflow_ready", "exact_focus", "exact_key",
             "exact_page_focus", "exact_page_key", "exact_page_verdict",
             "exact_verdict", "exact_key_dispatch", "exact_navigation",
             "exact_selection", "exact_no_search", "return_list",
@@ -556,8 +557,14 @@ def main():
         assert not state["exact_navigations"] and not state["exact_selected"]
         assert view._master._page.selection.get_selected() == 0
         report["checks"]["P1_1354_gtk_page17_keyboard_local_only"] = True
+        panel = view._master._page.detail
+        # The native adaptive action bar intentionally promotes the exact
+        # in-place route (#4664) at narrow widths. The old Search redirect
+        # remains a normal GTK action, accessible under "Plus d’actions".
+        # Inspect the bar's owned buttons, not only mapped descendants:
+        # overflow popovers are outside the regular widget walk until shown.
         buttons = [
-            widget for widget in walk(view.widget)
+            widget for widget in panel._action_buttons
             if isinstance(widget, Gtk.Button)
             and str(getattr(widget, "_cifereca_action_id", "")).startswith(
                 "recommendation.loaded-notice."
@@ -566,6 +573,28 @@ def main():
         report["p1_1354_phase"] = "exact_button"
         assert len(buttons) == 1, "Loaded exact Search route is missing"
         button = buttons[0]
+        if not button.get_mapped():
+            bar = panel.action_scroll
+            report["p1_1354_phase"] = "exact_overflow"
+            assert button.get_parent() is bar.overflow_box
+            assert bar.overflow_button.get_visible()
+            assert bar.overflow_button.get_mapped()
+            # Physical XTEST click: do not make a hidden action spuriously
+            # appear or manually invoke its callback.
+            state["device"].click_widget(bar.overflow_button)
+            later(190, lambda: exact_overflow_ready(button))
+            return
+        exact_button_ready(button)
+
+    def exact_overflow_ready(button):
+        report["p1_1354_phase"] = "exact_overflow_ready"
+        bar = state["view"]._master._page.detail.action_scroll
+        assert bar.overflow_popover.get_mapped()
+        assert button.get_mapped() and button.get_sensitive()
+        report["checks"]["P1_4664_narrow_exact_redirect_in_accessible_overflow"] = True
+        exact_button_ready(button)
+
+    def exact_button_ready(button):
         assert button.get_mapped()
         assert "vault" not in str(
             getattr(button, "_cifereca_action_label", "") or ""
@@ -578,9 +607,8 @@ def main():
         ))
         capture("05b-loaded-exact-route")
         report["p1_1354_phase"] = "exact_focus"
-        # This action lives below a long detail's scrolled content.
-        # Separate GTK focus/scroll from XTEST Return: activation in the
-        # same GTK main-loop turn is not guaranteed to reach the button.
+        # This action may be inside a real GTK overflow popover. Preserve
+        # keyboard activation in both wide and narrow layouts.
         assert button.grab_focus() is not False
         later(170, lambda: exact_press(button))
 
@@ -595,6 +623,11 @@ def main():
     def after_exact_loaded_bridge():
         report["p1_1354_phase"] = "exact_verdict"
         view = state["view"]
+        # Closing the overflow is a GUI-only transition; the Search
+        # navigation proof below still uses the real action callback.
+        bar = view._master._page.detail.action_scroll
+        if bar.overflow_popover.get_mapped():
+            bar.overflow_popover.popdown()
         report["p1_1354_phase"] = "exact_key_dispatch"
         assert state["exact_clicked"] == 1, "Exact action did not receive keyboard activation"
         report["p1_1354_phase"] = "exact_navigation"
