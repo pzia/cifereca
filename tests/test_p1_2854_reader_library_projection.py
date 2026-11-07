@@ -188,3 +188,14 @@ def test_missing_unverified_or_tombstoned_local_file_is_not_a_reader_book():
     for state in ("missing", "dedup_cleanup_pending", "returned", None):
         result = view(locals=[local(state=state)])
         assert result.books == ()
+
+
+@pytest.mark.parametrize("path", ["Other/outside.epub", "Books/Cifereca/../outside.epub"])
+def test_unscoped_target_is_not_shown_in_book_detail(path):
+    target = dict(device_row(), target_relative_path=path)
+    book, = view(
+        bound=dict(binder(), target_directory="Books/Cifereca"),
+        placements=[target],
+    ).books
+    assert book.target_relative_path is None
+    assert book.target_format is None

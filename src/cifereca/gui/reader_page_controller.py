@@ -10,6 +10,7 @@ import time
 
 from .detail_model import book_detail_presentation
 from .reader_library_projection import project_reader_library
+from .recent_time import format_recent_timestamp
 
 
 FILTERS = ("all", "to_send", "to_remove", "without_intent")
@@ -340,25 +341,28 @@ def reader_selected(window, row) -> None:
         else f"{'Présent' if item.last_known == 'present' else 'Absent'} "
              "(ancienne observation, à revérifier)"
     )
+    rows = [
+        ("Souhait", {
+            "none": "Aucune intention",
+            "keep": "Mettre sur la liseuse",
+            "remove": "Retirer de la liseuse",
+        }[item.desired_state]),
+        ("Présence actuelle", "Non confirmée"),
+        ("Dernier état enregistré", status),
+        ("Dernière observation",
+         format_recent_timestamp(item.last_observed_at, detailed=True)
+         if item.last_observed_at is not None else "Aucune"),
+    ]
+    if item.target_relative_path is not None:
+        rows.append(("Chemin réservé", item.target_relative_path))
+        if item.target_format is not None:
+            rows.append(("Format prévu", item.target_format.upper()))
     page.detail.show_presentation(book_detail_presentation(
         title=item.title,
         subtitle=item.author,
         thumbnail=item.thumbnail_url,
         badges=(),
-        section_rows=[
-            ("Liseuse", [
-                ("Souhait", {
-                    "none": "Aucune intention",
-                    "keep": "Mettre sur la liseuse",
-                    "remove": "Retirer de la liseuse",
-                }[item.desired_state]),
-                ("Présence actuelle", "Non confirmée"),
-                ("Dernier état enregistré", status),
-                ("Dernière observation (timestamp)",
-                 str(item.last_observed_at) if item.last_observed_at is not None
-                 else "Aucune"),
-            ]),
-        ],
+        section_rows=[("Liseuse", rows)],
     ))
     # A dry-run is a temporary observation of an exact list snapshot. It is
     # neither an instruction to deliver/remove nor a persistent presence
@@ -385,6 +389,7 @@ def reader_selected(window, row) -> None:
                 ("Décision", decision.state_label),
                 ("Motif", decision.reason_label),
                 ("Observation ponctuelle", decision.current_label),
+                ("Examiné le", format_recent_timestamp(details.observed_at, detailed=True)),
                 ("Validité", "Aperçu temporaire · aucun transfert ou retrait"),
             ])
     original = getattr(window, "_reader_source_items", {}).get(row.key)
