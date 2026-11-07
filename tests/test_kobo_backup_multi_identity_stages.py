@@ -43,7 +43,10 @@ def test_two_identity_cache_partial_recovery_is_idempotent_without_download(tmp_
     try:
         failed = service.sync_kobo_backup()
         assert failed['errors'] == 1 and failed['unchanged'] == 0
-        assert failed['status'] == 'partial'
+        # A provider failed and the other source has only 0.7 SHA evidence,
+        # not an independently attested canonical delivery. There is no
+        # positive completed acquisition to justify a partial-success label.
+        assert failed['status'] == 'failed'
         assert [(row['credential_id'], row['status']) for row in failed['sources']] == [
             ('vault-1', 'attention_required'), ('vault-2', 'failed'),
         ]
