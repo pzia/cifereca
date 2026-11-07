@@ -47,6 +47,21 @@ def clock(monkeypatch):
     return now
 
 
+def _terminal_complete(account):
+    """Synthetic terminal source outcome, not an attested A/B right or GET."""
+    return {
+        "status": "complete", "sessions": 1, "manifests_fetched": 1,
+        "errors": 0, "pending": 0, "attention_required": 0,
+        "remaining": 0, "aborted": False, "cancelled": False,
+        "sources": [{
+            "identity_id": account.identity_id,
+            "credential_id": account.credential_id,
+            "status": "complete", "errors": 0, "pending": 0,
+            "remaining": 0,
+        }],
+    }
+
+
 def _legacy_config(path, *, enabled=True):
     accounts = [
         dict(id="kobo-a", provider="kobo", identity_id="a", enabled=True,
@@ -155,12 +170,16 @@ def test_scoped_attempt_freezes_legacy_retry_without_granting_consent(
     assert storage.rows[schedule.retry_interval_key("source-alice")] == "180"
     assert storage.rows["sync.source.materialization.last_attempt.source-alice"] == "100000"
     assert schedule.retry_interval_key("source-bob") not in storage.rows
+    # A mark is in-flight, never a permission to GET again. A one-source
+    # terminal proof closes its retry gate without granting provider rights.
+    assert schedule.finish_on_start_attempt(service, alice, _terminal_complete(alice))
 
     # Editing the retired global value does not shorten Alice's saved clock,
     # and Bob independently gets the new conservative 60-minute baseline.
     old[0] = 15
     assert schedule.mark_on_start_attempt(service, bob)
     assert storage.rows[schedule.retry_interval_key("source-bob")] == "60"
+    assert schedule.finish_on_start_attempt(service, bob, _terminal_complete(bob))
     clock[0] += 90 * 60
     assert schedule.on_start_due(service, alice) is False
     assert schedule.on_start_due(service, bob) is True
@@ -210,7 +229,7 @@ def test_failed_metadata_commit_refuses_startup_dispatch(
     assert storage.metadata_get("sync.source.materialization.last_attempt.source") is None
 
 
-def test_resumed_checkpoint_uses_pinned_scoped_window_not_global(
+def test_prejournal_checkpoint_cannot_authorize_retry_even_after_old_cadence(
     clock, monkeypatch,
 ):
     from cifereca.core.kobo_backup import _kobo_backup_due
@@ -234,19 +253,15 @@ def test_resumed_checkpoint_uses_pinned_scoped_window_not_global(
             service, credential_id=credential, interval_minutes=interval_minutes,
         )
     )
-    assert schedule.mark_on_start_attempt(service, account)
-    assert storage.metadata_get(schedule.retry_interval_key("source-alice")) == "180"
-
-    # Both thresholds matter: 200 min since the scoped attempt but only
-    # 80 min since a completed checkpoint. The retired global value of 15
-    # would admit this old checkpoint; the source-pinned 180 must not.
+    # Pre-journal W2 state cannot be promoted into a fresh auto-GET even
+    # when a 0.7 "complete" checkpoint happens to be older than the window.
+    assert schedule.mark_on_start_attempt(service, account) is False
+    assert storage.metadata_get(schedule.retry_interval_key("source-alice")) is None
     clock[0] += 200 * 60
-    checkpoint["updated_at"] = clock[0] - 80 * 60
-    legacy[0] = 15
-    assert service._kobo_backup_account_due("credential-alice") is True
-    assert schedule.on_start_due(service, account) is False
     checkpoint["updated_at"] = clock[0] - 190 * 60
-    assert schedule.on_start_due(service, account) is True
+    legacy[0] = 15
+    assert schedule.on_start_due(service, account) is False
+    assert storage.metadata_get(schedule.attempt_key(account)) is None
 
 
 def test_invalid_explicit_checkpoint_interval_is_never_due(clock, monkeypatch):
