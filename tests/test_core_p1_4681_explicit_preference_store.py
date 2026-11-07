@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cifereca.storage import Storage
+from cifereca.storage import Storage, CURRENT_SCHEMA_VERSION
 from cifereca.services import LibraryService
 from cifereca.core.explicit_reading_preferences import (
     change_preference, preference_snapshot,
@@ -31,7 +31,7 @@ def test_reading_feedback_sqlite_durable_identity_isolated_reversible(tmp_path):
         b1 = _set(first, "bob", "artifact:sha256:aa", "not_interested", 0)
         assert a1.preferences == (("artifact:sha256:aa", "liked"),)
         assert b1.preferences == (("artifact:sha256:aa", "not_interested"),)
-        assert first.schema_version() == 14
+        assert first.schema_version() == CURRENT_SCHEMA_VERSION
         second = Storage(database)
         try:
             assert preference_snapshot(second, "alice") == a1
