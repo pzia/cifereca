@@ -1392,6 +1392,19 @@ class UxRecommendationsView:
                 for source in _public_ranked_values(sources):
                     if source_id := _public_candidate_text(source, limit=120):
                         available.add(source_id)
+        # Partial ranking is not an exhaustive catalogue inventory. A user
+        # may have selected Source B in the previous complete result while
+        # the current provisional top-N only contains Source A. Dropping B
+        # here silently resets the filter to 'Tous' and exposes A's rows and
+        # exact actions before the user has changed their choice. Retain
+        # *already selected* sources while a calculation is active, but only
+        # if the current provider inventory still attests the source. The
+        # final complete result (_busy=False) drops truly absent choices.
+        retained: set[str] = set()
+        if available is not None and getattr(self, "_busy", False):
+            selected = self._selected_catalogue_sources()
+            if selected != ("\\x00",):
+                retained.update(selected)
         # Catalogue labels populate the GTK filter *before* a detail is
         # selected. Apply the same public text boundary already used by
         # _display_source; never stringify a provider object or iterate
@@ -1404,7 +1417,8 @@ class UxRecommendationsView:
                 continue
             provider_id = _public_candidate_text(entry[0], limit=120)
             if (not provider_id or provider_id in seen
-                    or (available is not None and provider_id not in available)):
+                    or (available is not None and provider_id not in available
+                        and provider_id not in retained)):
                 continue
             label = _public_candidate_text(entry[1], limit=240) or provider_id
             seen.add(provider_id)
