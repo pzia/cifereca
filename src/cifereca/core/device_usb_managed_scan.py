@@ -15,6 +15,7 @@ import stat
 import time
 from typing import Mapping, Sequence
 
+from . import device_usb_mount as linux_mount
 from .device_usb_mount import observe_linux_usb_mount
 from .device_usb_preview import UsbDeviceScan, UsbObservedFile, _relative
 
@@ -62,7 +63,7 @@ def _managed_target_map(
 
 def _regular_hash(
     directory_fd: int, name: str, original: os.stat_result,
-    *, budget: int,
+    *, budget: int, mount_id: int,
 ) -> tuple[str, int] | None:
     if (not stat.S_ISREG(original.st_mode)
             or original.st_size < 0
@@ -74,7 +75,8 @@ def _regular_hash(
     try:
         fd = os.open(
             name,
-            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            | getattr(os, "O_CLOEXEC", 0),
             dir_fd=directory_fd,
         )
     except OSError:
@@ -82,6 +84,7 @@ def _regular_hash(
     try:
         current = os.fstat(fd)
         if (not stat.S_ISREG(current.st_mode)
+                or linux_mount._fd_mount_id(fd) != mount_id
                 or (current.st_dev, current.st_ino, current.st_size)
                 != (original.st_dev, original.st_ino, original.st_size)):
             return None
@@ -158,17 +161,18 @@ def scan_managed_usb(
         descriptors.append(root_fd)
         root_stat = os.fstat(root_fd)
         if (not stat.S_ISDIR(root_stat.st_mode)
-                or root_stat.st_dev != expected_dev):
+                or root_stat.st_dev != expected_dev
+                or linux_mount._fd_mount_id(root_fd) != before.mount_id):
             return None
         current_fd = root_fd
         for component in managed.split("/"):
             next_fd = os.open(component, directory_flag, dir_fd=current_fd)
             descriptors.append(next_fd)
             opened = os.fstat(next_fd)
-            if not stat.S_ISDIR(opened.st_mode) or opened.st_dev != expected_dev:
+            if (not stat.S_ISDIR(opened.st_mode) or opened.st_dev != expected_dev
+                    or linux_mount._fd_mount_id(next_fd) != before.mount_id):
                 return None
             current_fd = next_fd
-        root_managed = os.fstat(current_fd)
         found: dict[str, UsbObservedFile] = {}
         unique_paths: set[str] = set()
         counters = {"files": 0, "dirs": 0, "bytes": 0}
@@ -210,6 +214,7 @@ def scan_managed_usb(
                         current = os.fstat(childfd)
                         if ((current.st_dev, current.st_ino)
                                 != (original.st_dev, original.st_ino)
+                                or linux_mount._fd_mount_id(childfd) != before.mount_id
                                 or not walk(childfd, rel, depth + 1)):
                             return False
                     finally:
@@ -220,6 +225,7 @@ def scan_managed_usb(
                     actual = _regular_hash(
                         fd, name, original,
                         budget=_MAX_TOTAL_BYTES - counters["bytes"],
+                        mount_id=before.mount_id,
                     )
                     if actual is None:
                         return False
@@ -246,24 +252,14 @@ def scan_managed_usb(
 
         if not walk(current_fd, managed, 0):
             return None
-        after_managed = os.fstat(current_fd)
-        after_root = os.fstat(root_fd)
-        if (root_managed.st_dev != after_managed.st_dev
-                or root_managed.st_ino != after_managed.st_ino
-                or root_stat.st_dev != after_root.st_dev
-                or root_stat.st_ino != after_root.st_ino):
-            return None
         after = observe_linux_usb_mount(
             identity_id=identity_id, binding=dict(binding),
             mountpoint=mountpoint,
         )
-        if (after is None
-                or (after.identity_id, after.device_id, after.usb_fingerprint,
-                    after.mountpoint, after.major, after.minor,
-                    after.filesystem)
-                != (before.identity_id, before.device_id, before.usb_fingerprint,
-                    before.mountpoint, before.major, before.minor,
-                    before.filesystem)):
+        if (after is None or after.scope_key() != before.scope_key()
+                or not linux_mount._directory_chain_current(
+                    mountpoint, managed, descriptors, before.mount_id,
+                )):
             return None
         return UsbDeviceScan(
             identity_id=identity_id, device_id=binding["device_id"],

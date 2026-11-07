@@ -13,6 +13,7 @@ from pathlib import Path
 import stat
 from typing import Mapping
 
+from . import device_usb_mount as linux_mount
 from .device_usb_mount import LinuxUsbMount, observe_linux_usb_mount
 from .device_usb_preview import _relative, _sha
 from .device_usb_variant_review import _SUFFIX
@@ -34,13 +35,6 @@ class UsbTargetPreflight:
 
 def _blocked(reason: str) -> UsbTargetPreflight:
     return UsbTargetPreflight("blocked", reason)
-
-
-def _mount_key(proof: LinuxUsbMount) -> tuple[object, ...]:
-    return (
-        proof.identity_id, proof.device_id, proof.usb_fingerprint,
-        proof.mountpoint, proof.filesystem, proof.major, proof.minor,
-    )
 
 
 def preflight_usb_target(
@@ -119,14 +113,16 @@ def preflight_usb_target(
         current = os.open(mountpoint, directory_flags)
         fds.append(current)
         root = os.fstat(current)
-        if not stat.S_ISDIR(root.st_mode) or root.st_dev != expected_device:
+        if (not stat.S_ISDIR(root.st_mode) or root.st_dev != expected_device
+                or linux_mount._fd_mount_id(current) != first.mount_id):
             return _blocked("target_mount_unverified")
         for component in managed.split("/"):
             child = os.open(component, directory_flags, dir_fd=current)
             fds.append(child)
             current = child
             st = os.fstat(current)
-            if not stat.S_ISDIR(st.st_mode) or st.st_dev != expected_device:
+            if (not stat.S_ISDIR(st.st_mode) or st.st_dev != expected_device
+                    or linux_mount._fd_mount_id(child) != first.mount_id):
                 return _blocked("target_directory_unverified")
         before = os.fstat(current)
         name = digest + _SUFFIX[fmt]
@@ -161,8 +157,12 @@ def preflight_usb_target(
         last = observe_linux_usb_mount(
             identity_id=identity_id, binding=binding, mountpoint=mountpoint,
         )
-        if type(last) is not LinuxUsbMount or _mount_key(last) != _mount_key(first):
+        if type(last) is not LinuxUsbMount or last.scope_key() != first.scope_key():
             return _blocked("target_mount_changed")
+        if not linux_mount._directory_chain_current(
+            mountpoint, managed, fds, first.mount_id,
+        ):
+            return _blocked("target_directory_changed")
         return UsbTargetPreflight(
             "review", "target_absent_space_observed", available,
         )
