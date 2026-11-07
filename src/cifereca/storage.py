@@ -2722,6 +2722,36 @@ class Storage:
                         or type(keeper[0]) is not str
                         or rewrite_path(keeper[0], mappings, root) != keeper[0]):
                     raise ValueError("directory_migration_pending_dedup_keeper")
+            # #3196 W5: a directory migration is a mapping of ONE profile's
+            # files, not authority to rebind another owner's historical Kobo
+            # path. The old backup PK has no owner; use the stored identity,
+            # never infer it from the directory or identical bytes. Reject
+            # the entire transaction before moving placements/catalogue.
+            # Old NULL/foreign owners require explicit account-scoped
+            # recovery, not a silent path rewrite or rights transfer.
+            changed_folders = [
+                (str(change["identity_id"]), str(change["old"]))
+                for change in plan["changes"]
+            ]
+            if changed_folders:
+                old_paths = db.execute(
+                    "SELECT identity_id,local_path FROM backup_items "
+                    "WHERE provider_id='kobo' AND local_path IS NOT NULL "
+                    "LIMIT 100001"
+                ).fetchall()
+                if len(old_paths) > 100000:
+                    raise ValueError("directory_migration_legacy_scope_budget")
+                for historical_owner, historical_path in old_paths:
+                    if type(historical_path) is not str:
+                        raise ValueError("directory_migration_legacy_path_unverifiable")
+                    for expected_owner, folder in changed_folders:
+                        if (historical_path == folder
+                                or historical_path.startswith(folder + os.sep)):
+                            if (".." in Path(historical_path).parts
+                                    or historical_owner != expected_owner):
+                                raise ValueError(
+                                    "directory_migration_legacy_owner_requires_relink"
+                                )
             # #3196 W5 cutover: a directory rename is not authority to
             # rewrite an already canonical Kobo edition through backup_items.
             # The legacy PK has no borrower/branch and can alias another
