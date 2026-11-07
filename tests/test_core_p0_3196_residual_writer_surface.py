@@ -56,3 +56,31 @@ def test_storage_still_exposes_the_historical_mutation_surface_for_cutover():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert {"backup_put", "backup_prune_missing", "relocate_local_path"} <= names
+
+
+
+def test_kobo_w4_historical_writer_is_unreachable_from_production():
+    """W4 legacy may remain as a test archive, not as a callable production path.
+
+    Detect imports, direct calls, attribute access and literal getattr
+    references across Core and plugins. Deleting the archive later is allowed.
+    This is an architectural fence, not a replacement for transactional tests.
+    """
+    symbol = "_historical_reconcile_kobo_local"
+    unexpected: list[str] = []
+    for package in ("cifereca", "plugins"):
+        directory = ROOT / "src" / package
+        for path in directory.rglob("*.py"):
+            if "tests" in path.relative_to(directory).parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if (
+                    (isinstance(node, ast.Name) and node.id == symbol)
+                    or (isinstance(node, ast.Attribute) and node.attr == symbol)
+                    or (isinstance(node, ast.ImportFrom)
+                        and any(alias.name == symbol for alias in node.names))
+                    or (isinstance(node, ast.Constant) and node.value == symbol)
+                ):
+                    unexpected.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+    assert unexpected == [], "W4 historical writer reachable: " + ", ".join(unexpected)
