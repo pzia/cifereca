@@ -2019,7 +2019,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
             pinned_accounts = tuple(session.accounts)
             pinned_scopes = tuple(
                 (account.identity_id, account.provider_id,
-                 account.credential_id, account.unique_id)
+                 account.credential_id, account.unique_id,
+                 getattr(account, "is_primary", None))
                 for account in pinned_accounts
             )
         except (AttributeError, TypeError, ValueError):
@@ -2051,10 +2052,16 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     and live_accounts[0] is pinned_accounts[0]
                     and tuple(
                         (account.identity_id, account.provider_id,
-                         account.credential_id, account.unique_id)
+                         account.credential_id, account.unique_id,
+                         getattr(account, "is_primary", None))
                         for account in live_accounts
                     ) == pinned_scopes
                     and pinned_scopes[0][1:3] == ("kobo", pinned_credential)
+                    # The empty Kobo borrower is a valid primary, but an
+                    # unqualified secondary with the same empty ID cannot
+                    # inherit the primary's W2 manifest or acquisition grant.
+                    and (pinned_scopes[0][3] != ""
+                         or pinned_scopes[0][4] is True)
                     and pinned_scopes[0][0] in {pinned_identity, "default"}
                     and self.storage.identity_for_connection(
                         "kobo", pinned_credential,
