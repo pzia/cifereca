@@ -3187,10 +3187,22 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 emit("reconcile_required", current=index + 1, total=total,
                      title=title, item_id=product_id)
                 return True
-            # Exactly the persisted historical digest/size were checked;
-            # metadata refresh here does not invent an absent hash baseline.
-            backup_put({**current, **observed})
-            summary["unchanged"] += 1
+            # W2 cutover: the old 0.7 checksum and current matching bytes
+            # establish only HISTORICAL file integrity, not a supplier
+            # SourceReference + CompletedDelivery + OriginLink + Placement.
+            # This must not be reported as a canonical/local positive. Leave
+            # the original archive untouched (including revision and SHA)
+            # for attested retirement, and do not issue a replacement GET.
+            # In particular, do not call backup_put here: its W1 mirror can
+            # otherwise manufacture a new canonical entitlement from the
+            # old "complete" receipt during an otherwise read-only replay.
+            summary["reconcile_pending"] += 1
+            summary["reconcile_skipped"] += 1
+            emit(
+                "reconcile_required", current=index + 1, total=total,
+                item_id=product_id, title=title,
+                code="legacy_complete_without_canonical_origin",
+            )
             return True
 
     # Legacy/partial records can claim a completed Kobo download without
