@@ -226,3 +226,68 @@ def test_p0_numilog_resume_ui_keeps_private_errors_redacted():
     assert messages[0].startswith("Reprise d’indexation indisponible.")
     assert "PRIVATE" not in str(raised.value) and "PRIVATE" not in messages[0]
     assert calls == []
+
+
+
+@pytest.mark.parametrize("change", [
+    "source_reconnect", "invalid_source_epoch", "detail_replaced",
+])
+def test_p1_4664_stale_owned_download_never_queues_after_source_or_detail_revocation(change):
+    window, actions, calls, submissions, _ = setup_action("numilog")
+    button = actions[0]
+    if change == "source_reconnect":
+        window.service._source_context_epoch = 1
+    elif change == "invalid_source_epoch":
+        window.service._source_context_epoch = "not-an-epoch"
+    else:
+        button._cifereca_action_context_revoked = True
+    button.click()
+    assert submissions == [] and calls == []
+
+
+@pytest.mark.parametrize("change", [
+    "source_reconnect", "invalid_source_epoch", "detail_replaced",
+])
+def test_p1_4664_queued_owned_download_cannot_run_or_publish_after_revocation(change):
+    window, actions, calls, submissions, _ = setup_action("kobo")
+    button = actions[0]
+    button.click()
+    assert len(submissions) == 1 and calls == []
+    if change == "source_reconnect":
+        window.service._source_context_epoch = 1
+    elif change == "invalid_source_epoch":
+        window.service._source_context_epoch = None
+    else:
+        button._cifereca_action_context_revoked = True
+    args, _kwargs = submissions[0]
+    with pytest.raises(RuntimeError, match="contexte"):
+        args[1]()
+    before = list(calls)
+    args[2](NS(path="synthetic"))
+    args[3](RuntimeError("PRIVATE /home/reader"))
+    assert calls == before == []
+    assert len(submissions) == 1
+
+
+def test_p1_4664_reconnected_source_only_allows_a_newly_rendered_owned_button():
+    window, entry, detail, actions, events, submissions, _, deps = _environment(
+        item={"provider_id": "numilog", "item_id": "book", "possessions": []},
+        local=False,
+    )
+    target = NS(identity_id="alice", provider_id="numilog", operation=None)
+    window.service._source_context_epoch = 7
+    window.service.owned_library_download_target = lambda _entry: target
+    calls = []
+    window.service.obtain_owned_library_item = (
+        lambda actual: calls.append(actual) or NS(path=None)
+    )
+    add_local_book_actions(window, detail, entry, **deps)
+    assert len(actions) == 1 and submissions == []
+    fresh = actions[0]
+    fresh.click()
+    assert len(submissions) == 1 and calls == []
+    submissions[0][0][1]()
+    assert calls == [target]
+    window.service._source_context_epoch = 8
+    fresh.click()
+    assert len(submissions) == 1 and calls == [target]
