@@ -137,6 +137,11 @@ def _source(broker, source_id, *, allow_canonical=False):
         and session_accounts[0].provider_id == "kobo"
         and session_accounts[0].credential_id == account.credential_id
         and session_accounts[0].unique_id == account.unique_id
+        # Empty Kobo borrower is a valid *primary* source only. The
+        # upstream adapter may rebind an empty secondary under the same
+        # credential; never issue a manual confirmation on that alias.
+        and (account.unique_id != ""
+             or session_accounts[0].is_primary is True)
         # Kobo-Vault's legacy Account model uses "default" as an adapter
         # identity label even for a named Core profile; the actual owner is
         # independently pinned by identity_for_connection above. Only this
@@ -436,10 +441,29 @@ def prepare(broker, source_id):
                     acquisition_authorized=False, manifest_refreshed=True,
                     execution_path="canonical",
                 )
+            # Legacy manual confirmation was previously scoped by source
+            # coordinates/evidence only: replacing a connected provider
+            # session with an equivalent borrower could reuse the old
+            # token and authorize its historical W2 GET. Bind the one-use
+            # plan to this exact live provider instance and both epochs,
+            # just as the canonical executor already does.
+            from .source_context import source_context_epoch
+            core_epoch = source_context_epoch(broker.service)
+            provider_epoch = getattr(session, "_epoch", None)
             manifest, manifest_hash = _manifest(session)
             evidence, counts = _evidence(broker.service, account, manifest)
-            _require(_source(broker, source_id)[2:] == (scope, configuration), "source_changed")
-            token = broker._materialization_plans.put(scope, manifest_hash, (configuration, evidence))
+            current = _source(broker, source_id)
+            _require(
+                current[1] is session
+                and current[2:] == (scope, configuration)
+                and source_context_epoch(broker.service) == core_epoch
+                and getattr(session, "_epoch", None) == provider_epoch,
+                "source_changed",
+            )
+            token = broker._materialization_plans.put(
+                scope, manifest_hash,
+                (configuration, evidence, session, core_epoch, provider_epoch),
+            )
         return _result("prepared", ok=True, counts=counts, confirmation_token=token,
                        expires_in_seconds=_TTL, requires_explicit_confirmation=True,
                        acquisition_authorized=False, manifest_refreshed=True)
@@ -511,17 +535,33 @@ def execute(broker, source_id, token, control=None):
         locked = True
         account, session, scope, configuration = _source(broker, source_id)
         plan = broker._materialization_plans.take(token, scope)
+        from .source_context import source_context_epoch
+        # A legacy token is not transferable across reconnects, even if a
+        # provider reuses the same exact account_id and manifest revision.
+        # This check precedes every second manifest or local writer.
+        _require(
+            type(plan[3]) is tuple and len(plan[3]) == 5
+            and plan[3][2] is session
+            and plan[3][3] == source_context_epoch(service)
+            and plan[3][4] == getattr(session, "_epoch", None),
+            "source_changed",
+        )
         if cancelled():
             return finish("cancelled")
         manifest, manifest_hash = _manifest(session)
         _require(manifest_hash == plan[2], "manifest_changed")
         evidence, _counts = _evidence(service, account, manifest)
-        _require((configuration, evidence) == plan[3], "preview_changed")
+        _require((configuration, evidence) == plan[3][:2], "preview_changed")
 
         def guard():
             current_account, current_session, current_scope, current_configuration = _source(broker, source_id)
-            _require(current_scope == scope and current_configuration == configuration
-                     and current_session is session, "source_changed")
+            _require(
+                current_scope == scope and current_configuration == configuration
+                and current_session is session
+                and source_context_epoch(service) == plan[3][3]
+                and getattr(session, "_epoch", None) == plan[3][4],
+                "source_changed",
+            )
 
         revisions = {row.get("product_id", row.get("id")).strip(): row["revision_id"].strip() for row in manifest}
 
