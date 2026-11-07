@@ -106,6 +106,11 @@ class _ReferenceCatalog:
                         results=tuple(self._filtered(getattr(batch, "results", ()))),
                         warnings=tuple(getattr(batch, "warnings", ()) or ()),
                         error_message=str(getattr(batch, "error_message", "") or ""),
+                        # The Core status can report a typed refusal with no
+                        # printable error message. Preserve *only its presence*
+                        # so catalogue coverage does not mislabel a failed
+                        # source as a legitimately empty response.
+                        error_code=bool(getattr(batch, "error_code", None)),
                         cached=bool(getattr(batch, "cached", False)),
                     )
                 )
