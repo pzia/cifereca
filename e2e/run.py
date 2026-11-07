@@ -673,6 +673,24 @@ def main() -> int:
                         for key in sorted(coherence_keys):
                             print("P1_774_KEYBOARD_NUMERIC_" + key + "=" +
                                   str(coherence[key]), flush=True)
+                    # Closed diagnostic shape for the synthetic Recommandations
+                    # summary; never export raw labels or filter values.
+                    shape = report_data.get("p1_774_keyboard_summary_shape")
+                    shape_keys = frozenset({
+                        "events", "ever_count", "ever_title", "ever_order",
+                        "current_order", "current_provisional",
+                        "current_recommendation", "ranked", "matched",
+                        "label_length",
+                    })
+                    counts = {"events": 64, "ranked": 100, "matched": 100,
+                              "label_length": 512}
+                    if (type(shape) is dict and set(shape) == shape_keys
+                            and all(type(shape[key]) is int
+                                    and 0 <= shape[key] <= counts.get(key, 1)
+                                    for key in shape_keys)):
+                        for key in sorted(shape_keys):
+                            print("P1_774_SUMMARY_SHAPE_" + key + "=" +
+                                  str(shape[key]), flush=True)
                     # Eight screen-local bounded integers diagnose a clipped
                     # overflow button without leaking widget text, session,
                     # actions, account metadata or raw GTK tracebacks.
