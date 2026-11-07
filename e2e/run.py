@@ -691,6 +691,23 @@ def main() -> int:
                         for key in sorted(shape_keys):
                             print("P1_774_SUMMARY_SHAPE_" + key + "=" +
                                   str(shape[key]), flush=True)
+                    # Cover rendering at HiDPI: numeric observations only.
+                    # Never export image URLs, account data, titles or screenshots.
+                    cover = report_data.get("p1_774_cover_state")
+                    cover_keys = frozenset({
+                        "attempt", "list_found", "list_mapped", "list_paintable",
+                        "detail_found", "detail_mapped", "detail_paintable",
+                        "image_requests", "list_stack_mapped", "detail_pane_mapped",
+                    })
+                    if (type(cover) is dict and set(cover) == cover_keys
+                            and all(type(cover[key]) is int
+                                    and 0 <= cover[key] <= (
+                                        1 if key in {"list_stack_mapped", "detail_pane_mapped"}
+                                        else 30 if key == "attempt" else 20
+                                    ) for key in cover_keys)):
+                        for key in sorted(cover_keys):
+                            print("P1_774_COVER_NUMERIC_" + key + "=" +
+                                  str(cover[key]), flush=True)
                     # Eight screen-local bounded integers diagnose a clipped
                     # overflow button without leaking widget text, session,
                     # actions, account metadata or raw GTK tracebacks.
