@@ -60,7 +60,7 @@ def _id(value, *, limit=256, empty=False):
 
 
 def _inspect(db, *, library_root, scope, edition_id, right_id,
-             branch_id, placement_id, new_path):
+             branch_id, reference_kind, placement_id, new_path):
     _require(
         _exact_borrower_bound_in_db(db, scope),
         "canonical_relink_scope_unavailable",
@@ -82,7 +82,7 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
     _require(all(x is not None for x in signatures), "canonical_relink_file_unverified")
     source_ref = _stable(
         "source", scope.identity_id, scope.provider_id, scope.credential_id,
-        scope.account_id, branch_id, edition_id, right_id, "purchase",
+        scope.account_id, branch_id, edition_id, right_id, reference_kind,
     )
     source = db.execute(
         "SELECT state,evidence_kind,evidence_ref,identity_id,provider_id,"
@@ -96,7 +96,7 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
         and type(source[2]) is str and bool(source[2])
         and source[3:] == (
             scope.identity_id, "kobo", scope.credential_id, scope.account_id,
-            branch_id, edition_id, right_id, "purchase",
+            branch_id, edition_id, right_id, reference_kind,
         ),
         "canonical_relink_right_unverified",
     )
@@ -196,7 +196,7 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
     plan = {
         "schema": _SCHEMA,
         "scope": [scope.identity_id, "kobo", scope.credential_id, scope.account_id,
-                  branch_id, edition_id, right_id],
+                  branch_id, edition_id, right_id, reference_kind],
         "placement_id": placement_id,
         "old_path": old_path, "new_path": str(new_path),
         "evidence": stamp,
@@ -215,6 +215,7 @@ def relink_verified_canonical_kobo(
     storage, *, library_root: Path, identity_id: str, credential_id: str,
     account_id: str, edition_id: str, right_id: str, branch_id: str,
     placement_id: str, new_path: Path, confirmation: str | None = None,
+    reference_kind: str = "purchase",
     context_current: Callable[[], bool] | None = None,
 ) -> dict[str, object]:
     """Preview/relink only an EXISTING provider B, never infer fresh ownership.
@@ -232,6 +233,8 @@ def relink_verified_canonical_kobo(
         # The empty upstream Kobo primary account is a literal exact scope,
         # not a missing borrower; the SQL connection/borrower join still vets it.
         and _id(account_id, empty=True)
+        and type(reference_kind) is str
+        and reference_kind in {"purchase", "loan"}
         and isinstance(library_root, Path)
         and library_root.is_absolute()
         and isinstance(new_path, Path) and new_path.is_absolute()
@@ -258,7 +261,8 @@ def relink_verified_canonical_kobo(
              source_evidence, origin_evidence) = _inspect(
                 db, library_root=library_root, scope=scope,
                 edition_id=edition_id, right_id=right_id,
-                branch_id=branch_id, placement_id=placement_id,
+                branch_id=branch_id, reference_kind=reference_kind,
+                placement_id=placement_id,
                 new_path=new_path,
             )
             if not write:
@@ -304,9 +308,9 @@ def relink_verified_canonical_kobo(
                 "WHERE source_reference_id=? AND identity_id=? "
                 "AND provider_id='kobo' AND credential_id=? AND account_id=? "
                 "AND branch_id=? AND edition_id=? AND right_id=? "
-                "AND reference_kind='purchase'",
+                "AND reference_kind=?",
                 (source_ref, identity_id, credential_id, account_id,
-                 branch_id, edition_id, right_id),
+                 branch_id, edition_id, right_id, reference_kind),
             ).fetchall()
             origin_now = db.execute(
                 "SELECT evidence_ref FROM origin_links WHERE origin_kind='provider' "

@@ -194,6 +194,10 @@ def main(argv: list[str] | None = None) -> int:
     relink_b.add_argument("--item", required=True)
     relink_b.add_argument("--right", required=True)
     relink_b.add_argument("--branch", required=True)
+    relink_b.add_argument(
+        "--kind", choices=("purchase", "loan"), default="purchase",
+        help="Type exact de SourceReference déjà publié (défaut : purchase)",
+    )
     relink_b.add_argument("--placement", required=True)
     relink_b.add_argument("--path", required=True)
     relink_b.add_argument("--confirm", help="Token exact d'aperçu, sinon lecture seule")
@@ -455,8 +459,9 @@ def main(argv: list[str] | None = None) -> int:
                 canonical_relink=True, credential_id=a.credential,
                 identity_id=a.identity, account_id=a.account_id,
                 edition_id=a.item, right_id=a.right,
-                branch_id=a.branch, placement_id=a.placement,
-                path=a.path, confirmation=a.confirm,
+                branch_id=a.branch, reference_kind=a.kind,
+                placement_id=a.placement, path=a.path,
+                confirmation=a.confirm,
             )
         except Exception as exc:
             result = {
