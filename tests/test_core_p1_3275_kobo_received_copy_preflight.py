@@ -6,6 +6,7 @@ rights, acquisition, implicit adoption, or external filesystem mutation.
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
@@ -150,6 +151,12 @@ def test_b_owns_same_kobo_product_but_received_a_copy_requires_explicit_link(
             manifest=[_manifest_row()],
         )
         b_session.connect()
+        # The shared synthetic KoboSession helper defaults to Alice. This
+        # test is Bob's independent connected credential and must bind Bob
+        # before any credential-scoped manifest/admission validation.
+        b_session._accounts = [
+            replace(b_session.accounts[0], identity_id="bob"),
+        ]
         service._sessions[service._session_key("kobo", "vault-b")] = b_session
         monkeypatch.setattr(
             service, "_execute_kobo_acquisition",
