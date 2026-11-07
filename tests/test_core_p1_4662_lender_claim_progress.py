@@ -201,3 +201,101 @@ def test_exact_claim_does_not_confirm_other_edition_collection_or_borrower(
     assert read(service, account, notice).loan == (
         "confirmed" if altered != "borrower" else "unknown"
     )
+
+
+
+@pytest.mark.parametrize("mutation", [
+    "disabled", "missing", "duplicate", "malformed",
+])
+def test_disabled_or_ambiguous_lender_connection_never_reads_private_claim(
+    setup, monkeypatch, mutation,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    connections = service.storage.provider_connections
+    if mutation == "disabled":
+        service.storage.provider_connection_put({
+            "identity_id": "alex", "provider_id": "paris",
+            "credential_id": "paris-lender", "label": "Synthetic",
+            "enabled": False, "metadata": {},
+        })
+    elif mutation == "missing":
+        monkeypatch.setattr(
+            service.storage, "provider_connections", lambda **_kw: [],
+        )
+    elif mutation == "duplicate":
+        original = connections(identity_id="alex")
+        exact = next(row for row in original
+                     if row.get("credential_id") == "paris-lender")
+        monkeypatch.setattr(
+            service.storage, "provider_connections",
+            lambda **_kw: [*original, dict(exact)],
+        )
+    else:
+        monkeypatch.setattr(
+            service.storage, "provider_connections", lambda **_kw: (),
+        )
+    # A's UI must not even inspect B's durable at-most-once receipt if B's
+    # registered connection is no longer uniquely enabled.
+    monkeypatch.setattr(
+        service.storage, "metadata_get",
+        lambda *_args: pytest.fail("private lender metadata read after revocation"),
+    )
+    monkeypatch.setattr(
+        service.storage, "loan_borrow_state",
+        lambda *_args: pytest.fail("private lender receipt read after revocation"),
+    )
+    result = read(service, account, notice)
+    assert result == CrossProfileBorrowProgress(
+        "unknown", "unavailable", "blocked", "lender_scope_unverified",
+    )
+
+
+def test_reenabled_exact_lender_connection_can_again_observe_spent_receipt(setup):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    assert read(service, account, notice).loan == "confirmed"
+    service.storage.provider_connection_put({
+        "identity_id": "alex", "provider_id": "paris",
+        "credential_id": "paris-lender", "label": "Synthetic",
+        "enabled": False, "metadata": {},
+    })
+    assert read(service, account, notice).reason_code == "lender_scope_unverified"
+    service.storage.provider_connection_put({
+        "identity_id": "alex", "provider_id": "paris",
+        "credential_id": "paris-lender", "label": "Synthetic",
+        "enabled": True, "metadata": {},
+    })
+    result = read(service, account, notice)
+    assert result.loan == "confirmed"
+    assert result.transfer == "blocked" and result.retry_borrow is False
+
+
+@pytest.mark.parametrize("phase", ["metadata", "checkpoint"])
+def test_lender_binding_disabled_during_receipt_reads_never_publishes(
+    setup, monkeypatch, phase,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    getter_name = "metadata_get" if phase == "metadata" else "loan_borrow_state"
+    original = getattr(service.storage, getter_name)
+
+    def revoke_while_reading(*args):
+        value = original(*args)
+        service.storage.provider_connection_put({
+            "identity_id": "alex", "provider_id": "paris",
+            "credential_id": "paris-lender", "label": "Synthetic",
+            "enabled": False, "metadata": {},
+        })
+        return value
+
+    monkeypatch.setattr(service.storage, getter_name, revoke_while_reading)
+    result = read(service, account, notice)
+    assert result.loan == "unknown"
+    assert result.transfer == "blocked"
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.executable is False and result.retry_borrow is False
+    # Historical lender claims remain spent: no second borrow authorization.
+    assert service.storage.loan_borrow_claim_once(
+        borrow_claim_key(account, notice), "replay-forbidden",
+    )[0] is False
