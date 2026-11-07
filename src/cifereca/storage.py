@@ -2091,6 +2091,7 @@ class Storage:
             # source cannot be inserted between this check and that UPSERT.
             # Other providers, and Kobo editions with no typed source,
             # retain the historical writer until their recovery is migrated.
+            was_complete_kobo_archive = False
             if item.get("provider_id") == "kobo":
                 db.execute("BEGIN IMMEDIATE")
                 if db.execute(
@@ -2100,6 +2101,20 @@ class Storage:
                      str(item.get("item_id") or "")),
                 ).fetchone() is not None:
                     return
+                # W1 cutover: when an old Kobo receipt was ALREADY complete,
+                # later metadata refreshes are writes to a historical archive,
+                # not fresh independent supplier A/B delivery evidence.
+                # Snapshot this under the same BEGIN IMMEDIATE as the UPSERT,
+                # so another process cannot change its status between checks.
+                former = db.execute(
+                    "SELECT status FROM backup_items WHERE provider_id='kobo' "
+                    "AND credential_id=? AND item_id=? LIMIT 1",
+                    (str(item.get("credential_id") or ""),
+                     str(item.get("item_id") or "")),
+                ).fetchone()
+                was_complete_kobo_archive = bool(
+                    former and former[0] in {"complete", "ok"}
+                )
             # The v0.7 checkpoint remains writable for legacy recovery,
             # but neither passive inventory nor active delivery may mirror
             # canonical A/B state. The legacy PK omits owner/account: reject
@@ -2172,6 +2187,16 @@ class Storage:
             # with omitted owner/account must not demote an earlier exact
             # owner in the backup projection.
             merged = dict(zip(keys, persisted))
+            # A previously completed v0.7 archive can receive a newer title,
+            # cover or updated_at, but that is not a newly completed delivery.
+            # Do not replay the W1 mirror or refresh canonical rights,
+            # artifacts, placements or ledger from this archival state.
+            # Keep the exact-owner collision checks before returning.
+            if (item.get("provider_id") == "kobo"
+                    and was_complete_kobo_archive
+                    and merged.get("status") in {"complete", "ok"}):
+                self._check_kobo_legacy_canonical_owner(db, merged)
+                return
             if (item.get("provider_id") == "kobo"
                     and (merged.get("identity_id") is None
                          # A missing/blank profile label (including whitespace)
