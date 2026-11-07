@@ -6,6 +6,7 @@ Only fictional identifiers, never a real provider or account.
 from __future__ import annotations
 
 from io import BytesIO
+from hashlib import sha256
 import json
 from zipfile import ZipFile
 import pytest
@@ -14,6 +15,7 @@ pytest.importorskip("cryptography")
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
+from browser_recorder_devkit import core_contract_kit
 from browser_recorder_http import PrivateExchange, PrivateHttpTrace
 from browser_recorder_vault import PrivateSessionVault, VaultError
 from browser_recorder_private_zip import (
@@ -83,7 +85,18 @@ def test_explicit_private_export_and_external_read(tmp_path):
     assert unwrapped == decrypt_private_zip(raw, PASSPHRASE)
     with ZipFile(BytesIO(unwrapped)) as zip_file:
         assert zip_file.testzip() is None
-        assert set(zip_file.namelist()) == {"README.txt", "trace.json"}
+        names = set(zip_file.namelist())
+        assert {"README.txt", "trace.json",
+                "plugin-dev-kit/PROVIDER-DEVELOPMENT.md",
+                "plugin-dev-kit/manifest.json",
+                "plugin-dev-kit/contracts/downloadable_resources.py",
+                "plugin-dev-kit/contracts/loan_inventory.py"} <= names
+        sdk = json.loads(zip_file.read("plugin-dev-kit/manifest.json"))
+        assert {row["path"] for row in sdk["files"]} == (
+            names - {"README.txt", "trace.json", "plugin-dev-kit/manifest.json"})
+        for entry in sdk["files"]:
+            assert sha256(zip_file.read(entry["path"])).hexdigest() == entry["sha256"]
+        assert b"Core Cifereca" in zip_file.read("plugin-dev-kit/PROVIDER-DEVELOPMENT.md")
         detail = json.loads(zip_file.read("trace.json"))
         assert detail["saved_at"] == session.saved_at
         rows = detail["exchanges"]
@@ -125,7 +138,14 @@ def test_simple_llm_export_works_in_0755_folder_without_second_secret(tmp_path):
     assert destination.stat().st_mode & 0o777 == 0o600
     with ZipFile(destination) as zf:
         assert zf.testzip() is None
-        assert set(zf.namelist()) == {"README.txt", "trace.json"}
+        names = set(zf.namelist())
+        assert {"README.txt", "trace.json",
+                "plugin-dev-kit/PROVIDER-DEVELOPMENT.md",
+                "plugin-dev-kit/manifest.json"} <= names
+        kit = core_contract_kit()
+        for member in ("plugin-dev-kit/PROVIDER-DEVELOPMENT.md",
+                       "plugin-dev-kit/contracts/downloadable_resources.py"):
+            assert zf.read(member) == kit[member]
         data = json.loads(zf.read("trace.json"))
         assert ACCOUNT in data["exchanges"][0]["url"]
         assert TOKEN in data["exchanges"][0]["request_body"]
@@ -201,7 +221,14 @@ except Exception:
 
 with ZipFile(io.BytesIO(clear)) as archive:
     assert archive.testzip() is None
-    assert set(archive.namelist()) == {"README.txt", "trace.json"}
+    names = set(archive.namelist())
+    assert {"README.txt", "trace.json",
+            "plugin-dev-kit/PROVIDER-DEVELOPMENT.md",
+            "plugin-dev-kit/manifest.json"} <= names
+    kit_manifest = json.loads(archive.read("plugin-dev-kit/manifest.json"))
+    from hashlib import sha256
+    for member in kit_manifest["files"]:
+        assert sha256(archive.read(member["path"])).hexdigest() == member["sha256"]
     contents = json.loads(archive.read("trace.json"))
     assert contents["schema"] == "cifereca.browser-recorder.private-session/1"
     assert len(contents["exchanges"]) == 2
