@@ -177,6 +177,20 @@ def test_queued_loaded_detail_never_fetches_after_search_row_revocation(
     assert f.outputs == []
 
 
+def test_worker_loaded_row_check_does_not_query_gtk_search_filters(
+    monkeypatch,
+):
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    # loaded_notice_key() inspects GTK Search controls/store and is allowed
+    # only at initial click and at GTK result delivery, never in the worker.
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("worker must not read GTK Search state")
+    monkeypatch.setattr(port, "loaded_notice_key", forbidden)
+    assert work() is f.detail
+    assert len(f.calls) == 1
+
+
 def test_loaded_detail_already_fetched_still_refuses_replaced_search_row(
     monkeypatch,
 ):
