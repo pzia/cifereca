@@ -509,6 +509,7 @@ def _canonical_kobo_backup_preview(self, credential_id, identity_id, session):
         "provider_rejected_manifest_items": 0,
         "checkpoint_status": "not_applicable",
         "unlinked_local_books": 0,
+        "unlinked_local_books_observed": False,
         "counts": counts,
         "blocking_items": sum(counts[name] for name in (
             "needs_reconciliation", "attention_required", "blocked_scope",
