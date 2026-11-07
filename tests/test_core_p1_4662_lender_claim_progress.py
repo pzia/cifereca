@@ -365,3 +365,35 @@ def test_lender_receipt_observation_rejects_aba_context_or_source_epoch(
     assert result.loan == "unknown"
     assert result.transfer == "blocked"
     assert result.retry_borrow is result.executable is False
+
+
+
+@pytest.mark.parametrize("change", ["reader_epoch", "source_epoch", "reader_identity"])
+def test_lender_binding_reader_side_effect_does_not_publish_old_claim(
+    setup, monkeypatch, change,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    original = service.storage.provider_connections
+
+    def changed_during_binding(*args, **kwargs):
+        rows = original(*args, **kwargs)
+        if change == "reader_epoch":
+            service._account_context_epoch += 2
+        elif change == "source_epoch":
+            service._source_context_epoch += 2
+        else:
+            service.current_identity = service.identity_by_id("alex")
+        return rows
+
+    monkeypatch.setattr(
+        service.storage, "provider_connections", changed_during_binding,
+    )
+    monkeypatch.setattr(
+        service.storage, "metadata_get",
+        lambda *_args: pytest.fail("private claim after binding switched"),
+    )
+    result = read(service, account, notice)
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.loan == "unknown"
+    assert result.transfer == "blocked" and result.retry_borrow is False
