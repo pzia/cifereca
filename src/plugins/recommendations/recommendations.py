@@ -99,7 +99,9 @@ def _catalogue_coverage_projection(
         if type(raw) not in (tuple, list) or len(raw) != 2:
             continue
         provider_id = _public_candidate_text(raw[0], limit=120)
-        if not provider_id or provider_id in seen:
+        # A source ID is an exact broker key. Trimming controls/whitespace
+        # into another provider ID would attribute a foreign status to it.
+        if not provider_id or provider_id != raw[0] or provider_id in seen:
             continue
         seen.add(provider_id)
         label = _public_candidate_text(raw[1], limit=240) or provider_id
