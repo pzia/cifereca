@@ -569,7 +569,7 @@ def apply_snapshot(
     archive: Path,
     *,
     python: str | None = None,
-    keep: int = 3,
+    keep: int = updater.MIN_RETAINED_RELEASES,
     dry_run: bool = False,
     restart: bool = False,
     expected_sha256: str | None = None,
@@ -684,7 +684,7 @@ def apply_snapshot(
         core_result = None
         try:
             if core_zip is not None:
-                core_result = step("core_activation", updater.install_archive, core_zip, python=python, keep=max(keep, 3), dry_run=False)
+                core_result = step("core_activation", updater.install_archive, core_zip, python=python, keep=max(keep, updater.MIN_RETAINED_RELEASES), dry_run=False)
                 core_installed = True
             # The manifest is fully validated before mutation. The ordinal
             # marks the plugin currently attempted, NOT the number installed:
@@ -755,7 +755,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-sha256", metavar="HEXADECIMAL", help="Empreinte SHA-256 du ZIP obtenue d'une source de confiance, vérifiée avant extraction")
     parser.add_argument("--require-plugins-only", action="store_true", help="Exiger le marqueur/index plugins-only et un --expected-sha256 externe fiable, y compris en dry-run")
     parser.add_argument("--restart", action="store_true", help="Lance la nouvelle application après mise à jour")
-    parser.add_argument("--keep", type=int, default=3)
+    parser.add_argument("--keep", type=int, default=updater.MIN_RETAINED_RELEASES,
+                        help="Plancher de versions Core (min 2) en plus des 24 h")
     parser.add_argument("--python")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
