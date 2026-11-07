@@ -88,6 +88,35 @@ def sync_local_preflight_presentation(result: object) -> str:
         )
     ):
         return "Aperçu indisponible. Aucun téléchargement autorisé."
+    # D1 Core P0: the Sync page now receives historical B evidence only.
+    # Never rephrase those observations as current supplier-owned books,
+    # verified W2 backups or missing acquisitions.
+    if facts.get("historical_canonical_only") is True:
+        evidence = facts.get("historical_canonical")
+        if (facts.get("canonical_source") is not True
+                or facts.get("manifest_refreshed") is not False
+                or known != 0 or any(counts[key] for key in expected)
+                or not isinstance(evidence, Mapping)):
+            return "Aperçu indisponible. Aucun téléchargement autorisé."
+        total = evidence.get("recorded_rights")
+        verified = evidence.get("physically_verified")
+        truncated = evidence.get("inventory_truncated")
+        if (type(total) is not int or not 0 <= total <= 512
+                or type(verified) is not int or not 0 <= verified <= total
+                or type(truncated) is not bool
+                or (facts.get("files_verified") is not True and verified != 0)):
+            return "Aperçu indisponible. Aucun téléchargement autorisé."
+        scan = ("Vérification SHA demandée."
+                if facts.get("files_verified") is True
+                else "Sans vérification SHA des fichiers.")
+        limit = (" Inventaire partiel." if truncated else "")
+        return (
+            f"Références Kobo B historiques : {total} · "
+            f"copies physiquement vérifiées : {verified}.{limit}\\n"
+            f"{scan} Manifeste distant non actualisé ; "
+            "les droits actuels et les déclarations manuelles ne sont pas "
+            "évalués. Aucun téléchargement autorisé depuis cet aperçu."
+        )
     local = counts["already_local_linked"] + counts["already_local_verified"]
     # An offline backup-only preview has no verified current Kobo rights
     # manifest. Personal user_declarations are tracked separately: they are
