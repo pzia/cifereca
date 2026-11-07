@@ -6,6 +6,7 @@ included in the returned candidate reference or a provider exception.
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -350,6 +351,22 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
             return receipt.path, ""
         except ValueError as exc:
             code = str(exc)
+            # #4882: the public refusal deliberately groups multiple unsafe
+            # URL/redirect forms. Preserve the exact *closed* transport code
+            # locally for diagnosis without ever logging Location, signed URL,
+            # product, credential, exception text outside the allowlist, or
+            # changing which GETs are permitted.
+            if code in (
+                "delivery_redirect_invalid", "delivery_redirect_missing",
+                "delivery_url_invalid", "delivery_ip_literal_refused",
+            ):
+                try:
+                    logging.getLogger("cifereca").warning(
+                        "EVENT kobo candidate_http_boundary cause=%s", code,
+                    )
+                except Exception:
+                    # Telemetry is never an acquisition prerequisite.
+                    pass
             if code == "delivery_admission_changed":
                 raise ProviderCapabilityError(
                     "kobo_candidate_owner_changed" if not bound()
