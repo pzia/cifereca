@@ -1,7 +1,7 @@
-"""#4640 K2: case-only FLEPUB variations are not a new Kobo permission.
+"""#4640 K2/K3: owner-approved explicit unknown/FLEPUB media presentation.
 
-K2's real media_format=unknown remains pending, while an independently
-attested media_format=epub + KDRM library_sync source preserves one offer ID.
+Only Kobo KDRM unknown+FLEPUB is presented as EPUB consistently, while
+other formats and ambiguous multiple offers stay closed.
 No Vault HTTP, content GET, DRM runtime or account access.
 """
 from copy import deepcopy
@@ -54,9 +54,9 @@ def test_case_only_flepub_variations_keep_exact_offer_id_and_runtime_route(
     assert "candidate_rejection_counts" not in observed
 
 
-@pytest.mark.parametrize("media", ["unknown", "UNKNOWN", "flepub", "FLEPUB"])
+@pytest.mark.parametrize("media", ["flepub", "FLEPUB", "other", "kepub"])
 @pytest.mark.parametrize("source", ["FLEPUB", "flepub"])
-def test_unknown_or_unqualified_media_cannot_be_upgraded_from_source_label(
+def test_unqualified_media_cannot_be_upgraded_from_source_label(
     media, source,
 ):
     candidate = _candidate(media, source)
