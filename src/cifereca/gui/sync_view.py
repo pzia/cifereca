@@ -112,7 +112,7 @@ def sync_local_preflight_presentation(result: object) -> str:
         limit = (" Inventaire partiel." if truncated else "")
         return (
             f"Références Kobo B historiques : {total} · "
-            f"copies physiquement vérifiées : {verified}.{limit}\\n"
+            f"copies physiquement vérifiées : {verified}.{limit}\n"
             f"{scan} Manifeste distant non actualisé ; "
             "les droits actuels et les déclarations manuelles ne sont pas "
             "évalués. Aucun téléchargement autorisé depuis cet aperçu."
