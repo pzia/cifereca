@@ -53,11 +53,17 @@ est dépourvue de couverture.
 
 Le scénario vérifie les deux images décodées dans la **liste Recherche**,
 leur restitution dans le **Détail** des deux livres, un placeholder pour
-la notice sans image, **exactement deux GET image simulés** et le partage
-du cache entre Recherche et Détail. Les captures `01` à `04` et le
-rapport `screen.json` n'incluent aucun identifiant, chemin, token ou
-réponse fournisseur privée. La recette ne prouve **ni** disponibilité
-effective du CDN public Feedbooks, **ni** état d'un compte BnF installé.
+la notice sans image, puis dans la **liste Mes emprunts** avec trois prêts
+synthétiques de sources exactes et dans leur **Détail**. Il exige un
+placeholder pour le prêt sans image, **exactement deux GET image simulés**
+et le même cache de couvertures entre Recherche, Détail et Emprunts.
+Les captures `01` à `07` et le rapport `screen.json` n'incluent
+aucun identifiant, chemin, token ou réponse fournisseur privée.
+La partie Emprunts reçoit directement trois `Loan` synthétiques déjà
+projetés ; elle **prouve le rendu GTK partagé**, pas la récupération
+réelle des métadonnées des deux cartes BnF par un compte installé.
+La recette ne prouve **ni** disponibilité effective du CDN public
+Feedbooks, **ni** état d'un compte BnF installé.
 
 ## Scénario de référence
 
