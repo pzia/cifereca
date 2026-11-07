@@ -125,3 +125,19 @@ def test_legacy_default_alias_preserves_recovery_for_verified_named_owner(tmp_pa
         assert receipt["attention_code"] == "interrupted_acquisition_review"
     finally:
         service.close()
+
+
+def test_recovery_disconnected_current_session_cannot_change_its_checkpoint(tmp_path):
+    service = _service(tmp_path, manifest=[])
+    try:
+        record = _interrupted("vault-1", "disconnected")
+        service.storage.backup_put(record)
+        before = service.storage.backup_get("kobo", "vault-1", "disconnected")
+        session = next(iter(service._sessions.values()))
+        session.connected = False
+        summary = _recover_only(service)
+        assert summary["recovered_interrupted"] == 0
+        assert summary["reconcile_pending"] == 0
+        assert service.storage.backup_get("kobo", "vault-1", "disconnected") == before
+    finally:
+        service.close()
