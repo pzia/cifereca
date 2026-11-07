@@ -14,6 +14,7 @@ import pytest
 
 from cifereca import cli
 from cifereca.core import kobo_local_reconciliation as repair
+from tests.kobo_legacy_reconciliation_archive import historical_reconcile_kobo_local
 from cifereca.core.canonical_publication import publish_completed_acquisition
 from cifereca.identities import Identity
 from cifereca.locking import InterProcessLock
@@ -57,7 +58,7 @@ def _dump(case):
 
 
 def _run(case, **kwargs):
-    return repair._historical_reconcile_kobo_local(case.service, **{**case.options, **kwargs})
+    return historical_reconcile_kobo_local(case.service, **{**case.options, **kwargs})
 
 
 def _apply(case):
@@ -742,7 +743,8 @@ def crash(db,table,row,previous):
  original(db,table,row,previous)
  os._exit(17)
 m._write_row=crash
-m._historical_reconcile_kobo_local(service,**options)
+from tests.kobo_legacy_reconciliation_archive import historical_reconcile_kobo_local as historical_w4
+historical_w4(service,**options)
 '''
     result = subprocess.run([sys.executable, "-c", script, str(case.tmp),
                              json.dumps({**case.options, "confirmation": plan["plan_token"]})],
