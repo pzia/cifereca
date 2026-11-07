@@ -534,8 +534,8 @@ def main(argv: list[str] | None = None) -> int:
         diagnostics_level="trace" if private_kobo_trace else "detailed",
     )
     service = core.library
-    trace_previous_level = None
-    trace_handlers_before = None
+    kobo_trace_previous_level = None
+    kobo_trace_handlers_before = None
     try:
         if private_kobo_trace:
             # The standalone CLI does not set up the GUI's file logger.
@@ -544,8 +544,8 @@ def main(argv: list[str] | None = None) -> int:
             from .logging_utils import (
                 configure_logging, diagnostics_level, set_diagnostics_level,
             )
-            trace_previous_level = diagnostics_level()
-            trace_handlers_before = tuple(logging.getLogger("cifereca").handlers)
+            kobo_trace_previous_level = diagnostics_level()
+            kobo_trace_handlers_before = tuple(logging.getLogger("cifereca").handlers)
             configure_logging()
             set_diagnostics_level("trace")
         if a.cmd == "kobo-sync-edition":
@@ -1231,14 +1231,14 @@ def main(argv: list[str] | None = None) -> int:
             print("\n[Kobo] Synchronisation interrompue ; l’élément en cours sera repris au prochain lancement.", file=sys.stderr, flush=True)
         return 130
     finally:
-        if trace_previous_level is not None:
+        if kobo_trace_previous_level is not None:
             from .logging_utils import set_diagnostics_level
             logger = logging.getLogger("cifereca")
             for handler in tuple(logger.handlers):
-                if handler not in trace_handlers_before:
+                if handler not in kobo_trace_handlers_before:
                     logger.removeHandler(handler)
                     handler.close()
-            set_diagnostics_level(trace_previous_level)
+            set_diagnostics_level(kobo_trace_previous_level)
         core.close()
 
 
