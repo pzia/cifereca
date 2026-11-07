@@ -45,6 +45,11 @@ def _configured_binding(service: Any, account: Any) -> bool:
     # never inherit an ON from a previous borrower after reconnect/rebind.
     # Exact per-account V2 CAS consent is a separate, safer path.
     if (type(upstream_id) is not str
+            # The empty borrower is the exact Kobo PRIMARY account, not
+            # an unbound secondary borrower. The legacy Source ID otherwise
+            # aliases the primary's saved on_start ON bit after account swap.
+            or (upstream_id == ""
+                and getattr(account, "is_primary", None) is not True)
             or (upstream_id and (
                 upstream_id != upstream_id.strip()
                 or upstream_id == f"kobo:{credential}:primary"
@@ -122,7 +127,9 @@ def _configured_binding(service: Any, account: Any) -> bool:
     if (getattr(bound, "provider_id", None) != "kobo"
             or getattr(bound, "credential_id", None) != credential
             or getattr(bound, "identity_id", None) not in {identity, "default"}
-            or getattr(bound, "unique_id", None) != upstream_id):
+            or getattr(bound, "unique_id", None) != upstream_id
+            or (upstream_id == ""
+                and getattr(bound, "is_primary", None) is not True)):
         return False
     # #3196: on_start is strictly the historical Kobo backup_items writer.
     # A complete Core A->B source already has a single canonical executor.
