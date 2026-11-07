@@ -132,3 +132,45 @@ def test_reference_mode_can_exclude_other_owned_books_from_existing_snapshot():
 
     assert all(row.item["title"] != "Livre voisin" for row in hidden.ranked)
     assert any(row.item["title"] == "Livre voisin" for row in shown.ranked)
+
+
+@pytest.mark.parametrize("typed_failure", [False, True])
+def test_reference_progressive_coverage_distinguishes_empty_and_typed_error(
+    typed_failure,
+):
+    """A typed Core failure with no text must survive the reference adapter.
+
+    Only the error's presence is exposed; provider payloads are never copied
+    into status labels, and reference suppression remains a local filter.
+    """
+    from recommendations import _catalogue_coverage_projection
+
+    class TypedCatalog:
+        def searchable_providers(self):
+            return (("catalog", "Catalogue public"),)
+
+        def search_progressive(self, query, *, on_batch, **kwargs):
+            assert query and kwargs["scope"] == "digital"
+            on_batch(SimpleNamespace(
+                provider_id="catalog", results=(),
+                error_code=("PRIVATE_TYPED_REFUSAL" if typed_failure else None),
+                error_message="", warnings=(), cached=False,
+            ))
+            return SimpleNamespace(warnings=(), cancelled=False)
+
+    result = compute_reference_recommendations(
+        TypedCatalog(), reference_book(), max_queries=1, exploration=0,
+    )
+    assert len(result.queries) == 1
+    assert result.ranked == ()
+    assert len(result.catalogue_observations) == 1
+    observation = result.catalogue_observations[0]
+    assert (observation.provider_id, observation.batches, observation.results_seen,
+            observation.failures) == (
+                "catalog", 1, 0, int(typed_failure),
+            )
+    status, tooltip = _catalogue_coverage_projection(result)
+    expected = "erreur fournisseur" if typed_failure else "réponse sans notice"
+    assert expected in tooltip
+    assert ("1 en erreur" in status) is typed_failure
+    assert "PRIVATE_TYPED_REFUSAL" not in status + tooltip
