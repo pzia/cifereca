@@ -25,6 +25,11 @@ n'est plus exécutable.
   (y compris sans callback de session). Si la politique change,
   la reprise conserve ses checkpoints historiques non promus et
   ne publie pas un `complete` inventé.
+- **Reprise indépendante** : `_recover_local_remnants` vérifie aussi
+  le CAS exact avant de retenir une source de reprise et dans le garde
+  vivant juste avant chaque écriture de correction de checkpoint.
+  Une archive `acquiring` conservée n'est donc pas une permission
+  lorsque le consentement canonique a été activé ou révoqué.
 - **D2** : l'aperçu/confirmation du vieux manifeste est refusé
   `canonical_source_policy_configured` avant de contacter le
   fournisseur. Un token obtenu auparavant ne neutralise pas la
