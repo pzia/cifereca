@@ -125,3 +125,79 @@ def test_shared_bibliography_survives_recommendations_ranking_without_b_rights(
             assert session.private_calls >= 1  # only while Bob was selected
     finally:
         service.close()
+
+
+
+@pytest.mark.parametrize("provider", ["paris", "numilog", "kobo"])
+@pytest.mark.parametrize("phase", ["cached_disabled", "inflight_disabled"])
+def test_recommendations_never_rank_foreign_catalogue_after_provider_revocation(
+    tmp_path, monkeypatch, provider, phase,
+):
+    """Provider enablement is a lease, not just a discovery-time check.
+
+    A can only receive bibliographic rows while B's provider remains enabled.
+    Even an in-flight revocation cannot emit a partial ranked result.
+    """
+    if provider == "paris":
+        service, _, session, _, _ = paris_setup(tmp_path, monkeypatch)
+    elif provider == "numilog":
+        service, session, _ = numilog_setup(tmp_path, monkeypatch)
+    else:
+        service, session, _ = kobo_setup(tmp_path, monkeypatch)
+    service._sessions = {"bob": session}
+    allowed = {"value": True}
+    monkeypatch.setattr(
+        service, "_provider_enabled_for_identity",
+        lambda provider_id, identity_id=None: allowed["value"],
+    )
+    original_search = session.search
+
+    def matching_search(query, scope, **kwargs):
+        return [
+            replace(row, author="Alice")
+            for row in original_search(query, scope, **kwargs)
+        ]
+
+    session.search = matching_search
+
+    def compute():
+        partials = []
+        result = compute_recommendations(
+            _Metadata(), service, "alice",
+            max_queries=1, exploration=0, exclude_owned=False,
+            partial=partials.append,
+        )
+        return result, partials
+
+    try:
+        if phase == "cached_disabled":
+            warm, partials = compute()
+            assert warm.ranked and partials and not warm.cancelled
+            allowed["value"] = False
+            revoked, partials = compute()
+            assert revoked.providers == ()
+            assert revoked.ranked == ()
+            assert partials == []
+        else:
+            session.mutate = lambda: allowed.__setitem__("value", False)
+            revoked, partials = compute()
+            assert revoked.cancelled
+            assert revoked.ranked == ()
+            assert partials == []
+            assert service.last_search == []
+
+        # Explicitly re-enabling the provider must rebuild an anonymous
+        # shared projection, not resurrect B's private catalogue or rights.
+        allowed["value"] = True
+        session.mutate = None if provider == "paris" else lambda: None
+        resumed, partials = compute()
+        assert not resumed.cancelled and resumed.ranked and partials
+        for row in resumed.ranked:
+            assert row.item.metadata == {"catalogue_access": "shared_read_only"}
+            assert row.item.owned is False
+            assert row.item.downloadable is False
+            assert row.item.download_url is None
+        if provider != "paris":
+            assert session.private_calls == 0
+    finally:
+        service.close()
