@@ -60,6 +60,23 @@ historiques complètes, W4 et les autres statuts demeurent dans le périmètre
 de migration ; ce n'est pas une preuve de droit ni un retrait global W1.
 Tests : `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
 
+**Parent W1 — cutover des checkpoints Kobo passifs en écriture courante
+(07/11/2026) :** la règle déjà appliquée à la migration v2→v3 s'applique
+désormais à chaque `backup_put` Kobo. Un reçu `pending/queued`
+**jamais tenté**, sans chemin, empreinte, taille, erreur, ADEPT, tentative,
+stratégie ni prêt particulier, demeure dans `backup_items` mais ne crée
+plus d'Entitlement, acquisition, Artifact, Placement ou catalogue générique.
+Même sort pour `skipped_archived`. Le prédicat est unique pour la migration
+et l'écriture courante ; il inspecte la **ligne fusionnée et persistée**,
+pas les champs d'un patch partiel. Les veto de collision d'identité/compte
+restent transactionnels ; un replay passif n'altère pas une ancienne
+projection canonique. Un indice de tentative ou de contenu maintient
+temporairement le miroir de compatibilité, en attendant #4858 (W2/D1–D4)
+et #4859 (W4/D5), sans le transformer en preuve A→B. Test :
+`tests/test_core_p0_3196_w1_live_passive_cutover.py`.
+**Cette séparation ne termine pas W1 :** les acquisitions actives/achevées
+et rapprochements W4 restent dans le périmètre du cutover coordonné.
+
 **Mise à jour W3 (06/11/2026) :** l'intégralité du prune Kobo est retirée, y compris pour les enregistrements `pending` sans aucune preuve ; les détails historiques de garde W3 ci-dessous décrivent les protections antérieures désormais subsumées par la conservation de *toutes* les lignes. La migration transactionnelle seule pourra décider du retrait d'une archive.
 
 **Cutover W2 après manifeste — scope de session exact (07/11/2026) :**
