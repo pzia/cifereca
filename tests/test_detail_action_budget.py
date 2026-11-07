@@ -171,3 +171,30 @@ def test_p1_3687_oversized_primary_label_keeps_overflow_hittable_at_1024():
     assert obj._primary_variant == 'abbreviated'
     assert occupied(obj) <= 529
     assert obj.box.children[-1] is obj.overflow_button
+
+
+def test_p1_3687_full_caption_remains_if_all_actions_fit_without_menu():
+    obj = bar()
+    for button in tuple(obj.box.children):
+        obj.box.remove(button)
+    full_label = "Consulter la notice avec sa provenance attestée"
+    primary = LongPrimary(full_label)
+    secondary = Button(32)
+    obj._buttons = [primary, secondary]
+    obj._widths = {primary: primary.width, secondary: 32}
+    obj.box.append(primary)
+    obj.box.append(secondary)
+    obj.preserve_primary_label = True
+    obj._primary_full_width = None
+    obj._primary_fit_budget = None
+    obj._primary_variant = None
+    obj._compact = False
+    # The two actual buttons fit; reserving an unnecessary menu would
+    # otherwise shorten the primary caption for no UX benefit.
+    budget = primary.width + 32 + obj.box.spacing + 2 * obj.box.margins
+    obj._layout_overflow(budget)
+    assert primary.display == full_label
+    assert obj._primary_variant is None
+    assert not obj.overflow_button.visible
+    assert obj.box.children == [primary, secondary]
+    assert occupied(obj) <= budget
