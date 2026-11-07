@@ -82,7 +82,9 @@ def test_k1_rejected_initial_url_logged_only_with_trace_and_no_get(
     local_level(level)
     s, vault, _broker, account, posts = setup()
     orig = vault.acquisition
-    url = SIGNED + "#PRIVATE_K1_FRAGMENT"
+    # urllib.parse ignores an empty fragment, while Core rejects the raw #.
+    # This is the actual guard divergence targeted by K1 instrumentation.
+    url = SIGNED + "#"
 
     def upstream(product, **kw):
         value = orig(product, **kw)
@@ -113,7 +115,7 @@ def test_k1_rejected_initial_url_logged_only_with_trace_and_no_get(
             assert any("phase=initial" in row and repr(url) in row for row in lines)
         else:
             assert lines == []
-            assert "PRIVATE_K1_FRAGMENT" not in caplog.text
+            assert "SYNTHETIC_PRIVATE_SIGNATURE" not in caplog.text
             assert SIGNED not in caplog.text
     finally:
         s.close()
