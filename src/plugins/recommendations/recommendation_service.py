@@ -128,6 +128,19 @@ class LibrarySnapshotCache:
 
 
 @dataclass(frozen=True)
+class CatalogueSearchObservation:
+    """Closed per-provider evidence from Core progressive batches, not rights.
+
+    Zero batches means no observed response, not a confirmed empty catalogue.
+    The counters are diagnostics only: no raw search or provider error string.
+    """
+    provider_id: str
+    batches: int = 0
+    results_seen: int = 0
+    failures: int = 0
+
+
+@dataclass(frozen=True)
 class RecommendationResult:
     books_count: int
     queries: tuple[str, ...]
@@ -139,6 +152,7 @@ class RecommendationResult:
     cache_unknown_calls: int = 0
     cancelled: bool = False
     profile_books: tuple[Any, ...] = ()
+    catalogue_observations: tuple[CatalogueSearchObservation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -281,6 +295,20 @@ def compute_recommendations(
     provider_total = max(1, len(providers))
     total_units = max(1, len(queries) * provider_total)
     progressive = getattr(catalog_broker, "search_progressive", None)
+    # Do not equate a provider in the discovery inventory with an observed
+    # response, or an observed result with a candidate kept by ranking.
+    observed: dict[str, list[int]] = {}
+    if callable(progressive):
+        for provider_id, _label in providers[:128]:
+            if type(provider_id) is str and provider_id:
+                observed.setdefault(provider_id, [0, 0, 0])
+
+    def observations_snapshot() -> tuple[CatalogueSearchObservation, ...]:
+        return tuple(
+            CatalogueSearchObservation(provider_id, *values)
+            for provider_id, values in observed.items()
+        )
+
     was_cancelled = False
 
     if progress:
@@ -375,6 +403,12 @@ def compute_recommendations(
                     network_batches += 1
                 warnings.extend(str(x) for x in tuple(getattr(batch, "warnings", ()) or ()))
                 error = str(getattr(batch, "error_message", "") or "").strip()
+                failure_code = getattr(batch, "error_code", None)
+                if provider_id in observed:
+                    counters = observed[provider_id]
+                    counters[0] += 1
+                    counters[1] += len(rows)
+                    counters[2] += int(bool(error or failure_code))
                 if error:
                     warnings.append(f"{provider_id}: {error}")
                 if progress:
@@ -446,6 +480,7 @@ def compute_recommendations(
             cache_unknown_calls,
             True,
             tuple(books),
+            observations_snapshot(),
         )
 
     if progress:
@@ -472,4 +507,5 @@ def compute_recommendations(
         cache_unknown_calls,
         False,
         tuple(books),
+        observations_snapshot(),
     )
