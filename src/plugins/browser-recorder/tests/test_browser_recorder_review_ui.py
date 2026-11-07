@@ -956,7 +956,7 @@ def test_4932_complementary_origins_have_separate_full_and_metadata_consent(
         panel.begin()
         assert len(tasks.handles) == 1
         assert not panel.captured_origins.sensitive
-        assert raw.captured_scope is None  # worker not started yet
+        assert not hasattr(raw, "captured_scope")  # worker not started yet
         # A future capture cannot reuse the prior consent by accident.
         assert panel.captured_origins.get_text() == ""
         assert panel.third_party_origins.get_text() == ""
