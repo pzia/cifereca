@@ -18,7 +18,7 @@ from cifereca.plugin_api import (
 )
 from cifereca_kobo_delivery_offer import (
     exact_kobo_offer_id, _safe_https_get, kdrm_runtime_ready,
-    kdrm_delegated_runtime_ready,
+    kdrm_delegated_runtime_ready, effective_kobo_media_format,
 )
 from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
@@ -61,7 +61,12 @@ def _single_admitted_candidate(payload, offer_id, *, identity_id,
     if len(matches) != 1:
         raise ProviderCapabilityError("kobo_candidate_descriptor_ambiguous")
     selected = matches[0]
-    fmt = selected.get("media_format") or selected.get("source_format")
+    # Read the same exact KDRM media assumption that produced the opaque
+    # offer ID. Unknown/FLEPUB must not qualify and later silently turn
+    # into an unsupported route (or fall into the plain HTTP branch).
+    fmt = (effective_kobo_media_format(selected)
+           if selected.get("handling") == "kobo_kdrm"
+           else selected.get("media_format") or selected.get("source_format"))
     fmt = fmt.strip().lower() if type(fmt) is str else ""
     if (selected.get("kind") == "acsm"
             and selected.get("handling") == "adobe_adept"
