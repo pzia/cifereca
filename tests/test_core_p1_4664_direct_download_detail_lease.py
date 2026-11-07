@@ -132,3 +132,26 @@ def test_source_epoch_and_a_b_a_revoked_without_new_permission():
     with pytest.raises(Cancelled):
         jobs[1][0][1]()
     assert obtained == []
+
+
+def test_cached_extension_refresh_retains_live_core_action_but_revokes_removed_one():
+    clear = _method("detail_panel.py", "_clear_actions", cls="DetailPanel")
+    update = _method(
+        "detail_panel.py", "update_cached_book_details", cls="DetailPanel",
+    )
+    base = NS(_cifereca_action_id="download-core")
+    removed = NS(_cifereca_action_id="book-cache:old:action")
+    kept = []
+    panel = NS(
+        _cached_section_widgets=[],
+        _cached_action_ids={"book-cache:old:action"},
+        _action_buttons=[base, removed],
+        _clear_actions=None,
+        _actions=lambda buttons: kept.extend(buttons),
+        action_scroll=NS(clear=lambda: None, set_visible=lambda _: None),
+    )
+    panel._clear_actions = lambda: clear(panel)
+    update(panel, ())
+    assert base._cifereca_action_context_revoked is False
+    assert removed._cifereca_action_context_revoked is True
+    assert kept == [base]
