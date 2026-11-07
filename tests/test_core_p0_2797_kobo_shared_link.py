@@ -14,6 +14,7 @@ import pytest
 from cifereca.core.library_audit import audit_library
 from cifereca.core.library_local_inspection import LocalInspection
 from cifereca.core import kobo_local_reconciliation as kobo
+from tests.kobo_legacy_reconciliation_archive import historical_reconcile_kobo_local
 from tests.test_core_1345_confirmed_local_reconciliation import case as kobo_case
 from tests.test_library_reconciliation import epub, filesystem
 
@@ -143,18 +144,18 @@ def test_kobo_gui_rejects_late_confirmation_after_selection_change(selected):
 def test_kobo_writer_stamp_callback_occurs_only_after_durable_commit(kobo_case):
     case = kobo_case
     callbacks = []
-    preview = kobo._historical_reconcile_kobo_local(case.service, **case.options,
+    preview = historical_reconcile_kobo_local(case.service, **case.options,
                                         on_committed=lambda: callbacks.append("wrong"))
     assert preview["status"] == "preview" and not callbacks
     with pytest.raises(kobo.ReconciliationRejected, match="reconciliation_cancelled"):
-        kobo._historical_reconcile_kobo_local(
+        historical_reconcile_kobo_local(
             case.service, **case.options,
             confirmation=preview["plan_token"],
             cancelled=lambda: True,
             on_committed=lambda: callbacks.append("wrong"),
         )
     assert not callbacks
-    receipt = kobo._historical_reconcile_kobo_local(
+    receipt = historical_reconcile_kobo_local(
         case.service, **case.options, confirmation=preview["plan_token"],
         on_committed=lambda: callbacks.append("committed"),
     )
