@@ -140,6 +140,28 @@ def test_borrower_rebound_during_offline_audit_discards_projection(
         service.kobo_backup_preview("vault-1")
 
 
+def test_provider_default_identity_retains_exact_sql_owner(rig, monkeypatch):
+    service, session, account = rig
+    # The real Vault adapter constructs Account without a Core identity_id;
+    # its default label is not a second profile or a bearer of rights.
+    session._accounts = [replace(account, identity_id="default")]
+    _disable_backup_reads(service, monkeypatch)
+    result = service.kobo_backup_preview("vault-1")
+    assert result["historical_canonical_only"] is True
+    assert result["acquisition_authorized"] is False
+
+
+def test_explicit_foreign_provider_identity_refuses_offline_audit(
+    rig, monkeypatch,
+):
+    service, session, account = rig
+    session._accounts = [replace(account, identity_id="bob")]
+    _disable_backup_reads(service, monkeypatch)
+    with pytest.raises(ProviderConfigurationError,
+                       match="canonical_kobo_preview_scope_changed"):
+        service.kobo_backup_preview("vault-1")
+
+
 def test_ambiguous_core_credential_denies_offline_audit(rig, monkeypatch):
     service, session, account = rig
     service.accounts.append(replace(account))
