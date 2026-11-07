@@ -3905,7 +3905,19 @@ class LibraryService:
         same global lock is intentionally named for local acquisition rather
         than Kobo so the 0.8.x loan synchronizer can share it.
         """
-        return kobo_backup.sync_kobo_backup(self, progress, lock_factory=InterProcessLock, lock_path=acquisition_lock_file)
+        # #4858 W2: a global Kobo command may select multiple independent
+        # credentials, including modern and partial ABIs. For any modern
+        # source, dispatch each account with its own Core acquisition lock;
+        # the global 0.7 writer must never own a canonical source or nest
+        # the Sync A→B lease. All-legacy installations keep compatibility.
+        from .core.kobo_backup_canonical_batch import run_global_kobo_with_canonical_sources
+        routed = run_global_kobo_with_canonical_sources(self, progress)
+        if routed is not None:
+            return routed
+        return kobo_backup.sync_kobo_backup(
+            self, progress, lock_factory=InterProcessLock,
+            lock_path=acquisition_lock_file,
+        )
 
     def sync_kobo_backup_account(
         self, credential_id: str,
