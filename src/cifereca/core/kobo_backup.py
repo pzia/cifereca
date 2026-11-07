@@ -1514,6 +1514,53 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     summary["sources"] = []
     for session in sessions:
         session_identity = self.identity_for_connection("kobo", session.credential_id)
+        # #3196 W2: a legacy manifest is only valid for the *same* live Kobo
+        # session/account that issued it. A credential alone is not enough:
+        # a reconnect may silently switch the upstream borrower while the
+        # old manifest request is in flight. Freeze both object identities
+        # and scalar coordinates before requesting that manifest.
+        try:
+            pinned_accounts = tuple(session.accounts)
+            pinned_scopes = tuple(
+                (account.identity_id, account.provider_id,
+                 account.credential_id, account.unique_id)
+                for account in pinned_accounts
+            )
+        except (AttributeError, TypeError, ValueError):
+            pinned_accounts, pinned_scopes = (), ()
+        pinned_provider_epoch = getattr(session, "_epoch", None)
+        pinned_credential = session.credential_id
+        pinned_identity = session_identity.identity_id
+
+        def manifest_source_current() -> bool:
+            try:
+                live_accounts = tuple(session.accounts)
+                return bool(
+                    session.connected is True
+                    and session.provider_id == "kobo"
+                    and session.credential_id == pinned_credential
+                    and getattr(session.capabilities, "backup", False)
+                    and not has_complete_delivery_abi(session)
+                    and self._sessions.get(self._session_key(
+                        "kobo", pinned_credential,
+                    )) is session
+                    and getattr(session, "_epoch", None) == pinned_provider_epoch
+                    and len(pinned_accounts) == len(live_accounts) == 1
+                    and live_accounts[0] is pinned_accounts[0]
+                    and tuple(
+                        (account.identity_id, account.provider_id,
+                         account.credential_id, account.unique_id)
+                        for account in live_accounts
+                    ) == pinned_scopes
+                    and pinned_scopes[0][1:3] == ("kobo", pinned_credential)
+                    and pinned_scopes[0][0] in {pinned_identity, "default"}
+                    and self.storage.identity_for_connection(
+                        "kobo", pinned_credential,
+                    ) == pinned_identity
+                )
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                return False
+
         initial = {name: int(summary.get(name, 0)) for name in source_metrics}
         previous_checkpoint = _kobo_checkpoint_for(
             self, session_identity.identity_id, session.credential_id,
@@ -1575,8 +1622,18 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         # A resumed run always revalidates the complete manifest and files.
         checkpoint("manifest_fetch")
         try:
+            # A changed borrower, replaced registry session or completed Core
+            # ABI invalidates this entire legacy batch before any GET/receipt.
+            if not manifest_source_current():
+                raise ProviderConfigurationError(
+                    "Source Kobo modifiée avant le manifeste"
+                )
             emit("manifest_fetch", credential_id=session.credential_id, message="Lecture du manifest Kobo-Vault")
             manifest = confirmed_manifest if confirmed else session.backup_manifest()
+            if not manifest_source_current():
+                raise ProviderConfigurationError(
+                    "Source Kobo modifiée pendant le manifeste"
+                )
             source_total = len(manifest)
             checkpoint("running")
             summary["manifests_fetched"] += 1
