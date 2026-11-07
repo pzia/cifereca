@@ -83,6 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), required=True)
+    parser.add_argument("--scale", type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -91,7 +92,7 @@ def main():
     start = monotonic()
     report = {
         "scenario": "recommendations-detail-gtk", "status": "RUNNING",
-        "width": args.width, "backend": "GTK4/X11/XTEST",
+        "width": args.width, "scale": args.scale, "backend": "GTK4/X11/XTEST",
         "git_sha": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
         ).strip(),
@@ -144,10 +145,18 @@ def main():
             "display_width": image.width, "display_height": image.height,
             "window_width": window_width, "window_height": window_height,
         }
-        assert image.size == (args.width, expected_height)
+        assert image.size == (
+            args.width * args.scale, expected_height * args.scale,
+        ), "Physical Xvfb screen must be sized in device pixels"
         report["p1_774_phase"] = "gtk_geometry"
-        assert args.width - 100 <= window_width <= args.width
+        assert window.get_scale_factor() == args.scale, (
+            "GTK must actually use the requested HiDPI scale"
+        )
+        assert args.width - 100 <= window_width <= args.width, (
+            "Toplevel logical width must remain in the 1024px layout budget"
+        )
         assert 500 <= window_height <= expected_height
+        report["checks"]["P1_774_real_gtk_logical_hidpi_geometry"] = True
         report["p1_774_phase"] = "image_pixels"
         colors = image.getcolors(maxcolors=2)
         assert colors is None or len(colors) > 1
@@ -164,7 +173,7 @@ def main():
             "window_width": window_width,
             "window_height": window_height,
             "display_width": image.width,
-            "display_height": image.height,
+            "display_height": image.height, "scale": args.scale,
         })
         save()
 
@@ -411,6 +420,30 @@ def main():
         # event. Gtk.SearchEntry.grab_focus() alone may lose focus before
         # an asynchronous callback; the test must use the visible pointer.
         state["p1_774_filter_generation"] = generation
+        # Read-only observer of Gtk.Label updates during genuine XTEST input.
+        # The public verdict only exports bounded booleans and counts, never
+        # raw label text, titles or user/provider data.
+        state["p1_774_summary_events"] = []
+        state["p1_774_unexpected_action_clicks"] = 0
+        def observe_unexpected_action(*_args):
+            if report["p1_774_phase"] in (
+                "keyboard_focus", "keyboard_type", "keyboard_verdict",
+            ):
+                state["p1_774_unexpected_action_clicks"] += 1
+        # Guard against a HiDPI coordinate conversion that accidentally
+        # activates Recalculer or toggles Exclure les possédés.
+        view._refresh_button.connect("clicked", observe_unexpected_action)
+        view._exclude_owned.connect("toggled", observe_unexpected_action)
+        def observe_summary(_label, _pspec):
+            events = state["p1_774_summary_events"]
+            if len(events) < 64:
+                value = view._summary.get_text()
+                events.append((
+                    int("1 sur 3" in value),
+                    int("Livre B" in value),
+                    int("Ordre diversifié" in value),
+                ))
+        view._summary.connect("notify::label", observe_summary)
         state["p1_774_focus_retry"] = 0
         state["p1_774_filter_retry"] = 0
         report["p1_774_phase"] = "keyboard_focus"
@@ -460,18 +493,58 @@ def main():
             and "1 sur 3" in count_text
             and "Livre B" in count_text
         )
-        if not complete and state["p1_774_filter_retry"] < 3:
+        # HiDPI can take longer to process native XTEST input and deliver
+        # debounced GTK model/counter updates. Keep a finite deadline and
+        # require every original assertion; do not accept a stale counter.
+        max_retries = 12 if args.scale == 2 else 3
+        if not complete and state["p1_774_filter_retry"] < max_retries:
             state["p1_774_filter_retry"] += 1
             later(150, after_keyboard_filter)
             return
-        assert complete, "GTK keyboard filter and counter did not converge"
+        # Closed, synthetic-only diagnostic: boolean coherence flags,
+        # never user text, provider labels, or account information.
+        summary_events = state.get("p1_774_summary_events", ())
+        current_summary = view._summary.get_text()
+        report["p1_774_keyboard_summary_shape"] = {
+            "events": min(64, len(summary_events)),
+            "ever_count": int(any(event[0] for event in summary_events)),
+            "ever_title": int(any(event[1] for event in summary_events)),
+            "ever_order": int(any(event[2] for event in summary_events)),
+            "current_order": int("Ordre diversifié" in current_summary),
+            "current_provisional": int("Provisoire" in current_summary),
+            "current_recommendation": int("recommandation" in current_summary.lower()),
+            "ranked": min(100, len(view._ranked)),
+            "matched": min(100, sum(1 for candidate in view._ranked if view._matches(candidate))),
+            "label_length": min(512, len(current_summary)),
+            "unexpected_actions": min(10, state["p1_774_unexpected_action_clicks"]),
+        }
+        report["p1_774_keyboard_coherence"] = {
+            "text": int(query.entry.get_text() == "Livre B"),
+            "rows": int(store.get_n_items() == 1),
+            "title": int(store.get_n_items() == 1 and store.get_item(0).title == "Livre B"),
+            "count": int("1 sur 3" in view._summary.get_text()),
+            "summary_title": int("Livre B" in view._summary.get_text()),
+            "retries": min(30, int(state["p1_774_filter_retry"])),
+        }
+        # Each independent assert has a distinct safe source-line marker
+        # in the public E2E reporter. This differentiates focus/text,
+        # row-model and counter failures without logging any input text.
         assert query.entry.get_text() == "Livre B"
         assert store.get_n_items() == 1
         assert store.get_item(0).title == "Livre B"
+        # Closed-source-line assertions separate an inconsistent *model* from
+        # a stale summary: no titles, account IDs or actual query are logged.
+        assert len(view._ranked) == 3
+        assert view._score.get_value() == 15
+        assert view._local_filter_state()[0] == "Livre B"
+        assert sum(1 for ranked in view._ranked if view._matches(ranked)) == 1
         assert "1 sur 3" in view._summary.get_text()
         assert "Livre B" in view._summary.get_text()
         assert view._generation == state["p1_774_filter_generation"]
         assert not state["searches"]
+        assert state["p1_774_unexpected_action_clicks"] == 0, (
+            "XTEST keyboard entry must not click recalculation or ownership controls"
+        )
         report["checks"]["P1_774_real_gtk_xtest_keyboard_local_filter"] = True
         capture("00b-keyboard-local-filter")
         # Restoring the old scenario via a normal entry reset is not the
@@ -516,6 +589,46 @@ def main():
             and all(cover.picture.get_paintable() is not None
                     for cover in list_covers + detail_covers)
         ):
+            # Closed numeric diagnosis only: distinguish a non-mapped
+            # responsive pane from a real failed image load on scale 2.
+            all_list = [
+                cell.cover for cell in walk(page.list_stack)
+                if isinstance(cell, BookListCell)
+                and cell.title_label.get_text() == "Livre A"
+            ]
+            all_detail = [
+                cover for cover in walk(page.detail)
+                if isinstance(cover, CoverView)
+            ]
+            # Fixed numeric counters from the shared Core loader only.
+            # This local fixture has no real provider URL or account.
+            cover_stats = cover_loader.stats()
+            cover_stat_keys = (
+                "requested", "cache_hit_valid", "download_ok",
+                "download_failed", "preview_created", "preview_hit",
+                "preview_fallback", "ui_applied", "ui_stale", "ui_failed",
+                "decode_failed", "cancelled_callbacks", "queue", "inflight_urls",
+            )
+            report["p1_774_cover_loader_state"] = {
+                key: min(100, max(0, int(cover_stats[key])))
+                for key in cover_stat_keys
+            }
+            report["p1_774_cover_state"] = {
+                "attempt": min(30, attempt),
+                "list_found": min(20, len(all_list)),
+                "list_mapped": min(20, len(list_covers)),
+                "list_paintable": min(20, sum(
+                    cover.picture.get_paintable() is not None for cover in all_list
+                )),
+                "detail_found": min(20, len(all_detail)),
+                "detail_mapped": min(20, len(detail_covers)),
+                "detail_paintable": min(20, sum(
+                    cover.picture.get_paintable() is not None for cover in all_detail
+                )),
+                "image_requests": min(20, len(image_requests)),
+                "list_stack_mapped": int(page.list_stack.get_mapped()),
+                "detail_pane_mapped": int(page.detail.get_mapped()),
+            }
             assert attempt < 20, "La couverture n’est pas chargée dans la liste et le détail"
             later(100, lambda: verify_cover_a(attempt + 1))
             return

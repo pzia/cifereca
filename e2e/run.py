@@ -116,6 +116,13 @@ SCENARIOS = {
         "description": "P0 #2842 : parcours guidé et confirmations natives à 1728×895, sans réseau.",
         "runner": "gtk-maintenance", "width": 1728, "height": 895,
     },
+    "recommendations-detail-1024-hidpi": {
+        "plugin": "ui.page.recommendations",
+        "fixture": "search-filters",
+        "description": "P1 #3687/#774 : vraie recette GTK/XTEST HiDPI 2x, 1024×768 logiques dans un Xvfb 2048×1536.",
+        "runner": "gtk-recommendations",
+        "width": 1024, "height": 768, "scale": 2,
+    },
     "recommendations-detail-1024": {
         "plugin": "ui.page.recommendations",
         "fixture": "search-filters",
@@ -436,10 +443,17 @@ def main() -> int:
             if scenario.get("runner") == "gtk-recommendations":
                 width = scenario["width"]
                 height = scenario.get("height", 1000 if width == 1600 else 900)
+                scale = scenario.get("scale", 1)
+                # GTK measures logical units while XTEST and ImageGrab see
+                # physical pixels. Never emulate HiDPI by merely enlarging
+                # the window on an unscaled display.
+                env["GDK_SCALE"] = str(scale)
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x{height}x24",
+                    xvfb, "-a", "-s",
+                    f"-screen 0 {width * scale}x{height * scale}x24",
                     args.python, str(ROOT / "e2e/recommendations_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
+                    "--scale", str(scale),
                 ]
             elif scenario.get("runner") == "gtk-constellations":
                 width = scenario["width"]
@@ -618,7 +632,8 @@ def main() -> int:
                 # #774: export only closed phase codes and bounded numeric
                 # XTEST geometry for the synthetic Recommendations probe.
                 # Raw exceptions, search text and GTK widget labels stay local.
-                if (name in {"recommendations-detail-1024",
+                if (name in {"recommendations-detail-1024-hidpi",
+                             "recommendations-detail-1024",
                              "recommendations-detail-1366",
                              "recommendations-detail-1600"}
                         and report_data.get("status") != "PASS"):
@@ -644,6 +659,73 @@ def main() -> int:
                         for key in sorted(dimensions):
                             print("P1_774_NUMERIC_" + key + "=" +
                                   str(dimensions[key]), flush=True)
+                    # Synthetic keyboard verdict: bounded boolean flags only.
+                    # Never export the actual query, summary or widget text.
+                    coherence = report_data.get("p1_774_keyboard_coherence")
+                    coherence_keys = frozenset({
+                        "text", "rows", "title", "count", "summary_title", "retries",
+                    })
+                    if (type(coherence) is dict and set(coherence) == coherence_keys
+                            and all(type(coherence[k]) is int and coherence[k] in (0, 1)
+                                    for k in coherence_keys - {"retries"})
+                            and type(coherence["retries"]) is int
+                            and 0 <= coherence["retries"] <= 30):
+                        for key in sorted(coherence_keys):
+                            print("P1_774_KEYBOARD_NUMERIC_" + key + "=" +
+                                  str(coherence[key]), flush=True)
+                    # Closed diagnostic shape for the synthetic Recommandations
+                    # summary; never export raw labels or filter values.
+                    shape = report_data.get("p1_774_keyboard_summary_shape")
+                    shape_keys = frozenset({
+                        "events", "ever_count", "ever_title", "ever_order",
+                        "current_order", "current_provisional",
+                        "current_recommendation", "ranked", "matched",
+                        "label_length", "unexpected_actions",
+                    })
+                    counts = {"events": 64, "ranked": 100, "matched": 100,
+                              "label_length": 512, "unexpected_actions": 10}
+                    if (type(shape) is dict and set(shape) == shape_keys
+                            and all(type(shape[key]) is int
+                                    and 0 <= shape[key] <= counts.get(key, 1)
+                                    for key in shape_keys)):
+                        for key in sorted(shape_keys):
+                            print("P1_774_SUMMARY_SHAPE_" + key + "=" +
+                                  str(shape[key]), flush=True)
+                    # Cover rendering at HiDPI: numeric observations only.
+                    # Never export image URLs, account data, titles or screenshots.
+                    cover = report_data.get("p1_774_cover_state")
+                    cover_keys = frozenset({
+                        "attempt", "list_found", "list_mapped", "list_paintable",
+                        "detail_found", "detail_mapped", "detail_paintable",
+                        "image_requests", "list_stack_mapped", "detail_pane_mapped",
+                    })
+                    if (type(cover) is dict and set(cover) == cover_keys
+                            and all(type(cover[key]) is int
+                                    and 0 <= cover[key] <= (
+                                        1 if key in {"list_stack_mapped", "detail_pane_mapped"}
+                                        else 30 if key == "attempt" else 20
+                                    ) for key in cover_keys)):
+                        for key in sorted(cover_keys):
+                            print("P1_774_COVER_NUMERIC_" + key + "=" +
+                                  str(cover[key]), flush=True)
+                    # Closed aggregate counters from the synthetic CoverLoader.
+                    # No URL, filesystem path, image bytes or account data.
+                    loader_state = report_data.get("p1_774_cover_loader_state")
+                    loader_keys = frozenset({
+                        "requested", "cache_hit_valid", "download_ok",
+                        "download_failed", "preview_created", "preview_hit",
+                        "preview_fallback", "ui_applied", "ui_stale", "ui_failed",
+                        "decode_failed", "cancelled_callbacks", "queue",
+                        "inflight_urls",
+                    })
+                    if (type(loader_state) is dict
+                            and set(loader_state) == loader_keys
+                            and all(type(loader_state[key]) is int
+                                    and 0 <= loader_state[key] <= 100
+                                    for key in loader_keys)):
+                        for key in sorted(loader_keys):
+                            print("P1_774_LOADER_NUMERIC_" + key + "=" +
+                                  str(loader_state[key]), flush=True)
                     # Eight screen-local bounded integers diagnose a clipped
                     # overflow button without leaking widget text, session,
                     # actions, account metadata or raw GTK tracebacks.
@@ -696,7 +778,8 @@ def main() -> int:
                         code = report_data.get("p0_4673_local_reason")
                         if type(code) is str and code in local_reasons:
                             print("P0_4673_CLOSED_LOCAL_REASON=" + code, flush=True)
-                if (name in {"recommendations-detail-1024",
+                if (name in {"recommendations-detail-1024-hidpi",
+                             "recommendations-detail-1024",
                              "recommendations-detail-1366",
                              "recommendations-detail-1600"}
                         and report_data.get("status") != "PASS"):

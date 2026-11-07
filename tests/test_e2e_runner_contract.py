@@ -583,7 +583,9 @@ def test_774_real_gtk_recommendations_asserts_native_keyboard_and_geometry():
     )
     ast.parse(probe)
     for marker in (
-        'assert image.size == (args.width, expected_height)',
+        'assert image.size == (',
+        'args.width * args.scale, expected_height * args.scale,',
+        'assert window.get_scale_factor() == args.scale',
         'window_width, window_height = window.get_width(), window.get_height()',
         'assert args.width - 100 <= window_width <= args.width',
         'state["device"].click_widget(query.entry)',

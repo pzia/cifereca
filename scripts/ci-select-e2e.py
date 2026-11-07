@@ -35,7 +35,7 @@ DETAIL = BOOK_DETAIL + ("mainwindow-baseline-1366",
           "mainwindow-baseline-1600")
 CONSTELLATIONS_GTK = ("constellations-detail-1366", "constellations-detail-1600")
 CONSTELLATIONS = DETAIL + CONSTELLATIONS_GTK
-RECOMMENDATIONS_GTK = ("recommendations-detail-1024", "recommendations-detail-1366", "recommendations-detail-1600")
+RECOMMENDATIONS_GTK = ("recommendations-detail-1024-hidpi", "recommendations-detail-1024", "recommendations-detail-1366", "recommendations-detail-1600")
 RECOMMENDATIONS = DETAIL + RECOMMENDATIONS_GTK
 OPTIMIZER_GTK = ("optimizer-handoff-1366", "optimizer-handoff-1600")
 ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK + BNF_COVERS

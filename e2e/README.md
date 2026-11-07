@@ -281,3 +281,27 @@ ordre des boutons sont inchangés. Le titre complet revient dès que le
 budget GTK le permet. La sonde 1024 impose aussi une vérification explicite
 que **tout** le menu est dans le viewport, puis un clic XTEST sur une cible
 validée par `Gtk.Widget.pick` : un widget seulement `mapped` ne suffit pas.
+
+
+### P1 #774/#3687 — vraie recette HiDPI Recommandations (2×)
+
+Le scénario `recommendations-detail-1024-hidpi` conserve un **budget GTK
+logique de 1024 × 768** tout en lançant un Xvfb physique
+**2048 × 1536** et `GDK_SCALE=2`. La sonde exige explicitement les
+dimensions physiques de la capture, le facteur d'échelle GTK natif et
+la largeur GTK allouée (pas seulement la taille demandée).
+
+Le port XTEST commun multiplie les *offsets GTK logiques* par le facteur
+de l'affichage avant de les additionner aux origines X11 (déjà physiques),
+notamment après un `Gtk.Widget.pick` vérifié. Les événements restent
+des clics/saisies XTEST réellement dispatchés, jamais des `emit("clicked")`
+substitués aux vérifications d'atteignabilité. Cela préserve la recette à
+échelle 1 et couvre les menus d'actions sous scroller et l'entrée clavier.
+
+Comme le scénario `recommendations-detail-1024`, il rejoue filtres,
+comptage, reset, détails, choix exact d'une édition, protections contre
+les anciens callbacks et absence de nouvelle recherche fournisseur. Les
+tests headless `tests/test_e2e_x11_hidpi_coordinates.py` protègent la
+conversion 1×/2× et rejettent les coordonnées invalides. Les données de
+classement restent synthétiques ; la recette d'un fournisseur réel et la
+comparaison visuelle complète restent distinctes.

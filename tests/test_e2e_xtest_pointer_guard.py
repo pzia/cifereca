@@ -49,13 +49,15 @@ def test_valid_coordinates_emit_exactly_one_real_xtest_click():
     }
 
 
-@pytest.mark.parametrize("transform,origin,expected", [
-    ((0, 0), (20, 30), (55, 78)),
-    ((5, 5), (0, 0), (40, 53)),
-    ((-3, -7), (100, 200), (132, 241)),
+@pytest.mark.parametrize("transform,origin,scale,expected", [
+    ((0, 0), (20, 30), 1, (55, 78)),
+    ((5, 5), (0, 0), 1, (40, 53)),
+    ((-3, -7), (100, 200), 1, (132, 241)),
+    ((0, 0), (20, 30), 2, (90, 126)),
+    ((5, 5), (0, 0), 2, (80, 106)),
 ])
 def test_native_widget_center_includes_surface_render_offset(
-    monkeypatch, transform, origin, expected,
+    monkeypatch, transform, origin, scale, expected,
 ):
     class Function:
         def __init__(self, operation): self.operation = operation
@@ -76,7 +78,8 @@ def test_native_widget_center_includes_surface_render_offset(
     native = NS(get_surface=lambda: object(), get_surface_transform=lambda: transform)
     rect = NS(get_x=lambda: 10, get_y=lambda: 40,
               get_width=lambda: 50, get_height=lambda: 16)
-    widget = NS(get_native=lambda: native, compute_bounds=lambda target: (True, rect))
+    widget = NS(get_native=lambda: native, compute_bounds=lambda target: (True, rect),
+                get_scale_factor=lambda: scale)
     assert device.widget_point(widget) == expected
 
 
@@ -89,6 +92,9 @@ class _TopLevel:
 
     def get_height(self):
         return self.height
+
+    def get_scale_factor(self):
+        return 1
 
 
 def test_audited_local_window_point_translates_from_native_x11_center():

@@ -137,6 +137,16 @@ class CoverView(Gtk.Overlay):
         self.spinner.start()
 
     def bind_url(self, loader: CoverLoader, url: str | None, *, priority: int = 10) -> None:
+        # A rapid GTK list rebuild can rebind the same URL before the
+        # asynchronous cache/preview callback reaches the main loop.
+        # Resetting here invalidates that callback's generation repeatedly,
+        # leaving even mapped rows with an empty picture at HiDPI scale.
+        # Preserve only the identical *in-flight* request. A completed or
+        # failed request may still be refreshed by an ordinary rebind, and
+        # changing loader, URL or priority retains the normal cancellation.
+        if (url and self._loader is loader and self._url == url
+                and self._priority == priority and self.spinner.get_visible()):
+            return
         self.reset()
         if not url:
             self._show_missing()
