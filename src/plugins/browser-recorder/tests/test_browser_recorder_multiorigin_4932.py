@@ -41,13 +41,13 @@ def test_two_normal_origins_share_body_redirect_header_and_budget_pipeline():
         redirect = Request(FOREIGN + "/navigate")
         emit(trace, redirect, Response(
             redirect, status=302, data=b"",
-            headers={"Location": "/catalog?genre=fiction"},
+            headers={"location": "/catalog?genre=fiction"},
         ))
         limited = Request(META + "/anything?token=HIDDEN", method="POST",
                           data=b"password=HIDDEN")
         limited_response = Response(
             limited, status=302, data=b"",
-            headers={"Location": META + "/secret?code=HIDDEN"},
+            headers={"location": META + "/secret?code=HIDDEN"},
         )
         emit(trace, limited, limited_response)
         excluded = Request(EXCLUDED + "/unlisted?password=DO_NOT_KEEP")
@@ -120,7 +120,7 @@ def test_authentication_structures_omit_bodies_and_never_store_ticket_values():
         )
         login_response = Response(
             login, status=302, data=b"",
-            headers={"Location": ORIGIN + "/loans?ticket=" + synthetic[0]
+            headers={"location": ORIGIN + "/loans?ticket=" + synthetic[0]
                      + "&service=" + synthetic[4],
                      "Set-Cookie": "session=NO_STORAGE"},
         )
