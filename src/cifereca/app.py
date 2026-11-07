@@ -32,8 +32,9 @@ def _run_application(*, capture_mode: bool = False) -> int:
         return 0
     if "--help" in sys.argv[1:] or "-h" in sys.argv[1:]:
         print(
-            "Usage: cifereca [--trace] [--capture [--capture-dir DIR]] [--no-plugins] [--force-plugin ID]\n"
+            "Usage: cifereca [--perf] [--trace] [--capture [--capture-dir DIR]] [--no-plugins] [--force-plugin ID]\n"
             "       cifereca [--help | --version]\n\n"
+            "  --perf          Capture détaillée des performances dès le démarrage (session uniquement)\n"
             "  --trace         Activer le niveau Trace dans le Core et l'interface\n"
             "  --debug         Alias de --trace (compatibilité)\n"
             "  --verbose       Alias de --trace (compatibilité)\n"
@@ -43,6 +44,7 @@ def _run_application(*, capture_mode: bool = False) -> int:
             "  --force-plugin  Activer le plugin indiqué (répétable)"
         )
         return 0
+    perf_requested = "--perf" in sys.argv[1:]
     verbose = capture_mode or any(arg in {"--trace", "--verbose", "--debug"} for arg in sys.argv[1:])
     no_plugins = "--no-plugins" in sys.argv[1:]
     force_plugins: list[str] = []
@@ -50,7 +52,7 @@ def _run_application(*, capture_mode: bool = False) -> int:
     index = 1
     while index < len(sys.argv):
         arg = sys.argv[index]
-        if arg in {"--trace", "--verbose", "--debug", "--no-plugins"}:
+        if arg in {"--trace", "--verbose", "--debug", "--no-plugins", "--perf"}:
             index += 1
             continue
         if arg == "--force-plugin":
@@ -69,6 +71,17 @@ def _run_application(*, capture_mode: bool = False) -> int:
     sys.argv = cleaned
     logger = configure_logging(verbose=verbose)
     t0 = time.monotonic()
+    # The same monitor used by Settings starts before GTK imports and Core
+    # opening; no persistent setting, extra profiler or network trace.
+    performance_monitor = None
+    if perf_requested:
+        try:
+            from .gui.ui_perf import UiPerfMonitor
+            performance_monitor = UiPerfMonitor()
+            performance_monitor.enable_detailed_capture(True)
+        except Exception:
+            print("performance_capture_unavailable", file=sys.stderr)
+            return 2
     identity = build_identity()
     # One structured startup event, before GTK import or any provider connection.
     # Its SHA comes from deployed artifact metadata, never mutable HEAD.
@@ -80,6 +93,7 @@ def _run_application(*, capture_mode: bool = False) -> int:
     logger.info("TRACE startup begin version=%s git_commit=%s verbose=%s no_plugins=%s forced_plugin_count=%s",
                 __version__, identity["commit_sha"] or "unavailable",
                 verbose, no_plugins, len(force_plugins))
+    gtk_import_started = time.perf_counter()
     try:
         import gi
         gi.require_version("Gtk", "4.0")
@@ -89,6 +103,12 @@ def _run_application(*, capture_mode: bool = False) -> int:
     except Exception as exc:
         return _gtk_import_error(exc)
 
+    if performance_monitor is not None:
+        performance_monitor.record_phase(
+            "startup", "gtk_import",
+            (time.perf_counter() - gtk_import_started) * 1000.0,
+            trigger="automatic", outcome="success",
+        )
     logger.info("TRACE startup gtk-import-ok dt=%.3fs", time.monotonic()-t0)
     logger.info("TRACE startup core-open begin")
     core_options = dict(
@@ -100,7 +120,14 @@ def _run_application(*, capture_mode: bool = False) -> int:
     # Do not persist it: only an IHM preference change saves the next launch.
     if verbose:
         core_options["diagnostics_level"] = "trace"
+    core_open_started = time.perf_counter()
     core = CiferecaCore.open(**core_options)
+    if performance_monitor is not None:
+        performance_monitor.record_phase(
+            "startup", "core_open",
+            (time.perf_counter() - core_open_started) * 1000.0,
+            trigger="automatic", outcome="success",
+        )
     config, service, diagnostics = core.config, core.library, core.diagnostics
     set_diagnostics_level(diagnostics.level)
     logger.info(
@@ -116,13 +143,26 @@ def _run_application(*, capture_mode: bool = False) -> int:
         def do_activate(self):
             if self.window is None:
                 logger.info("TRACE gui MainWindow-init begin")
-                self.window = MainWindow(self, config, service, diagnostics)
+                # Hand off the already-active monitor: MainWindow and Settings
+                # must not allocate a replacement or lose early samples.
+                monitor_kw = (
+                    {"ui_perf": performance_monitor}
+                    if performance_monitor is not None else {}
+                )
+                self.window = MainWindow(
+                    self, config, service, diagnostics, **monitor_kw
+                )
                 logger.info("TRACE gui MainWindow-init end dt=%.3fs", time.monotonic()-t0)
             self.window.present()
             presented_ms = (time.monotonic() - t0) * 1000.0
             logger.info("TRACE gui window-presented duration_ms=%.1f", presented_ms)
             try:
                 self.window.ui_perf.record("startup.window_presented", presented_ms)
+                if self.window.ui_perf.detailed_capture_enabled:
+                    self.window.ui_perf.record_phase(
+                        "startup", "window_presented", presented_ms,
+                        trigger="automatic", outcome="success",
+                    )
             except Exception:
                 pass
             if not getattr(self, "_startup_plugins_scheduled", False):
