@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from importlib import metadata, resources
 import json
+from pathlib import Path
 
 from browser_recorder import RecorderError
 from browser_recorder_devkit_templates import reference_plugin_files
@@ -35,7 +36,9 @@ _MAX_KIT_BYTES = 550_000
 
 _GUIDE = """# Cifereca: kit public de création de plugin (hors connexion)
 
-Ce dossier contient la copie **exacte et datée par version** des sources
+Ce dossier inclut **PROVIDER-DEVELOPMENT.md** (règles d'isolation du Core,
+catalogues C, inventaires A, acquisition B, multi-établissements et recette).
+Lire ce guide avant de générer un provider, puis la copie **exacte et datée par version** des sources
 publiques `cifereca.plugin_api` lues depuis le Core exécutant l'export,
 ainsi que `contract-registry.json` et un manifeste SHA-256. Le contenu des
 fichiers `contracts/*.py` est **normatif** pour la version constatée ;
@@ -149,6 +152,10 @@ _LLM_GUIDE = """# Instructions à un LLM de génération de plugin
 
 Entrées: `manifest.json`, `coverage-report.json`, `timeline.json`,
 `exchanges/`, `bodies/`, `identifiers.json`, puis **ce kit** `plugin-dev-kit/`.
+**Lire `plugin-dev-kit/PROVIDER-DEVELOPMENT.md` avant d'écrire du code** :
+frontières Core, catalogues C vs inventaires A vs livraisons B, session/tenant,
+quotas, cache, sécurité, matrice de recette et statuts de preuve.
+Ce guide est une documentation, pas une interface ; vérifier les contrats .py.
 
 1. Vérifier `manifest.json` de ce kit, ses hash SHA-256, la version
    `plugin_api_version` et la compatibilité avec le Core cible.
@@ -197,9 +204,24 @@ def core_contract_kit() -> dict[str, bytes]:
             or not isinstance(CONTRACT_REGISTRY, tuple)):
         raise RecorderError("core_kit_incompatible")
 
+    # This resource is packaged WITH Browser Recorder, not discovered from a
+    # developer checkout. Installed plugin ZIP and source tree behave alike.
+    # Do not follow an operator-replaced symlink into their private files.
+    guide_path = Path(__file__).with_name("PROVIDER-DEVELOPMENT.md")
+    try:
+        if guide_path.is_symlink() or not guide_path.is_file():
+            raise RecorderError("core_kit_unavailable")
+        provider_guide = guide_path.read_bytes()
+    except OSError as exc:
+        raise RecorderError("core_kit_unavailable") from exc
+    if (not provider_guide or len(provider_guide) > 64_000
+            or b"\x00" in provider_guide):
+        raise RecorderError("core_kit_invalid")
+
     contents = {
         "plugin-dev-kit/README.md": _GUIDE.encode("utf-8"),
         "plugin-dev-kit/LLM_GUIDE.md": _LLM_GUIDE.encode("utf-8"),
+        "plugin-dev-kit/PROVIDER-DEVELOPMENT.md": provider_guide,
     }
     provenance = {}
     total = sum(len(v) for v in contents.values())
@@ -252,6 +274,10 @@ def core_contract_kit() -> dict[str, bytes]:
     provenance["plugin-dev-kit/LLM_GUIDE.md"] = (
         "src/plugins/browser-recorder/browser_recorder_devkit.py:_LLM_GUIDE"
     )
+    provenance["plugin-dev-kit/PROVIDER-DEVELOPMENT.md"] = (
+        "src/plugins/browser-recorder/PROVIDER-DEVELOPMENT.md "
+        "(byte-identical to docs/PROVIDER-DEVELOPMENT.md)"
+    )
     manifest = {
         "schema": _KIT_SCHEMA,
         "core_version": core_version or "unknown",
@@ -266,6 +292,7 @@ def core_contract_kit() -> dict[str, bytes]:
             "plugin_api public source boundary",
             "contract registry and manifest version",
             "catalog.service/1 offline reference example and tests",
+            "provider architecture guide embedded from installed plugin",
         ],
         "not_claimed": [
             "private Core implementation",
