@@ -200,16 +200,18 @@ def test_multiple_valid_signed_urls_never_leak_to_real_provider_log(caplog):
 
 
 def test_k2_observed_library_sync_unknown_flepub_logs_contract_not_raw_alias(caplog):
+    # The owner now admits the *effective* EPUB route, but the raw format
+    # remains unknown and can only be executed through the guarded KDRM
+    # delegated runtime. No fake descriptor is sent to a live Worker.
+    from tests.test_p0_3252_kdrm_canonical_runtime import ready
     session, vault, _broker, account, posts = setup()
-    session.runtime_capabilities = SimpleNamespace(
-        acquisition=lambda _provider: SimpleNamespace(
-            available=True, compatible=True, operational=True,
-            modes=("kobo_kdrm",),
-        )
-    )
+    ready(session, vault)
+    delegated_reply = vault.acquisition
 
     def observed_descriptor(product_id, **options):
         posts.append((product_id, options))
+        if options.get("mode") == "delegated":
+            return delegated_reply(product_id, **options)
         candidate = kdrm_candidate(product_id)
         candidate["media_format"] = "unknown"
         candidate["source_format"] = "FLEPUB"
@@ -222,9 +224,9 @@ def test_k2_observed_library_sync_unknown_flepub_logs_contract_not_raw_alias(cap
             snapshot = session.rights_delivery_offer_snapshot(
                 account, "book-1", explicit_user_action=True,
             )
-        assert snapshot.rights[0].delivery == "unknown"
-        assert snapshot.rights[0].delivery_offer_id == ""
-        assert len(posts) == 1 and posts[0][1]["mode"] == "descriptor"
+        assert snapshot.rights[0].delivery == "available"
+        assert snapshot.rights[0].delivery_offer_id.startswith("kobo.runtime:")
+        assert [x[1]["mode"] for x in posts] == ["descriptor", "delegated"]
         records = [
             row.getMessage() for row in caplog.records
             if "EVENT kobo selected_offer" in row.getMessage()
@@ -233,9 +235,10 @@ def test_k2_observed_library_sync_unknown_flepub_logs_contract_not_raw_alias(cap
         event = records[0]
         assert "candidate_kvault_flepub_contract=media_unknown" in event
         assert "candidate_kvault_format_alias=conflicting" in event
-        assert "candidate_media_format=unknown" in event
-        assert "candidate_source_format=flepub" in event
-        assert "outcome=unknown" in event
+        assert "candidate_flepub_epub_assumptions=1" in event
+        assert "candidate_media_format_raw=unknown" in event
+        assert "candidate_media_format_effective=epub" in event
+        assert "outcome=available" in event
         assert "PRIVATE-ALIAS-TOKEN" not in event
         assert "https://" not in event
     finally:
