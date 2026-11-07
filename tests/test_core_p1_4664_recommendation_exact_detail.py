@@ -152,6 +152,43 @@ def test_rebound_search_result_cannot_publish_stale_actions(monkeypatch):
     assert f.outputs == []
 
 
+@pytest.mark.parametrize("mutation", ["replace", "remove", "invalid_cache"])
+def test_queued_loaded_detail_never_fetches_after_search_row_revocation(
+    monkeypatch, mutation,
+):
+    """The Core Search row can change without changing its old object's fields.
+
+    The user clicked the former exact item, but the queued worker must not
+    consume a newer search context or perform an avoidable supplier GET.
+    """
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    if mutation == "replace":
+        f.window.search_objects["paris:search-1"] = _source()
+    elif mutation == "remove":
+        del f.window.search_objects["paris:search-1"]
+    else:
+        f.window.search_objects = []
+    with pytest.raises(Cancelled):
+        work()
+    assert f.calls == []
+    success(f.detail)
+    failure(RuntimeError("stale provider response"))
+    assert f.outputs == []
+
+
+def test_loaded_detail_already_fetched_still_refuses_replaced_search_row(
+    monkeypatch,
+):
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    assert work() is f.detail
+    f.window.search_objects["paris:search-1"] = _source()
+    success(f.detail)
+    assert len(f.calls) == 1
+    assert f.outputs == []
+
+
 def test_hidden_or_ambiguous_route_cannot_schedule_or_publish(monkeypatch):
     f = _fixture(monkeypatch)
     f.loaded[0] = False
