@@ -644,6 +644,21 @@ def main() -> int:
                         for key in sorted(dimensions):
                             print("P1_774_NUMERIC_" + key + "=" +
                                   str(dimensions[key]), flush=True)
+                    # Eight screen-local bounded integers diagnose a clipped
+                    # overflow button without leaking widget text, session,
+                    # actions, account metadata or raw GTK tracebacks.
+                    overflow = report_data.get("p1_774_overflow_geometry")
+                    allowed_overflow = frozenset({
+                        "menu_x", "menu_y", "menu_width", "menu_height",
+                        "bar_x", "bar_y", "bar_width", "bar_height",
+                    })
+                    if (type(overflow) is dict
+                            and set(overflow) == allowed_overflow
+                            and all(type(n) is int and -4096 <= n <= 4096
+                                    for n in overflow.values())):
+                        for key in sorted(allowed_overflow):
+                            print("P1_774_OVERFLOW_NUMERIC_" + key + "=" +
+                                  str(overflow[key]), flush=True)
                 # #4673: a fixed checkpoint code from our own synthetic GTK
                 # probe is the only failure detail emitted to public Actions
                 # logs. Never echo report.error, widget labels or tracebacks.
