@@ -90,7 +90,7 @@ def test_matching_alias_and_absent_alias_preserve_exact_kdrm_offer_and_recipe():
     assert source["candidate"]["delivery_source"] == "library_sync"
 
 
-def test_k2_unknown_flepub_stays_unqualified_even_with_matching_alias():
+def test_k2_unknown_flepub_is_qualified_with_matching_source_alias():
     candidate = kdrm_candidate("book-1")
     candidate["source"] = "library_sync"
     candidate["media_format"] = "unknown"
@@ -98,9 +98,14 @@ def test_k2_unknown_flepub_stays_unqualified_even_with_matching_alias():
     diagnosis = {}
     assert exact_kobo_offer_id(
         descriptor(candidate=candidate), **SCOPE, diagnostic=diagnosis,
-    ) == ""
-    assert diagnosis["qualification_reason"] == "kdrm_format_pair_unqualified"
+    ).startswith("kobo.runtime:")
+    assert diagnosis["candidate_kdrm_flepub_normalized_count"] == 1
     assert diagnosis["candidate_kvault_flepub_contract"] == "media_unknown"
+    assert scoped_kdrm_source(
+        delegated("book-1"), candidate,
+        product_id="book-1", account_id="alice",
+        identity_id="identity-A", credential_id="synthetic-card",
+    )["candidate"]["media_format"] == "epub"
 
 
 def test_provider_rejects_source_conflict_without_delegated_or_content_get(caplog):
