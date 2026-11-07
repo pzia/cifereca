@@ -111,7 +111,7 @@ def test_candidate_scope_conflict_does_not_report_partial_counts():
 
 
 @pytest.mark.parametrize(("media_format", "reported"), [
-    ("unrecognized-format", "other"), ("unknown", "unknown"), ("FLEPUB", "flepub"),
+    ("unrecognized-format", "other"), ("FLEPUB", "flepub"),
 ])
 def test_observed_non_epub_flepub_pair_is_not_inferred_as_epub(media_format, reported):
     candidate = kdrm_candidate("book-1")
@@ -224,8 +224,11 @@ def test_k2_kvault_flepub_alias_diagnostic_is_closed_and_not_an_admission(
     assert diagnostic["candidate_kvault_format_alias"] == expected_alias
     assert "PRIVATE-API-TOKEN" not in str(diagnostic)
     assert "FLEPUB" not in str(diagnostic)
-    if expected_media == "normalized_epub":
+    if media in {"epub", "unknown"}:
         assert offer.startswith("kobo.runtime:")
+        assert diagnostic.get("candidate_kdrm_flepub_normalized_count") == (
+            1 if media == "unknown" else None
+        )
     else:
         assert offer == ""
         assert diagnostic["qualification_reason"] == "kdrm_format_pair_unqualified"
