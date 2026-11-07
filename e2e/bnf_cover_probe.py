@@ -33,6 +33,7 @@ import httpx
 from PIL import ImageGrab
 
 from cifereca.core import CiferecaCore
+from cifereca.models import Loan
 from cifereca.gui.book_widgets import CoverView
 from cifereca.gui.main_window import MainWindow
 from cifereca.gui.query_model import QueryState
@@ -237,6 +238,16 @@ def main() -> int:
         return [cover for cover in walk(app_window[0].search_page.detail)
                 if isinstance(cover, CoverView)]
 
+    def visible_loan(url):
+        return [cover for cover in walk(app_window[0].loan_page)
+                if isinstance(cover, CoverView) and cover._url == url
+                and cover.get_mapped() and cover.picture.get_paintable() is not None
+                and not cover.placeholder.get_visible()]
+
+    def selected_loan_cover():
+        return [cover for cover in walk(app_window[0].loan_page.detail)
+                if isinstance(cover, CoverView)]
+
     def search_ready():
         window = app_window[0]
         assert tuple(window.search_page.store.get_item(i).thumbnail_url
@@ -288,18 +299,101 @@ def main() -> int:
             and selected_detail()[0]._url is None
             and selected_detail()[0].picture.get_paintable() is None
             and selected_detail()[0].placeholder.get_visible(),
+            begin_loan_covers,
+        )
+
+    def begin_loan_covers():
+        capture("04-bnf-missing-cover-placeholder")
+        window = app_window[0]
+        identity = window.service.current_identity
+        assert identity is not None and identity.identity_id
+        # The exact BnF Loan model is the same contract consumed by the real
+        # Mes emprunts controller. No upstream borrow, refresh or cover GET.
+        loans = [
+            Loan(
+                id="synthetic-loan-" + resource, provider="BNF_PRET",
+                medium="digital", record_id=resource,
+                title="Synthetic " + resource,
+                author="Author " + resource,
+                thumbnail_url=COVERS[index] if index < 2 else None,
+                source_provider="bnf-pret", source_credential="bnf-e2e",
+                source_account_id="borrower-1", identity_id=identity.identity_id,
+            )
+            for index, resource in enumerate(RESOURCES)
+        ]
+        window._populate_loans(loans)
+        window.navigate("loans")
+        await_condition(
+            "two_exact_loan_list_covers",
+            lambda: window.loan_page.store.get_n_items() == 3
+            and len(visible_loan(COVERS[0])) >= 1
+            and len(visible_loan(COVERS[1])) >= 1,
+            first_loan_detail,
+        )
+
+    def first_loan_detail():
+        window = app_window[0]
+        rows = [window.loan_page.store.get_item(i)
+                for i in range(window.loan_page.store.get_n_items())]
+        assert {row.thumbnail_url for row in rows} == {COVERS[0], COVERS[1], None}
+        report["checks"]["two_real_gtk_loan_list_images"] = True
+        capture("05-bnf-loan-list-two-covers")
+        first = next(i for i, row in enumerate(rows) if row.thumbnail_url == COVERS[0])
+        window.loan_page.selection.set_selected(first)
+        await_condition(
+            "first_loan_detail_cover",
+            lambda: bool(selected_loan_cover())
+            and selected_loan_cover()[0].get_mapped()
+            and selected_loan_cover()[0]._url == COVERS[0]
+            and selected_loan_cover()[0].picture.get_paintable() is not None,
+            second_loan_detail,
+        )
+
+    def second_loan_detail():
+        window = app_window[0]
+        report["checks"]["first_real_gtk_loan_detail_cover"] = True
+        capture("06-bnf-first-loan-detail")
+        rows = [window.loan_page.store.get_item(i)
+                for i in range(window.loan_page.store.get_n_items())]
+        second = next(i for i, row in enumerate(rows) if row.thumbnail_url == COVERS[1])
+        window.loan_page.selection.set_selected(second)
+        await_condition(
+            "second_loan_detail_cover",
+            lambda: bool(selected_loan_cover())
+            and selected_loan_cover()[0].get_mapped()
+            and selected_loan_cover()[0]._url == COVERS[1]
+            and selected_loan_cover()[0].picture.get_paintable() is not None,
+            missing_loan_detail,
+        )
+
+    def missing_loan_detail():
+        window = app_window[0]
+        report["checks"]["second_real_gtk_loan_detail_cover"] = True
+        capture("07-bnf-second-loan-detail")
+        rows = [window.loan_page.store.get_item(i)
+                for i in range(window.loan_page.store.get_n_items())]
+        missing = next(i for i, row in enumerate(rows) if row.thumbnail_url is None)
+        window.loan_page.selection.set_selected(missing)
+        await_condition(
+            "loan_missing_cover_placeholder",
+            lambda: bool(selected_loan_cover())
+            and selected_loan_cover()[0].get_mapped()
+            and selected_loan_cover()[0]._url is None
+            and selected_loan_cover()[0].picture.get_paintable() is None
+            and selected_loan_cover()[0].placeholder.get_visible(),
             finish,
         )
 
     def finish():
-        capture("04-bnf-missing-cover-placeholder")
         assert set(image_gets) == set(COVERS)
-        assert len(image_gets) == 2, "Search and detail must share cached public images"
+        assert len(image_gets) == 2, "Search, loan list and both details must share cached public images"
         assert details[-3:] == list(RESOURCES), "Provider detail scoped to each resource"
         assert applied_details[-3:] == list(RESOURCES), "Real GTK applied all scoped details"
         assert app_window[0].covers.stats()["ui_applied"] >= 4
         report["checks"]["missing_cover_no_image_get"] = True
         report["checks"]["cache_shared_search_detail"] = True
+        report["checks"]["cache_shared_loans"] = True
+        report["checks"]["missing_loan_cover_no_image_get"] = True
         report["checks"]["no_credential_or_token_network"] = True
         report["status"] = "PASS"
         result[0] = 0
@@ -376,7 +470,7 @@ def main() -> int:
 
     app = Application()
     GLib.timeout_add_seconds(
-        28, lambda: (fail(), False)[1]
+        50, lambda: (fail(), False)[1]
         if report["status"] == "RUNNING" else False,
     )
     try:
