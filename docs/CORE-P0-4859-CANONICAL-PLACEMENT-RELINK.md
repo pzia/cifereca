@@ -57,3 +57,11 @@ destinataire déjà revendiqué, symlink, triggers SQLite et rollback).
 
 **Ne clôt pas #4859/#3196** : W4 historique et undo doivent encore être
 remplacés ou explicitement retirés après les cas A/B non couverts.
+
+La recette complémentaire `tests/test_core_p0_4859_verified_canonical_kobo_relink.py`
+vérifie aussi les droits concurrents, la suppression de l'archive de preuve,
+les chemins de deux profils, le changement d'inode à SHA égal et l'atomicité
+après échec de journal ou changement de contexte. Le contexte facultatif
+`context_current` doit être **sans accès à Storage/SQLite** pendant le
+`BEGIN IMMEDIATE` ; l'adaptateur offline relit uniquement le JSON de
+configuration du profil, sans jamais réentrer dans le verrou SQL.
