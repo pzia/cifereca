@@ -126,3 +126,8 @@ plus modifier la capture. Un nouveau host retrouve la capture existante,
 qui persiste à la navigation jusqu’à arrêt explicite ou fermeture Core.
 Les plugins vérifient cette extension optionnelle et indiquent son
 indisponibilité sur un ancien Core, sans importer le moniteur privé.
+
+
+## Guide d'implémentation autonome des providers (07/11/2026)
+
+Voir [PROVIDER-AUTONOMOUS-DEVELOPMENT.md](PROVIDER-AUTONOMOUS-DEVELOPMENT.md) : distinction catalogue public / inventaire authentifié / offre / droit / artefact, isolation par identité/provider/credential/tenant, absence de droit inféré depuis Notice C, preuves A→B et tests multi-comptes. Ce guide est aussi inclus dans les ZIP Browser Recorder pour rendre les captures directement exploitables par un développeur de plugin sans accès au dépôt.
