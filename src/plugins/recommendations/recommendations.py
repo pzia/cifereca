@@ -449,7 +449,7 @@ def _local_ranked_isbns(
     """
     try:
         item = ranked.item
-        notices = ranked.notices
+        notices = getattr(ranked, "notices", ())
     except Exception:
         return ()
     verified = _attested_catalogue_isbns(
