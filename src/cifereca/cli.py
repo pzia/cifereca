@@ -182,6 +182,20 @@ def main(argv: list[str] | None = None) -> int:
     observe_local.add_argument(
         "--confirm", help="Token exact du constat ; sinon lecture seule",
     )
+    # P0 #4859: existing canonical B path repair, no 0.7 inference.
+    relink_b = sub.add_parser(
+        "kobo-relink-canonical",
+        help="Relocaliser un Placement Kobo déjà attesté A→B, sans droit nouveau",
+    )
+    relink_b.add_argument("--credential", required=True)
+    relink_b.add_argument("--identity", required=True)
+    relink_b.add_argument("--account-id", required=True)
+    relink_b.add_argument("--item", required=True)
+    relink_b.add_argument("--right", required=True)
+    relink_b.add_argument("--branch", required=True)
+    relink_b.add_argument("--placement", required=True)
+    relink_b.add_argument("--path", required=True)
+    relink_b.add_argument("--confirm", help="Token exact d'aperçu, sinon lecture seule")
     kobo_preview = sub.add_parser(
         "kobo-resume-preview",
         help="Aperçu en lecture seule des candidats Kobo (aucun téléchargement)",
@@ -421,6 +435,33 @@ def main(argv: list[str] | None = None) -> int:
                       "reason": (exc.code if isinstance(
                           exc, ReconciliationRejected,
                       ) else "observation_unavailable")}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 2
+
+    if a.cmd == "kobo-relink-canonical":
+        from .core.kobo_local_reconciliation import (
+            ReconciliationRejected, reconcile_existing_profile,
+        )
+        from .core.kobo_canonical_relink import CanonicalRelinkRejected
+        try:
+            if a.account and a.account != a.credential:
+                raise ReconciliationRejected("source_scope_mismatch")
+            result = reconcile_existing_profile(
+                canonical_relink=True, credential_id=a.credential,
+                identity_id=a.identity, account_id=a.account_id,
+                edition_id=a.item, right_id=a.right,
+                branch_id=a.branch, placement_id=a.placement,
+                path=a.path, confirmation=a.confirm,
+            )
+        except Exception as exc:
+            result = {
+                "status": "failed", "ok": False, "changed": 0,
+                "reason": (
+                    exc.code if isinstance(exc, (
+                        ReconciliationRejected, CanonicalRelinkRejected,
+                    )) else "canonical_relink_unavailable"
+                ),
+            }
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 2
 
