@@ -972,6 +972,15 @@ class LibraryService:
         """
         return provider_sessions.connect_kobo_preview(self, credential_id)
 
+    def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
+        """Bind only a confirmed Kobo CLI source to existing Core SQLite owner.
+
+        Unlike a preview or broad connect, requires an already registered
+        borrower/credential, performs no provider-account writes and never
+        starts a second source. Incomplete ABI retains its old route.
+        """
+        return provider_sessions.connect_kobo_canonical(self, credential_id)
+
     def connect_configured(self) -> dict[str, Any]:
         """Public facade with its stable, no-argument compatibility contract."""
         return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
