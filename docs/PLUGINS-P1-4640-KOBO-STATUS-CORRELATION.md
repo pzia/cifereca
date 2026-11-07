@@ -109,3 +109,38 @@ Ne pas redemander le ZIP 06/11 déjà interprété. Pas de synchronisation
 massive, pas de nouveau GET, pas d'évolution ni déploiement KVault. Les tests
 synthétiques de la tranche couvrent les trois pending, les versions
 malformées et l'absence de secret dans le journal.
+
+
+## K3 : deux URL de même route, identité de fichier non démontrée
+
+Le diagnostic des offres Kobo ajoute, **sans second POST ni GET**, la
+relation structurelle `candidate_url_relation` aux catégories existantes
+`eligible_candidate_count` et `candidate_route_comparison` :
+
+- `same_host_path_different_query_or_fragment` : même hôte/chemin,
+  query ou fragment distinct (signatures possibles, **équivalence non prouvée**) ;
+- `same_host_different_paths` : même hôte, chemins différents ;
+- `different_hosts` : hôtes différents ;
+- `same_host_path_raw_encoding_difference` ou `uncomparable`.
+
+Si plusieurs candidats demeurent admissibles, une observation locale contient
+également leur **titre associé au même compte authentifié** :
+
+```text
+EVENT kobo ambiguous_candidates product_id=... title='...' candidate_count=2 outcome=pending non_failure=true
+```
+
+Aucune URL signée n'est incluse dans cette observation ; pour voir les URL
+complètes utiliser **uniquement** le mode Trace privé livré dans #4890 :
+
+```sh
+cifereca kobo-sync-edition --credential '<compte>' \\
+  --item 'f4b22e3d-2980-4d33-bf0c-df75bfb1a24c' --confirm --trace
+```
+
+Cette commande cible K3, affiche son titre dans le journal privé et expose
+les deux candidats (indices `0` et `1`) sans arbitrage arbitraire. Si
+aucune offre exacte n'est sélectionnable, aucun contenu n'est téléchargé.
+Le titre **n'est pas connu depuis le journal antérieur à cette instrumentation**.
+Ne pas ajouter un fallback « premier candidat » et ne pas conclure à une
+même édition binaire sur la seule comparaison d'URL.
