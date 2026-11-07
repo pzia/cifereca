@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 35)
+        self.assertEqual(len(mod.ALL), 36)
         self.assertIn("maintenance-tools-920", mod.ALL)
         self.assertIn("maintenance-tools-1024", mod.ALL)
         self.assertIn("maintenance-tools-1728", mod.ALL)
@@ -154,8 +154,9 @@ class SelectionTests(unittest.TestCase):
         ):
             assert set(mod.CONSTELLATIONS_GTK).issubset(set(mod.select([path])))
 
-    def test_1599_recommendations_gtk_both_widths(self):
+    def test_p1_774_recommendations_gtk_three_effective_widths(self):
         assert set(mod.RECOMMENDATIONS_GTK) == {
+            "recommendations-detail-1024",
             "recommendations-detail-1366", "recommendations-detail-1600",
         }
         assert set(mod.RECOMMENDATIONS_GTK).issubset(set(mod.RECOMMENDATIONS))

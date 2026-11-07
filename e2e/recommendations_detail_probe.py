@@ -82,7 +82,7 @@ def walk(widget):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--width", type=int, choices=(1366, 1600), required=True)
+    parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), required=True)
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -136,7 +136,7 @@ def main():
 
     def capture(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
-        expected_height = 900 if args.width == 1366 else 1000
+        expected_height = {1024: 768, 1366: 900, 1600: 1000}[args.width]
         report["p1_774_phase"] = "display_geometry"
         window = state["window"]
         window_width, window_height = window.get_width(), window.get_height()
@@ -1164,7 +1164,7 @@ def main():
     def activate(_app):
         nonlocal cover_loader
         window = Adw.ApplicationWindow(application=app)
-        window.set_default_size(args.width - 40, 850 if args.width == 1366 else 930)
+        window.set_default_size(args.width - 40, {1024: 720, 1366: 850, 1600: 930}[args.width])
         window._closed = False
         cover_loader = CoverLoader(max_workers=2)
         cover_loader.client.close()

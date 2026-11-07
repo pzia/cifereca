@@ -116,6 +116,13 @@ SCENARIOS = {
         "description": "P0 #2842 : parcours guidé et confirmations natives à 1728×895, sans réseau.",
         "runner": "gtk-maintenance", "width": 1728, "height": 895,
     },
+    "recommendations-detail-1024": {
+        "plugin": "ui.page.recommendations",
+        "fixture": "search-filters",
+        "description": "P1 #3687/#774 : Recommandations GTK/XTEST 1024×768 effectifs ; filtres, compteur et clavier.",
+        "runner": "gtk-recommendations",
+        "width": 1024, "height": 768,
+    },
     "recommendations-detail-1366": {
         "plugin": "ui.page.recommendations",
         "fixture": "search-filters",
@@ -428,8 +435,9 @@ def main() -> int:
             _event(trace_path, name, "scenario_start", plugin=scenario["plugin"])
             if scenario.get("runner") == "gtk-recommendations":
                 width = scenario["width"]
+                height = scenario.get("height", 1000 if width == 1600 else 900)
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{height}x24",
                     args.python, str(ROOT / "e2e/recommendations_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                 ]
