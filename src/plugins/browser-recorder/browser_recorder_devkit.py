@@ -36,6 +36,9 @@ _PUBLIC_SOURCES = (
     "loan_inventory.py",
     "errors.py",
 )
+# Public ProviderPlugin/ProviderSession/Descriptor are re-exported from
+# cifereca.plugin_api but defined in cifereca.providers.base.
+_PROVIDER_BASE_SOURCE = "base.py"
 _MAX_SOURCE_BYTES = 160_000
 _MAX_KIT_BYTES = 550_000
 
@@ -250,6 +253,25 @@ def core_contract_kit() -> dict[str, bytes]:
         contents[target] = data
         provenance[target] = "src/cifereca/plugin_api/" + name
 
+    # Export the exact implementation of the publicly re-exported provider
+    # base classes, not other provider internals. This gives external agents
+    # ProviderPlugin / ProviderSession constructor and method signatures.
+    try:
+        provider_base = resources.files("cifereca.providers").joinpath(
+            _PROVIDER_BASE_SOURCE
+        ).read_bytes()
+    except Exception as exc:
+        raise RecorderError("core_kit_unavailable") from exc
+    if (not provider_base or len(provider_base) > _MAX_SOURCE_BYTES
+            or b"\x00" in provider_base):
+        raise RecorderError("core_kit_invalid")
+    target = "plugin-dev-kit/contracts/provider_base.py"
+    contents[target] = provider_base
+    provenance[target] = (
+        "src/cifereca/providers/base.py "
+        "(public ProviderPlugin/ProviderSession re-exports)"
+    )
+
     rows = [asdict(row) for row in CONTRACT_REGISTRY]
     if len(rows) > 100 or any(
         type(row.get("category")) is not str for row in rows
@@ -301,6 +323,7 @@ def core_contract_kit() -> dict[str, bytes]:
             "contract registry and manifest version",
             "catalog.service/1 offline reference example and tests",
             "provider architecture guide embedded from installed plugin",
+            "re-exported ProviderPlugin/ProviderSession public base signatures",
         ],
         "not_claimed": [
             "private Core implementation",
