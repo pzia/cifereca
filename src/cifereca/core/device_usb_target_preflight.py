@@ -37,6 +37,16 @@ def _blocked(reason: str) -> UsbTargetPreflight:
     return UsbTargetPreflight("blocked", reason)
 
 
+def _target_aliases(directory_fd: int, name: str) -> tuple[str, ...] | None:
+    """Return case-fold aliases or None when the directory cannot be bounded."""
+    with os.scandir(directory_fd) as listing:
+        entries = list(islice(listing, _MAX_ENTRIES + 1))
+    if len(entries) > _MAX_ENTRIES:
+        return None
+    folded = name.casefold()
+    return tuple(entry.name for entry in entries if entry.name.casefold() == folded)
+
+
 def preflight_usb_target(
     *, identity_id: str, binding: Mapping[str, object],
     mountpoint: Path, artifact: Mapping[str, object],
@@ -126,11 +136,10 @@ def preflight_usb_target(
                 return _blocked("target_directory_unverified")
         before = os.fstat(current)
         name = digest + _SUFFIX[fmt]
-        with os.scandir(current) as listing:
-            entries = list(islice(listing, _MAX_ENTRIES + 1))
-        if len(entries) > _MAX_ENTRIES:
+        aliases = _target_aliases(current, name)
+        if aliases is None:
             return _blocked("target_directory_unbounded")
-        if any(entry.name.casefold() == name.casefold() for entry in entries):
+        if aliases:
             return _blocked("target_occupied")
         # The no-overwrite condition is corroborated via the directory FD.
         try:
