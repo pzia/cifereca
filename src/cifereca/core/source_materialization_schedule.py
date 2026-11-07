@@ -101,6 +101,10 @@ def finish_on_start_attempt(service: Any, account: Any, report: Any) -> bool:
         current = _attempt(service, account)
         if type(current) is not dict or current["status"] != "in_flight":
             return False
+        # A changed live borrower after a provider GET must never finalize
+        # the old owner's journal as automatically retryable.
+        if hasattr(service, "accounts") and not _configured_binding(service, account):
+            return False
         rows = report.get("sources") if type(report) is dict else None
         source = rows[0] if type(rows) is list and len(rows) == 1 else None
         complete = (
@@ -366,10 +370,21 @@ def mark_on_start_attempt(service: Any, account: Any) -> bool:
             prior is not None and prior["status"] != "complete"
         ):
             return False
-        if prior is None and service.storage.metadata_get(
-            "sync.source.materialization.last_attempt." + source_id,
-        ) is not None:
-            return False
+        if prior is None:
+            from .kobo_backup import _kobo_checkpoint_for, _kobo_checkpoint_key
+            # Direct caller of mark() must not bypass on_start_due's retired
+            # checkpoint quarantine. Legacy incomplete/unknown work is NOT
+            # a positive retry admission even with an unchanged ON switch.
+            if service.storage.metadata_get(
+                "sync.source.materialization.last_attempt." + source_id,
+            ) is not None:
+                return False
+            if (_kobo_checkpoint_for(
+                    service, account.identity_id, account.credential_id,
+            ) is not None or service.storage.metadata_get(
+                _kobo_checkpoint_key(account.identity_id, account.credential_id),
+            ) is not None):
+                return False
         # This is written FIRST. Even if a later retry-clock write fails,
         # the in-flight fence survives and forbids a second automatic GET.
         # A terminal completion is never guessed from W2 backup_items.
