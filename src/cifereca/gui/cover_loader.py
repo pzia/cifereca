@@ -433,6 +433,17 @@ class CoverLoader:
             try:
                 if not absolute or self._stop.is_set():
                     continue
+                # A recycled GTK cell may cancel its request while the URL
+                # waits behind other downloads. Claim and discard an entirely
+                # cancelled batch atomically so a later live request for the
+                # same URL can queue normally; never issue an unused GET.
+                with self._lock:
+                    waiting = self._callbacks.get(absolute, ())
+                    if not any(callback.active for callback in waiting):
+                        self._callbacks.pop(absolute, None)
+                        self._queued.discard(absolute)
+                        self._stats["cancelled_callbacks"] += len(waiting)
+                        continue
                 path = self._path(absolute)
                 result: Path | None = None
                 error: Exception | None = None
