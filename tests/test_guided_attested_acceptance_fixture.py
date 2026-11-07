@@ -29,26 +29,36 @@ def _rows(service):
                               'catalog_entries', 'artifacts', 'backup_items')}
 
 
-def test_gtk_fixture_has_real_attested_preview_commit_and_reversible_placement(tmp_path):
+def test_gtk_fixture_historical_kobo_evidence_cannot_publish_positive_B(tmp_path):
     service, book, session, right, file = _case(tmp_path)
     try:
         before, contents = _rows(service), book.read_bytes()
-        assert session.preflight_manual_link(right, file).status == 'eligible_for_fresh_validation'
-        assert session.preview_manual_attachment(right, file)['status'] == 'preview'
+        preflight = session.preflight_manual_link(right, file)
+        assert preflight.status == 'eligible_for_fresh_validation'
+        assert preflight.read_only and not preflight.attachment_authorized
+        preview = session.preview_manual_attachment(right, file)
+        assert preview == {
+            'status': 'blocked', 'read_only': True,
+            'reason_code': 'kobo_canonical_evidence_required',
+        }
+        assert session._manual_pending is None
         assert _rows(service) == before
-        assert session.confirm_manual_attachment(right, file, user_confirmed=False)['status'] == 'unavailable'
+        assert session.confirm_manual_attachment(
+            right, file, user_confirmed=True,
+        )['status'] == 'unavailable'
+        # Old GUI confirmation and undo coordinates cannot resurrect W4.
+        session._manual_pending = (right, file, 'a' * 64)
+        assert session.confirm_manual_attachment(
+            right, file, user_confirmed=True,
+        )['status'] == 'blocked'
+        session._manual_undo = (right, file, 'b' * 64)
+        assert session.preview_manual_undo(right, file)['status'] == 'blocked'
+        session._manual_undo_pending = (right, file, 'b' * 64, 'c' * 64)
+        assert session.confirm_manual_undo(
+            right, file, user_confirmed=True,
+        )['status'] == 'blocked'
         assert _rows(service) == before
-        assert session.preview_manual_attachment(right, file)['status'] == 'preview'
-        result = session.confirm_manual_attachment(right, file, user_confirmed=True)
-        assert result['status'] == 'applied' and result['undo_available'] is True
-        placed = service.storage.placement_for_path(book)
-        assert placed['identity_id'] == 'default' and placed['provider_id'] == 'kobo'
-        assert placed['source_item_id'] == 'synthetic-item'
-        assert _rows(service)['entitlements'] == before['entitlements']
-        assert book.read_bytes() == contents
-        assert session.preview_manual_undo(right, file)['status'] == 'undo_preview'
-        assert session.confirm_manual_undo(right, file, user_confirmed=True)['status'] == 'undone'
-        assert _rows(service) == before
+        assert service.storage.placement_for_path(book) is None
         assert book.read_bytes() == contents
     finally:
         session.close()
