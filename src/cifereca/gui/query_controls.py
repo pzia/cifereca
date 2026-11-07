@@ -294,7 +294,9 @@ class LocalQueryControls(QueryControls):
                 known_medium = True
             formats.update(selected_formats & self._attested_document_formats)
         else:
-            self._attested_document_scopes = frozenset(media - {'unknown'})
+            # Unknown is selectable alongside a positively known medium;
+            # keep that explicit choice as well across partial heads.
+            self._attested_document_scopes = frozenset(media if known_medium else ())
             self._attested_document_formats = frozenset(formats)
         scope_choices = tuple(
             (value, label) for value, label in self._scope_labels.items()
