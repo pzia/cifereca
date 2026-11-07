@@ -130,8 +130,8 @@ def test_foreign_source_never_claims_existing_provider_origin(fixture_b, scope):
 
 @pytest.mark.parametrize("corrupt", [
     "source_inactive", "source_synthetic", "missing_origin",
-    "origin_unattested", "wrong_owner", "wrong_artifact",
-    "legacy_label", "no_artifact",
+    "origin_not_provider", "wrong_owner", "wrong_artifact",
+    "legacy_label", "artifact_size_mismatch",
 ])
 def test_unattested_or_poisoned_B_cannot_be_promoted(corrupt, fixture_b):
     storage, _old, new, args = fixture_b
@@ -144,8 +144,8 @@ def test_unattested_or_poisoned_B_cannot_be_promoted(corrupt, fixture_b):
             db.execute("UPDATE source_references SET evidence_kind='historical_receipt'")
         elif corrupt == "missing_origin":
             db.execute("DELETE FROM origin_links WHERE origin_kind='provider'")
-        elif corrupt == "origin_unattested":
-            db.execute("UPDATE origin_links SET evidence_ref='' WHERE origin_kind='provider'")
+        elif corrupt == "origin_not_provider":
+            db.execute("UPDATE origin_links SET origin_kind='manual' WHERE origin_kind='provider'")
         elif corrupt == "wrong_owner":
             db.execute("UPDATE placements SET identity_id='other' WHERE placement_id=?", (pid,))
         elif corrupt == "wrong_artifact":
@@ -153,7 +153,7 @@ def test_unattested_or_poisoned_B_cannot_be_promoted(corrupt, fixture_b):
         elif corrupt == "legacy_label":
             db.execute("UPDATE placements SET provider_id='kobo',source_item_id='kobo-book' WHERE placement_id=?", (pid,))
         else:
-            db.execute("DELETE FROM artifacts WHERE sha256=?", (SHA,))
+            db.execute("UPDATE artifacts SET size=size+1 WHERE sha256=?", (SHA,))
     before = _records(storage)
     with pytest.raises(CanonicalRelinkRejected):
         _relink(fixture_b)
