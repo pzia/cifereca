@@ -21,14 +21,20 @@ from tests.test_p1_3252_rights_observation_snapshot import OwnerBroker
 
 def epub_bytes():
     out = BytesIO()
+    # Stable ZIP metadata: the raw fixture is compared across separate calls
+    # and the DOS timestamp changes at a 2-second clock boundary.
+    def add(archive, name, content):
+        info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+        archive.writestr(info, content)
+
     with zipfile.ZipFile(out, "w") as archive:
-        archive.writestr("mimetype", "application/epub+zip")
-        archive.writestr("META-INF/container.xml", (
+        add(archive, "mimetype", "application/epub+zip")
+        add(archive, "META-INF/container.xml", (
             '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
             '<rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles>'
             '</container>'
         ))
-        archive.writestr("OPS/book.opf", "<package/>")
+        add(archive, "OPS/book.opf", "<package/>")
     return out.getvalue()
 
 

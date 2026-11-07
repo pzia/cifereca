@@ -2195,7 +2195,7 @@ class Storage:
                              {"reconcile_required", "reconcile_conflict"}
                              and db.execute(
                                  "SELECT 1 FROM provider_connections "
-                                 "WHERE provider_id='kobo' AND "
+                                 "WHERE provider_id='kobo' AND enabled=1 AND "
                                  "credential_id=? AND identity_id=? LIMIT 1",
                                  (merged.get("credential_id"),
                                   merged.get("identity_id")),
