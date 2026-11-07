@@ -251,13 +251,15 @@ def make_panel(monkeypatch, *, allowed=True, busy=False, export_directory=None):
     ))
 
     def recorder(start, stop, *, pause_control=None, metadata_only_origins=(),
-                 download_destination=None, status=None, coverage_callback=None):
+                 origins=None, download_destination=None, status=None,
+                 coverage_callback=None):
         assert start.startswith(ORIGIN) and stop.is_set()
         assert pause_control is not None
         assert type(metadata_only_origins) is tuple
         assert callable(download_destination)
         assert callable(status)
         raw.third_party_scope = metadata_only_origins
+        raw.captured_scope = origins
         return raw
 
     monkeypatch.setattr(review_ui, "record_http", recorder)
@@ -938,5 +940,60 @@ def test_private_coverage_reports_body_eviction_and_no_false_success(monkeypatch
         metrics["response_read_failed"] = "PRIVATE_CREDENTIAL"
         panel._show_coverage(metrics)
         assert panel.coverage_status.label == baseline
+    finally:
+        panel.destroy()
+
+
+def test_4932_complementary_origins_have_separate_full_and_metadata_consent(
+    monkeypatch,
+):
+    panel, tasks, raw = make_panel(monkeypatch)
+    try:
+        panel.captured_origins.set_text(
+            "https://api.example.org, https://auth.example.org/"
+        )
+        panel.third_party_origins.set_text("https://metrics.example.org")
+        panel.begin()
+        assert len(tasks.handles) == 1
+        assert not panel.captured_origins.sensitive
+        assert not hasattr(raw, "captured_scope")  # worker not started yet
+        # A future capture cannot reuse the prior consent by accident.
+        assert panel.captured_origins.get_text() == ""
+        assert panel.third_party_origins.get_text() == ""
+        panel.stop_capture()
+        tasks.handles[0].finish()
+        assert raw.captured_scope == (
+            ORIGIN, "https://api.example.org", "https://auth.example.org",
+        )
+        assert raw.third_party_scope == ("https://metrics.example.org",)
+        assert "Couverture par origine HTTPS" in panel.origin_coverage_status.label
+        assert panel.captured_origins.sensitive is False  # retained trace
+        panel.discard()
+        assert panel.captured_origins.sensitive
+    finally:
+        panel.destroy()
+
+
+@pytest.mark.parametrize("normal,restricted", [
+    ("https://auth.example.org", "https://auth.example.org"),
+    ("https://api.example.org/path", ""),
+    ("https://api.example.org?ticket=SYNTHETIC_SECRET", ""),
+    ("https://api.example.org", "https://api.example.org,https://api.example.org"),
+    (
+        "https://a.example.org,https://b.example.org,https://c.example.org",
+        "https://d.example.org,https://e.example.org",
+    ),
+])
+def test_4932_invalid_or_overlapping_consent_never_launches_browser(
+    monkeypatch, normal, restricted,
+):
+    panel, tasks, _trace = make_panel(monkeypatch)
+    try:
+        panel.captured_origins.set_text(normal)
+        panel.third_party_origins.set_text(restricted)
+        panel.begin()
+        assert tasks.handles == []
+        assert "Origines HTTPS invalides" in panel.status.label
+        assert "SYNTHETIC_SECRET" not in panel.status.label
     finally:
         panel.destroy()

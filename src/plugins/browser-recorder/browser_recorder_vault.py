@@ -85,6 +85,7 @@ def _record(trace: PrivateHttpTrace, session_id: str, state: str) -> bytes:
         ) else None,
         "origins": list(trace.origins),
         "metadata_only_origins": list(trace.metadata_only_origins),
+        "metadata_only_counts": dict(trace._metadata_origin_counts),
         "content_negotiation": trace.content_negotiation,
         "compressed_responses_accepted": trace.allow_compressed_responses,
         "limit": trace.limit,
@@ -119,6 +120,14 @@ def _unrecord(blob: bytes, session_id: str):
             limit=data["limit"], max_body=data["max_body"],
             total_body=data["total_body_remaining"],
         )
+        # v1 archives without this optional counter remain readable.
+        counts = data.get("metadata_only_counts", {})
+        if (type(counts) is not dict
+                or set(counts) - set(trace.metadata_only_origins)
+                or any(type(count) is not int or not 0 <= count <= MAX_EXCHANGES
+                       for count in counts.values())):
+            raise ValueError("invalid per-origin coverage")
+        trace._metadata_origin_counts.update(counts)
         rows = data["exchanges"]
         strategy = data.get("content_negotiation", "browser_default")
         if type(strategy) is not str or strategy not in {"browser_default", "identity_requested"}:
@@ -130,6 +139,8 @@ def _unrecord(blob: bytes, session_id: str):
         trace.allow_compressed_responses = accepted
         if type(rows) is not list or len(rows) > MAX_EXCHANGES:
             raise ValueError("invalid entries")
+        if sum(counts.values()) > len(rows):
+            raise ValueError("invalid per-origin coverage")
         for index, row in enumerate(rows):
             # Old CFRVLT01 sessions predate per-direction reason codes.
             # Accept only those exact legacy fields, never arbitrary data.

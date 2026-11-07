@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 import re
 from threading import Event, Lock
 from time import monotonic
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
 
 from browser_recorder import RecorderError, _playwright, site_origin
 from browser_recorder_download import (
@@ -32,6 +33,7 @@ _BODY_REASONS = frozenset((
     "captured", "redirect", "network_error", "unfinished", "compressed",
     "unsafe_headers", "size_unavailable", "over_budget", "unsupported_mime",
     "measured_mismatch", "text_invalid_or_limit", "read_failed",
+    "auth_redacted",
 ))
 _ALLOWED_MIME = frozenset((
     "application/json", "application/xml", "text/xml", "text/html",
@@ -50,6 +52,153 @@ _FORBIDDEN = frozenset((
     "x-api-key", "x-auth-token", "x-csrf-token", "x-xsrf-token",
 ))
 _HEADER_VALUES = re.compile(r"^[\x20-\x7e]{0,256}$")
+
+
+# Secret-bearing flows are guarded across *all* consented origins. This is
+# deliberately protocol-agnostic: no provider-specific URL or domain names.
+_AUTH_ROUTE = re.compile(
+    r"(?:^|[/_.-])(?:login|logon|signin|sign-in|sign_in|oauth|oidc|sso|"
+    r"saml|cas|authorize|callback|token|credential|authenticate|"
+    r"mfa|otp|session)(?:$|[/_.-])", re.IGNORECASE,
+)
+_SECRET_QUERY_KEYS = frozenset((
+    "ticket", "service", "password", "passwd", "pwd", "otp", "totp",
+    "code", "state", "csrf", "csrf_token", "authenticity_token",
+    "samlresponse", "samlrequest", "id_token", "access_token",
+    "refresh_token", "authorization", "client_secret", "session",
+    "session_state", "auth", "token", "assertion", "mfa",
+    "oauth_token", "api_key", "key",
+))
+_SAFE_QUERY_NAME = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$")
+_LONG_AUTH_PATH_SEGMENT = re.compile(r"/[a-zA-Z0-9_-]{24,}(?=/|$)")
+
+
+def _auth_flow(url: str) -> bool:
+    """True for structurally sensitive authentication endpoints."""
+    try:
+        return bool(_AUTH_ROUTE.search(urlsplit(url).path))
+    except (TypeError, ValueError):
+        return True
+
+
+def _safe_http_url(url: str) -> str:
+    """Remove secret-bearing query values before a URL enters the trace.
+
+    Regular catalogue URLs keep their normal private/reviewable fidelity.
+    Auth routes lose all query values; on other routes the same happens if
+    any key is sensitive (CAS return tickets, OAuth codes, etc.).
+    """
+    if type(url) is not str or len(url) > 8192:
+        return ""
+    try:
+        parts = urlsplit(url)
+        if parts.username is not None or parts.password is not None:
+            return ""
+        auth = bool(_AUTH_ROUTE.search(parts.path))
+        path = (_LONG_AUTH_PATH_SEGMENT.sub("/:value", parts.path)
+                if auth else parts.path)
+        query = parts.query
+        if query:
+            try:
+                fields = parse_qsl(query, keep_blank_values=True,
+                                   max_num_fields=32)
+            except ValueError:
+                return urlunsplit((parts.scheme, parts.netloc, path, "redacted", ""))
+            if auth or any(key.lower() in _SECRET_QUERY_KEYS
+                           for key, _value in fields):
+                query = "&".join(
+                    quote(key, safe="") + "=REDACTED"
+                    if _SAFE_QUERY_NAME.fullmatch(key)
+                    else "param=REDACTED" for key, _value in fields
+                )
+        return urlunsplit((parts.scheme, parts.netloc, path, query, ""))
+    except (TypeError, ValueError):
+        return ""
+
+
+# Body review still exists for ordinary IDs, but common authentication values
+# must be irreversibly replaced *before* assigning to PrivateExchange and
+# before the encrypted-vault snapshot or either ZIP can observe them.
+_SECRET_BODY_KEY = re.compile(
+    r"(?:^|[_\-.])(?:password|passwd|pwd|passphrase|secret|token|"
+    r"access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|"
+    r"authorization|csrf|xsrf|authenticity[_-]?token|"
+    r"samlresponse|samlrequest|assertion|ticket|otp|totp|mfa|"
+    r"session[_-]?key|session[_-]?token|client[_-]?secret)"
+    r"(?:$|[_\-.])", re.IGNORECASE,
+)
+_HTML_SECRET_INPUT = re.compile(
+    r"<input\b[^>]{0,1024}(?:type\s*=\s*[\"']?password|"
+    r"name\s*=\s*[\"']?(?:csrf|xsrf|token|password|secret))",
+    re.IGNORECASE,
+)
+_PLAIN_CREDENTIAL = re.compile(
+    r"(?i)(?:password|passwd|secret|access[_-]?token|"
+    r"refresh[_-]?token|samlresponse|authorization|"
+    r"csrf|otp|totp|mfa|bearer)\s*[:=]"
+)
+
+
+def _safe_body_text(value: str, mime: str) -> str | None:
+    """Redact known credentials in bounded text without publishing raw bytes.
+
+    Unparseable credential-like documents and HTML login forms are omitted
+    rather than copied verbatim into the trace. Other private identifiers
+    remain under the existing explicit review/export workflow.
+    """
+    if mime == "application/x-www-form-urlencoded":
+        try:
+            fields = parse_qsl(value, keep_blank_values=True, max_num_fields=256)
+        except ValueError:
+            return None
+        if any(_SECRET_BODY_KEY.search(key) for key, _ in fields):
+            if any(not _SAFE_QUERY_NAME.fullmatch(key) for key, _ in fields):
+                return None
+            return "&".join(quote(key, safe="") + "=REDACTED"
+                            for key, _ in fields)
+        return value
+    if mime in {"application/json", "text/json"} or mime.endswith("+json"):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError, RecursionError):
+            return None if _PLAIN_CREDENTIAL.search(value) else value
+
+        changed = [False]
+
+        def scrub(item, depth=0):
+            if depth > 16:
+                raise ValueError("nested_credentials_unverifiable")
+            if isinstance(item, dict):
+                replacement = {}
+                for key, child in item.items():
+                    if type(key) is not str:
+                        raise ValueError("invalid_json_key")
+                    if _SECRET_BODY_KEY.search(key):
+                        replacement[key] = "REDACTED"
+                        changed[0] = True
+                    else:
+                        replacement[key] = scrub(child, depth + 1)
+                return replacement
+            if isinstance(item, list):
+                return [scrub(child, depth + 1) for child in item]
+            if type(item) is str and re.search(r"\b(?:Bearer|Basic)\s+\S+", item):
+                changed[0] = True
+                return "REDACTED"
+            return item
+
+        try:
+            filtered = scrub(parsed)
+            return (json.dumps(filtered, ensure_ascii=False, separators=(",", ":"))
+                    if changed[0] else value)
+        except (TypeError, ValueError, RecursionError):
+            return None
+    if mime == "text/html":
+        if _HTML_SECRET_INPUT.search(value) or _PLAIN_CREDENTIAL.search(value):
+            return None
+    elif mime in {"text/plain", "application/xml", "text/xml"} or mime.endswith("+xml"):
+        if _PLAIN_CREDENTIAL.search(value):
+            return None
+    return value
 
 
 def _mime(headers: dict) -> str:
@@ -231,10 +380,16 @@ class PrivateHttpTrace:
         if (type(metadata_only_origins) not in (tuple, list)
                 or len(metadata_only_origins) > 4):
             raise RecorderError("invalid_origin")
-        self.metadata_only_origins = tuple(dict.fromkeys(
+        metadata_origins = tuple(dict.fromkeys(
             site_origin(item) for item in metadata_only_origins
-            if site_origin(item) not in self.origins
         ))
+        if set(metadata_origins) & set(self.origins):
+            # Never silently upgrade metadata-only consent to full capture.
+            raise RecorderError("invalid_origin")
+        self.metadata_only_origins = metadata_origins
+        self._metadata_origin_counts = {
+            origin: 0 for origin in self.metadata_only_origins
+        }
         self.limit = min(MAX_EXCHANGES, max(1, int(limit)))
         self.max_body = min(MAX_BODY_BYTES, max(1, int(max_body)))
         self.total_body = min(MAX_TOTAL_BODY_BYTES, max(0, int(total_body)))
@@ -311,6 +466,37 @@ class PrivateHttpTrace:
             "out_of_scope": self.omitted["out_of_scope"],
             "static_metadata_budget": self.omitted["static_metadata_budget"],
         }
+
+    def coverage_by_origin(self):
+        """Bounded per-origin counts; only consented HTTPS origins are exposed.
+
+        No request URL, path, query, header, body or foreign origin is emitted.
+        Restricted third-party events have no identifying URL in the trace,
+        so their counts are collected separately at observation time.
+        """
+        rows = {
+            origin: {"mode": "normal", "requests": 0,
+                     "text_responses": 0, "metadata_only": 0}
+            for origin in self.origins
+        }
+        rows.update({
+            origin: {"mode": "metadata_only", "requests": 0,
+                     "text_responses": 0, "metadata_only": 0}
+            for origin in self.metadata_only_origins
+        })
+        for entry in self.exchanges:
+            if entry.metadata_only:
+                continue
+            origin = _url_origin(entry.url)
+            if origin in rows and rows[origin]["mode"] == "normal":
+                rows[origin]["requests"] += 1
+                if type(entry.response_body) is str:
+                    rows[origin]["text_responses"] += 1
+        for origin, count in self._metadata_origin_counts.items():
+            if origin in rows and rows[origin]["mode"] == "metadata_only":
+                rows[origin]["requests"] = count
+                rows[origin]["metadata_only"] = count
+        return rows
 
     def _drop_inflight_on_pause(self) -> None:
         # A pause cannot finish capturing a request that began earlier.
@@ -397,8 +583,9 @@ class PrivateHttpTrace:
                 method = "OTHER"
             entry = PrivateExchange(
                 sequence=len(self.exchanges) + 1, method=method,
-                # Never retain the target host/path/query of a third party.
-                url="" if metadata_only else str(req.url),
+                # Consent is per origin, with identical privacy rules on all
+                # normal-capture origins. Meta-only remains completely opaque.
+                url="" if metadata_only else _safe_http_url(str(req.url)),
                 started_ms=int((monotonic() - self._begin) * 1000),
                 page_id=self._tab(req),
                 request_headers={} if metadata_only else _headers(req),
@@ -413,6 +600,8 @@ class PrivateHttpTrace:
                 ),
             )
             self.exchanges.append(entry)
+            if metadata_only:
+                self._metadata_origin_counts[origin] += 1
             self._pending[id(req)] = entry
         except (AttributeError, TypeError, ValueError):
             self.omitted["network_error"] += 1
@@ -448,7 +637,7 @@ class PrivateHttpTrace:
                 try:
                     location = resp.headers.get("location", "")
                     if isinstance(location, str) and len(location) <= 2048:
-                        entry.redirect_to = location
+                        entry.redirect_to = _safe_http_url(location)
                 except (AttributeError, TypeError, ValueError):
                     pass
                 entry.response_body_state = "redirect"
@@ -468,6 +657,19 @@ class PrivateHttpTrace:
         entry.duration_ms = max(0, int((monotonic() - self._begin) * 1000)
                                 - entry.started_ms)
         if entry.metadata_only:
+            return
+        if _auth_flow(entry.url):
+            # Browser still performs the login, but the recorder never reads
+            # credential POSTs or IdP HTML/JSON response bodies, including
+            # those hosted on an explicitly authorized extra origin.
+            if entry.method in {"POST", "PUT", "PATCH"}:
+                entry.request_body = None
+                entry.request_body_state = "body_omitted"
+                entry.request_body_reason = "auth_redacted"
+            if entry.response_body_state != "redirect":
+                entry.response_body = None
+                entry.response_body_state = "body_omitted"
+                entry.response_body_reason = "auth_redacted"
             return
         sizes = _sizes(req)
         actual_request = sizes.get("requestBodySize")
@@ -505,13 +707,18 @@ class PrivateHttpTrace:
                     if (type(raw) is bytes and len(raw) == actual_request
                             and (request_length is None
                                  or len(raw) <= request_length)):
-                        entry.request_body = self._take_text(raw)
+                        decoded = self._take_text(raw)
+                        entry.request_body = (
+                            _safe_body_text(decoded, _mime(entry.request_headers))
+                            if decoded is not None else None
+                        )
                         entry.request_body_state = (
                             "captured" if entry.request_body is not None
                             else "body_omitted"
                         )
                         entry.request_body_reason = (
                             "captured" if entry.request_body is not None
+                            else "auth_redacted" if decoded is not None
                             else "text_invalid_or_limit"
                         )
                     else:
@@ -596,7 +803,11 @@ class PrivateHttpTrace:
                 entry.response_body_reason = "measured_mismatch"
                 self.omitted["oversize"] += 1
             else:
-                entry.response_body = self._take_text(raw)
+                decoded = self._take_text(raw)
+                entry.response_body = (
+                    _safe_body_text(decoded, entry.mime)
+                    if decoded is not None else None
+                )
                 if static and entry.response_body is not None:
                     self._static_body_remaining -= len(raw)
                 entry.response_body_state = (
@@ -604,6 +815,7 @@ class PrivateHttpTrace:
                 )
                 entry.response_body_reason = (
                     "captured" if entry.response_body is not None
+                    else "auth_redacted" if decoded is not None
                     else "text_invalid_or_limit"
                 )
         except (AttributeError, TypeError, ValueError):
@@ -677,6 +889,7 @@ class PrivateHttpTrace:
         self._pending.clear()
         self._responses.clear()
         self._tab_numbers.clear()
+        self._metadata_origin_counts.clear()
         self._excluded_origins.clear()
         self._excluded_origin_overflow = 0
 

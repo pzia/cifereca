@@ -30,6 +30,46 @@ export local. Le filtrage peut écarter certaines informations utiles à
 l'analyse ; ses limites sont détaillées dans le rapport de couverture.
 Le HAR historique reste une fonction secondaire.
 
+## Origines complémentaires : même capture, consentement distinct (#4932)
+
+Dans **Paramètres**, deux champs HTTPS distincts permettent de sélectionner
+jusqu'à **quatre origines complémentaires au total** pour la **capture en
+cours seulement** :
+
+- **Capture normale complémentaire** : Chromium enregistre les mêmes
+  chronologies de requêtes/réponses, corps textuels soumis aux mêmes limites,
+  en-têtes techniques, redirections, téléchargements, revue et archives
+  privées que pour l'origine initiale.
+- **Métadonnées seulement** : seules méthode, durée, statut et ordre de
+  requête sont conservés, sans URL, corps ni en-têtes. Le mode historique
+  `metadata_only_origins` conserve ce comportement.
+- **Non renseignée** : l'origine ne sera pas observée. Une redirection vers
+  un autre hôte ne l'autorise **jamais** implicitement.
+
+Saisir uniquement des **origines HTTPS exactes**, sans chemin, paramètre
+de query, identifiant, wildcard ou doublon. Le même hôte ne peut figurer dans
+les deux modes. Les deux champs sont vidés au démarrage, le consentement est
+figé pour la session active, et la couverture numérique apparaît ensuite
+**par origine**. Les origines absentes ne sont pas ajoutées au ZIP ou au
+coffre ; un inventaire local opt-in est possible pour diagnostiquer les
+domaines exclus.
+
+Les pages d'authentification sont un cas particulier de **protection
+commune à toutes les origines** (et non une exception fournisseur) :
+URL/redirect avec clés connues (`ticket`, `code`, `state`, `password`, etc.)
+sont expurgés de leurs valeurs avant rétention ; les champs identifiés comme
+secrets dans les corps JSON et formulaires sont masqués avant stockage, et
+les formulaires HTML susceptibles de contenir des credentials sont omis.
+Les corps de POST/PUT/PATCH et de réponse sur les routes d'authentification courantes (`/login`,
+`/oauth`, `/cas`, `/sso`, etc.) ne sont pas lus. Les autres échanges
+restent des données **privées** qui peuvent contenir des identifiants non
+reconnus : ne communiquer le ZIP direct qu'après examen et consentement.
+Le parcours de connexion reste manuel et le collecteur ne rejoue aucun appel.
+
+Le SSO La Rochelle (#3691) est une recette parmi d'autres. Cette fonction
+peut également servir à un catalogue, un fournisseur de contenus, une API
+ou un autre tenant. Aucune adresse spécifique n'est codée dans le collecteur.
+
 ## Accès à la fonction principale
 
 Depuis **Configuration → Browser Recorder**, l'écran est organisé en
@@ -43,7 +83,7 @@ Depuis **Configuration → Browser Recorder**, l'écran est organisé en
   sous** : ZIP **en clair**, sans second mot de passe ni anonymisation imposée.
   La revue individuelle et l'aperçu exact du ZIP anonymisé sont disponibles
   ensuite dans le même onglet ; ouvrir une session n'exporte aucun fichier.
-- **Paramètres** : hôtes tiers en métadonnées seulement, négociation HTTP,
+- **Paramètres** : origines complémentaires en capture normale ou métadonnées seulement, négociation HTTP,
   rétention et nettoyage sur aperçu/confirmation, fonctions HAR héritées
   repliées. Aucun réglage ne remplace le consentement d'une capture.
 
