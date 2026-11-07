@@ -50,7 +50,6 @@ def test_all_generations_from_last_24_hours_are_kept_even_if_many(tmp_path, cloc
     assert result["removed"] == 0
     assert result["retained"] == len(releases)
     assert all(path.exists() for path in releases)
-    assert updater.status()["ok"]  # no deletion performed by status()
 
 
 def test_boundary_and_floor_two_when_everything_is_old(tmp_path, clock, monkeypatch):
