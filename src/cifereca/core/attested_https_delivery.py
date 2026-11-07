@@ -43,12 +43,23 @@ class PublicDelivery:
 def _destination(
     url: str, *, phase: str = "initial",
     on_url_refusal: Callable[[str, str], None] | None = None,
+    on_trace_url: Callable[[str, str], None] | None = None,
 ) -> tuple[str, str, int]:
     """Validate an HTTPS destination; emit only closed refusal categories.
 
     The optional observer receives two fixed literals (phase and reason),
     never a URL, hostname, path, query, userinfo or HTTP response.
     """
+
+    # Raw URLs (including signed query values) are sent ONLY to an
+    # explicitly registered consumer in local trace mode. Keep observation
+    # failure isolated from admission and do not format untrusted URLs here.
+    if on_trace_url is not None and type(url) is str and 0 < len(url) <= _MAX_URL:
+        try:
+            if HTTPX_TRANSPORT.trace_enabled() is True:
+                on_trace_url(phase, url)
+        except Exception:
+            pass
 
     def refuse(reason: str, code: str = "delivery_url_invalid") -> None:
         if on_url_refusal is not None:
@@ -191,6 +202,7 @@ def download_attested_https(
     max_bytes: int = _MAX_BYTES, max_redirects: int = _MAX_REDIRECTS,
     max_duration: float = 900,
     on_url_refusal: Callable[[str, str], None] | None = None,
+    on_trace_url: Callable[[str, str], None] | None = None,
 ) -> PublicDelivery:
     """Stream an attested GET into a new staging file, with no URL in results.
 
@@ -208,9 +220,12 @@ def download_attested_https(
             or type(max_duration) not in (int, float)
             or not 0 < max_duration <= 3600):
         raise ValueError("delivery_parameters_invalid")
-    if on_url_refusal is not None and not callable(on_url_refusal):
+    if ((on_url_refusal is not None and not callable(on_url_refusal))
+            or (on_trace_url is not None and not callable(on_trace_url))):
         raise ValueError("delivery_parameters_invalid")
-    origin = _destination(url, on_url_refusal=on_url_refusal)
+    origin = _destination(
+        url, on_url_refusal=on_url_refusal, on_trace_url=on_trace_url,
+    )
     deadline = _monotonic() + max_duration
 
     def check_current():
@@ -275,6 +290,7 @@ def download_attested_https(
                     _destination(
                         next_url, phase="redirect",
                         on_url_refusal=on_url_refusal,
+                        on_trace_url=on_trace_url,
                     )  # Validate BEFORE next GET.
                     current = next_url
                     redirects += 1

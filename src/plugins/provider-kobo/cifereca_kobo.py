@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from cifereca_kobo_vault import KoboVaultClient, KoboVaultError
+from cifereca_kobo_private_trace import trace_kobo_descriptor_urls
 from cifereca_kobo_catalog import KoboCatalogService
 from cifereca_kobo_policy import (
     classify_personal_manifest, _strict_account_scope, _strict_product_id,
@@ -1448,6 +1449,10 @@ class KoboSession(ProviderSession):
         # not publish an old owner's otherwise valid offer snapshot.
         if not scope_current():
             raise ProviderCapabilityError("kobo_delivery_offer_owner_changed")
+        # Raw URL diagnostics belong exclusively to an explicit local
+        # trace session, after the account/identity owner fence. In particular,
+        # show BOTH ambiguous K3 candidates without picking one or any GET.
+        trace_kobo_descriptor_urls(payload, product_id=right_id)
         # Only record observed selection facts. A missing executable offer
         # is not proof of an HTTP 403 or of a failed Kobo-Adept download.
         acquisition = payload.get("acquisition") if type(payload) is dict else None

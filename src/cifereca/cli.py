@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import logging
 import os
 import sys
 from contextlib import nullcontext
@@ -234,6 +235,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     selected_kobo.add_argument("--credential", required=True)
     selected_kobo.add_argument("--item", required=True)
+    selected_kobo.add_argument(
+        "--trace", action="store_true",
+        help="Diagnostic privé local : conserve les URL de livraison signées dans le journal",
+    )
     selected_kobo.add_argument(
         "--confirm", action="store_true",
         help="Je confirme la livraison de cette édition par le Core",
@@ -523,9 +528,26 @@ def main(argv: list[str] | None = None) -> int:
                              ensure_ascii=False))
             return 2
 
-    core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
+    private_kobo_trace = a.cmd == "kobo-sync-edition" and a.trace
+    core = CiferecaCore.open(
+        diagnostics_enabled=True,
+        diagnostics_level="trace" if private_kobo_trace else "detailed",
+    )
     service = core.library
+    kobo_trace_previous_level = None
+    kobo_trace_handlers_before = None
     try:
+        if private_kobo_trace:
+            # The standalone CLI does not set up the GUI's file logger.
+            # Establish the same 0600 private journal only for explicit
+            # --trace, then remove newly installed handlers on exit.
+            from .logging_utils import (
+                configure_logging, diagnostics_level, set_diagnostics_level,
+            )
+            kobo_trace_previous_level = diagnostics_level()
+            kobo_trace_handlers_before = tuple(logging.getLogger("cifereca").handlers)
+            configure_logging()
+            set_diagnostics_level("trace")
         if a.cmd == "kobo-sync-edition":
             from .core.canonical_kobo_selected import SelectedKoboRejected
             try:
@@ -1209,6 +1231,14 @@ def main(argv: list[str] | None = None) -> int:
             print("\n[Kobo] Synchronisation interrompue ; l’élément en cours sera repris au prochain lancement.", file=sys.stderr, flush=True)
         return 130
     finally:
+        if kobo_trace_previous_level is not None:
+            from .logging_utils import set_diagnostics_level
+            logger = logging.getLogger("cifereca")
+            for handler in tuple(logger.handlers):
+                if handler not in kobo_trace_handlers_before:
+                    logger.removeHandler(handler)
+                    handler.close()
+            set_diagnostics_level(kobo_trace_previous_level)
         core.close()
 
 

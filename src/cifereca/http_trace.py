@@ -441,11 +441,16 @@ class _HTTPXTransportService:
                                trust_env=False, follow_redirects=False,
                                transport=PublicOnlyHTTPTransport())
 
+    def trace_enabled(self) -> bool:
+        """Read-only, process-local opt-in gate for sensitive provider traces."""
+        return _trace_active()
+
     def attested_https_download(
         self, *, producer: str, url: str, target: Path,
         admission_current, headers=None, timeout: float = 20,
         max_bytes: int = 512 * 1024 * 1024, max_redirects: int = 8,
         max_duration: float = 900, on_url_refusal=None,
+        on_trace_url=None,
     ):
         """Transport only for an already-admitted, source-bound HTTPS GET.
 
@@ -459,7 +464,7 @@ class _HTTPXTransportService:
             admission_current=admission_current, headers=headers,
             timeout=timeout, max_bytes=max_bytes,
             max_redirects=max_redirects, max_duration=max_duration,
-            on_url_refusal=on_url_refusal,
+            on_url_refusal=on_url_refusal, on_trace_url=on_trace_url,
         )
 
     def async_client(self, *, producer: str, **options) -> httpx.AsyncClient:
