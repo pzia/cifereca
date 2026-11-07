@@ -231,3 +231,58 @@ def test_unprovable_reconciliation_retains_active_source_discovery_only_for_owne
         assert storage.backup_get("kobo", "vault", "edition") is not None
     finally:
         storage.close()
+
+
+
+@pytest.mark.parametrize("status", ("reconcile_required", "reconcile_conflict"))
+@pytest.mark.parametrize("enabled", (False, True))
+def test_unproven_reconciliation_mirrors_only_enabled_exact_kobo_binding(
+    tmp_path, status, enabled,
+):
+    """A disabled connection is not live source discovery authority (W1)."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "enabled": enabled,
+        })
+        row = {
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "alice", "account_id": "account-a",
+            "item_id": "edition", "revision_id": "legacy",
+            "title": "No independently verified bytes",
+            "status": status, "sha256": None, "size": None,
+        }
+        for _ in range(2):
+            storage.backup_put(row)
+        assert storage.backup_get("kobo", "vault", "edition")["status"] == status
+        assert bool(storage.acquisitions(provider_id="kobo")) is enabled
+        assert bool(storage.entitlements(provider_id="kobo")) is enabled
+        assert storage.artifacts() == []
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize("status", ("reconcile_required", "reconcile_conflict"))
+def test_disabling_connection_prevents_new_unproven_legacy_projection(
+    tmp_path, status,
+):
+    """Do not delete old Core rows, but never mint a new one after disable."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "enabled": False,
+        })
+        storage.backup_put({
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "alice", "account_id": "account-a",
+            "item_id": "edition", "revision_id": "legacy",
+            "status": status, "title": "Offline checkpoint",
+            "sha256": "invalid", "size": 7,
+        })
+        assert storage.backup_get("kobo", "vault", "edition") is not None
+        assert storage.acquisitions(provider_id="kobo") == []
+        assert storage.entitlements(provider_id="kobo") == []
+    finally:
+        storage.close()
