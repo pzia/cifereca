@@ -3,22 +3,36 @@
 All providers are synthetic; no live network and no real credentials/URLs.
 """
 import json
+import logging
+import stat
 from types import SimpleNamespace
 
 import pytest
 
-from cifereca import cli
+from cifereca import cli, logging_utils
 from cifereca.logging_utils import diagnostics_level, set_diagnostics_level
 from cifereca.plugin_api import HTTPX_TRANSPORT
 
 
 @pytest.fixture
-def reset_level():
+def reset_level(monkeypatch, tmp_path):
     previous = diagnostics_level()
+    logger = logging.getLogger("cifereca")
+    old_handlers = tuple(logger.handlers)
+    for handler in old_handlers:
+        logger.removeHandler(handler)
+    destination = tmp_path / "cifereca.log"
+    monkeypatch.setattr(logging_utils, "log_file", lambda: destination)
     set_diagnostics_level("normal")
     try:
-        yield
+        yield destination
     finally:
+        for handler in tuple(logger.handlers):
+            logger.removeHandler(handler)
+            if handler not in old_handlers:
+                handler.close()
+        for handler in old_handlers:
+            logger.addHandler(handler)
         set_diagnostics_level(previous)
 
 
@@ -40,6 +54,7 @@ def _core(monkeypatch, calls):
             library=service, close=lambda: calls.append(("close",)),
         )
     monkeypatch.setattr(cli.CiferecaCore, "open", opened)
+    return service
 
 
 @pytest.mark.parametrize(("flag", "expected_level", "active"), [
@@ -84,3 +99,28 @@ def test_private_trace_flag_never_bypasses_confirmation_or_opens_core(
         "explicit_edition_confirmation_required"
     )
     assert HTTPX_TRANSPORT.trace_enabled() is False
+
+
+def test_exact_cli_trace_writes_0600_private_journal_without_stdout_leak(
+    monkeypatch, capsys, reset_level,
+):
+    calls = []
+    service = _core(monkeypatch, calls)
+    signed = "https://cdn.example/file.epub?signature=PRIVATE_SYNTHETIC"
+    def connect(credential):
+        logging.getLogger("cifereca").debug(
+            "TRACE kobo private_candidate_url phase=offer url=%r", signed,
+        )
+    service.connect_kobo_preview = connect
+    before = tuple(logging.getLogger("cifereca").handlers)
+    assert cli.main([
+        "kobo-sync-edition", "--credential", "synthetic",
+        "--item", "book-1", "--confirm", "--trace",
+    ]) == 0
+    text = reset_level.read_text(encoding="utf-8")
+    assert "TRACE kobo private_candidate_url" in text
+    assert repr(signed) in text
+    assert stat.S_IMODE(reset_level.stat().st_mode) == 0o600
+    assert tuple(logging.getLogger("cifereca").handlers) == before
+    assert signed not in capsys.readouterr().out
+    assert diagnostics_level() == "normal"
