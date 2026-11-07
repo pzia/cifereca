@@ -248,7 +248,6 @@ def main() -> int:
             window = MainWindow(self, core.config, core.library, core.diagnostics)
             window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
             window.present()
-            verify_local_facets()
             device = X11Input()
             later(600, start_search)
 
@@ -314,6 +313,7 @@ def main() -> int:
             raise AssertionError(f"{stage}: scroll modifié par le filtre")
 
     def start_search():
+        verify_local_facets()
         window.navigate("search")
         # The Stack transition must map Search before computing GTK/X11 bounds.
         later(400, focus_search_entry)
