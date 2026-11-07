@@ -94,3 +94,33 @@ politique déterministe actuelle, non la pertinence réelle ni un consentement
 utilisateur. L'API et le writer Core des préférences, les invalidations live,
 les comparaisons quantitatives sur plus grand corpus et la recette UI restent
 des critères de sortie du P1 #4681.
+
+
+## Tranche Core : préférences locales persistées, strictement opt-in
+
+Le Core fournit désormais une source durable de préférences via
+`LibraryService.reading_preference_snapshot(identity_id=...)` et
+`LibraryService.change_reading_preference(identity_id=..., library_key=...,
+preference=..., expected_revision=..., user_confirmed=True)`.
+Aucun écran n'appelle encore ces méthodes et le calcul historique des
+Recommandations **n'active jamais automatiquement** ces signaux.
+
+- L'écriture réclame une action `user_confirmed=True`, le profil actif et
+  **exactement une** entrée `library_entries(scan=False)` avec même
+  `identity_id` et même `key`; aucune jointure ISBN/titre/fournisseur.
+- `liked` et `not_interested` sont les seules valeurs. `None` efface
+  une clé ; `clear_all=True` efface le profil, y compris après suppression
+  physique du livre, sans réutiliser une préférence pour B.
+- SQLite `metadata` existant : document JSON borné par identité, clé
+  opaque SHA-256, révision atomique CAS `BEGIN IMMEDIATE`, refus si
+  révision périmée, état corrompu ou capacité dépassée. La révision est
+  conservée lors d'un effacement pour révoquer les anciennes actions.
+  Pas de migration de schéma, ni modification d'entitlement/Artifact/Placement.
+- Le Core limite lecture et écriture au **profil courant** et ne publie
+  aucune appréciation dans les notices ou catalogues communs. Aucune collecte
+  depuis prêt, achat, EPUB ou provider.
+
+Cette tranche livre uniquement **le stockage et sa politique d'admission**.
+Le raccordement contrôlé au DTO `ExplicitReadingSignal`, le consentement
+observable dans l'UI, la suppression UX et l'invalidation du classement
+en cours après une écriture restent des étapes distinctes de #4681.

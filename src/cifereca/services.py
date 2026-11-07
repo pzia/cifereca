@@ -3068,6 +3068,54 @@ class LibraryService:
         """
         return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
 
+    def reading_preference_snapshot(self, *, identity_id: str):
+        """Read only explicitly stored local feedback for the active identity.
+
+        No catalogue call, EPUB inference, or implicit application to ranking.
+        """
+        from .core.explicit_reading_preferences import preference_snapshot
+        with self._search_generation_lock:
+            if (self.current_identity is None
+                    or self.current_identity.identity_id != identity_id):
+                raise ValueError("reading_preference_identity_not_active")
+            return preference_snapshot(self.storage, identity_id)
+
+    def change_reading_preference(
+        self, *, identity_id: str, library_key: str | None = None,
+        preference: str | None = None, expected_revision: int,
+        user_confirmed: bool = False, clear_all: bool = False,
+    ):
+        """Explicit local preference only; no automatic provider/loan signal.
+
+        A positive preference requires exactly one currently projected book
+        of the same owner/key. Removal and full erasure remain possible even
+        when the original book has disappeared from the active library.
+        """
+        from .core.explicit_reading_preferences import change_preference
+        with self._search_generation_lock:
+            if (self.current_identity is None
+                    or self.current_identity.identity_id != identity_id):
+                raise ValueError("reading_preference_identity_not_active")
+            if type(user_confirmed) is not bool or not user_confirmed:
+                raise ValueError("reading_preference_confirmation_required")
+            if preference is not None:
+                # Metadata only. Never scan, GET a source or infer approval
+                # from possession, acquisition or lending state.
+                matches = sum(
+                    type(row) is dict
+                    and row.get("key") == library_key
+                    and row.get("identity_id") == identity_id
+                    for row in self.library_entries(identity_id=identity_id, scan=False)
+                )
+                if matches != 1:
+                    raise ValueError("reading_preference_target_unverified")
+            return change_preference(
+                self.storage, identity_id,
+                library_key=library_key, preference=preference,
+                expected_revision=expected_revision,
+                user_confirmed=user_confirmed, clear_all=clear_all,
+            )
+
     def _persist_active_loans(self, identity_id: str, loans: list[Loan], *, reconcile_missing: bool = True) -> dict[str, int]:
         """Persist observed loans; never treat unverified absence as a return."""
         return library_mutation._persist_active_loans(
