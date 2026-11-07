@@ -133,6 +133,9 @@ class CoverLoader:
         self.preview_root=self.root/"previews-v1";self.preview_root.mkdir(exist_ok=True)
         self._preview_pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix="cifereca-preview")
         self._preview_jobs={}
+        # Bounded, key-scoped subscribers let queued preview work skip
+        # expensive image decoding after rapid GTK cell recycling.
+        self._preview_waiters={}
         self._last_report_total = 0
         for idx in range(self.max_workers):
             thread = threading.Thread(target=self._worker, name=f"cifereca-cover-{idx + 1}", daemon=True)
@@ -383,45 +386,91 @@ class CoverLoader:
         self._queue.put((max(0, int(priority)), next(self._sequence), absolute))
         return request
 
-    def load_preview(self,url,callback,*,width,height,priority=10,force=False):
-        holder=_Callback(callback);request=CoverRequest(holder)
+    def load_preview(self, url, callback, *, width, height, priority=10, force=False):
+        holder = _Callback(callback)
+        request = CoverRequest(holder)
+
         def deliver(path):
-            if holder.active and not self._stop.is_set():callback(path)
+            if holder.active and not self._stop.is_set():
+                callback(path)
+
         def source_ready(source):
-            if not holder.active or self._stop.is_set():return
-            if source is None:deliver(None);return
+            if not holder.active or self._stop.is_set():
+                return
+            if source is None:
+                deliver(None)
+                return
+
+            # One preview conversion per source/size, shared by all callers.
+            key = (str(source), width, height, force)
+
             def work():
+                # An already-queued conversion need not decode bytes if
+                # every subscriber was canceled before its pool slot opened.
+                # Read the shared subscribers under the same lock that admits
+                # a new live request for this key.
+                with self._lock:
+                    needed = any(
+                        subscriber.active
+                        for subscriber in self._preview_waiters.get(key, ())
+                    )
+                if not needed or self._stop.is_set():
+                    return None
                 try:
-                    dest=preview_path(source,self.preview_root,width,height)
+                    dest = preview_path(source, self.preview_root, width, height)
                     if not force and self._valid_cache_file(dest):
-                        with self._lock:self._stats['preview_hit']+=1
+                        with self._lock:
+                            self._stats['preview_hit'] += 1
                         return dest
-                    create_preview(source,dest,width,height)
-                    with self._lock:self._stats['preview_created']+=1
+                    create_preview(source, dest, width, height)
+                    with self._lock:
+                        self._stats['preview_created'] += 1
                     return dest
                 except Exception as exc:
-                    with self._lock:self._stats['preview_fallback']+=1
-                    _TRACE_LOG.debug('TRACE cover preview fallback error=%s',type(exc).__name__)
+                    with self._lock:
+                        self._stats['preview_fallback'] += 1
+                    _TRACE_LOG.debug(
+                        'TRACE cover preview fallback error=%s',
+                        type(exc).__name__,
+                    )
                     return source
-            if self._stop.is_set():return
-            # Bound pending work by key, not one task per recycled cell.
-            key=(str(source),width,height,force)
+
+            if self._stop.is_set():
+                return
             with self._lock:
-                future=self._preview_jobs.get(key)
+                future = self._preview_jobs.get(key)
                 if future is None:
-                    if len(self._preview_jobs)>=64:
-                        self._stats['preview_fallback']+=1
+                    if len(self._preview_jobs) >= 64:
+                        self._stats['preview_fallback'] += 1
                     else:
-                        try:future=self._preview_pool.submit(work)
-                        except RuntimeError:pass
-                        if future is not None:self._preview_jobs[key]=future
-            if future is None:deliver(None);return
+                        # Register the initial consumer BEFORE the worker can
+                        # start; otherwise an eager pool would skip live work.
+                        self._preview_waiters[key] = [holder]
+                        try:
+                            future = self._preview_pool.submit(work)
+                        except RuntimeError:
+                            self._preview_waiters.pop(key, None)
+                        if future is not None:
+                            self._preview_jobs[key] = future
+                else:
+                    self._preview_waiters.setdefault(key, []).append(holder)
+            if future is None:
+                deliver(None)
+                return
+
             def done(f):
                 with self._lock:
-                    if self._preview_jobs.get(key) is f:self._preview_jobs.pop(key,None)
-                if not f.cancelled():deliver(f.result())
+                    if self._preview_jobs.get(key) is f:
+                        self._preview_jobs.pop(key, None)
+                        self._preview_waiters.pop(key, None)
+                if not f.cancelled():
+                    deliver(f.result())
+
             future.add_done_callback(done)
-        request._source_request=self.load(url,source_ready,priority=priority,force=force)
+
+        request._source_request = self.load(
+            url, source_ready, priority=priority, force=force,
+        )
         return request
 
     def _worker(self) -> None:
