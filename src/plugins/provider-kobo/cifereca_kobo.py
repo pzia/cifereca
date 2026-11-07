@@ -1528,6 +1528,16 @@ class KoboSession(ProviderSession):
                 " candidate_kdrm_flepub_normalized_count=%s"
                 " candidate_normalized_media_format=epub"
             ) % normalized_count
+            if "candidate_media_format" in qualification_diagnostic and offer_id:
+                detail += (
+                    " candidate_media_format_raw=%s"
+                    " candidate_source_format_raw=%s"
+                ) % (
+                    qualification_diagnostic["candidate_media_format"],
+                    qualification_diagnostic["candidate_source_format"],
+                )
+        if offer_id and qualification_diagnostic.get("candidate_selection") == "unique_epub_preferred":
+            detail += " candidate_selection=unique_epub_preferred"
         _TRACE_LOG.info(
             "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
