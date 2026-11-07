@@ -435,6 +435,14 @@ class DetailPanel(Gtk.Box):
             if callable(getter):
                 label = str(getter() or '')
         folded = label.casefold()
+        if identifier.startswith((
+            'recommendation.loaded-in-place.',
+            'recommendation.known-in-place.',
+        )):
+            # #4664: at narrow GTK widths the native action bar may show
+            # only one control. Keep exact in-panel actions reachable before
+            # the legacy redirect to Search, without inventing any right.
+            return 9
         if identifier in {'open-catalogue', 'open-notice'}:
             return 30
         if identifier == 'open-local' or folded.startswith('ouvrir'):
