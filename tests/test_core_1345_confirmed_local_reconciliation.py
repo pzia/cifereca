@@ -599,29 +599,45 @@ def test_untrusted_journal_cannot_rewrite_other_evidence(case, poison):
     assert _dump(case) == before
 
 
-def test_cli_is_offline_and_expurgates_success_and_unexpected_errors(case, monkeypatch, capsys):
-    case.service.config.save()
-    monkeypatch.setattr(repair, "config_file", lambda **kwargs: case.service.config.path)
-    monkeypatch.setattr(repair, "database_file", lambda **kwargs: case.storage.path)
-    monkeypatch.setattr(cli.CiferecaCore, "open", lambda **kwargs: pytest.fail("No Core/plugin startup"))
-    args = ["kobo-reconcile-local", "--credential", "vault-1", "--account-id", "PRIVATE-account",
-            "--item", "PRIVATE-product", "--sha256", case.sha, "--path", str(case.target)]
-    assert cli.main(args) == 0
-    output = capsys.readouterr()
-    token = json.loads(output.out)["plan_token"]
-    assert not output.err and "PRIVATE" not in output.out and case.sha not in output.out
-    assert cli.main(args + ["--confirm", token]) == 0
-    assert json.loads(capsys.readouterr().out)["status"] == "applied"
-    def fail(*args, **kwargs):
-        raise RuntimeError("Bearer PRIVATE token /secret/path")
-    monkeypatch.setattr(repair, "reconcile_existing_profile", fail)
-    assert cli.main(args) == 2
-    output = capsys.readouterr()
-    assert json.loads(output.out)["reason"] == "reconciliation_unavailable"
-    assert "PRIVATE" not in output.out + output.err
+def test_retired_legacy_cli_never_opens_core_sql_or_positive_writer(
+    case, monkeypatch, capsys,
+):
+    # The legacy positive W4 CLI is deliberately unavailable. Even an old
+    # confirmation/undo token must not reach the historical SQL writer.
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: pytest.fail("retired W4 cannot open Core"),
+    )
+    monkeypatch.setattr(
+        repair, "reconcile_existing_profile",
+        lambda **_kw: pytest.fail("retired W4 cannot open SQLite"),
+    )
+    before = _dump(case)
+    files = {p: p.read_bytes() for p in (case.original, case.target)}
+    args = [
+        "kobo-reconcile-local", "--credential", "vault-1",
+        "--account-id", "PRIVATE-account", "--item", "PRIVATE-product",
+        "--sha256", case.sha, "--path", str(case.target),
+    ]
+    for extra in ([], ["--confirm", "a" * 64],
+                  ["--undo", "b" * 64],
+                  ["--undo", "b" * 64, "--confirm", "a" * 64]):
+        assert cli.main(args + extra) == 2
+        output = capsys.readouterr()
+        result = json.loads(output.out)
+        assert result == {
+            "ok": False, "offline": True, "changed": 0,
+            "reason": "legacy_reconciliation_retired",
+        }
+        assert output.err == ""
+        assert all(secret not in output.out for secret in (
+            "PRIVATE", case.sha, str(case.tmp),
+        ))
+    assert _dump(case) == before
+    assert all(path.read_bytes() == data for path, data in files.items())
 
 
-def test_real_cli_process_preview_apply_and_undo_preserve_files_and_cache(case):
+def test_real_cli_process_refuses_retired_legacy_preview_apply_and_undo(case):
     root = case.tmp / "cli-profile"
     config_path = root / "config/cifereca/config.json"
     database_path = root / "data/cifereca/library.sqlite3"
@@ -630,7 +646,10 @@ def test_real_cli_process_preview_apply_and_undo_preserve_files_and_cache(case):
     config_path.write_text(json.dumps(case.service.config.data))
     config_path.chmod(0o640)
     with case.storage._lock, case.storage._connect() as db:
-        db.execute("INSERT INTO cache(namespace,cache_key,payload,stored_at,expires_at) VALUES('expired-test','sentinel','{}',0,1)")
+        db.execute(
+            "INSERT INTO cache(namespace,cache_key,payload,stored_at,expires_at) "
+            "VALUES('expired-test','sentinel','{}',0,1)"
+        )
     destination = sqlite3.connect(database_path)
     try:
         case.storage._connect().backup(destination)
@@ -638,27 +657,47 @@ def test_real_cli_process_preview_apply_and_undo_preserve_files_and_cache(case):
         destination.close()
     env = {**os.environ, "XDG_CONFIG_HOME": str(root / "config"),
            "XDG_DATA_HOME": str(root / "data"), "XDG_STATE_HOME": str(root / "state")}
-    args = ["kobo-reconcile-local", "--credential", "vault-1", "--account-id", "PRIVATE-account",
-            "--item", "PRIVATE-product", "--sha256", case.sha, "--path", str(case.target)]
+    args = [
+        "kobo-reconcile-local", "--credential", "vault-1",
+        "--account-id", "PRIVATE-account", "--item", "PRIVATE-product",
+        "--sha256", case.sha, "--path", str(case.target),
+    ]
+    tables = ("backup_items", "acquisition_ledger", "placements", "catalog_entries",
+              "entitlements", "artifacts", "origin_links", "source_references", "metadata")
+    with sqlite3.connect(database_path) as db:
+        before = {
+            table: db.execute("SELECT * FROM " + table + " ORDER BY 1").fetchall()
+            for table in tables
+        }
     def command(extra=()):
-        result = subprocess.run([sys.executable, "-m", "cifereca.cli", *args, *extra],
-                                env=env, capture_output=True, text=True, timeout=20)
-        assert result.returncode == 0, result.stderr + result.stdout
-        assert not result.stderr
-        assert all(value not in result.stdout for value in (case.sha, "PRIVATE", str(case.tmp)))
-        return json.loads(result.stdout)
+        run = subprocess.run(
+            [sys.executable, "-m", "cifereca.cli", *args, *extra],
+            env=env, capture_output=True, text=True, timeout=20,
+        )
+        assert run.returncode == 2, run.stderr + run.stdout
+        assert not run.stderr
+        assert all(value not in run.stdout for value in (
+            case.sha, "PRIVATE", str(case.tmp),
+        ))
+        assert json.loads(run.stdout) == {
+            "ok": False, "offline": True, "changed": 0,
+            "reason": "legacy_reconciliation_retired",
+        }
     files = {p: p.read_bytes() for p in (case.original, case.target)}
     config_stat = config_path.stat()
-    preview = command()
-    assert preview["dry_run"] and not (root / "state").exists()
-    applied = command(["--confirm", preview["plan_token"]])
-    assert applied["status"] == "applied"
-    undo = command(["--undo", applied["operation_id"]])
-    assert command(["--undo", applied["operation_id"], "--confirm", undo["plan_token"]])["status"] == "undone"
-    assert command(["--undo", applied["operation_id"]])["status"] == "already_undone"
+    command()
+    command(["--confirm", "a" * 64])
+    command(["--undo", "b" * 64])
+    command(["--undo", "b" * 64, "--confirm", "a" * 64])
     with sqlite3.connect(database_path) as db:
-        assert db.execute("SELECT COUNT(*) FROM cache WHERE namespace='expired-test'").fetchone()[0] == 1
-        assert db.execute("SELECT local_path,status FROM backup_items").fetchone() == (str(case.original), "reconcile_required")
+        assert {
+            table: db.execute("SELECT * FROM " + table + " ORDER BY 1").fetchall()
+            for table in tables
+        } == before
+        assert db.execute(
+            "SELECT COUNT(*) FROM cache WHERE namespace='expired-test'"
+        ).fetchone()[0] == 1
+    assert not (root / "state").exists()
     assert config_path.stat().st_mode == config_stat.st_mode
     assert config_path.stat().st_mtime_ns == config_stat.st_mtime_ns
     assert all(path.read_bytes() == data for path, data in files.items())
