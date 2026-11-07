@@ -1641,6 +1641,31 @@ class LibraryService:
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
+        # An authenticated Paris catalogue may be browsed from another local
+        # profile, but GetRecord/holdings may contain borrower-specific
+        # CanLoan or availability. Never call B's account or reuse a cached
+        # rights-bearing detail when the selected reader is A.
+        if item.source_provider == "paris":
+            active = getattr(self.current_identity, "identity_id", None)
+            try:
+                owner = self.storage.identity_for_connection(
+                    "paris", item.source_credential,
+                )
+            except (AttributeError, LookupError, TypeError, ValueError):
+                owner = None
+            metadata = item.metadata if type(item.metadata) is dict else {}
+            if (type(active) is not str or not active or owner != active
+                    or metadata.get("catalogue_access") == "shared_read_only"):
+                return ItemDetail(
+                    record_id=item.record_id, docbase=item.docbase,
+                    title=item.title, author=item.author,
+                    type=item.type, year=item.published_at,
+                    thumbnail_url=item.thumbnail_url,
+                    availability_status="unknown",
+                    availability_label="Catalogue partagé · droits non consultés",
+                    holdings=[], source_provider="paris",
+                    source_credential=item.source_credential,
+                )
         # Identical record IDs can belong to different collections. Scope
         # cached availability and offers to the exact source and profile.
         key = json.dumps((
@@ -2445,6 +2470,20 @@ class LibraryService:
         """
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             return False
+        if item.source_provider == "paris":
+            # Catalogue provenance (including a manually cached old row)
+            # must never become a foreign account's download permission.
+            active = getattr(self.current_identity, "identity_id", None)
+            try:
+                owner = self.storage.identity_for_connection(
+                    "paris", item.source_credential,
+                )
+            except (AttributeError, LookupError, TypeError, ValueError):
+                owner = None
+            if (type(active) is not str or not active or owner != active
+                    or (type(item.metadata) is dict
+                        and item.metadata.get("catalogue_access") == "shared_read_only")):
+                return False
         try:
             if item.source_provider in {"numilog", "numilog-catalog"}:
                 # A private Numilog session has direct_download=True, but that
