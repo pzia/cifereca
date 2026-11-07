@@ -3924,6 +3924,23 @@ class LibraryService:
             lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
         )
 
+    def synchronize_kobo_selected_edition(
+        self, credential_id: str, edition_id: str, *,
+        explicit_user_action: bool = False,
+        cancelled: Callable[[], bool] = lambda: False,
+    ) -> dict[str, object]:
+        """One consented Kobo edition through canonical A→B, never v0.7 W2.
+
+        This is distinct from the old catalogue direct-download API and from
+        account-wide Sync. Incomplete provider ABIs are never adapted through
+        historical backup_items to make this operation appear supported.
+        """
+        from .core.canonical_kobo_selected import synchronize_selected_kobo_edition
+        return synchronize_selected_kobo_edition(
+            self, credential_id=credential_id, edition_id=edition_id,
+            explicit_user_action=explicit_user_action, cancelled=cancelled,
+        )
+
     def kobo_unlinked_local_count(self, identity_id: str) -> int:
         """Conservative guard, never infer a Kobo link from a filename/title."""
         return kobo_backup.kobo_unlinked_local_count(self, identity_id)
