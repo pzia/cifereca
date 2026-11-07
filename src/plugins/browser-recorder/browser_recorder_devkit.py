@@ -29,6 +29,11 @@ _PUBLIC_SOURCES = (
     "brokers.py",
     "provider_collection.py",
     "provider_search_stream.py",
+    "provider_search_facets.py",
+    "capability_projection.py",
+    "provider_rights_observation.py",
+    "downloadable_resources.py",
+    "loan_inventory.py",
     "errors.py",
 )
 _MAX_SOURCE_BYTES = 160_000
