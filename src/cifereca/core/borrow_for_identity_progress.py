@@ -93,7 +93,13 @@ def observed_cross_profile_borrow_progress(
             ]
             # Even one enabled + one disabled duplicate is ambiguous: the
             # read model must never choose the convenient historical row.
-            return len(exact) == 1 and exact[0].get("enabled") is True
+            return (
+                len(exact) == 1 and exact[0].get("enabled") is True
+                and getattr(service, "_account_context_epoch", None) == reader_epoch
+                and getattr(service, "_source_context_epoch", None) == source_epoch
+                and getattr(service.current_identity, "identity_id", None)
+                    == requesting_identity_id
+            )
 
         # The source may be disabled while an old positive receipt remains
         # durable. Do not expose its state to a different profile.
