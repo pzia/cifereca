@@ -771,6 +771,11 @@ def main():
             assert button.get_parent() is bar.overflow_box
             assert bar.overflow_button.get_visible()
             assert bar.overflow_button.get_mapped()
+            # #1216/#3687: mapped is not enough. The menu's entire
+            # rectangle must actually fit the scrolled action viewport.
+            inside, menu_box = bar.overflow_button.compute_bounds(bar)
+            assert inside and menu_box.get_x() >= -1
+            assert menu_box.get_x() + menu_box.get_width() <= bar.get_width() + 1
             # At 1024 px this button lives in a horizontal ScrolledWindow.
             # A mapped widget can be partly clipped, and the native-surface
             # centre from compute_bounds(native) need not be GTK's hit target.
