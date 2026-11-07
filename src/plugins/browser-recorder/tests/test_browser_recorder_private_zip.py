@@ -83,7 +83,13 @@ def test_explicit_private_export_and_external_read(tmp_path):
     assert unwrapped == decrypt_private_zip(raw, PASSPHRASE)
     with ZipFile(BytesIO(unwrapped)) as zip_file:
         assert zip_file.testzip() is None
-        assert set(zip_file.namelist()) == {"README.txt", "trace.json"}
+        assert set(zip_file.namelist()) == {
+            "README.txt", "trace.json",
+            "plugin-dev-kit/PROVIDER-AUTONOMOUS-DEVELOPMENT.md",
+        }
+        assert b"provider.library" in zip_file.read(
+            "plugin-dev-kit/PROVIDER-AUTONOMOUS-DEVELOPMENT.md"
+        )
         detail = json.loads(zip_file.read("trace.json"))
         assert detail["saved_at"] == session.saved_at
         rows = detail["exchanges"]
