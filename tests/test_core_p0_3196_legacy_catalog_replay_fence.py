@@ -83,22 +83,33 @@ def test_promoted_catalogue_stops_legacy_physical_replay(tmp_path, promotion):
         store.close()
 
 
-def test_unpromoted_legacy_catalogue_can_still_refresh(tmp_path):
+def test_unpromoted_legacy_catalogue_is_not_refreshed_by_complete_archive(tmp_path):
     store = Storage(tmp_path / "state.sqlite3")
     path = tmp_path / "not-yet-verified.epub"
     try:
         store.backup_put(_legacy(path))
+        # A second v0.7 complete claim, even for an unpromoted placeholder,
+        # has no fresh supplier A/independent CompletedDelivery B. Preserve
+        # the first canonical projection rather than replacing its SHA/title
+        # merely because the archive metadata changed.
+        before = _physical(store)
+        before_rights = store.entitlements()
+        before_acquisition = store.acquisitions(provider_id="kobo")
         store.backup_put(_legacy(
             path, sha="b" * 64, title="Updated manifest", timestamp=400,
         ))
-        assert store.placements()[0]["artifact_id"] == "sha256:" + "b" * 64
+        assert _physical(store) == before
+        assert store.placements()[0]["artifact_id"] == "sha256:" + "a" * 64
         assert store.placements()[0]["state"] == "unverified"
         catalog = store.catalog_entries()[0]
-        assert catalog["title"] == "Updated manifest"
-        assert catalog["artifact_id"] == "sha256:" + "b" * 64
+        assert catalog["title"] == "Old manifest"
+        assert catalog["artifact_id"] == "sha256:" + "a" * 64
         assert catalog["metadata"] == {"imported_from": "backup_items"}
-        assert store.entitlements()[0]["identity_id"] == "A"
-        assert len(store.acquisitions(provider_id="kobo")) == 1
+        assert store.entitlements() == before_rights
+        assert store.acquisitions(provider_id="kobo") == before_acquisition
+        archive = store.backup_get("kobo", "credential-A", "edition-A")
+        assert archive["title"] == "Updated manifest"
+        assert archive["sha256"] == "b" * 64
         with store._lock, store._connect() as db:
             assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
     finally:
