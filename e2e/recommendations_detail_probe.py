@@ -469,11 +469,17 @@ def main():
             and "1 sur 3" in count_text
             and "Livre B" in count_text
         )
-        if not complete and state["p1_774_filter_retry"] < 3:
+        # HiDPI can take longer to process native XTEST input and deliver
+        # debounced GTK model/counter updates. Keep a finite deadline and
+        # require every original assertion; do not accept a stale counter.
+        max_retries = 12 if args.scale == 2 else 3
+        if not complete and state["p1_774_filter_retry"] < max_retries:
             state["p1_774_filter_retry"] += 1
             later(150, after_keyboard_filter)
             return
-        assert complete, "GTK keyboard filter and counter did not converge"
+        # Each independent assert has a distinct safe source-line marker
+        # in the public E2E reporter. This differentiates focus/text,
+        # row-model and counter failures without logging any input text.
         assert query.entry.get_text() == "Livre B"
         assert store.get_n_items() == 1
         assert store.get_item(0).title == "Livre B"
