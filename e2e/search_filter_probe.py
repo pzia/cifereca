@@ -234,6 +234,33 @@ def main() -> int:
         )
         assert local.provider.get_visible() and local.languages.get_visible()
         assert local.selected_sources() == () and local.selected_languages() == ()
+
+        # #3687: one malformed provider's file format must not terminate
+        # GTK facet rebuilding or obscure the attested format of another
+        # already-loaded document. No provider/LLM call or entitlement.
+        class OpaqueFormat:
+            def __str__(self):
+                raise RuntimeError("invalid supplier format")
+
+            def __repr__(self):
+                raise RuntimeError("invalid supplier format")
+
+        valid_epub = {"medium": "digital", "format": "EPUB"}
+        invalid = {"medium": "digital", "format": OpaqueFormat()}
+        before_documents = len(events)
+        local.set_document_choices((invalid, valid_epub))
+        assert local.types.get_visible() and local.scope.get_visible()
+        assert tuple(local.types.buttons) == ("epub",)
+        assert len(events) == before_documents
+        local.types.set_values(("epub",))
+        assert local.matches_document(valid_epub)
+        assert not local.matches_document(invalid)
+        local.types.set_values(())
+        local.set_document_choices((invalid,))
+        assert not local.types.get_visible() and not local.scope.get_visible()
+        assert len(events) == before_documents + 2
+        result["checks"]["malformed_local_document_facets"] = True
+
         # Local-only hiding must never change the global Search controls.
         assert window.search_controls.provider.get_visible()
         assert window.search_controls.languages.get_visible()
