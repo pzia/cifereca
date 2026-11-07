@@ -8,7 +8,7 @@ from __future__ import annotations
 from hashlib import sha256
 import os
 from pathlib import Path
-from types import SimpleNamespace as NS
+import stat
 
 import pytest
 
@@ -43,23 +43,25 @@ def intent(*, identity="alice", device="reader-a",
     }
 
 
-def fake_usb_attestation(monkeypatch, *, swapping=False):
+def fake_usb_attestation(monkeypatch, *, after_scan=lambda _mount: None):
     calls = []
 
     def observe(*, identity_id, binding, mountpoint):
         calls.append((identity_id, binding["device_id"], mountpoint))
-        if swapping and len(calls) > 1:
-            return None
+        mount_id = 189
+        if len(calls) > 1:
+            mount_id += after_scan(mountpoint) or 0
         st = mountpoint.stat()
         return LinuxUsbMount(
             identity_id=identity_id, device_id=binding["device_id"],
             usb_fingerprint=binding["metadata"]["usb_fingerprint"],
             mountpoint=mountpoint, filesystem="vfat",
             major=os.major(st.st_dev), minor=os.minor(st.st_dev),
-            checked_at=1770000000,
+            checked_at=1770000000, mount_id=mount_id,
         )
 
     monkeypatch.setattr(scanner, "observe_linux_usb_mount", observe)
+    monkeypatch.setattr(scanner.linux_mount, "_fd_mount_id", lambda fd: 189)
     return calls
 
 
@@ -177,7 +179,7 @@ def test_binding_and_managed_scope_must_be_exact(tmp_path, monkeypatch, invalid)
 def test_mount_swap_during_walk_never_claims_complete(tmp_path, monkeypatch):
     volume, managed = roots(tmp_path)
     (managed / "first.epub").write_bytes(BOOK)
-    calls = fake_usb_attestation(monkeypatch, swapping=True)
+    calls = fake_usb_attestation(monkeypatch, after_scan=lambda _mount: 1)
     assert scanner.scan_managed_usb(
         identity_id="alice", binding=binding(),
         mountpoint=volume, placements=[intent()],
@@ -388,3 +390,34 @@ def test_large_usb_directory_is_bounded_before_entries_are_materialized(
         )
     assert observed is None
     assert requested["count"] == 3
+
+
+def test_same_device_bind_mounted_file_is_not_read(tmp_path, monkeypatch):
+    volume, managed = roots(tmp_path)
+    (managed / "first.epub").write_bytes(BOOK)
+    fake_usb_attestation(monkeypatch)
+
+    def mount_id(fd):
+        return 190 if stat.S_ISREG(os.fstat(fd).st_mode) else 189
+
+    monkeypatch.setattr(scanner.linux_mount, "_fd_mount_id", mount_id)
+    monkeypatch.setattr(scanner.os, "read", lambda *_: pytest.fail("read foreign file"))
+    assert scanner.scan_managed_usb(
+        identity_id="alice", binding=binding(),
+        mountpoint=volume, placements=[intent()],
+    ) is None
+
+
+def test_replaced_managed_path_invalidates_complete_inventory(tmp_path, monkeypatch):
+    volume, managed = roots(tmp_path)
+    (managed / "first.epub").write_bytes(BOOK)
+
+    def replace_managed(_mount):
+        managed.rename(managed.with_name("moved"))
+        managed.mkdir()
+
+    fake_usb_attestation(monkeypatch, after_scan=replace_managed)
+    assert scanner.scan_managed_usb(
+        identity_id="alice", binding=binding(),
+        mountpoint=volume, placements=[intent()],
+    ) is None

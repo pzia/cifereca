@@ -14,7 +14,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.core.device_usb_mount import (
-    _decode_mountinfo_path, _mount_record, _qualify_mount,
+    _decode_mountinfo_path, _fd_mount_id, _mount_record, _qualify_mount,
     _sysfs_is_usb, observe_linux_usb_mount,
 )
 
@@ -26,10 +26,10 @@ USB_SYSFS = "/sys/devices/pci0000:00/0000:00:14.0/usb1/1-1/host6/block/sdb/sdb1"
 INTERNAL_SYSFS = "/sys/devices/pci0000:00/0000:00:17.0/ata1/block/sda/sda1"
 
 
-def mount_record(*, point=ENCODED, mounted_root="/", fs="vfat",
+def mount_record(*, point=ENCODED, mounted_root="/", fs="vfat", mount_id=189,
                  major=MAJOR, minor=MINOR):
     return (
-        f"189 1 {major}:{minor} {mounted_root} {point} rw,nosuid,nodev - "
+        f"{mount_id} 1 {major}:{minor} {mounted_root} {point} rw,nosuid,nodev - "
         f"{fs} /dev/sdb1 rw,uid=1000\n"
     )
 
@@ -47,7 +47,7 @@ def test_linux_mountinfo_exact_mountpoint_and_octal_escapes():
     assert _decode_mountinfo_path("/media/x\\011tab") == "/media/x\ttab"
     assert _decode_mountinfo_path("/media/x\\134backslash") == "/media/x\\backslash"
     assert _decode_mountinfo_path("/media/x\\bad") is None
-    assert _mount_record(mount_record(), MOUNT, MAJOR, MINOR) == "vfat"
+    assert _mount_record(mount_record(), MOUNT, MAJOR, MINOR) == ("vfat", 189)
     assert _mount_record(mount_record(), MOUNT + "2", MAJOR, MINOR) is None
 
 
@@ -55,6 +55,7 @@ def test_linux_mountinfo_exact_mountpoint_and_octal_escapes():
     mount_record(mounted_root="/Books"),
     mount_record(fs="fuse.kio-fuse"),
     mount_record(fs="overlay"),
+    mount_record(mount_id="invalid"),
     mount_record(major=8, minor=18),
     mount_record(point="/media/alice/Other"),
     mount_record() * 2,
@@ -80,7 +81,7 @@ def test_pure_mount_qualification_validates_all_independent_kernel_facts():
         uuid_mode=stat.S_IFBLK | 0o660, uuid_is_symlink=True,
         sysfs_is_symlink=True, sysfs_target=USB_SYSFS,
     )
-    assert _qualify_mount(**facts) == ("vfat", MAJOR, MINOR)
+    assert _qualify_mount(**facts) == ("vfat", MAJOR, MINOR, 189)
     for bad in (
         {"root_device": os.makedev(8, 19)},
         {"uuid_device": os.makedev(8, 18)},
@@ -178,8 +179,26 @@ def test_production_reader_checks_every_kernel_source_before_returning_evidence(
     assert got.usb_fingerprint == "ABCD-1234"
     assert got.filesystem == "vfat"
     assert (got.major, got.minor) == (MAJOR, MINOR)
+    assert got.mount_id == 189
     assert got.mountpoint == mount
     assert type(got.checked_at) is int and got.checked_at > 0
     # Only a mounting fact was observed. No files or rights are inferred.
     assert not hasattr(got, "files")
     assert not hasattr(got, "complete")
+
+
+@pytest.mark.parametrize("fdinfo,expected", [
+    ("pos:\t0\nflags:\t02300000\nmnt_id:\t189\nino:\t42\n", 189),
+    ("pos:\t0\nino:\t42\n", None),
+    ("mnt_id:\t0\n", None),
+    ("mnt_id:\t189\nmnt_id:\t190\n", None),
+    ("mnt_id:\t189\n" + "x" * 4096, None),
+])
+def test_kernel_fd_mount_id_must_be_unique_and_bounded(monkeypatch, fdinfo, expected):
+    def read_fdinfo(self, *, encoding):
+        assert self == Path("/proc/self/fdinfo/123")
+        assert encoding == "ascii"
+        return StringIO(fdinfo)
+
+    monkeypatch.setattr(Path, "open", read_fdinfo)
+    assert _fd_mount_id(123) == expected

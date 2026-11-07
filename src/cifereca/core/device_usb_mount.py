@@ -16,6 +16,7 @@ import time
 from typing import Mapping
 
 
+_MAX_FDINFO = 4096
 _MAX_MOUNTINFO = 1024 * 1024
 _UUID = re.compile(r"[A-Za-z0-9._:-]{8,128}\Z", re.ASCII)
 _OCTAL = re.compile(r"\\([0-7]{3})")
@@ -34,6 +35,54 @@ class LinuxUsbMount:
     major: int
     minor: int
     checked_at: int
+    mount_id: int
+
+    def scope_key(self) -> tuple[object, ...]:
+        """Identify the mount generation independently of observation time."""
+        return (
+            self.identity_id, self.device_id, self.usb_fingerprint,
+            self.mountpoint, self.filesystem, self.major, self.minor,
+            self.mount_id,
+        )
+
+
+def _mount_id(value: str) -> int | None:
+    if re.fullmatch(r"[1-9][0-9]{0,19}", value):
+        return int(value)
+    return None
+
+
+def _fd_mount_id(fd: int) -> int | None:
+    """Get the mount of an open Linux descriptor, including bind mounts."""
+    with Path(f"/proc/self/fdinfo/{fd}").open(encoding="ascii") as handle:
+        data = handle.read(_MAX_FDINFO + 1)
+    if len(data) > _MAX_FDINFO:
+        return None
+    matches = [
+        line.partition(":")[2].strip() for line in data.splitlines()
+        if line.startswith("mnt_id:")
+    ]
+    return _mount_id(matches[0]) if len(matches) == 1 else None
+
+
+def _directory_chain_current(
+    mountpoint: Path, managed: str, descriptors: list[int], mount_id: int,
+) -> bool:
+    """Check that pinned directory inodes still occupy the configured path."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    parent_fd = None
+    for name, fd in zip((mountpoint, *managed.split("/")), descriptors, strict=True):
+        live_fd = os.open(name, flags, dir_fd=parent_fd)
+        try:
+            current = os.fstat(live_fd)
+            opened = os.fstat(fd)
+            if ((current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+                    or _fd_mount_id(live_fd) != mount_id):
+                return False
+        finally:
+            os.close(live_fd)
+        parent_fd = fd
+    return True
 
 
 def _decode_mountinfo_path(raw: str) -> str | None:
@@ -48,7 +97,7 @@ def _decode_mountinfo_path(raw: str) -> str | None:
 
 def _mount_record(
     text: str, path: str, major: int, minor: int,
-) -> str | None:
+) -> tuple[str, int] | None:
     """Find exactly one direct mount of a supported block filesystem.
 
     A bind mount or a nested filesystem root is not evidence that a path
@@ -72,11 +121,12 @@ def _mount_record(
     if len(matches) != 1:
         return None
     left, right = matches[0]
-    if (left[2] != f"{major}:{minor}"
+    mount_id = _mount_id(left[0])
+    if (mount_id is None or left[2] != f"{major}:{minor}"
             or left[3] != "/"
             or right[0] not in _FS_TYPES):
         return None
-    return right[0]
+    return right[0], mount_id
 
 
 def _sysfs_is_usb(path: str) -> bool:
@@ -91,7 +141,7 @@ def _qualify_mount(
     *, mountpoint: str, mountinfo: str, root_device: int,
     uuid_device: int, uuid_mode: int, uuid_is_symlink: bool,
     sysfs_is_symlink: bool, sysfs_target: str,
-) -> tuple[str, int, int] | None:
+) -> tuple[str, int, int, int] | None:
     """Pure validation of data supplied by trusted Linux kernel interfaces."""
     if not (type(root_device) is int and type(uuid_device) is int
             and type(uuid_mode) is int
@@ -100,8 +150,11 @@ def _qualify_mount(
             and _sysfs_is_usb(sysfs_target)):
         return None
     major, minor = os.major(root_device), os.minor(root_device)
-    fs = _mount_record(mountinfo, mountpoint, major, minor)
-    return (fs, major, minor) if fs is not None else None
+    record = _mount_record(mountinfo, mountpoint, major, minor)
+    if record is None:
+        return None
+    filesystem, mount_id = record
+    return filesystem, major, minor, mount_id
 
 
 def observe_linux_usb_mount(
@@ -180,10 +233,10 @@ def observe_linux_usb_mount(
                 or after.st_ino != mount_st.st_ino
                 or not stat.S_ISDIR(after.st_mode)):
             return None
-        filesystem, _major, _minor = proof
+        filesystem, major, minor, mount_id = proof
         return LinuxUsbMount(
             identity_id, binding["device_id"], fingerprint,
-            mountpoint, filesystem, _major, _minor, int(time.time()),
+            mountpoint, filesystem, major, minor, int(time.time()), mount_id,
         )
     except (OSError, ValueError, UnicodeError, OverflowError):
         return None

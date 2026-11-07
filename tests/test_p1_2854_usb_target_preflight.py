@@ -41,13 +41,14 @@ def case(tmp_path, monkeypatch):
         identity_id="alice", device_id="alice-reader",
         usb_fingerprint="uuid-alice-0001", mountpoint=mount,
         filesystem="ext4", major=os.major(stat.st_dev),
-        minor=os.minor(stat.st_dev), checked_at=1800000000,
+        minor=os.minor(stat.st_dev), checked_at=1800000000, mount_id=189,
     )
     calls = []
     def observe(**kwargs):
         calls.append(kwargs)
         return proof
     monkeypatch.setattr(mod, "observe_linux_usb_mount", observe)
+    monkeypatch.setattr(mod.linux_mount, "_fd_mount_id", lambda fd: 189)
     payload = dict(
         identity_id="alice", binding=binding, mountpoint=mount,
         artifact=artifact, intention=intent,
@@ -146,7 +147,7 @@ def test_wrong_uuid_mount_or_volume_swap_refused(tmp_path, monkeypatch):
     def replaced(**kwargs):
         nonlocal count
         count += 1
-        return proof if count == 1 else replace(proof, minor=proof.minor + 1)
+        return proof if count == 1 else replace(proof, mount_id=proof.mount_id + 1)
     monkeypatch.setattr(mod, "observe_linux_usb_mount", replaced)
     result = mod.preflight_usb_target(**args)
     assert result.reason == "target_mount_changed"
@@ -196,3 +197,17 @@ def test_no_mount_evidence_never_touches_usb_path(tmp_path, monkeypatch):
     result = mod.preflight_usb_target(**args)
     assert result.reason == "target_mount_unverified"
     assert result.executable is False
+
+
+def test_replaced_managed_path_invalidates_target_preflight(tmp_path, monkeypatch):
+    args, directory, proof, calls = case(tmp_path, monkeypatch)
+
+    def observe(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 2:
+            directory.rename(directory.with_name("moved"))
+            directory.mkdir()
+        return proof
+
+    monkeypatch.setattr(mod, "observe_linux_usb_mount", observe)
+    assert mod.preflight_usb_target(**args).reason == "target_directory_changed"
