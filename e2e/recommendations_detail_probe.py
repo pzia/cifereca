@@ -101,6 +101,7 @@ def main():
         "source_data": "synthetic ranked candidates; ranking task disabled",
         "p1_1354_phase": "probe_start",
         "p1_4664_phase": "unstarted",
+        "p1_774_phase": "setup",
     }
     app = Adw.Application(
         application_id="org.cifereca.E2ERecommendations",
@@ -135,7 +136,19 @@ def main():
 
     def capture(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
-        assert image.width == args.width
+        expected_height = 900 if args.width == 1366 else 1000
+        report["p1_774_phase"] = "display_geometry"
+        window = state["window"]
+        window_width, window_height = window.get_width(), window.get_height()
+        report["p1_774_geometry"] = {
+            "display_width": image.width, "display_height": image.height,
+            "window_width": window_width, "window_height": window_height,
+        }
+        assert image.size == (args.width, expected_height)
+        report["p1_774_phase"] = "gtk_geometry"
+        assert args.width - 100 <= window_width <= args.width
+        assert 500 <= window_height <= expected_height
+        report["p1_774_phase"] = "image_pixels"
         colors = image.getcolors(maxcolors=2)
         assert colors is None or len(colors) > 1
         image_path = out / (stage + ".png")
@@ -148,7 +161,10 @@ def main():
             "identity": view.selected_identity_id(),
             "rows": view._master._page.store.get_n_items(),
             "selected": view._master._page.selection.get_selected(),
-            "window_width": state["window"].get_width(),
+            "window_width": window_width,
+            "window_height": window_height,
+            "display_width": image.width,
+            "display_height": image.height,
         })
         save()
 
@@ -177,6 +193,27 @@ def main():
             "obtain", "unavailable",
         }:
             print("P1_4664_CLOSED_FAILURE_STAGE=" + phase_4664, flush=True)
+        # Stable nonprivate markers. Exception strings / titles remain local.
+        closed_774 = {
+            "setup", "display_geometry", "gtk_geometry", "image_pixels",
+            "keyboard_focus", "keyboard_type", "keyboard_verdict",
+            "original_scenarios",
+        }
+        if report.get("p1_774_phase") in closed_774:
+            print("P1_774_CLOSED_FAILURE_STAGE=" + report["p1_774_phase"], flush=True)
+        # A line index *inside this fixed synthetic probe* is a bounded,
+        # non-private diagnostic; preserve it before capture('failure')
+        # overwrites the last phase with image_pixels.
+        try:
+            frames = [
+                frame.lineno for frame in traceback.extract_tb(exc.__traceback__)
+                if Path(frame.filename).name == "recommendations_detail_probe.py"
+                and 1 <= frame.lineno <= 1200
+            ]
+            if frames:
+                report["p1_774_probe_line"] = frames[-1]
+        except Exception:
+            pass
         report["status"] = "FAIL"
         report["error"] = str(exc)
         report["traceback"] = traceback.format_exc(limit=6)
@@ -356,6 +393,67 @@ def main():
         query.field.set_selected(0)
         view._ranked[0].item["isbn"] = original_isbn
         assert store.get_n_items() == 3
+        # Prove local filtering by a genuine XTEST mouse focus and keyboard
+        # event. Gtk.SearchEntry.grab_focus() alone may lose focus before
+        # an asynchronous callback; the test must use the visible pointer.
+        state["p1_774_filter_generation"] = generation
+        state["p1_774_focus_retry"] = 0
+        state["p1_774_filter_retry"] = 0
+        report["p1_774_phase"] = "keyboard_focus"
+        assert query.entry.get_mapped()
+        state["device"].click_widget(query.entry)
+        later(160, type_filter_by_keyboard)
+
+    def search_entry_has_native_focus(entry):
+        """GTK4 SearchEntry delegates keyboard focus to its inner GtkText."""
+        root = entry.get_root()
+        current = root.get_focus() if isinstance(root, Gtk.Window) else None
+        for _ in range(24):
+            if current is None:
+                return entry.has_focus()
+            if current is entry:
+                return True
+            current = current.get_parent()
+        return False
+
+    def type_filter_by_keyboard():
+        report["p1_774_phase"] = "keyboard_type"
+        view = state["view"]
+        query = view._query_controls
+        if not search_entry_has_native_focus(query.entry) and state["p1_774_focus_retry"] < 2:
+            state["p1_774_focus_retry"] += 1
+            state["device"].click_widget(query.entry)
+            later(140, type_filter_by_keyboard)
+            return
+        assert search_entry_has_native_focus(query.entry)
+        state["device"].type_text("Livre B")
+        later(350, after_keyboard_filter)
+
+    def after_keyboard_filter():
+        report["p1_774_phase"] = "keyboard_verdict"
+        view = state["view"]
+        query = view._query_controls
+        store = view._master._page.store
+        if ((query.entry.get_text() != "Livre B" or store.get_n_items() != 1)
+                and state["p1_774_filter_retry"] < 3):
+            state["p1_774_filter_retry"] += 1
+            later(150, after_keyboard_filter)
+            return
+        assert query.entry.get_text() == "Livre B"
+        assert store.get_n_items() == 1
+        assert store.get_item(0).title == "Livre B"
+        assert "1 sur 3" in view._summary.get_text()
+        assert "Livre B" in view._summary.get_text()
+        assert view._generation == state["p1_774_filter_generation"]
+        assert not state["searches"]
+        report["checks"]["P1_774_real_gtk_xtest_keyboard_local_filter"] = True
+        capture("00b-keyboard-local-filter")
+        # Restoring the old scenario via a normal entry reset is not the
+        # keyboard proof. The preceding XTEST assertion is the proof.
+        query.entry.set_text("")
+        query.entry.emit("activate")
+        assert store.get_n_items() == 3
+        report["p1_774_phase"] = "original_scenarios"
         view._ranked.pop()
         view._reload_document_choices()
         view._render()
