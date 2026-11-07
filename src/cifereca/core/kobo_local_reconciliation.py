@@ -478,6 +478,152 @@ def _receipt(status, *, token=None, operation=None, changed=0):
             "file_mutations": 0, "rights_mutations": 0, "originals_preserved": True}
 
 
+
+# #4859: this independent, append-only route is the W4 replacement for
+# historical files WITHOUT independently attested supplier A/B. It never
+# invokes the legacy positive _proposed/_write_row path.
+_FILE_ONLY_SCHEMA = "core.kobo.local-file-only/1"
+_FILE_ONLY_JOURNAL = "core.kobo.local-file-only."
+
+
+def observe_kobo_local_file_only(
+    service, *, identity_id, credential_id, account_id, item_id,
+    expected_sha256, expected_size, path, confirmation=None,
+    cancelled=lambda: False, on_committed=None,
+):
+    """Record verified *bytes only*, never an acquisition or ownership claim.
+
+    A caller can preview and explicitly confirm physical evidence for an
+    existing, exactly bound Kobo account. Neither the old backup nor a
+    synthetic entitlement is read, updated or required. An immutable local
+    journal is suitable for a later, independent provider-attested A->B
+    review; it is NOT a CompletedDelivery, SourceReference or OriginLink.
+
+    The public receipt deliberately contains no private path, SHA, identity,
+    item, account or credential. A changed inode/content, disabled/rebound
+    account, old confirmation or conflicting journal fails closed.
+    """
+    for value in (identity_id, credential_id, account_id, item_id):
+        _require(type(value) is str and 0 < len(value) <= 1024
+                 and all(32 <= ord(char) < 127 or ord(char) >= 160
+                         for char in value), "invalid_request")
+    _require(type(expected_sha256) is str
+             and re.fullmatch("[0-9a-f]{64}", expected_sha256) is not None,
+             "invalid_sha256")
+    _require(type(expected_size) is int and expected_size > 0,
+             "invalid_size")
+    _require(type(path) is str and 0 < len(path) <= 4096
+             and "\\0" not in path and Path(path).is_absolute()
+             and ".." not in Path(path).parts, "invalid_path")
+    _require(confirmation is None or (
+        type(confirmation) is str
+        and re.fullmatch("[0-9a-f]{64}", confirmation) is not None
+    ), "invalid_confirmation")
+    _require(callable(cancelled), "invalid_request")
+    _require(not cancelled(), "reconciliation_cancelled")
+
+    write = confirmation is not None
+    completion = {}
+    receipt = None
+    try:
+        guard = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
+        with guard, _transaction(service.storage, write, completion, on_committed) as db:
+            _require(not cancelled(), "reconciliation_cancelled")
+            # A live exact connection/borrower is required even for this
+            # historical note: never attribute another account's file.
+            scope = db.execute(
+                "SELECT connection_id,identity_id,enabled FROM provider_connections "
+                "WHERE provider_id='kobo' AND credential_id=? LIMIT 2",
+                (credential_id,),
+            ).fetchall()
+            _require(
+                len(scope) == 1 and scope[0][1:] == (identity_id, 1),
+                "source_scope_unavailable",
+            )
+            borrowers = db.execute(
+                "SELECT provider_account_id,updated_at FROM provider_accounts "
+                "WHERE connection_id=? AND identity_id=? AND provider_id='kobo' "
+                "AND credential_id=? AND account_id=? LIMIT 2",
+                (scope[0][0], identity_id, credential_id, account_id),
+            ).fetchall()
+            _require(len(borrowers) == 1, "borrower_scope_unavailable")
+            roots = _roots(service, identity_id)
+            target = os.path.abspath(path)
+            evidence = _file(target, roots, expected_sha256, expected_size)
+            # The journal key reserves the exact claimed coordinates + path.
+            # Reobserving changed inode/stat with the same SHA is NOT a
+            # re-authorization: a conflicting evidence record is refused.
+            claimed = {
+                "identity_id": identity_id, "provider_id": "kobo",
+                "credential_id": credential_id, "account_id": account_id,
+                "edition_id": item_id, "path": target,
+            }
+            key = _FILE_ONLY_JOURNAL + hashlib.sha256(
+                _json(claimed).encode("utf-8"),
+            ).hexdigest()
+            record = {
+                "schema": _FILE_ONLY_SCHEMA,
+                "claimed_scope": claimed,
+                "connection_id": scope[0][0],
+                "borrower_record_id": borrowers[0][0],
+                "borrower_record_updated_at": borrowers[0][1],
+                "file": {
+                    "sha256": expected_sha256, "size": expected_size,
+                    "device": evidence[1], "inode": evidence[2],
+                    "mtime_ns": evidence[3], "ctime_ns": evidence[4],
+                },
+                "authority": "historical_local_bytes_only",
+                "rights_attested": False,
+                "canonical_delivery_attested": False,
+            }
+            serialized = _json(record)
+            _require(len(serialized) <= 65536, "evidence_budget_exhausted")
+            existing = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()
+            _require(existing is None or existing[0] == serialized,
+                     "file_evidence_conflict")
+            token = hashlib.sha256(
+                ("kobo-local-file-only-confirm/1\\0" + serialized).encode("utf-8"),
+            ).hexdigest()
+            response = lambda status, plan=None: {
+                "schema": _FILE_ONLY_SCHEMA,
+                "status": status, "ok": True,
+                "plan_token": plan, "changed": int(status == "observed"),
+                "requires_provider_attestation": True,
+                "rights_attested": False, "canonical_delivery_attested": False,
+                "rights_mutations": 0, "file_mutations": 0,
+                "legacy_backup_mutations": 0,
+            }
+            if existing:
+                return response("already_observed")
+            if not write:
+                return response("preview", token)
+            _require(confirmation == token, "preview_changed")
+            _require(not cancelled(), "reconciliation_cancelled")
+            # Exact file and borrower evidence are both rechecked at the
+            # commit boundary. A stale preview cannot publish stale bytes.
+            _require(evidence == _file(target, _roots(service, identity_id),
+                                       expected_sha256, expected_size),
+                     "file_changed")
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?)",
+                (key, serialized),
+            )
+            receipt = response("observed")
+            return receipt
+    except LockBusyError:
+        raise ReconciliationRejected("acquisition_busy") from None
+    except (OSError, sqlite3.Error):
+        if completion.get("committed") and receipt is not None:
+            return receipt
+        raise ReconciliationRejected("local_storage_unavailable") from None
+    except (TypeError, KeyError, ValueError) as exc:
+        if isinstance(exc, ReconciliationRejected):
+            raise
+        raise ReconciliationRejected("invalid_local_evidence") from None
+
+
 def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expected_sha256,
                          path=None, confirmation=None, undo_operation=None, identity_id=None,
                          cancelled=lambda: False, on_committed=None):
