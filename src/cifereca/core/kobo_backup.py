@@ -51,7 +51,9 @@ def _kobo_legacy_cas_unset(storage, identity_id, credential_id, account_id):
         return False
 
 
-def _kobo_legacy_session_cas_unset(service, session, *, identity_id=None):
+def _kobo_legacy_session_cas_unset(
+    service, session, *, identity_id=None, allow_unbound=False,
+):
     """Re-observe the exact borrower on both sides of an opaque W2 GET."""
     try:
         credential = session.credential_id
@@ -59,12 +61,16 @@ def _kobo_legacy_session_cas_unset(service, session, *, identity_id=None):
                  service.storage.identity_for_connection("kobo", credential))
         accounts = tuple(session.accounts)
         if len(accounts) != 1:
-            return False
+            return allow_unbound
         account = accounts[0]
         if (getattr(account, "provider_id", None) != "kobo"
                 or getattr(account, "credential_id", None) != credential
                 or getattr(account, "identity_id", None) not in {owner, "default"}):
-            return False
+            # For the initial preflight only, leave the classification of
+            # an already-invalid session to the existing source-binding
+            # refusal path (which yields an aborted summary, not a new
+            # public exception). No live GET is permitted by that path.
+            return allow_unbound
         return _kobo_legacy_cas_unset(
             service.storage, owner, credential, account.unique_id,
         )
@@ -1840,7 +1846,9 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
         and (credential_id is None or
              getattr(session, "credential_id", None) == credential_id)
         and getattr(getattr(session, "capabilities", None), "backup", None)
-        and not _kobo_legacy_session_cas_unset(self, session)
+        and not _kobo_legacy_session_cas_unset(
+            self, session, allow_unbound=True,
+        )
         for session in self._sessions.values()
     ):
         raise ProviderConfigurationError("kobo_legacy_canonical_consent_configured")
