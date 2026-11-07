@@ -35,7 +35,8 @@ def test_w2_storage_backup_put_only_occurs_inside_guarded_writer():
             ):
                 continue
             direct.append((node.name, child.lineno))
-    assert direct == [("_guarded_kobo_legacy_put", direct[0][1])] if direct else False
+    assert len(direct) == 1, f"Unexpected direct W2 backup_put call sites: {direct}"
+    assert direct[0][0] == "_guarded_kobo_legacy_put"
 
 
 def test_w2_backup_put_aliases_delegate_to_guarded_writer():
