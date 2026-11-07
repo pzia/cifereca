@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from cifereca.core import rights_snapshot_read
+from cifereca.core import kobo_backup, rights_snapshot_read
 from cifereca.core.source_sync_consent import policy_key, scope_for_account
 from cifereca.providers import ProviderConfigurationError
 from tests.test_kobo_backup_guard import _service
@@ -78,7 +78,7 @@ def test_cas_retired_legacy_preview_never_reads_backup_or_manifest(
         ):
             with pytest.raises(ProviderConfigurationError,
                                match="canonical_kobo_preview_abi_unavailable"):
-                service.kobo_backup_preview("vault-1", **kwargs)
+                kobo_backup.kobo_backup_preview(service, "vault-1", **kwargs)
 
         historical = service.kobo_backup_preview(
             "vault-1", verify_local_files=False,
