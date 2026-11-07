@@ -3885,6 +3885,7 @@ class LibraryService:
     def kobo_backup_preview(
         self, credential_id: str, *,
         refresh_manifest: bool = False, verify_local_files: bool = False,
+        offline_canonical_only: bool = False,
     ) -> dict[str, Any]:
         """Preview Kobo acquisition candidates, without writes or downloads.
 
@@ -3894,6 +3895,7 @@ class LibraryService:
         return kobo_backup.kobo_backup_preview(
             self, credential_id, refresh_manifest=refresh_manifest,
             verify_local_files=verify_local_files,
+            offline_canonical_only=offline_canonical_only,
         )
 
     def _kobo_backup_due(self) -> bool:
