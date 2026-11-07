@@ -1,5 +1,14 @@
 # P1 #4673 — recherche Paris : provenance alignée sur l'identité active
 
+> **Mise à jour P1 #4909 (07/11/2026) :** la dernière section
+> « P0 : aucun repli vers un compte Paris explicitement étranger » est une
+> politique historique **supplantée pour les notices bibliographiques
+> uniquement**. Les recherches A depuis une session B produisent désormais
+> une projection `shared_read_only`, sans données privées ni GET de droits.
+> Les gardes d'emprunt et la priorité au compte propre restent impératives.
+> Voir [contrat actuel #4909](CORE-P1-4909-SHARED-CATALOGUE-PARIS.md).
+>
+
 ## Cause corrigée
 
 Les chemins `search` (synchrone) et `search_progressive` conservaient auparavant **la première session connectée par `provider_id`**, même si cette session Paris appartenait à un autre profil. La notice reçue depuis Paris B conservait logiquement `source_credential=B` : le bouton Emprunter de A était ensuite **correctement refusé** par les gardes locales, alors que le compte A était connecté et éligible à la recherche. Changer l'ordre de connexion B/A modifiait la provenance. Il ne faut pas masquer ce défaut en supprimant la garde d'emprunt.
