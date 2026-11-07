@@ -86,8 +86,12 @@ def test_correlated_user_navigation_post_json_redirect_and_get():
     first, second = trace.exchanges
     assert [e.sequence for e in trace.exchanges] == [1, 2]
     assert first.method == "POST" and first.status == 302
-    assert first.request_body_state == "captured"
-    assert first.request_body == '{"user_id":"private-7","book_id":"214"}'
+    # A login POST is now structurally observed but never stored verbatim,
+    # even in the encrypted private vault.
+    assert first.request_body_state == "body_omitted"
+    assert first.request_body_reason == "auth_redacted"
+    assert first.request_body is None
+    assert post.read_post_data == 0
     assert first.response_body_state == "redirect"
     assert first.redirect_to == "/library?book_id=214"
     assert second.method == "GET" and second.status == 200
