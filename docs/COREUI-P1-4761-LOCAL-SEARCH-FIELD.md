@@ -69,3 +69,27 @@ La recette GTK inclut maintenant une ligne sans ISBN agrégé mais possédant
 un `CatalogNoticeVariant.isbn` attesté, puis la réinitialisation du
 filtre ; des tests Plugins opposent deux ISBN/éditions de sources
 concurrentes et des variantes falsifiées/incomplètes.
+
+
+## Bandeau de paramètres de calcul séparé des filtres Recherche
+
+Le haut de Recommandations comporte deux surfaces distinctes :
+
+1. **Paramètres de calcul** : profil, référence, exclusion des livres
+   possédés, seuil d'affinité, diversité, `Recalculer`, et IA facultative
+   seulement lorsque configurée. Une seule rangée horizontale
+   `Gtk.Box` dans un `Gtk.ScrolledWindow` à débordement horizontal.
+   Au rétrécissement de la fenêtre, les options ne passent plus sur une
+   deuxième ligne avec un nouvel ordre de tabulation.
+2. **Filtres de résultats déjà calculés** : le véritable
+   `LocalQueryControls` de Recherche (Champ, texte, Sources multiples,
+   Langues, Format, Type), toujours dans son propre bandeau, sous les
+   paramètres. Manipuler les filtres n'appelle ni recalcul, ni fournisseur,
+   ni LLM.
+
+Un Core ancien, dépourvu de `build_local_query_controls`, conserve les
+widgets locaux `Catalogue/Langue/Filtrer` dans le bandeau des paramètres
+via `_append_legacy_filters`. Aucun changement des brokers, des droits,
+de l'admission d'acquisition ou du calcul. L'E2E GTK 1366/1600 vérifie
+le vrai parent `Gtk.Box(HORIZONTAL)`, sa fenêtre de défilement, et que
+les contrôles Recherche restent des enfants séparés.
