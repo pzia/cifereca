@@ -797,6 +797,36 @@ def main():
                         break
                 if target is not None:
                     break
+            # The existing maintenance probe has already validated a
+            # vertically wrapped GTK pick fallback at 920 px. Use it here
+            # when nested scroller bounds are inaccurate; still no click
+            # unless the *same* menu button is picked by the toplevel.
+            if target is None:
+                from maintenance_hit_target import choose_verified_point
+                try:
+                    x, y = choose_verified_point(
+                        window, menu, bounds, Gtk.PickFlags.DEFAULT,
+                    )
+                except RuntimeError:
+                    pass
+                else:
+                    target = state["device"].window_point(window, x, y)
+            if target is None:
+                # Closed numeric geometry only. A menu wholly outside its
+                # viewport is an actual UX failure, never a reason to force
+                # a GTK popup or silently skip the narrow-width scenario.
+                bar_ok, bar_bounds = bar.compute_bounds(window)
+                if bar_ok:
+                    def rect_dims(rect):
+                        return tuple(int(round(value)) for value in (
+                            rect.get_x(), rect.get_y(),
+                            rect.get_width(), rect.get_height(),
+                        ))
+                    values = rect_dims(bounds) + rect_dims(bar_bounds)
+                    report["p1_774_overflow_geometry"] = dict(zip(
+                        ("menu_x", "menu_y", "menu_width", "menu_height",
+                         "bar_x", "bar_y", "bar_width", "bar_height"), values,
+                    ))
             assert target is not None, "Overflow button has no accessible GTK hit target"
             state["device"].click(*target)
             later(320, lambda: exact_overflow_ready(button))
