@@ -6,6 +6,7 @@ policy has been explicitly configured. No network, ADEPT or legacy GET.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -131,5 +132,85 @@ def test_unreadable_canonical_policy_cannot_fall_back_to_legacy_schedule(
         monkeypatch.setattr(service.storage, "metadata_get", read)
         assert kobo_on_start_sessions(service) == ()
         assert not can_enable_kobo_on_start(service, service.accounts[0])
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("mode", [True, False, None], ids=["on", "off", "invalid"])
+def test_empty_primary_kobo_borrower_cas_vetoes_legacy_on_start(
+    tmp_path, monkeypatch, mode,
+):
+    """The exact empty primary borrower MUST NOT bypass an explicit CAS policy."""
+    service = _service(tmp_path)
+    try:
+        account = replace(service.accounts[0], unique_id="")
+        service.accounts[0] = account
+        session = service._sessions[("kobo", "vault")]
+        session.accounts = [account]
+        _neutralize_unrelated_sync_work(service, monkeypatch)
+        _enable_on_start(service)
+        sid = SynchronizationBrokerImpl._source_id(account)
+        clock_key = "sync.source.materialization.last_attempt." + sid
+
+        # The legacy schedule is valid only while the exact CAS is absent.
+        assert read_policy(service.storage, scope_for_account(account)).mode == "unset"
+        assert can_enable_kobo_on_start(service, account)
+        assert kobo_on_start_sessions(service) == (session,)
+        assert service.storage.metadata_get(policy_key(sid)) == "1"
+        assert service.storage.metadata_get(clock_key) is None
+
+        scope = _set_canonical_policy(service, enabled=mode)
+        assert scope.account_id == ""
+        assert read_policy(service.storage, scope).mode == (
+            "invalid" if mode is None else "on" if mode else "off"
+        )
+        assert not can_enable_kobo_on_start(service, account)
+        assert kobo_on_start_sessions(service) == ()
+        # A second explicit legacy ON must also be rejected, not just startup.
+        broker = SynchronizationBrokerImpl(service)
+        with pytest.raises(ValueError):
+            broker.set_local_materialization_schedule(sid, "on_start")
+
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda *_a, **_k: pytest.fail(
+                "empty-primary canonical CAS cannot launch legacy Kobo W2"
+            ),
+        )
+        result = service._opening_sync_locked(deep=False)
+        assert result["kobo_decision"]["scheduled_kobo"] == 0
+        assert service.storage.metadata_get(clock_key) is None
+        # Preserve history for supervised recovery without converting it to a grant.
+        assert service.storage.metadata_get(policy_key(sid)) == "1"
+    finally:
+        service.close()
+
+
+def test_unreadable_empty_primary_cas_cannot_enable_legacy_on_start(
+    tmp_path, monkeypatch,
+):
+    service = _service(tmp_path)
+    try:
+        account = replace(service.accounts[0], unique_id="")
+        service.accounts[0] = account
+        session = service._sessions[("kobo", "vault")]
+        session.accounts = [account]
+        _enable_on_start(service)
+        assert kobo_on_start_sessions(service) == (session,)
+
+        exact_key = canonical_policy_key(scope_for_account(account))
+        original_get = service.storage.metadata_get
+
+        def unreadable(key):
+            if key == exact_key:
+                raise RuntimeError("canonical policy unavailable")
+            return original_get(key)
+
+        monkeypatch.setattr(service.storage, "metadata_get", unreadable)
+        assert not can_enable_kobo_on_start(service, account)
+        assert kobo_on_start_sessions(service) == ()
+        assert service.storage.metadata_get(
+            policy_key(SynchronizationBrokerImpl._source_id(account))
+        ) == "1"
     finally:
         service.close()
