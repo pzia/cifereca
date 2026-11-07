@@ -2616,10 +2616,14 @@ class Storage:
                         (identity_id, old_text),
                     ).fetchone() is not None:
                         raise ValueError("relocate_canonical_source_requires_core_relink")
-                # Relocation is never an ownership attestation. In particular,
-                # a no-op rename must not fill a historical NULL identity;
-                # actual moves already refuse ambiguous legacy owners above.
-                if old_text != new_text:
+                # #3196 W5: ordinary file renames also must not fabricate
+                # a new current location for an old Kobo v0.7 receipt.
+                # Retain its original locator as passive historical evidence.
+                # A separate, already attested Core B requires its own
+                # exact-source relink. Non-Kobo compatibility providers still
+                # migrate their location as before.
+                # Scope/collision vetoes above remain active for Kobo.
+                if old_text != new_text and provider_id != "kobo":
                     db.execute(
                         "UPDATE backup_items SET local_path=? "
                         "WHERE local_path=? AND provider_id=? AND identity_id=?",
