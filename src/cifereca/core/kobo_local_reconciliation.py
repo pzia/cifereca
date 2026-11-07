@@ -742,12 +742,15 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
     Roots are reread from disk on validation, so another config save invalidates
     the plan if it changes the selected identity's directory or library root.
     """
-    # The new file-only channel has a dedicated, non-authoritative writer.
-    # The old W4 confirm/undo remains unchanged until its consumers migrate.
+    # P0 #4859 W4/D5: the historical default created positive ledger and
+    # Placement rows from v0.7 evidence. All production callers are retired:
+    # never open Config, SQLite or a file for legacy preview/confirm/undo.
+    # Only two explicit, independently fenced safe operators remain.
     file_only = options.pop("file_only", False)
     canonical_relink = options.pop("canonical_relink", False)
     _require(type(file_only) is bool and type(canonical_relink) is bool
              and not (file_only and canonical_relink), "invalid_request")
+    _require(file_only or canonical_relink, "legacy_reconciliation_retired")
     config_path = Path(config_path) if config_path is not None else config_file(create=False)
     database_path = Path(database_path) if database_path is not None else database_file(create=False)
 

@@ -15,8 +15,8 @@
 > `cifereca-cli kobo-relink-canonical` (voir
 > [contrat relink](CORE-P0-4859-CANONICAL-PLACEMENT-RELINK.md)).
 > Les sections suivantes documentent le comportement **historique**,
-> sans constituer une procédure exécutable après le retrait. L'ancien
-> opérateur Core et la GUI demeurent en migration dans #4859.
+> sans constituer une procédure exécutable après le retrait. L'ancienne
+> primitive Core interne demeure en migration dans #4859.
 
 > **Inspection locale / CoreUI : écriture W4 également retirée.**
 > La comparaison d'une édition Kobo et d'un EPUB reste consultable, mais
@@ -29,6 +29,16 @@
 > La voie sûre reste l'observation d'octets ou le relink d'un B **déjà
 > indépendamment publié** via les deux commandes citées ci-dessus.
 > Aucune mutation ni suppression du journal historique n'est effectuée.
+
+> **Façade Python offline également retirée.**
+> `reconcile_existing_profile(...)` refuse son mode historique par défaut,
+> avant toute ouverture de configuration, de SQLite ou d'un fichier :
+> `legacy_reconciliation_retired`. Les deux modes explicitement
+> sélectionnés `file_only=True` et `canonical_relink=True`
+> conservent leurs validations exactes et leurs fonctions propres.
+> L'ancienne primitive `reconcile_kobo_local` est conservée uniquement
+> pour les tests/archives tant que son retrait W4/D5 n'est pas finalisé ;
+> elle ne doit pas être utilisée par un code de production.
 
 `kobo-audit --credential CONNEXION --plan` reste un diagnostic en lecture seule.
 Ses comptes pseudonymisés et ses `case-*` éphémères ne peuvent jamais servir de
