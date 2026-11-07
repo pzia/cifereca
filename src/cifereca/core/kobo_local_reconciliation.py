@@ -776,20 +776,9 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
 
     connection = None
     try:
-        # SQLite WAL readers can need the live -shm even for a no-write
-        # preview. Open an EXISTING DB only (mode=rw, never create) and set
-        # query_only BEFORE any inspection. This is a strict SQLite write
-        # barrier, including accidental INSERT/DDL from an offline preview.
-        # Existing legacy W4 preview keeps its established mode=ro route.
-        file_only_preview = file_only and options.get("confirmation") is None
-        mode = ("rw" if file_only_preview else
-                "rw" if options.get("confirmation") is not None else "ro")
-        connection = sqlite3.connect(
-            database_path.absolute().as_uri() + "?mode=" + mode,
-            uri=True, timeout=10,
-        )
-        if file_only_preview:
-            connection.execute("PRAGMA query_only=ON")
+        # mode=rw/ro never creates a missing database. No schema/init/repair.
+        mode = "rw" if options.get("confirmation") is not None else "ro"
+        connection = sqlite3.connect(database_path.absolute().as_uri() + "?mode=" + mode, uri=True, timeout=10)
         _require(Storage._read_schema_version(connection) == CURRENT_SCHEMA_VERSION, "schema_upgrade_required")
         storage = SimpleNamespace(path=database_path, _lock=threading.Lock(),
                                   _connect=lambda: connection, _stable_id=Storage._stable_id)
