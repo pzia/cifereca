@@ -716,9 +716,12 @@ class UxRecommendationsView:
         self._exclude_owned.connect("toggled", lambda *_: self.refresh())
         controls.insert(self._exclude_owned, -1)
 
+        # The configured threshold is the baseline. A later user change
+        # is an active *view* filter, not a new recommendation ranking.
+        self._affinity_initial_threshold = self._config_int("minimum_score", 15)
         score_adjustment = Gtk.Adjustment(
             lower=0, upper=100, step_increment=5, page_increment=10,
-            value=self._config_int("minimum_score", 15),
+            value=self._affinity_initial_threshold,
         )
         self._score = Gtk.SpinButton(adjustment=score_adjustment, climb_rate=1, digits=0)
         self._score.set_tooltip_text(_AFFINITY_MIN_TOOLTIP)
@@ -1614,6 +1617,21 @@ class UxRecommendationsView:
             filters.append(f"« {text_filter} »")
         filters.extend(self._display_source(source) for source in sources)
         filters.extend(_language_label(language) for language in languages)
+        # The default threshold already informs initial ranking visibility.
+        # Once edited it becomes a *local, reversible* facet and belongs in
+        # the same visible count as Source/Format/Champ; no new provider I/O.
+        default_threshold = getattr(self, "_affinity_initial_threshold", None)
+        score_reader = getattr(getattr(self, "_score", None), "get_value", None)
+        if type(default_threshold) is int and callable(score_reader):
+            try:
+                selected_threshold = score_reader()
+                if (type(selected_threshold) in (int, float)
+                        and 0 <= selected_threshold <= 100
+                        and selected_threshold == int(selected_threshold)
+                        and selected_threshold != default_threshold):
+                    filters.append(f"Affinité ≥ {int(selected_threshold)}")
+            except (TypeError, ValueError, OverflowError):
+                pass
         # Same Core LocalQueryControls as Search: expose current format and
         # support choices in the visible counter. Absent/legacy hosts simply
         # omit the optional labels; this is presentation, not a new filter.
