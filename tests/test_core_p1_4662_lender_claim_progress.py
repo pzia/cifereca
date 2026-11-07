@@ -205,7 +205,7 @@ def test_exact_claim_does_not_confirm_other_edition_collection_or_borrower(
 
 
 @pytest.mark.parametrize("mutation", [
-    "disabled", "missing", "duplicate", "malformed",
+    "disabled", "missing", "duplicate", "mixed_duplicate", "malformed",
 ])
 def test_disabled_or_ambiguous_lender_connection_never_reads_private_claim(
     setup, monkeypatch, mutation,
@@ -223,13 +223,16 @@ def test_disabled_or_ambiguous_lender_connection_never_reads_private_claim(
         monkeypatch.setattr(
             service.storage, "provider_connections", lambda **_kw: [],
         )
-    elif mutation == "duplicate":
+    elif mutation in ("duplicate", "mixed_duplicate"):
         original = connections(identity_id="alex")
         exact = next(row for row in original
                      if row.get("credential_id") == "paris-lender")
+        duplicate = dict(exact)
+        if mutation == "mixed_duplicate":
+            duplicate["enabled"] = False
         monkeypatch.setattr(
             service.storage, "provider_connections",
-            lambda **_kw: [*original, dict(exact)],
+            lambda **_kw: [*original, duplicate],
         )
     else:
         monkeypatch.setattr(
