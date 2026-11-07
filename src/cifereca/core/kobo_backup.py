@@ -37,8 +37,20 @@ def _guarded_kobo_legacy_put(self, item, source_current):
     # The legacy checkpoint must never advance against a detached/rebound
     # provider session. A persisted acquiring row is deliberately left for
     # explicit recovery when the scope changes after a content GET.
-    if source_current is not None and not source_current():
-        raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
+    if source_current is not None:
+        if not source_current():
+            raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
+        # A typed Core SourceReference may have been published since the
+        # manifest's per-item admission check (e.g. another Core process).
+        # Recheck at the last W2 writer boundary, not only before GET.
+        # The 0.7 checkpoint has no account/branch and must not update a
+        # canonical source's parallel historical status or local locator.
+        if has_typed_kobo_source(
+            self.storage, item.get("credential_id"), item.get("item_id"),
+        ):
+            raise _KoboLegacySessionChanged("kobo_canonical_source_delivery_active")
+        if not source_current():
+            raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
     self.storage.backup_put(item)
 
 
