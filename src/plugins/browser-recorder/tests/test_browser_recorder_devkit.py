@@ -8,6 +8,7 @@ from dataclasses import asdict
 from hashlib import sha256
 from importlib import resources
 import json
+from pathlib import Path
 import socket
 
 import pytest
@@ -52,6 +53,12 @@ def test_kit_embeds_exact_public_contracts_and_provenance():
         assert row["sha256"] == sha256(body).hexdigest()
         assert row["bytes"] == len(body)
         assert row["source"] and not row["source"].startswith("/")
+    guide = result["plugin-dev-kit/PROVIDER-DEVELOPMENT.md"]
+    root = Path(__file__).resolve().parents[4]
+    assert guide == (root / "docs/PROVIDER-DEVELOPMENT.md").read_bytes()
+    assert guide == (root / "src/plugins/browser-recorder/PROVIDER-DEVELOPMENT.md").read_bytes()
+    assert b"provider.library" in guide and b"SourceReference" in guide
+    assert b"provider.biblioaccess.la-rochelle" in guide
     assert b"PluginContext" in result["plugin-dev-kit/README.md"]
     assert b"~route-NNNN~" in result["plugin-dev-kit/README.md"]
     assert sum(map(len, result.values())) < 550_000
@@ -97,7 +104,11 @@ def test_reviewed_zip_contains_sdk_in_exact_preview():
     names = {row["name"] for row in docs}
     assert "plugin-dev-kit/manifest.json" in names
     assert "plugin-dev-kit/contracts/models.py" in names
+    assert "plugin-dev-kit/contracts/downloadable_resources.py" in names
+    assert "plugin-dev-kit/contracts/loan_inventory.py" in names
+    assert "plugin-dev-kit/PROVIDER-DEVELOPMENT.md" in names
     assert "plugin-dev-kit/LLM_GUIDE.md" in names
+    assert "plugin-dev-kit/PROVIDER-DEVELOPMENT.md" in names
     assert not any("FAKE_PRIVATE_ACCOUNT" in row["text"] for row in docs)
     manifest = next(
         row for row in docs if row["name"] == "plugin-dev-kit/manifest.json"
