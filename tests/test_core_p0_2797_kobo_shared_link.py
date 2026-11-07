@@ -57,51 +57,54 @@ def _dump(case):
                 for table in (*kobo._KEYS, "entitlements", "artifacts")}
 
 
-def test_kobo_shared_preview_confirm_and_undo_require_three_user_actions(selected):
+def test_kobo_shared_gui_blocks_legacy_positive_preview_confirm_and_undo(
+    selected, monkeypatch,
+):
     case, session, right, file = selected
     before = _dump(case)
     book_bytes = case.target.read_bytes()
-    preview = session.preflight_manual_link(right.key, file.key)
-    assert preview.status == "eligible_for_fresh_validation"
-    assert preview.read_only and not preview.attachment_authorized
-    assert "kobo_fresh_proof_required" in preview.codes
-    # Clicking the preflight alone performs no IO to the writer.
-    assert _dump(case) == before
-    result = session.preview_manual_attachment(right.key, file.key)
-    assert result == {
-        "status": "preview", "read_only": True,
-        "requires_explicit_confirmation": True,
-    }
-    assert "PRIVATE" not in json.dumps(result)
-    assert _dump(case) == before
-    # False/missing human confirmation consumes the private preview token.
-    assert session.confirm_manual_attachment(
-        right.key, file.key, user_confirmed=False,
-    )["status"] == "unavailable"
-    assert _dump(case) == before
-    assert session.preview_manual_attachment(right.key, file.key)["status"] == "preview"
-    committed = session.confirm_manual_attachment(
-        right.key, file.key, user_confirmed=True,
+    # Legacy evidence is still a useful private comparison, never A→B rights.
+    preflight = session.preflight_manual_link(right.key, file.key)
+    assert preflight.read_only and not preflight.attachment_authorized
+    monkeypatch.setattr(
+        kobo, "reconcile_kobo_local",
+        lambda *_a, **_kw: pytest.fail("retired GUI must not call W4 writer"),
     )
-    assert committed == {
-        "status": "applied", "read_only": False, "undo_available": True,
+    expected = {
+        "status": "blocked", "read_only": True,
+        "reason_code": "kobo_canonical_evidence_required",
     }
-    assert _dump(case)["entitlements"] == before["entitlements"]
-    assert _dump(case)["artifacts"] == before["artifacts"]
-    assert case.target.read_bytes() == book_bytes
-    assert session.preview_manual_undo(right.key, file.key)["status"] == "undo_preview"
-    assert session.confirm_manual_undo(right.key, file.key, user_confirmed=False)["status"] == "unavailable"
-    assert session.preview_manual_undo(right.key, file.key)["status"] == "undo_preview"
-    undone = session.confirm_manual_undo(right.key, file.key, user_confirmed=True)
-    assert undone["status"] == "undone"
+    assert session.preview_manual_attachment(right.key, file.key) == expected
+    assert session._manual_pending is None
+    assert session.confirm_manual_attachment(
+        right.key, file.key, user_confirmed=True,
+    )["status"] == "unavailable"
+    # A token carried over from an earlier GUI version cannot resume W4.
+    session._manual_pending = (right.key, file.key, "a" * 64)
+    assert session.confirm_manual_attachment(
+        right.key, file.key, user_confirmed=True,
+    ) == expected
+    session._manual_undo = (right.key, file.key, "b" * 64)
+    assert session.preview_manual_undo(right.key, file.key) == expected
+    session._manual_undo_pending = (
+        right.key, file.key, "b" * 64, "c" * 64,
+    )
+    assert session.confirm_manual_undo(
+        right.key, file.key, user_confirmed=True,
+    ) == expected
     assert _dump(case) == before
     assert case.target.read_bytes() == book_bytes
+    assert "PRIVATE" not in json.dumps(expected)
 
 
-@pytest.mark.parametrize("kind", ["changed_bytes", "right_revoked", "revision", "cancelled"])
-def test_kobo_shared_stale_or_cancelled_confirmation_fails_closed(selected, kind):
+@pytest.mark.parametrize("kind", [
+    "changed_bytes", "right_revoked", "revision", "cancelled",
+])
+def test_kobo_gui_rejects_legacy_positive_even_when_evidence_changes(
+    selected, kind,
+):
     case, session, right, file = selected
-    assert session.preview_manual_attachment(right.key, file.key)["status"] == "preview"
+    assert session.preview_manual_attachment(right.key, file.key)["status"] == "blocked"
     if kind == "changed_bytes":
         case.target.write_bytes(b"changed bytes")
     elif kind in ("right_revoked", "revision"):
@@ -116,17 +119,17 @@ def test_kobo_shared_stale_or_cancelled_confirmation_fails_closed(selected, kind
         right.key, file.key, user_confirmed=True,
         cancelled=(lambda: kind == "cancelled"),
     )
-    assert outcome["status"] == "blocked"
+    assert outcome["status"] == "unavailable"
     assert _dump(case) == before
 
 
-def test_kobo_shared_rejects_cross_provider_and_late_confirmation(selected):
+def test_kobo_gui_rejects_late_confirmation_after_selection_change(selected):
     case, session, right, file = selected
     original = _dump(case)
     assert session.confirm_manual_attachment(
         right.key, file.key, user_confirmed=True,
     )["status"] == "unavailable"
-    assert session.preview_manual_attachment(right.key, file.key)["status"] == "preview"
+    assert session.preview_manual_attachment(right.key, file.key)["status"] == "blocked"
     session.revoke_manual_attachment_preview()
     assert session.confirm_manual_attachment(
         right.key, file.key, user_confirmed=True,

@@ -286,7 +286,12 @@ def test_kobo_requires_historical_backup_but_ignores_other_invalid_epub(kobo_sel
         assert report.status == 'eligible_for_fresh_validation'
         assert 'global_partial_pair_reviewable' in report.codes
         before = filesystem(root)
-        assert session.preview_manual_attachment(right, file)['status'] == 'preview'
+        # The partial unrelated EPUB does not block the *inspection*, but
+        # historical Kobo 0.7 receipts never permit a positive Core B write.
+        assert session.preview_manual_attachment(right, file) == {
+            'status': 'blocked', 'read_only': True,
+            'reason_code': 'kobo_canonical_evidence_required',
+        }
         assert session.confirm_manual_attachment(
             right, file, user_confirmed=False,
         )['status'] == 'unavailable'

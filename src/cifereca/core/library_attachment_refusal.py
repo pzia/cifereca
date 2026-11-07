@@ -43,6 +43,10 @@ _LABELS = {
             "Une migration des répertoires du profil est en cours.",
     },
     'kobo': {
+        'kobo_canonical_evidence_required':
+            "Kobo : le reçu historique ne prouve pas une livraison A→B. "
+            "Rapprochement et annulation indisponibles ici. "
+            "Utilisez le constat de fichier seul ou le relink canonique attesté.",
         'owned_right_required':
             "Le droit d’achat Kobo n’est pas attesté pour ce compte.",
         'active_right_ambiguous_or_missing':

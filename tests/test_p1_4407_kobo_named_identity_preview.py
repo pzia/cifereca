@@ -144,7 +144,7 @@ def test_cli_refreshed_preview_errors_return_stable_json_and_nonzero(
             "Kobo source changed /home/private/credentials?token=SECRET"
         )
     service = SimpleNamespace(
-        connect_kobo_preview=unavailable if stage == "connect" else lambda x: None,
+        connect_kobo_canonical=unavailable if stage == "connect" else lambda x: None,
         kobo_backup_preview=unavailable,
     )
     core = SimpleNamespace(library=service, close=lambda: closed.append(True))
@@ -171,6 +171,7 @@ def test_cli_offline_preview_never_connects_provider(monkeypatch, capsys):
         raise AssertionError("offline preview must not connect")
     service = SimpleNamespace(
         connect_kobo_preview=no_connect,
+        connect_kobo_canonical=no_connect,
         kobo_backup_preview=lambda *_a, **kw: {
             "preview_only": True, "manifest_refreshed": False,
             "acquisition_authorized": False,
