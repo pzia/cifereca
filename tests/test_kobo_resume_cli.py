@@ -55,7 +55,7 @@ def test_resume_connects_only_target_and_sanitizes_output(
         }
 
     service = SimpleNamespace(
-        connect_kobo_preview=connect,
+        connect_kobo_canonical=connect,
         sync_kobo_backup_account=resume,
         connect_configured=lambda: pytest.fail("global connect forbidden"),
     )
@@ -87,7 +87,7 @@ def test_resume_connects_only_target_and_sanitizes_output(
 def test_scope_retry_needs_separate_reauthorization_ack(monkeypatch, capsys):
     calls = []
     service = SimpleNamespace(
-        connect_kobo_preview=lambda credential: calls.append(("connect", credential)),
+        connect_kobo_canonical=lambda credential: calls.append(("connect", credential)),
         sync_kobo_backup_account=lambda credential, *, retry_scope_blocked=False: (
             calls.append(("sync", credential, retry_scope_blocked)) or
             {"status": "attention_required", "blocked_non_retryable": 2}
