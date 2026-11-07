@@ -90,9 +90,20 @@ def test_kobo_default_adapter_label_remains_valid_for_named_core_owner(
     account = case.target.accounts[0]
     assert account.identity_id != "default"
     case.target._accounts = [replace(account, identity_id="default")]
+    from cifereca.core import source_materialization as materialize
+    # The source admission MUST recognize Kobo-Vault's adapter-only label.
+    # The old 0.7 manifest may independently require reconciliation, which
+    # does not mean the account binding was rejected.
+    selected = materialize._source(
+        case.broker, case.source, allow_canonical=True,
+    )
+    assert selected[0] is account and selected[1] is case.target
     preview = case.broker.prepare_local_materialization(case.source)
-    assert preview.ok and preview.facts["status"] == "prepared"
-    assert preview.facts["acquisition_authorized"] is False
-    assert not case.downloaded
     if mode == "canonical":
+        assert preview.ok and preview.facts["status"] == "prepared"
+        assert preview.facts["acquisition_authorized"] is False
         assert rig.calls == []
+    else:
+        assert not preview.ok
+        assert preview.facts["status"] == "reconciliation_required"
+    assert not case.downloaded
