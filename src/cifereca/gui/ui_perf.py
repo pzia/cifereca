@@ -48,7 +48,7 @@ def _process_resource_sample() -> dict[str, float | int | None]:
 _PERF_CATEGORIES = frozenset({
     "task", "opening-sync", "deep-sync", "source-sync", "source-materialize",
     "sync-preflight", "kobo-acquisition", "maintenance", "library", "recent",
-    "search", "plugin", "other",
+    "search", "plugin", "startup", "other",
     # Fixed Core UI/MainWindow task kinds already present at the submit call.
     # Without this exact allowlist, an opt-in 600-file Maintenance audit is
     # reported as "other.worker" despite being a known maintenance action.
@@ -62,6 +62,9 @@ _PERF_PHASES = frozenset({
     "queue_wait", "worker", "gtk_delivery_wait", "lock_wait", "provider",
     "storage", "projection", "row_projection", "facets", "model_update",
     "selection", "render", "frame_wait", "first_paint", "sections", "actions", "gc_gen0", "gc_gen1", "gc_gen2",
+    # Closed startup vocabulary. Never derived from GTK/plugin/provider names.
+    "gtk_import", "core_open", "shell_interactive", "window_presented",
+    "plugins_activation",
 })
 _PERF_TRIGGERS = frozenset({
     "automatic", "user", "navigation", "maintenance", "unspecified",
@@ -148,7 +151,15 @@ class UiPerfMonitor:
         with self._lock:
             if enabled and not self._detailed_capture:
                 self._capture_generation += 1
+                # Keep observed startup events through Settings stop/restart.
+                # Manual captures (no startup observations) still reset their
+                # detailed timeline; aggregate phase stats always persist.
+                startup_events = [
+                    event for event in self._phase_events
+                    if event["category"] == "startup"
+                ]
                 self._phase_events.clear()
+                self._phase_events.extend(startup_events)
                 self._events_dropped = 0
                 self._gc_samples_dropped = 0
                 self._started_at = self._clock()
@@ -246,8 +257,18 @@ class UiPerfMonitor:
                 or capture_generation == self._capture_generation
             ):
                 if len(self._phase_events) == self._max_events:
+                    # Pin a handful of early startup observations inside the
+                    # SAME bounded deque, even after heavy opening sync. Every
+                    # insertion still evicts exactly one old event at capacity.
+                    oldest_non_startup = next(
+                        (index for index, event in enumerate(self._phase_events)
+                         if event["category"] != "startup"),
+                        0,
+                    )
+                    del self._phase_events[oldest_non_startup]
                     self._events_dropped += 1
                 self._phase_events.append({
+                    "capture_generation": self._capture_generation,
                     "operation_id": operation_id,
                     "category": category,
                     "phase": phase,

@@ -34,6 +34,15 @@ simple sonde** : `--confirm` autorise la synchronisation et les mutations.
 Le ZIP `--report` n'est pas une trace HTTP. Les traces et journaux bruts
 peuvent contenir des credentials ; aucune publication automatique.
 
+Pour mesurer la **phase de démarrage de la GUI**, lancer
+`cifereca --perf` : le moniteur de performances existant démarre avant
+l'import GTK et l'ouverture du Core. Le panneau Paramètres → Diagnostics →
+Performances montre la capture active et permet de l'arrêter/reprendre ou
+d'exporter manuellement le JSON local `cifereca.performance.phases/1`.
+L'option est valable uniquement pour ce lancement, indépendante de
+`--trace` ; les événements de démarrage sont conservés (dans les limites
+du budget d'événements) après arrêt/reprise. Aucun export automatique.
+
 Pour diagnostiquer un parcours **graphique** complet, lancer volontairement
 `cifereca --capture` ; à la fermeture, un ZIP brut privé de la session est
 créé dans Téléchargements XDG (option `--capture-dir DIR`). Avant de
