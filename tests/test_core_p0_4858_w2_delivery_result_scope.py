@@ -111,3 +111,45 @@ def test_w2_absent_result_borrower_uses_only_pinned_current_account(
         assert Path(row["local_path"]) == path
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("field,value", (
+    ("record_id", "wrong-edition"),
+    ("revision_id", "wrong-revision"),
+    ("source_provider", "paris"),
+    ("source_credential", "wrong-credential"),
+    ("owned", False),
+    ("downloadable", False),
+))
+def test_w2_normalized_source_switch_cannot_start_get(
+    tmp_path, monkeypatch, field, value,
+):
+    service = _service(tmp_path)
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    normalize = session.normalize_item
+    calls: list[str] = []
+
+    def switched(raw, **kwargs):
+        item = normalize(raw, **kwargs)
+        setattr(item, field, value)
+        return item
+
+    def no_get(*_args, **_kwargs):
+        calls.append("GET")
+        pytest.fail("A switched normalized source must never GET")
+
+    monkeypatch.setattr(session, "normalize_item", switched)
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", no_get)
+    try:
+        report = service.sync_kobo_backup_account("vault-1")
+        assert report["status"] == "aborted"
+        assert report["downloaded"] == 0
+        assert calls == []
+        record = service.storage.backup_get("kobo", "vault-1", "book-1")
+        assert record is not None and record["status"] == "acquiring"
+        # Replaying the same interrupted manifest cannot start another GET.
+        again = service.sync_kobo_backup_account("vault-1")
+        assert again["downloaded"] == again["attempted"] == 0
+        assert calls == []
+    finally:
+        service.close()
