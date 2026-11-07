@@ -345,3 +345,28 @@ def test_offline_profile_changed_during_sql_commit_rolls_back_B(
             "SELECT count(*) FROM metadata WHERE key LIKE "
             "'core.kobo.canonical-placement-relink.%'"
         ).fetchone()[0] == 0
+
+
+
+def test_trigger_cannot_relabel_provider_receipt_during_relink(published):
+    store, original, path, args, source, finished = published
+    original.rename(path)
+    preview = relink(store, **args)
+    before = _read(store, "placements")
+    before_origins = _read(store, "origin_links")
+    with store._lock, store._connect() as db:
+        db.execute(
+            "CREATE TRIGGER relink_origin_swap AFTER UPDATE ON placements "
+            "BEGIN UPDATE origin_links SET evidence_ref='forged-receipt' "
+            "WHERE source_reference_id='" + finished.source_reference_id + "'; END"
+        )
+    try:
+        with pytest.raises(
+            CanonicalRelinkRejected, match="canonical_relink_file_unverified",
+        ):
+            relink(store, confirmation=preview["plan_token"], **args)
+        assert _read(store, "placements") == before
+        assert _read(store, "origin_links") == before_origins
+    finally:
+        with store._lock, store._connect() as db:
+            db.execute("DROP TRIGGER relink_origin_swap")
