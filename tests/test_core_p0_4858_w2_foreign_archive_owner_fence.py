@@ -1,8 +1,8 @@
-"""#4858 W2: a 0.7 credential/edition receipt is not transferable B.
+"""#4858 W2: an explicitly foreign 0.7 receipt is not transferable B.
 
-An old Kobo archive's key lacks both Core identity and upstream borrower.
-Reconnecting the same credential must not adopt a foreign/ownerless local
-path, SHA, revision or completed acquisition. No provider I/O in these tests.
+Old Kobo archive keys omit Core identity and borrower. An explicitly
+different owner must not be adopted. Unscoped 0.7 receipts retain their
+bounded legacy reconciliation until attested migration. No provider I/O.
 """
 from __future__ import annotations
 
@@ -18,12 +18,9 @@ from tests.test_kobo_backup_guard import _manifest_row, _service
     ("bob", "account"),
     ("alice", "other-borrower"),
     ("bob", "other-borrower"),
-    (None, "account"),
-    ("alice", None),
-    ("", "account"),
     ("alice", " "),
 ))
-def test_manifest_refresh_refuses_foreign_or_unscoped_archive_before_any_write(
+def test_manifest_refresh_refuses_explicit_foreign_archive_before_any_write(
     tmp_path, monkeypatch, old_identity, old_account,
 ):
     service = _service(tmp_path)
@@ -43,11 +40,11 @@ def test_manifest_refresh_refuses_foreign_or_unscoped_archive_before_any_write(
     )
     monkeypatch.setattr(
         service.storage, "backup_put",
-        lambda *_a, **_kw: pytest.fail("foreign archive must not be relabelled"),
+        lambda *_a, **_kw: pytest.fail("explicit foreign archive must not be relabelled"),
     )
     monkeypatch.setattr(
         session, "cover_url",
-        lambda *_a: pytest.fail("no provider metadata access for foreign owner"),
+        lambda *_a: pytest.fail("no provider metadata access for explicit foreign owner"),
     )
     try:
         with pytest.raises(
