@@ -355,3 +355,80 @@ def test_disabled_exact_kobo_source_with_sha_is_archive_only(tmp_path, status):
         assert storage.placements() == []
     finally:
         storage.close()
+
+
+@pytest.mark.parametrize("status,attention_code", [
+    ("attention_required", "archived_book"),
+    ("attention_required", "missing_delegation_scope"),
+    ("pending_acquisition", "interrupted_acquisition_review"),
+    ("complete", "archived_book"),
+])
+def test_enabled_kobo_denial_and_interruption_codes_remain_archive_only(
+    tmp_path, status, attention_code,
+):
+    """W1: a live credential is not consent, supplier right or B evidence."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "enabled": True,
+        })
+        tables = (
+            "entitlements", "acquisition_ledger", "artifacts",
+            "placements", "catalog_entries", "source_references",
+            "origin_links",
+        )
+        with storage._lock, storage._connect() as db:
+            before = {
+                table: db.execute("SELECT * FROM " + table).fetchall()
+                for table in tables
+            }
+        row = {
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "alice", "account_id": "borrower",
+            "item_id": "edition", "revision_id": "r1",
+            "title": "Unqualified historical checkpoint",
+            "status": status, "attention_code": attention_code,
+            "sha256": "a" * 64, "size": 42,
+            "local_path": str(tmp_path / "not-a-provider-delivery.epub"),
+        }
+        for _ in range(2):
+            storage.backup_put(row)
+        stored = storage.backup_get("kobo", "vault", "edition")
+        assert stored["status"] == status
+        assert stored["attention_code"] == attention_code
+        assert stored["sha256"] == "a" * 64
+        with storage._lock, storage._connect() as db:
+            assert all(
+                db.execute("SELECT * FROM " + table).fetchall() == before[table]
+                for table in tables
+            )
+    finally:
+        storage.close()
+
+
+def test_denial_checkpoint_still_rejects_foreign_canonical_owner(tmp_path):
+    """The archive-only cut must preserve atomic owner-collision checks."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "enabled": True,
+        })
+        storage.entitlement_put({
+            "provider_id": "kobo", "credential_id": "vault",
+            "identity_id": "bob", "account_id": "borrower",
+            "item_id": "edition", "entitlement_type": "owned",
+            "state": "active",
+        })
+        with pytest.raises(ValueError, match="backup_entitlement_owner_conflict"):
+            storage.backup_put({
+                "provider_id": "kobo", "credential_id": "vault",
+                "identity_id": "alice", "account_id": "borrower",
+                "item_id": "edition", "entitlement_type": "owned",
+                "status": "attention_required",
+                "attention_code": "missing_delegation_scope",
+            })
+        assert storage.backup_get("kobo", "vault", "edition") is None
+    finally:
+        storage.close()

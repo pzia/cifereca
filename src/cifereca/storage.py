@@ -2182,6 +2182,17 @@ class Storage:
                          # Reconciliation statuses still require the 0.8
                          # mirror for W4 confirmation/undo until migrated.
                          or merged.get("status") == "skipped_archived"
+                         # A provider 409, delegation-scope veto or
+                         # interrupted-GET quarantine is NOT evidence of
+                         # an active Kobo right or of locally delivered B.
+                         # Preserve these exact denial/recovery receipts in
+                         # backup_items, including when the credential is
+                         # still enabled, but never project their old
+                         # status/SHA into a fresh 0.8 acquisition.
+                         or merged.get("attention_code") in {
+                             "archived_book", "missing_delegation_scope",
+                             "interrupted_acquisition_review",
+                         }
                          # #3196 W1 after W4 retirement: a
                          # reconcile_required/conflict 0.7 checkpoint is
                          # never independent provider A evidence, even with
