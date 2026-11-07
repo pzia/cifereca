@@ -2438,7 +2438,13 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 and row.get("credential_id") == source
                 and row.get("enabled") is True
             ]
-            if len(bindings) != 1:
+            if (len(bindings) != 1
+                    or not _kobo_legacy_session_cas_unset(
+                        self, session, identity_id=bound,
+                    )):
+                # The recovery-only reader has no batch-level acquisition
+                # gate. A configured/revoked canonical policy must not let
+                # a historical acquiring row rearm that legacy writer.
                 continue
             live[source] = (bound, accounts[0].unique_id, session)
         except (AttributeError, TypeError, ValueError):
@@ -2492,7 +2498,12 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 and row.get("credential_id") == source
                 and row.get("enabled") is True
             ]
-            return len(bindings) == 1
+            return (
+                len(bindings) == 1
+                and _kobo_legacy_session_cas_unset(
+                    self, session, identity_id=pinned[0],
+                )
+            )
         except (AttributeError, TypeError, ValueError, ProviderConfigurationError):
             return False
 
