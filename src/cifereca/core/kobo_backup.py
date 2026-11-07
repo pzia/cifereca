@@ -758,6 +758,12 @@ def _canonical_kobo_backup_preview(self, credential_id, identity_id, session):
                 and self.sync_source_enabled(account) is True
                 and sum(row is account for row in self.accounts) == 1
                 and len(session.accounts) == 1
+                # The supplier's borrower is a four-coordinate source, not
+                # merely the upstream account ID. A reconnect/rebind can
+                # preserve that ID under another provider or credential.
+                and session.accounts[0].provider_id == "kobo"
+                and session.accounts[0].credential_id == credential_id
+                and session.accounts[0].identity_id in {identity_id, "default"}
                 and session.accounts[0].unique_id == account.unique_id
             )
         except Exception:
@@ -885,6 +891,75 @@ def kobo_backup_preview(
         raise ProviderConfigurationError(
             "Compte Kobo non connecté : impossible de rafraîchir les droits"
         )
+    # D1 cutover: a configured canonical source consent, including OFF,
+    # invalid and unreadable, retires legacy 0.7 *preview authority* even
+    # when the delivery ABI later becomes incomplete or the session is
+    # disconnected. Do not convert that policy into legacy manifest access,
+    # candidate counters or local presence. Probe only exact borrowers from
+    # the current Core account roster and the durable SQLite account binding.
+    # The latter is essential for local-only/offline callers with no sessions.
+    if session is None or not has_complete_delivery_abi(session):
+        from ..plugin_api.provider_rights_observation import ProviderRightsScope
+        from .source_sync_consent import read_policy
+        try:
+            borrowers = {
+                row.unique_id for row in self.accounts
+                if row.provider_id == "kobo"
+                and row.credential_id == credential_id
+                and row.identity_id == identity_id
+                and type(row.unique_id) is str
+            }
+            with self.storage._lock, self.storage._connect() as db:
+                bound = db.execute(
+                    "SELECT account_id FROM provider_accounts WHERE "
+                    "provider_id='kobo' AND credential_id=? AND identity_id=? "
+                    "LIMIT 3",
+                    (credential_id, identity_id),
+                ).fetchall()
+            if len(bound) > 2:
+                raise ProviderConfigurationError(
+                    "canonical_kobo_preview_scope_unavailable"
+                )
+            borrowers.update(
+                row[0] for row in bound if type(row[0]) is str
+            )
+            has_canonical_consent = False
+            for borrower in borrowers:
+                try:
+                    policy = read_policy(
+                        self.storage, ProviderRightsScope(
+                            identity_id, "kobo", credential_id, borrower,
+                        ),
+                    )
+                    has_canonical_consent |= policy.configured
+                except Exception:
+                    # Cannot infer that an unreadable configured CAS is
+                    # missing and thereby resurrect 0.7 preview authority.
+                    has_canonical_consent = True
+        except ProviderConfigurationError:
+            raise
+        except Exception:
+            # Unreadable binding/policy state is not absence of consent.
+            raise ProviderConfigurationError(
+                "canonical_kobo_preview_scope_unavailable"
+            ) from None
+        if has_canonical_consent:
+            if (refresh_manifest or _manifest_evidence is not None
+                    or _item_reasons is not None):
+                # A partial ABI cannot re-observe typed A. The old manifest
+                # is not a substitute and must not become executable proof.
+                raise ProviderConfigurationError(
+                    "canonical_kobo_preview_abi_unavailable"
+                )
+            if session is None:
+                return _canonical_kobo_disconnected_offline_preview(
+                    self, credential_id, identity_id,
+                    verify_local_files=verify_local_files,
+                )
+            return _canonical_kobo_backup_offline_preview(
+                self, credential_id, identity_id, session,
+                verify_local_files=verify_local_files,
+            )
     # D1 cutover: a complete provider ABI uses the typed A/verified B
     # projection. The 0.7 checkpoint is never read for a modern live preview.
     # An explicitly supplied legacy private manifest is excluded from this
