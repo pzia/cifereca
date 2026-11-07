@@ -1040,6 +1040,7 @@ class PrivateReviewPanel:
 
     def _discard_private(self):
         self.coverage_status.set_label("")
+        self.origin_coverage_status.set_label("")
         self.excluded_domains.set_label("")
         self._candidate_page = 0
         self._pending_cursor = -1
