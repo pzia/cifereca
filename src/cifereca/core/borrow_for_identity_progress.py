@@ -41,7 +41,10 @@ def observed_cross_profile_borrow_progress(
     )
     try:
         a, item = borrowing_account, exact_notice
-        if (type(requesting_identity_id) is not str
+        reader_epoch = getattr(service, "_account_context_epoch", None)
+        source_epoch = getattr(service, "_source_context_epoch", None)
+        if (type(reader_epoch) is not int or type(source_epoch) is not int
+                or type(requesting_identity_id) is not str
                 or not requesting_identity_id
                 or type(a) is not Account
                 or type(item) is not SearchResult
@@ -66,9 +69,11 @@ def observed_cross_profile_borrow_progress(
 
         def lender_binding_current() -> bool:
             """Read-only, exact owner+enabled guard; never a lending license."""
-            if (service.storage.identity_for_connection(
-                    a.provider_id, a.credential_id,
-                ) != a.identity_id
+            if (getattr(service, "_account_context_epoch", None) != reader_epoch
+                    or getattr(service, "_source_context_epoch", None) != source_epoch
+                    or service.storage.identity_for_connection(
+                        a.provider_id, a.credential_id,
+                    ) != a.identity_id
                     or service.identity_by_id(a.identity_id) is None
                     or getattr(service.current_identity, "identity_id", None)
                        != requesting_identity_id
