@@ -131,11 +131,14 @@ def _local_sources(
 def inspect_usb_dry_run(
     *, storage: Any, identity_id: str, device_id: str,
     identity_root: Path, mountpoint: Path, now: int | None = None,
+    artifact_id: str | None = None,
 ) -> UsbDryRun:
     """Inspect an explicitly selected reader, fail closed on any scope change.
 
     This function never determines whether the user may transfer or remove
-    any book. In particular, it supplies **no** managed-write receipts:
+    any book. A selected Artifact limits local verification and returned rows;
+    the USB inventory still covers the whole managed directory. In particular,
+    this function supplies **no** managed-write receipts:
     historic observed_state=present and the target filename cannot authorize
     a deletion, including when the current scanned bytes match the source.
     """
@@ -145,6 +148,8 @@ def inspect_usb_dry_run(
             or not identity_root.is_absolute()
             or not isinstance(mountpoint, Path)
             or not mountpoint.is_absolute()
+            or (artifact_id is not None
+                and (type(artifact_id) is not str or not artifact_id))
             or type(now) not in (int, type(None))
             or (now is not None and now <= 0)):
         raise ValueError("invalid USB dry-run request")
@@ -158,7 +163,11 @@ def inspect_usb_dry_run(
         if first is None:
             return unknown("scope_unverified")
         binding, intentions = first
-        if not intentions:
+        selected = (
+            intentions if artifact_id is None else
+            tuple(row for row in intentions if row["artifact_id"] == artifact_id)
+        )
+        if not selected:
             return unknown("no_intentions")
 
         # Never attempt to scan a disabled device. The scan's mount guard
@@ -186,7 +195,7 @@ def inspect_usb_dry_run(
         local, artifacts, owned_placements = (
             _local_sources(
                 storage=storage, identity_id=identity_id,
-                identity_root=identity_root, intentions=intentions,
+                identity_root=identity_root, intentions=selected,
             )
             if scan is not None else ({}, {}, {})
         )
@@ -200,7 +209,7 @@ def inspect_usb_dry_run(
         observed_at = scan.observed_at if scan is not None else None
         rows = preview_usb_delta(
             identity_id=identity_id, binding=binding,
-            placements=list(intentions), local=local,
+            placements=selected, local=local,
             scan=scan, receipts=None, now=check_time,
         )
         # A verified local SHA and a missing USB target do not establish
@@ -210,7 +219,7 @@ def inspect_usb_dry_run(
             identity_id=identity_id, device_id=device_id,
             usb_fingerprint=fingerprint, binding=binding,
         )
-        by_artifact = {intent["artifact_id"]: intent for intent in intentions}
+        by_artifact = {intent["artifact_id"]: intent for intent in selected}
         qualified = []
         content_bytes_used = 0
         preflight_count = 0
