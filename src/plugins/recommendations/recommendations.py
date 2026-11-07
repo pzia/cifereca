@@ -1403,7 +1403,7 @@ class UxRecommendationsView:
         retained: set[str] = set()
         if available is not None and getattr(self, "_busy", False):
             selected = self._selected_catalogue_sources()
-            if selected != ("\\x00",):
+            if selected != ("\x00",):
                 retained.update(selected)
         # Catalogue labels populate the GTK filter *before* a detail is
         # selected. Apply the same public text boundary already used by
