@@ -185,3 +185,55 @@ def test_legacy_confirmation_token_revoked_after_canonical_cas_opt_in(case):
 
 # Reuse a real broker/SQLite fixture with synthetic transport.
 from tests.test_source_materialization_confirmation import case  # noqa: E402,F401
+
+
+@pytest.mark.parametrize("enabled", (True, False, None), ids=("on", "off", "invalid"))
+def test_independent_w2_recovery_refuses_preconfigured_cas(tmp_path, enabled):
+    """The offline recovery helper is callable without the W2 batch gate."""
+    from tests.test_core_p0_3196_w2_recovery_live_session_scope import (
+        _recover_only, _interrupted,
+    )
+    from tests.test_kobo_backup_reconcile_prune import _service
+
+    service = _service(tmp_path, manifest=[])
+    try:
+        service.storage.backup_put(_interrupted("vault-1", "interrupted"))
+        before = service.storage.backup_get("kobo", "vault-1", "interrupted")
+        scope = ProviderRightsScope("default", "kobo", "vault-1", "account")
+        _policy(service.storage, scope, enabled)
+        summary = _recover_only(service)
+        assert summary["recovered_interrupted"] == 0
+        assert service.storage.backup_get("kobo", "vault-1", "interrupted") == before
+    finally:
+        service.close()
+
+
+def test_independent_w2_recovery_refuses_cas_change_mid_scan(tmp_path, monkeypatch):
+    from tests.test_core_p0_3196_w2_recovery_live_session_scope import (
+        _recover_only, _interrupted,
+    )
+    from tests.test_kobo_backup_reconcile_prune import _service
+
+    service = _service(tmp_path, manifest=[])
+    try:
+        service.storage.backup_put(_interrupted("vault-1", "interrupted"))
+        before = service.storage.backup_get("kobo", "vault-1", "interrupted")
+        scope = ProviderRightsScope("default", "kobo", "vault-1", "account")
+        original = service._kobo_record_candidate_paths
+        called = []
+
+        def change_policy_during_scan(*args, **kwargs):
+            called.append(True)
+            _policy(service.storage, scope, False)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(
+            service, "_kobo_record_candidate_paths", change_policy_during_scan,
+        )
+        with pytest.raises(kobo_backup._KoboLegacySessionChanged,
+                           match="kobo_legacy_session_changed"):
+            _recover_only(service)
+        assert called
+        assert service.storage.backup_get("kobo", "vault-1", "interrupted") == before
+    finally:
+        service.close()
