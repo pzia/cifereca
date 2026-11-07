@@ -1583,8 +1583,12 @@ class KoboSession(ProviderSession):
                     qualification_diagnostic["candidate_media_format"],
                     qualification_diagnostic["candidate_source_format"],
                 )
-        if offer_id and qualification_diagnostic.get("candidate_selection") == "unique_epub_preferred":
-            detail += " candidate_selection=unique_epub_preferred"
+        if offer_id and qualification_diagnostic.get("candidate_selection") in {
+            "unique_epub_preferred", "equivalent_signed_first",
+        }:
+            detail += " candidate_selection=%s" % (
+                qualification_diagnostic["candidate_selection"],
+            )
         _TRACE_LOG.info(
             "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
