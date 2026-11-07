@@ -18,6 +18,16 @@
 > sans constituer une procédure exécutable après le retrait. L'ancien
 > opérateur Core et la GUI demeurent en migration dans #4859.
 
+> **Façade Python offline également retirée.**
+> `reconcile_existing_profile(...)` refuse son mode historique par défaut,
+> avant toute ouverture de configuration, de SQLite ou d'un fichier :
+> `legacy_reconciliation_retired`. Les deux modes explicitement
+> sélectionnés `file_only=True` et `canonical_relink=True`
+> conservent leurs validations exactes et leurs fonctions propres.
+> L'ancienne primitive `reconcile_kobo_local` est conservée uniquement
+> pour les tests/archives tant que son retrait W4/D5 n'est pas finalisé ;
+> elle ne doit pas être utilisée par un code de production.
+
 `kobo-audit --credential CONNEXION --plan` reste un diagnostic en lecture seule.
 Ses comptes pseudonymisés et ses `case-*` éphémères ne peuvent jamais servir de
 cible d'exécution. `evidence_status` distingue les octets locaux vérifiés de
