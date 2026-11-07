@@ -71,7 +71,10 @@ def test_partial_patch_reuses_existing_exact_borrower_and_mirror(tmp_path):
     store = Storage(tmp_path / "library.sqlite")
     try:
         store.backup_put(_row(account="buyer", status="pending"))
-        assert len(store.acquisitions(provider_id="kobo")) == 1
+        # A never-attempted pending 0.7 receipt is archive-only even with
+        # a known borrower. Core rights originate from independent A/B.
+        assert store.acquisitions(provider_id="kobo") == []
+        assert store.entitlements(provider_id="kobo") == []
         store.backup_put(_row(identity=None, account=None, status="complete"))
         assert store.backup_get("kobo", "vault", "edition")["account_id"] == "buyer"
         assert store.acquisitions(provider_id="kobo")[0]["status"] == "complete"
