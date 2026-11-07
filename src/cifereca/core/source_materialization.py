@@ -295,7 +295,9 @@ def _execute_canonical(broker, source_id, token, *, control=None):
                      and stored[2].startswith("canonical:")
                      and type(stored[3]) is tuple and len(stored[3]) == 6
                      and stored[3][1] == "canonical",
-                     "confirmation_unavailable")
+                     # A valid legacy confirmation cannot become a Core A->B
+                     # permit merely because this plugin gained an ABI.
+                     "canonical_source_delivery_active")
             _require(
                 stored[3][3] is session
                 and stored[3][4] == source_context_epoch(broker.service)
