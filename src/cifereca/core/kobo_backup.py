@@ -2333,7 +2333,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
     # checkpoint. Only the one currently connected, exactly bound session
     # may run compatibility recovery. Missing legacy owner/account remains
     # a diagnostic hint; it never establishes ownership by itself.
-    live: dict[str, tuple[str, str]] = {}
+    live: dict[str, tuple[str, str, Any]] = {}
     ambiguous: set[str] = set()
     for session in self._sessions.values():
         if (getattr(session, "provider_id", None) != "kobo"
@@ -2371,7 +2371,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             ]
             if len(bindings) != 1:
                 continue
-            live[source] = (bound, accounts[0].unique_id)
+            live[source] = (bound, accounts[0].unique_id, session)
         except (AttributeError, TypeError, ValueError):
             continue
     for source in ambiguous:
@@ -2385,6 +2385,54 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
         identity, account = previous.get("identity_id"), previous.get("account_id")
         return ((identity is None or identity == owner[0])
                 and (account is None or account == owner[1]))
+
+    # The preflight above is only a snapshot. Candidate discovery and local
+    # filesystem inspection can run arbitrary time while a Kobo session is
+    # disconnected, rebound, disabled or claimed by canonical Core.
+    # Check the *current* source at every recovery checkpoint, not merely
+    # when the recovery batch started. No second GET or new right is issued.
+    batch_epoch = source_context_epoch(self)
+
+    def recovery_current(previous: dict[str, Any]) -> bool:
+        if not scoped(previous) or source_context_epoch(self) != batch_epoch:
+            return False
+        source = previous.get("credential_id")
+        pinned = live.get(source)
+        sessions = [
+            session for session in self._sessions.values()
+            if getattr(session, "provider_id", None) == "kobo"
+            and getattr(session, "credential_id", None) == source
+            and getattr(session, "connected", None) is True
+            and getattr(getattr(session, "capabilities", None), "backup", False)
+        ]
+        if len(sessions) != 1 or sessions[0] is not pinned[2]:
+            return False
+        try:
+            session = sessions[0]
+            accounts = session.accounts
+            bound = self.storage.identity_for_connection("kobo", source)
+            if (len(accounts) != 1 or bound != pinned[0]
+                    or getattr(accounts[0], "provider_id", None) != "kobo"
+                    or accounts[0].credential_id != source
+                    or accounts[0].identity_id not in {pinned[0], "default"}
+                    or accounts[0].unique_id != pinned[1]):
+                return False
+            bindings = [
+                row for row in self.storage.provider_connections(identity_id=pinned[0])
+                if row.get("provider_id") == "kobo"
+                and row.get("credential_id") == source
+                and row.get("enabled") is True
+            ]
+            return len(bindings) == 1
+        except (AttributeError, TypeError, ValueError, ProviderConfigurationError):
+            return False
+
+    def recovery_put(previous: dict[str, Any], updated: dict[str, Any]) -> None:
+        # The shared W2 writer additionally checks typed SourceReference
+        # before backup_put, preserving the interrupted receipt on refusal.
+        _guarded_kobo_legacy_put(
+            self, updated, lambda: recovery_current(previous),
+        )
 
     for previous in self.storage.backup_list("kobo"):
         if not scoped(previous):
@@ -2438,7 +2486,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             if not _kobo_legacy_current_path_scoped(
                     self, artifact, previous_target_dir,
                     identity_id=previous_identity):
-                self.storage.backup_put({
+                recovery_put(previous, {
                     **previous,
                     "status": "reconcile_required",
                     # A dangling symlink can be the sole discovered candidate
@@ -2460,7 +2508,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             # interpret the synthetic hash as historical acquisition proof.
             # Retain any pre-interruption baseline exactly; the quarantine
             # blocks automatic reGET until provider/receipt review.
-            self.storage.backup_put({
+            recovery_put(previous, {
                 **previous,
                 "status": "reconcile_required",
                 "local_path": str(artifact),
@@ -2482,7 +2530,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             # the original pointer (including an offline path) while the
             # explicit reconcile_conflict status prohibits automatic reuse.
             # Never pick a candidate from the mere number/filenames.
-            self.storage.backup_put({
+            recovery_put(previous, {
                 **previous,
                 "status": "reconcile_conflict",
                 "local_path": previous.get("local_path"),
@@ -2500,7 +2548,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             # old path. The earlier no-candidate fallback used to reach
             # this classification in _skip_manifest_item; the new
             # interrupted-GET fence must not mask the physical locator.
-            self.storage.backup_put({
+            recovery_put(previous, {
                 **previous,
                 "status": "reconcile_required",
                 "updated_at": int(time.time()),
@@ -2511,7 +2559,7 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
                 "job_id": None,
             })
         elif previous_status == "acquiring":
-            self.storage.backup_put({
+            recovery_put(previous, {
                 **previous,
                 "status": "pending_acquisition",
                 "updated_at": int(time.time()),
