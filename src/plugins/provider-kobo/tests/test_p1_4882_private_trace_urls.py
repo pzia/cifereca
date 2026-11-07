@@ -46,8 +46,11 @@ def test_k3_both_distinct_kdrm_urls_revealed_only_in_explicit_trace(
     s, vault, _broker, account, posts = setup()
     ready(s, vault)
     first = _unknown_flepub()
+    first["kobo"]["platform"] = "Android"
+    first["kobo"]["display_profile"] = "Android"
     second = deepcopy(first)
     second["url"] = "https://cdn.kobo.com/second?token=PRIVATE_K3_SECOND"
+    second["kobo"]["platform"] = "Generic"
     upstream = descriptor(candidate=first)
     upstream["acquisition"]["candidates"] = [first, second]
     vault.acquisition = lambda product, **kw: (
@@ -64,6 +67,9 @@ def test_k3_both_distinct_kdrm_urls_revealed_only_in_explicit_trace(
             assert len(trace) == 2
             assert "candidate_index=0 handling=kobo_kdrm" in trace[0]
             assert "candidate_index=1 handling=kobo_kdrm" in trace[1]
+            assert "platform=android profile=android source=library_sync" in trace[0]
+            assert "platform=generic profile=android source=library_sync" in trace[1]
+            assert "media=unknown source_format=flepub drm=kobo_kdrm" in trace[0]
             assert repr(first["url"]) in trace[0]
             assert repr(second["url"]) in trace[1]
             assert "phase=offer" in trace[0] and "phase=offer" in trace[1]
@@ -178,3 +184,33 @@ def test_untrusted_rows_are_bounded_and_quoted_for_private_local_trace(
     assert "PRIVATE\\\\nFORGED WARNING" in lines[0]
     assert len(lines[0].splitlines()) == 1
     assert repr(malicious) in lines[0]
+
+
+@pytest.mark.parametrize("level", ["normal", "verbose", "trace"])
+def test_offer_platform_metadata_is_closed_and_private(
+    level, local_level, caplog,
+):
+    local_level(level)
+    # Deliberately malicious shapes must not be interpolated into the log.
+    leak = "PRIVATE_PROFILE\\nFORGED EVENT"
+    payload = {"acquisition": {"candidates": [
+        {"url": "https://downloads.example/ebook?token=PRIVATE_TEST",
+         "handling": "kobo_kdrm",
+         "media_format": leak,
+         "source_format": {"untrusted": leak},
+         "kobo": {"platform": leak, "source": leak, "display_profile": leak},
+         "drm": {"family": leak}},
+    ]}}
+    with caplog.at_level(logging.DEBUG, logger="cifereca"):
+        trace_kobo_descriptor_urls(payload, product_id="synthetic")
+    rows = _private_lines(caplog)
+    if level == "trace":
+        assert len(rows) == 1
+        assert "platform=other profile=other source=other" in rows[0]
+        assert "media=other source_format=other drm=other" in rows[0]
+        assert repr(payload["acquisition"]["candidates"][0]["url"]) in rows[0]
+        assert leak not in caplog.text
+    else:
+        assert not rows
+        assert "PRIVATE_TEST" not in caplog.text
+        assert leak not in caplog.text
