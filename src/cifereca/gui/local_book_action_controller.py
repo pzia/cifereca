@@ -105,11 +105,25 @@ def _add_owned_download(window, detail, item, TaskPriority):
                             'Télécharger uniquement ce livre possédé, pour son compte et son identité. Aucun lot global.')
     failure = ('Reprise d’indexation indisponible. Vérifiez le fichier livré et son identité.' if resume else
                'Téléchargement ciblé indisponible. Actualisez les droits et vérifiez les fichiers locaux.')
+    from ..core.source_context import source_context_epoch
     generation = getattr(window, '_identity_context_generation', None)
+    try:
+        source_epoch = source_context_epoch(window.service)
+    except ValueError:
+        # A malformed Core source generation is not an acquisition grant.
+        return
+
     def current():
-        return (not getattr(window, '_closed', False)
-                and getattr(window.service.current_identity, 'identity_id', None) == target.identity_id
-                and getattr(window, '_identity_context_generation', None) == generation)
+        if (getattr(window, '_closed', False)
+                or getattr(window.service.current_identity, 'identity_id', None) != target.identity_id
+                or getattr(window, '_identity_context_generation', None) != generation
+                or getattr(button, '_cifereca_action_context_revoked', False)):
+            return False
+        try:
+            return source_context_epoch(window.service) == source_epoch
+        except ValueError:
+            return False
+
     def clicked(_button):
         if not current():
             return
