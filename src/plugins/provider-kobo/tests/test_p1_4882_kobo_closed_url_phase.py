@@ -70,7 +70,7 @@ def test_k1_redirect_signed_url_invalid_cannot_consume_second_get(
     seen = []
     private_redirect = (
         "https://cdn-receipt.example/receipt.epub"
-        "?signature=SYNTHETIC_REDIRECT_PRIVATE#"
+        "?signature=SYNTHETIC_REDIRECT_PRIVATE#SYNTHETIC_PRIVATE_FRAGMENT"
     )
     def handler(request):
         seen.append(str(request.url))
