@@ -22,6 +22,12 @@ est admissible pour la seule **preuve d'octets**.
 - Les réponses publiques n'exposent ni chemin, compte, empreinte, ni jeton
   de fournisseur. Les archives et fichiers historiques ne sont jamais modifiés.
 
+Le point d'entrée offline `reconcile_existing_profile(file_only=True, ...)`
+appelle ce même opérateur avec une connexion SQLite `mode=ro` en prévisualisation,
+puis `mode=rw` en confirmation explicite ; aucun démarrage Core/Plugin,
+aucun réseau. Le dispatch est opt-in et strictement booléen : il n'altère
+pas la sémantique existante de `reconcile_existing_profile`.
+
 Le journal contient obligatoirement
 `authority='historical_local_bytes_only'`,
 `rights_attested=False`, `canonical_delivery_attested=False`.
