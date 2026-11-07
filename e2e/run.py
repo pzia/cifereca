@@ -650,8 +650,9 @@ def main() -> int:
                     # Only the reviewed, fixed synthetic checkpoint can leave
                     # the private GTK sandbox. No assertion, title or source.
                     allowed = frozenset({
-                        "setup", "button", "key", "holdings", "download",
-                        "obtain", "unavailable",
+                        "setup", "button", "button_mapped", "button_selection",
+                        "button_jobs", "button_focus", "key", "holdings",
+                        "download", "obtain", "unavailable",
                     })
                     stage = report_data.get("p1_4664_phase")
                     if type(stage) is str and stage in allowed:
