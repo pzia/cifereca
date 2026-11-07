@@ -4,12 +4,13 @@
 
 ## Point d’entrée
 
-`HTTPX_TRANSPORT.attested_https_download(producer, url, target, admission_current, headers=None, timeout=20, max_bytes=536870912, max_redirects=8, max_duration=900)`
+`HTTPX_TRANSPORT.attested_https_download(producer, url, target, admission_current, headers=None, timeout=20, max_bytes=536870912, max_redirects=8, max_duration=900, on_url_refusal=None)`
 
 - `url` : URL de GET HTTPS émise depuis **une offre fraîche, univoque et liée exactement** à un compte, une ressource et un consentement ; jamais une URL déduite d’une fiche publique.
 - `target` : chemin de staging **privé et préexistant**, sans symlink, contrôlé par Core. La cible n’existe pas ; elle est créée uniquement après vérification de la réponse, du budget et de l’admission. La primitive ne publie pas de fichier final.
 - `admission_current()` : callback Core **obligatoire** retournant le booléen strict `True` uniquement tant que l’identité, le compte, l’offre sélectionnée, le consentement et le contexte restent valables. Réévalué avant le premier GET, avant chaque saut, sur chaque bloc et avant la création du chemin de staging.
 - `headers` : en-têtes de l’offre strictement typés ; seuls `Accept`, `Accept-Language`, `User-Agent` traversent normalement une frontière d’origine. **Exception contrôlée Kobo/S3** : `x-amz-request-payer` traverse seulement lorsque sa valeur est exactement `requester` (constante non authentifiante, attestée par le candidat Kobo). Une valeur différente, un autre header spécifique ou un secret ne traverse jamais. Ne jamais transférer `Authorization`, `Cookie`, `Referer`, `Origin`, CSRF ou les jetons AWS d’authentification.
+- `on_url_refusal(phase, reason)` : **facultatif**, observabilité P1 #4882. Quand la validation HTTPS refuse une URL, le Core transmet uniquement `phase=initial|redirect` et un **motif de syntaxe fermé** (p. ex. `fragment_marker`, `scheme_not_https`, `parser_disagreement`). L'observateur ne reçoit jamais l'URL, le domaine, un jeton, le corps HTTP ou une exception brute. Son échec est ignoré ; son retour **ne peut pas** changer l'autorisation ni la décision du transport. Les clients existants ne passent pas cet argument et leur comportement reste inchangé. Le plugin Kobo applique une seconde whitelist aux deux valeurs avant le log local `EVENT kobo candidate_http_url_refusal`. Le code d'échec public demeure `kobo_candidate_redirect_refused`.
 - Sortie `PublicDelivery(path, sha256, size, content_type, redirects)` ; aucun jeton, compte ou URL dans la valeur de retour.
 
 ## Garanties de transport

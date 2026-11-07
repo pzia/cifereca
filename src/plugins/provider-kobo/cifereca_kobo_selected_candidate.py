@@ -27,6 +27,27 @@ _MAX_DELIVERY_BYTES = 128 * 1024 * 1024
 _MAX_ACSM_BYTES = 2 * 1024 * 1024
 
 
+# #4882: Core supplies only closed literals. Keep a second whitelist at
+# the plugin boundary so a faulty transport stub cannot print private inputs.
+_CLOSED_URL_PHASES = frozenset({"initial", "redirect"})
+_CLOSED_URL_REASONS = frozenset({
+    "type_or_length", "fragment_marker", "control_or_space",
+    "backslash", "parser_invalid", "scheme_not_https",
+    "authority_missing", "embedded_credentials", "encoded_authority",
+    "trailing_host_dot", "port_invalid", "ip_literal",
+    "empty_host_label", "httpx_authority_invalid", "parser_disagreement",
+})
+
+
+def _closed_url_refusal(phase: str, reason: str) -> None:
+    if phase not in _CLOSED_URL_PHASES or reason not in _CLOSED_URL_REASONS:
+        return
+    logging.getLogger("cifereca").warning(
+        "EVENT kobo candidate_http_url_refusal phase=%s category=%s",
+        phase, reason,
+    )
+
+
 def _single_admitted_candidate(payload, offer_id, *, identity_id,
                                credential_id, account_id, product_id,
                                kdrm_ready=False, kdrm_legacy_ready=False):
@@ -336,6 +357,7 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                                            and core_current()),
                 headers=_attested_kobo_http_headers(selected),
                 timeout=30, max_bytes=_MAX_DELIVERY_BYTES, max_redirects=8,
+                on_url_refusal=_closed_url_refusal,
             )
             staged = True
             require_core()

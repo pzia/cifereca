@@ -40,41 +40,71 @@ class PublicDelivery:
     redirects: int
 
 
-def _destination(url: str) -> tuple[str, str, int]:
-    """Validate the raw HTTPS authority before HTTPX parses or rewrites it."""
-    if (type(url) is not str or not 0 < len(url) <= _MAX_URL
-            or any(ord(ch) < 33 or ord(ch) == 127 or ch == "\\" or ch.isspace() for ch in url)
-            or "#" in url):
-        raise ValueError("delivery_url_invalid")
+def _destination(
+    url: str, *, phase: str = "initial",
+    on_url_refusal: Callable[[str, str], None] | None = None,
+) -> tuple[str, str, int]:
+    """Validate an HTTPS destination; emit only closed refusal categories.
+
+    The optional observer receives two fixed literals (phase and reason),
+    never a URL, hostname, path, query, userinfo or HTTP response.
+    """
+
+    def refuse(reason: str, code: str = "delivery_url_invalid") -> None:
+        if on_url_refusal is not None:
+            try:
+                on_url_refusal(phase, reason)
+            except Exception:
+                pass
+        raise ValueError(code)
+
+    if type(url) is not str or not 0 < len(url) <= _MAX_URL:
+        refuse("type_or_length")
+    if "#" in url:
+        refuse("fragment_marker")
+    if any(ord(ch) < 33 or ord(ch) == 127 or ch.isspace() for ch in url):
+        refuse("control_or_space")
+    if "\\" in url:
+        refuse("backslash")
     try:
         parsed = urlsplit(url)
         host = parsed.hostname
-        port = 443 if parsed.port is None else parsed.port
-        if (parsed.scheme != "https" or not parsed.netloc or not host
-                or parsed.username is not None or parsed.password is not None
-                or "%" in parsed.netloc or host.endswith(".")
-                or not 1 <= port <= 65535):
-            raise ValueError("delivery_url_invalid")
+        try:
+            port = 443 if parsed.port is None else parsed.port
+        except ValueError:
+            refuse("port_invalid")
+        if parsed.scheme != "https":
+            refuse("scheme_not_https")
+        if not parsed.netloc or not host:
+            refuse("authority_missing")
+        if parsed.username is not None or parsed.password is not None:
+            refuse("embedded_credentials")
+        if "%" in parsed.netloc:
+            refuse("encoded_authority")
+        if host.endswith("."):
+            refuse("trailing_host_dot")
+        if not 1 <= port <= 65535:
+            refuse("port_invalid")
         try:
             ipaddress.ip_address(host)
         except ValueError:
             pass
         else:
-            raise ValueError("delivery_ip_literal_refused")
+            refuse("ip_literal", code="delivery_ip_literal_refused")
         if not all(part for part in host.split(".")):
-            raise ValueError("delivery_url_invalid")
-        # Enforce URL parser agreement, including punycode and bracket syntax.
+            refuse("empty_host_label")
+        # HTTPX and urllib must parse the same authority before any GET.
         from httpx import URL
         normalized = URL(url)
         if normalized.scheme != "https" or normalized.host is None:
-            raise ValueError("delivery_url_invalid")
+            refuse("httpx_authority_invalid")
         if normalized.host.lower().rstrip(".") != host.lower().rstrip("."):
-            raise ValueError("delivery_url_invalid")
+            refuse("parser_disagreement")
         return ("https", host.lower(), port)
     except ValueError as exc:
-        if str(exc) == "delivery_ip_literal_refused":
+        if str(exc) in {"delivery_url_invalid", "delivery_ip_literal_refused"}:
             raise
-        raise ValueError("delivery_url_invalid") from None
+        refuse("parser_invalid")
 
 
 def _headers(headers: Mapping[str, str] | None) -> dict[str, str]:
@@ -160,6 +190,7 @@ def download_attested_https(
     headers: Mapping[str, str] | None = None, timeout: float = 20,
     max_bytes: int = _MAX_BYTES, max_redirects: int = _MAX_REDIRECTS,
     max_duration: float = 900,
+    on_url_refusal: Callable[[str, str], None] | None = None,
 ) -> PublicDelivery:
     """Stream an attested GET into a new staging file, with no URL in results.
 
@@ -177,7 +208,9 @@ def download_attested_https(
             or type(max_duration) not in (int, float)
             or not 0 < max_duration <= 3600):
         raise ValueError("delivery_parameters_invalid")
-    origin = _destination(url)
+    if on_url_refusal is not None and not callable(on_url_refusal):
+        raise ValueError("delivery_parameters_invalid")
+    origin = _destination(url, on_url_refusal=on_url_refusal)
     deadline = _monotonic() + max_duration
 
     def check_current():
@@ -205,7 +238,10 @@ def download_attested_https(
     with HTTPX_TRANSPORT.public_client(producer=producer, timeout=timeout) as client:
         while True:
             check_current()
-            origin = _destination(current)
+            origin = _destination(
+                current, phase="redirect" if redirects else "initial",
+                on_url_refusal=on_url_refusal,
+            )
             if current in visited:
                 raise ValueError("delivery_redirect_loop")
             visited.add(current)
@@ -236,7 +272,10 @@ def download_attested_https(
                                             or ch == "\\" or ch.isspace() for ch in location)):
                         raise ValueError("delivery_redirect_missing")
                     next_url = urljoin(current, location)
-                    _destination(next_url)  # Validate BEFORE next GET.
+                    _destination(
+                        next_url, phase="redirect",
+                        on_url_refusal=on_url_refusal,
+                    )  # Validate BEFORE next GET.
                     current = next_url
                     redirects += 1
                     continue
