@@ -20,6 +20,17 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 )  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def _private_acquisition_lock(tmp_path, monkeypatch):
+    # An isolated file lock prevents cross-worker CI contention while still
+    # exercising the same real InterProcessLock acquisition/rollback path.
+    from cifereca.core import kobo_canonical_relink as canonical
+    monkeypatch.setattr(
+        canonical, "acquisition_lock_file",
+        lambda: tmp_path / "canonical-relink.lock",
+    )
+
+
 @pytest.fixture
 def published(store, tmp_path):
     source, snapshot = new_source(
