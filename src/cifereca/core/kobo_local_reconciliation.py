@@ -513,7 +513,7 @@ def observe_kobo_local_file_only(
     _require(type(expected_size) is int and expected_size > 0,
              "invalid_size")
     _require(type(path) is str and 0 < len(path) <= 4096
-             and "\\0" not in path and Path(path).is_absolute()
+             and "\0" not in path and Path(path).is_absolute()
              and ".." not in Path(path).parts, "invalid_path")
     _require(confirmation is None or (
         type(confirmation) is str
@@ -584,7 +584,7 @@ def observe_kobo_local_file_only(
             _require(existing is None or existing[0] == serialized,
                      "file_evidence_conflict")
             token = hashlib.sha256(
-                ("kobo-local-file-only-confirm/1\\0" + serialized).encode("utf-8"),
+                ("kobo-local-file-only-confirm/1\0" + serialized).encode("utf-8"),
             ).hexdigest()
             response = lambda status, plan=None: {
                 "schema": _FILE_ONLY_SCHEMA,
