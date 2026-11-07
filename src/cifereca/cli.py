@@ -235,6 +235,10 @@ def main(argv: list[str] | None = None) -> int:
     selected_kobo.add_argument("--credential", required=True)
     selected_kobo.add_argument("--item", required=True)
     selected_kobo.add_argument(
+        "--trace", action="store_true",
+        help="Diagnostic privé local : conserve les URL de livraison signées dans le journal",
+    )
+    selected_kobo.add_argument(
         "--confirm", action="store_true",
         help="Je confirme la livraison de cette édition par le Core",
     )
@@ -523,9 +527,18 @@ def main(argv: list[str] | None = None) -> int:
                              ensure_ascii=False))
             return 2
 
-    core = CiferecaCore.open(diagnostics_enabled=True, diagnostics_level="detailed")
+    private_kobo_trace = a.cmd == "kobo-sync-edition" and a.trace
+    core = CiferecaCore.open(
+        diagnostics_enabled=True,
+        diagnostics_level="trace" if private_kobo_trace else "detailed",
+    )
     service = core.library
+    trace_previous_level = None
     try:
+        if private_kobo_trace:
+            from .logging_utils import diagnostics_level, set_diagnostics_level
+            trace_previous_level = diagnostics_level()
+            set_diagnostics_level("trace")
         if a.cmd == "kobo-sync-edition":
             from .core.canonical_kobo_selected import SelectedKoboRejected
             try:
@@ -1209,6 +1222,9 @@ def main(argv: list[str] | None = None) -> int:
             print("\n[Kobo] Synchronisation interrompue ; l’élément en cours sera repris au prochain lancement.", file=sys.stderr, flush=True)
         return 130
     finally:
+        if trace_previous_level is not None:
+            from .logging_utils import set_diagnostics_level
+            set_diagnostics_level(trace_previous_level)
         core.close()
 
 
