@@ -42,6 +42,27 @@ def _guarded_kobo_legacy_put(self, item, source_current):
     self.storage.backup_put(item)
 
 
+def _require_kobo_legacy_normalized_scope(
+    item: Any, *, credential_id: str, product_id: str,
+    revision_id: str | None,
+) -> None:
+    """Reject a provider-normalized source switch before an opaque W2 GET.
+
+    The live manifest selected a single Kobo purchase. A normalizer must
+    not turn it into another product, account credential or revision (or a
+    non-downloadable/non-owned offer) after the manifest's initial guard.
+    """
+    if (
+        getattr(item, "source_provider", None) != "kobo"
+        or getattr(item, "source_credential", None) != credential_id
+        or getattr(item, "record_id", None) != product_id
+        or getattr(item, "revision_id", None) != revision_id
+        or getattr(item, "owned", None) is False
+        or getattr(item, "downloadable", None) is False
+    ):
+        raise _KoboLegacySessionChanged("kobo_legacy_normalized_scope_mismatch")
+
+
 def _require_kobo_legacy_delivery_scope(
     result: Any, *, credential_id: str, account_id: str | None,
     product_id: str, revision_id: str | None,
@@ -3167,6 +3188,10 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         if normalizer is None:
             raise ProviderConfigurationError("Kobo provider sans normalisation LibraryItem")
         search_item = normalizer(raw, default_collection="library")
+        _require_kobo_legacy_normalized_scope(
+            search_item, credential_id=session.credential_id,
+            product_id=product_id, revision_id=revision_id,
+        )
         if item_guard is not None:
             item_guard(search_item, product_id, revision_id)
         if source_current is not None and not source_current():
