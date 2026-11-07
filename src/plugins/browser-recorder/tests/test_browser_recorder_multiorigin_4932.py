@@ -84,6 +84,32 @@ def test_two_normal_origins_share_body_redirect_header_and_budget_pipeline():
         }
         assert EXCLUDED not in by_origin
 
+        # The *reviewed ZIP* must accept both fully approved origins, not
+        # discard a companion as though it were an unconsented third party.
+        from browser_recorder_review import IdentifierReview
+        from browser_recorder_zip import prepare_reviewed_zip
+
+        review = IdentifierReview(trace)
+        try:
+            for candidate in review.candidates():
+                review.decide(candidate.key, "anonymize")
+            members = prepare_reviewed_zip(review).preview()["members"]
+            exported = {
+                row["name"]: json.loads(row["text"])
+                for row in members if row["name"].startswith("exchanges/")
+            }
+            assert len(exported) == 4
+            extra_export = exported["exchanges/0002.json"]
+            assert extra_export["metadata_only"] is False
+            assert extra_export["url"] not in {
+                "", "[OUT_OF_SCOPE]", "[UNSAFE_TARGET]",
+            }
+            assert exported["exchanges/0004.json"]["metadata_only"] is True
+            assert exported["exchanges/0004.json"]["url"] == ""
+            assert "SYNTHETIC_PRIVATE_SECRET" not in json.dumps(members)
+        finally:
+            review.destroy()
+
         encrypted_payload = _record(trace, ID, "completed")
         assert b"DO_NOT_KEEP" not in encrypted_payload
         assert b"SYNTHETIC_PRIVATE_COOKIE" not in encrypted_payload
