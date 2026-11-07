@@ -477,6 +477,16 @@ def main():
             state["p1_774_filter_retry"] += 1
             later(150, after_keyboard_filter)
             return
+        # Closed, synthetic-only diagnostic: boolean coherence flags,
+        # never user text, provider labels, or account information.
+        report["p1_774_keyboard_coherence"] = {
+            "text": int(query.entry.get_text() == "Livre B"),
+            "rows": int(store.get_n_items() == 1),
+            "title": int(store.get_n_items() == 1 and store.get_item(0).title == "Livre B"),
+            "count": int("1 sur 3" in view._summary.get_text()),
+            "summary_title": int("Livre B" in view._summary.get_text()),
+            "retries": min(30, int(state["p1_774_filter_retry"])),
+        }
         # Each independent assert has a distinct safe source-line marker
         # in the public E2E reporter. This differentiates focus/text,
         # row-model and counter failures without logging any input text.
