@@ -1,4 +1,5 @@
 """Real Paris adapter/redirect parser, synthetic HTTP, no real borrow."""
+from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 from types import SimpleNamespace as NS
 from urllib.parse import quote
@@ -20,6 +21,8 @@ CLAIM = {"schema": 1, "operation": "loan.borrow", "status": "request_sent",
 
 def setup(monkeypatch, *, result="acsm", existing=False):
     state = {"active": existing, "current": True, "owner": "identity-A"}
+    # Keep mock loans active independent of the calendar date of the CI run.
+    when_back_ms = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp() * 1000)
     calls = []
     session = ParisProviderSession(
         credential_id="card-A", label="Paris", credentials={}, options={},
@@ -53,7 +56,7 @@ def setup(monkeypatch, *, result="acsm", existing=False):
             calls.append("loans")
             assert request.url.params.get("userUniqueIdentifier") == ""
             rows = [{"Id": "loan", "RecordId": "edition", "State": "active",
-                     "WhenBack": "/Date(1794000000000)/"}] if state["active"] else []
+                     "WhenBack": f"/Date({when_back_ms})/"}] if state["active"] else []
             if state.get("duplicate"):
                 rows *= 2
             return httpx.Response(200, json={"success": True, "d": {"Loans": rows}})
