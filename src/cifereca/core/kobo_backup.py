@@ -1570,6 +1570,16 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     and self.storage.identity_for_connection(
                         "kobo", pinned_credential,
                     ) == pinned_identity
+                    # A disabled Kobo connection is not a live grant for the
+                    # 0.7 writer, even when its old owner row still exists.
+                    and any(
+                        row["provider_id"] == "kobo"
+                        and row["credential_id"] == pinned_credential
+                        and row["enabled"] is True
+                        for row in self.storage.provider_connections(
+                            identity_id=pinned_identity,
+                        )
+                    )
                 )
             except (AttributeError, TypeError, ValueError, RuntimeError):
                 return False
