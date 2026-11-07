@@ -171,7 +171,8 @@ def main():
         # stringify provider errors, account IDs or the failing callback.
         phase_4664 = report.get("p1_4664_phase")
         if phase_4664 in {
-            "setup", "button", "key", "holdings", "download",
+            "setup", "button", "button_mapped", "button_selection",
+            "button_jobs", "button_focus", "key", "holdings", "download",
             "obtain", "unavailable",
         }:
             print("P1_4664_CLOSED_FAILURE_STAGE=" + phase_4664, flush=True)
@@ -805,11 +806,15 @@ def main():
         report["p1_4664_phase"] = "button"
         view = state["view"]
         button = in_place_button()
+        report["p1_4664_phase"] = "button_mapped"
         assert button.get_mapped() and button.get_sensitive()
+        report["p1_4664_phase"] = "button_selection"
         assert view._master._page.selection.get_selected() == 0
+        report["p1_4664_phase"] = "button_jobs"
         assert not state["in_place_jobs"]
         assert not state["in_place_holdings"]
         assert not state["in_place_obtain"]
+        report["p1_4664_phase"] = "button_focus"
         assert button.grab_focus() is not False
         later(170, in_place_press)
 
