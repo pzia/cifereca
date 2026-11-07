@@ -299,6 +299,15 @@ def exact_kobo_offer_id(
                 type(candidate[key]) is not str or candidate[key] != expected
             ):
                 return reject("candidate_scope_conflict")
+        # A root-level source alias is not allowed to contradict the nested
+        # source consumed by Kobo-Adept. Do not admit a matching sibling from
+        # an internally inconsistent descriptor; the full offer is tainted.
+        nested_kobo = candidate.get("kobo")
+        if ("source" in candidate and type(nested_kobo) is dict
+                and "source" in nested_kobo
+                and (type(candidate["source"]) is not str
+                     or candidate["source"] != nested_kobo["source"])):
+            return reject("candidate_source_conflict")
         if not _safe_https_get(candidate):
             skip("candidate_transport_invalid",
                  single_reason="candidate_transport_or_expiry_invalid")
