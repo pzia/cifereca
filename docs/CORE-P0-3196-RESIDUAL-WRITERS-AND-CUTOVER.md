@@ -7,6 +7,12 @@
 > de copie de livres, de conversion de droits ou de désactivation du dernier
 > chemin de reprise.
 
+> **Cutover post-revue 07/11/2026 : #4928 (retrait physique W4) et #4929 (W1 sans source active) FUSIONNÉES.**
+> W4 n'a plus d'exécuteur positif dans le Core livré ; les archives W4 et W1
+> restent consultables. Le W1 des réconciliations sans source Kobo active
+> n'alimente plus le modèle 0.8, même avec SHA/taille historiques complets.
+> W1 sur source active, W2 ABI partielle et D1–D4 internes restent ouverts.
+>
 > **Mise à jour vérifiée le 07/11/2026 (PR #4922 et #4924 fusionnées).**
 > L'entrée Python publique `reconcile_kobo_local` refuse désormais toutes les
 > variantes legacy avant SQLite/FS ; les façades CLI, CoreUI et offline étaient
@@ -62,15 +68,18 @@ dans `tests/test_core_p0_3196_sync_retirement_integration.py`.
 
 **Mise à jour W1 (06/11/2026) :** le checkpoint Kobo `skipped_archived` ne déclenche plus `_mirror_backup_row` lors de `backup_put`, même avec `identity_id/account_id` renseignés. L'archive reste dans `backup_items`, avec contrôle transactionnel de collision d'owner. Aucun nouveau droit, ledger, Artifact, Placement ou catalogue ne peut être créé/rafraîchi par cet état d'archivage. **Les statuts `reconcile_required` et `reconcile_conflict` conservent temporairement le miroir W1** : la première CI a révélé 46 échecs et 11 erreurs sur W4/confirmation et leurs consommateurs lorsqu'il était supprimé sans remplacement. Ils doivent être migrés avec W4, pas coupés isolément. Les autres états Kobo et fournisseurs restent compatibles. Aucune ancienne projection n'est supprimée. Test `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
 
-**Complément W1 (07/11/2026) — connexion désactivée :** pour les états
-`reconcile_required` et `reconcile_conflict` sans SHA/taille exploitables,
-la présence d'une liaison historique dans `provider_connections` ne suffit
-plus à réactiver le miroir d'entitlement/acquisition. La liaison
-`identity/credential` doit être **activée** dans la transaction de
-`backup_put`. Le reçu `backup_items` reste consultable et les garde-fous
-de collision d'owner restent actifs. Les dossiers avec empreinte et taille
-historiques complètes, W4 et les autres statuts demeurent dans le périmètre
-de migration ; ce n'est pas une preuve de droit ni un retrait global W1.
+**Complément W1 (07/11/2026) — [#4929](https://github.com/pzia/cifereca/pull/4929) FUSIONNÉE :**
+pour les états `reconcile_required` et `reconcile_conflict`, **même avec SHA
+et taille historiques syntaxiquement valides**, aucune projection positive
+d'entitlement, acquisition, Artifact, Placement ou catalogue n'est désormais
+permise **sans** connexion Kobo **activée** portant exactement le
+`credential/identity` de l'archive. L'enregistrement 0.7 reste consultable,
+le contrôle négatif de propriétaire reste transactionnel et les droits
+canoniques préexistants ne sont pas effacés. Une connexion exacte et active
+conserve provisoirement son miroir pour la découverte OWN de W2 tant que
+l'ABI/les publications typées ne sont pas complètes. Ce n'est ni un droit
+inventé par les octets, ni un retrait global du miroir W1.
+Contrat : `docs/CORE-P0-3196-W1-DISCONNECTED-RECONCILIATION.md`.
 Tests : `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
 
 **Mise à jour W3 (06/11/2026) :** l'intégralité du prune Kobo est retirée, y compris pour les enregistrements `pending` sans aucune preuve ; les détails historiques de garde W3 ci-dessous décrivent les protections antérieures désormais subsumées par la conservation de *toutes* les lignes. La migration transactionnelle seule pourra décider du retrait d'une archive.
