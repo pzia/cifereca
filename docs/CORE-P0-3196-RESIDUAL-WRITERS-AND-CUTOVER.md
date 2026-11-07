@@ -62,6 +62,22 @@ Tests : `tests/test_core_p0_3196_w1_passive_kobo_checkpoint_cutover.py`.
 
 **Mise à jour W3 (06/11/2026) :** l'intégralité du prune Kobo est retirée, y compris pour les enregistrements `pending` sans aucune preuve ; les détails historiques de garde W3 ci-dessous décrivent les protections antérieures désormais subsumées par la conservation de *toutes* les lignes. La migration transactionnelle seule pourra décider du retrait d'une archive.
 
+**Cutover W2 après manifeste — scope de session exact (07/11/2026) :**
+la vérification de l'émetteur Kobo ne s'arrête plus à la réponse
+`backup_manifest()` : le traitement de chaque édition contrôle le même
+objet session/compte/epoch et propriétaire SQLite, y compris après les
+callbacks de progression et métadonnées. Les écritures `backup_put` des
+trois étapes `_refresh_manifest_record`, `_skip_manifest_item` et
+`_acquire_manifest_item` passent toutes par cette garde ; le contenu GET
+est revérifié juste avant son lancement. Si le compte change pendant
+un GET déjà entamé, **aucun reçu `complete` ou `error` n'est attribué
+au nouveau compte** : le checkpoint `acquiring` reste pour reprise
+manuelle après revalidation et aucun second GET automatique ne démarre.
+Le batch s'arrête en `aborted`, sans inventer de droit ni d'OriginLink.
+Le chemin de compatibilité sans ABI A→B demeure, ce garde ne constitue
+pas le cutover fonctionnel final. Recette synthétique :
+`tests/test_core_p0_3196_w2_item_session_scope.py`.
+
 **Complément W2/W3 — orphelins avec indices d'octets :** un ancien enregistrement Kobo sans `local_path` mais avec `sha256` non vide et/ou `size` positive reste consultable après un manifeste sans l'édition. Ce sont des indices historiques, pas des fichiers attestés ni des droits. À la réapparition de l'édition, W2 reconnaît aussi `error`/`pending` portant ces indices, **fige la révision acquise**, conserve SHA/taille et impose `reconcile_required` sans GET automatique. Ce garde de conservation/quarantaine n'efface rien et ne réalise pas le cutover ; tests SQLite et service sans fournisseur réel dans `tests/test_core_p0_3196_w3_orphaned_byte_evidence.py`.
 
 **Complément W3 — refus de délégation :** `backup_prune_missing` conserve désormais un refus `attention_required` avec `attention_code=missing_delegation_scope`, même sans chemin local lorsque l'édition sort temporairement d'un manifeste complet. La disparition de l'édition ne démontre pas un nouveau scope ; le retour du manifeste ne doit jamais réarmer implicitement le GET refusé. Seule une reprise explicite du compte ou un cutover canonique attesté peut lever ce checkpoint ; test SQLite et synchronisation sans réseau dans `tests/test_core_p0_3196_w3_scope_denial_retention.py`.
