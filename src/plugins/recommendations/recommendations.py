@@ -386,7 +386,9 @@ def _public_cover_url(item: Any) -> str | None:
     return None
 
 
-def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
+def _attested_catalogue_isbns(
+    notices: Any, *, selected_sources: tuple[str, ...] = (), limit: int = 4,
+) -> tuple[str, ...]:
     """Edition selectors, NOT borrowing permissions or exact item actions.
 
     An ISBN here was checked by the recommendation engine. Recheck its form
@@ -397,10 +399,16 @@ def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
     # A restored/corrupted ranking may contain an arbitrary object with a
     # fabricated has_source_coordinates property. It cannot attest an edition.
     # The engine produces only immutable CatalogNoticeVariant records.
-    if type(notices) not in (tuple, list):
+    if (type(notices) not in (tuple, list)
+            or type(selected_sources) is not tuple
+            or len(selected_sources) > 128
+            or any(type(source) is not str or not source for source in selected_sources)
+            or type(limit) is not int or not 1 <= limit <= 32):
         return ()
     for notice in notices[:256]:
         if type(notice) is not CatalogNoticeVariant:
+            continue
+        if selected_sources and notice.source_provider not in selected_sources:
             continue
         # An ISBN selector must be backed by the SAME validated, bounded
         # original provider coordinates as an exact Search detail action.
@@ -423,9 +431,43 @@ def _attested_catalogue_isbns(notices: Any) -> tuple[str, ...]:
             continue
         if isbn not in selections:
             selections.append(isbn)
-        if len(selections) == 4:
+        if len(selections) == limit:
             break
     return tuple(selections)
+
+
+def _local_ranked_isbns(
+    ranked: RankedCandidate, sources: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Read ISBNs from the correct catalogue, never from another variant.
+
+    A recommendation may merge multiple exact editions into one ranked book.
+    The aggregate candidate's ISBN alone cannot identify the selected source.
+    Core's normal public Search ISBN selector still uses its historical
+    4-edition bound; this read-only filter may inspect up to 32 verified
+    editions among the same first 256 already represented in the detail.
+    """
+    try:
+        item = ranked.item
+        notices = getattr(ranked, "notices", ())
+    except Exception:
+        return ()
+    verified = _attested_catalogue_isbns(
+        notices, selected_sources=sources, limit=32,
+    )
+    item_isbns = _local_recommendation_field_values(item, "isbn")
+    if sources:
+        # In a merged multi-source record, only a typed *exact* notice
+        # can attest the ISBN of the selected catalogue. A candidate scalar
+        # may represent a different edition (even with the same book title).
+        if type(notices) in (tuple, list) and any(
+            type(notice) is CatalogNoticeVariant
+            for notice in notices[:256]
+        ):
+            return verified
+        source = _candidate_public_field(item, "source_provider", limit=120)
+        return item_isbns if source in sources else ()
+    return tuple(dict.fromkeys((*item_isbns, *verified)))[:32]
 
 
 _LANGUAGE_LABELS = {
@@ -716,9 +758,12 @@ class UxRecommendationsView:
         self._exclude_owned.connect("toggled", lambda *_: self.refresh())
         controls.insert(self._exclude_owned, -1)
 
+        # The configured threshold is the baseline. A later user change
+        # is an active *view* filter, not a new recommendation ranking.
+        self._affinity_initial_threshold = self._config_int("minimum_score", 15)
         score_adjustment = Gtk.Adjustment(
             lower=0, upper=100, step_increment=5, page_increment=10,
-            value=self._config_int("minimum_score", 15),
+            value=self._affinity_initial_threshold,
         )
         self._score = Gtk.SpinButton(adjustment=score_adjustment, climb_rate=1, digits=0)
         self._score.set_tooltip_text(_AFFINITY_MIN_TOOLTIP)
@@ -1156,7 +1201,11 @@ class UxRecommendationsView:
                 if needle not in haystack:
                     return False
             else:
-                values = _local_recommendation_field_values(item, field)
+                values = (
+                    _local_ranked_isbns(ranked, sources)
+                    if field == "isbn" else
+                    _local_recommendation_field_values(item, field)
+                )
                 if not values:
                     return False
                 haystack = normalize(" ".join(values))
@@ -1614,6 +1663,21 @@ class UxRecommendationsView:
             filters.append(f"« {text_filter} »")
         filters.extend(self._display_source(source) for source in sources)
         filters.extend(_language_label(language) for language in languages)
+        # The default threshold already informs initial ranking visibility.
+        # Once edited it becomes a *local, reversible* facet and belongs in
+        # the same visible count as Source/Format/Champ; no new provider I/O.
+        default_threshold = getattr(self, "_affinity_initial_threshold", None)
+        score_reader = getattr(getattr(self, "_score", None), "get_value", None)
+        if type(default_threshold) is int and callable(score_reader):
+            try:
+                selected_threshold = score_reader()
+                if (type(selected_threshold) in (int, float)
+                        and 0 <= selected_threshold <= 100
+                        and selected_threshold == int(selected_threshold)
+                        and selected_threshold != default_threshold):
+                    filters.append(f"Affinité ≥ {int(selected_threshold)}")
+            except (TypeError, ValueError, OverflowError):
+                pass
         # Same Core LocalQueryControls as Search: expose current format and
         # support choices in the visible counter. Absent/legacy hosts simply
         # omit the optional labels; this is presentation, not a new filter.

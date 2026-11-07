@@ -30,22 +30,31 @@ def _unknown_flepub():
     return candidate
 
 
+@pytest.mark.parametrize("fresh_media", ["unknown", "epub"])
 def test_k2_end_to_end_exact_selection_and_epub_runtime_without_plain_get(
-    monkeypatch, tmp_path,
+    monkeypatch, tmp_path, fresh_media,
 ):
     session, vault, _broker, account, _posts = setup()
     calls = ready(session, vault)
     original = vault.acquisition
     candidate = _unknown_flepub()
+    descriptor_count = 0
     baseline = deepcopy(candidate)
     baseline["media_format"] = "epub"
     expected = exact_kobo_offer_id(descriptor(candidate=baseline), **SCOPE)
     assert expected.startswith("kobo.runtime:")
 
     def upstream(product, **options):
+        nonlocal descriptor_count
         response = original(product, **options)
         if options.get("mode") == "descriptor":
-            response["acquisition"]["candidates"] = [deepcopy(candidate)]
+            row = deepcopy(candidate)
+            if descriptor_count:
+                # The refreshed POST may already be fixed upstream; the same
+                # opaque offer must remain executable without a second route.
+                row["media_format"] = fresh_media
+            descriptor_count += 1
+            response["acquisition"]["candidates"] = [row]
         return response
 
     vault.acquisition = upstream
@@ -76,6 +85,7 @@ def test_k2_end_to_end_exact_selection_and_epub_runtime_without_plain_get(
         )
         assert staged.path.is_file()
         assert len(execution) == 1
+        assert descriptor_count == 2
         assert calls == [
             ("book-1", "descriptor"), ("book-1", "delegated"),
             ("book-1", "descriptor"), ("book-1", "delegated"),
