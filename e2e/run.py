@@ -116,6 +116,13 @@ SCENARIOS = {
         "description": "P0 #2842 : parcours guidé et confirmations natives à 1728×895, sans réseau.",
         "runner": "gtk-maintenance", "width": 1728, "height": 895,
     },
+    "recommendations-detail-1024": {
+        "plugin": "ui.page.recommendations",
+        "fixture": "search-filters",
+        "description": "P1 #3687/#774 : Recommandations GTK/XTEST 1024×768 effectifs ; filtres, compteur et clavier.",
+        "runner": "gtk-recommendations",
+        "width": 1024, "height": 768,
+    },
     "recommendations-detail-1366": {
         "plugin": "ui.page.recommendations",
         "fixture": "search-filters",
@@ -428,8 +435,9 @@ def main() -> int:
             _event(trace_path, name, "scenario_start", plugin=scenario["plugin"])
             if scenario.get("runner") == "gtk-recommendations":
                 width = scenario["width"]
+                height = scenario.get("height", 1000 if width == 1600 else 900)
                 command = [
-                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{height}x24",
                     args.python, str(ROOT / "e2e/recommendations_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                 ]
@@ -610,7 +618,8 @@ def main() -> int:
                 # #774: export only closed phase codes and bounded numeric
                 # XTEST geometry for the synthetic Recommendations probe.
                 # Raw exceptions, search text and GTK widget labels stay local.
-                if (name in {"recommendations-detail-1366",
+                if (name in {"recommendations-detail-1024",
+                             "recommendations-detail-1366",
                              "recommendations-detail-1600"}
                         and report_data.get("status") != "PASS"):
                     allowed = frozenset({
@@ -635,6 +644,21 @@ def main() -> int:
                         for key in sorted(dimensions):
                             print("P1_774_NUMERIC_" + key + "=" +
                                   str(dimensions[key]), flush=True)
+                    # Eight screen-local bounded integers diagnose a clipped
+                    # overflow button without leaking widget text, session,
+                    # actions, account metadata or raw GTK tracebacks.
+                    overflow = report_data.get("p1_774_overflow_geometry")
+                    allowed_overflow = frozenset({
+                        "menu_x", "menu_y", "menu_width", "menu_height",
+                        "bar_x", "bar_y", "bar_width", "bar_height",
+                    })
+                    if (type(overflow) is dict
+                            and set(overflow) == allowed_overflow
+                            and all(type(n) is int and -4096 <= n <= 4096
+                                    for n in overflow.values())):
+                        for key in sorted(allowed_overflow):
+                            print("P1_774_OVERFLOW_NUMERIC_" + key + "=" +
+                                  str(overflow[key]), flush=True)
                 # #4673: a fixed checkpoint code from our own synthetic GTK
                 # probe is the only failure detail emitted to public Actions
                 # logs. Never echo report.error, widget labels or tracebacks.
@@ -672,7 +696,8 @@ def main() -> int:
                         code = report_data.get("p0_4673_local_reason")
                         if type(code) is str and code in local_reasons:
                             print("P0_4673_CLOSED_LOCAL_REASON=" + code, flush=True)
-                if (name in {"recommendations-detail-1366",
+                if (name in {"recommendations-detail-1024",
+                             "recommendations-detail-1366",
                              "recommendations-detail-1600"}
                         and report_data.get("status") != "PASS"):
                     # Source probe stages are a reviewed fixed vocabulary;

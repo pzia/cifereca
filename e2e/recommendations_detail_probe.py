@@ -82,7 +82,7 @@ def walk(widget):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--width", type=int, choices=(1366, 1600), required=True)
+    parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), required=True)
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -136,7 +136,7 @@ def main():
 
     def capture(stage):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
-        expected_height = 900 if args.width == 1366 else 1000
+        expected_height = {1024: 768, 1366: 900, 1600: 1000}[args.width]
         report["p1_774_phase"] = "display_geometry"
         window = state["window"]
         window_width, window_height = window.get_width(), window.get_height()
@@ -448,11 +448,23 @@ def main():
         view = state["view"]
         query = view._query_controls
         store = view._master._page.store
-        if ((query.entry.get_text() != "Livre B" or store.get_n_items() != 1)
-                and state["p1_774_filter_retry"] < 3):
+        # SearchEntry notifications are debounced while GTK also rebuilds
+        # the live row model and its counter. Only the *complete*, coherent
+        # result may end this bounded wait; a correct row with a stale count
+        # is not a successful keyboard filter.
+        count_text = view._summary.get_text()
+        complete = (
+            query.entry.get_text() == "Livre B"
+            and store.get_n_items() == 1
+            and store.get_item(0).title == "Livre B"
+            and "1 sur 3" in count_text
+            and "Livre B" in count_text
+        )
+        if not complete and state["p1_774_filter_retry"] < 3:
             state["p1_774_filter_retry"] += 1
             later(150, after_keyboard_filter)
             return
+        assert complete, "GTK keyboard filter and counter did not converge"
         assert query.entry.get_text() == "Livre B"
         assert store.get_n_items() == 1
         assert store.get_item(0).title == "Livre B"
@@ -771,10 +783,70 @@ def main():
             assert button.get_parent() is bar.overflow_box
             assert bar.overflow_button.get_visible()
             assert bar.overflow_button.get_mapped()
-            # Physical XTEST click: do not make a hidden action spuriously
-            # appear or manually invoke its callback.
-            state["device"].click_widget(bar.overflow_button)
-            later(190, lambda: exact_overflow_ready(button))
+            # #1216/#3687: mapped is not enough. The menu's entire
+            # rectangle must actually fit the scrolled action viewport.
+            inside, menu_box = bar.overflow_button.compute_bounds(bar)
+            assert inside and menu_box.get_x() >= -1
+            assert menu_box.get_x() + menu_box.get_width() <= bar.get_width() + 1
+            # At 1024 px this button lives in a horizontal ScrolledWindow.
+            # A mapped widget can be partly clipped, and the native-surface
+            # centre from compute_bounds(native) need not be GTK's hit target.
+            # Locate a *pick-verified* point inside the allocated toplevel
+            # before dispatching physical XTEST. Do not emit "clicked", call
+            # popup() or treat an inaccessible overflow as a passing test.
+            menu = bar.overflow_button
+            window = state["window"]
+            ok, bounds = menu.compute_bounds(window)
+            assert ok
+            target = None
+            for h in (0.5, 0.3, 0.7):
+                for v in (0.5, 0.3, 0.7):
+                    x = bounds.get_x() + bounds.get_width() * h
+                    y = bounds.get_y() + bounds.get_height() * v
+                    if not (0 <= x < window.get_width() and
+                            0 <= y < window.get_height()):
+                        continue
+                    picked = window.pick(x, y, Gtk.PickFlags.DEFAULT)
+                    while picked is not None and picked is not menu:
+                        picked = picked.get_parent()
+                    if picked is menu:
+                        target = state["device"].window_point(window, x, y)
+                        break
+                if target is not None:
+                    break
+            # The existing maintenance probe has already validated a
+            # vertically wrapped GTK pick fallback at 920 px. Use it here
+            # when nested scroller bounds are inaccurate; still no click
+            # unless the *same* menu button is picked by the toplevel.
+            if target is None:
+                from maintenance_hit_target import choose_verified_point
+                try:
+                    x, y = choose_verified_point(
+                        window, menu, bounds, Gtk.PickFlags.DEFAULT,
+                    )
+                except RuntimeError:
+                    pass
+                else:
+                    target = state["device"].window_point(window, x, y)
+            if target is None:
+                # Closed numeric geometry only. A menu wholly outside its
+                # viewport is an actual UX failure, never a reason to force
+                # a GTK popup or silently skip the narrow-width scenario.
+                bar_ok, bar_bounds = bar.compute_bounds(window)
+                if bar_ok:
+                    def rect_dims(rect):
+                        return tuple(int(round(value)) for value in (
+                            rect.get_x(), rect.get_y(),
+                            rect.get_width(), rect.get_height(),
+                        ))
+                    values = rect_dims(bounds) + rect_dims(bar_bounds)
+                    report["p1_774_overflow_geometry"] = dict(zip(
+                        ("menu_x", "menu_y", "menu_width", "menu_height",
+                         "bar_x", "bar_y", "bar_width", "bar_height"), values,
+                    ))
+            assert target is not None, "Overflow button has no accessible GTK hit target"
+            state["device"].click(*target)
+            later(320, lambda: exact_overflow_ready(button))
             return
         exact_button_ready(button)
 
@@ -1164,7 +1236,7 @@ def main():
     def activate(_app):
         nonlocal cover_loader
         window = Adw.ApplicationWindow(application=app)
-        window.set_default_size(args.width - 40, 850 if args.width == 1366 else 930)
+        window.set_default_size(args.width - 40, {1024: 720, 1366: 850, 1600: 930}[args.width])
         window._closed = False
         cover_loader = CoverLoader(max_workers=2)
         cover_loader.client.close()

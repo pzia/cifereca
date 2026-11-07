@@ -253,3 +253,31 @@ handler direct Core avec une fixture d’admission positive. Elle ne prouve
 ni une offre réelle du fournisseur, ni toutes les variantes (mirroir v2,
 droits possédés, prêts et multi-profils #4662), ni l’éligibilité et la
 transaction sur un compte connecté. Ces critères restent ouverts sous #4664.
+
+### Recette P1 #3687/#774 — Recommandations à 1024 × 768
+
+Le scénario `recommendations-detail-1024` rejoue sous un **écran Xvfb réel
+1024 × 768**, avec le plugin Recommandations et le composant CoreUI
+`MasterDetailPage`. Le contrôle du probe impose une largeur GTK de
+**924 à 1024 px** (et non une simple taille demandée à GTK) ainsi qu'une
+capture effective 1024 × 768. Il hérite des validations Source multi-sélection,
+Format/Type/Champ, filtre clavier XTEST, compteur `0 / N`, remise à zéro,
+absence de recherche fournisseur induite et actions exactes avec protection
+contre les callbacks obsolètes.
+
+Ce scénario complète les recettes existantes à 1366 et 1600 px ; il ne
+prouve pas à lui seul la conformité visuelle à toutes les densités ni le
+HiDPI. Toute géométrie réelle hors du budget, action masquée ou échec clavier
+est un **échec de recette**, non une autorisation d'agrandir artificiellement
+la fenêtre ou d'ignorer l'étape. Voir #774 et #3687 pour la revue UX.
+
+**Régression du premier essai 1024 :** le menu « Plus d’actions » était
+mappé mais totalement hors de son viewport (x=982–1016, panneau se
+terminant à x=974). Le composant CoreUI `AdaptiveActionBar` ajuste
+désormais le seul libellé **visuel** de l'action principale lorsque sa largeur
+réelle plus la réserve du menu dépassent le budget. Le titre complet reste
+en propriété accessible et en infobulle ; identité, callback, priorité et
+ordre des boutons sont inchangés. Le titre complet revient dès que le
+budget GTK le permet. La sonde 1024 impose aussi une vérification explicite
+que **tout** le menu est dans le viewport, puis un clic XTEST sur une cible
+validée par `Gtk.Widget.pick` : un widget seulement `mapped` ne suffit pas.
