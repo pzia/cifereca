@@ -140,6 +140,26 @@ class QueryControlBatching(unittest.TestCase):
         self.assertEqual(tuple(control.types.buttons), ('epub',))
         self.assertEqual(len(calls), before)
 
+    def test_3687_unknown_support_selection_survives_provisional_head(self):
+        control = LocalQueryControls(lambda: None, 'Filtre')
+        control.set_document_choices((
+            {'medium': 'unknown'},
+            {'medium': 'digital', 'format': 'application/pdf'},
+        ))
+        self.assertIn('unknown', control._attested_document_scopes)
+        control.scope.set_selected(control._scope_values.index('unknown'))
+        control.set_document_choices(
+            ({'medium': 'digital', 'format': 'application/pdf'},),
+            provisional=True,
+        )
+        self.assertEqual(control.state().scope, 'unknown')
+        self.assertTrue(control.scope.visible)
+        self.assertFalse(control.matches_document(
+            {'medium': 'digital', 'format': 'application/pdf'},
+        ))
+        control.set_document_choices(({'medium': 'digital', 'format': 'application/pdf'},))
+        self.assertEqual(control.state().scope, 'all')
+
     def test_3687_provisional_document_attestation_clears_on_identity_reset(self):
         control = LocalQueryControls(lambda: None, 'Filtre')
         control.set_document_choices((
