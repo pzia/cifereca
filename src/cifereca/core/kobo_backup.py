@@ -2685,7 +2685,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 credential_id = base_record["credential_id"]
                 account_id = base_record["account_id"]
 
-                def source_current():
+                def declared_source_current():
                     return bool(
                         self.storage is storage_at_start
                         and session.connected
@@ -2704,7 +2704,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                     presence = verify_declared_presence(
                         self, identity_id=identity_id, provider_id="kobo",
                         credential_id=credential_id, account_id=account_id,
-                        item_id=product_id, source_current=source_current,
+                        item_id=product_id, source_current=declared_source_current,
                         seconds=declared_budget["remaining"],
                         _acquisition_lock_held=True,
                     )
