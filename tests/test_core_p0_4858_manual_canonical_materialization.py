@@ -203,3 +203,65 @@ def test_canonical_confirmation_rejects_same_account_session_aba(
     assert result.ok is False
     assert result.facts["status"] == "source_changed"
     assert canonical.calls == []
+
+
+def test_empty_primary_kobo_borrower_can_preview_and_confirm_once(canonical):
+    """D2: the primary account_id is exactly '', never an implicit alias."""
+    case = canonical.case
+    account = case.target.accounts[0]
+    assert account.is_primary is True
+    account.unique_id = ""
+    case.source = case.broker._source_id(account)
+    canonical.snapshots[0] = _snapshot(case)
+
+    preview = case.broker.prepare_local_materialization(case.source)
+    assert preview.ok and preview.facts["execution_path"] == "canonical"
+    assert preview.facts["acquisition_authorized"] is False
+    assert not canonical.calls
+    token = preview.facts["confirmation_token"]
+    executed = case.broker.materialize_source(case.source, token)
+    assert executed.ok and executed.changed == 1
+    assert executed.facts["execution_path"] == "canonical"
+    assert canonical.calls == [case.source]
+    assert not case.downloaded and not any(case.calls.values())
+    replay = case.broker.materialize_source(case.source, token)
+    assert not replay.ok and replay.facts["status"] == "confirmation_unavailable"
+    assert canonical.calls == [case.source]
+
+
+@pytest.mark.parametrize("primary,borrower", [
+    (False, ""), (True, " "), (True, " borrower"), (True, "borrower "),
+])
+def test_invalid_or_secondary_blank_borrower_is_rejected_before_provider(
+    canonical, primary, borrower,
+):
+    """Only the exact empty *primary* borrower is a valid empty SourceKey."""
+    case = canonical.case
+    account = case.target.accounts[0]
+    account.is_primary = primary
+    account.unique_id = borrower
+    case.source = case.broker._source_id(account)
+    canonical.snapshots[0] = _snapshot(case)
+    preview = case.broker.prepare_local_materialization(case.source)
+    assert not preview.ok and preview.facts["status"] == "invalid_source"
+    assert "confirmation_token" not in preview.facts
+    assert not canonical.calls and not case.downloaded
+    assert not any(case.calls.values())
+
+
+def test_empty_primary_lease_revoked_before_confirm_on_borrower_switch(
+    canonical,
+):
+    case = canonical.case
+    account = case.target.accounts[0]
+    account.unique_id = ""
+    case.source = case.broker._source_id(account)
+    canonical.snapshots[0] = _snapshot(case)
+    token = case.broker.prepare_local_materialization(
+        case.source,
+    ).facts["confirmation_token"]
+    account.unique_id = "different-borrower"
+    result = case.broker.materialize_source(case.source, token)
+    assert not result.ok
+    assert result.facts["status"] == "unknown_source"
+    assert not canonical.calls and not case.downloaded
