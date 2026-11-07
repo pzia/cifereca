@@ -554,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
                 # Reuse the existing exact-credential connect gate, never
                 # connect every Kobo account or infer source from an item.
                 # No provider activity happens without CLI --confirm.
-                service.connect_kobo_preview(a.credential)
+                service.connect_kobo_canonical(a.credential)
                 result = service.synchronize_kobo_selected_edition(
                     a.credential, a.item, explicit_user_action=True,
                 )
@@ -1204,7 +1204,7 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "kobo-resume":
             # The targeted provider session is connected only after explicit
             # download consent. Never connect Paris or other Kobo credentials.
-            service.connect_kobo_preview(a.credential)
+            service.connect_kobo_canonical(a.credential)
             summary = service.sync_kobo_backup_account(
                 a.credential,
                 retry_scope_blocked=a.retry_scope_blocked,
