@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from importlib import metadata, resources
 import json
+from pathlib import Path
 
 from browser_recorder import RecorderError
 from browser_recorder_devkit_templates import reference_plugin_files
@@ -28,14 +29,24 @@ _PUBLIC_SOURCES = (
     "brokers.py",
     "provider_collection.py",
     "provider_search_stream.py",
+    "provider_search_facets.py",
+    "capability_projection.py",
+    "provider_rights_observation.py",
+    "downloadable_resources.py",
+    "loan_inventory.py",
     "errors.py",
 )
+# Public ProviderPlugin/ProviderSession/Descriptor are re-exported from
+# cifereca.plugin_api but defined in cifereca.providers.base.
+_PROVIDER_BASE_SOURCE = "base.py"
 _MAX_SOURCE_BYTES = 160_000
 _MAX_KIT_BYTES = 550_000
 
 _GUIDE = """# Cifereca: kit public de création de plugin (hors connexion)
 
-Ce dossier contient la copie **exacte et datée par version** des sources
+Ce dossier inclut **PROVIDER-DEVELOPMENT.md** (règles d'isolation du Core,
+catalogues C, inventaires A, acquisition B, multi-établissements et recette).
+Lire ce guide avant de générer un provider, puis la copie **exacte et datée par version** des sources
 publiques `cifereca.plugin_api` lues depuis le Core exécutant l'export,
 ainsi que `contract-registry.json` et un manifeste SHA-256. Le contenu des
 fichiers `contracts/*.py` est **normatif** pour la version constatée ;
@@ -130,8 +141,11 @@ pas les vrais endpoints. Un corps omis ne décrit pas un schéma complet.
 - Utiliser `PluginContext.broker(...)` pour les dépendances disponibles :
   tâches/annulation, cache, transport, acquisition, diagnostics ; vérifier
   les Protocols correspondants dans les sources, ne pas deviner d'API privée.
-- N'émettre que des diagnostics expurgés, avec codes fermés ; jamais de
-  contenu HTTP privé, compte, livre ou ACSM dans logs et tests publics.
+- Appliquer le contrat de journalisation du Core : le journal brut local et les
+  diagnostics publics ont des responsabilités différentes. Les projections
+  publiques doivent rester bornées ; aucune trace HTTP privée ni credential
+  dans les fixtures, la CI ou un export non explicitement autorisé. Consulter
+  le guide PROVIDER-DEVELOPMENT.md et LOGGING-CONTRACT.md du dépôt.
 - Tester recherche/détail, erreurs 401/403/429, couverture des champs,
   pagination, auth consentie, annulation et non-rejeu des actions sensibles.
 - Valider le manifeste via l'outil officiel de packaging du dépôt cible et
@@ -149,6 +163,10 @@ _LLM_GUIDE = """# Instructions à un LLM de génération de plugin
 
 Entrées: `manifest.json`, `coverage-report.json`, `timeline.json`,
 `exchanges/`, `bodies/`, `identifiers.json`, puis **ce kit** `plugin-dev-kit/`.
+**Lire `plugin-dev-kit/PROVIDER-DEVELOPMENT.md` avant d'écrire du code** :
+frontières Core, catalogues C vs inventaires A vs livraisons B, session/tenant,
+quotas, cache, sécurité, matrice de recette et statuts de preuve.
+Ce guide est une documentation, pas une interface ; vérifier les contrats .py.
 
 1. Vérifier `manifest.json` de ce kit, ses hash SHA-256, la version
    `plugin_api_version` et la compatibilité avec le Core cible.
@@ -197,9 +215,24 @@ def core_contract_kit() -> dict[str, bytes]:
             or not isinstance(CONTRACT_REGISTRY, tuple)):
         raise RecorderError("core_kit_incompatible")
 
+    # This resource is packaged WITH Browser Recorder, not discovered from a
+    # developer checkout. Installed plugin ZIP and source tree behave alike.
+    # Do not follow an operator-replaced symlink into their private files.
+    guide_path = Path(__file__).with_name("PROVIDER-DEVELOPMENT.md")
+    try:
+        if guide_path.is_symlink() or not guide_path.is_file():
+            raise RecorderError("core_kit_unavailable")
+        provider_guide = guide_path.read_bytes()
+    except OSError as exc:
+        raise RecorderError("core_kit_unavailable") from exc
+    if (not provider_guide or len(provider_guide) > 64_000
+            or b"\x00" in provider_guide):
+        raise RecorderError("core_kit_invalid")
+
     contents = {
         "plugin-dev-kit/README.md": _GUIDE.encode("utf-8"),
         "plugin-dev-kit/LLM_GUIDE.md": _LLM_GUIDE.encode("utf-8"),
+        "plugin-dev-kit/PROVIDER-DEVELOPMENT.md": provider_guide,
     }
     provenance = {}
     total = sum(len(v) for v in contents.values())
@@ -219,6 +252,25 @@ def core_contract_kit() -> dict[str, bytes]:
         target = "plugin-dev-kit/contracts/" + name
         contents[target] = data
         provenance[target] = "src/cifereca/plugin_api/" + name
+
+    # Export the exact implementation of the publicly re-exported provider
+    # base classes, not other provider internals. This gives external agents
+    # ProviderPlugin / ProviderSession constructor and method signatures.
+    try:
+        provider_base = resources.files("cifereca.providers").joinpath(
+            _PROVIDER_BASE_SOURCE
+        ).read_bytes()
+    except Exception as exc:
+        raise RecorderError("core_kit_unavailable") from exc
+    if (not provider_base or len(provider_base) > _MAX_SOURCE_BYTES
+            or b"\x00" in provider_base):
+        raise RecorderError("core_kit_invalid")
+    target = "plugin-dev-kit/contracts/provider_base.py"
+    contents[target] = provider_base
+    provenance[target] = (
+        "src/cifereca/providers/base.py "
+        "(public ProviderPlugin/ProviderSession re-exports)"
+    )
 
     rows = [asdict(row) for row in CONTRACT_REGISTRY]
     if len(rows) > 100 or any(
@@ -252,6 +304,10 @@ def core_contract_kit() -> dict[str, bytes]:
     provenance["plugin-dev-kit/LLM_GUIDE.md"] = (
         "src/plugins/browser-recorder/browser_recorder_devkit.py:_LLM_GUIDE"
     )
+    provenance["plugin-dev-kit/PROVIDER-DEVELOPMENT.md"] = (
+        "src/plugins/browser-recorder/PROVIDER-DEVELOPMENT.md "
+        "(byte-identical to docs/PROVIDER-DEVELOPMENT.md)"
+    )
     manifest = {
         "schema": _KIT_SCHEMA,
         "core_version": core_version or "unknown",
@@ -266,6 +322,8 @@ def core_contract_kit() -> dict[str, bytes]:
             "plugin_api public source boundary",
             "contract registry and manifest version",
             "catalog.service/1 offline reference example and tests",
+            "provider architecture guide embedded from installed plugin",
+            "re-exported ProviderPlugin/ProviderSession public base signatures",
         ],
         "not_claimed": [
             "private Core implementation",

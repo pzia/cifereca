@@ -15,6 +15,8 @@ import secrets
 import stat
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
+from browser_recorder import RecorderError
+from browser_recorder_devkit import core_contract_kit
 from browser_recorder_vault import (
     VaultError, StoredSession, _key, _aead, _record, MAX_FILE,
 )
@@ -27,6 +29,8 @@ README = (
     "Not an anonymized LLM ZIP, not a full browser HAR/profile or session.\n"
     "Collector omitted Authorization, Cookie, Set-Cookie, binary and out-of-scope traffic.\n"
     "trace.json is the versioned, authenticated source observation snapshot.\n"
+    "Read plugin-dev-kit/PROVIDER-DEVELOPMENT.md before implementing a provider.\n"
+    "plugin-dev-kit/manifest.json inventories the offline SDK by SHA-256.\n"
 )
 
 
@@ -45,12 +49,21 @@ def _zip_bytes(session: StoredSession) -> bytes:
     source = json.dumps(
         snapshot, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
     ).encode("utf-8")
+    # Both explicit LLM export modes get the same real, offline Core kit.
+    # No capture contents are passed to its builder. The unreviewed ZIP keeps
+    # private trace.json separate and does not claim anonymization.
+    try:
+        kit = core_contract_kit()
+    except RecorderError as exc:
+        raise VaultError("private_zip_kit_unavailable") from exc
+    members = {"README.txt": README.encode("utf-8"), "trace.json": source}
+    if any(name in members or not name.startswith("plugin-dev-kit/")
+           for name in kit):
+        raise VaultError("private_zip_kit_unavailable")
+    members.update(kit)
     output = BytesIO()
     with ZipFile(output, "w") as archive:
-        for name, body in (
-            ("README.txt", README.encode("utf-8")),
-            ("trace.json", source),
-        ):
+        for name, body in sorted(members.items()):
             member = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             member.compress_type = ZIP_DEFLATED
             member.external_attr = 0o600 << 16
