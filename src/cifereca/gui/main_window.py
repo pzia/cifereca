@@ -151,7 +151,7 @@ class MainWindow(Adw.ApplicationWindow):
         ("plugins", "Plugins", "application-x-addon-symbolic"),
     ]
 
-    def __init__(self, app: Adw.Application, config: Config, service: LibraryService, diagnostics: Diagnostics):
+    def __init__(self, app: Adw.Application, config: Config, service: LibraryService, diagnostics: Diagnostics, *, ui_perf: UiPerfMonitor | None = None):
         super().__init__(application=app)
         self.config = config
         self.service = service
@@ -194,7 +194,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._activity_hide_source: int | None = None
         self._last_finished_task_id: int | None = None
         self.activity_feedback = ActivityFeedback(limit=20)
-        self.ui_perf = UiPerfMonitor()
+        self.ui_perf = ui_perf if ui_perf is not None else UiPerfMonitor()
         self.covers = CoverLoader(diagnostics=diagnostics, max_workers=6)
         self.history_cover_resolver = HistoryCoverResolver(service, diagnostics)
         self.runner = TaskRunner(self)
@@ -235,6 +235,11 @@ class MainWindow(Adw.ApplicationWindow):
         self.root_stack.set_visible_child_name("main")
         shell_ms = (time.perf_counter() - startup_started) * 1000.0
         self.ui_perf.record("startup.shell_interactive", shell_ms)
+        if self.ui_perf.detailed_capture_enabled:
+            self.ui_perf.record_phase(
+                "startup", "shell_interactive", shell_ms,
+                trigger="automatic", outcome="success",
+            )
         _TRACE_LOG.info("TRACE gui shell-interactive duration_ms=%.1f", shell_ms)
         self.connect("close-request", self._on_close_request)
         self._install_shell_shortcuts()
