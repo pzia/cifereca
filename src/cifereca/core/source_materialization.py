@@ -282,6 +282,7 @@ def _execute_canonical(broker, source_id, token, *, control=None):
     publication admission is independent of this non-authoritative preview.
     """
     from .source_sync_consent import read_policy, scope_for_account
+    from .source_context import source_context_epoch
     try:
         with InterProcessLock(acquisition_lock_file()):
             account, session, scope, configuration = _source(
@@ -292,9 +293,15 @@ def _execute_canonical(broker, source_id, token, *, control=None):
             stored = broker._materialization_plans.take(token, scope)
             _require(type(stored[2]) is str
                      and stored[2].startswith("canonical:")
-                     and type(stored[3]) is tuple and len(stored[3]) == 3
+                     and type(stored[3]) is tuple and len(stored[3]) == 6
                      and stored[3][1] == "canonical",
                      "confirmation_unavailable")
+            _require(
+                stored[3][3] is session
+                and stored[3][4] == source_context_epoch(broker.service)
+                and stored[3][5] == getattr(session, "_epoch", None),
+                "source_changed",
+            )
             policy = read_policy(
                 broker.service.storage, scope_for_account(account),
             )
@@ -356,19 +363,25 @@ def prepare(broker, source_id):
                 # Manual confirmation for a modern Kobo source must reuse the
                 # same Core A->B executor as Sync, never the 0.7 backup writer.
                 from .source_sync_consent import read_policy, scope_for_account
+                from .source_context import source_context_epoch
                 policy = read_policy(broker.service.storage, scope_for_account(account))
                 _require(policy.mode == "on" and type(policy.revision) is str,
                          "canonical_source_delivery_active")
+                core_epoch = source_context_epoch(broker.service)
+                provider_epoch = getattr(session, "_epoch", None)
                 fingerprint, counts = _canonical_preview(broker.service, account)
                 current = _source(broker, source_id, allow_canonical=True)
-                _require(current[1] is session and current[2:] == (scope, configuration),
+                _require(current[1] is session and current[2:] == (scope, configuration)
+                         and source_context_epoch(broker.service) == core_epoch
+                         and getattr(session, "_epoch", None) == provider_epoch,
                          "source_changed")
                 _require(read_policy(
                     broker.service.storage, scope_for_account(account)
                 ).revision == policy.revision, "source_changed")
                 token = broker._materialization_plans.put(
                     scope, "canonical:" + fingerprint,
-                    (configuration, "canonical", policy.revision),
+                    (configuration, "canonical", policy.revision,
+                     session, core_epoch, provider_epoch),
                 )
                 return _result(
                     "prepared", ok=True, counts=counts, confirmation_token=token,
