@@ -254,3 +254,103 @@ def test_confirmed_resume_cli_from_local_only_core_reaches_canonical_dispatch(
     assert service.current_account is owner_before
     assert service.storage.backup_list() == []
     assert service.storage.placements() == []
+
+
+def test_cli_refreshed_preview_from_local_only_core_reads_typed_A_without_B_get(
+    rig, monkeypatch, capsys,
+):
+    """Real v14 Core, complete Kobo ABI and scoped inventory; no consent to GET."""
+    import json
+    from types import SimpleNamespace
+    from cifereca import cli
+
+    service, session = rig
+    local = service.primary
+    before = (
+        tuple(service.accounts), service.storage.provider_accounts(),
+        service.storage.provider_connections(identity_id="alice"),
+        service.storage.placements(), service.storage.entitlements(),
+    )
+    reads = []
+    def inventory(account):
+        reads.append(account)
+        assert account.identity_id == "alice"
+        return ProviderRightsSnapshot(
+            ProviderRightsScope("alice", "kobo", "vault-1", account.unique_id),
+            (), status="partial", coverage="partial", branch="purchases",
+        )
+
+    monkeypatch.setattr(session, "rights_observation_snapshot", inventory)
+    monkeypatch.setattr(service, "sync_source_enabled", lambda row: row.provider_id == "kobo")
+    monkeypatch.setattr(
+        service, "synchronize_account_source",
+        lambda *_a, **_kw: pytest.fail("preview cannot execute canonical B"),
+    )
+    monkeypatch.setattr(
+        service.storage, "backup_list",
+        lambda *_a, **_kw: pytest.fail("modern D1 preview cannot read v0.7 backup"),
+    )
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: SimpleNamespace(library=service, close=lambda: None),
+    )
+    rc = cli.main([
+        "kobo-resume-preview", "--credential", "vault-1",
+        "--refresh-manifest",
+    ])
+    public = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert public["canonical_source"] is True
+    assert public["manifest_refreshed"] is True
+    assert public["preview_only"] is True
+    assert public["acquisition_authorized"] is False
+    assert public["manifest_items"] == 0
+    assert len(reads) == 1 and reads[0] is service.accounts[-1]
+    assert service.primary is local
+    assert service.current_account is local
+    assert tuple(service.accounts[:len(before[0])]) == before[0]
+    assert service.storage.provider_accounts() == before[1]
+    assert service.storage.provider_connections(identity_id="alice") == before[2]
+    assert service.storage.placements() == before[3]
+    assert service.storage.entitlements() == before[4]
+
+
+@pytest.mark.parametrize("state", ("wrong_config_owner", "unbound_sql_borrower"))
+def test_cli_refreshed_preview_refuses_foreign_owner_before_typed_A(
+    rig, monkeypatch, capsys, state,
+):
+    import json
+    from types import SimpleNamespace
+    from cifereca import cli
+
+    service, session = rig
+    if state == "wrong_config_owner":
+        service.config.set("providers.accounts", [{
+            "provider": "kobo", "id": "vault-1", "identity_id": "bob",
+            "enabled": True, "credentials": {},
+        }])
+    else:
+        monkeypatch.setattr(
+            service.storage, "provider_scope_account_bound",
+            lambda **_kw: False,
+        )
+    monkeypatch.setattr(
+        session, "rights_observation_snapshot",
+        lambda *_a: pytest.fail("foreign scope cannot read A"),
+    )
+    before = tuple(service.accounts)
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: SimpleNamespace(library=service, close=lambda: None),
+    )
+    rc = cli.main([
+        "kobo-resume-preview", "--credential", "vault-1",
+        "--refresh-manifest",
+    ])
+    report = json.loads(capsys.readouterr().out)
+    assert rc == 2
+    assert report["status"] == "unavailable"
+    assert report["preview_only"] is True
+    assert report["acquisition_authorized"] is False
+    assert tuple(service.accounts) == before
+    assert service.storage.placements() == []
