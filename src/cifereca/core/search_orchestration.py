@@ -433,6 +433,38 @@ def _shared_numilog_public_row(row: SearchResult) -> SearchResult | None:
     )
 
 
+def _kobo_search_owner(self, session: ProviderSession) -> str | None:
+    """Inert SQLite owner snapshot for an authenticated Kobo session."""
+    credential = getattr(session, "credential_id", None)
+    if type(credential) is not str or not credential:
+        return None
+    try:
+        owner = self.storage.identity_for_connection("kobo", credential)
+    except (AttributeError, LookupError, TypeError, ValueError):
+        return None
+    return owner if type(owner) is str and owner else None
+
+
+def _shared_kobo_public_row(
+    row: SearchResult, session: ProviderSession,
+) -> SearchResult | None:
+    """Only descriptive public Kobo catalogue: never another profile's rights."""
+    if (type(row) is not SearchResult
+            or row.source_provider != "kobo"
+            or row.source_credential != getattr(session, "credential_id", None)
+            or row.docbase != "KOBO" or row.scenario != "KOBO"
+            or row.source_collection != "catalog"
+            or row.owned is True or row.downloadable is True
+            or row.download_url is not None):
+        return None
+    return replace(
+        row, owned=False, downloadable=False, download_url=None,
+        friendly_url=None, thumbnail_url=None, revision_id=None,
+        metadata={"catalogue_access": "shared_read_only"},
+        document_classification=None,
+    )
+
+
 def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[str, str], ...]:
     """Partition remote search cache by the active configured source account.
 
@@ -557,6 +589,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     shared_paris_sessions: set[int] = set()
     numilog_owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
     shared_numilog_sessions: set[int] = set()
+    kobo_owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
+    shared_kobo_sessions: set[int] = set()
 
     def sources_current() -> bool:
         if not source_leases:
@@ -579,6 +613,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             return False
         if any(_numilog_search_owner(self, session) != owner
                for session, owner in numilog_owner_leases):
+            return False
+        if any(_kobo_search_owner(self, session) != owner
+               for session, owner in kobo_owner_leases):
             return False
         return True
 
@@ -631,6 +668,13 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     shared_numilog_sessions = {
         id(session) for session, owner in numilog_owner_leases if owner != active_id
     }
+    kobo_owner_leases = tuple(
+        (session, _kobo_search_owner(self, session))
+        for session in searchable if session.provider_id == "kobo"
+    )
+    shared_kobo_sessions = {
+        id(session) for session, owner in kobo_owner_leases if owner != active_id
+    }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
         for session in searchable
@@ -646,7 +690,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     )
     virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
     cache_key = hashlib.sha256(
-        f"search-v10\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        f"search-v11\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
     ).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
     if not force:
@@ -676,8 +720,12 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             session, field, provider_scope, facade_type=facade_type,
         )
         numilog_catalog_only = id(session) in shared_numilog_sessions
-        effective_search_scope = "catalog" if numilog_catalog_only else provider_scope
-        if numilog_catalog_only and effective_field is not None:
+        kobo_catalog_only = id(session) in shared_kobo_sessions
+        effective_search_scope = (
+            "catalog" if numilog_catalog_only or kobo_catalog_only
+            else provider_scope
+        )
+        if (numilog_catalog_only or kobo_catalog_only) and effective_field is not None:
             effective_field = "all"
         if contract_warning:
             warnings.append(contract_warning)
@@ -719,6 +767,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                             continue
                     if numilog_catalog_only:
                         row = _shared_numilog_public_row(row)
+                        if row is None:
+                            continue
+                    if kobo_catalog_only:
+                        row = _shared_kobo_public_row(row, session)
                         if row is None:
                             continue
                     key = _search_result_scope_key(row)
@@ -989,6 +1041,7 @@ def _search_provider_session(
     content_types: tuple[str, ...] = (), facade_type,
     response_facets: list[CatalogSearchFacet] | None = None,
     numilog_catalogue_only: bool = False,
+    kobo_catalogue_only: bool = False,
 ) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
@@ -1006,8 +1059,9 @@ def _search_provider_session(
         warnings.append(contract_warning)
     if effective_field is None:
         return [], warnings, "", ""
-    if numilog_catalogue_only:
-        # This provider's default all/digital path calls private library().
+    if numilog_catalogue_only or kobo_catalogue_only:
+        # Numilog all/digital reads MesLivres; Kobo can issue /library/search.
+        # Never query either foreign account for descriptive browsing.
         effective_field = "all"
         provider_scope = "catalog"
         response_facets = None
@@ -1053,6 +1107,10 @@ def _search_provider_session(
                 row = _provider_search_row(raw_row)
                 if numilog_catalogue_only:
                     row = _shared_numilog_public_row(row)
+                    if row is None:
+                        continue
+                if kobo_catalogue_only:
+                    row = _shared_kobo_public_row(row, session)
                     if row is None:
                         continue
                 key = _search_result_scope_key(row)
@@ -1222,6 +1280,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     shared_numilog_sessions = {
         id(session) for session, owner in numilog_owner_leases if owner != active_id
     }
+    kobo_owner_leases = tuple(
+        (session, _kobo_search_owner(self, session))
+        for session in searchable if session.provider_id == "kobo"
+    )
+    shared_kobo_sessions = {
+        id(session) for session, owner in kobo_owner_leases if owner != active_id
+    }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
         for session in searchable
@@ -1234,7 +1299,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
         if (entry := self.registry.virtual_entry(session.provider_id)) is not None
     )
-    cache_key = hashlib.sha256(f"search-v11-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
+    cache_key = hashlib.sha256(f"search-v12-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
@@ -1260,6 +1325,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             return False
         if any(_numilog_search_owner(self, session) != owner
                for session, owner in numilog_owner_leases):
+            return False
+        if any(_kobo_search_owner(self, session) != owner
+               for session, owner in kobo_owner_leases):
             return False
         return True
 
@@ -1374,11 +1442,14 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 break
             entry = self.registry.virtual_entry(session.provider_id)
             response_facets: list[CatalogSearchFacet] = []
-            if id(session) in shared_numilog_sessions:
+            if (id(session) in shared_numilog_sessions
+                    or id(session) in shared_kobo_sessions):
                 future = executor.submit(
                     _search_provider_session, self, session, query, scope,
                     field=field, content_types=tuple(content_types or ()),
-                    facade_type=type(self), numilog_catalogue_only=True,
+                    facade_type=type(self),
+                    numilog_catalogue_only=id(session) in shared_numilog_sessions,
+                    kobo_catalogue_only=id(session) in shared_kobo_sessions,
                 )
             elif (
                 entry is not None
@@ -1460,6 +1531,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     provider_rows = [
                         projected for raw in provider_rows
                         if (projected := _shared_numilog_public_row(raw))
+                        is not None
+                    ]
+                    response_facets.clear()
+                if id(session) in shared_kobo_sessions:
+                    provider_rows = [
+                        projected for raw in provider_rows
+                        if (projected := _shared_kobo_public_row(raw, session))
                         is not None
                     ]
                     response_facets.clear()

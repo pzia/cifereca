@@ -85,3 +85,31 @@ Limites : la découverte explicite du provider public `numilog-catalog` reste
 distincte, et les requêtes du catalogue public peuvent échouer selon le
 fournisseur ; un refus public ne déclenche pas la lecture des achats privés.
 Tests offline, aucun appel réseau réel.
+
+
+## Tranche Kobo : limiter les sessions étrangères au catalogue
+
+`KoboSession.search(all|digital)` peut consulter `/library/search` avec
+le compte connecté, alors que `scope=catalog` interdit cette branche
+privée et ne requiert que le catalogue public. Quand A n'est pas le
+propriétaire attesté du credential Kobo B, Core demande explicitement
+`scope=catalog` avant tout I/O ; il ne tente jamais la recherche privée
+sous B et ne réinterprète pas une absence de résultats publics comme absence
+d'achat de B.
+
+Seules les notices `KOBO/catalog` de provenance du credential exact
+sont admissibles, avec `owned` et `downloadable` non positifs, sans
+`download_url`. La projection Core supprime URL et métadonnées privées,
+revision, vignette et lien de fiche non qualifié, et marque l'accès
+`shared_read_only`. Une ligne `library/archived`, un achat positif ou
+une URL de livraison dans une réponse prétendue publique est refusé.
+Les détails affichés utilisent les seuls attributs déjà chargés, sans
+requête de droits du compte B, et un changement de propriétaire révoque
+l'ancienne recherche.
+
+Les caches Search passent à `v11` et `v12-progressive`, avec séparation
+identité/credential. Testé hors réseau avec un fournisseur synthétique à
+routes `catalog` et `library` distinctes, en synchrone et progressif.
+Aucune évolution ni installation KVault, aucun essai de téléchargement et
+aucune permission ajoutée. L'identité propriétaire B conserve sa propre
+recherche privée quand B est le profil sélectionné.
