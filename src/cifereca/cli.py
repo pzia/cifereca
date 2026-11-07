@@ -165,6 +165,23 @@ def main(argv: list[str] | None = None) -> int:
     reconcile.add_argument("--path", help="Fichier EPUB/PDF dans le dossier de cette identité")
     reconcile.add_argument("--undo", help="Identifiant opaque du rapprochement à annuler (aperçu par défaut)")
     reconcile.add_argument("--confirm", help="Token de l’aperçu exact ; son absence interdit toute écriture")
+    # #4859: a separate, rights-neutral operation. Unlike the historical
+    # kobo-reconcile-local, this cannot mutate ledger/placement/catalogue or
+    # claim provider delivery merely because historical bytes match.
+    observe_local = sub.add_parser(
+        "kobo-observe-local",
+        help="Constat hors réseau des octets Kobo, sans droit ni placement",
+    )
+    observe_local.add_argument("--credential", required=True)
+    observe_local.add_argument("--identity", required=True)
+    observe_local.add_argument("--account-id", required=True)
+    observe_local.add_argument("--item", required=True)
+    observe_local.add_argument("--sha256", required=True)
+    observe_local.add_argument("--size", type=int, required=True)
+    observe_local.add_argument("--path", required=True)
+    observe_local.add_argument(
+        "--confirm", help="Token exact du constat ; sinon lecture seule",
+    )
     kobo_preview = sub.add_parser(
         "kobo-resume-preview",
         help="Aperçu en lecture seule des candidats Kobo (aucun téléchargement)",
@@ -369,6 +386,29 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             result = {"ok": False, "offline": True, "changed": 0,
                       "reason": exc.code if isinstance(exc, ReconciliationRejected) else "reconciliation_unavailable"}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["ok"] else 2
+
+    if a.cmd == "kobo-observe-local":
+        from .core.kobo_local_reconciliation import (
+            ReconciliationRejected, reconcile_existing_profile,
+        )
+        try:
+            if a.account and a.account != a.credential:
+                raise ReconciliationRejected("source_scope_mismatch")
+            result = reconcile_existing_profile(
+                file_only=True, credential_id=a.credential,
+                identity_id=a.identity, account_id=a.account_id,
+                item_id=a.item, expected_sha256=a.sha256,
+                expected_size=a.size, path=a.path, confirmation=a.confirm,
+            )
+        except Exception as exc:
+            # Never echo SQLite errors, path, account, stored SHA or provider
+            # messages into a user-visible stdout/stderr CLI receipt.
+            result = {"ok": False, "changed": 0,
+                      "reason": (exc.code if isinstance(
+                          exc, ReconciliationRejected,
+                      ) else "observation_unavailable")}
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 2
 
