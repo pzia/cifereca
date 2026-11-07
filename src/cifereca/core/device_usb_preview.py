@@ -159,6 +159,9 @@ def preview_usb_delta(
         scan, identity_id=identity_id, device_id=device_id,
         fingerprint=fingerprint, now=now, max_age_seconds=max_age_seconds,
     )
+    files = scan.files if fresh else {}
+    path_owners = {entry.relative_path.casefold(): key for key, entry in files.items()}
+    seen_digests = {entry.sha256 for entry in files.values()}
     enabled = binding.get("enabled") is True
     result: list[UsbPreviewRow] = []
     seen: set[str] = set()
@@ -207,22 +210,32 @@ def preview_usb_delta(
                     and target.startswith(managed_dir.rstrip("/") + "/")
                 ))
             )
-            observed = scan.files.get(artifact_id)
-            occupied = (
-                _relative(target) and any(
-                    key != artifact_id
-                    and entry.relative_path.casefold() == target.casefold()
-                    for key, entry in scan.files.items()
-                )
+            observed = files.get(artifact_id)
+            source = local.get(artifact_id)
+            source_verified = (
+                type(source) is UsbLocalArtifact and source.verified is True
+                and source.identity_id == identity_id and _sha(source.sha256)
             )
+            canonical_sha = artifact_id.removeprefix("sha256:")
+            expected_sha = (
+                canonical_sha if canonical_sha != artifact_id and _sha(canonical_sha)
+                else source.sha256 if source_verified else None
+            )
+            occupant = path_owners.get(target.casefold()) if scoped else None
             if not scoped:
                 action, reason = "verify", "target_path_unqualified"
-            elif occupied:
+            elif occupant is not None and occupant != artifact_id:
                 # A foreign/untracked file at this path cannot become an
                 # implicit candidate for overwrite or removal.
                 action, reason = "blocked", "target_path_occupied"
-            elif observed is not None and observed.relative_path != target:
+            elif (observed is not None and observed.relative_path != target
+                  or observed is None and expected_sha in seen_digests):
                 action, reason = "blocked", "observed_target_path_mismatch"
+            elif (observed is not None and expected_sha is not None
+                  and observed.sha256 != expected_sha):
+                action = "blocked"
+                reason = ("unmanaged_or_changed_file" if desired == "remove"
+                          else "source_or_device_sha_unverified")
             else:
                 current = "present" if observed is not None else "missing"
                 if desired == "remove":
@@ -243,25 +256,16 @@ def preview_usb_delta(
                             if matching else ("blocked", "unmanaged_or_changed_file")
                         )
                 elif observed is not None:
-                    source = local.get(artifact_id)
-                    match = (
-                        type(source) is UsbLocalArtifact and source.verified is True
-                        and source.identity_id == identity_id
-                        and _sha(source.sha256) and source.sha256 == observed.sha256
-                    )
+                    match = source_verified and source.sha256 == observed.sha256
                     action, reason = (
                         ("skip", "identical_sha_observed")
                         if match else ("blocked", "source_or_device_sha_unverified")
                     )
                 else:
-                    source = local.get(artifact_id)
-                    verified = (
-                        type(source) is UsbLocalArtifact and source.verified is True
-                        and source.identity_id == identity_id and _sha(source.sha256)
-                    )
                     action, reason = (
                         ("upload_candidate", "revalidate_before_usb_write")
-                        if verified else ("blocked", "owned_source_unverified")
+                        if source_verified and source.sha256 == expected_sha
+                        else ("blocked", "owned_source_unverified")
                     )
         result.append(UsbPreviewRow(
             artifact_id=artifact_id,

@@ -114,7 +114,7 @@ def test_shas_match_before_present_is_rendered_as_verified_skip():
     conflict, = preview(scan_value=scan(
         files={"artifact-a": UsbObservedFile(FILE_PATH, SHA_B, regular_file=True)},
     ))
-    assert conflict.action == "blocked"
+    assert (conflict.action, conflict.observed) == ("blocked", "unknown")
     assert conflict.reason == "source_or_device_sha_unverified"
     assert conflict.executable is False
 
@@ -361,3 +361,36 @@ def test_external_file_occupying_target_blocks_upload_candidate():
     assert (shown.action, shown.observed) == ("blocked", "unknown")
     assert shown.reason == "target_path_occupied"
     assert shown.executable is False
+
+
+@pytest.mark.parametrize("desired", ["keep", "remove"])
+def test_exact_artifact_relocated_under_an_untracked_name_is_unresolved(desired):
+    artifact_id = "sha256:" + SHA_A
+    observed = scan(files={
+        "untracked:renamed": UsbObservedFile(
+            "Books/Paris/renamed.epub", SHA_A, regular_file=True,
+        ),
+    })
+    row, = preview(
+        placements=[intent(artifact=artifact_id, desired=desired)],
+        scan_value=observed,
+        local_value={artifact_id: UsbLocalArtifact("alice", SHA_A, True)}
+        if desired == "keep" else {},
+    )
+    assert (row.action, row.reason, row.observed, row.executable) == (
+        "blocked", "observed_target_path_mismatch", "unknown", False,
+    )
+
+
+def test_wrong_bytes_at_the_exact_remove_target_do_not_prove_presence():
+    artifact_id = "sha256:" + SHA_A
+    observed = scan(files={
+        artifact_id: UsbObservedFile(FILE_PATH, SHA_B, regular_file=True),
+    })
+    row, = preview(
+        placements=[intent(artifact=artifact_id, desired="remove")],
+        scan_value=observed, local_value={},
+    )
+    assert (row.action, row.reason, row.observed) == (
+        "blocked", "unmanaged_or_changed_file", "unknown",
+    )
