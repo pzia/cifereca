@@ -589,6 +589,33 @@ def main():
             and all(cover.picture.get_paintable() is not None
                     for cover in list_covers + detail_covers)
         ):
+            # Closed numeric diagnosis only: distinguish a non-mapped
+            # responsive pane from a real failed image load on scale 2.
+            all_list = [
+                cell.cover for cell in walk(page.list_stack)
+                if isinstance(cell, BookListCell)
+                and cell.title_label.get_text() == "Livre A"
+            ]
+            all_detail = [
+                cover for cover in walk(page.detail)
+                if isinstance(cover, CoverView)
+            ]
+            report["p1_774_cover_state"] = {
+                "attempt": min(30, attempt),
+                "list_found": min(20, len(all_list)),
+                "list_mapped": min(20, len(list_covers)),
+                "list_paintable": min(20, sum(
+                    cover.picture.get_paintable() is not None for cover in all_list
+                )),
+                "detail_found": min(20, len(all_detail)),
+                "detail_mapped": min(20, len(detail_covers)),
+                "detail_paintable": min(20, sum(
+                    cover.picture.get_paintable() is not None for cover in all_detail
+                )),
+                "image_requests": min(20, len(image_requests)),
+                "list_stack_mapped": int(page.list_stack.get_mapped()),
+                "detail_pane_mapped": int(page.detail.get_mapped()),
+            }
             assert attempt < 20, "La couverture n’est pas chargée dans la liste et le détail"
             later(100, lambda: verify_cover_a(attempt + 1))
             return
