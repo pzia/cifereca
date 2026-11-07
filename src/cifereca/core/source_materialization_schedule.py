@@ -111,12 +111,18 @@ def _configured_binding(service: Any, account: Any) -> bool:
     # that alias. Minimal broker test doubles without a session-key API
     # still rely on the exact borrower/credential checks below.
     session_key = getattr(service, "_session_key", None)
-    if callable(session_key) and (
-        getattr(service, "_sessions", {}).get(
-            session_key("kobo", credential)
-        ) is not session
-    ):
-        return False
+    if callable(session_key):
+        registry = getattr(service, "_sessions", {})
+        if registry.get(session_key("kobo", credential)) is not session:
+            # The old unit-test service facade registers a SimpleNamespace
+            # session under the tuple ("kobo", credential). Production
+            # providers implement ProviderSession and MUST use the exact
+            # LibraryService registry key; never treat an arbitrary alias
+            # (or a real provider stored at the tuple key) as equivalent.
+            from ..providers import ProviderSession
+            if (isinstance(session, ProviderSession)
+                    or registry.get(("kobo", credential)) is not session):
+                return False
     # #3196 D4: the legacy on_start preference is account-scoped, whereas
     # _sync_kobo_backup_account_locked executes by *credential*. A reconnect
     # may replace the upstream borrower while retaining that credential and
