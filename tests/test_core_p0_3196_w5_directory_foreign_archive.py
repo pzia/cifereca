@@ -65,7 +65,7 @@ def test_directory_rename_refuses_foreign_or_unbound_kobo_archive(
         storage.close()
 
 
-def test_directory_rename_updates_only_exact_owner_legacy_history(tmp_path):
+def test_directory_rename_preserves_exact_owner_kobo_archive_locator(tmp_path):
     storage = Storage(tmp_path / "db.sqlite")
     try:
         storage.identity_put({
@@ -75,9 +75,9 @@ def test_directory_rename_updates_only_exact_owner_legacy_history(tmp_path):
         old = tmp_path / "alice-old" / "book.epub"
         _legacy(storage, old, "alice")
         storage.commit_directory_migration(_plan(tmp_path))
-        assert storage.backup_get("kobo", "vault", "book")["local_path"] == (
-            str(tmp_path / "alice-new" / "book.epub")
-        )
+        # The v0.7 archive is historical; the directory migration cannot
+        # fabricate a newly attested physical path for it.
+        assert storage.backup_get("kobo", "vault", "book")["local_path"] == str(old)
         assert storage.identity_get("alice")["directory_name"] == "alice-new"
         assert storage.metadata_get(JOURNAL_KEY) is not None
     finally:
