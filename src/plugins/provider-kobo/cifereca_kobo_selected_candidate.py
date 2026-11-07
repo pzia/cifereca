@@ -18,7 +18,7 @@ from cifereca.plugin_api import (
 )
 from cifereca_kobo_delivery_offer import (
     exact_kobo_offer_id, _safe_https_get, kdrm_runtime_ready,
-    kdrm_delegated_runtime_ready,
+    kdrm_delegated_runtime_ready, _effective_kdrm_media_format,
 )
 from cifereca_kobo_provider_kdrm import scoped_kdrm_source
 
@@ -61,7 +61,16 @@ def _single_admitted_candidate(payload, offer_id, *, identity_id,
     if len(matches) != 1:
         raise ProviderCapabilityError("kobo_candidate_descriptor_ambiguous")
     selected = matches[0]
-    fmt = selected.get("media_format") or selected.get("source_format")
+    drm = selected.get("drm")
+    raw_drm = drm.get("raw_type") if type(drm) is dict else selected.get("drm_type")
+    source = selected.get("source")
+    if source is None and type(selected.get("kobo")) is dict:
+        source = selected["kobo"].get("source")
+    fmt = _effective_kdrm_media_format(
+        selected, raw_drm=raw_drm, source=source,
+    )
+    if fmt is None:
+        fmt = selected.get("source_format")
     fmt = fmt.strip().lower() if type(fmt) is str else ""
     if (selected.get("kind") == "acsm"
             and selected.get("handling") == "adobe_adept"
