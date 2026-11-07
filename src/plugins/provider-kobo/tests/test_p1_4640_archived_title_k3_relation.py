@@ -115,6 +115,7 @@ def test_k3_ambiguous_title_and_relation_are_info_without_content_get(
     original = vault.acquisition
 
     def k3(product, **kw):
+        posts.append((product, kw))
         data = original(product, **kw)
         data["acquisition"]["candidates"] = [first, second]
         return data
