@@ -166,7 +166,8 @@ def test_prepare_then_confirm_is_exactly_one_account_and_replay_cannot_download(
     assert phases["discover_rights"].last_success == ""
     # A fresh explicit plan is idempotent: same books do not download again.
     again = case.broker.materialize_source(case.source, _prepare(case))
-    assert again.ok and again.changed == 0 and len(case.downloaded) == 2, again
+    assert not again.ok and again.changed == 0 and len(case.downloaded) == 2, again
+    assert again.facts["status"] == "blocked"  # 0.7 bytes, not canonical B
 
 
 @pytest.mark.parametrize("change", ["add", "revision", "remove", "owned", "duplicate"])
@@ -392,7 +393,8 @@ def test_checkpoint_failure_after_durable_download_reports_it_and_does_not_dupli
     assert len(case.downloaded) == 1 and case.downloaded[0].is_file()
     assert "PRIVATE" not in repr(result)
     retry = case.broker.materialize_source(case.source, _prepare(case))
-    assert retry.ok and retry.changed == 1 and len(case.downloaded) == 2, retry
+    assert not retry.ok and retry.changed == 1 and len(case.downloaded) == 2, retry
+    assert retry.facts["status"] == "blocked"  # retained old B needs attestation
 
 
 def test_disabling_a_source_between_items_stops_only_remaining_acquisitions(case):
@@ -475,7 +477,8 @@ def test_real_process_crash_keeps_completed_item_and_requires_new_confirmation(c
     assert restarted.materialize_source(case.source, token).facts["status"] == "confirmation_unavailable"
     case.broker = restarted
     retry = restarted.materialize_source(case.source, _prepare(case))
-    assert retry.ok and retry.changed == 1, retry
+    assert not retry.ok and retry.changed == 1, retry
+    assert retry.facts["status"] == "blocked"
     assert len(case.downloaded) == 1  # only the second file was written by parent
 
 
