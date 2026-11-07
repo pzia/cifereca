@@ -357,27 +357,176 @@ def _write_launchers(root: Path) -> dict[str, str]:
     return out
 
 
+RELEASE_RETENTION_SECONDS = 24 * 60 * 60
+MIN_RETAINED_RELEASES = 2
+RETENTION_STATE_FILE = ".cifereca-release-retention.json"
+_UNFINISHED_TRANSACTION_STATES = frozenset({
+    "prepared", "applying", "restoring", "rolling_back",
+    "restoration_incomplete",
+})
+
+
 def _releases(root: Path) -> list[Path]:
     base = root / "releases"
-    if not base.is_dir():
+    if not base.is_dir() or base.is_symlink():
         return []
-    return sorted((x for x in base.iterdir() if x.is_dir()), key=lambda x: x.stat().st_mtime, reverse=True)
+    # Never traverse a symlink posing as a release directory.
+    return sorted(
+        (x for x in base.iterdir() if x.is_dir() and not x.is_symlink()),
+        key=lambda x: x.stat().st_mtime, reverse=True,
+    )
 
 
-def _gc(root: Path, keep: int) -> None:
-    keep = max(2, int(keep))
-    active = _symlink_target(root / "current")
-    previous = _symlink_target(root / "previous")
-    protected = {x.resolve() for x in (active, previous) if x is not None}
+def _release_installed_at(release: Path) -> float | None:
+    """Deployment time, not the mtime of a file modified after deployment.
+
+    Old installs without installed_at use the immutable release directory
+    timestamp if necessary. Invalid explicit timestamps fail closed.
+    """
+    metadata = release / ".cifereca-install.json"
+    if metadata.is_symlink():
+        return None
+    if metadata.exists():
+        try:
+            value = json.loads(metadata.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeError):
+            return None
+        if type(value) is not dict:
+            return None
+        raw = value.get("installed_at")
+        if raw is not None:
+            if type(raw) is not str:
+                return None
+            from datetime import datetime
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    return None
+                return parsed.timestamp()
+            except (ValueError, OverflowError, OSError):
+                return None
+    # Historic releases did not always persist the install time. The
+    # directory mtime is the bounded fallback, not nested content mtimes.
+    try:
+        return release.stat(follow_symlinks=False).st_mtime
+    except OSError:
+        return None
+
+
+def _gc(root: Path, keep: int) -> dict[str, int]:
+    """Post-commit cleanup: retain last 24 h AND >=2 restorable generations.
+
+    Core symlink targets and any incomplete transaction are fail-closed.
+    The currently applied transaction's *before_previous* is also needed:
+    transactional rollback restores BOTH Core symlinks, not just current.
+    No plugin version store, user state, backup, or transaction is purged.
+    """
+    keep = max(MIN_RETAINED_RELEASES, int(keep))
+    now = time.time()
+    releases_root = root / "releases"
+    if releases_root.is_symlink():
+        raise UpdateError("Nettoyage refusé : répertoire de releases non sûr")
     releases = _releases(root)
-    survivors = set(protected)
+    by_path = {release.resolve(): release for release in releases}
+    protected: set[Path] = set()
+
+    def retain_reference(target: Path | None, *, required: bool = True) -> None:
+        if target is None:
+            return
+        resolved = target.resolve()
+        if resolved in by_path:
+            protected.add(resolved)
+        elif required:
+            # Never discard apparently unneeded releases while a rollback
+            # pointer refers to an unexpected or missing Core tree.
+            raise UpdateError("Nettoyage refusé : référence Core non résolue")
+
+    for link in ("current", "previous"):
+        retain_reference(_symlink_target(root / link))
+
+    # An update that has not finished might need any of its before/after
+    # releases. The entire cleanup is postponed, including old releases.
+    transactions = root / "transactions"
+    if transactions.is_symlink():
+        raise UpdateError("Nettoyage refusé : journal de transactions non sûr")
+    if transactions.is_dir():
+        for directory in transactions.iterdir():
+            if directory.is_symlink():
+                raise UpdateError("Nettoyage refusé : transaction non sûre")
+            if not directory.is_dir():
+                continue
+            transaction = _read_transaction(directory)
+            if transaction.get("state") in _UNFINISHED_TRANSACTION_STATES:
+                return {
+                    "retained": len(releases), "removed": 0,
+                    "protected": len(protected), "deferred": 1,
+                }
+            if transaction.get("state") not in {
+                "applied", "rolled_back", "update_failed_restored",
+            }:
+                raise UpdateError("Nettoyage refusé : état de transaction inconnu")
+
+    active = _symlink_target(root / "current")
+    if active is not None and active.is_dir():
+        linked = _transaction_for_release(root, active)
+        if linked is not None:
+            _, transaction = linked
+            if transaction.get("state") != "applied":
+                raise UpdateError("Nettoyage refusé : transaction active non finalisée")
+            core = transaction.get("core")
+            if type(core) is not dict:
+                raise UpdateError("Nettoyage refusé : preuve de rollback absente")
+            retain_reference(_path_from_identity(core.get("before_current")))
+            retain_reference(_path_from_identity(core.get("before_previous")))
+
+    # Keep the newest N *distinct deployment trees* regardless of their
+    # semantic version; identical version labels can have different octets.
+    # The last-24h protection is additive to this minimum.
+    dated = [(release, _release_installed_at(release)) for release in releases]
+    ordered = sorted(
+        dated, key=lambda row: (
+            row[1] is not None, row[1] if row[1] is not None else 0.0,
+            row[0].name,
+        ), reverse=True,
+    )
+    protected.update(release.resolve() for release, _ in ordered[:keep])
+    for release, installed in dated:
+        if installed is None or installed > now - RELEASE_RETENTION_SECONDS:
+            # Unknown/future times cannot authorize destruction.
+            protected.add(release.resolve())
+
+    removed = 0
     for release in releases:
-        if release.resolve() in survivors:
+        if release.resolve() in protected:
             continue
-        if len(survivors) < keep:
-            survivors.add(release.resolve())
-            continue
-        shutil.rmtree(release, ignore_errors=True)
+        # A concurrent link change must never turn a purge candidate into
+        # the active or previous runtime. New transactions defer cleanup.
+        for link in ("current", "previous"):
+            if _symlink_target(root / link) == release.resolve():
+                raise UpdateError("Nettoyage refusé : génération réactivée")
+        if transactions.is_dir():
+            for directory in transactions.iterdir():
+                if directory.is_dir() and not directory.is_symlink():
+                    state = _read_transaction(directory).get("state")
+                    if state in _UNFINISHED_TRANSACTION_STATES:
+                        raise UpdateError("Nettoyage différé : transaction en cours")
+        if release.is_symlink() or not release.is_dir():
+            raise UpdateError("Nettoyage refusé : génération devenue non sûre")
+        # Do not ignore deletion errors: a partial cleanup must be diagnosed.
+        shutil.rmtree(release)
+        removed += 1
+
+    summary = {
+        "retained": len(releases) - removed, "removed": removed,
+        "protected": len(protected), "deferred": 0,
+    }
+    _write_json_atomic(root / RETENTION_STATE_FILE, {
+        "max_age_seconds": RELEASE_RETENTION_SECONDS,
+        "minimum_generations": keep,
+        "last_cleanup_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+        **summary,
+    })
+    return summary
 
 
 def _backup_persistent_state(label: str) -> Path:
@@ -993,7 +1142,7 @@ def install_source(
     source: Path,
     *,
     python: str | None = None,
-    keep: int = 3,
+    keep: int = MIN_RETAINED_RELEASES,
     dry_run: bool = False,
     provenance: dict[str, str] | None = None,
     backup_persistent: bool = False,
@@ -1070,12 +1219,12 @@ def install_source(
                 _replace_symlink(root / "current", release)
                 switched = True
                 launchers = _write_launchers(root)
-                step("cleanup", _gc, root, keep)
             if plugin_snapshot is not None:
                 plugins_result = step("plugin_activation", _apply_release_plugin_snapshot, release, plugin_snapshot)
             for package_id, row in transaction["packages"].items():
                 row["after"] = _package_identity(package_id)
             step("transaction_finalize", _save_transaction, transaction_path, transaction, "applied")
+            cleanup_result = step("cleanup", _gc, root, keep)
     except (Exception, KeyboardInterrupt) as update_exc:
         # Ctrl-C after Core activation must attempt the same safe transactional
         # restore as ordinary failures; never leave a success-looking state.
@@ -1107,6 +1256,7 @@ def install_source(
         "desktop_error": smoke.get("desktop_error", ""),
         "backup": str(backup) if backup else None,
         "plugins": plugins_result,
+        "cleanup": cleanup_result,
         "transaction": str(transaction_path) if transaction_path else None,
     })
     return result
@@ -1212,7 +1362,7 @@ def install_github(
     *,
     repository: str = DEFAULT_GITHUB_REPOSITORY,
     python: str | None = None,
-    keep: int = 3,
+    keep: int = MIN_RETAINED_RELEASES,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="cifereca-github-") as tmp:
@@ -1239,7 +1389,7 @@ def install_archive(
     archive: Path,
     *,
     python: str | None = None,
-    keep: int = 3,
+    keep: int = MIN_RETAINED_RELEASES,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     try:
@@ -1395,7 +1545,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--status", action="store_true")
     p.add_argument("--rollback", action="store_true")
     p.add_argument("--to")
-    p.add_argument("--keep", type=int, default=3)
+    p.add_argument("--keep", type=int, default=MIN_RETAINED_RELEASES,
+                   help="Plancher de générations conservées (min 2) en plus des 24 h")
     p.add_argument("--python")
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
