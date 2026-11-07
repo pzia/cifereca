@@ -150,6 +150,8 @@ def _candidate_url_relation(urls: list[str]) -> str:
     """
     if len(urls) < 2:
         return "not_applicable"
+    if len(set(urls)) == 1:
+        return "same_url"
     try:
         parsed = [urlsplit(url) for url in urls]
         if len({part.netloc.casefold() for part in parsed}) != 1:
