@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Joindre un plan de vérifications manuelles, sans modifier ni télécharger de fichiers",
     )
     reconcile = sub.add_parser(
-        "kobo-reconcile-local", help="Rapprochement Kobo local confirmé, atomique et réversible"
+        "kobo-reconcile-local", help="Commande legacy retirée : utiliser kobo-observe-local / kobo-relink-canonical"
     )
     reconcile.add_argument("--credential", required=True)
     reconcile.add_argument("--identity", help="Refuser une connexion liée à une autre identité")
@@ -409,20 +409,18 @@ def main(argv: list[str] | None = None) -> int:
     # A local repair/preview must not activate plugins, chmod Config, purge
     # caches or recover a directory migration as a side effect of startup.
     if a.cmd == "kobo-reconcile-local":
-        from .core.kobo_local_reconciliation import ReconciliationRejected, reconcile_existing_profile
-        try:
-            if a.account and a.account != a.credential:
-                raise ReconciliationRejected("source_scope_mismatch")
-            result = reconcile_existing_profile(
-                credential_id=a.credential, account_id=a.account_id, item_id=a.item,
-                expected_sha256=a.sha256, path=a.path, confirmation=a.confirm,
-                undo_operation=a.undo, identity_id=a.identity,
-            )
-        except Exception as exc:
-            result = {"ok": False, "offline": True, "changed": 0,
-                      "reason": exc.code if isinstance(exc, ReconciliationRejected) else "reconciliation_unavailable"}
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0 if result["ok"] else 2
+        # P0 #4859 W4/D5: the retired v0.7 positive repair treated legacy
+        # backup_items + generic ledger as authority for an applied delivery.
+        # Deny even preview and undo: a historical token cannot authorize
+        # a new positive mutation after this cutover, and the CLI must never
+        # open SQLite or inspect a private file on this deprecated route.
+        # Explicit safe alternatives: kobo-observe-local (bytes-only) and
+        # kobo-relink-canonical (only an independently published Core B).
+        print(json.dumps({
+            "ok": False, "offline": True, "changed": 0,
+            "reason": "legacy_reconciliation_retired",
+        }, ensure_ascii=False, indent=2))
+        return 2
 
     if a.cmd == "kobo-observe-local":
         from .core.kobo_local_reconciliation import (
