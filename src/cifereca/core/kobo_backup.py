@@ -576,6 +576,21 @@ def kobo_backup_preview(
                 if refresh_manifest and raw.get("archived") is True
                 else "attention_required"
             )
+        elif refresh_manifest and raw.get("archived") is True:
+            # A fresh explicit provider archive flag is independent of the
+            # 0.7 file/borrower claim. It never authorizes a local B.
+            reason = "skipped_archived"
+        elif (refresh_manifest and current is not None
+              and (len(accounts) != 1
+                   or current.get("identity_id") != identity_id
+                   or current.get("account_id") != accounts[0].unique_id)):
+            # #3196 D1/W2: a refreshed manifest may belong to a different
+            # upstream borrower than the old credential-scoped backup row.
+            # Do not report its path, SHA or state as this borrower's local
+            # presence, even in the private _item_reasons preflight. Missing
+            # legacy owner/account is ambiguous too. The offline diagnostic
+            # keeps historical classifications without claiming authority.
+            reason = "attention_required"
         else:
             reason = "skipped_archived" if _manifest_archived(raw, current) else ""
         path_raw = str((current or {}).get("local_path") or "").strip()
