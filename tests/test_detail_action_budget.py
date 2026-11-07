@@ -48,7 +48,19 @@ def bar():
     methods = [n for n in cls.body if isinstance(n, ast.FunctionDef)
                and n.name in {'_layout_overflow', '_move_button'}]
     owner = ast.ClassDef(name='Bar', bases=[], keywords=[], body=methods, decorator_list=[])
-    ns = {'Gtk': NS(Orientation=NS(HORIZONTAL=0)), 'visible_action_count': visible_action_count}
+    class Content:
+        def set_label(self, value): self.label = value
+        def set_icon_name(self, value): self.icon_name = value
+
+    ns = {
+        'Gtk': NS(
+            Orientation=NS(HORIZONTAL=0),
+            AccessibleProperty=NS(LABEL=1),
+            Image=NS(new_from_icon_name=lambda name: NS(label='', icon_name=name)),
+        ),
+        'Adw': NS(ButtonContent=Content),
+        'visible_action_count': visible_action_count,
+    }
     exec(compile(ast.fix_missing_locations(ast.Module(body=[owner], type_ignores=[])), str(path), 'exec'), ns)
     obj = ns['Bar']()
     obj.box, obj.overflow_box = Box(), Box(0)
@@ -98,3 +110,64 @@ def test_late_toolbar_style_change_reduces_visible_count():
     obj._layout_overflow(410)
     assert occupied(obj) <= 410
     assert obj._overflow_visible_count == 1
+
+
+class LongPrimary(Button):
+    """Natural GTK-ish text width, no display required."""
+    def __init__(self, label):
+        super().__init__(len(label) * 8 + 36)
+        self._cifereca_action_label = label
+        self._cifereca_action_icon = 'document-open-symbolic'
+        self.display = label
+        self.accessible = None
+
+    def set_child(self, content):
+        self.display = content.label
+        self.width = max(32, len(self.display) * 8 + 36)
+
+    def set_label(self, value):
+        self.display = value
+        self.width = max(32, len(value) * 8 + 36)
+
+    def update_property(self, _keys, values):
+        self.accessible = values[0]
+
+
+def test_p1_3687_oversized_primary_label_keeps_overflow_hittable_at_1024():
+    obj = bar()
+    full_label = (
+        "Consulter disponibilités et actions de la notice 1 ici · Premier"
+    )
+    original = obj._buttons[0]
+    obj.box.remove(original)
+    primary = LongPrimary(full_label)
+    obj._buttons[0] = primary
+    obj.box.append(primary)
+    obj._widths.pop(original)
+    obj._widths[primary] = primary.width
+    obj.preserve_primary_label = True
+    obj._primary_full_width = None
+    obj._primary_fit_budget = None
+    obj._primary_variant = None
+    obj._compact = False
+
+    obj._layout_overflow(529)
+    assert obj._primary_variant == 'abbreviated'
+    assert primary.display.endswith('…')
+    assert primary.accessible == full_label
+    assert obj.box.children[0] is primary
+    assert obj.box.children[-1] is obj.overflow_button
+    assert occupied(obj) <= 529
+    assert obj.overflow_button.visible
+    # When the panel grows, the original meaningful title must return.
+    obj._layout_overflow(950)
+    assert obj._primary_variant is None
+    assert primary.display == full_label
+    assert primary.accessible == full_label
+    assert occupied(obj) <= 950
+    assert obj._buttons[0] is primary
+    # Narrow again: no stale dimensions or duplicate button identities.
+    obj._layout_overflow(529)
+    assert obj._primary_variant == 'abbreviated'
+    assert occupied(obj) <= 529
+    assert obj.box.children[-1] is obj.overflow_button
