@@ -2182,15 +2182,16 @@ class Storage:
                          # Reconciliation statuses still require the 0.8
                          # mirror for W4 confirmation/undo until migrated.
                          or merged.get("status") == "skipped_archived"
-                         # #3196 W1: a SHA-less/size-less 0.7 repair or
-                         # conflict cannot attest local bytes and is archive-
-                         # only if the credential has NO currently bound
-                         # source for the recorded identity. An active Kobo
-                         # OWN manifest can legitimately discover this source
-                         # right even while multiple local candidates need
-                         # manual review. Until W2 writes typed source rights,
-                         # preserve that connected source's 0.8 mirror.
-                         # This is not B presence or a right from the file.
+                         # #3196 W1 after W4 retirement: a
+                         # reconcile_required/conflict 0.7 checkpoint is
+                         # never independent provider A evidence, even with
+                         # syntactically valid SHA/size or a stale local path.
+                         # When the credential is no longer enabled AND
+                         # owned by the recorded identity, keep the raw
+                         # archive only; do not mint entitlement, B, ledger
+                         # or catalogue. An enabled, exact Kobo connection
+                         # retains temporary W2 discovery compatibility
+                         # until typed source-rights publication is complete.
                          or (merged.get("status") in
                              {"reconcile_required", "reconcile_conflict"}
                              and db.execute(
@@ -2199,15 +2200,7 @@ class Storage:
                                  "credential_id=? AND identity_id=? LIMIT 1",
                                  (merged.get("credential_id"),
                                   merged.get("identity_id")),
-                             ).fetchone() is None
-                             and (
-                                 type(merged.get("sha256")) is not str
-                                 or len(merged["sha256"]) != 64
-                                 or any(ch not in "0123456789abcdef"
-                                        for ch in merged["sha256"].lower())
-                                 or type(merged.get("size")) is not int
-                                 or merged["size"] <= 0
-                             )))):
+                             ).fetchone() is None))):
                 self._check_kobo_legacy_canonical_owner(db, merged)
             else:
                 self._mirror_backup_row(
