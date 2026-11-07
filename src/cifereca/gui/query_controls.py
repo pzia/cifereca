@@ -219,6 +219,7 @@ class LocalQueryControls(QueryControls):
         super().__init__((), changed, self._changed, library=True)
         self.entry.set_placeholder_text(placeholder)
         self.field.set_visible(False)
+        self._local_field_enabled = False
         self._format_labels = self.types.choice_labels.copy()
         scope_model = self.scope.get_model()
         self._scope_labels = {
@@ -234,6 +235,25 @@ class LocalQueryControls(QueryControls):
 
     def filter_text(self):
         return self.entry.get_text().strip()
+
+    def enable_field_filter(self):
+        """Expose Search's existing field chooser for a read-only local set.
+
+        Disabled by default for installed consumers that use the historical
+        title/author text filter. Opt-in does not trigger a remote search.
+        """
+        self._local_field_enabled = True
+        self.field.set_visible(True)
+
+    def filter_field(self):
+        """Selected Search field, or 'all' when this local view has no chooser."""
+        if not self._local_field_enabled:
+            return 'all'
+        try:
+            index = self.field.get_selected()
+            return FIELDS[index] if type(index) is int and 0 <= index < len(FIELDS) else '\x00'
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return '\x00'
 
     def selected_sources(self):
         return self.provider.values()
@@ -288,6 +308,10 @@ class LocalQueryControls(QueryControls):
             if type(formats) is not tuple:
                 return ()
             labels = []
+            if self._local_field_enabled:
+                chosen = self.filter_field()
+                if chosen != 'all' and chosen in FIELDS:
+                    labels.append(self.field.get_model().get_string(FIELDS.index(chosen)))
             if scope != 'all':
                 label = self._scope_labels.get(scope)
                 if type(label) is str and label:
