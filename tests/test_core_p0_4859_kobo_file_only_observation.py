@@ -164,3 +164,36 @@ def test_file_only_journal_is_immutable_after_replacement(observation):
     with pytest.raises(repair.ReconciliationRejected, match="file_evidence_conflict"):
         _observe(case, args)
     assert _snapshot(case) == before
+
+
+
+def test_offline_existing_profile_exposes_file_only_route_without_legacy_mutation(
+    observation,
+):
+    case, args = observation
+    before = _snapshot(case)
+    run = lambda **extra: repair.reconcile_existing_profile(
+        config_path=case.service.config.path,
+        database_path=case.storage.path,
+        file_only=True, **{**args, **extra},
+    )
+    preview = run()
+    assert preview["status"] == "preview"
+    assert _snapshot(case) == before
+    assert run(confirmation=preview["plan_token"])["status"] == "observed"
+    assert _snapshot(case) == before
+    assert run()["status"] == "already_observed"
+
+
+@pytest.mark.parametrize("value", (None, "true", 1, []))
+def test_offline_entry_rejects_ambiguous_file_only_dispatch(observation, value):
+    case, args = observation
+    if value is None:
+        # Explicit None is not equivalent to a requested read-only observation.
+        pass
+    with pytest.raises(repair.ReconciliationRejected, match="invalid_request"):
+        repair.reconcile_existing_profile(
+            config_path=case.service.config.path,
+            database_path=case.storage.path,
+            file_only=value, **args,
+        )
