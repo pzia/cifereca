@@ -50,7 +50,8 @@ def test_provider_rejection_blocks_prune_even_if_valid_subset_is_processed(
         assert first["status"] == "partial"
         assert first["errors"] == 0
         assert first["downloaded"] == first["attempted"] == 0
-        assert first["unchanged"] == 1
+        assert first["unchanged"] == 0
+        assert first["reconcile_pending"] >= 1
         assert first["malformed_manifest_items"] == 1
         assert first["provider_rejected_manifest_items"] == 1
         assert first["sources"][0]["provider_rejected_manifest_items"] == 1
@@ -67,7 +68,7 @@ def test_provider_rejection_blocks_prune_even_if_valid_subset_is_processed(
 
         failed_page[0] = False
         good = service.sync_kobo_backup_account("vault-1")
-        assert good["status"] == "complete"
+        assert good["status"] == "attention_required"
         assert good["provider_rejected_manifest_items"] == 0
         assert good["legacy_pruned"] == 0
         assert service.storage.backup_get("kobo", "vault-1", "historic") is not None
