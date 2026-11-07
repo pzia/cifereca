@@ -223,3 +223,79 @@ def test_missing_explicit_confirmation_never_writes_or_moves_files(published):
     assert report["status"] == "preview"
     assert _read(store, "placements") == before
     assert path.read_bytes() == BYTES
+
+
+
+def _offline(published, tmp_path):
+    import json
+    store, original, path, args, source, finished = published
+    profile = tmp_path / "current-profile.json"
+    profile.write_text(json.dumps({
+        "identities": [
+            {"id": "A", "label": "A", "directory_name": "A"},
+        ],
+        "library": {"directory": str(args["library_root"])},
+    }), encoding="utf-8")
+    return profile
+
+
+def test_offline_profile_relink_and_cli_do_not_start_provider_or_legacy(
+    published, tmp_path, monkeypatch, capsys,
+):
+    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca import cli
+
+    store, original, path, args, source, finished = published
+    original.rename(path)
+    profile = _offline(published, tmp_path)
+    monkeypatch.setattr(repair, "config_file", lambda **_kw: profile)
+    monkeypatch.setattr(repair, "database_file", lambda **_kw: store.path)
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: pytest.fail("offline relink must not start Core/provider"),
+    )
+    before = _unchanged(store)
+    argv = [
+        "kobo-relink-canonical",
+        "--credential", "vault-1", "--identity", "A",
+        "--account-id", "buyer-A", "--item", "book-1",
+        "--right", "purchase", "--branch", "purchases",
+        "--placement", finished.placement_id,
+        "--path", str(path),
+    ]
+    assert cli.main(argv) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["status"] == "preview"
+    assert _unchanged(store) == before
+    assert cli.main(argv + ["--confirm", preview["plan_token"]]) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "relinked"
+    assert receipt["rights_mutations"] == 0
+    assert _unchanged(store) == before
+    assert store.placement_get(finished.placement_id)["path"] == str(path)
+    text = json.dumps(preview) + json.dumps(receipt)
+    for private in ("vault-1", "buyer-A", "book-1", SHA, str(path)):
+        assert private not in text
+
+
+def test_offline_config_cannot_rebind_profile_folder(published, tmp_path):
+    from cifereca.core import kobo_local_reconciliation as repair
+
+    store, original, path, args, source, finished = published
+    original.rename(path)
+    profile = _offline(published, tmp_path)
+    data = json.loads(profile.read_text())
+    data["identities"][0]["directory_name"] = "another-owner"
+    profile.write_text(json.dumps(data))
+    before = _read(store, "placements")
+    with pytest.raises(repair.ReconciliationRejected, match="identity_directory_unproven"):
+        repair.reconcile_existing_profile(
+            config_path=profile, database_path=store.path,
+            canonical_relink=True,
+            credential_id="vault-1", identity_id="A",
+            account_id="buyer-A", edition_id="book-1",
+            right_id="purchase", branch_id="purchases",
+            placement_id=finished.placement_id,
+            path=str(path),
+        )
+    assert _read(store, "placements") == before
