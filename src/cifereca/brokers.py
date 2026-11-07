@@ -1006,9 +1006,13 @@ class SynchronizationBrokerImpl:
         if not bool(getattr(getattr(session, "capabilities", None), "backup", False)):
             return rejected("not_supported")
         try:
+            # D1 P0: the public Sync-page broker must never reuse W2's
+            # private 0.7 backup_items projection, even on a partial Kobo
+            # ABI. Read existing canonical B evidence only; no live A/GET.
             raw = self.service.kobo_backup_preview(
                 credential, refresh_manifest=False,
                 verify_local_files=verify_local_files,
+                offline_canonical_only=True,
             )
         except Exception:
             # Provider/local errors can include bearer URLs and private
@@ -1019,6 +1023,10 @@ class SynchronizationBrokerImpl:
             or raw.get("acquisition_authorized") is not False
             or raw.get("manifest_refreshed") is not False
             or raw.get("requires_manifest_validation") is not True
+            or raw.get("canonical_source") is not True
+            or raw.get("historical_canonical_only") is not True
+            or raw.get("known_item_count") != 0
+            or raw.get("manifest_items") != 0
         ):
             return rejected("preview_unavailable")
         allowed = (
@@ -1036,8 +1044,21 @@ class SynchronizationBrokerImpl:
             if type(value) is not int or not 0 <= value <= 1_000_000:
                 return rejected("preview_unavailable")
             counts[field] = value
-        known = raw.get("known_item_count")
-        if type(known) is not int or not 0 <= known <= 1_000_000:
+        # An old W2 status/sha/path must never leak back as a positive
+        # count through a future Core default-preview compatibility change.
+        if any(counts.values()):
+            return rejected("preview_unavailable")
+        historical = raw.get("historical_canonical")
+        if type(historical) is not dict:
+            return rejected("preview_unavailable")
+        recorded = historical.get("recorded_rights")
+        verified = historical.get("previously_published_files_physically_verified")
+        truncated = historical.get("inventory_truncated")
+        if (type(recorded) is not int or not 0 <= recorded <= 512
+                or type(verified) is not int or not 0 <= verified <= recorded
+                or type(truncated) is not bool
+                or historical.get("file_verification_requested") is not verify_local_files
+                or (not verify_local_files and verified != 0)):
             return rejected("preview_unavailable")
         return SyncResult(
             ok=True, changed=0,
@@ -1048,8 +1069,15 @@ class SynchronizationBrokerImpl:
                 "manifest_refreshed": False,
                 "requires_manifest_validation": True,
                 "files_verified": verify_local_files,
-                "known_item_count": known,
+                "known_item_count": 0,
                 "counts": counts,
+                "canonical_source": True,
+                "historical_canonical_only": True,
+                "historical_canonical": {
+                    "recorded_rights": recorded,
+                    "physically_verified": verified,
+                    "inventory_truncated": truncated,
+                },
             },
         )
 
