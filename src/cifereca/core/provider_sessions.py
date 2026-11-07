@@ -587,7 +587,26 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
     core_epoch = self._source_context_epoch
     registry = self.accounts
     owner = self.storage.identity_for_connection("kobo", credential_id)
-    if (type(owner) is not str or not owner
+    # The enabled configuration is another independent local owner fence.
+    # connect_kobo_preview intentionally does not rewrite SQLite, so a
+    # config A→B profile move cannot silently resurrect A's old SQL consent.
+    try:
+        configured_rows = [
+            row for row in self.config.provider_accounts(enabled_only=True)
+            if type(row) is dict
+            and str(row.get("provider") or "").strip().lower() == "kobo"
+            and str(row.get("id") or "").strip() == credential_id
+        ]
+        configured_owner = (
+            str(configured_rows[0].get("identity_id") or (
+                self.current_identity.identity_id
+                if self.current_identity else "default"
+            )).strip() if len(configured_rows) == 1 else None
+        )
+    except Exception:
+        configured_owner = None
+    if (configured_owner != owner
+            or type(owner) is not str or not owner
             or account.provider_id != "kobo"
             or account.credential_id != credential_id
             or type(account.unique_id) is not str
