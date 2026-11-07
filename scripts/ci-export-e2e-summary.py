@@ -319,6 +319,15 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
             ("native_declaration_preview_dialog", "declaration_preview"),
             ("native_declaration_committed", "declaration_committed"),
             ("native_declaration_revoked", "declaration_revoked"),
+            # Closed, boolean-only diagnostics for the mandatory attested
+            # reconciliation phase following user-declaration revocation.
+            ("native_declaration_revoked_verified", "declaration_revoked_verified"),
+            ("native_declaration_cleanup_started", "declaration_cleanup_started"),
+            ("native_declaration_cleanup_done", "declaration_cleanup_done"),
+            ("native_declaration_attested_started", "attested_started"),
+            ("native_declaration_attested_fixture_ready", "attested_fixture"),
+            ("native_declaration_attested_audit_complete", "attested_audit"),
+            ("native_declaration_attested_right_ready", "attested_right"),
         )
         reached = "before_maintenance_route"
         for field, label in milestones:
