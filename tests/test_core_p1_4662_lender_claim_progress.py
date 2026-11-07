@@ -339,3 +339,29 @@ def test_switching_active_profile_during_claim_read_revokes_observation(
     assert verdict.reason_code == "lender_scope_unverified"
     assert verdict.loan == "unknown" and verdict.transfer == "blocked"
     assert verdict.retry_borrow is verdict.executable is False
+
+
+
+@pytest.mark.parametrize("epoch", ["_account_context_epoch", "_source_context_epoch"])
+def test_lender_receipt_observation_rejects_aba_context_or_source_epoch(
+    setup, monkeypatch, epoch,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    original = service.storage.metadata_get
+
+    def bump_epoch_during_read(*args):
+        value = original(*args)
+        # An A -> B -> A switch may restore the same identity scalar.
+        # A source disconnect/reconnect can restore the same connection ID.
+        setattr(service, epoch, getattr(service, epoch) + 2)
+        return value
+
+    monkeypatch.setattr(
+        service.storage, "metadata_get", bump_epoch_during_read,
+    )
+    result = read(service, account, notice)
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.loan == "unknown"
+    assert result.transfer == "blocked"
+    assert result.retry_borrow is result.executable is False
