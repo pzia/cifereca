@@ -10,6 +10,7 @@ import pytest
 
 from tests.test_kobo_backup_fault_isolation import _service, _write_epub
 from tests.test_kobo_backup_preview import _forbid_mutation_and_acquisition
+from cifereca.core.kobo_backup import kobo_backup_preview
 
 
 def _rig(tmp_path, *, owner, borrower, archived=False):
@@ -55,7 +56,7 @@ def test_fresh_private_preview_refuses_foreign_or_unbound_legacy_file(
     )
     try:
         reasons = {}
-        result = service.kobo_backup_preview(
+        result = kobo_backup_preview(service, 
             "vault-1", refresh_manifest=True, verify_local_files=True,
             _item_reasons=reasons,
         )
@@ -78,7 +79,7 @@ def test_same_exact_borrower_retains_private_legacy_repair_preflight(
     _forbid_mutation_and_acquisition(service, session, monkeypatch)
     try:
         reasons = {}
-        result = service.kobo_backup_preview(
+        result = kobo_backup_preview(service, 
             "vault-1", refresh_manifest=True, verify_local_files=True,
             _item_reasons=reasons,
         )
@@ -98,7 +99,7 @@ def test_fresh_explicit_archive_flag_is_not_inferred_from_old_borrower(
     _forbid_mutation_and_acquisition(service, session, monkeypatch)
     try:
         reasons = {}
-        result = service.kobo_backup_preview(
+        result = kobo_backup_preview(service, 
             "vault-1", refresh_manifest=True, _item_reasons=reasons,
         )
         assert reasons == {"book": "skipped_archived"}
