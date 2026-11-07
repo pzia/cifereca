@@ -503,10 +503,16 @@ def observe_kobo_local_file_only(
     item, account or credential. A changed inode/content, disabled/rebound
     account, old confirmation or conflicting journal fails closed.
     """
-    for value in (identity_id, credential_id, account_id, item_id):
+    for value in (identity_id, credential_id, item_id):
         _require(type(value) is str and 0 < len(value) <= 1024
                  and all(32 <= ord(char) < 127 or ord(char) >= 160
                          for char in value), "invalid_request")
+    # The upstream primary borrower has the exact account ID "". Reject
+    # missing/unknown IDs, but do not conflate this valid ID with None or
+    # another account: the SQLite connection/borrower join below is exact.
+    _require(type(account_id) is str and len(account_id) <= 1024
+             and all(32 <= ord(char) < 127 or ord(char) >= 160
+                     for char in account_id), "invalid_request")
     _require(type(expected_sha256) is str
              and re.fullmatch("[0-9a-f]{64}", expected_sha256) is not None,
              "invalid_sha256")
