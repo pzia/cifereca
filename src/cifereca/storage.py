@@ -2183,6 +2183,15 @@ class Storage:
                          or not merged["identity_id"].strip()
                          or merged["identity_id"] != merged["identity_id"].strip()
                          or merged.get("account_id") is None
+                         # The empty Kobo PRIMARY account is a valid exact
+                         # borrower, unlike whitespace-only, padded or
+                         # control-tainted historical borrower labels. Preserve
+                         # these rows as archives only: a 0.7 account label
+                         # cannot substitute for the canonical SourceKey.
+                         or type(merged.get("account_id")) is not str
+                         or (merged["account_id"] != ""
+                             and (merged["account_id"] != merged["account_id"].strip()
+                                  or any(c in merged["account_id"] for c in "\x00\r\n")))
                          # #3196 W1: a provider-archived Kobo edition is
                          # not an active acquisition. Keep the 0.7 archive
                          # and transactional owner veto, but never mint a
