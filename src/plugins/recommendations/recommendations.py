@@ -1153,6 +1153,29 @@ class UxRecommendationsView:
             (provider,) if provider else (), (language,) if language else (),
         )
 
+    def _local_filter_state(
+        self,
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...]] | None:
+        """Bound user-facing local filter state before matching or summarizing.
+
+        A stale/untrusted host adapter must never stringify private values,
+        break list refresh, or turn an invalid active filter into 'Tous'.
+        This projection neither queries providers nor changes exact rights.
+        """
+        try:
+            text, sources, languages = self._view_filters()
+        except Exception:
+            return None
+        if type(text) is not str or len(text) > 2048 or not text.isprintable():
+            return None
+        for values in (sources, languages):
+            if (type(values) not in (tuple, list) or len(values) > 128
+                    or any(type(value) is not str or not value
+                           or len(value) > 120 or value != value.strip()
+                           or not value.isprintable() for value in values)):
+                return None
+        return text, tuple(dict.fromkeys(sources)), tuple(dict.fromkeys(languages))
+
     def _language_changed(self, *_args) -> None:
         if not self._reloading_languages:
             self._render()
@@ -1188,20 +1211,35 @@ class UxRecommendationsView:
         score = _public_affinity_score(ranked.score)
         if score is None or score < int(self._score.get_value()):
             return False
-        text, sources, languages = self._view_filters()
+        state = self._local_filter_state()
+        if state is None:
+            return False
+        text, sources, languages = state
         if sources and set(sources).isdisjoint(_public_ranked_values(ranked.sources)):
             return False
         if languages and set(languages).isdisjoint(_candidate_languages(ranked.item)):
             return False
         controls = getattr(self, "_query_controls", None)
         matches_document = getattr(controls, "matches_document", None)
-        if callable(matches_document) and not matches_document(ranked.item):
-            return False
+        if callable(matches_document):
+            try:
+                if not matches_document(ranked.item):
+                    return False
+            except Exception:
+                return False
         needle = normalize(text)
         if needle:
             item = ranked.item
             selected_field = getattr(controls, "filter_field", None)
-            field = selected_field() if callable(selected_field) else "all"
+            try:
+                field = selected_field() if callable(selected_field) else "all"
+            except Exception:
+                return False
+            if type(field) is not str or field not in (
+                "all", "title", "author", "isbn", "subject",
+                "series", "collection", "language",
+            ):
+                return False
             if field == "all":
                 # Preserve historical title + attested authors by default.
                 # Selecting a field is an explicit, local-only restriction.
@@ -1692,12 +1730,19 @@ class UxRecommendationsView:
         if not total:
             return
 
-        text_filter, sources, languages = self._view_filters()
-        filters = []
-        if text_filter:
-            filters.append(f"« {text_filter} »")
-        filters.extend(self._display_source(source) for source in sources)
-        filters.extend(_language_label(language) for language in languages)
+        state = self._local_filter_state()
+        if state is None:
+            # _matches has hidden every row. Keep the count and a public,
+            # closed diagnostic rather than serialize arbitrary filter values.
+            text_filter, sources, languages = "", (), ()
+            filters = ["Filtres locaux indisponibles"]
+        else:
+            text_filter, sources, languages = state
+            filters = []
+            if text_filter:
+                filters.append(f"« {text_filter} »")
+            filters.extend(self._display_source(source) for source in sources)
+            filters.extend(_language_label(language) for language in languages)
         # The default threshold already informs initial ranking visibility.
         # Once edited it becomes a *local, reversible* facet and belongs in
         # the same visible count as Source/Format/Champ; no new provider I/O.
