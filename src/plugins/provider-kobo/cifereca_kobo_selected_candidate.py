@@ -22,6 +22,7 @@ from cifereca_kobo_delivery_offer import (
     kdrm_delegated_runtime_ready, _effective_kdrm_media_format,
 )
 from cifereca_kobo_provider_kdrm import scoped_kdrm_source
+from cifereca_kobo_private_trace import trace_kobo_http_url
 
 _MAX_DELIVERY_BYTES = 128 * 1024 * 1024
 _MAX_ACSM_BYTES = 2 * 1024 * 1024
@@ -358,6 +359,9 @@ def stage_selected_candidate(session, account: Account, *, edition_id,
                 headers=_attested_kobo_http_headers(selected),
                 timeout=30, max_bytes=_MAX_DELIVERY_BYTES, max_redirects=8,
                 on_url_refusal=_closed_url_refusal,
+                on_trace_url=lambda phase, raw: trace_kobo_http_url(
+                    phase, raw, product_id=right_id,
+                ),
             )
             staged = True
             require_core()
