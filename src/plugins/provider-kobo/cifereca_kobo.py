@@ -1472,6 +1472,16 @@ class KoboSession(ProviderSession):
                 qualification_diagnostic.get("candidate_media_format", "not_applicable"),
                 qualification_diagnostic.get("candidate_source_format", "not_applicable"),
             )
+            # Correlate the refusal with public /status already seen at
+            # connect(), NOT with the Worker that generated this POST.
+            # No network call; never publish unvalidated upstream text.
+            detail += (
+                " kvault_status_release_at_connect=%s"
+                " kvault_status_api_at_connect=%s"
+            ) % (
+                _vault_public_version(self.vault_release) or "unavailable",
+                _vault_public_version(self.api_version) or "unavailable",
+            )
             if "candidate_kvault_flepub_contract" in qualification_diagnostic:
                 # Closed local categories only: never log the raw format
                 # alias, signed URL, account ID or provider-supplied text.
