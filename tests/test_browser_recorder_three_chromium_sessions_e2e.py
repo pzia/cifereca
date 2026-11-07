@@ -182,14 +182,16 @@ def test_three_real_captures_reopen_two_different_zips_no_replay(
                     assert b"ProviderPlugin.create_session" in archive.read(
                         "plugin-dev-kit/PROVIDER-DEVELOPMENT.md"
                     )
-                    # Fictional bodies remain private, deliberately unredacted.
+                    # Catalogue bodies remain private. Authentication POST
+                    # bodies are redacted before ZIP/SQLite-independent probes.
                     # Assert types/counters, not raw body text in a log.
                     data = json.loads(archive.read("trace.json"))
                 assert data["id"] == ids[1]
                 assert data["state"] == "completed"
                 assert len(data["exchanges"]) >= 9
                 assert any(
-                    row["method"] == "POST" and type(row["request_body"]) is str
+                    row["method"] == "POST" and row["request_body"] is None
+                    and row["request_body_reason"] == "auth_redacted"
                     for row in data["exchanges"]
                 )
                 assert any(
@@ -273,8 +275,9 @@ print("3")
          "z=zipfile.ZipFile(sys.argv[1]); "
          "doc=json.loads(z.read('trace.json')); "
          "assert doc['id']==sys.argv[2] and doc['state']=='completed'; "
-         "assert any(row['method']=='POST' and "
-         "isinstance(row['request_body'],str) for row in doc['exchanges']); "
+         "assert any(row['method']=='POST' and row['request_body'] is None "
+         "and row['request_body_reason']=='auth_redacted' "
+         "for row in doc['exchanges']); "
          "z.close(); print('exact-B')",
          str(private_export), ids[1]],
         env=probe_env, cwd=tmp_path, stdin=subprocess.DEVNULL,
