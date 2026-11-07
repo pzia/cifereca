@@ -260,9 +260,11 @@ def relink_verified_canonical_kobo(
             changed = db.execute(
                 "UPDATE placements SET path=?,state='present',"
                 "last_seen_at=?,updated_at=? WHERE placement_id=? "
-                "AND path=? AND identity_id=? AND state IN('present','missing') "
+                "AND path=? AND identity_id=? AND artifact_id=? "
+                "AND state IN('present','missing') "
                 "AND provider_id IS NULL AND source_item_id IS NULL",
-                (str(new_path), now, now, placement_id, old_path, identity_id),
+                (str(new_path), now, now, placement_id, old_path,
+                 identity_id, "sha256:" + artifact_sha),
             )
             _require(changed.rowcount == 1, "canonical_relink_plan_changed")
             key = _JOURNAL + hashlib.sha256(
@@ -280,8 +282,28 @@ def relink_verified_canonical_kobo(
                     "confirmed_at": now,
                 }, ensure_ascii=True, sort_keys=True)),
             )
+            # SQL triggers or injected maintenance must not transform a
+            # canonical origin into an unrelated claim inside this transaction.
+            source_now = db.execute(
+                "SELECT state,evidence_kind FROM source_references "
+                "WHERE source_reference_id=? AND identity_id=? "
+                "AND provider_id='kobo' AND credential_id=? AND account_id=? "
+                "AND branch_id=? AND edition_id=? AND right_id=? "
+                "AND reference_kind='purchase'",
+                (source_ref, identity_id, credential_id, account_id,
+                 branch_id, edition_id, right_id),
+            ).fetchall()
+            origin_now = db.execute(
+                "SELECT 1 FROM origin_links WHERE origin_kind='provider' "
+                "AND identity_id=? AND artifact_id=? AND source_reference_id=? "
+                "AND typeof(evidence_ref)='text' AND evidence_ref!='' LIMIT 2",
+                (identity_id, "sha256:" + artifact_sha, source_ref),
+            ).fetchall()
             _require(
-                _same_file(new_path, observed)
+                source_now == [("active", "provider_response")]
+                and len(origin_now) == 1
+                and _exact_borrower_bound_in_db(db, scope)
+                and _same_file(new_path, observed)
                 and (_directory_signature(library_root.resolve(strict=True)),
                      _directory_signature(library_root.resolve(strict=True) / owner_folder)) == signatures
                 and not os.path.lexists(old_path),
