@@ -2174,6 +2174,14 @@ class Storage:
             merged = dict(zip(keys, persisted))
             if (item.get("provider_id") == "kobo"
                     and (merged.get("identity_id") is None
+                         # A missing/blank profile label (including whitespace)
+                         # is not an exact Core identity. Keep the 0.7 archive
+                         # but never project a positive right or local content.
+                         # Kobo's empty PRIMARY account_id is valid and must
+                         # remain eligible with an independently scoped owner.
+                         or type(merged.get("identity_id")) is not str
+                         or not merged["identity_id"].strip()
+                         or merged["identity_id"] != merged["identity_id"].strip()
                          or merged.get("account_id") is None
                          # #3196 W1: a provider-archived Kobo edition is
                          # not an active acquisition. Keep the 0.7 archive
