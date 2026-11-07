@@ -1,3 +1,41 @@
+## Diagnostic privé des URL candidates (P1 #4882, opt-in Trace)
+
+Lorsque **et seulement lorsque** le niveau de diagnostic effectif est `trace`,
+le provider Kobo écrit dans le **journal local** de Cifereca :
+
+```text
+TRACE kobo private_candidate_url phase=offer product_id='...' candidate_index=0 handling=kobo_kdrm url='https://...?...'
+TRACE kobo private_candidate_url phase=offer product_id='...' candidate_index=1 handling=kobo_kdrm url='https://...?...'
+TRACE kobo private_candidate_url phase=initial product_id='...' url='https://...?...'
+TRACE kobo private_candidate_url phase=redirect product_id='...' url='https://...?...'
+```
+
+- `offer` : **toutes** les URL candidates du descripteur POST déjà reçu,
+  dont les deux K3, même si l'offre reste ambiguë/pending. Aucun tri arbitraire
+  et aucun GET supplémentaire.
+- `initial` : URL sélectionnée pour la livraison Core, avant tout GET,
+  y compris une URL K1 refusée en préflight.
+- `redirect` : cible du saut HTTPS calculée avant son éventuel GET,
+  y compris une cible rejetée par le validateur. Les contrôles SSRF/TLS,
+  le consentement, les refus et les publications ne changent pas.
+- Modes `normal` et `verbose` : **aucun de ces événements, aucun lien signé**.
+  La frontière Core n'appelle même pas l'observateur URL en dehors de Trace.
+- Les URL sont écrites en `repr` Python : une valeur contenant un saut de
+  ligne reste sur **une ligne de journal**. Il ne faut pas supprimer les quotes
+  ni décoder automatiquement les échappements pour faire des requêtes.
+
+**Précaution explicite :** les URL et les paramètres de signature sont
+potentiellement des secrets d'accès. Le journal `trace`, ses rotations et
+les ZIP bruts exportés peuvent conserver ces données après avoir quitté
+ce mode. Ne jamais les publier sur GitHub, une CI ou un ticket public ; ne
+transmettre aux agents que les champs fermés (phase, catégorie, issue) ou
+un extrait volontairement expurgé. Après diagnostic, remettre le mode normal
+et purger **manuellement** les copies privées selon la politique locale.
+Les jetons OAuth du compte ne sont **jamais** journalisés par cette fonctionnalité.
+
+Cette observation n'est ni une permission de téléchargement ni une preuve que
+deux liens K3 transportent le même fichier ; le refus `pending` reste maintenu.
+
 # P1 #4640 — Kobo K1/K2/K3 : corrélation du status existant (Cifereca uniquement)
 
 > **Mise à jour opposable — 07/11/2026, décision propriétaire [#4640](https://github.com/pzia/cifereca/issues/4640)** : les interdictions historiques de normaliser `unknown/flepub` et de préférer EPUB à PDF ci-dessous ne s'appliquent plus. K1 choisit l'unique EPUB **déjà admissible** parmi des offres plain EPUB/PDF ; deux EPUB restent ambigus. K2/K3 : Cifereca seul normalise **uniquement** `media_format=unknown` + `source_format=flepub` (casse/espaces tolérés) pour `http/kobo_kdrm/library_sync` et DRM KDRM reconnu ; le descripteur KVault reste brut. L'ID d'offre, le sélecteur exact, la recette runtime et le diagnostic utilisent la même normalisation ; K3 à deux candidats demeure `pending`. `candidate_shape_counts` conserve les formats bruts, `candidate_kdrm_flepub_normalized_count` indique uniquement le nombre normalisé, et `candidate_normalized_media_format=epub` est une catégorie fermée. Ni autorisation d'acquisition, ni preuve d'octets, ni téléchargement réseau supplémentaire. Le texte restant documente la phase d'investigation antérieure à la décision.
