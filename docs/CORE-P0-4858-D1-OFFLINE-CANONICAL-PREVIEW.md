@@ -47,3 +47,29 @@ d'un PDF, absence ou déplacement du fichier, compte réattribué,
 connexion désactivée et doublon d'emprunteur. Les accès
 `backup_get/backup_list` et manifest Kobo sont interdits dans la
 recette. Le droit A courant n'est **jamais** inventé depuis B.
+
+
+## D1 — aperçus CLI avec rafraîchissement explicite
+
+`cifereca-cli kobo-resume-preview --credential <id> --refresh-manifest`
+doit d'abord relier **en mémoire seulement** l'unique borrower exact du
+credential à la session Kobo ABI complète, avec les mêmes gardes
+Config/SQLite de `connect_kobo_canonical` que pour les commandes confirmées.
+Ce raccordement n'accorde **ni consentement CAS ON ni permission de GET de
+livre** : il permet seulement au lecteur A de connaître l'instance
+`Account` déjà reliée à la session fournisseur et à SQLite. L'aperçu
+observe le manifeste de droits A à la demande, compare B en lecture seule et
+rend `preview_only=True, acquisition_authorized=False`. Aucun fallback vers
+`backup_items.complete` n'est admis en présence d'une ABI complète.
+Une source étrangère/désactivée/rebind ou une session ambiguë répond
+`unavailable`, sans inventer un droit.
+
+Sans `--refresh-manifest`, aucune connexion ni inventaire fournisseur
+n'est autorisé ; l'aperçu historique reste uniquement un diagnostic
+`preview_only`, jamais un plan d'acquisition. Une ABI partielle conserve
+sa classification ancienne jusqu'à sa migration W2 distincte.
+
+Recettes : `tests/test_core_p0_4858_targeted_kobo_account_activation.py`
+(sur Core initialement local-only + SQLite v14, lecture A positive,
+absence d'appel B/GET, refus profil étranger) et
+`tests/test_kobo_backup_preview_cli.py` (aucune connexion offline).

@@ -25,7 +25,7 @@ def test_kobo_resume_preview_cli_only_connects_when_manifest_refresh_requested(m
         connect_configured=lambda: (_ for _ in ()).throw(
             AssertionError("global connect_configured must never be used for Kobo preview")
         ),
-        connect_kobo_preview=lambda credential_id: connections.append(credential_id),
+        connect_kobo_canonical=lambda credential_id: connections.append(credential_id),
         kobo_backup_preview=preview,
     )
     core = SimpleNamespace(library=service, close=lambda: closed.append(True))
