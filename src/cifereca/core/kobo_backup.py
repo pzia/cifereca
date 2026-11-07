@@ -403,6 +403,127 @@ def _kobo_manifest_flags_invalid(raw: dict[str, Any]) -> bool:
     return False
 
 
+
+def _canonical_kobo_backup_preview(self, credential_id, identity_id, session):
+    """D1 live preview from authenticated A + verified B, not backup_items.
+
+    Only sessions with the complete Core delivery ABI take this route.
+    The old offline diagnostic and incomplete-ABI private W2 preflight remain
+    compatibility reads until their cutover, never authorizing typed GET.
+    """
+    from ..models import Account
+    from .rights_snapshot_read import read_account_rights_snapshot
+    from .convergence_verified_presence import plan_existing_verified_presence
+
+    registered = [
+        account for account in self.accounts if type(account) is Account
+        and account.provider_id == "kobo"
+        and account.credential_id == credential_id
+        and account.identity_id == identity_id
+    ]
+    if len(registered) != 1:
+        raise ProviderConfigurationError("canonical_kobo_preview_scope_unavailable")
+    account = registered[0]
+    core_epoch = source_context_epoch(self)
+    provider_epoch = getattr(session, "_epoch", None)
+
+    def scope_current() -> bool:
+        try:
+            return bool(
+                source_context_epoch(self) == core_epoch
+                and self._sessions.get(
+                    self._session_key("kobo", credential_id),
+                ) is session
+                and getattr(session, "_epoch", None) == provider_epoch
+                and session.connected is True
+                and self.storage.identity_for_connection(
+                    "kobo", credential_id,
+                ) == identity_id
+                and self.sync_source_enabled(account) is True
+                and sum(row is account for row in self.accounts) == 1
+                and len(session.accounts) == 1
+                and session.accounts[0].unique_id == account.unique_id
+            )
+        except Exception:
+            return False
+
+    if not scope_current():
+        raise ProviderConfigurationError("canonical_kobo_preview_scope_changed")
+    try:
+        snapshot = read_account_rights_snapshot(self, account)
+        if (snapshot.status not in {"success", "partial"}
+                or snapshot.scope.identity_id != identity_id
+                or snapshot.scope.provider_id != "kobo"
+                or snapshot.scope.credential_id != credential_id
+                or snapshot.scope.account_id != account.unique_id
+                or (snapshot.rights and not snapshot.branch)
+                or any(not right.provider_attested for right in snapshot.rights)):
+            raise ProviderConfigurationError("canonical_kobo_preview_unavailable")
+        plan = plan_existing_verified_presence(
+            self.storage, snapshot, library_root=self.library_dir(),
+        )
+    except ProviderConfigurationError:
+        raise
+    except Exception:
+        # A provider error may contain credentials, paths or signed URLs.
+        raise ProviderConfigurationError("canonical_kobo_preview_unavailable") from None
+    if not scope_current():
+        raise ProviderConfigurationError("canonical_kobo_preview_scope_changed")
+
+    counts = {
+        "already_local_linked": 0, "already_local_verified": 0,
+        "needs_reconciliation": 0, "attention_required": 0,
+        "skipped_archived": 0, "blocked_scope": 0, "blocked_unlinked": 0,
+        "not_downloadable": 0, "candidate_unverified": 0,
+        "potentially_missing": 0, "invalid_manifest_items": 0,
+    }
+    reason_by_state = {
+        "present_attested": "already_local_verified",
+        "present_declared": "needs_reconciliation",
+        "needs_reconciliation": "needs_reconciliation",
+        "missing_to_download": "potentially_missing",
+        "pending": "potentially_missing",
+        "inactive": "not_downloadable",
+        "skipped_archived": "skipped_archived",
+    }
+    examples = []
+    for decision in plan.decisions:
+        reason = reason_by_state.get(decision.state)
+        if reason is None:
+            raise ProviderConfigurationError("canonical_kobo_preview_unavailable")
+        counts[reason] += 1
+        if (len(examples) < 20 and reason not in {
+                "already_local_verified", "already_local_linked",
+        }):
+            # The same opaque, non-reversible digest shape as the 0.7 UI.
+            digest = hashlib.sha256(
+                (credential_id + "\x00" + decision.source.edition_id).encode("utf-8"),
+            ).hexdigest()[:20]
+            examples.append({"item_ref": digest, "reason": reason})
+    return {
+        "scope": "account",
+        "source_id": _kobo_checkpoint_key(identity_id, credential_id).rsplit(".", 1)[-1],
+        "manifest_refreshed": True,
+        "manifest_items": len(snapshot.rights),
+        "known_item_count": len(snapshot.rights),
+        "provider_rejected_manifest_items": 0,
+        "checkpoint_status": "not_applicable",
+        "unlinked_local_books": 0,
+        "unlinked_local_books_observed": False,
+        "counts": counts,
+        "blocking_items": sum(counts[name] for name in (
+            "needs_reconciliation", "attention_required", "blocked_scope",
+            "blocked_unlinked", "not_downloadable", "invalid_manifest_items",
+        )),
+        "examples": examples,
+        "preview_only": True,
+        "acquisition_authorized": False,
+        "requires_manifest_validation": False,
+        "manifest_valid": True,
+        "canonical_source": True,
+    }
+
+
 def kobo_backup_preview(
     self, credential_id: str, *,
     refresh_manifest: bool = False, verify_local_files: bool = False,
@@ -434,6 +555,16 @@ def kobo_backup_preview(
     if refresh_manifest and session is None:
         raise ProviderConfigurationError(
             "Compte Kobo non connecté : impossible de rafraîchir les droits"
+        )
+    # D1 cutover: a complete provider ABI uses the typed A/verified B
+    # projection. The 0.7 checkpoint is never read for a modern live preview.
+    # An explicitly supplied legacy private manifest is excluded from this
+    # dispatch; it cannot be rebranded as canonical evidence.
+    if (refresh_manifest and _manifest_evidence is None
+            and _item_reasons is None and session is not None
+            and has_complete_delivery_abi(session)):
+        return _canonical_kobo_backup_preview(
+            self, credential_id, identity_id, session,
         )
 
     # A fresh remote manifest must remain attached to this *same* Core
