@@ -15,6 +15,8 @@ import secrets
 import stat
 from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 
+from browser_recorder_devkit import _PROVIDER_GUIDE
+
 from browser_recorder_vault import (
     VaultError, StoredSession, _key, _aead, _record, MAX_FILE,
 )
@@ -50,6 +52,8 @@ def _zip_bytes(session: StoredSession) -> bytes:
         for name, body in (
             ("README.txt", README.encode("utf-8")),
             ("trace.json", source),
+            ("plugin-dev-kit/PROVIDER-AUTONOMOUS-DEVELOPMENT.md",
+             _PROVIDER_GUIDE.encode("utf-8")),
         ):
             member = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             member.compress_type = ZIP_DEFLATED
