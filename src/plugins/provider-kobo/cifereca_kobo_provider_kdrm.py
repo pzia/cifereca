@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import re
 
-from cifereca_kobo_delivery_offer import _safe_https_get, _kdrm_raw_type
+from cifereca_kobo_delivery_offer import (
+    _safe_https_get, _kdrm_raw_type, _effective_kdrm_media_format,
+)
 
 
 def _bounded_text(value, limit=8192):
@@ -131,16 +133,19 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
     if selected_source == "content_access_book" and kdrm_delegated_ready is not True:
         return None
     drm = selected.get("drm")
-    media = selected.get("media_format")
-    if (type(drm) is not dict or not _kdrm_raw_type(drm.get("raw_type"))
-            or type(media) is not str or media.casefold() not in ("kepub", "epub")):
+    if type(drm) is not dict or not _kdrm_raw_type(drm.get("raw_type")):
+        return None
+    media = _effective_kdrm_media_format(
+        selected, raw_drm=drm.get("raw_type"), source=selected_source,
+    )
+    if type(media) is not str or media.strip().casefold() not in ("kepub", "epub"):
         return None
     source_format = selected.get("source_format", media)
     formats = {("kepub", "kepub"), ("epub", "flepub"), ("epub", "epub")}
     if selected_source == "content_access_book" and kdrm_delegated_ready is True:
         formats |= {("epub", "epub3"), ("epub", "epub3fl")}
     if (type(source_format) is not str
-            or (media.casefold(), source_format.casefold()) not in formats):
+            or (media.strip().casefold(), source_format.strip().casefold()) not in formats):
         return None
     platform = kobo.get("platform", kobo.get("display_profile"))
     if platform is not None and not _bounded_text(platform, 128):
@@ -190,8 +195,11 @@ def scoped_kdrm_source(delegated, selected, *, product_id, account_id,
         }
     pinned = {
         "url": selected["url"], "headers": candidate_headers,
-        "drm_type": "KDRM", "media_format": selected["media_format"].lower(),
-        "source_format": source_format, "delivery_source": "library_sync",
+        "drm_type": "KDRM", "media_format": media.strip().lower(),
+        "source_format": (source_format.strip().upper()
+                          if source_format.strip().casefold() == "flepub"
+                          else source_format.strip()),
+        "delivery_source": "library_sync",
     }
     if platform:
         pinned["platform"] = platform

@@ -1,8 +1,6 @@
-"""#4640 K2: case-only FLEPUB variations are not a new Kobo permission.
+"""#4640 K2/K3: tightly scoped unknown/FLEPUB aliases match EPUB KDRM.
 
-K2's real media_format=unknown remains pending, while an independently
-attested media_format=epub + KDRM library_sync source preserves one offer ID.
-No Vault HTTP, content GET, DRM runtime or account access.
+Synthetic descriptor and delegated-envelope fixtures only; no external I/O.
 """
 from copy import deepcopy
 
@@ -54,27 +52,43 @@ def test_case_only_flepub_variations_keep_exact_offer_id_and_runtime_route(
     assert "candidate_rejection_counts" not in observed
 
 
-@pytest.mark.parametrize("media", ["unknown", "UNKNOWN", "flepub", "FLEPUB"])
-@pytest.mark.parametrize("source", ["FLEPUB", "flepub"])
-def test_unknown_or_unqualified_media_cannot_be_upgraded_from_source_label(
-    media, source,
-):
+@pytest.mark.parametrize("media", ["unknown", "UNKNOWN", " Unknown "])
+@pytest.mark.parametrize("source", ["FLEPUB", "flepub", " FlEpUb "])
+def test_unknown_flepub_is_normalized_to_same_opaque_offer_and_recipe(media, source):
+    baseline = _candidate("epub", "FLEPUB")
+    expected = exact_kobo_offer_id(descriptor(candidate=baseline), **SCOPE)
     candidate = _candidate(media, source)
     observed = {}
     offer = exact_kobo_offer_id(
-        descriptor(product="book-1", candidate=candidate),
-        **SCOPE, diagnostic=observed,
+        descriptor(candidate=candidate), **SCOPE, diagnostic=observed,
     )
-    assert offer == ""
-    assert observed["candidate_selection"] == "no_eligible_candidates"
-    assert observed["candidate_rejection_counts"].get(
-        "kdrm_format_pair_unqualified"
-    ) == 1
+    assert offer == expected and offer.startswith("kobo.runtime:")
+    assert observed["candidate_media_format"] == "unknown"
+    assert observed["candidate_kdrm_flepub_normalized_count"] == 1
+    assert observed["candidate_kvault_flepub_contract"] == "media_unknown"
+    recipe = scoped_kdrm_source(
+        delegated("book-1"), candidate,
+        product_id="book-1", account_id="alice",
+        identity_id="identity-A", credential_id="synthetic-card",
+    )
+    assert recipe["candidate"]["media_format"] == "epub"
+    assert recipe["candidate"]["source_format"] == "FLEPUB"
+
+
+@pytest.mark.parametrize("media", ["flepub", "FLEPUB", "other", "", None])
+@pytest.mark.parametrize("source", ["FLEPUB", "flepub"])
+def test_other_or_missing_media_is_not_inferred_from_flepub(media, source):
+    candidate = _candidate(media, source)
+    observed = {}
+    assert exact_kobo_offer_id(
+        descriptor(candidate=candidate), **SCOPE, diagnostic=observed,
+    ) == ""
     assert scoped_kdrm_source(
         delegated("book-1"), candidate,
         product_id="book-1", account_id="alice",
         identity_id="identity-A", credential_id="synthetic-card",
     ) is None
+    assert "candidate_kdrm_flepub_normalized_count" not in observed
 
 
 def test_two_case_equivalent_routes_with_distinct_urls_still_require_selection():

@@ -203,7 +203,7 @@ def test_k2_observed_library_sync_unknown_flepub_logs_contract_not_raw_alias(cap
     session, vault, _broker, account, posts = setup()
     session.runtime_capabilities = SimpleNamespace(
         acquisition=lambda _provider: SimpleNamespace(
-            available=True, compatible=True, operational=True,
+            available=True, compatible=True, operational=False,
             modes=("kobo_kdrm",),
         )
     )
@@ -235,6 +235,8 @@ def test_k2_observed_library_sync_unknown_flepub_logs_contract_not_raw_alias(cap
         assert "candidate_kvault_format_alias=conflicting" in event
         assert "candidate_media_format=unknown" in event
         assert "candidate_source_format=flepub" in event
+        assert "candidate_kdrm_flepub_normalized_count=1" in event
+        assert "candidate_normalized_media_format=epub" in event
         assert "outcome=unknown" in event
         assert "PRIVATE-ALIAS-TOKEN" not in event
         assert "https://" not in event
