@@ -112,6 +112,7 @@ def copy(tmp_path, monkeypatch):
             plugin_manager=SimpleNamespace(services=lambda _: (resolution,)),
             plugin_id=resolution.plugin_id, registry_generation=resolution.registry_generation,
             revalidate=lambda c, r: c == consent and r == rights,
+            review_target=lambda: True,
         ), managed, journal_at_stage, resolution
 
 

@@ -82,14 +82,16 @@ def execute_usb_copy(
     directory_fd: int, consent: UsbCopyConsent, rights: UsbCopyRightsEvidence,
     payload: bytes, plugin_manager: Any, plugin_id: str, registry_generation: int,
     revalidate: Callable[[UsbCopyConsent, UsbCopyRightsEvidence], bool],
+    review_target: Callable[[], bool],
     check_cancelled: Callable[[], None] | None = None,
 ) -> UsbCopyExecution:
     """Copy verified bytes under a reader lock and an insert-only consent.
 
     The trusted Core caller supplies its private lock directory, current mount,
     authorized source bytes and a live revalidation callback for identity,
-    binding, intention, source and independent copy policy. A dry-run result
-    is insufficient. The journal must make each transition durable before
+    binding, intention, source and independent copy policy. The target review
+    runs under the volume lock before the journal reserves the copy. Each
+    journal transition must be durable before
     returning True. Uncertain or failed writes are left for supervised review.
     """
     if (type(consent) is not UsbCopyConsent or type(rights) is not UsbCopyRightsEvidence
@@ -99,6 +101,7 @@ def execute_usb_copy(
             or type(plugin_id) is not str or not plugin_id
             or type(registry_generation) is not int or registry_generation < 0
             or (check_cancelled is not None and not callable(check_cancelled))
+            or not callable(review_target)
             or type(consent.operation_id) is not str or type(payload) is not bytes
             or not 0 < len(payload) <= MAX_SNAPSHOT_BYTES):
         return UsbCopyExecution("blocked", "usb_copy_request_invalid")
@@ -139,6 +142,8 @@ def execute_usb_copy(
                 return UsbCopyExecution("blocked", "usb_stage_transport_unavailable")
             if journal.get(consent.operation_id) is not None:
                 return UsbCopyExecution("blocked", "usb_copy_consent_already_used")
+            if review_target() is not True or not authorized():
+                return UsbCopyExecution("blocked", "usb_copy_target_review_refused")
             if _target_aliases(directory_fd, PurePosixPath(target).name) != ():
                 return UsbCopyExecution("blocked", "usb_copy_target_not_clear")
 
