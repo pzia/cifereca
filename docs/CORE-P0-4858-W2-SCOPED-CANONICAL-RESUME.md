@@ -42,7 +42,7 @@ cifereca kobo-resume --credential <credential-kobo>
 Pour une seule édition, utiliser la voie introduite par #4878 :
 
 ```sh
-cifereca kobo-sync-edition --credential <credential-kobo> \
+cifereca-cli kobo-sync-edition --credential <credential-kobo> \
   --item <edition-id> --confirm
 ```
 
