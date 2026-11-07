@@ -1517,6 +1517,17 @@ class KoboSession(ProviderSession):
                     f"{shape}={count}" for shape, count in sorted(shapes.items())
                 )
                 detail += " candidate_shape_counts=%s" % (summary or "none")
+        # The raw descriptor shape is already reported by the existing
+        # closed-category diagnostics. Keep the normalized effective media
+        # separate, even for a successful preflight; never log raw URLs.
+        normalized_count = qualification_diagnostic.get(
+            "candidate_kdrm_flepub_normalized_count", 0,
+        )
+        if normalized_count:
+            detail += (
+                " candidate_kdrm_flepub_normalized_count=%s"
+                " candidate_normalized_media_format=epub"
+            ) % normalized_count
         _TRACE_LOG.info(
             "EVENT kobo selected_offer product_id=%s outcome=%s reason=%s "
             "candidate_count=%s kdrm_candidate_seen=%s runtime_ready=%s "
