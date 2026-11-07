@@ -58,6 +58,10 @@ def test_kit_embeds_exact_public_contracts_and_provenance():
     assert guide == (root / "docs/PROVIDER-DEVELOPMENT.md").read_bytes()
     assert guide == (root / "src/plugins/browser-recorder/PROVIDER-DEVELOPMENT.md").read_bytes()
     assert b"provider.library" in guide and b"SourceReference" in guide
+    assert b"ProviderPlugin.create_session" in guide
+    assert result["plugin-dev-kit/contracts/provider_base.py"] == (
+        resources.files("cifereca.providers").joinpath("base.py").read_bytes()
+    )
     assert b"provider.biblioaccess.la-rochelle" in guide
     assert b"PluginContext" in result["plugin-dev-kit/README.md"]
     assert b"~route-NNNN~" in result["plugin-dev-kit/README.md"]
@@ -106,6 +110,7 @@ def test_reviewed_zip_contains_sdk_in_exact_preview():
     assert "plugin-dev-kit/contracts/models.py" in names
     assert "plugin-dev-kit/contracts/downloadable_resources.py" in names
     assert "plugin-dev-kit/contracts/loan_inventory.py" in names
+    assert "plugin-dev-kit/contracts/provider_base.py" in names
     assert "plugin-dev-kit/PROVIDER-DEVELOPMENT.md" in names
     assert "plugin-dev-kit/LLM_GUIDE.md" in names
     assert "plugin-dev-kit/PROVIDER-DEVELOPMENT.md" in names
