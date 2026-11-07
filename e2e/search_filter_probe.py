@@ -196,6 +196,49 @@ def main() -> int:
 
     core.library.search_known_catalog = counted_search
 
+    def verify_local_facets():
+        """#3687: GTK facettes disponibles, sans appel fournisseur ni mutation."""
+        from cifereca.gui.query_controls import LocalQueryControls
+
+        events = []
+        local = LocalQueryControls(lambda: events.append("changed"), "Filtre local")
+        assert not local.provider.get_visible()
+        assert not local.languages.get_visible()
+        assert not local.types.get_visible()
+        assert not local.scope.get_visible()
+
+        local.set_choices(
+            sources=(("paris", "Paris"), ("gallica", "Gallica")),
+            languages=(("fr", "Français"), ("en", "English")),
+        )
+        assert local.provider.get_visible() and local.languages.get_visible()
+        local.provider.set_values(("gallica",))
+        local.languages.set_values(("fr",))
+        assert local.selected_sources() == ("gallica",)
+        assert local.selected_languages() == ("fr",)
+        before = len(events)
+        local.set_choices(
+            sources=(("gallica", "Gallica"), ("kobo", "Kobo")),
+            languages=(("fr", "Français"),),
+        )
+        assert local.selected_sources() == ("gallica",)
+        assert local.selected_languages() == ("fr",)
+        assert len(events) == before  # Choices updated without a new search.
+
+        local.set_choices(sources=(), languages=())
+        assert not local.provider.get_visible() and not local.languages.get_visible()
+        assert local.selected_sources() == () and local.selected_languages() == ()
+        assert len(events) == before
+        local.set_choices(
+            sources=(("kobo", "Kobo"),), languages=(("en", "English"),),
+        )
+        assert local.provider.get_visible() and local.languages.get_visible()
+        assert local.selected_sources() == () and local.selected_languages() == ()
+        # Local-only hiding must never change the global Search controls.
+        assert window.search_controls.provider.get_visible()
+        assert window.search_controls.languages.get_visible()
+        result["checks"]["local_facets"] = True
+
     class Application(Adw.Application):
         def __init__(self):
             super().__init__(application_id="org.cifereca.SearchFiltersP0")
@@ -270,6 +313,7 @@ def main() -> int:
             raise AssertionError(f"{stage}: scroll modifié par le filtre")
 
     def start_search():
+        verify_local_facets()
         window.navigate("search")
         # The Stack transition must map Search before computing GTK/X11 bounds.
         later(400, focus_search_entry)
