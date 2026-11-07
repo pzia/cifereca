@@ -29,6 +29,19 @@ from ..providers import ProviderConfigurationError
 from ..plugin_api import UserFacingError, ProviderError
 
 
+class _KoboLegacySessionChanged(ProviderConfigurationError):
+    """The issuing Kobo session/borrower changed during a legacy batch."""
+
+
+def _guarded_kobo_legacy_put(self, item, source_current):
+    # The legacy checkpoint must never advance against a detached/rebound
+    # provider session. A persisted acquiring row is deliberately left for
+    # explicit recovery when the scope changes after a content GET.
+    if source_current is not None and not source_current():
+        raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
+    self.storage.backup_put(item)
+
+
 class _ManifestItem(NamedTuple):
     revision_id: str | None
     title: str
@@ -1708,6 +1721,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 item_events.append((event, detail))
 
             try:
+                if not manifest_source_current():
+                    raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
                 if not isinstance(raw, dict):
                     malformed = True
                     summary["malformed_manifest_items"] += 1
@@ -1726,6 +1741,10 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     unchanged=summary["unchanged"],
                     skipped=summary["skipped"],
                 )
+                # A progress callback may disconnect or rebind this source.
+                # No old receipt or GET is allowed after that callback.
+                if not manifest_source_current():
+                    raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
                 product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
                 if not product_id:
                     malformed = True
@@ -1767,19 +1786,25 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     summary["pending"] += 1
                     item_committed = True
                     continue
-                item = _refresh_manifest_record(self, session, session_identity, raw, product_id, summary)
+                item = _refresh_manifest_record(
+                    self, session, session_identity, raw, product_id, summary,
+                    source_current=manifest_source_current,
+                )
                 if _skip_manifest_item(
                     self, item, raw, session_target_dir, indexed_kobo_paths,
                     adapter_available, adept_state,
                     index, len(manifest), summary, defer_item_event,
                     retry_scope_blocked=retry_scope_blocked,
                     session=session, declared_budget=declared_budget,
+                    source_current=manifest_source_current,
                 ):
                     item_committed = True
                     continue
 
                 if source_guard is not None:
                     source_guard()
+                if not manifest_source_current():
+                    raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
                 # Last admission before the 0.7 acquiring row and provider
                 # I/O. If a canonical intake appeared since the preflight,
                 # leave its publication to Core rather than double GET.
@@ -1790,11 +1815,20 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     item_committed = True
                     continue
                 if _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, len(manifest), summary, defer_item_event, record_error, logger, item_guard=item_guard,
-                                          on_delivery_committed=on_delivery_committed):
+                                          on_delivery_committed=on_delivery_committed,
+                                          source_current=manifest_source_current):
                     abort_all = True
                     item_committed = True
                     break
                 item_committed = True
+            except _KoboLegacySessionChanged as exc:
+                summary["errors"] += 1
+                info = record_error(exc, title=session.label)
+                summary["aborted"] = True
+                summary["abort_reason"] = info
+                summary["remaining"] += len(manifest) - index
+                abort_all = True
+                break
             finally:
                 # Only advance past a committed item: exceptions must not
                 # fabricate a resume checkpoint for an incomplete acquisition.
@@ -2243,7 +2277,8 @@ def _publish_summary(self, summary, error_counts, error_examples, emit, *, scope
 
 
 
-def _refresh_manifest_record(self, session, session_identity, raw, product_id, summary) -> _ManifestItem:
+def _refresh_manifest_record(self, session, session_identity, raw, product_id, summary, *, source_current=None) -> _ManifestItem:
+    backup_put = lambda row: _guarded_kobo_legacy_put(self, row, source_current)
     revision_id = str(raw.get("revision_id") or "").strip() or None
     title = str(raw.get("title") or product_id)
     author = self._manifest_author(raw)
@@ -2323,7 +2358,7 @@ def _refresh_manifest_record(self, session, session_identity, raw, product_id, s
             or current.get("identity_id") != refreshed.get("identity_id")
         ):
             summary["metadata_refreshed"] += 1
-        self.storage.backup_put(refreshed)
+        backup_put(refreshed)
         current = self.storage.backup_get("kobo", session.credential_id, product_id) or refreshed
 
     return _ManifestItem(revision_id, title, account_id, current, base_record)
@@ -2339,7 +2374,8 @@ def _manifest_archived(raw, current):
     )
 
 
-def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, adapter_available, adept_state, index, total, summary, emit, *, retry_scope_blocked: bool = False, session=None, declared_budget=None):
+def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths, adapter_available, adept_state, index, total, summary, emit, *, retry_scope_blocked: bool = False, session=None, declared_budget=None, source_current=None):
+    backup_put = lambda row: _guarded_kobo_legacy_put(self, row, source_current)
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     # A known archive is a terminal non-error, before reconciliation or any
@@ -2373,7 +2409,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 not current or current.get("status") not in {
                     "ok", "complete", "reconcile_required", "reconcile_conflict"
                 }):
-            self.storage.backup_put({
+            backup_put({
                 **(current or {}), **base_record, "status": "skipped_archived",
                 "error": None, "attention_code": None,
             })
@@ -2420,7 +2456,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     if current and current.get("status") in {"ok", "complete"} and current.get("revision_id") == revision_id:
         local = Path(str(current.get("local_path") or ""))
         if local.is_symlink():
-            self.storage.backup_put({**current, "status": "reconcile_required", "error": "Lien symbolique local à réconcilier"})
+            backup_put({**current, "status": "reconcile_required", "error": "Lien symbolique local à réconcilier"})
             summary["reconcile_skipped"] += 1
             return True
         if local.is_file():
@@ -2430,7 +2466,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             # Quarantine that row rather than treating it as unchanged or
             # allowing an automatic replacement download.
             def refuse_unscoped():
-                self.storage.backup_put({
+                backup_put({
                     **current, "status": "reconcile_required",
                     "error": "Emplacement Kobo historique hors profil ou non vérifiable",
                 })
@@ -2447,7 +2483,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
             # Require a prior exact SHA and positive size *before* opening
             # today's file; otherwise retain the path for supervised review.
             if not _kobo_legacy_has_integrity_baseline(current):
-                self.storage.backup_put({
+                backup_put({
                     **current,
                     "status": "reconcile_required",
                     "error": "Preuve d'intégrité Kobo historique incomplète ; rapprochement explicite requis",
@@ -2462,7 +2498,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 observed = self._observed_backup_artifact(local)
             except ProviderConfigurationError:
                 # A stale/invalid file must not retain a complete state.
-                self.storage.backup_put({**current, "status": "reconcile_required", "error": "Artefact local invalide"})
+                backup_put({**current, "status": "reconcile_required", "error": "Artefact local invalide"})
                 summary["reconcile_skipped"] += 1
                 return True
             # A directory swap while the legacy inspector reads is not a
@@ -2484,7 +2520,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 and observed["size"] != expected_size
             )
             if hash_changed or size_changed:
-                self.storage.backup_put({
+                backup_put({
                     **current,
                     "status": "reconcile_required",
                     "error": "Artefact Kobo local modifié depuis la sauvegarde ; vérification manuelle requise",
@@ -2497,7 +2533,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 return True
             # Exactly the persisted historical digest/size were checked;
             # metadata refresh here does not invent an absent hash baseline.
-            self.storage.backup_put({**current, **observed})
+            backup_put({**current, **observed})
             summary["unchanged"] += 1
             return True
 
@@ -2507,7 +2543,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     if current and current.get("status") in {"ok", "complete"} and not str(
         current.get("local_path") or ""
     ).strip():
-        self.storage.backup_put({
+        backup_put({
             **base_record,
             # Keep the acquired revision baseline, even if the remote edition
             # has changed since the previously completed acquisition.
@@ -2532,7 +2568,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         # The explicit 403 delegation denial below has stronger retry
         # semantics: do not rewrite its durable attention code as a generic
         # reconciliation marker, even if a legacy SHA/size also survives.
-        self.storage.backup_put({
+        backup_put({
             **base_record,
             "revision_id": current.get("revision_id"),
             "status": "reconcile_required",
@@ -2556,7 +2592,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
         # was moved or deleted after a crash. Never silently fetch a second copy.
         # Preserve dangling symlinks and absent files for manual reconciliation.
         linked_present = linked_path.is_symlink() or linked_path.is_file()
-        self.storage.backup_put({
+        backup_put({
             **base_record,
             "status": "reconcile_required",
             "local_path": str(linked_path),
@@ -2589,7 +2625,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                 candidates.append(candidate)
     if candidates:
         conflict = len(candidates) > 1
-        self.storage.backup_put({
+        backup_put({
             **base_record,
             "status": "reconcile_conflict" if conflict else "reconcile_required",
             "local_path": None if conflict else str(candidates[0]),
@@ -2680,7 +2716,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
                        "toute nouvelle acquisition" if declared else
                        "Déclarations locales indisponibles : acquisition suspendue "
                        "jusqu'à vérification")
-            self.storage.backup_put({
+            backup_put({
                 **base_record, "status": "attention_required",
                 "attention_code": code, "error": message,
             })
@@ -2711,7 +2747,7 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
     if not adapter_available:
         adept_error = adept_state.get("error") if isinstance(adept_state.get("error"), dict) else {}
         reason = str(adept_error.get("message") or "Kobo-Adept indisponible")
-        self.storage.backup_put({**base_record, "status": "pending_acquisition", "error": reason})
+        backup_put({**base_record, "status": "pending_acquisition", "error": reason})
         summary["pending"] += 1
         return True
 
@@ -2719,13 +2755,14 @@ def _skip_manifest_item(self, item, raw, session_target_dir, indexed_kobo_paths,
 
 
 
-def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger, *, item_guard=None, on_delivery_committed=None):
+def _acquire_manifest_item(self, session, session_identity, item, raw, session_target_dir, index, total, summary, emit, record_error, logger, *, item_guard=None, on_delivery_committed=None, source_current=None):
+    backup_put = lambda row: _guarded_kobo_legacy_put(self, row, source_current)
     revision_id, title, account_id, current, base_record = item
     product_id = base_record["item_id"]
     summary["attempted"] += 1
     attempt_count = int(current.get("attempt_count") or 0) + 1 if current else 1
     attempted_at = int(time.time())
-    self.storage.backup_put({
+    backup_put({
         **base_record,
         "status": "acquiring",
         "error": None,
@@ -2741,6 +2778,8 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         search_item = normalizer(raw, default_collection="library")
         if item_guard is not None:
             item_guard(search_item, product_id, revision_id)
+        if source_current is not None and not source_current():
+            raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
         result = self._execute_kobo_acquisition(search_item, session_target_dir)
         artifact = result.path
         if artifact is None or not artifact.is_file():
@@ -2749,7 +2788,7 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         size = observed["size"]
         sha256 = observed["sha256"]
         result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
-        self.storage.backup_put({
+        backup_put({
             **base_record,
             "account_id": result.account_id or account_id,
             "format": observed["format"],
@@ -2785,11 +2824,16 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
             item_id=product_id, path=str(artifact), downloaded=summary["downloaded"],
             errors=summary["errors"],
         )
+    except _KoboLegacySessionChanged:
+        # A GET might already have yielded bytes; leave acquiring for
+        # explicit recovery, never reclassify it as a different owner's
+        # complete/error receipt or trigger another content GET.
+        raise
     except Exception as exc:
         if isinstance(exc, (KoboAdeptError, UserFacingError)) and getattr(exc, "code", "") == "result_unparseable_artifact_present":
             details = dict(getattr(exc, "details", {}) or {})
             artifact_path = Path(str(details.get("artifact_path") or "")) if details.get("artifact_path") else None
-            self.storage.backup_put({
+            backup_put({
                 **base_record,
                 "status": "reconcile_required",
                 "local_path": str(artifact_path) if artifact_path else None,
@@ -2810,7 +2854,7 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         info = self._kobo_backup_error_info(exc)
         if str(info.get("code") or "") == "missing_delegation_scope":
             message = "Kobo-Vault : autorisation de délégation requise (scope kobo.acquisition.delegate)"
-            self.storage.backup_put({
+            backup_put({
                 **base_record,
                 "status": "attention_required",
                 "attention_code": "missing_delegation_scope",
@@ -2826,7 +2870,7 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
                  code="missing_delegation_scope", message=message)
             return False
         if str(info.get("code") or "") == "archived_book":
-            self.storage.backup_put({
+            backup_put({
                 **base_record, "status": "skipped_archived",
                 "attention_code": None, "error": None,
                 "attempt_count": attempt_count,
@@ -2849,7 +2893,7 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
             "TRACE kobo acquisition failed code=backup_item_failed phase=%s http_status=%s",
             phase, http_status,
         )
-        self.storage.backup_put({
+        backup_put({
             **base_record, "status": "error", "error": "Sauvegarde Kobo impossible",
             "attempt_count": attempt_count, "last_attempt_at": attempted_at,
             "executor": "kobo-adept", "updated_at": int(time.time()),
