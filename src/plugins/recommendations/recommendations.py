@@ -147,6 +147,88 @@ def _public_candidate_authors(item: Any) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _local_recommendation_field_values(item: Any, field: str) -> tuple[str, ...]:
+    """Read only bounded, already-loaded public facts for Search's field filter.
+
+    This is a *view filter*, not a recommendation signal or a permission.
+    Unknown field, malformed metadata, opaque objects, provider exceptions
+    and unconsolidated provenance never select a book by accident.
+    """
+    if field == "title":
+        title = _candidate_public_field(item, "title", limit=2048)
+        return (title,) if title else ()
+    if field == "author":
+        return _public_candidate_authors(item)
+    if field == "isbn":
+        # The engine verifies checksums and namespaces identifiers. Provider
+        # record IDs are NOT ISBNs, even when numeric.
+        try:
+            return tuple(
+                value[5:] for value in sorted(identifier_values(item))
+                if value.startswith("isbn:")
+            )[:32]
+        except Exception:
+            return ()
+    if field == "language":
+        return _candidate_languages(item)
+
+    names = {
+        "subject": (
+            "subjects", "subject", "themes", "keywords", "tags",
+            "genres", "genre", "categories",
+        ),
+        "series": ("series",),
+        "collection": ("collection",),
+    }.get(field)
+    if names is None:
+        return ()
+    try:
+        metadata = get_field(item, "metadata", None)
+    except Exception:
+        metadata = None
+    metadata = metadata if isinstance(metadata, Mapping) else {}
+    try:
+        epub = get_field(metadata, "epub_metadata", None)
+    except Exception:
+        epub = None
+    epub = epub if isinstance(epub, Mapping) else {}
+    scopes = (item, metadata, epub)
+    observed: list[str] = []
+    for name in names:
+        for scope in scopes:
+            try:
+                raw = get_field(scope, name, None)
+            except Exception:
+                continue
+            if type(raw) is str or isinstance(raw, Mapping):
+                rows = (raw,)
+            elif type(raw) in (list, tuple):
+                rows = raw[:32]
+            else:
+                continue
+            for row in rows:
+                if isinstance(row, Mapping):
+                    # Named bibliographic subjects, not arbitrary keys or
+                    # serialized provider payloads.
+                    row = next((
+                        value for key in ("value", "label", "name")
+                        if (value := _candidate_mapping_text(row, key))
+                    ), "")
+                text = _public_candidate_text(row, limit=2048)
+                if text:
+                    observed.append(text)
+                    if len(observed) == 128:
+                        return tuple(observed)
+    return tuple(observed)
+
+
+def _candidate_mapping_text(row: Mapping[str, Any], key: str) -> str:
+    try:
+        return _public_candidate_text(row.get(key), limit=2048)
+    except Exception:
+        return ""
+
+
 def _reference_isbn(book: Any) -> str:
     """One checksum-validated edition ISBN, not an inferred title match."""
     identifiers = identifier_values(book)
@@ -592,9 +674,14 @@ class UxRecommendationsView:
         toolbox.set_hexpand(True)
         build_filters = getattr(host, "build_local_query_controls", None)
         self._query_controls = (
-            build_filters(changed=self._render, placeholder="Titre ou auteur")
+            build_filters(changed=self._render, placeholder="Filtrer les résultats calculés")
             if callable(build_filters) else None
         )
+        # Search's same field selector, now explicitly enabled for local
+        # recommendation filtering. No query or recalculation is started.
+        enable_field = getattr(self._query_controls, "enable_field_filter", None)
+        if callable(enable_field):
+            enable_field()
 
         controls = Gtk.FlowBox()
         controls.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -1057,15 +1144,33 @@ class UxRecommendationsView:
         needle = normalize(text)
         if needle:
             item = ranked.item
-            # The same attested author variants as the public detail must
-            # participate in local filtering; the scalar "author" field may
-            # be empty even when "authors" contains several names.
-            haystack = normalize(" ".join((
-                _candidate_public_field(item, "title", limit=2048),
-                " ".join(_public_candidate_authors(item)),
-            )))
-            if needle not in haystack:
-                return False
+            selected_field = getattr(controls, "filter_field", None)
+            field = selected_field() if callable(selected_field) else "all"
+            if field == "all":
+                # Preserve historical title + attested authors by default.
+                # Selecting a field is an explicit, local-only restriction.
+                haystack = normalize(" ".join((
+                    _candidate_public_field(item, "title", limit=2048),
+                    " ".join(_public_candidate_authors(item)),
+                )))
+                if needle not in haystack:
+                    return False
+            else:
+                values = _local_recommendation_field_values(item, field)
+                if not values:
+                    return False
+                haystack = normalize(" ".join(values))
+                tokens = needle.split()
+                if field == "subject":
+                    # Same one-character whole-word guard as Core Search.
+                    if not all(
+                        bool(re.search(r"(?<!\\w)" + re.escape(token) + r"(?!\\w)", haystack))
+                        if len(token) == 1 else token in haystack
+                        for token in tokens
+                    ):
+                        return False
+                elif not all(token in haystack for token in tokens):
+                    return False
         return True
 
     def _base_reload_providers(self, providers: tuple[tuple[str, str], ...]) -> None:
