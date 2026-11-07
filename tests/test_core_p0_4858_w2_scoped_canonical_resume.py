@@ -203,9 +203,12 @@ def test_rebind_after_sync_refuses_complete(rig, monkeypatch, tamper):
         service.sync_kobo_backup_account("vault-1")
 
 
-def test_cancelled_before_canonical_sync_is_no_op(rig):
+@pytest.mark.parametrize("cancel_value", [True, 1, "cancelled"])
+def test_cancelled_before_canonical_sync_is_no_op(rig, cancel_value):
     service, _session, _account, _grant, calls = rig
-    result = service.sync_kobo_backup_account("vault-1", cancelled=lambda: True)
+    result = service.sync_kobo_backup_account(
+        "vault-1", cancelled=lambda: cancel_value,
+    )
     assert result["status"] == "cancelled"
     assert result["downloaded"] == 0
     assert calls == []
