@@ -21,6 +21,16 @@ class Session:
     def __init__(self, rows):
         self._accounts = rows
 
+    # Statically callable complete ABI; binding must not execute provider IO.
+    def rights_observation_snapshot(self, *_a, **_kw):
+        raise AssertionError("source bind must never read supplier rights")
+
+    def rights_selected_delivery_offer_snapshot(self, *_a, **_kw):
+        raise AssertionError("source bind must never inspect offers")
+
+    def rights_selected_delivery_candidate(self, *_a, **_kw):
+        raise AssertionError("source bind must never request content")
+
     @property
     def accounts(self):
         return list(self._accounts)
@@ -54,6 +64,10 @@ def _rig(monkeypatch, *, session=None, accepted=True, identity_present=True):
     )
     svc = NS(
         storage=storage,
+        config=NS(provider_accounts=lambda *, enabled_only=False: [{
+            "provider": "kobo", "id": "kobo-2",
+            "identity_id": "identity-owner", "enabled": True,
+        }]),
         _session_key=lambda provider, credential: (provider, credential),
         _sessions={key: session},
         accounts=[other],
@@ -82,12 +96,14 @@ def test_exact_selected_binds_persisted_account_without_enrolling(monkeypatch):
     selected = provider_sessions.connect_kobo_selected_edition(svc, "kobo-2")
     assert selected is session
     assert calls == [(svc, "kobo-2")]
-    assert svc.accounts == [session._accounts[0]]
-    assert svc.accounts[0] is session._accounts[0]
-    assert svc.accounts[0].identity_id == "identity-owner"
-    assert svc.current_account is svc.primary is session._accounts[0]
-    assert svc.current_identity.identity_id == "identity-owner"
-    assert svc._active_session_key == ("kobo", "kobo-2")
+    assert len(svc.accounts) == 2
+    assert svc.accounts[0].provider_id == "paris"
+    assert svc.accounts[1] is session._accounts[0]
+    assert svc.accounts[1].identity_id == "identity-owner"
+    # A selected Kobo request cannot erase or select another Core identity.
+    assert svc.current_account is svc.primary is svc.accounts[0]
+    assert svc.current_identity is previous
+    assert svc._active_session_key == ("paris", "paris-1")
     assert svc._source_context_epoch == 6
     assert reads[-1] == ("scope", {
         "identity_id": "identity-owner", "provider_id": "kobo",
