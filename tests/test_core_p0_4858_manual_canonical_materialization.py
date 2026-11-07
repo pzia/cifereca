@@ -161,3 +161,40 @@ def test_empty_or_inventory_only_core_sync_is_not_false_completed_delivery(canon
     assert not result.ok and result.changed == 0
     assert result.facts["status"] == "canonical_execution_unavailable"
     assert canonical.calls == ["metadata_only"]
+
+
+
+@pytest.mark.parametrize("transition", ("provider_epoch", "core_epoch", "new_session"))
+def test_canonical_confirmation_rejects_same_account_session_aba(
+    canonical, transition, monkeypatch,
+):
+    from cifereca.core import source_context
+
+    case = canonical.case
+    token = case.broker.prepare_local_materialization(
+        case.source,
+    ).facts["confirmation_token"]
+    if transition == "provider_epoch":
+        case.target._epoch = getattr(case.target, "_epoch", 0) + 1
+    elif transition == "core_epoch":
+        current = source_context.source_context_epoch(case.service)
+        monkeypatch.setattr(
+            materialize, "_source",
+            materialize._source,
+        )
+        monkeypatch.setattr(
+            source_context, "source_context_epoch",
+            lambda _service: current + 1,
+        )
+    else:
+        # Keep all declared source coordinates but replace the Python session.
+        # The one-use plan must bind the old session *identity*.
+        import copy
+        replacement = copy.copy(case.target)
+        case.service._sessions[
+            case.service._session_key("kobo", case.target.credential_id)
+        ] = replacement
+    result = case.broker.materialize_source(case.source, token)
+    assert result.ok is False
+    assert result.facts["status"] == "source_changed"
+    assert canonical.calls == []
