@@ -14,6 +14,22 @@ _LOG = logging.getLogger("cifereca")
 _MAX_URL_CHARS = 16384
 _HANDLING = frozenset({"http_plain", "adobe_adept", "kobo_kdrm"})
 
+# Only closed platform/format labels from the already admitted Vault descriptor.
+# The JSON provider is untrusted even under a private diagnostics session.
+_PLATFORM = frozenset({"android", "generic", "desktop", "ios", "kobo"})
+_SOURCE = frozenset({"library_sync", "content_access_book"})
+_FORMAT = frozenset({"epub", "kepub", "flepub", "epub3", "epub3fl", "pdf", "unknown", "acsm"})
+_DRM = frozenset({"kobo_kdrm", "adobe_adept", "none", "unknown"})
+
+
+def _closed(value: object, allowed: frozenset[str]) -> str:
+    if value is None:
+        return "missing"
+    if type(value) is not str:
+        return "other"
+    normalized = value.strip().casefold()
+    return normalized if normalized in allowed else "other"
+
 
 def _trace_enabled() -> bool:
     try:
@@ -59,11 +75,24 @@ def trace_kobo_descriptor_urls(payload: object, *, product_id: object) -> None:
             handling if type(handling) is str and handling in _HANDLING
             else "other"
         )
+        kobo = row.get("kobo")
+        kobo = kobo if type(kobo) is dict else {}
+        drm = row.get("drm")
+        drm = drm if type(drm) is dict else {}
         try:
             _LOG.debug(
                 "TRACE kobo private_candidate_url phase=offer "
-                "product_id=%r candidate_index=%d handling=%s url=%r",
-                item, index, handling, raw,
+                "product_id=%r candidate_index=%d handling=%s "
+                "platform=%s profile=%s source=%s media=%s "
+                "source_format=%s drm=%s url=%r",
+                item, index, handling,
+                _closed(kobo.get("platform"), _PLATFORM),
+                _closed(kobo.get("display_profile"), _PLATFORM),
+                _closed(kobo.get("source"), _SOURCE),
+                _closed(row.get("media_format"), _FORMAT),
+                _closed(row.get("source_format"), _FORMAT),
+                _closed(drm.get("family"), _DRM),
+                raw,
             )
         except Exception:
             pass
