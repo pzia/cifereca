@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from ..core.device_usb_preview import _relative, _sha
+from ..core.device_usb_variant_review import _SUFFIX
+
 
 _MAX_ROWS = 30000
 _MAX_DEVICES = 100000
@@ -29,6 +32,8 @@ class ReaderLibraryBook:
     last_known: str
     last_observed_at: int | None
     label: str
+    target_relative_path: str | None = None
+    target_format: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +120,8 @@ def project_reader_library(
         if type(desired) is not str or desired not in ("keep", "remove"):
             raise ValueError("invalid USB intention")
         device_rows[row["artifact_id"]] = row
+    managed = binding.get("target_directory")
+    managed_prefix = managed + "/" if _relative(managed) else None
     books: list[ReaderLibraryBook] = []
     seen_keys: set[str] = set()
     seen_artifacts: set[str] = set()
@@ -151,6 +158,17 @@ def project_reader_library(
                 or view_filter == "to_remove" and desired != "remove"
                 or view_filter == "without_intent" and desired != "none"):
             continue
+        target = row.get("target_relative_path") if row is not None else None
+        if not (managed_prefix and _relative(target) and target.startswith(managed_prefix)):
+            target = None
+        target_format = None
+        digest = artifact_id.removeprefix("sha256:")
+        if target is not None and digest != artifact_id and _sha(digest):
+            stem = managed_prefix + digest
+            target_format = next(
+                (name for name, suffix in _SUFFIX.items() if target == stem + suffix),
+                None,
+            )
         thumb = entry.get("thumbnail_url")
         books.append(ReaderLibraryBook(
             key=key, artifact_id=artifact_id,
@@ -162,6 +180,7 @@ def project_reader_library(
             current_presence="unknown",
             last_known=last_known, last_observed_at=last_at,
             label=label,
+            target_relative_path=target, target_format=target_format,
         ))
     # Totals refer to the same currently selected filter, not an unrelated
     # unscoped account or a provider's remote Library.

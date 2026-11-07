@@ -17,6 +17,7 @@ from cifereca.gui.reader_library_projection import (
 )
 from cifereca.gui.reader_usb_decisions import project_reader_usb_decisions
 from cifereca.gui import reader_page_controller
+from cifereca.gui.recent_time import format_recent_timestamp
 from cifereca.gui.reader_usb_preview_actions import request_reader_usb_preview
 from tests.test_p1_2854_readers_master_detail_page import environment
 from tests.test_p1_2854_reader_usb_preview_actions import (
@@ -63,6 +64,9 @@ def test_gtk_selected_book_shows_exact_ephemeral_result_without_execution(tmp_pa
     host.readers_page.selected(host.readers_page.rows[0])
     assert len(groups) == 1
     assert groups[0][0] == "Dernier examen USB · lecture seule"
+    assert dict(groups[0][1])["Examiné le"] == format_recent_timestamp(
+        projected.observed_at, detailed=True,
+    )
     text = repr(groups[0][1])
     assert "Envoi à examiner" in text
     assert "Absence observée" in text

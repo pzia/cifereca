@@ -8,6 +8,7 @@ from types import SimpleNamespace as NS
 
 from cifereca.builtin_ui.pages import Pages
 from cifereca.gui import reader_page_controller
+from cifereca.gui.recent_time import format_recent_timestamp
 from cifereca.gui.shell_page_controller import build_standard_page
 from cifereca.identities import Identity
 from cifereca.storage import Storage
@@ -275,10 +276,14 @@ def test_selector_restricts_intentions_to_selected_device(tmp_path):
 def test_book_detail_uses_generic_panel_and_exact_current_local_placement(tmp_path):
     db, entries, host, actions = environment(tmp_path)
     data = entries[0]
+    binding = db.device_binding_get("reader-alice")
+    managed = binding["target_directory"]
+    target = managed + "/" + data["artifact_id"].removeprefix("sha256:") + ".epub"
     db.device_placement_put({
         "device_id": "reader-alice", "artifact_id": data["artifact_id"],
         "desired_state": "keep", "observed_state": "present",
         "last_observed_at": 1600000000,
+        "target_relative_path": target,
         "metadata": {"intent_identity_id": "alice"},
     })
     host._render_readers()
@@ -295,6 +300,10 @@ def test_book_detail_uses_generic_panel_and_exact_current_local_placement(tmp_pa
     assert "Non confirmée" in text
     assert "ancienne observation" in text
     assert "Private bob" not in text
+    fields = {field.label: field.value for field in shown.sections[0].fields}
+    assert fields["Dernière observation"] == format_recent_timestamp(1600000000, detailed=True)
+    assert fields["Chemin réservé"] == target
+    assert fields["Format prévu"] == "EPUB"
 
 
 def test_identity_switch_isolation_and_missing_binding_clears_rows(tmp_path):
