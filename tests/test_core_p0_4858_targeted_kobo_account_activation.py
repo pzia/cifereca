@@ -119,6 +119,7 @@ def test_targeted_bound_account_passes_generic_canonical_A_read(rig, monkeypatch
 @pytest.mark.parametrize("tamper", [
     "disabled_or_rebound_sql", "foreign_live_profile", "foreign_borrower",
     "duplicate_registered_account", "changed_session_during_admission",
+    "inplace_borrower_change_during_sql",
 ])
 def test_targeted_bind_refuses_ambiguous_or_unowned_source_without_core_mutation(
     rig, monkeypatch, tamper,
@@ -143,7 +144,13 @@ def test_targeted_bind_refuses_ambiguous_or_unowned_source_without_core_mutation
         original = service.storage.provider_scope_account_bound
         def switched(**kw):
             valid = original(**kw)
-            session._accounts = [replace(session.accounts[0])]
+            if tamper == "changed_session_during_admission":
+                session._accounts = [replace(session.accounts[0])]
+            else:
+                # Same object, but different borrower in-place after the
+                # checked SQL snapshot: its earlier value must not authorize
+                # a new Core registration or provider GET.
+                session._accounts[0].unique_id = "rebound"
             return valid
         monkeypatch.setattr(service.storage, "provider_scope_account_bound", switched)
     before = tuple(service.accounts)
