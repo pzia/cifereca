@@ -95,8 +95,20 @@ def _source(broker, source_id, *, allow_canonical=False):
     account = rows[0]
     _require(account.provider_id == "kobo", "not_supported")
     scope = (source_id, account.identity_id, account.provider_id, account.credential_id, account.unique_id)
-    _require(all(type(value) is str and 0 < len(value) <= 1024 and not any(c in value for c in "\0\n\r")
-                 for value in scope), "invalid_source")
+    # Kobo's exact primary borrower has account_id="" (not None). Only
+    # this explicitly primary account may use the empty upstream ID; every
+    # other scope coordinate still has to be a non-empty exact string.
+    # This is not entitlement or GET admission: canonical Sync independently
+    # rechecks A, the persisted account binding and CAS consent.
+    _require(
+        all(type(value) is str and len(value) <= 1024
+            and not any(c in value for c in "\0\n\r") for value in scope)
+        and all(scope[:4])
+        and (bool(account.unique_id) or account.is_primary is True)
+        and (not account.unique_id
+             or account.unique_id == account.unique_id.strip()),
+        "invalid_source",
+    )
     _require(broker._enabled(source_id), "source_disabled")
     service = broker.service
     _require(service.storage.identity_for_connection("kobo", account.credential_id) == account.identity_id, "invalid_source")
