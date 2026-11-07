@@ -1443,7 +1443,12 @@ class UxRecommendationsView:
         controls = getattr(self, "_query_controls", None)
         set_documents = getattr(controls, "set_document_choices", None)
         if callable(set_documents):
-            set_documents(ranked.item for ranked in self._ranked)
+            # Use the already published provisional badge state: preserving
+            # the historical no-arg hook also keeps headless/host adapters.
+            set_documents(
+                (ranked.item for ranked in self._ranked),
+                provisional=bool(getattr(self, "_provisional_active", False)),
+            )
 
     @staticmethod
     def _candidate_key(ranked: Any) -> str:
@@ -1845,8 +1850,8 @@ class UxRecommendationsView:
         # Prior connected catalogues with zero visible candidates disappear.
         self._reload_providers(snapshot.providers)
         self._reload_languages(self._ranked)
-        self._reload_document_choices()
         self._set_provisional(True)
+        self._reload_document_choices()
 
         units = (
             max(0, snapshot.query_index - 1) * max(1, snapshot.provider_total)

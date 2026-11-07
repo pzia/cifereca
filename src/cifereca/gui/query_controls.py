@@ -221,6 +221,10 @@ class LocalQueryControls(QueryControls):
         self.field.set_visible(False)
         self._local_field_enabled = False
         self._format_labels = self.types.choice_labels.copy()
+        # Only a completed local result may attest a choice across a
+        # provisional top-N. New profiles / failed calculations clear it.
+        self._attested_document_scopes = frozenset()
+        self._attested_document_formats = frozenset()
         scope_model = self.scope.get_model()
         self._scope_labels = {
             value: scope_model.get_string(index)
@@ -268,14 +272,32 @@ class LocalQueryControls(QueryControls):
             item, tuple(self._format_labels),
         )
 
-    def set_document_choices(self, items):
-        """Expose only supports and formats present in the current result set."""
+    def set_document_choices(self, items, *, provisional=False):
+        """Refresh local facets without dropping attested filters on a partial head.
+
+        A provisional ranked top-N is not an exhaustive catalogue response.
+        Retain only the previously selected Format/Support from a completed
+        projection; the final result (or identity reset) removes absent ones.
+        This method never creates a provider scope, right or remote query.
+        """
         media, formats = set(), set()
         for item in items:
             medium, offered = self._document_facets(item)
             media.add(medium)
             formats.update(offered)
         known_medium = bool(media - {'unknown'})
+        selected_scope = self._scope_values[self.scope.get_selected()]
+        selected_formats = set(self.types.values())
+        if provisional:
+            if selected_scope in self._attested_document_scopes:
+                media.add(selected_scope)
+                known_medium = True
+            formats.update(selected_formats & self._attested_document_formats)
+        else:
+            # Unknown is selectable alongside a positively known medium;
+            # keep that explicit choice as well across partial heads.
+            self._attested_document_scopes = frozenset(media if known_medium else ())
+            self._attested_document_formats = frozenset(formats)
         scope_choices = tuple(
             (value, label) for value, label in self._scope_labels.items()
             if value == 'all' or (known_medium and value in media)
@@ -284,10 +306,9 @@ class LocalQueryControls(QueryControls):
         self._programmatic_update = True
         try:
             if scope_values != self._scope_values:
-                selected = self._scope_values[self.scope.get_selected()]
                 self.scope.set_model(Gtk.StringList.new([label for _value, label in scope_choices]))
                 self._scope_values = scope_values
-                self.scope.set_selected(scope_values.index(selected) if selected in scope_values else 0)
+                self.scope.set_selected(scope_values.index(selected_scope) if selected_scope in scope_values else 0)
             self.scope.set_visible(known_medium)
             self.types.set_choices(tuple(
                 (value, label) for value, label in self._format_labels.items() if value in formats
