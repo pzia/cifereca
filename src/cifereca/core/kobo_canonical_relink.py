@@ -155,6 +155,13 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
         (str(new_path),),
     ).fetchall()
     _require(not existing, "canonical_relink_destination_claimed")
+    # Canonical publishers store physically resolved paths. A symlinked
+    # library alias must not create a second SQL pathname for the same B.
+    try:
+        _require(new_path.resolve(strict=True) == new_path,
+                 "canonical_relink_file_unverified")
+    except (OSError, RuntimeError):
+        raise CanonicalRelinkRejected("canonical_relink_file_unverified") from None
     _require(
         _verified_copy(
             str(new_path), root=library_root,
