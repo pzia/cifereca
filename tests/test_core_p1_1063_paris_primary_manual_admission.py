@@ -210,3 +210,22 @@ def test_no_configured_primary_does_not_grant_foreign_identity(tmp_path):
         assert state["mutations"] == 0
     finally:
         service.close()
+
+
+def test_shared_paris_catalogue_result_stays_inert_even_when_owner_is_current(tmp_path):
+    """#4909: an old A catalogue-only result cannot become a B loan click."""
+    service, _session, account, item, state = setup(tmp_path)
+    try:
+        shared = replace(item, metadata={"catalogue_access": "shared_read_only"})
+        assert service.can_borrow_paris(item)
+        assert not service.can_borrow_paris(shared)
+        diagnostic = service.paris_borrow_diagnostic(shared)
+        assert diagnostic["local_action_possible"] is False
+        assert diagnostic["reason_code"] == "edition_or_source_unqualified"
+        result = attempt(service, account, shared)
+        assert result["status"] == "blocked"
+        assert state["mutations"] == 0
+        assert state["calls"] == []
+        assert service.storage.metadata_get(borrow_claim_key(account, shared)) is None
+    finally:
+        service.close()

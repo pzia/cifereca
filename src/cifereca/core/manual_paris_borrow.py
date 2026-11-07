@@ -20,7 +20,11 @@ def _normal_paris_source_current(service, item: SearchResult, identity_id: str) 
             or item.source_provider != "paris"
             or type(item.source_credential) is not str
             or not item.source_credential
-            or type(identity_id) is not str or not identity_id):
+            or type(identity_id) is not str or not identity_id
+            or (type(getattr(item, "metadata", None)) is dict
+                and item.metadata.get("catalogue_access") == "shared_read_only")):
+        # A shared catalogue projection is never an action source, even
+        # when its owner later becomes the selected identity (A -> B).
         return False
     try:
         saved = service.config.identity(identity_id)
@@ -93,7 +97,9 @@ def manual_paris_borrow_diagnostic(service, item: SearchResult) -> dict[str, obj
               or item.docbase != "DILICOM"
               or item.medium != "digital"
               or type(item.source_credential) is not str
-              or not item.source_credential):
+              or not item.source_credential
+              or (type(getattr(item, "metadata", None)) is dict
+                  and item.metadata.get("catalogue_access") == "shared_read_only")):
             reason = "edition_or_source_unqualified"
         elif not _normal_paris_source_current(service, item, identity_id):
             reason = "primary_paris_connection_mismatch_or_inactive"
