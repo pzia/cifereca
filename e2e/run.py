@@ -680,10 +680,10 @@ def main() -> int:
                         "events", "ever_count", "ever_title", "ever_order",
                         "current_order", "current_provisional",
                         "current_recommendation", "ranked", "matched",
-                        "label_length",
+                        "label_length", "unexpected_actions",
                     })
                     counts = {"events": 64, "ranked": 100, "matched": 100,
-                              "label_length": 512}
+                              "label_length": 512, "unexpected_actions": 10}
                     if (type(shape) is dict and set(shape) == shape_keys
                             and all(type(shape[key]) is int
                                     and 0 <= shape[key] <= counts.get(key, 1)
