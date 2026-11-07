@@ -172,6 +172,12 @@ def test_real_dimension_assertions_publish_only_the_last_completed_check(
         ("native_declaration_attested_fixture_ready", "attested_fixture"),
         ("native_declaration_attested_audit_complete", "attested_audit"),
         ("native_declaration_attested_right_ready", "attested_right"),
+        ("native_declaration_attested_dialog_open", "attested_dialog"),
+        ("native_declaration_attested_right_selected", "attested_selected"),
+        ("native_declaration_attested_file_view_visible", "attested_files"),
+        ("native_declaration_attested_preflight_reached", "attested_preflight"),
+        ("native_declaration_attested_preview_reached", "attested_preview"),
+        ("P0_4859_native_historical_kobo_refusal_no_B", "attested_refusal_confirmed"),
     ],
 )
 def test_774_attested_maintenance_phase_is_closed_boolean_only(
