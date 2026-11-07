@@ -1,0 +1,7 @@
+# P1 #3687 / #4761 — Langues et classement provisoire
+
+La facette « Langue » a le même problème que la facette « Source » corrigée en #4906 : les résultats partiels de Recommandations ne prouvent pas que les autres langues sont absentes du résultat final. Enlever immédiatement une langue sélectionnée lors d'un recalcul, parce qu'elle ne figure pas dans la nouvelle tête provisoire, bascule silencieusement la consultation vers « Toutes les langues ».
+
+Le plugin ne mémorise comme `_attested_language_choices` que des **langues normalisées provenant des résultats effectivement chargés**. Durant un calcul en cours, si l'utilisateur a déjà sélectionné l'une de ces langues, elle reste proposée même si la tête provisoire courante ne comporte pas encore de livre correspondant. Cela n'est **pas** une preuve que le nouveau résultat final possède cette langue. Au classement terminé, seuls les codes présents dans les nouveaux résultats demeurent, et toute sélection devenue absente est retirée. Une sélection corrompue, non attestée ou supprimée au changement de profil n'est pas restaurée.
+
+Tests headless : `test_p1_3687_progressive_language_selection.py` (état antérieur FR, tête partielle EN, maintien du filtre FR, finale EN, adapter défectueux et réinitialisation au changement de profil). Les scénarios E2E GTK Recommandations demeurent obligatoires. Aucune I/O fournisseur, collecte de préférence, attribution de droits ou mutation métier.
