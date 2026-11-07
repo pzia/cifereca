@@ -287,6 +287,9 @@ def main():
         assert query.field.get_visible()
         query.field.set_selected(4)  # Champ · Sujet
         query.entry.set_text("astronomie")
+        # Gtk.SearchEntry.search-changed is debounced. The same explicit
+        # activation used by this real GTK probe commits the local filter.
+        query.entry.emit("activate")
         assert store.get_n_items() == 1
         assert store.get_item(0).title == "Livre A"
         assert "Champ · Sujet" in view._summary.get_text()
@@ -295,6 +298,7 @@ def main():
         assert "0 sur 3" in view._summary.get_text()
         assert "Champ · Titre" in view._summary.get_text()
         query.entry.set_text("")
+        query.entry.emit("activate")
         query.field.set_selected(0)  # Tous les champs (legacy title/author)
         assert store.get_n_items() == 3
         assert query.active_document_labels() == ()
