@@ -2616,10 +2616,14 @@ class Storage:
                         (identity_id, old_text),
                     ).fetchone() is not None:
                         raise ValueError("relocate_canonical_source_requires_core_relink")
-                # Relocation is never an ownership attestation. In particular,
-                # a no-op rename must not fill a historical NULL identity;
-                # actual moves already refuse ambiguous legacy owners above.
-                if old_text != new_text:
+                # #3196 W5: ordinary file renames also must not fabricate
+                # a new current location for an old Kobo v0.7 receipt.
+                # Retain its original locator as passive historical evidence.
+                # A separate, already attested Core B requires its own
+                # exact-source relink. Non-Kobo compatibility providers still
+                # migrate their location as before.
+                # Scope/collision vetoes above remain active for Kobo.
+                if old_text != new_text and provider_id != "kobo":
                     db.execute(
                         "UPDATE backup_items SET local_path=? "
                         "WHERE local_path=? AND provider_id=? AND identity_id=?",
@@ -2879,10 +2883,23 @@ class Storage:
                             "(identity_id IS NULL OR identity_id=?)",
                             (identity, now, placement_id, legacy),
                         )
-            for provider, credential, item, path in db.execute("SELECT provider_id,credential_id,item_id,local_path FROM backup_items").fetchall():
+            # #3196 W5 final Kobo archive cutover: a directory rename is a
+            # filesystem mapping, NOT evidence that the historical v0.7
+            # Kobo file is still located at the new path. Preserve the old
+            # raw backup_items locator verbatim (including updated_at) for
+            # diagnosis/recovery. Typed Core Placements are migrated above;
+            # non-Kobo compatibility receipts retain their prior behavior.
+            for provider, credential, item, path in db.execute(
+                "SELECT provider_id,credential_id,item_id,local_path "
+                "FROM backup_items WHERE provider_id!='kobo'"
+            ).fetchall():
                 new = rewrite_path(path, mappings, root)
                 if new != path:
-                    db.execute("UPDATE backup_items SET local_path=?,updated_at=? WHERE provider_id=? AND credential_id=? AND item_id=?", (new, now, provider, credential, item))
+                    db.execute(
+                        "UPDATE backup_items SET local_path=?,updated_at=? "
+                        "WHERE provider_id=? AND credential_id=? AND item_id=?",
+                        (new, now, provider, credential, item),
+                    )
             # These JSON containers hold local paths, including nested ledger
             # materialization paths. Provider URLs and text remain untouched.
             for table, key in [("placements","placement_id"),("catalog_entries","catalog_entry_id"),
