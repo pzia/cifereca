@@ -95,6 +95,25 @@ Un filtre de sources actif malformé refuse les routes exactes plutôt que de
 revenir implicitement à « Tous ». Cette contrainte de vue ne crée aucun
 droit fournisseur ; le Core garde toute la validation au clic.
 
+## Garde de ligne Search révoquée pendant l'attente du worker
+
+La notice Search sélectionnée peut être retirée ou remplacée dans
+`window.search_objects` après le clic Recommandations mais avant l'exécution
+de la tâche `holdings()`, sans modifier les attributs de l'ancien objet.
+Le test des seuls attributs de cet objet ne détectait pas la révocation.
+
+Le clic capture maintenant la **clé exacte** déjà qualifiée par CoreUI.
+Dans le worker, un contrôle strict vérifie que cette clé référence toujours
+**la même instance** `SearchResult` ; sinon la tâche est annulée avant tout
+GET de disponibilités. Le contrôle est uniquement sur un dictionnaire Core,
+sans lire un widget GTK, sans `loaded_notice_key()` et sans fournisseur.
+Les gardes de profil/session, la vérification au callback, le parcours
+`known-v2` et les contrôles d'emprunt restent inchangés.
+
+Tests offline : ligne remplacée, retirée, cache invalide, callback tardif,
+worker exempt d'accès GTK, ligne valide inchangée. Cette tranche reporte
+la correction de l'ancienne PR #4870 sur `main` sans forcer sa branche.
+
 ## Couverture, suites et non-objectifs
 
 Tests headless Core/Plugins : aucun GET au rendu, clic explicite seulement,
