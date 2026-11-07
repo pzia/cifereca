@@ -23,7 +23,7 @@ from cifereca.plugin_api import (
 from recommendation_llm import explain_reasons
 
 from recommendation_engine import CatalogNoticeVariant, RankedCandidate, candidate_key, get_field, identifier_values, normalize
-from recommendation_service import LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
+from recommendation_service import CatalogueSearchObservation, LibrarySnapshotCache, RecommendationPartial, RecommendationResult, compute_recommendations
 from reference_recommendation import compute_reference_recommendations
 
 
@@ -77,6 +77,103 @@ def _public_ranked_values(raw: Any, *, limit: int = 32) -> tuple[str, ...]:
         cleaned for value in rows
         if (cleaned := _public_candidate_text(value, limit=240))
     )
+
+
+def _catalogue_coverage_projection(
+    result: RecommendationResult | None,
+) -> tuple[str, str]:
+    """Public status of discovered / responding / ranked catalogues.
+
+    The Source filter remains strictly ranked-only. A supplier returning no
+    ranked candidate must not be called disabled, nor silently disappear from
+    the separate status. Never display raw error messages or user query text.
+    """
+    if type(result) is not RecommendationResult:
+        return "", ""
+    raw_providers = result.providers
+    if type(raw_providers) not in (tuple, list):
+        return "", ""
+    entries: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw in raw_providers[:128]:
+        if type(raw) not in (tuple, list) or len(raw) != 2:
+            continue
+        provider_id = _public_candidate_text(raw[0], limit=120)
+        # A source ID is an exact broker key. Trimming controls/whitespace
+        # into another provider ID would attribute a foreign status to it.
+        if not provider_id or provider_id != raw[0] or provider_id in seen:
+            continue
+        seen.add(provider_id)
+        label = _public_candidate_text(raw[1], limit=240) or provider_id
+        entries.append((provider_id, label))
+    if not entries:
+        return "Aucun catalogue disponible", ""
+    count = len(entries)
+    if not result.queries:
+        return f"{count} catalogue(s) disponibles · aucun signal de recherche", ""
+
+    observations: dict[str, CatalogueSearchObservation] = {}
+    raw_observations = result.catalogue_observations
+    if type(raw_observations) in (tuple, list):
+        for value in raw_observations[:128]:
+            if (type(value) is CatalogueSearchObservation
+                    and value.provider_id in seen
+                    and value.provider_id not in observations
+                    and all(type(number) is int and 0 <= number <= 1000000
+                            for number in (
+                                value.batches, value.results_seen, value.failures,
+                            ))):
+                observations[value.provider_id] = value
+    if not observations:
+        return f"{count} catalogue(s) disponibles · réponses individuelles non détaillées", ""
+
+    ranked_sources: set[str] = set()
+    if type(result.ranked) in (tuple, list):
+        for ranked in result.ranked[:4096]:
+            try:
+                raw_sources = ranked.sources
+            except Exception:
+                continue
+            ranked_sources.update(_public_ranked_values(raw_sources))
+
+    answered = empty = errors = not_ranked = no_response = 0
+    visible = set()
+    details: list[str] = []
+    for provider_id, label in entries:
+        observation = observations.get(provider_id)
+        if observation is None or not observation.batches:
+            state = "aucun lot reçu"
+            no_response += 1
+        else:
+            answered += 1
+            if observation.failures:
+                errors += 1
+            if observation.results_seen == 0 and not observation.failures:
+                empty += 1
+            if observation.results_seen and provider_id not in ranked_sources:
+                not_ranked += 1
+            if provider_id in ranked_sources:
+                visible.add(provider_id)
+            if observation.failures:
+                state = ("réponse partielle en erreur" if observation.results_seen
+                         else "erreur fournisseur")
+            elif not observation.results_seen:
+                state = "réponse sans notice"
+            elif provider_id not in ranked_sources:
+                state = "notices reçues, non retenues dans le classement"
+            else:
+                state = "notices présentes dans le classement"
+        if len(details) < 12:
+            details.append(f"{label} : {state}")
+
+    summary = (
+        f"{count} catalogue(s) disponibles · {answered} avec réponse · "
+        f"{len(visible)} retenu(s) · {not_ranked} hors classement · "
+        f"{empty} sans notice · {errors} en erreur · {no_response} sans lot"
+    )
+    if len(entries) > len(details):
+        details.append(f"{len(entries) - len(details)} autre(s) catalogue(s)")
+    return summary, "\n".join(details)
 
 
 def _candidate_public_field(item: Any, name: str, *, limit: int = 180) -> str:
@@ -843,6 +940,13 @@ class UxRecommendationsView:
         status_row.append(self._summary)
         toolbox.append(status_row)
 
+        # This is a catalogue *inventory/response* status, not the ranked
+        # results Source facet. No rights, accounts or provider error payload.
+        self._catalogue_overview = Gtk.Label(label="", xalign=0, wrap=True)
+        self._catalogue_overview.add_css_class("dim-label")
+        self._catalogue_overview.set_visible(False)
+        toolbox.append(self._catalogue_overview)
+
         self._master.append_toolbar(toolbox)
         self._master.empty_detail(
             "Aucune recommandation sélectionnée",
@@ -1375,6 +1479,17 @@ class UxRecommendationsView:
             self._provider_labels.get(source, source), limit=240,
         )
 
+    def _set_catalogue_coverage(
+        self, result: RecommendationResult | None = None,
+    ) -> None:
+        label = getattr(self, "_catalogue_overview", None)
+        if label is None:
+            return
+        summary, tooltip = _catalogue_coverage_projection(result)
+        label.set_label(summary)
+        label.set_tooltip_text(tooltip or None)
+        label.set_visible(bool(summary))
+
     def _diagnostic_tooltip(self) -> str:
         return (
             "Progression du calcul : requêtes × catalogues, puis classement et diversification.\n"
@@ -1603,6 +1718,7 @@ class UxRecommendationsView:
         self._set_provisional(False)
         self._diagnostic_cache = 0
         self._diagnostic_network = 0
+        self._set_catalogue_coverage()
         if hasattr(self, "_progress"):
             self._progress.set_tooltip_text(self._diagnostic_tooltip())
 
@@ -2563,6 +2679,7 @@ class UxRecommendationsView:
         self._set_provisional(False)
         self._refresh_button.set_sensitive(True)
         self._spinner.stop()
+        self._set_catalogue_coverage(result if error is None else None)
         if error or result is None:
             self._ranked = []
             # The old result's Source/Langue facets are no longer available
