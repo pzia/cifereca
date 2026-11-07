@@ -235,6 +235,23 @@ def main() -> int:
         assert local.provider.get_visible() and local.languages.get_visible()
         assert local.selected_sources() == () and local.selected_languages() == ()
 
+        # #3687: real GTK local reset is one user-visible change, not a
+        # new recommendation query. Available facet choices must survive.
+        local.provider.set_values(("kobo",))
+        local.languages.set_values(("en",))
+        local.entry.set_text("titre")
+        assert local.clear_button.get_sensitive()
+        reset_events = len(events)
+        local.clear_button.emit("clicked")
+        assert local.filter_text() == ""
+        assert local.selected_sources() == ()
+        assert local.selected_languages() == ()
+        assert len(events) == reset_events + 1
+        assert not local.clear_button.get_sensitive()
+        assert tuple(local.provider.buttons) == ("kobo",)
+        assert tuple(local.languages.buttons) == ("en",)
+        result["checks"]["local_filter_reset"] = True
+
         # #3687: one malformed provider's file format must not terminate
         # GTK facet rebuilding or obscure the attested format of another
         # already-loaded document. No provider/LLM call or entitlement.
