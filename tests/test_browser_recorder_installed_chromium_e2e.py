@@ -326,13 +326,12 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         assert any(x.mime == "application/xml" for x in trace.exchanges)
         assert all(x.response_body is None for x in trace.exchanges
                    if x.mime == "image/png")
-        # A successful browser navigation alone is NOT evidence of a usable
-        # private capture (#2531): require real HTML, JSON, XML and the POST
-        # body from the explicitly agreed localhost fixture. Assertions use
-        # booleans/counts, never dump private request/response objects.
+        # Require usable HTML/JSON/XML evidence and the existence of the POST.
+        # The credential-bearing POST is intentionally not retained verbatim
+        # in either RAM or encrypted storage. Assertions do not dump payloads.
         evidence = trace.coverage()
         assert evidence["write_requests_observed"] >= 1
-        assert evidence["write_requests_captured"] >= 1
+        assert evidence["write_requests_captured"] == 0
         assert evidence["json_responses_observed"] >= 1
         assert evidence["json_responses_captured"] >= 1
         assert evidence["html_responses_observed"] >= 1
@@ -343,8 +342,9 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
         )
         assert any(
             x.method == "POST" and x.status == 302
-            and x.request_body_state == "captured"
-            and type(x.request_body) is str
+            and x.request_body_state == "body_omitted"
+            and x.request_body_reason == "auth_redacted"
+            and x.request_body is None
             for x in trace.exchanges
         )
         assert evidence["response_read_failed"] == 0
@@ -363,7 +363,8 @@ def test_installed_plugin_drives_real_chromium_to_confirmed_zip(
             ):
                 assert saved[key] == evidence[key]
             assert any(
-                x.method == "POST" and x.request_body_state == "captured"
+                x.method == "POST" and x.request_body_reason == "auth_redacted"
+                and x.request_body is None
                 for x in stored.trace.exchanges
             )
         finally:
