@@ -250,7 +250,26 @@ def main():
         query = view._query_controls
         store = view._master._page.store
         generation = view._generation
+        # #4761: verify REAL GTK hierarchy, not merely a static builder.
+        # Calculation options form one horizontal row with a scrollable
+        # viewport. Search's own LocalQueryControls remains below it.
+        strip = view._calculation_parameters_scroll
+        parameters = view._calculation_parameters
+        assert isinstance(strip, Gtk.ScrolledWindow)
+        assert strip.get_child() is parameters
+        assert parameters.get_orientation() == Gtk.Orientation.HORIZONTAL
+        assert strip.get_policy() == (
+            Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER,
+        )
+        assert strip.get_mapped()
+        assert view._exclude_owned.get_parent() is parameters
+        assert view._refresh_button.get_parent() is parameters
+        assert view._score.get_parent().get_parent() is parameters
+        assert view._identity.get_parent().get_parent() is parameters
+        assert view._reference.get_parent().get_parent() is parameters
+        assert query.widget.get_parent() is not parameters
         assert query.widget.get_mapped() and store.get_n_items() == 3
+        report["checks"]["P1_4761_gtk_single_row_calculation_strip"] = True
         query.provider.buttons["fixture"].set_active(True)
         assert store.get_n_items() == 1
         query.provider.buttons["second"].set_active(True)
