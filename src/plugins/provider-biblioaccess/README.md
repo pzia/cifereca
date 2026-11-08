@@ -349,3 +349,25 @@ sont confirmés, le mode `post` permet ensuite un unique POST explicitement
 consenti, seulement avec les paramètres réellement connus, sans deviner de
 valeur. Un retour `200` et `MyLoans` seul ne démontre toujours pas
 l'identité d'un emprunteur et ne justifie pas l'activation de `sync.loans`.
+
+
+### Recette réelle du catalogue C depuis « Tester ce compte »
+
+L'option de compte **`experimental_catalogue_query`** (vide par défaut)
+permet de saisir un mot-clé volontaire. Lors d'un clic explicite sur
+« Tester ce compte » avec `experimental_http_probe=on` ou `post`,
+le provider effectue une recherche **GET sur une page au plus** du
+catalogue public du tenant 1409 et peut lire **une fiche** dont le lien
+a réellement été observé dans cette recherche. Ce test est indépendant
+du GET institutionnel : une panne SSO n'empêche pas le diagnostic de
+recherche C. Les flux sont pris en charge par le transport HTTPX public.
+
+Le journal canonique contient uniquement les phases
+`catalogue_search`, `catalogue_detail`, le statut de qualification,
+le nombre de pages et de liens observés et un éventuel code d'erreur
+fermé. Il ne publie ni le terme de recherche, ni le titre de la
+notice, ni le HTML, ni un droit utilisateur. Un code 200 ne prouve pas
+l'exhaustivité du catalogue ; `completeness=partial` reste systématique.
+**Aucune capacité `catalog.search`, `sync.loans` ni emprunt
+n'est encore publiée** : la prochaine capture terrain établira le
+véritable comportement fournisseur avant cette promotion.
