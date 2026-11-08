@@ -240,3 +240,38 @@ def test_unknown_provider_result_displays_only_public_status_without_transfer():
     assert "SECRET" not in repr(h.logs)
     assert "incertain" in h.logs[0][1]
     assert h.window._cross_profile_borrow_pending is None
+
+
+def test_duplicate_gtk_responses_schedule_only_one_worker_even_before_runner():
+    h = setup(multiple=True)
+    assert h.show()
+    Dialog.made[0].respond("choice-1")
+    Dialog.made[0].respond("choice-0")
+    assert len(Dialog.made) == 2
+    confirm = Dialog.made[1]
+    confirm.respond("borrow")
+    confirm.respond("borrow")
+    confirm.respond("cancel")
+    assert len(h.window.runner.jobs) == 1
+    assert h.attempts == []
+    result = h.window.runner.jobs[0][1]()
+    assert result["status"] == "confirmed"
+    assert len(h.attempts) == 1
+    h.window.runner.jobs[0][2](result)
+    assert h.window._cross_profile_borrow_pending is None
+    confirm.respond("borrow")
+    assert len(h.window.runner.jobs) == 1
+    assert len(h.attempts) == 1
+
+
+def test_cancelled_pending_worker_never_dispatches_supplier_mutation():
+    h = setup()
+    assert h.show()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    assert len(h.window.runner.jobs) == 1
+    # Simulate navigation/explicit cancellation revoking the pending token.
+    h.window._cross_profile_borrow_pending = None
+    result = h.window.runner.jobs[0][1]()
+    assert result["status"] == "blocked"
+    assert h.attempts == []
