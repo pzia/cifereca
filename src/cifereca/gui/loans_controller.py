@@ -15,6 +15,7 @@ from gi.repository import Gtk, Adw
 
 from ..models import Loan
 from ..core.loan_source_identity import loan_source_key, unambiguous_loan_rows
+from ..core.loan_cover_fallback import loan_local_cover
 from .book_widgets import BookListItem
 from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_due_presentation, loan_medium_counts, loan_row_metadata
 from .master_detail import MasterDetailPage
@@ -83,6 +84,26 @@ def _populate_loans(self, rows: list[Loan]) -> None:
     if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
 
 
+def _loan_display_cover(self, loan: Loan) -> Loan:
+    """Display-only image fallback; retain the original loan for every action.
+
+    The library's already materialized read-only snapshot is reused. If the
+    exact loan + Placement proof is absent, ambiguous, stale or from another
+    profile, keep the supplier's thumbnail unchanged (including None).
+    """
+    if loan.thumbnail_url:
+        return loan
+    active = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+    if active is None or loan.identity_id != active:
+        return loan
+    resolved = loan_local_cover(loan, getattr(self, "_library_entries_cache", ()))
+    if resolved.status != "selected" or not resolved.url:
+        return loan
+    displayed = copy(loan)
+    displayed.thumbnail_url = resolved.url
+    return displayed
+
+
 def _render_loans(self) -> None:
     if not hasattr(self, "loan_page"):
         return
@@ -121,6 +142,7 @@ def _render_loans(self) -> None:
         if type(loan.author) is str and loan.author.strip():
             subtitle = loan.author.strip() + " · " + subtitle
         meta = loan_row_metadata(loan.due_at, due, document_type=loan.document_type, provider=loan.provider)
+        display = _loan_display_cover(self, loan)
         ranked_rows.append((
             due.sort_key,
             BookListItem(
@@ -129,7 +151,7 @@ def _render_loans(self) -> None:
                 subtitle,
                 meta,
                 due.label,
-                loan.thumbnail_url,
+                display.thumbnail_url,
                 badge_style=due.style,
             ),
         ))
@@ -155,7 +177,7 @@ def _loan_selected(self, row: BookListItem | None) -> None:
     loan = self.loan_objects.get(row.key)
     if loan:
         self._displayed_loan = loan
-        self.loan_page.detail.show_loan(loan)
+        self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
@@ -200,7 +222,7 @@ def _loans_refreshed(self, rows):
         ]
         fresh = matches[0] if len(matches) == 1 else None
         self._displayed_loan=fresh
-        if fresh:self.loan_page.detail.show_loan(fresh)
+        if fresh:self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
         else:self.loan_page.detail.empty(
             "Prêt non retrouvé dans cette actualisation",
             "La réponse peut être vide ou partielle ; la disparition du prêt "
