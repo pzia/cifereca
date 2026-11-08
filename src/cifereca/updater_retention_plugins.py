@@ -197,6 +197,7 @@ def inspect_plugin_version_history(packages_root: Path, *, now: float) -> dict[s
 
 def inspect_updater_retention_readonly(
     runtime_root: Path, packages_root: Path, *, now: float,
+    backups_root: Path | None = None,
 ) -> dict[str, Any]:
     """One redacted projection for the independently qualified store families.
 
@@ -208,17 +209,27 @@ def inspect_updater_retention_readonly(
 
     core = inspect_core_transaction_history(runtime_root, now=now)
     plugins = inspect_plugin_version_history(packages_root, now=now)
+    backups = None
+    if backups_root is not None:
+        from .updater_retention_backups import inspect_dev_updater_backups
+        backups = inspect_dev_updater_backups(backups_root, now=now)
+    coverage = set(core["coverage"]) | set(plugins["coverage"])
+    blockers = set(core["blockers"]) | set(plugins["blockers"])
+    plans = {"core_transactions": core["plan"], "plugin_versions": plugins["plan"]}
+    pending = ["persistent_staging", "cross_store_reference_proofs"]
+    if backups is not None:
+        coverage.update(backups["coverage"])
+        blockers.update(backups["blockers"])
+        plans["updater_backups"] = backups["plan"]
+        if not backups["coverage"]:
+            pending.append("updater_backups")
+    else:
+        pending.append("updater_backups")
     return {
         "schema": "cifereca.updater.retention-inventory-combined/1",
         "safe_to_apply": False,
-        "coverage": sorted(set(core["coverage"]) | set(plugins["coverage"])),
-        "pending_stores": [
-            "updater_backups", "persistent_staging", "cross_store_reference_proofs",
-        ],
-        "blockers": sorted(set(core["blockers"]) | set(plugins["blockers"])
-                           | {"partial_store_coverage"}),
-        "plans": {
-            "core_transactions": core["plan"],
-            "plugin_versions": plugins["plan"],
-        },
+        "coverage": sorted(coverage),
+        "pending_stores": sorted(pending),
+        "blockers": sorted(blockers | {"partial_store_coverage"}),
+        "plans": plans,
     }

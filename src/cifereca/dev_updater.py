@@ -684,7 +684,24 @@ def apply_snapshot(
         backup_name = hashlib.sha256(snapshot_id.encode()).hexdigest()[:16] + '-' + str(time.time_ns())
         backup_base = state_dir() / "dev-updates" / backup_name
         backup_plugins = backup_base / "plugins"
+        # Ownership is minted only by the updater after the copy completed,
+        # never inferred from a directory name or its mtime. A crash before
+        # receipt fsync leaves an unqualified backup to be retained.
+        try:
+            backup_base.parent.mkdir(parents=True, exist_ok=True)
+            backup_base.mkdir(mode=0o700, exist_ok=False)
+            # Create the empty backup envelope before the copy stage. Some
+            # valid snapshots back up zero installed plugins; test doubles
+            # must not affect the receipt's filesystem preconditions.
+            backup_plugins.mkdir(mode=0o700, exist_ok=False)
+        except OSError:
+            raise DevUpdateError("répertoire de sauvegarde non sûr") from None
         step("plugin_backup", _backup_plugins, package_ids, backup_plugins)
+        from .updater_retention_backups import write_dev_backup_receipt
+        try:
+            write_dev_backup_receipt(backup_base, snapshot_sha256=result["sha256"])
+        except (OSError, ValueError):
+            raise DevUpdateError("reçu de sauvegarde de mise à jour indisponible") from None
         old_current = updater._symlink_target(updater.install_root() / "current")
         core_installed = False
         core_result = None
