@@ -102,12 +102,12 @@ def test_exact_legacy_purchase_claim_keeps_first_delivery_contract(
     {"product_id": True},
     {"product_id": " book-1"},
     {"product_id": "book-1 "},
-    {"product_id": "book-1\\n"},
-    {"product_id": "book-1\\x00"},
+    {"product_id": "book-1\n"},
+    {"product_id": "book-1\x00"},
     {"product_id": "x" * 1025},
     {"product_id": "book-1", "id": 123},
     {"product_id": "book-1", "id": "book-1 "},
-    {"product_id": "book-1", "id": "book-1\\r"},
+    {"product_id": "book-1", "id": "book-1\r"},
 ])
 def test_malformed_raw_edition_key_never_mints_right_or_get(
     tmp_path: Path, monkeypatch, extra,
