@@ -545,3 +545,14 @@ mais **ne constitue jamais** une authentification Core vérifiée :
 aucun compte, prêt, téléchargement ou `sync.loans` n'est publié.
 Les captures HTTP brutes de ce mode peuvent contenir des identifiants :
 fichiers privés et partage après expurgation uniquement.
+
+
+La reconnaissance lexicale de la route AJAX accepte désormais également
+le littéral relatif `logon.svc/logon` observé dans le JS PageSpeed, sans
+imposer un slash initial. Ce signal sert seulement au diagnostic : il
+n'exécute pas le JS et ne conditionne pas la connexion.
+
+Une régression MockTransport couvre désormais le chemin **positif
+synthétique** complet : session cookie institutionnel initiale, POST avec
+valeurs fraîches, cookie de succès, CAS avec ticket, cookie BiblioAccess,
+puis lecture de MyLoans. Ce test ne vaut pas validation en production.
