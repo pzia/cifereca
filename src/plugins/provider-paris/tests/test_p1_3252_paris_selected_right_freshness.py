@@ -302,3 +302,76 @@ def test_paris_supplier_tls_allowlist_applies_before_offer_claim(tmp_path, monke
     finally:
         session.close()
 
+
+
+def test_selected_candidate_reuses_its_exact_inventory_for_file_get(tmp_path, monkeypatch):
+    """A verified candidate must not trigger a third intermittent ListLoans."""
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan()]
+    offer_id = session.rights_observation_snapshot(account).rights[0].delivery_offer_id
+    client.calls.clear()
+    reads = 0
+    original = client.loans
+
+    def intermittent(upstream, borrower):
+        nonlocal reads
+        if upstream == "DILICOM":
+            reads += 1
+            if reads >= 3:
+                raise RuntimeError("synthetic late DILICOM timeout")
+        return original(upstream, borrower)
+
+    client.loans = intermittent
+    try:
+        path, receipt = session.rights_selected_delivery_candidate(
+            account, edition_id="edition-1", right_id="loan-1",
+            kind="loan", branch="dilicom", delivery_offer_id=offer_id,
+            target_dir=tmp_path, explicit_user_action=True,
+        )
+        assert path.is_file() and receipt == ""
+        assert gets == [SIGNED]
+        assert reads == 2  # selected preflight + candidate card; never a third
+        assert client.calls == [
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+            ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
+        ]
+        # The pin cannot leak to another direct selected delivery call.
+        with pytest.raises(ProviderConfigurationError, match="paris_selected_right_unobserved"):
+            session.download_digital(
+                _loan, account, tmp_path, expected_right_id="loan-1",
+                expected_identity_id="identity-A",
+            )
+        assert reads == 3
+        assert gets == [SIGNED]  # no new file GET on subsequent timeout
+    finally:
+        session.close()
+
+
+def test_selected_candidate_missing_latest_card_blocks_without_content_get(tmp_path, monkeypatch):
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = [raw_loan()]
+    offer_id = session.rights_observation_snapshot(account).rights[0].delivery_offer_id
+    client.calls.clear()
+    original = client.loans
+    seen = 0
+
+    def revoked(upstream, borrower):
+        nonlocal seen
+        if upstream == "DILICOM":
+            seen += 1
+            if seen == 2:
+                return []  # a successful but explicitly empty current inventory
+        return original(upstream, borrower)
+
+    client.loans = revoked
+    try:
+        with pytest.raises(ProviderCapabilityError, match="paris_candidate_source_unobserved"):
+            session.rights_selected_delivery_candidate(
+                account, edition_id="edition-1", right_id="loan-1",
+                kind="loan", branch="dilicom", delivery_offer_id=offer_id,
+                target_dir=tmp_path, explicit_user_action=True,
+            )
+        assert seen == 2 and gets == []
+        assert session._selected_delivery_inventory.get() is None
+    finally:
+        session.close()
