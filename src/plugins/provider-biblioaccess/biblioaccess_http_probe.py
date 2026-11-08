@@ -12,7 +12,7 @@ from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from biblioaccess_http_sso import (
     ORIGIN, LOGON_PATH, FormShape, SsoProtocolError,
-    inspect_login_forms, logon_response_shape,
+    inspect_login_forms, logon_response_shape, classify_http_step,
 )
 
 _MAX_RESPONSE_BYTES = 65536
@@ -25,9 +25,6 @@ def _bounded_body(response, limit):
             raise SsoProtocolError("sso_response_limit")
         result.extend(chunk)
     return bytes(result)
-_ALLOWED_CONTENT_TYPES = frozenset((
-    "application/json", "text/html", "application/xhtml+xml",
-))
 
 
 @dataclass(frozen=True)
@@ -50,11 +47,15 @@ class BiblioAccessHTTPQualification:
             follow_redirects=False, trust_env=False, transport=transport,
         )
         self._closed = False
+        self._post_attempted = False
+        self._inspected_form_shapes = ()
+        self._login_inspected = False
 
     def close(self):
         if not self._closed:
             self._closed = True
             self.http.cookies.clear()
+            self._inspected_form_shapes = ()
             self.http.close()
 
     def inspect_login(self) -> tuple[FormShape, ...]:
@@ -70,8 +71,11 @@ class BiblioAccessHTTPQualification:
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise SsoProtocolError("sso_unexpected_content")
                 body = _bounded_body(response, 256000)
-                return inspect_login_forms(
+                shapes = inspect_login_forms(
                     ORIGIN + "/login", body.decode("utf-8", errors="strict"))
+                self._inspected_form_shapes = shapes
+                self._login_inspected = True
+                return shapes
         except (httpx.HTTPError, UnicodeError):
             raise SsoProtocolError("sso_transport_unavailable") from None
 
@@ -84,6 +88,8 @@ class BiblioAccessHTTPQualification:
             raise SsoProtocolError("sso_transport_closed")
         if explicit_consent is not True:
             raise SsoProtocolError("sso_consent_required")
+        if self._post_attempted:
+            raise SsoProtocolError("sso_post_already_attempted")
         if (type(shape) is not FormShape or shape.method != "POST"
                 or shape.action_origin != ORIGIN
                 or shape.action_path != LOGON_PATH
@@ -91,8 +97,12 @@ class BiblioAccessHTTPQualification:
                 or set(fields) != set(shape.field_names)
                 or any(type(k) is not str or type(v) is not str or len(v) > 8192
                        for k, v in fields.items())
-                or not shape.password_field_present):
+                or not shape.password_field_present
+                or not self._login_inspected
+                or shape not in self._inspected_form_shapes):
             raise SsoProtocolError("sso_post_schema_unqualified")
+        # Mark before any I/O: an uncertain POST must never retry on this client.
+        self._post_attempted = True
         try:
             with self.http.stream(
                 "POST", ORIGIN + LOGON_PATH, data=fields,
