@@ -19,7 +19,8 @@ from tests.test_core_p0_981_redacted_task_traces import _runner
     ({"status": "verification_unavailable",
       "reason_code": "borrow_result_unverified",
       "provider_verified": False}, "pending",
-     "Emprunt non confirmé — vérification nécessaire"),
+     "Demande d’emprunt envoyée ; confirmation indisponible. "
+     "Ne réempruntez pas : actualisez vos prêts ultérieurement."),
     ({"status": "submitted", "reason_code": "borrow_result_unverified",
       "provider_verified": False}, "pending",
      "Emprunt non confirmé — vérification nécessaire"),
