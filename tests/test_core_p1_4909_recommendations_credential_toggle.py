@@ -67,9 +67,7 @@ def test_recommendations_discard_b_catalogue_without_waiting_for_session_close(
         first, _ = _recommend(service, "alice")
         assert len(first.ranked) == 1
         assert first.providers == ((provider, session.descriptor.display_name),)
-        assert first.ranked[0].item.metadata == {
-            "catalogue_access": "shared_read_only",
-        }
+        assert first.ranked[0].item.metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         before = calls()
         assert before >= 1
 
@@ -96,9 +94,7 @@ def test_recommendations_discard_b_catalogue_without_waiting_for_session_close(
 
         restored, _ = _recommend(service, "alice")
         assert len(restored.ranked) == 1
-        assert restored.ranked[0].item.metadata == {
-            "catalogue_access": "shared_read_only",
-        }
+        assert restored.ranked[0].item.metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         assert restored.ranked[0].item.owned is False
         assert restored.ranked[0].item.downloadable is False
         if provider != "paris":
