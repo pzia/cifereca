@@ -101,6 +101,8 @@ historiques. Ces noms ne créent pas de deuxième moteur générique de Sync.
 
 **Analyseur externe Kobo (#3252, script hors Core)** : `scripts/kobo_final_verdict_summary.py` (O — lecture locale uniquement). Depuis la racine du dépôt, lancer `python -m scripts.kobo_final_verdict_summary CHEMIN-PRIVE.zip` pour extraire les compteurs fermés des rejets finaux. N'ouvre pas le Core, ne modifie aucune donnée, ne déclenche aucune connexion ni acquisition et ne publie aucun contenu brut du ZIP. Le dossier `scripts/` ne fait pas partie du package Core installable.
 
+**Métrique d'extraction Core/Plugin P0 #3196 (script read-only)** : `scripts/ci_kobo_core_line_inventory.py` ; lancer `python -m scripts.ci_kobo_core_line_inventory --json` depuis le dépôt. Le relevé **dédié** couvre les fichiers Python nommés Kobo de `src/cifereca/core/`, tout `src/cifereca/kobo/` et l'IHM `settings_legacy_kobo*.py` ; les lignes de commentaires et vides sont affichées séparément. Pour ne pas maquiller le volume résiduel, les lignes contenant littéralement « Kobo » dans les modules génériques sont comptées **à part**, sans prétendre couvrir les blocs dont seul le contexte est Kobo. Aucun plugin fournisseur, appel réseau, migration ou modification SQLite n'est exécuté. Le test `tests/test_core_p0_3196_kobo_line_budget.py` interdit un accroissement depuis le plafond figé après #5030 ; l'abaisser après chaque coupe validée.
+
 ## Expert : réconciliation de bibliothèque hors réseau
 
 **Point d'entrée Core non installé comme commande shell :**
