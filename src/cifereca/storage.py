@@ -2099,8 +2099,20 @@ class Storage:
             # Other providers, and Kobo editions with no typed source,
             # retain the historical writer until their recovery is migrated.
             was_complete_kobo_archive = False
+            completed_archive_key = None
             if item.get("provider_id") == "kobo":
                 db.execute("BEGIN IMMEDIATE")
+                # The v0.7 row can move complete -> acquiring -> error.
+                # A single previous-status snapshot loses the historical
+                # complete transition after the first retry. Persist a
+                # monotone, private, per-legacy-PK archive marker instead.
+                completed_archive_key = (
+                    "core.kobo.completed-legacy-archive.v1."
+                    + hashlib.sha256(json.dumps([
+                        str(item.get("credential_id") or ""),
+                        str(item.get("item_id") or ""),
+                    ], ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+                )
                 if db.execute(
                     "SELECT 1 FROM source_references WHERE provider_id='kobo' "
                     "AND credential_id=? AND edition_id=? LIMIT 1",
@@ -2120,7 +2132,11 @@ class Storage:
                      str(item.get("item_id") or "")),
                 ).fetchone()
                 was_complete_kobo_archive = bool(
-                    former and former[0] in {"complete", "ok"}
+                    (former and former[0] in {"complete", "ok"})
+                    or db.execute(
+                        "SELECT 1 FROM metadata WHERE key=? LIMIT 1",
+                        (completed_archive_key,),
+                    ).fetchone()
                 )
             # The v0.7 checkpoint remains writable for legacy recovery,
             # but neither passive inventory nor active delivery may mirror
@@ -2164,6 +2180,17 @@ class Storage:
             )
             if backup_cursor.rowcount != 1:
                 raise ValueError("backup_projection_owner_conflict")
+            if completed_archive_key is not None and (
+                was_complete_kobo_archive
+                or str(item.get("status") or "pending") in {"complete", "ok"}
+            ):
+                # Commit atomically with the archive update and all owner
+                # checks below. Once complete, no later status may resurrect
+                # W1's positive projection; never clear this marker on retry.
+                db.execute(
+                    "INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)",
+                    (completed_archive_key, "archive_only_after_complete"),
+                )
             # Keep the 0.7 compatibility projection and the generic 0.8 ledger
             # in the same SQLite transaction. This makes Kobo immediately visible
             # to the provider-neutral acquisition model without duplicating sync I/O.
