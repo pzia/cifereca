@@ -23,23 +23,16 @@ class QueryState:
         )
 
 
-def result_row(item):
-    """Render ownership only for a private, typed purchase-inventory record.
+def result_row(item, *, purchase_evidence=None, identity_id=None):
+    """Render a verified purchase only with independent Core ledger evidence.
 
-    A search hit with owned=True is not an entitlement: public Numilog and
-    Kobo catalogue claims may be stale, unscoped or unauthenticated. Actual
-    Kobo ownership is projected separately from Core's identity-scoped ledger.
-    No provider call, disk access or network operation is made here.
+    Provider flags, inventory scenario and account coordinates are not rights.
+    This pure projection never calls an upstream provider, SQLite or a plugin;
+    absent or invalid evidence has the closed state remote_catalog.
     """
-    meta = item.metadata if type(item.metadata) is dict else {}
-    private_numilog_purchase = (
-        item.source_provider == 'numilog'
-        and type(item.source_credential) is str
-        and item.source_credential not in {'', '__public__'}
-        and item.source_collection == 'library'
-        and item.scenario == 'NUMILOG_LIBRARY'
-        and item.owned is True
-        and meta.get('search_provenance') != 'known_catalog_stale'
+    from ..core.search_owned_evidence import search_result_has_verified_purchase
+    verified_purchase = search_result_has_verified_purchase(
+        item, purchase_evidence, current_identity_id=identity_id,
     )
     result = asdict(item)
     # asdict() includes every ClassificationEvidence.raw_code, which is
@@ -50,7 +43,7 @@ def result_row(item):
     )
     return {**result, 'key': item.id, 'item_id': item.record_id,
             'provider_id': item.source_provider, 'media_format': file_format(item.format),
-            'state': 'remote_owned' if private_numilog_purchase else 'remote_catalog'}
+            'state': 'remote_owned' if verified_purchase else 'remote_catalog'}
 
 
 def online_search(service, state):
