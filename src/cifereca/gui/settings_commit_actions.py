@@ -150,6 +150,32 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             # unrelated Settings must never touch the retired global Kobo timer
             # or use a historical global bit as a scheduling authority.
             refresh_text()
+            # A freshly created/activated interactive account acquires a
+            # persisted credential after Save. Its test button was initially
+            # insensitive; re-evaluate it without recreating the Settings page
+            # or authorizing any network request. The clicked callback itself
+            # resolves the current persisted row and verifies form equality.
+            try:
+                current_accounts = self.config.provider_accounts()
+                for editor in account_editors:
+                    button = editor.get("explicit_probe_button")
+                    if button is None:
+                        continue
+                    matches = [
+                        row for row in current_accounts if type(row) is dict
+                        and row.get("provider") == editor.get("provider")
+                        and row.get("id") == editor.get("id")
+                    ]
+                    button.set_sensitive(
+                        not editor.get("deleted")
+                        and editor.get("invalid_saved_snapshot") is not True
+                        and len(matches) == 1
+                        and matches[0].get("enabled", True) is True
+                    )
+            except Exception:
+                # Rendering never turns a settings write into an exception.
+                # The click path retains its fail-closed admission guard.
+                pass
             settings_state.commit(staged_settings_revisions)
             track_all_settings_widgets()
             update_settings_actions()
