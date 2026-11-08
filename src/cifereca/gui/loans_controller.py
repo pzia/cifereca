@@ -25,6 +25,31 @@ from .detail_model import fr_date
 from . import history_language_projection
 
 
+def _loan_cover_url(self, loan: Loan) -> str | None:
+    """Presentation-only fallback; never changes the original loan or rights."""
+    if loan.thumbnail_url:
+        return loan.thumbnail_url
+    current = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+    if (not current or loan.identity_id != current
+            or getattr(self, "_loan_cover_identity_id", None) != current
+            or getattr(self, "_loan_cover_epoch", None)
+            != getattr(self.service, "_account_context_epoch", None)):
+        return None
+    url = getattr(self, "_loan_cover_urls", {}).get(loan_source_key(loan))
+    return url if type(url) is str and url.startswith("file:///") else None
+
+
+def _loan_for_detail(self, loan: Loan) -> Loan:
+    url = _loan_cover_url(self, loan)
+    if not url or url == loan.thumbnail_url:
+        return loan
+    # DetailPanel consumes the same shared CoverView/CoverLoader as the list.
+    # Never patch the upstream DTO or the source-bound action object.
+    projected = copy(loan)
+    projected.thumbnail_url = url
+    return projected
+
+
 def _build_loans_page(self) -> MasterDetailPage:
     page = MasterDetailPage(self, "Mes emprunts", "Prêts physiques et numériques", "Aucun emprunt affiché", "Vérifiez l’identité et les filtres, puis actualisez les emprunts. Une liste vide ne prouve pas l’absence de prêts chez le fournisseur.")
     history = Gtk.Button(label="Historique"); history.connect("clicked", lambda _b: self.navigate("history")); page.header_actions.append(history)
@@ -78,9 +103,55 @@ def _populate_loans(self, rows: list[Loan]) -> None:
     # The same upstream loan can be visible under two Paris credentials.
     # Preserve both source-bound rows instead of overwriting by loan.id.
     self.loan_objects = {loan_source_key(x): x for x in rows}
+    # Every fresh inventory invalidates earlier asynchronous cover results,
+    # even for an A→B→A identity round-trip with the same profile ID.
+    self._loan_cover_urls = {}
+    self._loan_cover_identity_id = identity_id
+    self._loan_cover_epoch = getattr(self.service, "_account_context_epoch", None)
+    generation = getattr(self, "_loan_cover_generation", 0) + 1
+    self._loan_cover_generation = generation
     self._render_loans()
     self._render_kobo_loans()
     if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
+
+    resolver = getattr(self.service, "loan_local_cover_fallbacks", None)
+    runner = getattr(self, "runner", None)
+    missing = tuple(x for x in rows if not x.thumbnail_url)
+    if not missing or not callable(resolver) or not callable(getattr(runner, "submit", None)):
+        return
+
+    epoch = self._loan_cover_epoch
+    exact_keys = frozenset(self.loan_objects)
+
+    def covers_ready(found):
+        current = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
+        if (current != identity_id
+                or getattr(self.service, "_account_context_epoch", None) != epoch
+                or getattr(self, "_loan_cover_generation", None) != generation
+                or frozenset(getattr(self, "loan_objects", {})) != exact_keys
+                or type(found) is not dict):
+            return
+        accepted = {
+            key: url for key, url in found.items()
+            if type(key) is str and key in exact_keys
+            and type(url) is str and url.startswith("file:///")
+        }
+        if not accepted:
+            return
+        self._loan_cover_urls = accepted
+        self._render_loans()
+        selected = getattr(self, "_displayed_loan", None)
+        if (type(selected) is Loan
+                and loan_source_key(selected) in accepted
+                and loan_source_key(selected) in exact_keys):
+            self.loan_page.detail.show_loan(_loan_for_detail(self, selected))
+
+    runner.submit(
+        "Couvertures locales attestées des emprunts…",
+        lambda: resolver(missing, identity_id=identity_id),
+        covers_ready, priority=TaskPriority.METADATA,
+        kind="other", origin="automatic",
+    )
 
 
 def _render_loans(self) -> None:
@@ -129,7 +200,7 @@ def _render_loans(self) -> None:
                 subtitle,
                 meta,
                 due.label,
-                loan.thumbnail_url,
+                _loan_cover_url(self, loan),
                 badge_style=due.style,
             ),
         ))
@@ -155,7 +226,7 @@ def _loan_selected(self, row: BookListItem | None) -> None:
     loan = self.loan_objects.get(row.key)
     if loan:
         self._displayed_loan = loan
-        self.loan_page.detail.show_loan(loan)
+        self.loan_page.detail.show_loan(_loan_for_detail(self, loan))
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
@@ -200,7 +271,7 @@ def _loans_refreshed(self, rows):
         ]
         fresh = matches[0] if len(matches) == 1 else None
         self._displayed_loan=fresh
-        if fresh:self.loan_page.detail.show_loan(fresh)
+        if fresh:self.loan_page.detail.show_loan(_loan_for_detail(self, fresh))
         else:self.loan_page.detail.empty(
             "Prêt non retrouvé dans cette actualisation",
             "La réponse peut être vide ou partielle ; la disparition du prêt "
