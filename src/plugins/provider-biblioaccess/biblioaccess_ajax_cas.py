@@ -160,7 +160,10 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 if not raw:
                     raise AjaxCasError("cas_ticket_refused")
                 target = urljoin(CAS, raw)
-                dest = _url(target)
+                try:
+                    dest = _url(target)
+                except AjaxCasError:
+                    raise AjaxCasError("cas_ticket_refused") from None
                 params = parse_qs(dest.query, keep_blank_values=True, max_num_fields=8)
                 svc = urlsplit(self._service)
                 if (dest.hostname != svc.hostname or dest.path != svc.path
