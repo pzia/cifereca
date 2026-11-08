@@ -434,3 +434,33 @@ def test_ambiguous_observed_script_urls_never_qualify_a_get():
         assert len(seen) == 2
     finally:
         client.close()
+
+
+def test_myloans_http_200_exposes_staged_book_links_but_never_a_loan():
+    calls = []
+    def handler(req):
+        calls.append(req.url.path)
+        assert req.url.path == "/1409/Catalog/MyLoans"
+        return httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text='<html><a href="/1409/Catalog/Book/123/a-slug">SYNTHETIC BOOK</a>'
+                 '<a href="/1409/Catalog/Book/123/a-slug">dup</a>'
+                 '<a href="/1409/Catalog/Book/456">other</a></html>')
+    c = client_for(handler)
+    c._cas_landed = True  # prior CAS success is simulated, never remote
+    try:
+        result = c.observe_loans_once()
+        assert calls == ["/1409/Catalog/MyLoans"]
+        assert result.page_book_link_count == 3
+        assert result.page_book_unique_count == 2
+        assert result._candidate_book_urls == (
+            ("123", "https://www.biblioaccess.com/1409/Catalog/Book/123/a-slug"),
+            ("456", "https://www.biblioaccess.com/1409/Catalog/Book/456"))
+        assert result.phase == "loans_html_unverified"
+        assert not result.loans_verified and not result.identity_verified
+        assert not result.inventory_verified
+        assert "123" not in repr(result)
+        with pytest.raises(cas.AjaxCasError, match="cas_loans_already_attempted"):
+            c.observe_loans_once()
+    finally:
+        c.close()
