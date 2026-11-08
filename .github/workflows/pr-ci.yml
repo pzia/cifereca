@@ -24,6 +24,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Block new Core provider coupling (P0 #5057)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.ci_provider_coupling_delta_gate \
+            --base-ref "$BASE_SHA" --head-ref "$HEAD_SHA"
+
       - name: Select validation scopes
         id: scope
         shell: bash
