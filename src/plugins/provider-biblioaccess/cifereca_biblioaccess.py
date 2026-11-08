@@ -578,34 +578,20 @@ class LaRochelleSession(ProviderSession):
             product_ref = loan.id[len("biblioaccess:1409:"):]
             if not product_ref.isascii() or not product_ref.isdigit():
                 raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+            # Fresh MyLoans GET each time. No reuse prevention: request a
+            # new signed link when redownloading the same active loan.
             try:
-                # Fresh MyLoans GET each time. No reuse prevention: request a
-                # new signed link when redownloading the same active loan.
                 observation = self._http.read_authenticated_loans()
-                matches = [
-                    row for row in observation._loan_rows
-                    if row.product_ref == product_ref
-                    and row.book_id == loan.record_id
-                    and row.acsm_offer_present
-                    and type(row.acsm_url) is str
-                ]
-                if len(matches) != 1:
-                    raise ProviderCapabilityError("biblioaccess_acsm_offer_unavailable")
-                from biblioaccess_acsm_delivery import stage_loan_acsm
-                path = stage_loan_acsm(matches[0].acsm_url, target_dir)
-                self._last_probe_phase = "acsm_staged"
-                self._event(
-                    "acsm_stage", "observed", probe="authenticated_sync",
-                    connected=True, staged=True, signed_url_logged=False,
-                )
-                # Never return the signed ACSM link to Core/receipts/hooks.
-                return path, ""
             except Exception:
-                self._last_probe_phase = "acsm_failed"
+                self._last_probe_phase = "acsm_session_failed"
                 self._event(
                     "acsm_stage", "error", probe="authenticated_sync",
-                    connected=False, staged=False, signed_url_logged=False,
+                    connected=False, stage="myloans_refresh",
+                    error_code="biblioaccess_acsm_session_unavailable",
+                    session_revoked=True,
                 )
+                # Only a loss of the authenticated page revokes the session.
+                # An ACSM delivery 403/429 may be retried with a new offer.
                 self.connected = False
                 self._sync_auth_live = False
                 self._accounts = []
@@ -616,7 +602,64 @@ class LaRochelleSession(ProviderSession):
                     except Exception:
                         pass
                 raise ProviderCapabilityError(
+                    "biblioaccess_acsm_session_unavailable") from None
+            matches = [
+                row for row in observation._loan_rows
+                if row.product_ref == product_ref
+                and row.book_id == loan.record_id
+                and row.acsm_offer_present
+                and type(row.acsm_url) is str
+            ]
+            if len(matches) != 1:
+                self._event(
+                    "acsm_stage", "warning", probe="authenticated_sync",
+                    connected=True, stage="offer_selection",
+                    error_code="biblioaccess_acsm_offer_unavailable",
+                    session_revoked=False,
+                )
+                raise ProviderCapabilityError(
+                    "biblioaccess_acsm_offer_unavailable")
+            from biblioaccess_acsm_delivery import (
+                stage_loan_acsm, ACSMDeliveryError,
+            )
+            try:
+                path = stage_loan_acsm(matches[0].acsm_url, target_dir)
+            except Exception as exc:
+                allowed = frozenset({
+                    "biblioaccess_acsm_url_invalid",
+                    "biblioaccess_acsm_destination_invalid",
+                    "biblioaccess_acsm_unavailable",
+                    "biblioaccess_acsm_redirect",
+                    "biblioaccess_acsm_denied",
+                    "biblioaccess_acsm_missing",
+                    "biblioaccess_acsm_rate_limited",
+                    "biblioaccess_acsm_remote_error",
+                    "biblioaccess_acsm_body_limit",
+                    "biblioaccess_acsm_transport_unavailable",
+                    "biblioaccess_acsm_structure_invalid",
+                    "biblioaccess_acsm_stage_unavailable",
+                })
+                code = (
+                    exc.args[0] if type(exc) is ACSMDeliveryError
+                    and len(exc.args) == 1 and type(exc.args[0]) is str
+                    and exc.args[0] in allowed
+                    else "biblioaccess_acsm_stage_unavailable"
+                )
+                self._last_probe_phase = "acsm_failed"
+                self._event(
+                    "acsm_stage", "error", probe="authenticated_sync",
+                    connected=True, stage="signed_get", error_code=code,
+                    session_revoked=False,
+                )
+                raise ProviderCapabilityError(
                     "biblioaccess_acsm_stage_unavailable") from None
+            self._last_probe_phase = "acsm_staged"
+            self._event(
+                "acsm_stage", "observed", probe="authenticated_sync",
+                connected=True, stage="staged", signed_url_logged=False,
+            )
+            # Never return the signed ACSM link to Core/receipts/hooks.
+            return path, ""
 
     def loans(self, account: Account) -> list[Loan]:
         return list(self.loan_inventory_snapshot(account).loans)
