@@ -4818,7 +4818,7 @@ class Storage:
         key = scope_key(scope)
         if (key is None
                 or type(acquisition_id) is not str or not acquisition_id
-                or type(path) is not str or not path or "\\0" in path
+                or type(path) is not str or not path or "\0" in path
                 or type(artifact_id) is not str
                 or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_id) is None
                 or not valid_provider_identifier(placement_provider_id)
