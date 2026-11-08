@@ -1200,10 +1200,11 @@ def test_signed_acsm_cannot_be_downloaded_for_another_credential_or_book(
             session.download_digital(
                 replace(loan, source_credential="other"), account, tmp_path)
         assert client.closed is False
-        with pytest.raises(mod.ProviderCapabilityError, match="acsm_stage_unavailable"):
+        with pytest.raises(mod.ProviderCapabilityError, match="acsm_offer_unavailable"):
             session.download_digital(
                 replace(loan, record_id="other"), account, tmp_path)
-        assert client.closed and not session.connected
+        # The CAS session remains usable; the user can re-download later.
+        assert client.closed is False and session.connected
         assert calls.count("post") == 1
     finally:
         session.close()
@@ -1226,5 +1227,42 @@ def test_no_signed_offer_produces_a_visible_loan_but_no_auto_download():
         assert loan.medium == "digital"
         assert session.capabilities.digital_download
         assert session.capabilities.opening_loan_auto_acquisition
+    finally:
+        session.close()
+
+
+def test_transient_acsm_403_keeps_cas_session_for_redownload(monkeypatch, tmp_path):
+    from types import SimpleNamespace as NS
+    import biblioaccess_acsm_delivery
+
+    row = NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC-BOOK",
+        due_at_local="08/11/2026 12:30:00", acsm_offer_present=True,
+        acsm_url="https://entrepot2r.numilog.com/fulfillment/URLLink.acsm"
+                 "?token=PRIVATE-SYNTHETIC-RETRY",
+    )
+    session, http, calls = _synced_session(rows=[row])
+    attempts = []
+    def stage(url, folder):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise biblioaccess_acsm_delivery.ACSMDeliveryError(
+                "biblioaccess_acsm_denied")
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "fresh.acsm"
+        path.write_bytes(b"SYNTHETIC")
+        return path
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm", stage)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = session.loans(account)
+        with pytest.raises(mod.ProviderCapabilityError, match="acsm_stage_unavailable"):
+            session.download_digital(loan, account, tmp_path)
+        assert session.connected and not http.closed
+        path, used_url = session.download_digital(loan, account, tmp_path)
+        assert path.exists() and used_url == ""
+        assert calls.count("post") == 1
+        assert len(attempts) == 2
     finally:
         session.close()
