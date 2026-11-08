@@ -7,15 +7,40 @@ from cifereca.gui.local_book_action_controller import add_local_book_actions
 from tests.test_core_ui_1129_local_book_actions import _environment
 
 
-def setup_action(provider="kobo", operation=None):
+def setup_action(provider="kobo", operation=None, *, provider_label=None):
     window, entry, detail, actions, events, submissions, launched, deps = _environment(
         item={"provider_id": "kobo", "item_id": "book", "possessions": []}, local=False)
     target = NS(identity_id="alice", provider_id=provider, operation=operation)
+    if provider_label is not None:
+        window.service.provider_display_name = lambda _provider: provider_label
     window.service.owned_library_download_target = lambda entry: target
     calls = []
     window.service.obtain_owned_library_item = lambda requested: calls.append(requested) or NS(path="fake-path")
     add_local_book_actions(window, detail, entry, **deps)
     return window, actions, calls, submissions, target
+
+
+def test_owned_action_presents_exact_plugin_display_name_without_new_authority():
+    window, actions, calls, submissions, _ = setup_action(
+        "kobo", provider_label="Librairie déclarée"
+    )
+    assert len(actions) == 1
+    assert "Librairie déclarée" in actions[0].label
+    assert "Kobo" not in actions[0].label
+    assert calls == submissions == []
+    actions[0].click()
+    assert len(submissions) == 1
+
+
+@pytest.mark.parametrize("untrusted_label", ["A\\nPRIVATE", "X" * 81, "  "])
+def test_owned_action_does_not_render_invalid_provider_display_name(untrusted_label):
+    _window, actions, calls, submissions, _ = setup_action(
+        "kobo", provider_label=untrusted_label
+    )
+    assert len(actions) == 1
+    assert "Kobo" in actions[0].label
+    assert untrusted_label not in actions[0].label
+    assert not calls and not submissions
 
 
 def test_unlinked_remote_purchase_shows_explicit_manual_download_refusal():
