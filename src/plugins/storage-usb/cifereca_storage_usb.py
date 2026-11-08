@@ -85,8 +85,15 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
                     continue
                 digest = sha256()
                 size = 0
-                while chunk := os.read(file_fd, _CHUNK_SIZE):
+                # A file can grow after fstat: never read more than the
+                # attested size plus one byte, even if a writer keeps appending.
+                while size <= before.st_size:
+                    chunk = os.read(file_fd, min(_CHUNK_SIZE, before.st_size - size + 1))
+                    if not chunk:
+                        break
                     size += len(chunk)
+                    if size > before.st_size:
+                        break
                     digest.update(chunk)
                 after = os.fstat(file_fd)
                 # Renames can replace the path while the old FD stays live.
