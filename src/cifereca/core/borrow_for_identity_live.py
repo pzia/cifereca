@@ -166,15 +166,19 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         connections = service.storage.provider_connections(
             identity_id=evidence.identity_id,
         )
-        if (type(connections) is not list or len(connections) > 512
-                or sum(
-                    type(conn) is dict
-                    and conn.get("provider_id") == evidence.provider_id
-                    and conn.get("credential_id") == evidence.credential_id
-                    and conn.get("identity_id") == evidence.identity_id
-                    and conn.get("enabled") is True
-                    for conn in connections
-                ) != 1):
+        if type(connections) is not list or len(connections) > 512:
+            return "lender_unavailable"
+        exact = [
+            conn for conn in connections
+            if type(conn) is dict
+            and conn.get("provider_id") == evidence.provider_id
+            and conn.get("credential_id") == evidence.credential_id
+            and conn.get("identity_id") == evidence.identity_id
+        ]
+        # One enabled plus one disabled row is *not* a unique binding.
+        # Align the preview with the durable claim and progress admission:
+        # never choose the convenient enabled row and hide the other one.
+        if len(exact) != 1 or exact[0].get("enabled") is not True:
             return "lender_unavailable"
 
         accounts = service.accounts
