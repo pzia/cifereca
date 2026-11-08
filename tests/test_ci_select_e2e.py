@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 38)
+        self.assertEqual(len(mod.ALL), 39)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["height"], 768)
@@ -32,6 +32,11 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("book-detail-1300", mod.ALL)
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
+
+    def test_p1_5178_task_busy_settings_is_an_explicit_gtk_contract(self):
+        self.assertEqual(mod.BUSY_GTK, ("task-busy-settings-1366",))
+        self.assertEqual(mod.select(["e2e/task_busy_settings_probe.py"]), mod.BUSY_GTK)
+        self.assertIn("task-busy-settings-1366", mod.select(["src/cifereca/gui/task_runner.py"]))
 
     def test_p1_4118_bnf_real_gtk_cover_gate_is_routed_to_producer_and_ui(self):
         self.assertEqual(mod.BNF_COVERS, ("bnf-covers-1366",))
@@ -240,6 +245,7 @@ class SelectionTests(unittest.TestCase):
         spec.loader.exec_module(runner)
         entrypoints = {
             "gtk-capture-session": "capture_session_gtk_probe.py",
+            "gtk-task-busy-settings": "task_busy_settings_probe.py",
             "gtk-probe": "search_filter_probe.py",
             "gtk-detail": "book_detail_probe.py",
             "gtk-llm-settings": "llm_settings_probe.py",
