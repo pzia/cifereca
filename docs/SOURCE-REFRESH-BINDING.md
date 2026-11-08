@@ -20,9 +20,9 @@ non fermée, génération de contexte valide et projection upstream de comptes
 non contradictoire. La capacité `backup` et le profil sélectionné dans
 l’interface ne participent pas à cette décision.
 
-Les noms `kobo_inventory_source_eligible` et
-`numilog_inventory_source_eligible` restent des façades compatibles limitées
-à leur ancien fournisseur. Ils ne portent plus d’algorithmes concurrents.
+Les anciennes façades spécifiques à Kobo et Numilog ont été supprimées :
+les appelants utilisent directement `inventory_source_eligible`, neutre vis-à-vis
+du fournisseur, sous les mêmes vérifications de source, session et consentement.
 Les anciennes clés de planification et leurs valeurs sont conservées ;
 aucun compte n’est inscrit implicitement à une planification.
 
