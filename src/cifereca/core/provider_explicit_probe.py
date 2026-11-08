@@ -49,10 +49,8 @@ def run_explicit_provider_probe(
         raise ExplicitProbeRefused("explicit_probe_provider_unavailable")
     if getattr(plugin.descriptor, "interactive_authentication", False) is not True:
         raise ExplicitProbeRefused("explicit_probe_not_interactive")
-    if row.get("options", {}).get("experimental_http_probe") not in ("on", "post"):
-        # Only providers explicitly exposing the opted-in diagnostic
-        # contract can run here. Do not activate arbitrary interactive SSO.
-        raise ExplicitProbeRefused("explicit_probe_not_opted_in")
+    # Provider-owned options validate the selected diagnostic mode.
+    # Core must not know a provider-specific configuration key.
 
     session = None
     try:
@@ -70,12 +68,12 @@ def run_explicit_provider_probe(
             session.connect()
         except Exception:
             return ExplicitProbeResult(
-                provider_id=provider_id, status="completed",
-                reason="provider_diagnostic_returned",
+                provider_id=provider_id, status="observed",
+                reason="provider_diagnostic_completed_unverified",
             )
         return ExplicitProbeResult(
-            provider_id=provider_id, status="completed",
-            reason="provider_diagnostic_returned",
+            provider_id=provider_id, status="observed",
+            reason="provider_diagnostic_completed_unverified",
         )
     except Exception:
         # Never expose exception text: it may include a token or secret.
