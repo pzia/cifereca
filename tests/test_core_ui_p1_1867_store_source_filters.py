@@ -167,7 +167,8 @@ def test_plugin_manager_uses_the_vocabulary_in_read_only_rendering():
     node = next(n for n in tree.body if isinstance(n, ast.ClassDef)
                 and n.name == "PluginManagerPage")
     render_source = ast.unparse(node)
-    assert "store_plugin_usage_hint(d.id)" in render_source
+    assert "ui_usage_hint" in render_source
+    assert "store_plugin_usage_hint" not in render_source
     assert "if d.id == 'provider.numilog.catalog'" not in render_source
     assert "cette activation ne confère aucun droit" in render_source
     assert 'if d.instantiation == \'singleton_public\'' in render_source
