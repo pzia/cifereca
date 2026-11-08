@@ -209,3 +209,48 @@ def test_projection_attests_only_existing_local_placement_and_exact_borrower():
     assert "attested_local_loan_cover_proof(" in source
     assert 'if entitlement_type == "loan" else None' in source
     assert '_exact_loan_cover_proofs' in source
+
+
+def test_failing_lazy_library_projection_never_returns_partial_cover():
+    current = loan()
+
+    def partial_then_private_failure():
+        yield local_row(current)
+        raise RuntimeError("/private/library/reader-token")
+
+    result = loan_local_cover(current, partial_then_private_failure())
+    assert result.status == "missing"
+    assert result.url == ""
+    assert "reader-token" not in repr(result)
+
+
+def test_oversized_local_library_fails_closed_without_consuming_all_rows(monkeypatch):
+    from cifereca.core import loan_cover_fallback as mod
+
+    current = loan()
+    monkeypatch.setattr(mod, "_MAX_LOAN_COVER_ROWS", 2)
+    inspected = []
+
+    def rows():
+        for index in range(20):
+            inspected.append(index)
+            yield local_row(current)
+
+    result = mod.loan_local_cover(current, rows())
+    assert result.status == "missing"
+    assert result.url == ""
+    # A single lookahead establishes an oversized sequence.
+    assert inspected == [0, 1, 2]
+
+
+def test_bounded_local_library_preserves_exact_cover_and_ambiguous_result(monkeypatch):
+    from cifereca.core import loan_cover_fallback as mod
+
+    current = loan()
+    monkeypatch.setattr(mod, "_MAX_LOAN_COVER_ROWS", 2)
+    a = local_row(current, "https://one.example/cover.jpg",
+                  tier="origin", artifact="art-a", placement="place-a")
+    b = local_row(current, "https://two.example/cover.jpg",
+                  tier="origin", artifact="art-b", placement="place-b")
+    assert mod.loan_local_cover(current, (a,)).status == "selected"
+    assert mod.loan_local_cover(current, (a, b)).status == "ambiguous"
