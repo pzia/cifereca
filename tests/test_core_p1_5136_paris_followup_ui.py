@@ -5,6 +5,7 @@ after a spent attempt, no loan publication, no raw ACSM/credentials in UI.
 """
 from __future__ import annotations
 
+import ast
 from dataclasses import replace
 from types import SimpleNamespace as NS
 from pathlib import Path
@@ -16,6 +17,7 @@ from cifereca.gui.bnf_borrow_controller import present_paris_borrow_verification
 from tests.test_core_p1_5136_paris_borrow_later_verification import _pending, _snapshot
 from tests.test_core_p0_2055_bnf_ui_consent import view
 from tests.test_paris_manual_borrow_dispatch import setup
+from cifereca.models import SearchResult
 
 
 class ReadOnlyTasks:
@@ -199,3 +201,43 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
     assert "verify_paris_borrow_followup(" in body
     assert "borrow_paris_manual(" not in body
     assert "borrow_explicit_with_claim(" not in body
+
+
+def test_mainwindow_existing_paris_router_dispatches_only_readonly_followup(tmp_path):
+    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    owner = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+                 and n.name == "MainWindow")
+    fn = next(n for n in owner.body if isinstance(n, ast.FunctionDef)
+              and n.name == "borrow_search_item")
+    namespace = {
+        "SearchResult": SearchResult, "Gtk": NS(Widget=object),
+        "Adw": NS(), "TaskPriority": NS(USER_ACTION=40),
+        "__name__": "cifereca.gui.main_window",
+    }
+    exec(compile(ast.fix_missing_locations(
+        ast.Module(body=[fn], type_ignores=[]),
+    ), str(source), "exec"), namespace)
+    service, session, account, item, state, _op = _pending(tmp_path)
+    window, errors, messages, refreshes = view(service, session, account, item)
+    window.runner = ReadOnlyTasks()
+    session.rights_observation_snapshot = lambda _a: _snapshot(account, item)
+    session.borrow_explicit_with_claim = lambda *_a, **_kw: pytest.fail("POST")
+    try:
+        # Only the explicit verification_only flag reaches the new controller.
+        namespace["borrow_search_item"](
+            window, item, verification_only=True,
+        )
+        assert len(window.runner.tasks) == 1
+        assert window.runner.complete()["status"] == "observed_current_loan"
+        assert state["mutations"] == 1
+        assert messages == ["Prêt Paris désormais observé ; demande initiale non rejouée"]
+        assert errors == [] and refreshes == [True]
+        # Another source can never reuse this flag to run a regular borrow.
+        namespace["borrow_search_item"](
+            window, replace(item, source_provider="unknown"),
+            verification_only=True,
+        )
+        assert not window.runner.tasks
+    finally:
+        service.close()
