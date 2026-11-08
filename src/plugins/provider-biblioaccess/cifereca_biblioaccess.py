@@ -448,7 +448,8 @@ class LaRochelleSession(ProviderSession):
                 from biblioaccess_ajax_logon import AjaxLogonError
                 from biblioaccess_ajax_preflight import LoginPreflightError
                 code = str(exc) if isinstance(
-                    exc, (AjaxCasError, AjaxLogonError, LoginPreflightError)) else ""
+                    exc, (AjaxCasError, AjaxLogonError, LoginPreflightError,
+                          ProviderConfigurationError)) else ""
                 if code not in _HTTP_PROBE_CODES:
                     code = "biblioaccess_probe_http_failure"
                 self._last_probe_phase = code
