@@ -1118,6 +1118,7 @@ class UxRecommendationsView:
             selected = 0
             current_index = None
             selected_index = None
+            selected_count = 0
             for row in rows:
                 identity_id = str(row.get("identity_id") or "")
                 if not identity_id:
@@ -1128,17 +1129,18 @@ class UxRecommendationsView:
                 index = len(self._identity_ids) - 1
                 if identity_id == current:
                     current_index = index
-                if row.get("selected"):
+                if row.get("selected") is True:
                     selected_index = index
+                    selected_count += 1
             # Trust only the *explicitly selected Core identity*. An absent
             # selection must never silently fall back to the first identity;
             # a global A -> B switch may legitimately replace a removed A.
             # Do not keep a sticky plugin-only selection state: there is no
             # longer any separate user choice to clear it.
-            self._profile_selection_required = selected_index is None
+            self._profile_selection_required = selected_count != 1
             self._identity.set_sensitive(False)
             self._identity.set_selected(
-                selected_index if selected_index is not None else 0xFFFFFFFF
+                selected_index if selected_count == 1 else 0xFFFFFFFF
             )
         finally:
             self._reloading_identities = False
