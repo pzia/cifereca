@@ -109,6 +109,9 @@ class Core0915(unittest.TestCase):
                    provider_id='fixture-store',credential_id='c',
                    connected=True,capabilities=NS(search=True,loans=False))
         self.service.accounts=[account]
+        self.config.set('providers.accounts', [
+            {'id':'c','provider':'fixture-store','identity_id':'stable','enabled':True},
+        ])
         self.service._sessions={'source':session}
         self.service._provider_enabled_for_identity=lambda _provider,_identity: True
         self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],True)
@@ -126,6 +129,43 @@ class Core0915(unittest.TestCase):
         self.service.accounts.append(NS(unique_id='another',identity_id='stable',
                                         provider_id='fixture-other',credential_id='x'))
         self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        self.service._sessions={}
+
+    def test_configured_disconnected_lender_prevents_no_loan_claim(self):
+        store=NS(unique_id='user',identity_id='stable',
+                 provider_id='future-store',credential_id='store-cred')
+        session=NS(descriptor=NS(instantiation='multiple',display_name='Store'),
+                   provider_id='future-store',credential_id='store-cred',
+                   connected=True,capabilities=NS(loans=False))
+        self.service.accounts=[store]
+        self.service._sessions={'store':session}
+        self.service._provider_enabled_for_identity=lambda _provider,_identity: True
+        persisted=[
+            {'id':'store-cred','provider':'future-store','identity_id':'stable','enabled':True},
+        ]
+        self.config.set('providers.accounts',list(persisted))
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'], True)
+        # A failed lender login removes it from live accounts but not config.
+        self.config.set('providers.accounts',persisted + [
+            {'id':'loan-cred','provider':'fixture-lender','identity_id':'stable','enabled':True},
+        ])
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        # Even an unscoped legacy lender might belong to this identity.
+        self.config.set('providers.accounts',persisted + [
+            {'id':'loan-cred','provider':'fixture-lender','enabled':True},
+        ])
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        self.config.set('providers.accounts',persisted + [
+            {'id':'loan-cred','provider':'fixture-lender','identity_id':'stable',
+             'enabled':'false'},
+        ])
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        # A disabled lender cannot become a hidden live source.
+        self.config.set('providers.accounts',persisted + [
+            {'id':'loan-cred','provider':'fixture-lender','identity_id':'stable',
+             'enabled':False},
+        ])
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],True)
         self.service._sessions={}
 
     def test_overview_does_not_expose_another_identity_session(self):
