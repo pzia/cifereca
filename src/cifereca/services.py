@@ -1616,6 +1616,34 @@ class LibraryService:
         """
         return library_projection.recent_acquisitions(self, identity_id=identity_id, limit=limit)
 
+    def loan_local_cover_fallbacks(self, loans: tuple[Loan, ...], *, identity_id: str) -> dict[str, str]:
+        """Read-only, identity/borrower/edition-exact embedded loan covers.
+
+        GTK calls this through an existing background TaskRunner. The verified
+        OriginLink reader and recent-acquisition projection already check
+        canonical receipt provenance and usable, profile-scoped Placements.
+        No provider request, inventory, acquisition or rights projection.
+        """
+        from .core.loan_cover_fallback import proven_local_loan_cover_urls
+        if (type(identity_id) is not str or not identity_id
+                or not loans or not any(
+                    type(loan) is Loan and loan.identity_id == identity_id
+                    and not loan.thumbnail_url for loan in loans
+                )):
+            return {}
+        origins = library_projection._verified_provider_origin_coordinates(
+            self.storage, identity_id=identity_id, with_kind=True,
+        )
+        if not any(row[-1] == "loan" for row in origins):
+            return {}
+        local_rows = self.recent_acquisitions(
+            identity_id=identity_id, limit=10_000,
+        )
+        return proven_local_loan_cover_urls(
+            loans, identity_id=identity_id,
+            origins=origins, local_rows=local_rows,
+        )
+
     def local_book_path(self, placement_id: str, *, identity_id: str) -> Path:
         """Resolve an inventoried file in the explicit identity scope, no acquisition."""
         return library_projection.local_book_path(self, placement_id, identity_id=identity_id)
