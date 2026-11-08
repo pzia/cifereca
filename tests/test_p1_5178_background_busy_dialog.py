@@ -12,6 +12,7 @@ from cifereca.gui.ui_dialog_observation import (
     observe_background_busy_task, task_dialog_context,
 )
 from cifereca.locking import LockBusyError
+from cifereca.builtin_ui.chrome import Titlebar
 from tests.test_core_p0_981_redacted_task_traces import _runner
 from tests.test_p1_4277_unavailable_dialog_observations import FakeDialog
 
@@ -132,3 +133,17 @@ def test_stale_task_context_and_invalid_scope_never_suppress_ui():
         assert not hasattr(window, "_ui_dialog_observation_context")
     finally:
         runner.close()
+
+
+def test_old_bookings_preference_is_inert_without_mutating_saved_config():
+    stored = ["search.open", "bookings.open", "library.open",
+              "bookings.open", "unrelated.obsolete"]
+    settings = {"actions": list(stored)}
+    titlebar = Titlebar().activate(NS(configuration=lambda: settings))
+    assert titlebar.selected_actions() == [
+        "search.open", "library.open", "unrelated.obsolete",
+    ]
+    assert settings == {"actions": stored}  # read-only compatibility
+    assert titlebar.selected_actions() == [
+        "search.open", "library.open", "unrelated.obsolete",
+    ]
