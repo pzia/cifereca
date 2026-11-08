@@ -177,3 +177,26 @@ référence `captchaCheckValue` **ne prouve pas** qu'on peut obtenir ou
 reconstituer sa valeur ; aucun CAPTCHA n'est résolu ou contourné.
 L'absence de référence ne prouve pas que le paramètre n'est pas produit
 ailleurs. Toujours aucune capacité de connexion réelle.
+
+
+### Lecture catalogue HTTPX bornée, hors authentification
+
+`biblioaccess_catalogue_http.py` ajoute un client HTTPX de lecture seule
+et non publié comme capacité provider. Il lance un GET
+`/1409/Catalog/SearchResultSummary?query=...`, puis suit **manuellement
+et seulement** la redirection 302 vers
+`/1409/Catalog/Search?query=...&pageindex=...` après validation
+de l'origine HTTPS exacte, du tenant, de la query, des paramètres autorisés
+et du budget de pages (1 à 3 par appel). Les réponses HTML sont limitées
+à 2 Mio avant décodage, et les erreurs HTTP restent fermées.
+La réponse présente uniquement les IDs de notices `/Catalog/Book/{id}`,
+le nombre de pages inspectées et un état de qualification.
+
+Un `SearchResultSummary` HTTP 200 **n'est jamais interprété comme zéro
+résultat établi** : l'état `summary_html_unverified` est explicite.
+Une page sans lien extrait reste `partial` et n'atteste jamais
+l'exhaustivité, la propriété ou le prêt. Le client ne fait aucun POST,
+n'importe aucune session navigateur, n'accède pas aux prêts, et ne
+déclare **aucune nouvelle capacité** dans le manifeste. Les tests
+utilisent uniquement un transport HTTPX fictif. L'accès catalogue
+réel et la forme HTML exacte restent à recetter avant publication.
