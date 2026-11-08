@@ -77,13 +77,22 @@ def _receipt_local_file_verified(service, account: Account, row: dict, path: Pat
     A private auto-ref does not authorize a new loan or a new file.
     """
     from .local_receipt_verification import local_receipt_file_verified
+
+    def closed_read_failure():
+        # Preserve the historical diagnostics contract, never traceback or
+        # path: an exception from an arbitrary filesystem can be private.
+        _TRACE_LOG.warning(
+            "TRACE bnf auto receipt file check failed provider_id=%s",
+            account.provider_id,
+        )
+
     return local_receipt_file_verified(
         service,
         identity_id=account.identity_id,
         placement_provider_id="bnf-pret",
         acquisition_provider_id="manual",
         acquisition_credential_id="manual",
-        row=row, path=path,
+        row=row, path=path, on_read_failure=closed_read_failure,
     )
 
 
