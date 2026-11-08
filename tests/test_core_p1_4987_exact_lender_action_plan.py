@@ -31,6 +31,12 @@ def test_single_exact_lender_plan_is_internal_and_does_not_borrow(harness):
     )
     assert result._account is account and result._notice is row.notice
     assert result._claim_key == borrow_claim_key(account, row.notice)
+    via_service = service.prepare_cross_profile_lender_action_plan(
+        captured_preview=captured, selected_option_id=captured.options[0].option_id,
+        expected_edition_id="edition-1", observations=(row,), now=1100,
+    )
+    assert via_service == result
+    assert via_service.executable is via_service.transfer_permitted is False
     assert result.executable is result.transfer_permitted is False
     assert "card-alex" not in repr(result)
     assert "record-1" not in repr(result)
