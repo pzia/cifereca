@@ -8,7 +8,6 @@ consent is exposed through the versioned plugin/source policy contract.
 """
 from __future__ import annotations
 
-import hashlib
 import re
 import logging
 
@@ -35,15 +34,11 @@ _HEX = re.compile(r"[0-9a-f]{32}\Z")
 
 
 def _source_id(scope):
-    identity, provider, credential, account = (
+    from .legacy_source_identifier import legacy_source_id
+    return legacy_source_id(
         scope.identity_id, scope.provider_id, scope.credential_id,
         scope.account_id,
     )
-    # Match the public Sync broker's stable identifier, including its legacy
-    # primary-account fallback. Empty account IDs are not wildcard grants.
-    unique = account.strip() or f"{provider}:{credential}:primary"
-    raw = "\0".join((identity, provider, credential, unique))
-    return "sync:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 def toggle_state(db, source: SourceKey):
