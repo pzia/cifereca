@@ -1,5 +1,77 @@
 # BiblioAccess — La Rochelle (tenant 1409)
 
+## Acquisition des prêts numériques — bundle 0.4.0
+
+La synchronisation du lecteur `authenticated_sync=on` relève toujours les
+prêts positifs via AJAX/CAS et MyLoans. Lorsqu'une ligne affiche réellement
+une action ACSM, le provider annonce `digital_download` et
+`opening_loan_auto_acquisition`. Le Core peut déclencher sa pipeline
+d'acquisition existante (staging, Kobo-Adept, publication EPUB/PDF, indexation
+locale, suivi des erreurs et reprise).
+
+**Flux effectif :**
+1. à la demande d'acquisition, relire MyLoans **dans le cookie jar du
+   credential exact**, sans rejouer l'authentification AJAX ;
+2. sélectionner la ligne selon la référence produit du prêt ET son identifiant
+   de notice ; utiliser l'URL ACSM signée fraîchement exposée ;
+3. effectuer le GET HTTPS sur le seul hôte observé
+   `entrepot2r.numilog.com/fulfillment/URLLink.acsm` via un client neuf
+   sans cookies du lecteur, valider le jeton XML ADEPT et écrire un fichier
+   temporaire `.acsm` ;
+4. remettre au Core uniquement le **chemin du fichier ACSM**, jamais l'URL
+   signée. Le Core exploite son profil Kobo-Adept lié à l'identité pour
+   produire le document final. Le fournisseur ne contourne pas les DRM.
+
+**Retéléchargement :** le provider ne mémorise aucun drapeau
+« déjà récupéré » ; un nouvel appel obtient une nouvelle action depuis
+MyLoans. Le Core conserve sa politique habituelle de cache/reprise et
+accepte ses actions explicites de rafraîchissement forcé.
+
+**Échec :** un prêt sans offre ACSM reste un prêt synchronisable, mais n'est
+pas éligible à l'acquisition automatique. Un rejet distant, un XML qui n'est
+pas un token ADEPT ou la disparition du prêt produit un code fermé ; jamais
+de journalisation du corps HTTP, du token, du lien signé ou du cookie.
+Une session devenue non fiable est fermée. Le profil ADEPT doit être
+configuré sur l'identité ; l'acquisition peut rester en attente si
+Kobo-Adept n'est pas opérationnel.
+
+**Limite terrain** : le lien ACSM a été observé dans deux MyLoans privés le
+08/11/2026, mais **sa récupération effective et le fulfillment ADEPT
+n'ont pas encore été capturés** sur le nouveau code. Les tests sont
+entièrement synthétiques ; une erreur de livraison sera corrigée à partir
+des journaux de recette.
+
+## Catalogue public et prêts privés — bundle 0.3.0
+
+Le même bundle déclare désormais **deux providers indépendants** :
+
+- **La Rochelle — catalogue numérique** : source publique (sans compte),
+  `catalog.search` et `catalog.detail`. Recherche plein texte dans
+  BiblioAccess tenant 1409, pages 0–100 suivies via les vrais liens
+  « Suivant », titres issus des liens de résultats et métadonnées
+  structurées à l'ouverture d'une fiche. Les notices ne produisent
+  **aucun droit de prêt** : disponibilité inconnue, aucun lien de
+  téléchargement, aucune action d'emprunt.
+- **Médiathèques de La Rochelle** : compte privé avec les identifiants du
+  lecteur et `authenticated_sync=on` sur consentement. Connexion AJAX/CAS,
+  MyLoans et synchronisation **positive, partielle et non destructive**,
+  liés à l'identité et au credential précis. `authenticated_sync=off`
+  n'empêche **pas** la recherche dans le catalogue public.
+
+Le catalogue ne lit ni les options ni les cookies SSO du lecteur. Les
+fiches du catalogue public sont consultées via une session HTTPX propre,
+et les liens vers d'autres tenants ou domaines sont ignorés. Aucune
+requête n'est effectuée au rendu des réglages. Le bouton de vérification
+de compte est sans effet sur le catalogue public.
+
+**Contrat de recherche v0.3.0 :** `query` plein texte côté fournisseur,
+`field=all`, `scope=all|digital`, pagination indexée depuis 0.
+Titre issu du lien de notice quand disponible ; sinon libellé « Notice
+<id> » non bibliographique. Les métadonnées JSON-LD attestées (titre,
+auteur, éditeur, année, couverture) sont consultées lors de l'ouverture
+d'un résultat. Le service ne revendique ni inventaire exhaustif du
+catalogue ni disponibilité d'exemplaires à partir d'une recherche vide.
+
 ## Déclaration simplifiée du compte (v0.2.2)
 
 L'écran **Paramètres → Sources et comptes fournisseurs → Médiathèques

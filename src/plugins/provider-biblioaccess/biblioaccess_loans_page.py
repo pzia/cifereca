@@ -32,13 +32,16 @@ class ObservedLoanRow:
     """Positive row structure, NOT an entitlement or authoritative loan ID.
 
     The template product reference and the catalog book ID are independent.
-    Never retain signed ACSM URLs or grant their download from this evidence.
+    A signed ACSM URL is ephemeral and never crosses into a Core Loan or log.
     """
     product_ref: str = field(repr=False)
     book_id: str = field(repr=False)
     title: str = field(repr=False)
     due_at_local: str = field(repr=False)
     acsm_offer_present: bool = False
+    # Memory-only exact action URL from an authenticated MyLoans response.
+    # The token is never repr()'d, persisted, or attached to a Core Loan.
+    acsm_url: str | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -139,7 +142,8 @@ class _ObservedRows(HTMLParser):
                 self.row_depth = self.div_depth
                 self.row = {
                     "ref": ids[0], "titles": [], "dates": [], "book_ids": set(),
-                    "acsm": False, "ambiguous": False,
+                    "acsm": False, "acsm_url": None,
+                    "ambiguous": False,
                 }
             if (self.row is not None and "downloadbook" in classes
                     and "JSdownloadbook-" + self.row["ref"] in classes):
@@ -168,8 +172,13 @@ class _ObservedRows(HTMLParser):
                             and dest.port in (None, 443) and not dest.fragment
                             and dest.path == "/fulfillment/URLLink.acsm"
                             and bool(dest.query)):
-                        # Boolean observation only. NEVER store href or query.
-                        self.row["acsm"] = True
+                        # Private ephemeral value, used only by the provider's
+                        # same-session acquisition method. Never store in Loan.
+                        if self.row["acsm_url"] is not None:
+                            self.row["ambiguous"] = True
+                        else:
+                            self.row["acsm_url"] = href
+                            self.row["acsm"] = True
             except ValueError:
                 pass
 
@@ -230,6 +239,7 @@ class _ObservedRows(HTMLParser):
                 book_id=next(iter(row["book_ids"])),
                 title=titles[0], due_at_local=dates[0],
                 acsm_offer_present=row["acsm"],
+                acsm_url=row["acsm_url"],
             ))
         else:
             self.partial_rows += 1

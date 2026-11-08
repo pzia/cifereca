@@ -2,8 +2,8 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.biblioaccess",
-    "version": "0.2.2",
-    "name": "La Rochelle — compte lecteur et prêts",
+    "version": "0.4.0",
+    "name": "La Rochelle — catalogue, prêts et acquisition ADEPT",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.7,<2"
   },
@@ -12,9 +12,9 @@
       "id": "provider.biblioaccess.la-rochelle",
       "type": "provider.library",
       "entrypoint": "cifereca_biblioaccess:PLUGIN",
-      "version": "0.2.2",
+      "version": "0.4.0",
       "display_name": "Médiathèques de La Rochelle",
-      "description": "Connexion au compte lecteur et synchronisation en lecture seule des prêts numériques.",
+      "description": "Connexion au compte lecteur, synchronisation des prêts numériques et récupération ACSM pour ADEPT.",
       "priority": 85,
       "enabled_by_default": false,
       "config_schema": {
@@ -24,7 +24,8 @@
         "properties": {}
       },
       "capabilities": [
-        "sync.loans"
+        "sync.loans",
+        "acquisition.download"
       ],
       "requires": [],
       "recommends": [],
@@ -33,7 +34,36 @@
       ],
       "requires_contracts": [],
       "system_requires": [],
-      "help_text": "Renseigner l’identifiant et le mot de passe de médiathèque. Synchronisation des prêts : on pour autoriser une connexion SSO automatique de ce seul compte, off pour la désactiver (par défaut). « Tester ce compte » effectue une connexion ponctuelle et referme sa session sans modifier ce choix. Anciens réglages AJAX/JS masqués dans l’éditeur mais conservés dans la configuration ; aucune acquisition ACSM ni opération d’emprunt ou de retour."
+      "help_text": "Saisissez l’identifiant et le mot de passe du lecteur. Synchronisation des prêts : on autorise AJAX/CAS, la lecture des prêts et la récupération ACSM des prêts actifs lors des acquisitions. Le fichier ACSM est remis au pipeline Kobo-Adept du Core pour l’EPUB/PDF si un profil ADEPT est configuré. Un fichier peut être re-téléchargé ; aucun emprunt/retour/renouvellement n’est exécuté ici. La recherche du catalogue reste publique et indépendante."
+    },
+    {
+      "id": "provider.biblioaccess-catalogue.la-rochelle",
+      "type": "provider.library",
+      "entrypoint": "cifereca_biblioaccess_catalogue:PLUGIN",
+      "version": "0.4.0",
+      "display_name": "La Rochelle — catalogue numérique",
+      "description": "Catalogue public de BiblioAccess tenant 1409, sans identifiants.",
+      "priority": 86,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "capabilities": [
+        "catalog.search",
+        "catalog.detail"
+      ],
+      "requires": [],
+      "recommends": [],
+      "requires_brokers": [
+        "httpx"
+      ],
+      "requires_contracts": [],
+      "system_requires": [],
+      "help_text": "Recherche publique du catalogue numérique La Rochelle, sans compte ni SSO. Les notices et métadonnées ne sont pas des droits de prêt ; les emprunts privés sont synchronisés séparément via « Médiathèques de La Rochelle »."
     }
   ]
 }
