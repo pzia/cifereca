@@ -275,3 +275,54 @@ def test_cancelled_pending_worker_never_dispatches_supplier_mutation():
     result = h.window.runner.jobs[0][1]()
     assert result["status"] == "blocked"
     assert h.attempts == []
+
+
+def test_positive_callback_renders_only_inert_progress_on_same_detail():
+    h = setup()
+    seen = []
+    h.window.search_page.detail.show_cross_profile_borrow_progress_detail = (
+        lambda progress, **kw: seen.append((progress, kw)) or True
+    )
+    assert h.show()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    _title, work, done, _failed, _kw = h.window.runner.jobs[0]
+    done(work())
+    assert len(seen) == 1
+    progress, kwargs = seen[0]
+    assert (progress.loan, progress.delivery, progress.transfer) == (
+        "confirmed", "unavailable", "blocked",
+    )
+    assert progress.retry_borrow is progress.executable is False
+    assert kwargs["expected_item"] is h.item
+    assert kwargs["requesting_identity_id"] == "bob"
+    assert kwargs["expected_context_epoch"] == 4
+    assert kwargs["expected_source_epoch"] == 9
+
+
+def test_outdated_detail_after_worker_result_cannot_receive_lender_progress():
+    h = setup()
+    shown = []
+    h.window.search_page.detail.show_cross_profile_borrow_progress_detail = (
+        lambda *_args, **_kw: shown.append(True)
+    )
+    assert h.show()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    _title, work, done, _failed, _kw = h.window.runner.jobs[0]
+    result = work()
+    h.window._selected_search_id = "different"
+    done(result)
+    assert shown == []
+    assert h.logs == []
+
+
+@pytest.mark.parametrize("response", ["choice-" + "9" * 10000, "choice-999", "choice--1"])
+def test_unregistered_choice_response_never_confirms_or_dispatches(response):
+    h = setup()
+    assert h.show()
+    Dialog.made[0].respond(response)
+    assert len(Dialog.made) == 1
+    assert h.window.runner.jobs == []
+    assert h.attempts == []
+    assert h.window._cross_profile_borrow_pending is None
