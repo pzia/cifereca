@@ -73,7 +73,8 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         self._cas_lock = Lock()
         self._service = None
         self._login_url = None
-        self._login_seen = False
+        self._login_attempted = False
+        self._login_qualified = False
         self._preflight = None
         self._script_attempted = False
         self._entry_attempted = False
@@ -115,12 +116,18 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
             raise AjaxCasError("cas_transport_unavailable") from None
 
     def observe_login_once(self) -> CasHttpObservation:
-        """GET the institution's fresh service URL; no DOM or browser."""
-        if self._closed:
-            raise AjaxCasError("cas_client_closed")
-        if not self._login_url or self._login_seen:
-            raise AjaxCasError("cas_login_unavailable")
-        self._login_seen = True
+        """One GET, qualified only after a complete bounded login HTML read.
+
+        A failed preflight (302, 403, truncated body or transport failure)
+        permanently consumes this client's login attempt and cannot enable
+        the credential-bearing AJAX POST.
+        """
+        with self._cas_lock:
+            if self._closed:
+                raise AjaxCasError("cas_client_closed")
+            if not self._login_url or self._login_attempted:
+                raise AjaxCasError("cas_login_unavailable")
+            self._login_attempted = True
         try:
             with self.http.stream("GET", self._login_url,
                                   follow_redirects=False,
@@ -131,9 +138,14 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise AjaxCasError("cas_login_unverified")
                 body = _bounded(response)
-                self._preflight = inspect_login_preflight(
+                preflight = inspect_login_preflight(
                     body.decode("utf-8", errors="strict"), page_url=self._login_url)
-                return CasHttpObservation("login_html_unverified", 200)
+            with self._cas_lock:
+                if self._closed:
+                    raise AjaxCasError("cas_client_closed")
+                self._preflight = preflight
+                self._login_qualified = True
+            return CasHttpObservation("login_html_unverified", 200)
         except (httpx.HTTPError, UnicodeError):
             raise AjaxCasError("cas_transport_unavailable") from None
 
@@ -183,10 +195,14 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         # The AJAX client remains an explicit one-shot POST. The preflight
         # anchors the institution and tenant; it does not construct dynamic
         # parameters or bypass challenges.
-        if self._service is None or not self._login_seen:
-            raise AjaxCasError("cas_login_required")
+        with self._cas_lock:
+            if self._closed or self._service is None or not self._login_qualified:
+                raise AjaxCasError("cas_login_required")
         result = super().submit_once(query=query, fields=fields, consent=consent)
-        self._ajax_succeeded = result.outcome == "success_reported"
+        with self._cas_lock:
+            self._ajax_succeeded = (
+                not self._closed and result.outcome == "success_reported"
+            )
         return result
 
     def observe_cas_once(self) -> CasHttpObservation:
@@ -262,6 +278,7 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         self._service = None
         self._login_url = None
         self._preflight = None
+        self._login_qualified = False
         self._ajax_succeeded = False
         self._cas_landed = False
         super().close()
