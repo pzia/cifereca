@@ -298,7 +298,10 @@ class LaRochelleSession(ProviderSession):
             # Reject malformed optional script selection before any HTTP.
             # The client separately checks exact membership in the freshly
             # observed HTML; no arbitrary third-party GET is allowed.
-            script_path = self.options.get("experimental_login_script_path", "")
+            script_path = (
+                "" if sync_opt_in else
+                self.options.get("experimental_login_script_path", "")
+            )
             if (type(script_path) is not str or len(script_path) > 256
                     or (script_path and (
                         not script_path.startswith("/")
@@ -355,9 +358,12 @@ class LaRochelleSession(ProviderSession):
                 # A second, independently selected GET is opt-in by exact
                 # script path, and only on a previously observed IdP script.
                 # Never log the script source, query, URL or response bytes.
-                script_path = self.options.get("experimental_login_script_path", "")
+                script_path = (
+                "" if sync_opt_in else
+                self.options.get("experimental_login_script_path", "")
+            )
                 selection = "configured" if script_path else ""
-                if not script_path and mode == "on":
+                if not script_path and mode == "on" and not sync_opt_in:
                     script_path = _observed_logon_script(
                         preflight.same_origin_script_paths)
                     if script_path:
@@ -545,9 +551,11 @@ class LaRochelleSession(ProviderSession):
             self._accounts = []
             self._sync_auth_live = False
             http, self._http = self._http, None
-            if http is not None:
-                http.close()
-            self.credentials.clear()
+            try:
+                if http is not None:
+                    http.close()
+            finally:
+                self.credentials.clear()
 
  
 class LaRochellePlugin(ProviderPlugin):
