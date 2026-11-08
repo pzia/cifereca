@@ -13,6 +13,7 @@ def test_retention_inspect_json_on_absent_stores_is_pure(tmp_path, monkeypatch, 
     packages = tmp_path / "plugins"
     monkeypatch.setattr(updater, "install_root", lambda: runtime)
     monkeypatch.setattr(updater, "_plugin_packages_root", lambda: packages)
+    monkeypatch.setattr(updater, "state_dir", lambda **_kwargs: tmp_path / "state")
     assert updater.main(["--retention-inspect", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["schema"] == "cifereca.updater.retention-inventory-combined/1"
@@ -39,6 +40,7 @@ def test_retention_inspect_rejects_mutating_and_other_modes(
 ):
     root = tmp_path / "runtime"
     monkeypatch.setattr(updater, "install_root", lambda: root)
+    monkeypatch.setattr(updater, "state_dir", lambda **_kwargs: tmp_path / "state")
     monkeypatch.setattr(updater, "rollback", lambda *args: pytest.fail("rollback called"))
     monkeypatch.setattr(updater, "install_github", lambda *args, **kw: pytest.fail("github called"))
     monkeypatch.setattr(updater, "reconcile_lost_previous", lambda *args, **kw: pytest.fail("reconcile called"))
@@ -71,6 +73,7 @@ def test_retention_inspect_reports_plugin_versions_without_package_names(
 
     monkeypatch.setattr(updater, "install_root", lambda: runtime)
     monkeypatch.setattr(updater, "_plugin_packages_root", lambda: packages)
+    monkeypatch.setattr(updater, "state_dir", lambda **_kwargs: tmp_path / "state")
     assert updater.main(["--retention-inspect", "--json"]) == 0
     output = capsys.readouterr().out
     report = json.loads(output)
@@ -79,3 +82,50 @@ def test_retention_inspect_reports_plugin_versions_without_package_names(
     assert report["plans"]["plugin_versions"]["total"] == 1
     assert report["plans"]["plugin_versions"]["candidates"] == 0
     assert report["safe_to_apply"] is False
+
+
+
+def test_cli_includes_qualified_dev_backups_without_authorizing_cleanup(
+    tmp_path, monkeypatch, capsys,
+):
+    from cifereca.updater_retention_backups import write_dev_backup_receipt
+
+    backups = tmp_path / "state" / "dev-updates"
+    first = backups / ("a" * 16 + "-1700000000000000000")
+    plugins = first / "plugins"
+    plugins.mkdir(parents=True)
+    first.chmod(0o700)
+    write_dev_backup_receipt(first, snapshot_sha256="f" * 64)
+    runtime = tmp_path / "runtime"
+    root = tmp_path / "packages"
+    monkeypatch.setattr(updater, "install_root", lambda: runtime)
+    monkeypatch.setattr(updater, "_plugin_packages_root", lambda: root)
+    monkeypatch.setattr(updater, "state_dir", lambda **_kwargs: tmp_path / "state")
+
+    assert updater.main(["--retention-inspect", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert "updater_backups" in report["coverage"]
+    assert "updater_backups" in report["plans"]
+    assert report["plans"]["updater_backups"]["total"] == 1
+    assert "updater_backups" not in report["pending_stores"]
+    assert "persistent_staging" in report["pending_stores"]
+    assert report["safe_to_apply"] is False
+    assert first.exists()
+
+
+
+def test_retention_inspect_does_not_allocate_real_xdg_locations(
+    tmp_path, monkeypatch, capsys,
+):
+    import os
+
+    data_home = tmp_path / "xdg-data"
+    state_home = tmp_path / "xdg-state"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.delenv("CIFERECA_INSTALL_ROOT", raising=False)
+    assert updater.main(["--retention-inspect", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["safe_to_apply"] is False
+    assert not data_home.exists()
+    assert not state_home.exists()
