@@ -12,6 +12,7 @@ import re
 from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 
 from browser_recorder import RecorderError
+from browser_recorder_http import _valid_auth_schema, _auth_flow
 
 MAX_CANDIDATES = 256
 MAX_TEXT = 32768
@@ -456,6 +457,25 @@ class IdentifierReview:
                 "response_headers": {k: clean(v) for k, v in entry.response_headers.items()},
                 "network_error": entry.network_error,
                 "metadata_only": entry.metadata_only,
+                # Private review: schema names only, never source values.
+                # No schema is presented for a metadata-only/foreign route.
+                "auth_structure": {
+                    direction: {
+                        "state": getattr(entry, "auth_" + direction + "_schema_state",
+                                         "not_applicable"),
+                        "schema": json.loads(json.dumps(schema)) if (
+                            not entry.metadata_only and _auth_flow(entry.url)
+                            and type(entry.url) is str and entry.url.startswith("https://")
+                            and _valid_auth_schema(schema, direction=direction)
+                            and getattr(entry, "auth_" + direction + "_schema_state",
+                                        None) == "schema_captured"
+                        ) else None,
+                    }
+                    for direction, schema in (
+                        ("request", entry.auth_request_schema),
+                        ("response", entry.auth_response_schema),
+                    )
+                },
             })
         return {
             "schema": "cifereca.browser-recorder.review-preview/1",
