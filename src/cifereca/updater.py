@@ -1989,6 +1989,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--status", action="store_true")
     p.add_argument("--recovery-inspect", action="store_true",
                    help="Diagnostic en lecture seule des transactions de reprise bloquées")
+    p.add_argument("--retention-inspect", action="store_true",
+                   help="Inventaire read-only de rétention Core/transactions/versions plugins ; jamais d'effacement")
     p.add_argument("--recovery-reconcile", metavar="TRANSACTION_ID",
                    help="Plan de réconciliation ciblée (lecture seule sauf --acknowledge)")
     p.add_argument("--acknowledge", metavar="SHA256",
@@ -2001,7 +2003,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.recovery_inspect:
+        if a.retention_inspect:
+            if (a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.acknowledge is not None or a.dry_run or a.to or a.python):
+                p.error("--retention-inspect est exclusif et strictement read-only")
+            from .updater_retention_plugins import inspect_updater_retention_readonly
+            result = inspect_updater_retention_readonly(
+                install_root(), _plugin_packages_root(), now=time.time(),
+            )
+        elif a.recovery_inspect:
             result = recovery_inspect()
         elif a.recovery_reconcile is not None:
             if a.archive or a.github is not None or a.rollback or a.status or a.dry_run:
