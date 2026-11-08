@@ -2279,16 +2279,29 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 malformed = True
                 summary["provider_rejected_manifest_items"] += upstream_rejected
                 summary["malformed_manifest_items"] += upstream_rejected
-            manifest_product_counts = Counter(
-                str(raw.get("product_id") or raw.get("id") or "").strip()
-                for raw in manifest if isinstance(raw, dict)
-                if str(raw.get("product_id") or raw.get("id") or "").strip()
-            )
-            # A repeated product ID may be two conflicting revisions. Identify
-            # every conflicting row BEFORE any acquisition, never download the
-            # first variant only to overwrite it with the second.
+            # An invalid row may claim *two different* edition aliases.
+            # Rejecting that row alone is insufficient: its secondary alias
+            # can still collide with a later apparently valid purchase and
+            # authorize an opaque GET for an ambiguous provider edition.
+            # Count each alias at most once per row; the count is bounded by
+            # the already bounded manifest. Trimming is used only for this
+            # NEGATIVE collision veto, never for SourceKey admission.
+            manifest_alias_counts: Counter[str] = Counter()
+            for candidate in manifest:
+                if not isinstance(candidate, dict):
+                    continue
+                aliases = {
+                    value.strip()
+                    for key in ("product_id", "id")
+                    if type(value := candidate.get(key)) is str
+                    and 0 < len(value) <= 1024 and value.strip()
+                }
+                manifest_alias_counts.update(aliases)
+            # A repeated alias, even as the *secondary* key of a malformed
+            # sibling, quarantines that edition across the complete batch.
+            # Do this BEFORE any backup_put, entitlement projection or GET.
             ambiguous_product_ids = {
-                product_id for product_id, count in manifest_product_counts.items()
+                edition for edition, count in manifest_alias_counts.items()
                 if count > 1
             }
             emit("manifest", credential_id=session.credential_id, total=len(manifest))
@@ -2373,7 +2386,13 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     summary["skipped"] += 1
                     item_committed = True
                     continue
-                if product_id in ambiguous_product_ids:
+                raw_aliases = {
+                    value.strip()
+                    for key in ("product_id", "id")
+                    if type(value := raw.get(key)) is str
+                    and 0 < len(value) <= 1024 and value.strip()
+                }
+                if raw_aliases & ambiguous_product_ids:
                     # Do not trust either version of a duplicated product:
                     # keep existing entitlements/artifacts and quarantine the
                     # batch from authoritative prune until Vault is repaired.
