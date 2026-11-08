@@ -95,6 +95,28 @@ DESCRIPTOR = ProviderDescriptor(
 
 _LOG = logging.getLogger("cifereca.plugin.biblioaccess")
 
+# Allowlisted technical outcomes only; no raw exception/URL/auth fields
+# can be written to journal even when a dependency raises an odd ValueError.
+_HTTP_PROBE_CODES = frozenset((
+    "cas_url_refused", "cas_body_limit", "cas_client_closed",
+    "cas_entry_already_attempted", "cas_entry_unverified",
+    "cas_entry_redirect_refused", "cas_service_refused",
+    "cas_login_unavailable", "cas_login_unverified",
+    "cas_transport_unavailable", "cas_preflight_unavailable",
+    "cas_post_not_confirmed", "cas_already_attempted",
+    "cas_ticket_unverified", "cas_ticket_refused",
+    "cas_landing_unverified", "cas_loans_already_attempted",
+    "cas_landing_required", "cas_loans_unverified",
+    "ajax_logon_consent_required", "ajax_logon_shape_mismatch",
+    "ajax_logon_credentials_missing", "ajax_logon_challenge_missing",
+    "ajax_logon_response_invalid", "ajax_logon_response_type",
+    "ajax_logon_json_invalid", "ajax_logon_json_shape",
+    "ajax_logon_response_limit", "ajax_logon_outcome_unknown",
+    "ajax_logon_client_closed", "ajax_logon_already_attempted",
+    "login_preflight_limit", "login_preflight_invalid_html",
+    "login_preflight_url_refused",
+))
+
 
 class LaRochelleSession(ProviderSession):
     """Opt-in network diagnostic, deliberately not an authenticated session."""
@@ -227,9 +249,12 @@ class LaRochelleSession(ProviderSession):
             except Exception as exc:
                 # The provider remains disconnected even if the login HTML
                 # cannot be parsed; preserve the exact technical step/code.
-                code = str(exc)
-                if not (code.startswith("cas_") or code.startswith("ajax_logon_")
-                        or code.startswith("login_preflight_")):
+                from biblioaccess_ajax_cas import AjaxCasError
+                from biblioaccess_ajax_logon import AjaxLogonError
+                from biblioaccess_ajax_preflight import LoginPreflightError
+                code = str(exc) if isinstance(
+                    exc, (AjaxCasError, AjaxLogonError, LoginPreflightError)) else ""
+                if code not in _HTTP_PROBE_CODES:
                     code = "biblioaccess_probe_http_failure"
                 self._last_probe_phase = code
                 self._event("preflight", "error", error_code=code,
