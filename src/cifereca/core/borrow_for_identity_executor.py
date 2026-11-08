@@ -142,9 +142,10 @@ def execute_cross_profile_borrow(
                         or descriptor.id != plugin_id
                         or descriptor.type != "provider.library"
                         or tuple(descriptor.capabilities) != manifest
-                        or (callable(enabled_for) and enabled_for(
+                        or not callable(enabled_for)
+                        or enabled_for(
                             plugin_id, account.identity_id,
-                        ) is not True)):
+                        ) is not True):
                     return False
                 # Lease is last: reject context/source/account changes
                 # caused during plugin manager or identity-status lookup.
