@@ -637,6 +637,19 @@ def main() -> int:
             visual_change_ratio = None
             if report.exists():
                 report_data = json.loads(report.read_text(encoding="utf-8"))
+                # #5178 synthetic-only probe: closed numeric gate diagnostics.
+                # Never emit worker exceptions, account data, GTK label text,
+                # raw logs or task paths to the public E2E workflow.
+                if (name == "task-busy-settings-1366"
+                        and report_data.get("status") != "PASS"):
+                    for metric in (
+                        "workers", "modals", "typed_receipts", "toast_count",
+                        "refs_ok", "feedback_ok", "navigation_ok",
+                        "label_ok", "scope_ok",
+                    ):
+                        value = report_data.get(metric)
+                        if (type(value) is int and 0 <= value <= 5):
+                            print(f"P1_5178_NUMERIC_{metric}={value}", flush=True)
                 if scenario.get("geometry_1300") and report_data.get("status") != "PASS":
                     stages = {"probe_start", "search_ready", "selected_search", "selected_library",
                               "xwininfo_lookup", "xwininfo_parse", "monitor_and_paned",
