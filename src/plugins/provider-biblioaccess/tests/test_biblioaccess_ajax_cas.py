@@ -540,3 +540,109 @@ def test_auto_post_refuses_unknown_challenge_before_credentials_leave():
         assert seen == ["/1409/Account/Login", "/login"]
     finally:
         c.close()
+
+
+
+def test_fresh_auto_post_success_follows_cas_and_reads_myloans_same_cookie_jar():
+    """Positive synthetic chain: GET/GET/POST/GET/GET/GET, never Core connected.
+
+    The real provider has not yet demonstrated this path; fixtures contain
+    invented sessions, tokens, credentials and a fake loan-like link.
+    """
+    from urllib.parse import parse_qs
+    seen = []
+    hidden = "SYNTHETIC-EPHEMERAL-CHECK-VALUE"
+    username = "SYNTHETIC-FRESH-READER"
+    password = "SYNTHETIC-PRIVATE-PASSWORD"
+
+    def handler(request):
+        seen.append((request.method, request.url.path))
+        path = request.url.path
+        if path == "/1409/Account/Login":
+            assert request.method == "GET"
+            return httpx.Response(302, headers={"location": LOGIN})
+        if path == "/login":
+            assert request.method == "GET" and str(request.url) == LOGIN
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "text/html",
+                    "set-cookie": "idp_synthetic=first; Path=/; Secure; HttpOnly",
+                },
+                text='<div id="logon-captcha-form-group" style="display:none"></div>'
+                     '<input id="logon-captcha" name="captcha">'
+                     '<input type="hidden" id="logon-captcha-checkvalue" '
+                     'name="checkValue" value="' + hidden + '">'
+                     "<script>logonManager.provider='Form';"
+                     "logonManager.action='logon';</script>",
+            )
+        if path == "/logon.svc/logon":
+            assert request.method == "POST"
+            assert "idp_synthetic=first" in request.headers.get("cookie", "")
+            assert request.url.params["changeUser"] == "true"
+            assert request.url.params["provider"] == "Form"
+            assert request.url.params["_dc"].isdigit()
+            posted = parse_qs(request.content.decode("ascii"), keep_blank_values=True)
+            assert posted == {
+                "username": [username], "password": [password],
+                "rememberMe": ["false"], "captcha": [""],
+                "captchaCheckValue": [hidden],
+            }
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "application/json",
+                    "set-cookie": "idp_logged_in=second; Path=/; Secure; HttpOnly",
+                },
+                json={"errors": [], "message": None, "success": True, "d": None},
+            )
+        if path == "/cas/login":
+            assert request.method == "GET"
+            cookie = request.headers.get("cookie", "")
+            assert "idp_synthetic=first" in cookie
+            assert "idp_logged_in=second" in cookie
+            assert request.url.params["service"] == SERVICE
+            return httpx.Response(302, headers={"location": TICKET_RETURN})
+        if str(request.url) == TICKET_RETURN:
+            assert request.method == "GET"
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "text/html",
+                    "set-cookie": "library_session=third; Path=/; Secure; HttpOnly",
+                },
+                text="<html>Logged-in-looking synthetic landing</html>",
+            )
+        if path == "/1409/Catalog/MyLoans":
+            assert request.method == "GET"
+            assert "library_session=third" in request.headers.get("cookie", "")
+            return httpx.Response(
+                200, headers={"content-type": "text/html"},
+                text='<a href="/1409/Catalog/Book/123456/synthetic-notice">Notice</a>',
+            )
+        pytest.fail("Unexpected network operation")
+
+    client = client_for(handler)
+    try:
+        client.observe_entry_once()
+        client.observe_login_once()
+        assert hidden not in repr(client.login_preflight())
+        ajax_result = client.submit_observed_login_once(
+            username=username, password=password, consent=True)
+        assert ajax_result.outcome == "success_reported"
+        landing = client.observe_cas_once()
+        books = client.observe_loans_once()
+        assert books.page_book_link_count == 1
+        assert books.page_book_unique_count == 1
+        assert not landing.connected and not books.connected
+        assert not books.identity_verified and not books.loans_verified
+        assert not books.inventory_verified
+        assert seen == [
+            ("GET", "/1409/Account/Login"), ("GET", "/login"),
+            ("POST", "/logon.svc/logon"), ("GET", "/cas/login"),
+            ("GET", "/1409/"), ("GET", "/1409/Catalog/MyLoans"),
+        ]
+        for secret in (hidden, username, password, "ST-SYNTHETIC", "third"):
+            assert secret not in repr(ajax_result) + repr(landing) + repr(books)
+    finally:
+        client.close()

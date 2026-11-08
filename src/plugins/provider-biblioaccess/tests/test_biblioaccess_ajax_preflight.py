@@ -146,3 +146,24 @@ def test_same_path_with_distinct_query_versions_is_ambiguous_and_omitted():
     assert result.same_origin_script_paths == ()
     assert result._script_request_urls == ()
     assert "SYNTHETIC" not in repr(result)
+
+
+
+def test_realistic_concatenated_ajax_endpoint_without_leading_slash():
+    """A PageSpeed JS literal may be relative to instanceWebDirectory."""
+    observed = mod.inspect_javascript_evidence(
+        "var url = master.instanceWebDirectory + "
+        "'logon.svc/logon?_dc=' + new Date().getTime(); "
+        "var captchaCheckValue = $('#logon-captcha-checkvalue').val();")
+    assert observed.ajax_endpoint_referenced
+    assert observed.identifier_names == ("_dc", "captcha", "captchaCheckValue")
+    assert not observed.value_provenance_verified
+
+
+@pytest.mark.parametrize("source", [
+    "formService.svc/generateCaptchaValue?length=6",
+    "'logon.svc/generateCaptchaValue'",
+    "'logon.svc/other'",
+])
+def test_unrelated_institutional_ajax_endpoint_not_reported_as_logon(source):
+    assert not mod.inspect_javascript_evidence(source).ajax_endpoint_referenced

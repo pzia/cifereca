@@ -266,5 +266,8 @@ def inspect_javascript_evidence(source: str) -> JavascriptEvidence:
     ))
     return JavascriptEvidence(
         identifier_names=identifiers,
-        ajax_endpoint_referenced="/logon.svc/logon" in source,
+        # The observed PageSpeed JS builds the URL from a base directory.
+        # Its literal lacks the leading slash; this is still only lexical
+        # evidence, never proof of a successful POST.
+        ajax_endpoint_referenced="logon.svc/logon" in source,
     )
