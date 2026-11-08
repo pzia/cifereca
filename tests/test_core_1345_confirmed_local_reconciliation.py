@@ -733,6 +733,7 @@ from cifereca.config import Config
 from cifereca.storage import Storage
 from cifereca.identities import Identity
 from cifereca.core import kobo_local_reconciliation as m
+from tests.kobo_legacy_reconciliation_archive import historical_reconcile_kobo_local as historical_w4
 options=json.loads(sys.argv[2]);root=Path(sys.argv[1]);config=Config(root/'child-config.json')
 config.set('library.directory',str(root/'EBooks'))
 identity=Identity('default','Hugues',directory_name='hugues')
@@ -743,7 +744,6 @@ def crash(db,table,row,previous):
  original(db,table,row,previous)
  os._exit(17)
 m._write_row=crash
-from tests.kobo_legacy_reconciliation_archive import historical_reconcile_kobo_local as historical_w4
 historical_w4(service,**options)
 '''
     result = subprocess.run([sys.executable, "-c", script, str(case.tmp),
