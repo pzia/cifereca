@@ -1241,6 +1241,7 @@ def main() -> int:
                           status="error", error="Bearer PRIVATE_SYNC_ERROR",
                           sync_capabilities=("entitlements",)),
         ]
+        f["source_fixture_rows"] = sources
         f["source_sync_calls"] = []
         f["library_refresh_calls"] = []
         override(w, "refresh_library", lambda *args: f["library_refresh_calls"].append(args))
@@ -2809,6 +2810,120 @@ def main() -> int:
         report["checks"]["P0_3416_unknown_provider_generic_consent_XTEST_OFF"] = True
         report["checks"]["P0_3416_generic_consent_render_no_write_and_stale_widget_inert"] = True
         capture("03o-canonical-source-consent-off")
+        later(100, p1_5078_historical_kobo_sync_begin)
+
+    def p1_5078_historical_kobo_sync_begin():
+        """Real MainWindow Sync UI: 9/522/5 old Kobo scopes, one newer A→B."""
+        from cifereca.plugin_api import (
+            SyncSourceRef, SyncPhaseState, SyncSourceCycleReceipt,
+        )
+        from cifereca.core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+        from cifereca.gui.sync_view import sync_source_attention
+        w = window[0]
+        f = loan_sync_fixture
+        assert w.view_stack.get_visible_child_name() == "sync"
+        assert f["proxy"].active
+        before = (
+            len(f["source_sync_calls"]), len(f["prepare_calls"]),
+            len(f["materialize_calls"]), len(f["inventory_policy_writes"]),
+            len(f["mutations"]),
+        )
+        f["p1_5078_no_mutation_baseline"] = before
+        canonical = dict.fromkeys(CANONICAL_EXECUTION_STATUSES, 0)
+        canonical.update(present_attested=517, skipped_archived=5)
+        receipt = SyncSourceCycleReceipt(
+            status="success", attempted_at="2026-11-08T10:36:54+00:00",
+            mode="manual", canonical_execution=tuple(
+                (name, canonical[name]) for name in CANONICAL_EXECUTION_STATUSES
+            ),
+        )
+        old = "2026-10-30T09:58:30+00:00"
+        early = "2026-10-15T10:00:00+00:00"
+        rows = [
+            SyncSourceRef(
+                "p1-5078-9", "camille", "kobo", "synthetic-9", "Kobo historique 9",
+                status="idle", sync_capabilities=("local_materialization",),
+                phase_states=(
+                    SyncPhaseState("discover_rights", "idle"),
+                    SyncPhaseState("materialize", "attention_required",
+                                   last_attempt=early),
+                ),
+            ),
+            SyncSourceRef(
+                "p1-5078-522", "camille", "kobo", "synthetic-522",
+                "Kobo canonique 522", status="success",
+                last_attempt="2026-11-08T10:36:54+00:00",
+                last_success="2026-11-08T10:36:54+00:00",
+                sync_capabilities=("remote_inventory", "entitlements",
+                                   "local_materialization"),
+                phase_states=(
+                    SyncPhaseState("discover_rights", "success",
+                                   last_attempt="2026-11-08T10:36:54+00:00"),
+                    SyncPhaseState("materialize", "partial", last_attempt=old),
+                    SyncPhaseState("reconcile", "not_supported"),
+                ),
+                last_cycle=receipt,
+            ),
+            SyncSourceRef(
+                "p1-5078-5", "camille", "kobo", "synthetic-5", "Kobo historique 5",
+                status="idle", sync_capabilities=("local_materialization",),
+                phase_states=(
+                    SyncPhaseState("discover_rights", "idle"),
+                    SyncPhaseState("materialize", "attention_required",
+                                   last_attempt=early),
+                ),
+            ),
+        ]
+        assert [sync_source_attention(row) is None for row in rows] == [
+            False, True, False,
+        ]
+        # Replace only local synthetic broker results; never touch SQLite or
+        # source activation, provider, HTTP, user identity or consent.
+        f["source_fixture_rows"][:] = rows
+        w._refresh_sync_page()
+        later(220, p1_5078_historical_kobo_sync_check)
+
+    def p1_5078_historical_kobo_sync_check():
+        w = window[0]
+        f = loan_sync_fixture
+        rows = {
+            node.get_title(): node
+            for node in walk(w._sync_sources_box)
+            if isinstance(node, Adw.ActionRow)
+            and node.get_title() in {
+                "Kobo historique 9", "Kobo canonique 522", "Kobo historique 5",
+            }
+        }
+        assert set(rows) == {
+            "Kobo historique 9", "Kobo canonique 522", "Kobo historique 5",
+        }
+        current = rows["Kobo canonique 522"].get_subtitle()
+        assert "Synchronisation : Dernier succès" in current
+        assert "08/11/2026" in current
+        assert "historique, antérieur au dernier cycle canonique" in current
+        assert "État à vérifier" not in current
+        assert "Téléchargement local : Réussie" not in current
+        assert all(
+            "Synchronisation : État à vérifier" in rows[title].get_subtitle()
+            for title in ("Kobo historique 9", "Kobo historique 5")
+        )
+        assert w._sync_attention_row.get_visible()
+        banner = w._sync_attention_text.get_label()
+        assert "0 échec(s) · 2 avertissement(s)" in banner
+        assert "PRIVATE" not in "\n".join(
+            r.get_subtitle() for r in rows.values()
+        )
+        assert (
+            len(f["source_sync_calls"]), len(f["prepare_calls"]),
+            len(f["materialize_calls"]), len(f["inventory_policy_writes"]),
+            len(f["mutations"]),
+        ) == f["p1_5078_no_mutation_baseline"]
+        scroll = w._sync_sources_box.get_parent()
+        while not isinstance(scroll, Gtk.ScrolledWindow):
+            scroll = scroll.get_parent()
+        scroll.get_vadjustment().set_value(0)
+        report["checks"]["P1_5078_9_522_5_real_sync_gtk_historic_vs_current"] = True
+        capture("03o2-kobo-history-versus-canonical")
         cleanup_loan_sync()
         later(100, continue_baseline_settings)
 
