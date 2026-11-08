@@ -556,3 +556,31 @@ Une régression MockTransport couvre désormais le chemin **positif
 synthétique** complet : session cookie institutionnel initiale, POST avec
 valeurs fraîches, cookie de succès, CAS avec ticket, cookie BiblioAccess,
 puis lecture de MyLoans. Ce test ne vaut pas validation en production.
+
+
+### Préparation de la prochaine recette du compte : phases et diagnostic expurgé
+
+Pour `experimental_http_probe=auto-post`, un incident est désormais
+attribué à **la phase exacte** (`entry`, `institution_login`,
+`login_preflight`, `login_script`, `ajax_logon`, `cas_return`,
+`loans_page`) au lieu d'une phase générique `preflight`.
+L'authentification reste explicitement déclenchée, à tentative unique,
+et les transitions CAS ne sont pas assouplies.
+
+Si le POST renvoie un JSON de forme reconnue, l'événement `ajax_logon`
+rapporte `reported_error_count` (nombre plafonné à 99, `null` si le champ
+est mal typé) et `response_message_present` (booléen).
+**Aucun corps JSON, message, erreur textuelle, credential, cookie ou ticket**
+n'est restitué. Un `failure_reported` n'est pas forcément un CAPTCHA.
+
+Interprétation après un **log réel privé** :
+- arrêt `ajax_logon` : déterminer si le POST a été refusé, sans relance
+  automatique ni contournement du challenge ;
+- `success_reported` puis refus `cas_return` : analyser la continuité
+  ticket/service/cookies dans les seules preuves autorisées ;
+- `loans_page` 200 : qualifier l'identité réellement authentifiée,
+  puis les *lignes de prêt* et leur caractère exhaustif avant de
+  publier `Loan`, `sync.loans` ou une preuve d'absence de prêt.
+
+Le maintien de `connected=False` est volontaire : ces indicateurs ne
+constituent pas une preuve de compte ni de droit.
