@@ -716,7 +716,10 @@ def main() -> int:
                         "download_failed", "preview_created", "preview_hit",
                         "preview_fallback", "ui_applied", "ui_stale", "ui_failed",
                         "decode_failed", "cancelled_callbacks", "queue",
-                        "inflight_urls",
+                        "inflight_urls", "preview_source_none",
+                        "preview_worker_skipped", "preview_no_future",
+                        "preview_result_none", "preview_result_path",
+                        "preview_callback_suppressed",
                     })
                     if (type(loader_state) is dict
                             and set(loader_state) == loader_keys
@@ -726,6 +729,28 @@ def main() -> int:
                         for key in sorted(loader_keys):
                             print("P1_774_LOADER_NUMERIC_" + key + "=" +
                                   str(loader_state[key]), flush=True)
+                    # Closed numeric binding state: whitelist all nested keys
+                    # and bounds, never expose URL, callback, file or labels.
+                    bindings = report_data.get("p1_774_cover_bind_state")
+                    bound_keys = frozenset({
+                        "count", "generation", "expected_url", "same_loader",
+                        "request_present", "request_active", "source_present",
+                        "source_active", "spinner", "placeholder",
+                    })
+                    if (type(bindings) is dict
+                            and set(bindings) == {"list", "detail"}
+                            and all(type(row) is dict and set(row) == bound_keys
+                                    and all(type(row[key]) is int and
+                                            0 <= row[key] <= (
+                                                100 if key == "generation"
+                                                else 20 if key == "count"
+                                                else 1)
+                                            for key in bound_keys)
+                                    for row in bindings.values())):
+                        for part in ("list", "detail"):
+                            for key in sorted(bound_keys):
+                                print("P1_774_BIND_NUMERIC_" + part + "_" + key +
+                                      "=" + str(bindings[part][key]), flush=True)
                     # Eight screen-local bounded integers diagnose a clipped
                     # overflow button without leaking widget text, session,
                     # actions, account metadata or raw GTK tracebacks.
