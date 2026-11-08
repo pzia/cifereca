@@ -37,7 +37,6 @@ def verify_borrow_without_submission(
             or expected_account.identity_id != expected_identity_id
             or expected_account.provider_id != expected_provider_id
             or expected_account.credential_id != item.source_credential
-            or expected_account.unique_id != ""
             or expected_account.is_primary is not True):
         return result("blocked", "borrow_verification_scope_invalid")
 
@@ -72,8 +71,7 @@ def verify_borrow_without_submission(
         # No borrow_explicit_with_claim, PNB URL retrieval, ACSM staging,
         # manual loan claim, or write to any SQLite table occurs.
         observed = session.rights_observation_snapshot(expected_account)
-        if (not lease.current(service) or not checkpoint_current()
-                ):
+        if not lease.current(service) or not checkpoint_current():
             return result("blocked", "borrow_verification_source_changed")
         if (type(observed) is not ProviderRightsSnapshot
                 or observed.scope != ProviderRightsScope(
