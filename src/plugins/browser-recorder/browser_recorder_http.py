@@ -539,6 +539,8 @@ class PrivateHttpTrace:
         self.limit = min(MAX_EXCHANGES, max(1, int(limit)))
         self.max_body = min(MAX_BODY_BYTES, max(1, int(max_body)))
         self.total_body = min(MAX_TOTAL_BODY_BYTES, max(0, int(total_body)))
+        # #5097: separate bounded structural auth budget, never replenished.
+        self._auth_schema_remaining = min(128 * 1024, self.total_body)
         self._static_body_remaining = min(64 * 1024, self.total_body // 4)
         self.exchanges: list[PrivateExchange] = []
         # Closed vocabulary only: no provider value or browser exception.
@@ -820,12 +822,20 @@ class PrivateHttpTrace:
                     else "auth_schema_unavailable"
                 )
                 if scoped and entry.method == "POST":
-                    try:
-                        structure = _auth_request_structure(
-                            req, max_bytes=min(self.max_body, self.total_body),
-                        )
-                    except Exception:
-                        structure = None
+                    structure = None
+                    measured = _sizes(req).get("requestBodySize")
+                    if (type(measured) is int and 0 < measured
+                            <= min(self._auth_schema_remaining,
+                                   self.max_body, _AUTH_SCHEMA_BYTES)):
+                        # Debit before the optional read, even if parsing later
+                        # fails: malformed repeated login attempts are bounded.
+                        self._auth_schema_remaining -= measured
+                        try:
+                            structure = _auth_request_structure(
+                                req, max_bytes=measured,
+                            )
+                        except Exception:
+                            structure = None
                     if structure is not None:
                         entry.auth_request_schema = structure
                         entry.auth_request_schema_state = "schema_captured"
@@ -841,12 +851,18 @@ class PrivateHttpTrace:
                 if (scoped and resp is not None
                         and entry.mime in {"application/json", "text/json"}):
                     # Never read a previously excluded download/license body.
-                    try:
-                        structure = _auth_response_structure(
-                            resp, req, max_bytes=min(self.max_body, self.total_body),
-                        )
-                    except Exception:
-                        structure = None
+                    structure = None
+                    measured = _sizes(req).get("responseBodySize")
+                    if (type(measured) is int and 0 < measured
+                            <= min(self._auth_schema_remaining,
+                                   self.max_body, _AUTH_SCHEMA_BYTES)):
+                        self._auth_schema_remaining -= measured
+                        try:
+                            structure = _auth_response_structure(
+                                resp, req, max_bytes=measured,
+                            )
+                        except Exception:
+                            structure = None
                     if structure is not None:
                         entry.auth_response_schema = structure
                         entry.auth_response_schema_state = "schema_captured"
