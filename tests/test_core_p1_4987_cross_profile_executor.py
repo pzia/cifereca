@@ -240,3 +240,47 @@ def test_provider_rebound_during_return_does_not_confirm_loan(harness, monkeypat
     assert service.storage.loan_borrow_state(
         borrow_claim_key(replace(account, provider_id="paris"), row.notice),
     )["status"] == "verification_unavailable"
+
+
+@pytest.mark.parametrize("revoke", ["lender_plugin", "manifest", "global_plugin"])
+def test_plugin_reconfiguration_during_claim_cannot_dispatch_provider(
+    harness, monkeypatch, revoke,
+):
+    service, account, session, row, preview = setup_borrower(harness)
+    manager = service._plugin_manager
+    original = service.storage.loan_borrow_claim_once
+    original_status = manager.status
+    switch = {"active": True}
+    manager.enabled_for_identity = lambda _plugin, _identity: switch["active"]
+    if revoke == "manifest":
+        manager.status = lambda plugin_id: (
+            original_status(plugin_id) if switch["active"] else
+            __import__("types").SimpleNamespace(
+                state="ready", enabled=True,
+                descriptor=__import__("types").SimpleNamespace(
+                    id=plugin_id, type="provider.library", capabilities=(),
+                ),
+            )
+        )
+    elif revoke == "global_plugin":
+        manager.status = lambda plugin_id: (
+            original_status(plugin_id) if switch["active"] else
+            __import__("types").SimpleNamespace(
+                state="ready", enabled=False,
+                descriptor=original_status(plugin_id).descriptor,
+            )
+        )
+
+    def revoke_at_claim(key, operation):
+        result = original(key, operation)
+        switch["active"] = False
+        return result
+
+    monkeypatch.setattr(service.storage, "loan_borrow_claim_once", revoke_at_claim)
+    outcome = execute(service, row, preview)
+    assert outcome["status"] == "blocked"
+    assert outcome["retry_borrow"] is False
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, row.notice),
+    )["status"] == "blocked"
