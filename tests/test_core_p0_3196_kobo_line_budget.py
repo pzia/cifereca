@@ -7,9 +7,9 @@ from scripts.ci_kobo_core_line_inventory import _category, inventory
 
 
 ROOT = Path(__file__).resolve().parents[1]
-# Contract-first baseline, 2026-11-08 after green #5032. Only decrease this
+# Contract-first baseline, 2026-11-08 after green #5032 and P0 W4 dead-helper extraction. Only decrease this
 # ceiling after cuts merge; never reclassify production code to hide growth.
-BASELINE = 7303
+BASELINE = 7218
 
 
 def test_kobo_dedicated_core_surface_never_grows_from_baseline():

@@ -12,6 +12,7 @@ from cifereca.core import kobo_local_reconciliation as module
 
 
 _RETIRED = {
+    "_json", "_transaction", "_roots", "_within", "_file",
     "_token", "_rows", "_unique_catalogue_fields", "_metadata", "_snapshot",
     "_validate", "_proposed", "_write_row", "_operation_id", "_journal",
     "_validate_undo", "_validate_historical_links",
