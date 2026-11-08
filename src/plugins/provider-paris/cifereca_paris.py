@@ -358,6 +358,12 @@ class ParisProviderSession(ProviderSession):
         # Tiny one-shot proof that Core's defensive copy stems from THIS
         # session's latest completed typed read, not a different borrower,
         # account instance or older session. Never retain loan rows here.
+        # One-call, task-local exact inventory pin for selected delivery. The
+        # candidate already fetched the current DILICOM card under the same
+        # inventory lock; do not issue a redundant ListLoans before file GET.
+        self._selected_delivery_inventory: ContextVar[LoanInventorySnapshot | None] = ContextVar(
+            "paris_selected_delivery_inventory", default=None,
+        )
         self._last_typed_loan_marker = None
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
@@ -1537,14 +1543,18 @@ class ParisProviderSession(ProviderSession):
                     raise ProviderCapabilityError("paris_candidate_source_unobserved")
                 # Another fresh ListLoans inside download_digital rejects a
                 # disappeared link, rebind or loan mismatch before any PNB GET.
-                return self.download_digital(
-                    candidates[0], account, directory,
-                    expected_right_id=right_id,
-                    expected_identity_id=account.identity_id,
-                    selected_stage_fd=stage_fd,
-                    **({"admission_current": admission_current}
-                       if admission_current is not None else {}),
-                )
+                pin = self._selected_delivery_inventory.set(inventory)
+                try:
+                    return self.download_digital(
+                        candidates[0], account, directory,
+                        expected_right_id=right_id,
+                        expected_identity_id=account.identity_id,
+                        selected_stage_fd=stage_fd,
+                        **({"admission_current": admission_current}
+                           if admission_current is not None else {}),
+                    )
+                finally:
+                    self._selected_delivery_inventory.reset(pin)
 
         finally:
             os.close(stage_fd)
@@ -1666,7 +1676,18 @@ class ParisProviderSession(ProviderSession):
                 # new acquisition/token GET. It cannot prove complete
                 # absence or turn an untrusted state into 'active'. Require
                 # a single exact DILICOM right before touching any PNB URL.
-                fresh = self._snapshot_for_account(account)
+                pinned = self._selected_delivery_inventory.get()
+                if pinned is not None:
+                    # The pinned read is only usable inside the candidate
+                    # call under the same reentrant session lock. A changed
+                    # account or incomplete upstream observation fails closed.
+                    if (type(pinned) is not LoanInventorySnapshot
+                            or pinned.scope != LoanInventoryScope.for_account(account)
+                            or not pinned.branch_claims_complete("dilicom", "digital")):
+                        raise ProviderConfigurationError("paris_selected_right_unobserved")
+                    fresh = pinned
+                else:
+                    fresh = self._snapshot_for_account(account)
                 if not scope_current():
                     raise ProviderConfigurationError("paris_download_scope_mismatch")
                 failed_dilicom = any(
