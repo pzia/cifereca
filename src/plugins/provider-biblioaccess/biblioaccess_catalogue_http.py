@@ -34,6 +34,7 @@ class CatalogueSearchObservation:
     completeness: str = "partial"
     authenticated: bool = False
     entitlements_verified: bool = False
+    book_urls: tuple[tuple[str, str], ...] = ()
 
 
 def _checked_search_url(url: str, query: str, *, page: int | None = None) -> None:
@@ -81,6 +82,7 @@ class BiblioAccessCatalogueHTTP:
         self._lock = Lock()
         self._closed = False
         self._last_search_ids: frozenset[str] = frozenset()
+        self._last_book_urls: dict[str, str] = {}
 
     def close(self):
         with self._lock:
@@ -88,6 +90,7 @@ class BiblioAccessCatalogueHTTP:
                 return
             self._closed = True
         self._last_search_ids = frozenset()
+        self._last_book_urls = {}
         self.http.cookies.clear()
         self.http.close()
 
@@ -105,8 +108,10 @@ class BiblioAccessCatalogueHTTP:
                 raise CatalogueHTTPError("catalogue_client_closed")
             # Avoid parallel cookie jar mutation or interleaved pagination.
             self._last_search_ids = frozenset()
+            self._last_book_urls = {}
             result = self._search_locked(summary, normalized_query, max_pages)
             self._last_search_ids = frozenset(result.book_ids)
+            self._last_book_urls = dict(result.book_urls)
             return result
 
     def _search_locked(self, summary, query, max_pages):
@@ -131,6 +136,7 @@ class BiblioAccessCatalogueHTTP:
                 target = urljoin(summary, response.headers["location"])
             _checked_search_url(target, query)
             seen = set()
+            book_urls = {}
             page_count = 0
             expected_page = None
             while page_count < max_pages:
@@ -149,16 +155,20 @@ class BiblioAccessCatalogueHTTP:
                     html = _read_html(page)
                 links = extract_catalogue_links(target, html)
                 seen.update(links.book_ids)
+                for ident, detail_url in links.book_urls:
+                    book_urls.setdefault(ident, detail_url)
                 page_count += 1
                 if links.next_page_url is None:
                     return CatalogueSearchObservation(
-                        tuple(sorted(seen)), page_count, "page_read_unverified")
+                        tuple(sorted(seen)), page_count, "page_read_unverified",
+                        book_urls=tuple(sorted(book_urls.items())))
                 current = parse_qs(urlsplit(target).query)
                 expected_page = int(current.get("pageindex", ["0"])[0]) + 1
                 _checked_search_url(links.next_page_url, query, page=expected_page)
                 target = links.next_page_url
             return CatalogueSearchObservation(
-                tuple(sorted(seen)), page_count, "page_budget_exhausted")
+                tuple(sorted(seen)), page_count, "page_budget_exhausted",
+                book_urls=tuple(sorted(book_urls.items())))
         except httpx.HTTPError:
             raise CatalogueHTTPError("catalogue_transport_unavailable") from None
 
@@ -177,7 +187,9 @@ class BiblioAccessCatalogueHTTP:
                 raise CatalogueHTTPError("catalogue_client_closed")
             if book_id not in self._last_search_ids:
                 raise CatalogueHTTPError("catalogue_book_not_observed")
-            url = "https://www.biblioaccess.com/1409/Catalog/Book/" + book_id
+            url = self._last_book_urls.get(book_id)
+            if url is None or _parts(url) is None:
+                raise CatalogueHTTPError("catalogue_book_url_missing")
             try:
                 with self.http.stream(
                     "GET", url, follow_redirects=False,
