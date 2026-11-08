@@ -227,23 +227,39 @@ def _evidence(service, account, manifest):
     )
     _require(preview["manifest_valid"], "invalid_manifest")
     counts = {key: preview["counts"][key] for key in _COUNTS}
-    # Unrelated local books are diagnostic only; exact per-item candidates
-    # and unsafe placements remain vetoes in the refreshed preview.
-    _require(preview["blocking_items"] == 0, "reconciliation_required")
+    # A completed v0.7 receipt is a NEGATIVE at-most-once fence for W2,
+    # never a verified B file. It must not prevent a confirmed batch from
+    # acquiring *other* editions: W2 quarantines this exact item on replay.
+    # Keep all other preview blockers (candidate paths, scope, declarations,
+    # partial provenance, invalid rights) as whole-batch vetoes.
     roots = _roots(service, account.identity_id)
     backup = service.storage.backup_list("kobo", account.credential_id)
     _require(len(backup) <= 10000, "evidence_budget_exhausted")
+    legacy_completed = set()
     files = []
     for row in backup:
         _require(row.get("identity_id") == account.identity_id
                  and row.get("account_id") == account.unique_id, "source_scope_mismatch")
         _require(row.get("status") not in {"acquiring", "downloading", "interrupted"}, "acquisition_unresolved")
+        if row.get("status") in {"ok", "complete"}:
+            # Only this exact bound archive can be exempted from the
+            # *batch-level* veto. The provider GET and local-B claim remain
+            # forbidden for that item; the preview's counters stay negative.
+            legacy_completed.add(row.get("item_id"))
         path = row.get("local_path")
         if path:
             _require(_within(path, roots), "file_outside_identity")
             observed = _read_hash_within(path, roots)
             _require(observed is not None and observed[:2] == (str(row.get("sha256") or "").lower(), row.get("size")), "local_evidence_unverified")
             files.append((path, observed))
+    archived_blockers = sum(
+        reason == "needs_reconciliation" and item_id in legacy_completed
+        for item_id, reason in reasons.items()
+    )
+    _require(
+        preview["blocking_items"] == archived_blockers,
+        "reconciliation_required",
+    )
     tables = {}
     # A bounded snapshot of all local evidence for this source/identity. The
     # fingerprint stays private; no title, path, provider ID or token is logged.
