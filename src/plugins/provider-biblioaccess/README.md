@@ -1,5 +1,36 @@
 # BiblioAccess — La Rochelle (tenant 1409)
 
+## Catalogue public et prêts privés — bundle 0.3.0
+
+Le même bundle déclare désormais **deux providers indépendants** :
+
+- **La Rochelle — catalogue numérique** : source publique (sans compte),
+  `catalog.search` et `catalog.detail`. Recherche plein texte dans
+  BiblioAccess tenant 1409, pages 0–100 suivies via les vrais liens
+  « Suivant », titres issus des liens de résultats et métadonnées
+  structurées à l'ouverture d'une fiche. Les notices ne produisent
+  **aucun droit de prêt** : disponibilité inconnue, aucun lien de
+  téléchargement, aucune action d'emprunt.
+- **Médiathèques de La Rochelle** : compte privé avec les identifiants du
+  lecteur et `authenticated_sync=on` sur consentement. Connexion AJAX/CAS,
+  MyLoans et synchronisation **positive, partielle et non destructive**,
+  liés à l'identité et au credential précis. `authenticated_sync=off`
+  n'empêche **pas** la recherche dans le catalogue public.
+
+Le catalogue ne lit ni les options ni les cookies SSO du lecteur. Les
+fiches du catalogue public sont consultées via une session HTTPX propre,
+et les liens vers d'autres tenants ou domaines sont ignorés. Aucune
+requête n'est effectuée au rendu des réglages. Le bouton de vérification
+de compte est sans effet sur le catalogue public.
+
+**Contrat de recherche v0.3.0 :** `query` plein texte côté fournisseur,
+`field=all`, `scope=all|digital`, pagination indexée depuis 0.
+Titre issu du lien de notice quand disponible ; sinon libellé « Notice
+<id> » non bibliographique. Les métadonnées JSON-LD attestées (titre,
+auteur, éditeur, année, couverture) sont consultées lors de l'ouverture
+d'un résultat. Le service ne revendique ni inventaire exhaustif du
+catalogue ni disponibilité d'exemplaires à partir d'une recherche vide.
+
 ## Déclaration simplifiée du compte (v0.2.2)
 
 L'écran **Paramètres → Sources et comptes fournisseurs → Médiathèques
