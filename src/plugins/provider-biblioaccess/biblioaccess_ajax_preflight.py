@@ -127,6 +127,8 @@ def inspect_login_preflight(html: str, *, page_url: str = IDP + _LOGIN_PATH) -> 
     try:
         page.feed(html)
         page.close()
+    except LoginPreflightError:
+        raise
     except (ValueError, UnicodeError):
         raise LoginPreflightError("login_preflight_invalid_html") from None
     if page.depth:
