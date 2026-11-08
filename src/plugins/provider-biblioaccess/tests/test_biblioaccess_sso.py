@@ -133,11 +133,11 @@ def test_probe_failure_logged_but_no_account_promoted():
         diagnostics=diag,
     )
     session._client_factory = lambda: client
-    with pytest.raises(mod.ProviderConfigurationError, match="cas_entry_redirect_refused"):
+    with pytest.raises(mod.ProviderConfigurationError, match="biblioaccess_probe_http_failure"):
         session.connect()
     assert client.calls == ["entry", "close"]
     assert not session.connected and session.accounts == []
-    assert diag.events[-1][1]["error_code"] == "cas_entry_redirect_refused"
+    assert diag.events[-1][1]["error_code"] == "biblioaccess_probe_http_failure"
     session.close()
 
 def test_no_query_or_ticket_retained():
