@@ -80,6 +80,7 @@ def setup(*, multiple=False):
             attempts.append(kw)
             or {
                 "status": "confirmed", "provider_verified": True,
+                "reason_code": "lender_loan_confirmed_transfer_unverified",
                 "transfer": "blocked", "delivery": "unavailable",
                 "retry_borrow": False,
             }
@@ -330,4 +331,34 @@ def test_unregistered_choice_response_never_confirms_or_dispatches(response):
     assert len(Dialog.made) == 1
     assert h.window.runner.jobs == []
     assert h.attempts == []
+    assert h.window._cross_profile_borrow_pending is None
+
+
+@pytest.mark.parametrize("wrong", [
+    {"reason_code": "other_reason"},
+    {"delivery": "available"},
+    {"transfer": "completed"},
+    {"retry_borrow": True},
+    {"provider_verified": 1},
+])
+def test_incomplete_or_contradictory_positive_result_never_publishes_a_loan(wrong):
+    h = setup()
+    shown = []
+    h.window.search_page.detail.show_cross_profile_borrow_progress_detail = (
+        lambda *_args, **_kw: shown.append(True)
+    )
+    good = {
+        "status": "confirmed", "provider_verified": True,
+        "reason_code": "lender_loan_confirmed_transfer_unverified",
+        "delivery": "unavailable", "transfer": "blocked",
+        "retry_borrow": False,
+    }
+    h.service.execute_cross_profile_borrow = lambda **_kw: {**good, **wrong}
+    assert h.show()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    _title, work, done, _failed, _kw = h.window.runner.jobs[0]
+    done(work())
+    assert shown == []
+    assert h.logs and h.logs[0][0] == "error"
     assert h.window._cross_profile_borrow_pending is None
