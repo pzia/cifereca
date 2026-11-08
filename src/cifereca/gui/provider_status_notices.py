@@ -32,6 +32,7 @@ def _safe_text(value: object) -> bool:
     return (
         type(value) is str and 1 <= len(value) <= _MAX_TEXT
         and value == value.strip()
+        and chr(92) not in value  # also reject literal escaped control/bidi sequences
         and not any(ord(ch) < 32 or ord(ch) == 127
                     or ch in "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
                     for ch in value)
