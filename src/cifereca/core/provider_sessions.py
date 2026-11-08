@@ -780,6 +780,26 @@ def _record_configured_connect_phase(logger, attempt, phase, started, outcome):
         pass  # optional telemetry cannot change provider connection semantics
 
 
+def _interactive_background_opted_in(descriptor: object, row: object) -> bool:
+    """Exact per-account consent for a declared HTTP-capable interactive source.
+
+    The option name comes from the provider's public descriptor; Core never
+    recognizes an individual provider ID. Old interactive providers remain
+    skipped. A truthy value, missing option, or undeclared field is NOT consent.
+    """
+    key = getattr(descriptor, "background_authentication_option_key", None)
+    if (type(key) is not str or not key or len(key) > 128
+            or type(row) is not dict):
+        return False
+    specs = getattr(descriptor, "account_options", ())
+    if not (type(specs) is tuple and any(
+        getattr(spec, "key", None) == key for spec in specs
+    )):
+        return False
+    opts = row.get("options")
+    return type(opts) is dict and opts.get(key) == "on"
+
+
 def connect_configured(self, *, logger, caller_category: str = "other",
                        source_scope: tuple[str, str, str] | None = None) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
@@ -953,10 +973,11 @@ def connect_configured(self, *, logger, caller_category: str = "other",
                 duration_ms=int((time.monotonic() - item_started) * 1000),
             )
             continue
-        if getattr(plugin.descriptor, "interactive_authentication", False):
-            # A configured SSO provider cannot be opened, authenticated or
-            # declared connected by the automatic startup connection sweep.
-            # Its explicit UI flow owns the consent and authenticated state.
+        if (getattr(plugin.descriptor, "interactive_authentication", False)
+                and not _interactive_background_opted_in(plugin.descriptor, row)):
+            # Legacy interactive sources MUST stay out of startup connection.
+            # Only an exact, declared, persisted per-account opt-in admits
+            # the provider's direct HTTP connect; never synthesize a browser.
             attempt.emit(self.diagnostics, "terminal", "skipped", "interactive_auth_required")
             continue
         session = None
