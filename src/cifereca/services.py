@@ -2842,8 +2842,35 @@ class LibraryService:
                     ):
                         raise ProviderConfigurationError("kobo_canonical_source_delivery_active")
                     if _admission is not None:
-                        item = _admission()
-                        identity = self.identity_for_connection(item.source_provider, item.source_credential)
+                        # A fresh Core right may justify bypassing an old
+                        # backup_items retry veto, but cannot silently switch
+                        # the requested edition, revision or credential. Save
+                        # scalar coordinates BEFORE the callback: SearchResult
+                        # itself is mutable and can be changed in place.
+                        selected_scope = (
+                            item.source_provider, item.source_credential,
+                            item.record_id, item.revision_id,
+                        )
+                        selected_identity = identity.identity_id
+                        admitted = _admission()
+                        if (type(admitted) is not SearchResult
+                                or (admitted.source_provider,
+                                    admitted.source_credential,
+                                    admitted.record_id,
+                                    admitted.revision_id) != selected_scope
+                                or admitted.owned is not True
+                                or admitted.downloadable is False):
+                            raise ProviderConfigurationError(
+                                "kobo_legacy_direct_admission_changed"
+                            )
+                        item = admitted
+                        identity = self.identity_for_connection(
+                            item.source_provider, item.source_credential,
+                        )
+                        if identity.identity_id != selected_identity:
+                            raise ProviderConfigurationError(
+                                "kobo_legacy_direct_admission_changed"
+                            )
                         # The selected source/ABI may change during the
                         # admission callback. Never trust its earlier result
                         # as an authorization for the legacy executor.
