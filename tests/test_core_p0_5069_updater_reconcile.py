@@ -247,3 +247,24 @@ def test_os_lock_excludes_independent_process(tmp_path, monkeypatch):
         timeout=10, capture_output=True,
     )
     assert next_process.returncode == 0
+
+
+@pytest.mark.parametrize("unfinished_state", ["prepared", "applying", "restoring", "rolling_back"])
+def test_missing_rollback_generation_blocks_every_unfinished_state_before_restore(
+    tmp_path, monkeypatch, unfinished_state,
+):
+    root, folder, missing = _scenario(tmp_path, monkeypatch)
+    saved = updater._read_transaction(folder)
+    saved["state"] = unfinished_state
+    updater._write_json_atomic(folder / "transaction.json", saved)
+    before = (folder / "transaction.json").read_bytes()
+
+    def forbidden_restore(*_args, **_kwargs):
+        pytest.fail("Automatic destructive recovery must not start")
+
+    monkeypatch.setattr(updater, "_restore_transaction_packages", forbidden_restore)
+    monkeypatch.setattr(updater, "_restore_release_links", forbidden_restore)
+    with pytest.raises(updater.UpdateError, match="before_previous_missing"):
+        updater._preflight_incomplete_recovery(root)
+    assert (folder / "transaction.json").read_bytes() == before
+    assert not missing.exists()
