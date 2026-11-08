@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html.parser import HTMLParser
 import re
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 from xml.etree import ElementTree as ET
 
 BOOK_HOST = "www.biblioaccess.com"
@@ -92,6 +92,10 @@ class _Links(HTMLParser):
     def __init__(self, page_url: str):
         super().__init__(convert_charrefs=True)
         self.page_url = page_url
+        current = parse_qs(urlsplit(page_url).query, keep_blank_values=True)
+        self.current_query = current.get("query") if len(current.get("query", [])) == 1 else None
+        page = current.get("pageindex", ["0"])
+        self.current_page = int(page[0]) if (len(page) == 1 and re.fullmatch(r"[0-9]{1,5}", page[0])) else -1
         self.book_ids = []
         self.next_page_url = None
         self._candidate = None
@@ -112,13 +116,15 @@ class _Links(HTMLParser):
         parts = _parts(link)
         self._candidate = None
         if parts and parts.path == _SEARCH_PATH:
-            from urllib.parse import parse_qs
             params = parse_qs(parts.query, keep_blank_values=True)
             if (params.keys() <= _ALLOWED_SEARCH_PARAMS
                     and "pageindex" in params
                     and len(params["pageindex"]) == 1
                     and re.fullmatch(r"[0-9]{1,5}", params["pageindex"][0])
-                    and int(params["pageindex"][0]) <= 100):
+                    and self.current_query is not None
+                    and params.get("query") == self.current_query
+                    and self.current_page >= 0
+                    and self.current_page < int(params["pageindex"][0]) <= 100):
                 self._candidate = link
                 self._anchor_text = []
                 if "next" in str(values.get("rel") or "").lower().split():
