@@ -300,6 +300,8 @@ class LaRochelleSession(ProviderSession):
             # Independent public C read even if the institution SSO GET fails.
             self._probe_public_catalogue()
             client = None
+            # Keep the in-flight stage separate from the last completed one.
+            active_phase = "entry"
             try:
                 if self._client_factory is None:
                     from biblioaccess_ajax_cas import ObservedAjaxCasClient
@@ -311,11 +313,13 @@ class LaRochelleSession(ProviderSession):
                 self._last_probe_phase = entry.phase
                 self._event("entry", "observed", response_status=entry.status,
                             observation=entry.phase)
+                active_phase = "institution_login"
                 self._event("institution_login", "started")
                 login = client.observe_login_once()
                 self._last_probe_phase = login.phase
                 self._event("institution_login", "observed", response_status=login.status,
                             observation=login.phase)
+                active_phase = "login_preflight"
                 preflight = client.login_preflight()
                 self._event(
                     "login_preflight", "observed",
@@ -337,6 +341,7 @@ class LaRochelleSession(ProviderSession):
                     if script_path:
                         selection = "auto"
                 if script_path:
+                    active_phase = "login_script"
                     self._event("login_script", "started",
                                 request_method="GET", selection=selection)
                     evidence = client.inspect_login_script_once(
@@ -353,6 +358,7 @@ class LaRochelleSession(ProviderSession):
                 if mode in ("post", "auto-post"):
                     # Exactly one explicitly consented credential POST on this
                     # client. The query/fields are ephemeral, never journaled.
+                    active_phase = "ajax_logon"
                     self._event("ajax_logon", "started", request_method="POST")
                     if mode == "auto-post":
                         answer = client.submit_observed_login_once(
@@ -363,13 +369,17 @@ class LaRochelleSession(ProviderSession):
                     self._last_probe_phase = "ajax_" + answer.outcome
                     self._event("ajax_logon", "observed",
                                 response_status=answer.status, outcome=answer.outcome,
-                                cas_completed=False, identity_verified=False)
+                                cas_completed=False, identity_verified=False,
+                                reported_error_count=getattr(answer, "error_count", None),
+                                response_message_present=getattr(answer, "message_present", False))
                     if answer.outcome == "success_reported":
+                        active_phase = "cas_return"
                         self._event("cas_return", "started", request_method="GET")
                         cas = client.observe_cas_once()
                         self._last_probe_phase = cas.phase
                         self._event("cas_return", "observed",
                                     response_status=cas.status, observation=cas.phase)
+                        active_phase = "loans_page"
                         self._event("loans_page", "started", request_method="GET")
                         loans = client.observe_loans_once()
                         self._last_probe_phase = loans.phase
@@ -390,7 +400,7 @@ class LaRochelleSession(ProviderSession):
                 if code not in _HTTP_PROBE_CODES:
                     code = "biblioaccess_probe_http_failure"
                 self._last_probe_phase = code
-                self._event("preflight", "error", error_code=code,
+                self._event(active_phase, "error", error_code=code,
                             error_type=type(exc).__name__)
                 raise ProviderConfigurationError(code) from None
             finally:

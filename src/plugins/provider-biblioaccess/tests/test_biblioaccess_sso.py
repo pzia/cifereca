@@ -666,3 +666,114 @@ def test_auto_post_mode_reuses_one_session_without_manual_ajax_options():
         assert not s.connected and s.accounts == []
     finally:
         s.close()
+
+
+@pytest.mark.parametrize(("failure_step", "expected_phase"), [
+    ("entry", "entry"),
+    ("login", "institution_login"),
+    ("preflight", "login_preflight"),
+    ("post", "ajax_logon"),
+    ("cas", "cas_return"),
+    ("loans", "loans_page"),
+])
+def test_error_diagnostic_reports_failing_ssostep_not_generic_preflight(
+    failure_step, expected_phase,
+):
+    from types import SimpleNamespace
+    events, calls = [], []
+
+    class Client:
+        def step(self, name):
+            calls.append(name)
+            if name == failure_step:
+                raise ValueError("SYNTHETIC-PRIVATE-DETAIL")
+        def observe_entry_once(self):
+            self.step("entry")
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            self.step("login")
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            self.step("preflight")
+            return SimpleNamespace(
+                script_count=0, same_origin_script_paths=(),
+                external_script_count=0, field_names=(), inline_identifier_names=())
+        def submit_observed_login_once(self, **kwargs):
+            self.step("post")
+            return SimpleNamespace(
+                outcome="success_reported", status=200,
+                error_count=0, message_present=False)
+        def observe_cas_once(self):
+            self.step("cas")
+            return SimpleNamespace(phase="landing_unverified", status=200)
+        def observe_loans_once(self):
+            self.step("loans")
+            return SimpleNamespace(phase="loans_html_unverified", status=200)
+        def close(self):
+            calls.append("closed")
+
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            events.append((status, detail))
+
+    session = mod.PLUGIN.create_session(
+        credential_id="synthetic", label="reader",
+        credentials={"username": "SYNTHETIC", "password": "SYNTHETIC"},
+        options={"experimental_http_probe": "auto-post"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    session._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderConfigurationError, match="biblioaccess_probe_http_failure"):
+            session.connect()
+        status, detail = events[-1]
+        assert status == "error"
+        assert detail["phase"] == expected_phase
+        assert detail["error_code"] == "biblioaccess_probe_http_failure"
+        assert "SYNTHETIC-PRIVATE-DETAIL" not in repr(events)
+        assert calls[-1] == "closed"
+        assert not session.connected and session.accounts == []
+    finally:
+        session.close()
+
+
+def test_ajax_failure_diagnostic_reports_only_json_presence_and_error_count():
+    from types import SimpleNamespace
+    events = []
+
+    class Client:
+        def observe_entry_once(self):
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            return SimpleNamespace(
+                script_count=0, same_origin_script_paths=(),
+                external_script_count=0, field_names=(), inline_identifier_names=())
+        def submit_observed_login_once(self, **kwargs):
+            return SimpleNamespace(
+                status=200, outcome="failure_reported",
+                error_count=2, message_present=True)
+        def close(self):
+            pass
+
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            events.append(detail)
+
+    session = mod.PLUGIN.create_session(
+        credential_id="synthetic", label="reader",
+        credentials={"username": "SYNTHETIC", "password": "SYNTHETIC"},
+        options={"experimental_http_probe": "auto-post"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    session._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderCapabilityError, match="completed_identity_unverified"):
+            session.connect()
+        answer = next(x for x in events if x["phase"] == "ajax_logon"
+                      and x.get("outcome") == "failure_reported")
+        assert answer["reported_error_count"] == 2
+        assert answer["response_message_present"] is True
+        assert answer["identity_verified"] is False
+        assert session.accounts == [] and not session.connected
+    finally:
+        session.close()
