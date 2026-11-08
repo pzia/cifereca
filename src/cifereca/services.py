@@ -416,13 +416,17 @@ class LibraryService:
 
     def paris_borrow_followup_available(self, item: SearchResult) -> bool:
         """Read-only, exact-account pending loan check availability."""
-        from .core.manual_paris_borrow import paris_borrow_followup_available
-        return paris_borrow_followup_available(self, item)
+        from .core.borrow_later_verification import borrow_followup_available
+        return borrow_followup_available(
+            self, item, readiness=self.paris_borrow_diagnostic,
+        )
 
     def verify_paris_borrow_followup(self, item: SearchResult) -> dict[str, object]:
         """Read-only verification of a spent Paris claim, without a second POST."""
-        from .core.manual_paris_borrow import verify_paris_borrow_followup
-        return verify_paris_borrow_followup(self, item)
+        from .core.borrow_later_verification import verify_pending_borrow_followup
+        return verify_pending_borrow_followup(
+            self, item, readiness=self.paris_borrow_diagnostic,
+        )
 
     def borrow_paris_manual(
         self, item: SearchResult, *, expected_identity_id: str,
