@@ -388,7 +388,10 @@ class LaRochelleSession(ProviderSession):
                                     identity_verified=False, loans_verified=False,
                                     inventory_verified=False,
                                     page_book_link_count=getattr(loans, "page_book_link_count", 0),
-                                    page_book_unique_count=getattr(loans, "page_book_unique_count", 0))
+                                    page_book_unique_count=getattr(loans, "page_book_unique_count", 0),
+                                    page_loan_row_count=getattr(loans, "page_loan_row_count", 0),
+                                    page_loan_row_partial_count=getattr(loans, "page_loan_row_partial_count", 0),
+                                    logout_form_observed=getattr(loans, "logout_form_observed", False))
             except Exception as exc:
                 # The provider remains disconnected even if the login HTML
                 # cannot be parsed; preserve the exact technical step/code.
