@@ -30,7 +30,7 @@ def test_search_moves_existing_action_bar_to_its_own_row_before_filters():
 
 
 def test_search_1024_keeps_real_x11_geometry_and_xtest_gates():
-    source = (SOURCE.parents[2] / "e2e/search_filter_probe.py").read_text(
+    source = (SOURCE.parents[3] / "e2e/search_filter_probe.py").read_text(
         encoding="utf-8"
     )
     assert "assert image.size == (1024, 768)" in source
