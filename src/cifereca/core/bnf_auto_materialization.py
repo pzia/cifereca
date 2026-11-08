@@ -72,65 +72,19 @@ def enabled(service, account: Account) -> bool:
 
 
 def _receipt_local_file_verified(service, account: Account, row: dict, path: Path) -> bool:
-    """A private auto-ref is only a hint, never proof of an unchanged book.
+    """BnF legacy wrapper: keep exact source scope, delegate byte evidence.
 
-    Verify that the complete acquisition still names the exact BnF directory,
-    indexed placement and original physical SHA. No provider/DRM I/O.
+    A private auto-ref does not authorize a new loan or a new file.
     """
-    from ..library_files import sha256_file
-    try:
-        if (type(row) is not dict or row.get('identity_id') != account.identity_id
-                or row.get('provider_id') != 'manual'
-                or row.get('credential_id') != 'manual'
-                or type(row.get('artifact_id')) is not str):
-            return False
-        expected_id = row['artifact_id']
-        artifact = service.storage.artifact_get(expected_id)
-        if (type(artifact) is not dict or type(artifact.get('sha256')) is not str
-                or expected_id != 'sha256:' + artifact['sha256']
-                or type(artifact.get('size')) is not int
-                or artifact['size'] <= 0):
-            return False
-        root = service.library_identity_provider_dir(account.identity_id, 'bnf-pret')
-        if root.is_symlink() or path.is_symlink() or not path.is_file():
-            return False
-        # Reject ALL symlinks below the identity/provider directory, not just
-        # the last component. An external EPUB must never satisfy this loan.
-        relative = path.relative_to(root)
-        if len(relative.parts) < 2:
-            return False
-        current = root
-        for part in relative.parts:
-            current = current / part
-            if current.is_symlink():
-                return False
-        path.resolve(strict=True).relative_to(root.resolve(strict=True))
-        linked = service.storage.placement_for_path(path)
-        if (type(linked) is not dict
-                or linked.get('state') != 'present'
-                or linked.get('identity_id') != account.identity_id
-                or linked.get('provider_id') != 'bnf-pret'
-                or linked.get('artifact_id') != expected_id):
-            return False
-        before = path.stat(follow_symlinks=False)
-        if before.st_size != artifact['size'] or sha256_file(path) != artifact['sha256']:
-            return False
-        inspected = inspect_artifact(path)
-        after = path.stat(follow_symlinks=False)
-        if (inspected.valid is not True
-                or inspected.media_format not in {'epub', 'pdf'}
-                or any(getattr(before, key) != getattr(after, key)
-                       for key in ('st_dev', 'st_ino', 'st_size',
-                                   'st_mtime_ns', 'st_ctime_ns'))):
-            return False
-        return True
-    except (OSError, ValueError, TypeError, KeyError):
-        # The caught filesystem/SQL cause may carry a private book path.
-        _TRACE_LOG.warning(
-            "TRACE bnf auto receipt file check failed provider_id=%s",
-            account.provider_id,
-        )
-        return False
+    from .local_receipt_verification import local_receipt_file_verified
+    return local_receipt_file_verified(
+        service,
+        identity_id=account.identity_id,
+        placement_provider_id="bnf-pret",
+        acquisition_provider_id="manual",
+        acquisition_credential_id="manual",
+        row=row, path=path,
+    )
 
 
 def materialize(service, account: Account, loan: Loan, *, control=None,
