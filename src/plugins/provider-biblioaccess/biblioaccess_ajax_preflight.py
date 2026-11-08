@@ -151,3 +151,32 @@ def inspect_login_preflight(html: str, *, page_url: str = IDP + _LOGIN_PATH) -> 
         field_names=tuple(dict.fromkeys(page.fields)),
         inline_identifier_names=identifiers,
     )
+
+
+@dataclass(frozen=True)
+class JavascriptEvidence:
+    identifier_names: tuple[str, ...]
+    ajax_endpoint_referenced: bool
+    source_type: str = "same_origin_script"
+    executable: bool = False
+    value_provenance_verified: bool = False
+
+
+def inspect_javascript_evidence(source: str) -> JavascriptEvidence:
+    """Offline, value-free structural indicators of an observed static JS.
+
+    Lexical matches cannot prove the algorithm or the provenance of captcha
+    values; scripts are never executed, serialized, returned or cached.
+    """
+    if (type(source) is not str or len(source) > MAX_INLINE
+            or len(source.encode("utf-8")) > MAX_INLINE):
+        raise LoginPreflightError("login_preflight_limit")
+    identifiers = tuple(sorted(
+        name for name in _NAMES
+        if re.search(r"(?<![A-Za-z0-9_])" + re.escape(name)
+                     + r"(?![A-Za-z0-9_])", source)
+    ))
+    return JavascriptEvidence(
+        identifier_names=identifiers,
+        ajax_endpoint_referenced="/logon.svc/logon" in source,
+    )
