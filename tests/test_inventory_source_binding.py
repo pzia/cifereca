@@ -5,8 +5,7 @@ import unittest
 
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.core.source_refresh_policy import (
-    inventory_source_eligible, kobo_inventory_source_eligible,
-    numilog_inventory_source_eligible,
+    inventory_source_eligible,
 )
 
 
@@ -158,9 +157,3 @@ class InventorySourceBindingTests(unittest.TestCase):
                         service._session_key = lambda p, c: ('foreign', p, c)
                     self.assertFalse(inventory_source_eligible(service, account))
 
-    def test_compatibility_names_preserve_provider_scope(self):
-        for provider in PROVIDERS:
-            with self.subTest(provider=provider):
-                service, account, _, _ = rig(provider)
-                self.assertEqual(kobo_inventory_source_eligible(service, account), provider == 'kobo')
-                self.assertEqual(numilog_inventory_source_eligible(service, account), provider == 'numilog')

@@ -204,16 +204,3 @@ def inventory_source_eligible(service: Any, account: Any) -> bool:
         # Never grant a scheduled private read when persistence or the live
         # source context cannot be proved.
         return False
-
-
-def kobo_inventory_source_eligible(service: Any, account: Any) -> bool:
-    """Compatibility name; the shared guard owns the binding decision."""
-    return (getattr(account, "provider_id", None) == "kobo"
-            and inventory_source_eligible(service, account))
-
-
-def numilog_inventory_source_eligible(service: Any, account: Any) -> bool:
-    """Compatibility name; the shared guard owns the binding decision."""
-    return (getattr(account, "provider_id", None) == "numilog"
-            and inventory_source_eligible(service, account))
-
