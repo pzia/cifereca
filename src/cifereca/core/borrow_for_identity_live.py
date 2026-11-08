@@ -273,7 +273,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         # (for example a UUID) or no local epoch at all. Do not interpret
         # a session token as a numeric counter, and never echo its value in
         # the choice ID. Invalid/unbounded tokens are not proof of freshness.
-        if type(session_epoch) is int and session_epoch >= 0:
+        if type(session_epoch) is int and 0 <= session_epoch < (1 << 64):
             epoch_number = session_epoch
         elif (type(session_epoch) is str
               and 0 < len(session_epoch) <= 128
