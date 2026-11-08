@@ -731,3 +731,37 @@ def test_held_lender_choice_revoked_when_binding_becomes_ambiguous(
     assert result.reason_code == "selection_stale"
     assert result.executable is False
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("opaque_epoch", [
+    "session-uuid-opaque-0123456789abcdef", "a" * 128,
+])
+def test_opaque_provider_session_epoch_is_scoped_without_provider_io(
+    harness, opaque_epoch,
+):
+    service, account, session = harness
+    session._epoch = opaque_epoch
+    row = _candidate()
+    original = _preview(service, row)
+    assert original.status == "external"
+    assert len(original.options) == 1
+    assert opaque_epoch not in original.options[0].option_id
+    selected = original.options[0].option_id
+    assert _click(service, original, selected, row).status == "current"
+    session._epoch = "new-session-uuid"
+    assert _click(service, original, selected, row).status == "revoked"
+    assert _preview(service, row).options[0].option_id != selected
+    assert session.calls == 0
+
+
+@pytest.mark.parametrize("invalid", ["", "a" * 129, "bad\\nsecret", -1, True, None])
+def test_malformed_provider_session_epoch_cannot_create_lender_offer(
+    harness, invalid,
+):
+    service, account, session = harness
+    session._epoch = invalid
+    result = _preview(service, _candidate())
+    assert result.status == "none"
+    assert result.options == ()
+    assert result.rejection_reasons == ("scope_unverified",)
+    assert session.calls == 0
