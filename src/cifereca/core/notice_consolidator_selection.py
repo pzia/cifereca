@@ -54,11 +54,12 @@ def select_consolidator(
             or type(declarations) not in (tuple, list)
             or len(declarations) > MAX_DECLARATIONS):
         raise ValueError("invalid_consolidator_registry")
-    # No selection is an intentional, non-authorizing unknown state.
-    if selected_plugin_id is None and selected_version is None:
-        return None
-    if (not _identifier(selected_plugin_id)
-            or not _identifier(selected_version)):
+    # Validate the full registry even when no consolidator was selected.
+    # An unselected or unrelated malformed declaration must not bypass the
+    # Core admission boundary merely because execution would be skipped.
+    no_selection = selected_plugin_id is None and selected_version is None
+    if not no_selection and (not _identifier(selected_plugin_id)
+                             or not _identifier(selected_version)):
         raise ValueError("incomplete_consolidator_selection")
     matched: list[ConsolidatorDeclaration] = []
     for row in declarations:
@@ -74,6 +75,8 @@ def select_consolidator(
                 and row.plugin_id == selected_plugin_id
                 and row.version == selected_version):
             matched.append(row)
+    if no_selection:
+        return None  # No implicit selection, after full-registry validation.
     if not matched:
         return None  # Configured plugin not installed/available: no fallback.
     if len(matched) != 1:
