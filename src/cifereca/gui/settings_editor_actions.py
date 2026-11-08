@@ -23,6 +23,49 @@ def _saved_interactive_probe_ready(row: dict[str, Any]) -> bool:
     )
 
 
+def _probe_has_unsaved_draft(editor, saved, descriptor) -> bool:
+    """Compare against the *rendered* initial form, not raw legacy defaults.
+
+    The old check treated e.g. an option missing in persisted data but shown
+    with its descriptor default as an unsaved user edit. We must still refuse
+    a genuinely changed secret, option, identity or account status.
+    """
+    if editor.get("invalid_saved_snapshot") is True:
+        return True
+    baseline = editor.get("probe_rendered_baseline")
+    if type(baseline) is dict:
+        return (
+            editor["enabled"].get_active() != baseline.get("enabled")
+            or editor["identity"].get_text() != baseline.get("identity")
+            or editor["label"].get_text() != baseline.get("label")
+            or {key: field.get_text() for key, field in editor["fields"].items()}
+               != baseline.get("fields")
+            or {key: field.get_text() for key, field
+                in editor["option_fields"].items()} != baseline.get("option_fields")
+        )
+    # Compatibility with headless legacy editor shims, which did not project
+    # the rendered baseline. This path is not used by real Settings GTK.
+    return (
+        editor["enabled"].get_active() is not True
+        or editor["identity"].get_text() != saved.get("identity_id")
+        or editor["label"].get_text() != str(
+            saved.get("label") or descriptor.display_name)
+        or any(
+            row.get_text() != str((saved.get("credentials") or {}).get(key) or "")
+            for key, row in editor["fields"].items()
+        )
+        or any(
+            row.get_text() != str(
+                (saved.get("options") or {}).get(key, next(
+                    (spec.default for spec in
+                     getattr(descriptor, "account_options", ())
+                     if spec.key == key), ""))
+            )
+            for key, row in editor["option_fields"].items()
+        )
+    )
+
+
 def build_settings_editors(self, *, box, descriptors, public_ids,
                            mark_settings_dirty, library_directory, Gtk, Adw, add_css,
                            page_lifetime=None):
@@ -238,23 +281,9 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     return
                 # A modified draft is not the persisted credential being
                 # tested. Save/reopen first; never send stale credentials.
-                if (e["enabled"].get_active() is not True
-                        or e["identity"].get_text() != saved.get("identity_id")
-                        or e["label"].get_text() != str(
-                            saved.get("label") or descriptor.display_name)
-                        or any(
-                            row.get_text() != str(
-                                (saved.get("credentials") or {}).get(key) or "")
-                            for key, row in e["fields"].items()
-                        ) or any(
-                            row.get_text() != str(
-                                (saved.get("options") or {}).get(key, next(
-                                    (spec.default for spec in
-                                     getattr(descriptor, "account_options", ())
-                                     if spec.key == key), ""))
-                            )
-                            for key, row in e["option_fields"].items()
-                        )):
+                if (type(saved.get("identity_id")) is not str
+                        or not saved["identity_id"]
+                        or _probe_has_unsaved_draft(e, saved, descriptor)):
                     e["explicit_probe_status"].set_subtitle(
                         "Enregistrer les modifications avant la recette.")
                     record("blocked_unsaved", "warning")
@@ -272,15 +301,22 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
 
                 def done(result):
                     release()
-                    observed = getattr(result, "status", None) == "observed"
-                    record("completed_unverified" if observed else "unavailable",
-                           "ok" if observed else "warning")
+                    status = getattr(result, "status", None)
+                    live = status == "connected_ephemeral"
+                    observed = status == "observed"
+                    record(
+                        "test_connected_ephemeral" if live else
+                        "completed_unverified" if observed else "unavailable",
+                        "ok" if (live or observed) else "warning",
+                    )
                     if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
                         e["explicit_probe_status"].set_subtitle(
-                            "Diagnostic terminé (sans compte connecté). "
-                            "Consulter et exporter le journal brut."
-                            if observed
-                            else "Diagnostic indisponible. Consulter le journal brut.")
+                            "Connexion vérifiée pour ce test. "
+                            "Session temporaire refermée ; aucune modification du compte."
+                            if live else
+                            "Diagnostic effectué sans compte connecté. Consulter le journal."
+                            if observed else
+                            "Diagnostic indisponible. Consulter le journal brut.")
 
                 def error(_exc):
                     release()
