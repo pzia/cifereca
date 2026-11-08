@@ -1,5 +1,58 @@
 # BiblioAccess — La Rochelle (tenant 1409)
 
+## État actuel — synchronisation positive des prêts (opt-in)
+
+Suite à la double recette HTTP AJAX/CAS réelle du 08/11/2026,
+la version **0.2.0** peut établir une session **HTTPS directe**, sans
+navigateur ni cookie importé, et relire les prêts actifs de MyLoans.
+
+**Consentement nécessaire par compte :**
+- compte La Rochelle enregistré et activé ;
+- option **`authenticated_sync=on`** sauvegardée explicitement
+  (valeur par défaut `off`, les autres valeurs refusées) ;
+- `Enregistrer et reconnecter` ou le prochain démarrage déclenche
+  l'authentification via le client HTTPX du provider. Aucune opération
+  au démarrage sans l'opt-in exact.
+
+`experimental_http_probe=auto-post` et `Tester ce compte` restent
+des outils de qualification séparés : **l'option `authenticated_sync`
+est le seul consentement à la connexion automatisée**.
+
+La session issue de AJAX `success_reported` → CAS ticket → landing tenant
+1409 → `MyLoans` HTML avec formulaire de déconnexion a un **compte local
+primaire** `primary` attaché à la connexion exacte (identité Core,
+provider et credential). Il **n'existe pas d'identifiant emprunteur
+upstream attesté** : `primary` est un identifiant local, jamais une
+identité distante déduite d'un titre ou d'un HTML public.
+
+Les lignes MyLoans reconnues dans le même conteneur (référence produit,
+notice BiblioAccess, titre, date de fin locale `Europe/Paris`) produisent
+des `Loan` positifs, sans action ni lien de livraison. L'échéance est
+représentée avec un fuseau explicite et la date locale originale reste
+une métadonnée ; sa sémantique métier définitive dépend du fournisseur.
+L'identité du produit de ligne n'est jamais remplacée par l'identifiant
+de notice. Le résultat typé `cifereca.loan.inventory/1` est **toujours
+`partial`**, même quand MyLoans renvoie zéro ligne : ni expiration,
+ni retour, ni suppression ne peut découler d'une absence.
+
+Le cookie jar est conservé en RAM par la session et détruit sur
+`close()`. Une lecture refusée, redirigée, dépourvue de structure
+authentifiée ou expirée **invalide la session** : aucune reconnexion
+automatique, aucun rejeu de POST en cours de lecture. Les comptes de
+credentials distincts ont des clients et des états séparés.
+
+**Toujours non fournis :** emprunt, retour, renouvellement, lecture
+du contenu ACSM, téléchargement, DRM et inventaire exhaustif.
+Le lien ACSM privé est détecté uniquement comme booléen dans
+la phase d'inspection, sans être stocké dans `Loan.ebook_url`.
+Le booléen `connected` atteste une session CAS applicative
+du credential local, pas un identifiant distant supplémentaire.
+
+*Les sections historiques ci-dessous documentent les étapes de
+qualification antérieures à la version 0.2.0 ; leurs anciens états
+« aucune synchronisation » ne décrivent pas le statut actuel.*
+
+
 Issue #3691. Provider **désactivé par défaut**. Le compte peut être configuré ; les GET de recette réseau ne sont déclenchés qu'après un opt-in explicite.
 
 ## Faits établis et limites
