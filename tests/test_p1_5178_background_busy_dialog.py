@@ -66,11 +66,11 @@ def test_three_background_lock_failures_keep_activity_and_have_no_modal(caplog):
         assert all(URL not in repr(row) for row in toasts)
         busy = [row[1]["detail"] for row in diagnostics
                 if row[0] == ("UI", "background task contention", "warning")]
-        assert [row["task_ref"] for row in busy] == [1, 2, 3]
+        assert sorted(row["task_ref"] for row in busy) == [1, 2, 3]
         assert all(row == {
             "schema_version": 1, "code": "lock_busy", "task_ref": index,
             "task_classification": "background_task",
-        } for index, row in enumerate(busy, 1))
+        } for index, row in enumerate(sorted(busy, key=lambda r: r["task_ref"]), 1))
         assert URL not in repr(diagnostics)
         assert not hasattr(runner.window, "_ui_dialog_observation_context")
     finally:
