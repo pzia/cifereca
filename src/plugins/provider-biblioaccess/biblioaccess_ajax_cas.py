@@ -177,10 +177,16 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
             if (self._preflight is None or type(path) is not str
                     or path not in self._preflight.same_origin_script_paths):
                 raise AjaxCasError("cas_script_unobserved")
+            # The selected path maps to exactly one freshly observed URL.
+            # Its query is deliberately ephemeral and never returned/logged.
+            sources = dict(self._preflight._script_request_urls)
+            observed_url = sources.get(path)
+            if observed_url is None:
+                raise AjaxCasError("cas_script_unobserved")
             self._script_attempted = True
         try:
             with self.http.stream(
-                "GET", IDP + path, follow_redirects=False,
+                "GET", observed_url, follow_redirects=False,
                 headers={"Accept": "application/javascript, text/javascript"},
             ) as response:
                 if response.status_code != 200:
