@@ -841,9 +841,11 @@ class UxRecommendationsView:
 
         self._identity_model = Gtk.StringList.new([])
         self._identity = Gtk.DropDown(model=self._identity_model)
-        self._identity.set_tooltip_text("Profil utilisé comme point de départ")
-        self._identity.connect("notify::selected", self._identity_changed)
-        controls.append(self._labeled("Profil", self._identity))
+        # The Core global profile is authoritative. Keep this dropdown only
+        # as an internal model for existing generation-safe adapters: it is
+        # deliberately NOT parented to GTK, visible, or user-selectable.
+        # A second profile selector here could compute for A while the
+        # Core's global context (including cover resolution) remains B.
 
         self._reference_model = Gtk.StringList.new(["Bibliothèque entière"])
         self._reference = Gtk.DropDown(model=self._reference_model)
@@ -1116,6 +1118,7 @@ class UxRecommendationsView:
             selected = 0
             current_index = None
             selected_index = None
+            selected_count = 0
             for row in rows:
                 identity_id = str(row.get("identity_id") or "")
                 if not identity_id:
@@ -1126,26 +1129,18 @@ class UxRecommendationsView:
                 index = len(self._identity_ids) - 1
                 if identity_id == current:
                     current_index = index
-                if row.get("selected"):
+                if row.get("selected") is True:
                     selected_index = index
-            if current is not None and current_index is None:
-                # The previously displayed profile vanished. Do not
-                # interpret the subsequent INVALID_LIST_POSITION as a first
-                # activation and silently select a different account.
-                self._profile_selection_required = True
-            elif current_index is not None:
-                self._profile_selection_required = False
-            if selected_index is not None:
-                selected = selected_index
-            elif current_index is not None:
-                selected = current_index
-            self._identity.set_sensitive(bool(self._identity_ids))
+                    selected_count += 1
+            # Trust only the *explicitly selected Core identity*. An absent
+            # selection must never silently fall back to the first identity;
+            # a global A -> B switch may legitimately replace a removed A.
+            # Do not keep a sticky plugin-only selection state: there is no
+            # longer any separate user choice to clear it.
+            self._profile_selection_required = selected_count != 1
+            self._identity.set_sensitive(False)
             self._identity.set_selected(
-                0xFFFFFFFF
-                if not self._identity_ids or getattr(
-                    self, "_profile_selection_required", False
-                )
-                else selected
+                selected_index if selected_count == 1 else 0xFFFFFFFF
             )
         finally:
             self._reloading_identities = False

@@ -33,7 +33,10 @@ def test_computation_parameters_occupy_one_independent_horizontal_scroll_row():
 
 def test_all_calculation_settings_and_opt_in_llm_remain_in_the_same_row():
     init = method("_init_master_detail")
-    assert "controls.append(self._labeled('Profil', self._identity))" in init
+    # No independent profile selector: global Core selection is authoritative.
+    assert "controls.append(self._labeled('Profil', self._identity))" not in init
+    assert "self._identity.connect('notify::selected', self._identity_changed)" not in init
+    assert "self._identity = Gtk.DropDown(model=self._identity_model)" in init
     assert "controls.append(self._labeled('Référence', self._reference))" in init
     assert "controls.append(self._exclude_owned)" in init
     assert "controls.append(self._labeled('Affinité ≥', self._score))" in init

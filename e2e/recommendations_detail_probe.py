@@ -315,7 +315,12 @@ def main():
         assert view._exclude_owned.get_parent() is parameters
         assert view._refresh_button.get_parent() is parameters
         assert view._score.get_parent().get_parent() is parameters
-        assert view._identity.get_parent().get_parent() is parameters
+        # Profile selection belongs to the Core shell, not this plugin.
+        assert view._identity.get_parent() is None
+        assert not any(
+            isinstance(widget, Gtk.Label) and widget.get_label() == "Profil"
+            for widget in walk(parameters)
+        )
         assert view._reference.get_parent().get_parent() is parameters
         assert query.widget.get_parent() is not parameters
         assert query.widget.get_mapped() and store.get_n_items() == 3
@@ -694,7 +699,9 @@ def main():
         view._query_controls.entry.emit("activate")
         assert view._master._page.store.get_n_items() == 2
         view._master._page.selection.set_selected(0)
-        view._identity.set_selected(1)
+        state["window"].service.current_identity = NS(identity_id="bob")
+        for callback in tuple(state["window"]._overview_listeners):
+            callback()
         later(180, changed_profile)
 
     def changed_profile():
@@ -1368,8 +1375,10 @@ def main():
         window.service = NS(
             current_identity=NS(identity_id="alice"),
             dashboard_state=lambda: [
-                {"identity_id": "alice", "label": "Alice", "selected": True},
-                {"identity_id": "bob", "label": "Bob", "selected": False},
+                {"identity_id": "alice", "label": "Alice",
+                 "selected": window.service.current_identity.identity_id == "alice"},
+                {"identity_id": "bob", "label": "Bob",
+                 "selected": window.service.current_identity.identity_id == "bob"},
             ],
         )
         window._overview_listeners = []

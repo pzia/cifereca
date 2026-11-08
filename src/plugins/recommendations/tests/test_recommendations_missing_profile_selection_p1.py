@@ -9,7 +9,7 @@ import pytest
 from tests.test_recommendations_ui import _identity_reload_view
 
 
-def test_deleted_selected_profile_does_not_load_other_profile_from_overview():
+def test_core_global_switch_after_profile_deletion_clears_previous_context():
     rows = [
         {"identity_id": "default", "selected": True, "label": "Alice"},
         {"identity_id": "other", "selected": False, "label": "Bob"},
@@ -22,35 +22,34 @@ def test_deleted_selected_profile_does_not_load_other_profile_from_overview():
 
     rows[:] = [{"identity_id": "other", "selected": True, "label": "Bob"}]
     view._identity_overview_changed()
-    assert dropdown.selected == 0xFFFFFFFF
-    assert view.selected_identity_id() is None
-    assert view._profile_selection_required is True
+    assert dropdown.selected == 0
+    assert view.selected_identity_id() == "other"
+    assert view._profile_selection_required is False
     assert view._reference_book is None
     assert view._reference_books == []
     assert view.plugin._pending_reference is None
-    view.GLib.run_pending()
-    assert refreshes == [None]
+    assert refreshes == ["other"]
 
 
-def test_missing_selection_is_sticky_across_later_overview_notifications():
+def test_global_core_selection_is_authoritative_across_notifications():
     rows = [{"identity_id": "default", "selected": True}]
     view, dropdown, refreshes = _identity_reload_view(rows, active_identity="default")
     rows[:] = [{"identity_id": "other", "selected": True}]
     view._reload_identities()
-    assert view.selected_identity_id() is None
+    assert view.selected_identity_id() == "other"
 
     rows[:] = [
         {"identity_id": "third", "selected": True},
         {"identity_id": "other", "selected": False},
     ]
     view._reload_identities()
-    assert dropdown.selected == 0xFFFFFFFF
-    assert view._profile_selection_required is True
-    assert view.selected_identity_id() is None
+    assert dropdown.selected == 0
+    assert view._profile_selection_required is False
+    assert view.selected_identity_id() == "third"
     assert refreshes == []
 
 
-def test_missing_profile_reappearance_requires_explicit_user_selection():
+def test_core_reselection_of_previous_profile_does_not_require_plugin_choice():
     rows = [{"identity_id": "default", "selected": True}]
     view, dropdown, refreshes = _identity_reload_view(rows, active_identity="default")
     rows[:] = [{"identity_id": "other", "selected": True}]
@@ -60,20 +59,17 @@ def test_missing_profile_reappearance_requires_explicit_user_selection():
         {"identity_id": "other", "selected": False},
     ]
     view._reload_identities()
-    assert dropdown.selected == 0xFFFFFFFF
-    assert view.selected_identity_id() is None
-    dropdown.set_selected(0)  # Explicit profile choice in GTK.
-    assert view._profile_selection_required is False
+    assert dropdown.selected == 0
     assert view.selected_identity_id() == "default"
-    assert refreshes == ["default"]
+    assert view._profile_selection_required is False
+    assert refreshes == []
 
 
-def test_manual_new_selection_remains_selected_after_profiles_reorder():
+def test_core_selection_remains_correct_after_profile_reorder():
     rows = [{"identity_id": "default", "selected": True}]
     view, dropdown, refreshes = _identity_reload_view(rows, active_identity="default")
     rows[:] = [{"identity_id": "other", "selected": True}]
     view._reload_identities()
-    dropdown.set_selected(0)
     assert view.selected_identity_id() == "other"
 
     rows[:] = [
@@ -84,7 +80,24 @@ def test_manual_new_selection_remains_selected_after_profiles_reorder():
     assert dropdown.selected == 1
     assert view.selected_identity_id() == "other"
     assert view._profile_selection_required is False
-    assert refreshes == ["other"]
+    assert refreshes == []
+
+
+def test_absent_or_ambiguous_core_selection_never_falls_back():
+    rows = [
+        {"identity_id": "default", "selected": False},
+        {"identity_id": "other", "selected": False},
+    ]
+    view, dropdown, _ = _identity_reload_view(rows, active_identity="default")
+    view._reload_identities()
+    assert dropdown.selected == 0xFFFFFFFF
+    assert view.selected_identity_id() is None
+
+    rows[0]["selected"] = True
+    rows[1]["selected"] = True
+    view._reload_identities()
+    assert dropdown.selected == 0xFFFFFFFF
+    assert view.selected_identity_id() is None
 
 
 def test_empty_initial_model_may_select_explicit_host_default():
