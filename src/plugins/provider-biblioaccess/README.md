@@ -22,6 +22,14 @@ ne constitue pas un navigateur, un protocole d'auth, ni un transport de cookies.
 - extraction de liens vers `Catalog/Book/{id}` limitée au domaine HTTPS et au tenant 1409, et détection d'une pagination `pageindex` bornée (100 pages maximum) ; la couverture est **toujours partielle** tant qu'aucun contrat métier ne garantit la liste complète ;
 - inspection structurelle de XML ACSM ADEPT, avec limite d'octets et rejet DTD/entités ; seul le format, le type déclaré et les durées sont restitués, jamais les tokens, les URL, les identifiants, un droit ou un fichier acquis.
 
+Le module `biblioaccess_metadata.py` inspecte également les fiches
+`Catalog/Book/{id}` **hors réseau**, à partir de métadonnées explicites
+`schema.org/Book` : titre, auteur, éditeur, ISBN-13 contrôlé, date et image
+HTTPS du domaine fournisseur. Une fiche sans structure `Book` reconnue
+reste inconnue (pas de fallback heuristique générant de fausses notices).
+Le bouton de prêt, les actions JSON-LD et les URLs de livraison ne confèrent
+aucun droit ni offre.
+
 Les tests utilisent exclusivement du HTML/XML synthétique. Ces helpers ne
 remplacent **ni** un parseur de fiche/listes validé sur observations
 expurgées, **ni** l'authentification, **ni** un runtime ADEPT.
