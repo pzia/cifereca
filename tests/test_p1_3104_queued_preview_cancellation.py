@@ -101,3 +101,29 @@ def test_shared_preview_remains_eligible_when_one_consumer_cancels(tmp_path, mon
         assert loader._preview_waiters == {}
     finally:
         loader.close()
+
+
+def test_live_late_subscriber_gets_source_when_abandoned_preview_completes(
+    tmp_path, monkeypatch,
+):
+    """#4996: canceled work must not turn a later valid cover into missing."""
+    loader, pool, conversions = setup(tmp_path, monkeypatch)
+    try:
+        abandoned, current = [], []
+        first = loader.load_preview("book", abandoned.append, width=60, height=90)
+        first.cancel()
+        # Worker executes with no live subscribers: its result is None.
+        task, future = pool.jobs[0]
+        assert task() is None
+        assert conversions == []
+        # Before its Future completion callback fires, a new GTK cell binds
+        # the same URL and gets associated with the existing conversion.
+        loader.load_preview("book", current.append, width=60, height=90)
+        assert len(pool.jobs) == 1
+        future.set_result(None)
+        assert abandoned == []
+        assert current == [tmp_path / "source.png"]
+        assert loader._preview_jobs == {}
+        assert loader._preview_waiters == {}
+    finally:
+        loader.close()
