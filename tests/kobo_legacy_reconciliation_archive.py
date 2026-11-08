@@ -454,29 +454,6 @@ def _transaction(storage, write, completion, on_committed=None):
                     pass
 
 
-def _roots(service, identity):
-    _require(type(identity) is str and 0 < len(identity) <= 1024
-             and not any(char in identity for char in ("\0", "\n", "\r")), "unknown_identity")
-    profile = service.identity_by_id(identity)
-    _require(profile is not None, "unknown_identity")
-    library, target = _kobo_preview_paths(service, identity)
-    folder = safe_library_component(profile.directory_name or identity, "default")
-    _require(not any(other.identity_id != identity
-                     and safe_library_component(other.directory_name or other.identity_id, "default") == folder
-                     for other in getattr(service, "identities", ())), "ambiguous_identity_directory")
-    return (target, library / folder)
-
-
-def _within(path, roots):
-    if type(path) is not str or not path or "\0" in path:
-        return False
-    value = Path(path)
-    if not value.is_absolute() or ".." in value.parts:
-        return False
-    value = Path(os.path.abspath(value))
-    return any(value != root and value.is_relative_to(root) for root in roots)
-
-
 def _file(path, roots, sha, size):
     _require(hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"), "platform_not_supported")
     _require(_within(path, roots), "file_outside_identity")
@@ -508,7 +485,7 @@ _TEST_ONLY_DEPENDENCIES = {
 for _name, _value in _TEST_ONLY_DEPENDENCIES.items():
     setattr(_runtime, _name, _value)
 
-_TEST_ONLY_NAMES = ["_json","_transaction","_roots","_within","_file","_JOURNAL","_FILE_EVIDENCE_JOURNAL","_FILE_EVIDENCE_SCHEMA","_SCHEMA","_KEYS","_CHANGES","_token","_rows","_unique_catalogue_fields","_metadata","_snapshot","_validate","_proposed","_write_row","_operation_id","_journal","_validate_undo","_validate_historical_links","_record_offline_file_evidence","_receipt"]
+_TEST_ONLY_NAMES = ["_json","_transaction","_file","_JOURNAL","_FILE_EVIDENCE_JOURNAL","_FILE_EVIDENCE_SCHEMA","_SCHEMA","_KEYS","_CHANGES","_token","_rows","_unique_catalogue_fields","_metadata","_snapshot","_validate","_proposed","_write_row","_operation_id","_journal","_validate_undo","_validate_historical_links","_record_offline_file_evidence","_receipt"]
 for _name in _TEST_ONLY_NAMES:
     _value = globals()[_name]
     if isinstance(_value, FunctionType):
