@@ -120,3 +120,54 @@ def test_reconciliation_rejects_competing_direct_plugin_mutation(tmp_path, monke
     finally:
         child.stdin.close()
         assert child.wait(timeout=10) == 0
+
+
+def _holding_process(package_root: Path):
+    script = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from cifereca.core.plugin_package_mutation_lock import package_mutation_lease\n"
+        "with package_mutation_lease(Path(sys.argv[1])):\n"
+        "  print('READY',flush=True)\n"
+        "  sys.stdin.readline()\n"
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-c", script, str(package_root)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
+    )
+    assert child.stdout.readline().strip() == "READY"
+    return child
+
+
+def test_core_transaction_snapshot_refuses_direct_plugin_writer(tmp_path, monkeypatch):
+    package_root = tmp_path / "plugins" / "packages"
+    monkeypatch.setattr(updater, "_plugin_packages_root", lambda: package_root)
+    runtime = tmp_path / "runtime"
+    release = runtime / "releases" / "new"
+    release.mkdir(parents=True)
+    child = _holding_process(package_root)
+    try:
+        with pytest.raises(updater.UpdateError, match="updater_package_mutation_lock_unavailable"):
+            updater._create_update_transaction(runtime, release, None, None, [])
+        assert not (runtime / "transactions").exists()
+    finally:
+        child.stdin.close()
+        assert child.wait(timeout=10) == 0
+
+
+def test_core_restoration_refuses_competing_plugin_writer_before_journal_change(
+    tmp_path, monkeypatch,
+):
+    root, folder, _missing = _scenario(tmp_path, monkeypatch)
+    tx = updater._read_transaction(folder)
+    original = (folder / "transaction.json").read_bytes()
+    child = _holding_process(tmp_path / "packages")
+    try:
+        with pytest.raises(updater.UpdateError, match="updater_package_mutation_lock_unavailable"):
+            updater._complete_transaction_restore(root, folder, tx, "restoring")
+        assert (folder / "transaction.json").read_bytes() == original
+        assert updater._symlink_target(root / "previous") is None
+    finally:
+        child.stdin.close()
+        assert child.wait(timeout=10) == 0
