@@ -166,15 +166,20 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         connections = service.storage.provider_connections(
             identity_id=evidence.identity_id,
         )
-        if (type(connections) is not list or len(connections) > 512
-                or sum(
-                    type(conn) is dict
-                    and conn.get("provider_id") == evidence.provider_id
-                    and conn.get("credential_id") == evidence.credential_id
-                    and conn.get("identity_id") == evidence.identity_id
-                    and conn.get("enabled") is True
-                    for conn in connections
-                ) != 1):
+        # A disabled duplicate is still a contradictory binding. Do not
+        # choose the convenient enabled row from an ambiguous snapshot:
+        # the same fail-closed rule protects post-loan claim projection.
+        if (type(connections) is not list or len(connections) > 512):
+            return "lender_unavailable"
+        exact_connections = [
+            conn for conn in connections
+            if type(conn) is dict
+            and conn.get("provider_id") == evidence.provider_id
+            and conn.get("credential_id") == evidence.credential_id
+            and conn.get("identity_id") == evidence.identity_id
+        ]
+        if (len(exact_connections) != 1
+                or exact_connections[0].get("enabled") is not True):
             return "lender_unavailable"
 
         accounts = service.accounts
