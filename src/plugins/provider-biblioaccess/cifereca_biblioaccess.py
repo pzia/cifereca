@@ -75,6 +75,12 @@ DESCRIPTOR = ProviderDescriptor(
             help_text="off = aucun réseau, on = GET seul ; post = POST AJAX unique "
                       "explicitement consenti avec TOUS les paramètres fournis. "
                       "Aucune connexion Core ni synchronisation de prêt."),
+        AccountOptionField(
+            "experimental_catalogue_query", "Catalogue : recherche de recette",
+            help_text="Optionnel : mot-clé saisi volontairement pour rechercher "
+                      "une page du catalogue 1409 et lire une fiche. Aucun prêt "
+                      "ni droit utilisateur inféré.",
+        ),
         AccountOptionField("ajax_change_user", "POST AJAX : changeUser (valeur observée)"),
         AccountOptionField("ajax_provider", "POST AJAX : provider (valeur observée)"),
         AccountOptionField("ajax_dc", "POST AJAX : _dc (valeur fraîche)", secret=True),
@@ -117,6 +123,18 @@ _HTTP_PROBE_CODES = frozenset((
     "login_preflight_url_refused",
 ))
 
+
+_CATALOGUE_PROBE_CODES = frozenset((
+    "catalogue_invalid_query", "catalogue_page_limit",
+    "catalogue_client_closed", "catalogue_url_refused",
+    "catalogue_pagination_refused", "catalogue_unexpected_content",
+    "catalogue_body_limit", "catalogue_bad_encoding",
+    "catalogue_auth_required", "catalogue_rate_limited",
+    "catalogue_remote_failure", "catalogue_redirect_refused",
+    "catalogue_page_unavailable", "catalogue_transport_unavailable",
+    "catalogue_book_not_observed", "catalogue_book_id_refused",
+    "catalogue_book_url_missing", "catalogue_book_unavailable",
+))
 
 class LaRochelleSession(ProviderSession):
     """Opt-in network diagnostic, deliberately not an authenticated session."""
@@ -181,6 +199,45 @@ class LaRochelleSession(ProviderSession):
             raise ProviderConfigurationError(str(exc)) from None
         return query, fields
 
+    def _probe_public_catalogue(self):
+        """Optional separate public session, strictly read-only and partial."""
+        query = self.options.get("experimental_catalogue_query", "")
+        if not query:
+            return
+        if (type(query) is not str or not 1 <= len(query.strip()) <= 120
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in query)):
+            self._event("catalogue", "error", error_code="catalogue_invalid_query")
+            return
+        catalogue = None
+        try:
+            from biblioaccess_catalogue_http import (
+                BiblioAccessCatalogueHTTP, CatalogueHTTPError,
+            )
+            catalogue = BiblioAccessCatalogueHTTP()
+            self._event("catalogue_search", "started", request_method="GET")
+            found = catalogue.search(query, max_pages=1)
+            self._event("catalogue_search", "observed",
+                        observation=found.status,
+                        pages_observed=found.pages_observed,
+                        book_ids_observed=len(found.book_ids),
+                        completeness="partial", entitlements_verified=False)
+            if found.book_ids:
+                self._event("catalogue_detail", "started", request_method="GET")
+                notice = catalogue.read_observed_notice(found.book_ids[0])
+                self._event("catalogue_detail", "observed",
+                            observation=("structured_book_unverified"
+                                         if notice else "metadata_unknown"),
+                            entitlements_verified=False)
+        except Exception as exc:
+            from biblioaccess_catalogue_http import CatalogueHTTPError
+            code = str(exc) if isinstance(exc, CatalogueHTTPError) else ""
+            if code not in _CATALOGUE_PROBE_CODES:
+                code = "catalogue_probe_unavailable"
+            self._event("catalogue", "error", error_code=code)
+        finally:
+            if catalogue is not None:
+                catalogue.close()
+
     def connect(self):
         with self._lock:
             self.connected = False
@@ -225,6 +282,7 @@ class LaRochelleSession(ProviderSession):
                     inline_identifier_names=list(preflight.inline_identifier_names),
                     challenge_resolved=False,
                 )
+                self._probe_public_catalogue()
                 if mode == "post":
                     # Exactly one explicitly consented credential POST on this
                     # client. The query/fields are ephemeral, never journaled.
