@@ -124,3 +124,39 @@ def test_growing_file_never_causes_unbounded_read(tmp_path, monkeypatch):
     assert row.sha256 is None
     assert row.size is None
     assert observed_limits == [2]
+
+
+def test_hardlinked_file_does_not_become_managed_receipt(tmp_path):
+    """#4983: same bytes in another tree do not establish managed ownership."""
+    import os
+
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    outside = tmp_path / "outside.epub"
+    outside.write_bytes(b"same bytes, different owner")
+    os.link(outside, managed / "book.epub")
+    row = observe_usb_files(managed, ("book.epub",))[0]
+    assert row.status == "unverified"
+    assert row.sha256 is None and row.size is None
+    assert outside.read_bytes() == b"same bytes, different owner"
+
+
+def test_symlinked_selected_root_is_not_attested(tmp_path):
+    """#4983: the caller's apparent USB root may not redirect observation."""
+    real_root = tmp_path / "device"
+    real_root.mkdir()
+    (real_root / "book.epub").write_bytes(b"private device")
+    link_root = tmp_path / "swapped-device"
+    link_root.symlink_to(real_root, target_is_directory=True)
+    row = observe_usb_files(link_root, ("book.epub",))[0]
+    assert row.status == "unverified"
+    assert row.sha256 is None
+    assert (real_root / "book.epub").read_bytes() == b"private device"
+
+
+def test_empty_regular_file_is_observation_only_not_transfer_receipt(tmp_path):
+    """#4983: zero-byte files can be observed without granting ownership."""
+    (tmp_path / "empty.epub").write_bytes(b"")
+    row = observe_usb_files(tmp_path, ("empty.epub",))[0]
+    assert row.status == "present"
+    assert row.size == 0 and row.sha256 == sha256(b"").hexdigest()
