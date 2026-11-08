@@ -12,7 +12,7 @@ import re
 from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 
 from browser_recorder import RecorderError
-from browser_recorder_http import _valid_auth_schema, _auth_flow
+from browser_recorder_http import _valid_auth_schema, _auth_flow, _url_origin
 
 MAX_CANDIDATES = 256
 MAX_TEXT = 32768
@@ -465,6 +465,7 @@ class IdentifierReview:
                                          "not_applicable"),
                         "schema": json.loads(json.dumps(schema)) if (
                             not entry.metadata_only and _auth_flow(entry.url)
+                            and _url_origin(entry.url) in self.trace.origins
                             and type(entry.url) is str and entry.url.startswith("https://")
                             and _valid_auth_schema(schema, direction=direction)
                             and getattr(entry, "auth_" + direction + "_schema_state",
