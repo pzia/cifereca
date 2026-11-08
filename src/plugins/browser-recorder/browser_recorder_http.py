@@ -308,6 +308,7 @@ def _sizes(request) -> dict:
 # #5097: fixed-size, value-free authentication schema; never raw auth text.
 _AUTH_SCHEMA_BYTES = 8192
 _AUTH_SCHEMA_FIELDS = 32
+_AUTH_FIELD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
 _AUTH_SCHEMA_REASONS = frozenset((
     "not_applicable", "schema_captured", "auth_schema_unavailable",
     "auth_schema_unsupported", "metadata_only",
@@ -326,7 +327,7 @@ def _valid_auth_schema(value: object, *, direction: str) -> bool:
         groups = (value["query_names"], value["form_names"])
         return all(
             type(group) is list and len(group) <= _AUTH_SCHEMA_FIELDS
-            and all(type(name) is str and _SAFE_QUERY_NAME.fullmatch(name)
+            and all(type(name) is str and _AUTH_FIELD_NAME.fullmatch(name)
                     for name in group)
             and group == sorted(set(group))
             for group in groups
@@ -339,7 +340,7 @@ def _valid_auth_schema(value: object, *, direction: str) -> bool:
             type(rows) is list and 0 < len(rows) <= _AUTH_SCHEMA_FIELDS
             and all(type(row) is list and len(row) == 2
                     and type(row[0]) is str
-                    and _SAFE_QUERY_NAME.fullmatch(row[0]) is not None
+                    and _AUTH_FIELD_NAME.fullmatch(row[0]) is not None
                     and type(row[1]) is str
                     and row[1] in {"null", "boolean", "string", "number", "array", "object"}
                     for row in rows)
@@ -356,7 +357,7 @@ def _auth_query_names(url: str) -> tuple[str, ...] | None:
             return None
         pairs = parse_qsl(query, keep_blank_values=True, max_num_fields=_AUTH_SCHEMA_FIELDS)
         names = [key for key, _value in pairs]
-        if any(_SAFE_QUERY_NAME.fullmatch(name) is None for name in names):
+        if any(_AUTH_FIELD_NAME.fullmatch(name) is None for name in names):
             return None
         return tuple(sorted(set(names)))
     except (TypeError, ValueError):
@@ -376,7 +377,7 @@ def _auth_request_structure(req, *, max_bytes: int) -> dict | None:
     measured = _sizes(req).get("requestBodySize")
     if (gate != "ready" or type(measured) is not int
             or not 0 < measured <= min(_AUTH_SCHEMA_BYTES, max_bytes)
-            or (declared is not None and declared != measured)):
+            or declared is None or declared != measured):
         return None
     try:
         raw = req.post_data_buffer
@@ -385,7 +386,7 @@ def _auth_request_structure(req, *, max_bytes: int) -> dict | None:
         decoded = raw.decode("utf-8", "strict")
         fields = parse_qsl(decoded, keep_blank_values=True,
                            max_num_fields=_AUTH_SCHEMA_FIELDS)
-        if not fields or any(_SAFE_QUERY_NAME.fullmatch(name) is None
+        if not fields or any(_AUTH_FIELD_NAME.fullmatch(name) is None
                              for name, _value in fields):
             return None
         # Even multiplicities are descriptive only; no password/login bytes.
@@ -427,7 +428,7 @@ def _auth_response_structure(resp, req, *, max_bytes: int) -> dict | None:
             return None
         kinds = []
         for key, value in data.items():
-            if type(key) is not str or _SAFE_QUERY_NAME.fullmatch(key) is None:
+            if type(key) is not str or _AUTH_FIELD_NAME.fullmatch(key) is None:
                 return None
             kind = ("null" if value is None else
                     "boolean" if type(value) is bool else
