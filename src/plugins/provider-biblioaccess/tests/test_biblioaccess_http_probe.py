@@ -116,6 +116,7 @@ def test_post_failure_not_retried():
     shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
                           ("login", "password"), True)
     client._inspected_form_shapes = (shape,)
+    client._form_actions[id(shape)] = sso.ORIGIN + "/logon"
     client._login_inspected = True
     try:
         with pytest.raises(sso.SsoProtocolError, match="post_outcome_unknown"):
@@ -132,6 +133,7 @@ def test_large_body_refused_without_trusting_content_length():
     shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
                           ("login", "password"), True)
     client._inspected_form_shapes = (shape,)
+    client._form_actions[id(shape)] = sso.ORIGIN + "/logon"
     client._login_inspected = True
     try:
         with pytest.raises(sso.SsoProtocolError, match="response_limit"):
