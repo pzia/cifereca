@@ -38,7 +38,8 @@ def _harness(monkeypatch, *, enabled_sentinel=True, option_missing=False, return
             "identity": Widget(text=data["identity_id"]),
             "label": Widget(text=data["label"]),
             "fields": {"username": Widget(text="PRIVATE-SYNTHETIC-USER")},
-            "option_fields": {"experimental_http_probe": Widget(text="auto-post")},
+            "option_fields": {"experimental_http_probe": Widget(
+                text="off" if option_missing else "auto-post")},
             "explicit_probe_button": Widget(),
             "explicit_probe_status": Widget(),
         }
@@ -150,7 +151,7 @@ def test_failure_ui_does_not_copy_exception_or_credentials_to_journal(monkeypatc
 def test_legacy_missing_option_rendered_with_default_is_not_unsaved_draft(monkeypatch):
     editor, submits, entries, action = _harness(
         monkeypatch, option_missing=True)
-    assert editor["option_fields"]["experimental_http_probe"].text == "auto-post"
+    assert editor["option_fields"]["experimental_http_probe"].text == "off"
     editor["explicit_probe_button"].emit("clicked")
     assert len(submits) == 1
     assert [row[3]["phase"] for row in entries] == ["clicked", "dispatched"]
