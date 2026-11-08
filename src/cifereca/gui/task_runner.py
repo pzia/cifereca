@@ -484,8 +484,8 @@ class TaskRunner:
                 # of depending on the nested fallback-status expression.
                 # Neither raw provider text nor an unverified loan can become
                 # a success message through this path.
-                if (trace_kind == "borrow" and business_status == "pending"
-                        and kind_outcome == "ok" and type(payload) is dict
+                if (business_status == "pending" and kind_outcome == "ok"
+                        and type(payload) is dict and trace_kind == "borrow"
                         and payload.get("reason_code") == "borrow_result_unverified"):
                     feedback_error = (
                         "Demande d’emprunt envoyée ; confirmation indisponible. "
