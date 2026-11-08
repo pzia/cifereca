@@ -7,13 +7,6 @@ Search filters retain the original provider ID and its exact routing scope.
 from __future__ import annotations
 
 
-_SEARCH_LABELS = {
-    "kobo": "Kobo — Catalogue et compte",
-    "numilog": "Numilog — Mes achats (compte)",
-    "numilog-catalog": "Numilog — Catalogue public",
-}
-
-
 _PLUGIN_USAGE_HINTS = {
     "provider.kobo": (
         "Kobo : Mes achats proviennent du compte connecté. "
@@ -35,10 +28,6 @@ _PLUGIN_USAGE_HINTS = {
     ),
 }
 
-
-def store_search_source_label(provider_id: str, default_label: str) -> str:
-    """Pure, fixed label; never adds a selectable provider or changes its ID."""
-    return _SEARCH_LABELS.get(provider_id, default_label)
 
 
 def store_plugin_usage_hint(plugin_id: str) -> str:
