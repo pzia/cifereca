@@ -376,7 +376,18 @@ def main() -> int:
                     "sidebar": window.sidebar,
                     "view_stack": window.view_stack,
                     "search_page": window.search_page,
+                    "search_page_header": window.search_page.page_header,
+                    "search_page_actions": window.search_page.header_actions,
+                    "search_toolbar": window.search_page.toolbar,
                     "search_controls": window.search_controls,
+                    "search_primary": window.search_controls.primary,
+                    "search_filter_scroller": (
+                        window.search_controls.primary.get_next_sibling()
+                    ),
+                    "search_paned": window.search_page.paned,
+                    "search_list_stack": window.search_page.list_stack,
+                    "search_list_scroll": window.search_page.scroll,
+                    "search_listview": window.search_page.listview,
                     "search_detail": window.search_page.detail,
                 }
                 measured = {}
