@@ -125,3 +125,24 @@ def test_static_login_script_path_remains_eligible():
     assert observation.same_origin_script_paths == ("/scripts/logon.js",)
     assert observation.field_names == ("checkValue", "rememberMe")
     assert "PRIVATE-CACHE" not in repr(observation)
+
+
+def test_script_query_is_private_and_bound_to_observed_source():
+    secret = "SYNTHETIC-OPAQUE-QUERY"
+    result = mod.inspect_login_preflight(
+        '<script src="/scripts/logon.js?v=' + secret + '"></script>')
+    assert result.same_origin_script_paths == ("/scripts/logon.js",)
+    assert result._script_request_urls == (
+        ("/scripts/logon.js",
+         mod.IDP + "/scripts/logon.js?v=" + secret),)
+    assert secret not in repr(result)
+
+
+def test_same_path_with_distinct_query_versions_is_ambiguous_and_omitted():
+    result = mod.inspect_login_preflight(
+        '<script src="/scripts/logon.js?v=SYNTHETIC-ONE"></script>'
+        '<script src="/scripts/logon.js?v=SYNTHETIC-TWO"></script>')
+    assert result.script_count == 2
+    assert result.same_origin_script_paths == ()
+    assert result._script_request_urls == ()
+    assert "SYNTHETIC" not in repr(result)
