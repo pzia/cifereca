@@ -364,6 +364,35 @@ def main() -> int:
                 "display_width": image.width, "display_height": image.height,
                 "window_width": allocated_width, "window_height": allocated_height,
             }
+            if allocated_width > 1024:
+                # Closed numerical diagnosis of the true GTK minimum-width
+                # contributors. No labels, identities, titles or URLs.
+                widgets = {
+                    "shell_header": window.shell_header,
+                    "header_controls": window._header_controls,
+                    "identity_dropdown": window.identity_dropdown,
+                    "account_dropdown": window.account_dropdown,
+                    "statistics_button": window.statistics_button,
+                    "sidebar": window.sidebar,
+                    "view_stack": window.view_stack,
+                    "search_page": window.search_page,
+                    "search_controls": window.search_controls,
+                    "search_detail": window.search_page.detail,
+                }
+                measured = {}
+                for key, widget in widgets.items():
+                    minimum, natural, _min_baseline, _nat_baseline = widget.measure(
+                        Gtk.Orientation.HORIZONTAL, -1
+                    )
+                    measured[key] = (int(minimum), int(natural), int(widget.get_width()))
+                result["p1_3687_minimum_widths"] = measured
+                print(
+                    "P1_3687_GTK_MIN_WIDTHS="
+                    + ",".join(
+                        f"{key}:{minimum}/{natural}/{allocated}"
+                        for key, (minimum, natural, allocated) in measured.items()
+                    ), flush=True,
+                )
             assert image.size == (1024, 768), (
                 "Recette Search 1024: dimensions physiques X11 non conformes"
             )
