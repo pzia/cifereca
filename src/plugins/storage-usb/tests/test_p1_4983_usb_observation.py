@@ -160,3 +160,52 @@ def test_empty_regular_file_is_observation_only_not_transfer_receipt(tmp_path):
     row = observe_usb_files(tmp_path, ("empty.epub",))[0]
     assert row.status == "present"
     assert row.size == 0 and row.sha256 == sha256(b"").hexdigest()
+
+
+def test_parent_directory_replaced_during_read_is_unverified(tmp_path, monkeypatch):
+    import os
+    import cifereca_storage_usb as usb
+
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    (managed / "book.epub").write_bytes(b"original")
+    original_read = os.read
+    replaced = False
+
+    def replace_parent_after_first_read(fd, limit):
+        nonlocal replaced
+        chunk = original_read(fd, limit)
+        if chunk and not replaced:
+            replaced = True
+            managed.rename(tmp_path / "detached")
+            managed.mkdir()
+            (managed / "book.epub").write_bytes(b"original")
+        return chunk
+
+    monkeypatch.setattr(usb.os, "read", replace_parent_after_first_read)
+    row = usb.observe_usb_files(tmp_path, ("managed/book.epub",))[0]
+    assert replaced
+    assert row.status == "unverified"
+    assert row.sha256 is None
+
+
+def test_parent_directory_replaced_by_symlink_during_read_is_unverified(tmp_path, monkeypatch):
+    import os
+    import cifereca_storage_usb as usb
+
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    (managed / "book.epub").write_bytes(b"original")
+    original_read = os.read
+
+    def swap_directory_for_symlink(fd, limit):
+        chunk = original_read(fd, limit)
+        if chunk and not (tmp_path / "detached").exists():
+            managed.rename(tmp_path / "detached")
+            managed.symlink_to(tmp_path / "detached", target_is_directory=True)
+        return chunk
+
+    monkeypatch.setattr(usb.os, "read", swap_directory_for_symlink)
+    row = usb.observe_usb_files(tmp_path, ("managed/book.epub",))[0]
+    assert row.status == "unverified"
+    assert row.sha256 is None
