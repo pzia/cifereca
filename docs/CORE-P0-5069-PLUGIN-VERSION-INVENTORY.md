@@ -9,3 +9,11 @@ L'ownership d'une génération n'est qualifié qu'en présence d'un `cifereca-pl
 Liens : #5069, #5159 (moteur de politique), #5160 (inventaire Core/transactions).
 
 La fonction `inspect_updater_retention_readonly(runtime_root, packages_root, now=...)` fournit une projection agrégée des familles Core, transactions, snapshots et plugins. Elle garde **deux plans distincts** et affiche explicitement les magasins/proofs encore à qualifier : elle ne fabrique aucun graphe de dépendances inter-magasins ni aucun plan d'effacement global.
+
+## Diagnostic officiel en lecture seule
+
+```sh
+cifereca-update --retention-inspect --json
+```
+
+La commande lit les magasins Core, transactions, snapshots et versions plugins, puis retourne les deux plans distincts, les motifs de conservation et les obstacles. Elle refuse `--rollback`, `--github`, `--recovery-inspect`, `--recovery-reconcile`, `--acknowledge`, `--status` et `--dry-run` combinés. Elle n'alloue pas de répertoire runtime absent, ne verrouille pas pour écrire et ne supprime rien. La présence de `candidates > 0` n'autorise **jamais** leur suppression : `safe_to_apply=false` reste invariant.
