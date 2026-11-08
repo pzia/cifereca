@@ -547,8 +547,8 @@ class TaskRunner:
                 )
                 # Preserve main's explicit pending-borrow instruction,
                 # independent of the background lock-contention feedback.
-                if (not busy_lock_attested
-                        and trace_kind == "borrow" and business_status == "pending"
+                if (business_status == "pending" and not busy_lock_attested
+                        and trace_kind == "borrow"
                         and kind_outcome == "ok" and type(payload) is dict
                         and payload.get("reason_code") == "borrow_result_unverified"):
                     feedback_error = (
