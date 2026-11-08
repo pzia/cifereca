@@ -1286,6 +1286,51 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         thumbnail = cover.url or None
         combined_meta = {**existing_meta, **meta}
         combined_meta["cover_resolution"] = cover.metadata()
+        # #4979: publish an immutable, read-only bridge from one exact loan
+        # to a *verified, identity-owned* local Placement. A bare loan ID,
+        # edition, title, SHA or unscoped source reference cannot attach
+        # another borrower's cover. Never change the actual loan thumbnail,
+        # local artifact entitlement, provider route or acquisition decision.
+        local_resolution = existing_meta.get("cover_resolution")
+        if (entitlement_type == "loan" and existing.get("local") is True
+                and type(loan) is Loan
+                and type(loan.identity_id) is str
+                and loan.identity_id == entitlement_identity
+                and type(loan.id) is str and loan.id
+                and type(entitlement.get("loan_id")) is str
+                and entitlement["loan_id"] == loan.id
+                and type(loan.record_id) is str and loan.record_id == item_id
+                and loan.source_provider == provider_id
+                and type(entitlement.get("credential_id")) is str
+                and loan.source_credential == entitlement["credential_id"]
+                and type(entitlement.get("account_id")) is str
+                and loan.source_account_id == entitlement["account_id"]
+                and type(existing.get("placement_id")) is str
+                and existing["placement_id"]
+                and type(existing.get("artifact_id")) is str
+                and existing["artifact_id"]
+                and type(local_resolution) is dict
+                and local_resolution.get("status") == "selected"
+                and local_resolution.get("tier") in ("embedded", "origin", "catalog")
+                and type(local_resolution.get("url")) is str
+                and local_resolution["url"] == existing.get("thumbnail_url")):
+            from .loan_source_identity import loan_source_key
+            proof = {
+                "loan_source_key": loan_source_key(loan),
+                "identity_id": loan.identity_id,
+                "source_provider": loan.source_provider,
+                "source_credential": loan.source_credential,
+                "source_account_id": loan.source_account_id,
+                "record_id": loan.record_id,
+                "loan_id": loan.id,
+                "artifact_id": existing["artifact_id"],
+                "placement_id": existing["placement_id"],
+                "url": local_resolution["url"],
+                "tier": local_resolution["tier"],
+            }
+            proofs = existing.setdefault("_exact_loan_cover_proofs", [])
+            if proof not in proofs:
+                proofs.append(proof)
         remote_state = ("remote_archived" if status == "archived" else
                         "remote_owned" if entitlement_type == "owned" else
                         "remote_loan_active" if entitlement_type == "loan" else "remote_entitled")
