@@ -123,18 +123,6 @@ def numilog_generation(storage, scope):
         return None
 
 
-def numilog_generation_in_transaction(db, source):
-    """Read the same generation from the canonical publisher's transaction."""
-    if type(source) is not SourceKey or source.scope.provider_id != "numilog":
-        return None
-    row = db.execute(
-        "SELECT value FROM metadata WHERE key=?",
-        ("sync.source.numilog.materialization.epoch.v1." +
-         _source_id(source.scope),),
-    ).fetchone()
-    value = row[0] if row else None
-    return value if type(value) is str and _HEX.fullmatch(value) else None
-
 
 def _consent_generation_key(scope):
     """Generation key for every source-wide automatic acquisition switch."""
