@@ -912,7 +912,7 @@ def test_login_session_expiry_revokes_borrower_and_never_reuses_cookie():
     account.identity_id = "identity-a"
     observation = read_loan_inventory(session, account)
     assert observation.status == "failed"
-    assert observation.reason_code == "unavailable"
+    assert observation.reason_code == "read_failed"
     assert not session.connected and session.accounts == []
     assert http.closed
     with pytest.raises(mod.ProviderCapabilityError, match="loan_account_unbound"):
