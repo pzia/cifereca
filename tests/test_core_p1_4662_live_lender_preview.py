@@ -678,3 +678,56 @@ def test_held_lender_choice_revoked_after_positive_fact_refresh(harness):
     assert _click(service, next_preview, next_preview.options[0].option_id,
                   refreshed).status == "current"
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_duplicate_lender_binding_never_qualifies_preview_even_when_enabled(
+    harness, monkeypatch, enabled,
+):
+    service, account, session = harness
+    real = service.storage.provider_connections
+    candidate = _candidate()
+    rows = real(identity_id="alex")
+    exact = next(
+        row for row in rows
+        if row.get("credential_id") == account.credential_id
+    )
+    # Even an enabled+disabled pair is ambiguous; an enabled+enabled
+    # pair is ambiguous too. No first-enabled or last-enabled fallback.
+    def duplicate(*, identity_id):
+        result = real(identity_id=identity_id)
+        if identity_id == "alex":
+            return [*result, {**exact, "enabled": enabled}]
+        return result
+
+    monkeypatch.setattr(service.storage, "provider_connections", duplicate)
+    snapshot = _preview(service, candidate)
+    assert snapshot.status == "none"
+    assert snapshot.options == ()
+    assert snapshot.rejection_reasons == ("lender_unavailable",)
+    assert session.calls == 0
+
+
+def test_held_lender_choice_revoked_when_binding_becomes_ambiguous(
+    harness, monkeypatch,
+):
+    service, account, session = harness
+    candidate = _candidate()
+    old = _preview(service, candidate)
+    selected = old.options[0].option_id
+    original = service.storage.provider_connections
+
+    def duplicate(*, identity_id):
+        rows = original(identity_id=identity_id)
+        if identity_id == "alex":
+            exact = next(x for x in rows
+                         if x.get("credential_id") == account.credential_id)
+            return [*rows, {**exact, "enabled": False}]
+        return rows
+
+    monkeypatch.setattr(service.storage, "provider_connections", duplicate)
+    result = _click(service, old, selected, candidate)
+    assert result.status == "revoked"
+    assert result.reason_code == "selection_stale"
+    assert result.executable is False
+    assert session.calls == 0
