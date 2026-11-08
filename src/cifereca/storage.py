@@ -2240,6 +2240,23 @@ class Storage:
                     db, merged, now=now, migration=False, archive_only=True,
                 )
                 return
+            # W1 P0 #3196: the first "pending"/"acquiring"/"error"
+            # backup_items checkpoint is an opaque legacy workflow state,
+            # not provider A nor a CompletedDelivery B. Publishing a generic
+            # right or acquisition from it gives 0.7 writer authority over
+            # Core 0.8 before any bytes are delivered. Retain the archive
+            # and validate negative owner/canonical journal conflicts only.
+            # The first actual "complete" delivery remains W1-compatible
+            # until the incomplete-provider W2 executor has a canonical
+            # replacement. After that, the monotone post-complete guard
+            # above prevents ALL subsequent positive W1 projections.
+            if (item.get("provider_id") == "kobo"
+                    and merged.get("status") != "complete"):
+                self._check_kobo_legacy_canonical_owner(db, merged)
+                self._mirror_backup_row(
+                    db, merged, now=now, migration=False, archive_only=True,
+                )
+                return
             if (item.get("provider_id") == "kobo"
                     and (merged.get("identity_id") is None
                          # A missing/blank profile label (including whitespace)
