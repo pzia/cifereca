@@ -85,3 +85,43 @@ def test_js_evidence_recognizes_only_names_and_route_not_computation():
     assert "PRIVATE" not in repr(observation)
     with pytest.raises(mod.LoginPreflightError, match="limit"):
         mod.inspect_javascript_evidence("x" * 200000)
+
+
+def test_dynamic_field_names_never_escape_login_preflight():
+    html = (
+        '<input name="username" value="SYNTHETIC-SECRET">'
+        '<input name="session_ABCDEF0123456789ABCDEF0123456789">'
+        '<input name="opaqueCredentialToken">'
+        '<input name="RequestKey">'
+        '<input name="captchaCheckValue">'
+    )
+    observation = mod.inspect_login_preflight(html)
+    assert observation.field_names == (
+        "username", "RequestKey", "captchaCheckValue")
+    assert "ABCDEF0123456789" not in repr(observation)
+    assert "opaqueCredentialToken" not in repr(observation)
+
+
+@pytest.mark.parametrize("script_src", [
+    "/assets/session_0123456789abcdef0123456789abcdef/logon.js",
+    "/assets/abc0123456789abcdef0123456789abcdef.js",
+    "/assets/%2Fsecret/logon.js",
+    "/assets/%2e%2e/logon.js",
+    "/assets/verylongopaque_token_0123456789abcdef0123456789abcdef.js",
+    "/assets/../logon.js",
+])
+def test_opaque_or_encoded_script_paths_never_reach_diagnostics(script_src):
+    observation = mod.inspect_login_preflight(
+        '<script src="' + script_src + '"></script>')
+    assert observation.script_count == 1
+    assert observation.same_origin_script_paths == ()
+
+
+def test_static_login_script_path_remains_eligible():
+    observation = mod.inspect_login_preflight(
+        '<script src="/scripts/logon.js?v=PRIVATE-CACHE"></script>'
+        '<input name="checkValue"><input name="rememberMe">'
+    )
+    assert observation.same_origin_script_paths == ("/scripts/logon.js",)
+    assert observation.field_names == ("checkValue", "rememberMe")
+    assert "PRIVATE-CACHE" not in repr(observation)
