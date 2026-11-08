@@ -180,11 +180,11 @@ def _unrecord(blob: bytes, session_id: str):
                 "auth_request_schema_state", "auth_response_schema_state",
             }
             old_fields = _FIELD_NAMES - schema_fields
-            legacy_fields = old_fields - {
-                "request_body_reason", "response_body_reason",
-            }
+            without_reasons = {"request_body_reason", "response_body_reason"}
+            legacy_fields = old_fields - without_reasons
+            new_legacy_fields = _FIELD_NAMES - without_reasons
             if type(row) is not dict or set(row) not in (
-                _FIELD_NAMES, old_fields, legacy_fields,
+                _FIELD_NAMES, new_legacy_fields, old_fields, legacy_fields,
             ):
                 raise ValueError("invalid entry")
             if not _validated_auth_structure_row(row):
