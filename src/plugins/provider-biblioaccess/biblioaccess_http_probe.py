@@ -227,7 +227,7 @@ class BiblioAccessHTTPQualification:
                     raise SsoProtocolError("sso_cas_return_refused") from None
                 query = parse_qs(p.query, keep_blank_values=True)
                 if (p.hostname != "www.biblioaccess.com"
-                        or not (p.path == "/1409" or p.path.startswith("/1409/"))
+                        or p.path != urlsplit(self._cas_service).path
                         or set(query) != {"ticket"} or len(query["ticket"]) != 1
                         or not 1 <= len(query["ticket"][0]) <= 2048):
                     raise SsoProtocolError("sso_cas_return_refused")
