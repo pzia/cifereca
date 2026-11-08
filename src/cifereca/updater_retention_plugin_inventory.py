@@ -11,6 +11,8 @@ from datetime import datetime
 import hashlib
 import json
 import math
+import os
+import stat
 from pathlib import Path
 import re
 from typing import Any
@@ -26,10 +28,20 @@ def _opaque(kind: str, *parts: str) -> str:
 
 
 def _read_small_json(path: Path, *, max_bytes: int = 32768) -> Any:
-    # refuse links even if they appear to point to regular files
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > max_bytes:
+    # Open one stable, no-follow descriptor. A symlink can otherwise replace
+    # a validated receipt between is_symlink/stat and read_text (TOCTOU).
+    if path.is_symlink():
         raise ValueError("missing_or_unsafe_file")
-    return json.loads(path.read_text(encoding="utf-8"))
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_size < 0 or info.st_size > max_bytes):
+            raise ValueError("missing_or_unsafe_file")
+        raw = stream.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise ValueError("oversized_marker")
+    return json.loads(raw.decode("utf-8"))
 
 
 def _timestamp(raw: Any) -> float | None:
