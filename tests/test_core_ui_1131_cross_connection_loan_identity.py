@@ -350,3 +350,23 @@ def test_loan_lookup_refuses_partial_or_oversized_inventory_without_action():
     assert unique_library_loan(oversized(), {"loan_id": exact.id}) is None
     assert len(seen) == 10001
     assert unique_library_loan([exact], {"loan_id": exact.id}) is exact
+
+
+def test_actionable_loan_rows_are_never_published_from_partial_inventory():
+    exact = _loan()
+
+    def interrupted():
+        yield exact
+        raise RuntimeError("/private/lender/credential")
+
+    assert unambiguous_loan_rows(interrupted()) == ()
+    seen = []
+
+    def excessive():
+        for index in range(10002):
+            seen.append(index)
+            yield exact if index == 0 else _loan(credential=f"other-{index}")
+
+    assert unambiguous_loan_rows(excessive()) == ()
+    assert len(seen) == 10001
+    assert unambiguous_loan_rows([exact, replace(exact)]) == (exact,)
