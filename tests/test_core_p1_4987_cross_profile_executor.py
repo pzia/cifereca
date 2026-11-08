@@ -98,6 +98,16 @@ def test_explicit_lender_loan_confirms_once_without_profile_switch_or_copy(harne
     claim = service.storage.loan_borrow_state(borrow_claim_key(account, row.notice))
     assert claim["status"] == "confirmed"
     assert claim["verified_loan_id"] == "loan-synthetic"
+    # The existing read-only progress must consume the *same* lender claim.
+    # It reports the verified loan but never a delivered or transferable book.
+    progress = service.cross_profile_borrow_progress(
+        requesting_identity_id="default", borrowing_account=account,
+        exact_notice=row.notice,
+    )
+    assert (progress.loan, progress.delivery, progress.transfer) == (
+        "confirmed", "unavailable", "blocked",
+    )
+    assert progress.retry_borrow is progress.executable is False
     assert execute(service, row, preview)["status"] == "blocked"
     assert session.actions == 1
 
