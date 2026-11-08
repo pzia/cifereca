@@ -1128,3 +1128,103 @@ def test_legacy_technical_options_are_still_supported_when_already_persisted():
         assert session.connected is False
     finally:
         session.close()
+
+
+def test_active_loan_acsm_download_uses_fresh_signed_action_on_every_call(
+    monkeypatch, tmp_path,
+):
+    """Core does not receive or persist the signed URL; re-download allowed."""
+    from types import SimpleNamespace as NS
+    from cifereca.plugin_api import read_loan_inventory
+    import biblioaccess_acsm_delivery
+
+    signed = (
+        "https://entrepot2r.numilog.com/fulfillment/URLLink.acsm"
+        "?code=PRIVATE-SYNTHETIC-URL-TOKEN"
+    )
+    row = NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC-BOOK",
+        due_at_local="08/11/2026 12:30:00", acsm_offer_present=True,
+        acsm_url=signed,
+    )
+    session, client, calls = _synced_session(rows=[row])
+    received = []
+    def stage(url, folder):
+        received.append(url)
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / ("offer-" + str(len(received)) + ".acsm")
+        path.write_bytes(b"SYNTHETIC-ACSM-CONTENT")
+        return path
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm", stage)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = read_loan_inventory(session, account).loans
+        assert loan.raw == {"acsm_offer_present": True}
+        assert loan.ebook_url is None
+        for attempt in range(2):
+            path, returned_url = session.download_digital(loan, account, tmp_path)
+            assert returned_url == ""
+            assert path.read_bytes() == b"SYNTHETIC-ACSM-CONTENT"
+            assert path.suffix == ".acsm"
+        assert received == [signed, signed]
+        assert calls.count("post") == 1  # No repeat auth on re-download.
+        assert calls.count("live_loans") == 3  # One inventory + two fresh offers.
+        assert "PRIVATE-SYNTHETIC-URL-TOKEN" not in repr(loan)
+        assert session.connected is True
+    finally:
+        session.close()
+    assert client.closed
+
+
+def test_signed_acsm_cannot_be_downloaded_for_another_credential_or_book(
+    monkeypatch, tmp_path,
+):
+    from dataclasses import replace
+    from types import SimpleNamespace as NS
+    import biblioaccess_acsm_delivery
+
+    row = NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC-BOOK",
+        due_at_local="08/11/2026 12:30:00", acsm_offer_present=True,
+        acsm_url="https://entrepot2r.numilog.com/fulfillment/URLLink.acsm?x=secret",
+    )
+    session, client, calls = _synced_session(rows=[row])
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm",
+                        lambda *args: pytest.fail("unexpected delivery"))
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = session.loans(account)
+        with pytest.raises(mod.ProviderCapabilityError, match="loan_account_unbound"):
+            session.download_digital(
+                replace(loan, source_credential="other"), account, tmp_path)
+        assert client.closed is False
+        with pytest.raises(mod.ProviderCapabilityError, match="acsm_stage_unavailable"):
+            session.download_digital(
+                replace(loan, record_id="other"), account, tmp_path)
+        assert client.closed and not session.connected
+        assert calls.count("post") == 1
+    finally:
+        session.close()
+
+
+def test_no_signed_offer_produces_a_visible_loan_but_no_auto_download():
+    from types import SimpleNamespace as NS
+
+    row = NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC-BOOK",
+        due_at_local="08/11/2026 12:30:00",
+        acsm_offer_present=False, acsm_url=None,
+    )
+    session, client, calls = _synced_session(rows=[row])
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = session.loans(account)
+        assert loan.raw == {} and loan.ebook_url is None
+        assert loan.medium == "digital"
+        assert session.capabilities.digital_download
+        assert session.capabilities.opening_loan_auto_acquisition
+    finally:
+        session.close()
