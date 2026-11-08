@@ -331,3 +331,55 @@ def test_cross_identity_explicit_feedback_cannot_trigger_search():
             ),),
         )
     assert catalog.queries == []
+
+
+def test_saved_preference_revocation_with_no_catalogues_cancels_result():
+    class RevokedMetadata(ExactPreferenceMetadata):
+        def __init__(self):
+            super().__init__()
+            self.revision = 1
+
+        def reading_preference_snapshot(self, *, identity_id):
+            assert identity_id == "id-1"
+            return SimpleNamespace(
+                revision=self.revision,
+                preferences=(("entry:alice", "liked"),),
+            )
+
+    class NoCatalogues:
+        def searchable_providers(self):
+            metadata.revision = 2  # Revoked after preference snapshot.
+            return ()
+
+        def search(self, *args, **kwargs):
+            raise AssertionError("catalogue search must not run")
+
+    metadata = RevokedMetadata()
+    result = compute_recommendations(
+        metadata, NoCatalogues(), "id-1",
+        use_saved_explicit_preferences=True,
+    )
+    assert result.cancelled is True
+    assert result.ranked == ()
+    assert result.providers == ()
+
+
+def test_saved_preference_stable_with_no_catalogues_keeps_empty_result():
+    class StableMetadata(ExactPreferenceMetadata):
+        def reading_preference_snapshot(self, *, identity_id):
+            assert identity_id == "id-1"
+            return SimpleNamespace(
+                revision=1,
+                preferences=(("entry:alice", "liked"),),
+            )
+
+    class NoCatalogues:
+        def searchable_providers(self):
+            return ()
+
+    result = compute_recommendations(
+        StableMetadata(), NoCatalogues(), "id-1",
+        use_saved_explicit_preferences=True,
+    )
+    assert result.cancelled is False
+    assert result.ranked == ()

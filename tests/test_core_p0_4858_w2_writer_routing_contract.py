@@ -61,7 +61,7 @@ def test_w2_guard_checks_typed_source_before_checkpoint_write():
     typed = [
         node.lineno for node in ast.walk(guard)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        and node.func.id == "has_typed_kobo_source"
+        and node.func.id == "has_typed_source"
     ]
     writes = [
         node.lineno for node in ast.walk(guard)
