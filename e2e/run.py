@@ -37,6 +37,16 @@ SCENARIOS = {
         ),
         "runner": "gtk-probe",
     },
+    "search-filter-1024": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": (
+            "P1 #3687/#774 : même vraie Recherche GTK/XTEST à 1024x768 "
+            "physiques ; cinq popovers, frappe, scroll, identité et droits isolés."
+        ),
+        "runner": "gtk-probe",
+        "width": 1024, "height": 768,
+    },
     "book-detail-1300": {
         "plugin": "core",
         "fixture": "search-filters",
@@ -560,10 +570,17 @@ def main() -> int:
                     *(["--geometry-1300"] if scenario.get("geometry_1300") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
+                # Keep the existing P0 baseline's 1280x1024 display stable.
+                # The additional P1 acceptance runs in a physically smaller
+                # Xvfb, and the probe asserts actual screen/window geometry.
+                narrow = scenario.get("width") == 1024
                 command = [
-                    xvfb, "-a", "-s", "-screen 0 1280x1024x24",
+                    xvfb, "-a", "-s",
+                    ("-screen 0 1024x768x24" if narrow
+                     else "-screen 0 1280x1024x24"),
                     args.python, str(ROOT / "e2e/search_filter_probe.py"),
                     "--out", str(scenario_dir),
+                    *(["--width", "1024"] if narrow else []),
                 ]
             else:
                 command = [
