@@ -111,6 +111,10 @@ def _script_path(raw: str) -> str | None:
             or any(ord(ch) <= 32 or ch == "\\" for ch in raw)):
         return None
     try:
+        # Reject traversal *before* urljoin normalizes dot segments away.
+        original = urlsplit(raw)
+        if any(segment in (".", "..") for segment in original.path.split("/")):
+            return None
         target = urljoin(IDP + _LOGIN_PATH, raw)
         p = urlsplit(target)
         if (p.scheme != "https" or p.netloc != "mediatheques.agglo-larochelle.fr"
