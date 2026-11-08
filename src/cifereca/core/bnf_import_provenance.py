@@ -1,32 +1,24 @@
 """A local import's observed loan is a display link, never a receipt/right."""
-from pathlib import Path
 
 # Public compatibility names: the display join is provider-neutral.
 from .observed_loan_scope import FIELDS, observed_loan, scope_key
 
 
 def remember_import(service, result, scope):
-    """Bind only actual, unchanged bytes in an indexed BnF placement.
+    """Bind only exact bytes to a display-only BnF loan observation.
 
-    Older manual placements stay at their original paths and acquire no new
-    source attribution. A repeated token cannot overwrite its first borrower.
+    Core storage retains the authority to reject a foreign borrower,
+    acquisition, artifact or placement. Never manufacture a provider right.
     """
-    if result.get('status') not in {'complete', 'unchanged'} or not scope_key(scope):
+    if not scope_key(scope):
         return
-    acquisition_id = result.get('acquisition_id')
-    if not acquisition_id:
+    from .manual_import_display_admission import verified_manual_import_candidate
+    candidate = verified_manual_import_candidate(service, result)
+    if candidate is None:
         return
-    row = service.storage.acquisition_get(acquisition_id)
-    if not row:
-        return
-    from ..artifact_inspection import inspect_artifact
-    from ..library_files import sha256_file
-    path = Path(str(result.get('path') or ''))
-    if (path.is_symlink() or not path.is_file() or not inspect_artifact(path).valid
-            or row.get('artifact_id') != 'sha256:' + sha256_file(path)):
-        return
+    acquisition_id, path, artifact_id = candidate
     service.storage.acquisition_bind_bnf_display_loan(
-        acquisition_id, path=str(path), artifact_id=row['artifact_id'], scope=scope)
+        acquisition_id, path=str(path), artifact_id=artifact_id, scope=scope)
 
 
 def display_links(storage, placements, local_keys):
