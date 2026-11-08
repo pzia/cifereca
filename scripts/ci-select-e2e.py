@@ -21,6 +21,7 @@ SYNC_PRODUCERS = frozenset((
     "src/cifereca/core/sync_coordination.py",
 ))
 CAPTURE_GTK = ("capture-session-gtk-1366",)
+BUSY_GTK = ("task-busy-settings-1366",)
 BOOK_DETAIL = ("book-detail-1300", "book-detail-1366", "book-detail-1600")
 BNF_COVERS = ("bnf-covers-1366",)
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
@@ -39,7 +40,7 @@ CONSTELLATIONS = DETAIL + CONSTELLATIONS_GTK
 RECOMMENDATIONS_GTK = ("recommendations-detail-1024-hidpi", "recommendations-detail-1024", "recommendations-detail-1366", "recommendations-detail-1600")
 RECOMMENDATIONS = DETAIL + RECOMMENDATIONS_GTK
 OPTIMIZER_GTK = ("optimizer-handoff-1366", "optimizer-handoff-1600")
-ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK + BNF_COVERS
+ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK + BNF_COVERS + BUSY_GTK
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          *CAPTURE_GTK, "startup", "core-navigation", "diagnostics-navigation-1366",
          "diagnostics-navigation-slow-1366")
@@ -76,6 +77,7 @@ LOCAL_GUI = {
     "maintenance_line_widgets.py": MAINT,
 }
 PROBES = {
+    "e2e/task_busy_settings_probe.py": BUSY_GTK,
     "e2e/capture_session_gtk_probe.py": CAPTURE_GTK,
     "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366"),
     "e2e/book_detail_probe.py": BOOK_DETAIL,
