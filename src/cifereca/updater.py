@@ -937,6 +937,151 @@ def _recover_incomplete_transactions(root: Path) -> list[str]:
     return recovered
 
 
+
+def recovery_inspect(root: Path | None = None) -> dict[str, Any]:
+    """Read-only, redacted diagnosis of blocking updater transactions (#5069).
+
+    This deliberately does not repair, clear, or reinterpret a rollback proof.
+    Public data contain only validated transaction IDs and closed reason codes;
+    never package IDs, stored absolute paths, or exception messages.
+    """
+    root = root if root is not None else install_root()
+    base = root / "transactions"
+    rows: list[dict[str, Any]] = []
+    incomplete_states = _UNFINISHED_TRANSACTION_STATES
+    final_states = {"applied", "rolled_back", "update_failed_restored",
+                    "reconciled_degraded", "abandoned_unrecoverable_previous"}
+
+    def diagnostic_id(name: str) -> str:
+        return name if re.fullmatch(r"\d{8}T\d{6}Z-[a-f0-9]{8,24}", name) else "invalid_id"
+
+    if base.is_symlink():
+        rows.append({"id": "invalid_id", "state": "unreadable",
+                     "reasons": ["unsafe_transaction_store"], "action": "manual_review"})
+    elif base.is_dir():
+        for directory in sorted(base.iterdir(), key=lambda item: item.name):
+            if not directory.is_dir() and not directory.is_symlink():
+                continue
+            identifier = diagnostic_id(directory.name)
+            if directory.is_symlink():
+                rows.append({"id": identifier, "state": "unreadable",
+                             "reasons": ["unsafe_transaction_directory"],
+                             "action": "manual_review"})
+                continue
+            try:
+                transaction = _read_transaction(directory)
+            except UpdateError:
+                rows.append({"id": identifier, "state": "unreadable",
+                             "reasons": ["transaction_unreadable"],
+                             "action": "manual_review"})
+                continue
+            state = transaction.get("state")
+            if state in final_states and transaction.get("id") == directory.name:
+                continue
+            reasons: set[str] = set()
+            if transaction.get("id") != directory.name or not isinstance(state, str):
+                reasons.add("transaction_identity_invalid")
+            if state not in incomplete_states:
+                reasons.add("transaction_state_invalid")
+            core = transaction.get("core")
+            packages = transaction.get("packages")
+            if type(core) is not dict or type(packages) is not dict:
+                reasons.add("transaction_evidence_invalid")
+            else:
+                releases_root = root / "releases"
+                for link, key in (("current", "before_current"),
+                                  ("previous", "before_previous")):
+                    expected_value = core.get(key)
+                    expected = _path_from_identity(expected_value)
+                    actual_link = root / link
+                    actual = _symlink_target(actual_link)
+                    missing = "before_current_missing" if link == "current" else "before_previous_missing"
+                    if expected_value is not None and (
+                            type(expected_value) is not dict
+                            or type(expected_value.get("path")) is not str
+                            or expected is None):
+                        reasons.add("transaction_evidence_invalid")
+                        continue
+                    if expected is not None:
+                        # No .resolve() on an arbitrary evidence path: do not
+                        # follow a symlink outside the updater-owned release store.
+                        if (not expected.is_absolute()
+                                or expected.parent != releases_root
+                                or expected.is_symlink()
+                                or releases_root.is_symlink()):
+                            reasons.add("unsafe_core_reference")
+                            continue
+                        if not expected.is_dir():
+                            reasons.add(missing)
+                            # Missing 'previous' is the known failure mode:
+                            # no pointer is better than a fabricated pointer.
+                            if actual is not None:
+                                reasons.add("core_link_mismatch")
+                            continue
+                    if (actual_link.exists() and not actual_link.is_symlink()
+                            or (expected is None) != (actual is None)
+                            or (expected is not None and actual != expected)):
+                        reasons.add("core_link_mismatch")
+                for package_id, row in packages.items():
+                    if (type(package_id) is not str or type(row) is not dict
+                            or type(row.get("before")) is not dict):
+                        reasons.add("transaction_evidence_invalid")
+                        continue
+                    try:
+                        _safe_package_id(package_id)
+                        before = row["before"]
+                        if before.get("exists"):
+                            backup = directory / "plugins" / package_id
+                            if backup.is_symlink() or not backup.is_dir():
+                                reasons.add("plugin_snapshot_missing")
+                            elif _package_identity_at(package_id, backup) != before:
+                                reasons.add("plugin_snapshot_mismatch")
+                        if _package_identity(package_id) != before:
+                            reasons.add("plugin_state_mismatch")
+                    except (OSError, UpdateError, ValueError, TypeError):
+                        reasons.add("plugin_evidence_unavailable")
+            if state == "restoration_incomplete" and not reasons:
+                # A stale generic 'verification' is not proof of safety.
+                reasons.add("unclassified_restoration_failure")
+            rows.append({
+                "id": identifier,
+                "state": state if state in incomplete_states else "unreadable",
+                "reasons": sorted(reasons),
+                "action": ("restore_missing_evidence" if reasons & {
+                    "before_current_missing", "before_previous_missing",
+                    "plugin_snapshot_missing"} else "manual_review"),
+            })
+    return {"ok": True, "read_only": True, "blocked": bool(rows),
+            "incomplete_transactions": rows}
+
+
+def _preflight_incomplete_recovery(root: Path) -> None:
+    """Stop permanent recovery failures before any checkout or source staging.
+
+    Recoverable interrupted operations still pass through the existing
+    transactional recover path. There is *no* implicit rollback bypass.
+    """
+    report = recovery_inspect(root)
+    irrecoverable = {
+        "before_current_missing", "before_previous_missing",
+        "plugin_snapshot_missing", "plugin_snapshot_mismatch",
+        "unsafe_core_reference", "unsafe_transaction_store",
+        "unsafe_transaction_directory", "transaction_unreadable",
+        "transaction_identity_invalid", "transaction_evidence_invalid",
+        "transaction_state_invalid",
+    }
+    for row in report["incomplete_transactions"]:
+        if (row["state"] == "restoration_incomplete"
+                and set(row["reasons"]) & irrecoverable
+                or row["state"] == "unreadable"):
+            code = next((reason for reason in row["reasons"] if reason in irrecoverable),
+                        "transaction_unreadable")
+            raise UpdateError(
+                "Restauration bloquante avant téléchargement: "
+                f"transaction={row['id']} reason={code}; "
+                "diagnostic: cifereca-update --recovery-inspect --json"
+            )
+
 def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | None:
     expected = _release_plugin_manifest(release)
     if not expected:
@@ -1147,6 +1292,8 @@ def install_source(
     provenance: dict[str, str] | None = None,
     backup_persistent: bool = False,
 ) -> dict[str, Any]:
+    if not dry_run:
+        _preflight_incomplete_recovery(install_root())
     source = source.resolve()
     _, version = step("metadata", _metadata, source)
     py = step("python_selection", select_python, python)
@@ -1365,6 +1512,8 @@ def install_github(
     keep: int = MIN_RETAINED_RELEASES,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    if not dry_run:
+        _preflight_incomplete_recovery(install_root())
     with tempfile.TemporaryDirectory(prefix="cifereca-github-") as tmp:
         source = Path(tmp) / "source"
         sha = _github_checkout(repository, ref, source)
@@ -1392,6 +1541,8 @@ def install_archive(
     keep: int = MIN_RETAINED_RELEASES,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    if not dry_run:
+        _preflight_incomplete_recovery(install_root())
     try:
         archive = step("resolve_archive", resolve_archive, archive)
     except ArchiveNotFoundError as exc:
@@ -1464,6 +1615,7 @@ def status() -> dict[str, Any]:
 
 def rollback(to: str | None = None) -> dict[str, Any]:
     root = install_root()
+    _preflight_incomplete_recovery(root)
     recovered = step("recover", _recover_incomplete_transactions, root)
     if recovered:
         return {
@@ -1567,6 +1719,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--status", action="store_true")
+    p.add_argument("--recovery-inspect", action="store_true",
+                   help="Diagnostic en lecture seule des transactions de reprise bloquées")
     p.add_argument("--rollback", action="store_true")
     p.add_argument("--to")
     p.add_argument("--keep", type=int, default=MIN_RETAINED_RELEASES,
@@ -1575,7 +1729,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.status:
+        if a.recovery_inspect:
+            result = recovery_inspect()
+        elif a.status:
             result = status()
         elif a.rollback:
             with update_operation("rollback", stream=sys.stderr):
