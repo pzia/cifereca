@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+
+import pytest
 from pathlib import Path
 
 from cifereca.core.covers import CoverCandidate, candidate, resolve_cover
@@ -113,3 +115,30 @@ def test_cover_resolver_is_pure_and_has_no_title_author_matching():
     assert 'requests' not in source
     assert 'title' not in identifiers | attributes
     assert 'author' not in identifiers | attributes
+
+
+@pytest.mark.parametrize("url", [
+    "https://user:password@covers.example/cover.jpg",
+    "https://user@covers.example/cover.jpg",
+    "https://[malformed/cover.jpg",
+    "https://covers.example:invalid/cover.jpg",
+    "file://foreign-server/home/user/cover.png",
+    "file:///home/user/cover.png?access_token=secret",
+    "https://covers.example/cover.jpg\\r\\nX-Private: secret",
+    "https://covers.example/" + "x" * 4096,
+])
+def test_cover_url_with_credentials_bad_authority_or_controls_is_rejected(url):
+    assert candidate(url, tier="catalog", source="synthetic") is None
+    assert resolve_cover([CoverCandidate(url, "catalog", "synthetic")]).status == "missing"
+
+
+def test_invalid_high_strength_cover_does_not_hide_verified_independent_candidate():
+    result = resolve_cover([
+        CoverCandidate("https://user:secret@covers.example/cover.jpg",
+                       "embedded", "untrusted", evidence_strength=999),
+        CoverCandidate("https://covers.example/public.jpg",
+                       "catalog", "verified", evidence_strength=10),
+    ])
+    assert result.status == "selected"
+    assert result.url == "https://covers.example/public.jpg"
+    assert "secret" not in repr(result)
