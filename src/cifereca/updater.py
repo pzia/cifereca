@@ -653,6 +653,17 @@ def _plugin_packages_root() -> Path:
     return data_dir() / "plugins" / "packages"
 
 
+def _serial_package_snapshot_operation(operation):
+    @wraps(operation)
+    def wrapped(*args, **kwargs):
+        try:
+            with package_mutation_lease(_plugin_packages_root()):
+                return operation(*args, **kwargs)
+        except PackageMutationLeaseError:
+            raise UpdateError("updater_package_mutation_lock_unavailable") from None
+    return wrapped
+
+
 def _safe_package_id(package_id: str) -> str:
     value = str(package_id).strip()
     if not value or value in {".", ".."} or Path(value).name != value or "/" in value or "\\" in value:
@@ -782,6 +793,7 @@ def _save_transaction(path: Path, transaction: dict[str, Any], state: str) -> No
     _write_json_atomic(path / "transaction.json", transaction)
 
 
+@_serial_package_snapshot_operation
 def _create_update_transaction(
     root: Path,
     release: Path,
@@ -831,6 +843,7 @@ def _create_update_transaction(
         raise UpdateError("Snapshot transactionnel des plugins impossible") from exc
 
 
+@_serial_package_snapshot_operation
 def _restore_transaction_packages(path: Path, transaction: dict[str, Any]) -> None:
     root = _plugin_packages_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -946,6 +959,7 @@ def _verify_restored_transaction_state(root: Path, transaction: dict[str, Any]) 
             raise UpdateError("rollback_package_state_mismatch")
 
 
+@_serial_package_snapshot_operation
 def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str, Any], state: str) -> None:
     """Idempotently complete a failed update or an interrupted voluntary rollback."""
     _save_transaction(path, transaction, state)
