@@ -49,15 +49,15 @@ est expurgé (sans chemin, IDs personnels ou SHA).
 
 ## Annulation supervisée (D5) de la relocalisation canonique
 
-La confirmation de relocalisation renvoie désormais \`operation_id\`, digest
+La confirmation de relocalisation renvoie désormais `operation_id`, digest
 opaque du journal de l'opération. **Restaurer d'abord physiquement le fichier
 à son chemin d'origine** (sans jamais le supprimer). La commande n'effectue
 aucun déplacement de fichier.
 
 Relancer la commande avec les **mêmes coordonnées exactes** de source/compte/
-droit/branche/Placement, en remplaçant \`--path\` par le chemin d'origine et
-en ajoutant \`--undo OPERATION_ID\`. Comme pour l'aller : aperçu en lecture
-seule, puis confirmation explicite \`--confirm PLAN_TOKEN\`.
+droit/branche/Placement, en remplaçant `--path` par le chemin d'origine et
+en ajoutant `--undo OPERATION_ID`. Comme pour l'aller : aperçu en lecture
+seule, puis confirmation explicite `--confirm PLAN_TOKEN`.
 
 Le Core vérifie transactionnellement que le journal initial correspond au
 même SourceReference fournisseur, au même Placement et aux chemins de
@@ -69,11 +69,11 @@ symlink, une copie encore présente, un chemin revendiqué par autrui, un
 journal ancien/malformé ou une preuve modifiée provoque un refus.
 
 Le commit est **une nouvelle relocalisation B**, inscrite dans un second
-journal append-only (\`undo_of\`) : aucune suppression ni modification de
+journal append-only (`undo_of`) : aucune suppression ni modification de
 droit, SourceReference, OriginLink, Artifact, acquisition, archive 0.7 ou
 fichier. L'opération initiale n'est jamais effacée. Une annulation ne
 réhabilite pas une provenance devenue invalide. Un relink inverse manuel
-sans \`--undo\` reste possible suivant son ancien contrat strict mais ne
+sans `--undo` reste possible suivant son ancien contrat strict mais ne
 prétend pas être l'annulation d'une opération identifiée.
 
 Le retrait de l'ancien exécuteur W4 reste en place ; les autres cas non
