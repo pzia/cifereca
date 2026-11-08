@@ -17,12 +17,21 @@ def test_search_route():
     assert url.endswith("query=Les+livres+%26+les+mots")
     assert mod.classify_search_response(
         request_url=url, status=302,
-        location="/1409/Catalog/Search?query=fake&type=all&pageindex=0",
+        location="/1409/Catalog/Search?query=Les+livres+%26+les+mots&type=all&pageindex=0",
     ) == "search_redirect"
     assert mod.classify_search_response(
         request_url=url, status=302,
         location="https://malicious.example/1409/Catalog/Search",
     ) == "untrusted_redirect"
+    for location in (
+        "/1409/Catalog/Search?query=different&pageindex=0",
+        "/1409/Catalog/Search?query=Les+livres+%26+les+mots&pageindex=200",
+        "/1409/Catalog/Search?query=Les+livres+%26+les+mots&pageindex=0&ticket=SYNTHETIC",
+        "/1717/Catalog/Search?query=Les+livres+%26+les+mots&pageindex=0",
+    ):
+        assert mod.classify_search_response(
+            request_url=url, status=302, location=location
+        ) == "untrusted_redirect"
     assert mod.classify_search_response(request_url=url, status=200) == "html_unparsed"
     assert mod.classify_search_response(request_url=url, status=401) == "authentication_required"
     assert mod.classify_search_response(request_url=url, status=403) == "authentication_required"
@@ -58,6 +67,8 @@ def test_catalogue_is_partial_even_without_cards():
     "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=1&ticket=SYNTHETIC",
     "https://www.biblioaccess.com/1409/Catalog/Search?query=different&pageindex=1",
     "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=0",
+    "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=2",
+    "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=1&pageindex=1",
 ])
 def test_untrusted_next_href(href):
     url = "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=0"
