@@ -400,6 +400,7 @@ def test_vault_refuses_auth_schema_containing_unchecked_values():
     trace.exchanges.append(PrivateExchange(
         1, "POST", url=ORIGIN + "/login", status=200,
         request_body=None, response_body=None,
+        request_body_reason="auth_redacted",
         auth_request_schema={
             "version": 1, "query_names": [],
             "form_names": ["password=PRIVATE_VALUE"],
