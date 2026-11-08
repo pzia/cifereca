@@ -218,10 +218,9 @@ def test_reader_rebound_during_confirmed_checkpoint_suppresses_positive_reply(
     )["status"] == "confirmed"
 
 
-def test_non_paris_primary_alias_is_never_positive_evidence(harness, monkeypatch):
-    # A provider result cannot invent Paris's special "primary" borrower
-    # alias for an unrelated supplier. Exercise the exact normalized check
-    # without giving the account a different owner mid-request.
+def test_provider_rebound_during_return_does_not_confirm_loan(harness, monkeypatch):
+    # Even when the returned Loan mirrors the account's new provider,
+    # a mid-request change of the pinned account must revoke the lease.
     service, account, session, row, preview = setup_borrower(harness)
     original = session.borrow_explicit_with_claim
 
