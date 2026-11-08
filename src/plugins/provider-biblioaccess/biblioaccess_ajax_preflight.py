@@ -62,6 +62,9 @@ class LoginPreflight:
     _script_request_urls: tuple[tuple[str, str], ...] = field(
         default=(), repr=False, compare=False,
     )
+    _login_post_context: tuple[str, str, str, str, bool] | None = field(
+        default=None, repr=False, compare=False,
+    )
 
 
 class _Page(HTMLParser):
@@ -75,6 +78,10 @@ class _Page(HTMLParser):
         self.scripts = []
         self.fields = []
         self.invalid = False
+        self.hidden_check_values = []
+        self.captcha_text_values = []
+        self.remember_checked = False
+        self.captcha_visibility = []
 
     def handle_starttag(self, tag, attrs):
         self.nodes += 1
@@ -89,8 +96,19 @@ class _Page(HTMLParser):
                 raise LoginPreflightError("login_preflight_limit")
             self.script_depth = 1
             self.scripts.append(values.get("src") or "")
+        elif tag == "div" and values.get("id") == "logon-captcha-form-group":
+            style = (values.get("style") or "").replace(" ", "").lower()
+            self.captcha_visibility.append("display:none" in style)
         elif tag == "input":
             name = values.get("name") or ""
+            if (values.get("id") == "logon-captcha-checkvalue"
+                    and name == "checkValue" and values.get("type") == "hidden"):
+                self.hidden_check_values.append(values.get("value"))
+            if values.get("id") == "logon-captcha":
+                self.captcha_text_values.append(values.get("value") or "")
+            if (values.get("id") == "logon-rememberMe"
+                    and name == "rememberMe" and values.get("type") == "checkbox"):
+                self.remember_checked = "checked" in values
             if name in _KNOWN_FIELDS and _SAFE_FIELD_NAME.fullmatch(name):
                 if len(self.fields) >= MAX_FIELDS:
                     raise LoginPreflightError("login_preflight_limit")
@@ -187,7 +205,32 @@ def inspect_login_preflight(html: str, *, page_url: str = IDP + _LOGIN_PATH) -> 
         if re.search(r"(?<![A-Za-z0-9_])" + re.escape(name)
                      + r"(?![A-Za-z0-9_])", inline_text)
     ))
+    # Fresh hidden challenge context from the very same page and cookie jar.
+    # The ordinary first POST includes the server's hidden checkValue even
+    # when its visual CAPTCHA is initially hidden. Never persist or log it.
+    provider_matches = re.findall(
+        r"logonManager\\.provider\\s*=\\s*['\\\"]([A-Za-z]{1,32})['\\\"]",
+        inline_text,
+    )
+    action_matches = re.findall(
+        r"logonManager\\.action\\s*=\\s*['\\\"]([A-Za-z]{1,32})['\\\"]",
+        inline_text,
+    )
+    context = None
+    if (provider_matches == ["Form"] and action_matches == ["logon"]
+            and len(page.hidden_check_values) == 1
+            and type(page.hidden_check_values[0]) is str
+            and 1 <= len(page.hidden_check_values[0]) <= 8192
+            and len(page.captcha_visibility) == 1
+            and page.captcha_visibility[0]
+            and len(page.captcha_text_values) == 1
+            and page.captcha_text_values[0] == ""):
+        context = (
+            "Form", "logon", page.hidden_check_values[0], "",
+            page.remember_checked,
+        )
     return LoginPreflight(
+        _login_post_context=context,
         script_count=len(page.scripts),
         same_origin_script_paths=paths,
         _script_request_urls=script_request_urls,
