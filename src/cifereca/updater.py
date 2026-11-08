@@ -2014,6 +2014,7 @@ def main(argv: list[str] | None = None) -> int:
             result = inspect_updater_retention_readonly(
                 install_root(), _plugin_packages_root(), now=time.time(),
                 backups_root=state_dir(create=False) / "dev-updates",
+                core_backups_root=state_dir(create=False) / "update-backups",
             )
         elif a.recovery_inspect:
             result = recovery_inspect()
