@@ -33,7 +33,8 @@ def present_cross_profile_lender_choice(
         return False
     service = window.service
     try:
-        panel = window.search_page.detail
+        search_page = window.search_page
+        panel = search_page.detail
         rendered = panel._rendered_search_detail
         identity = service.current_identity
         context_epoch = service._account_context_epoch
@@ -76,6 +77,8 @@ def present_cross_profile_lender_choice(
             visible = window.search_page.detail._rendered_search_detail
             return bool(
                 not getattr(window, "_closed", False)
+                and window.service is service
+                and window.search_page is search_page
                 and service.current_identity is identity
                 and identity.identity_id == preview.requesting_identity_id
                 and service._account_context_epoch == context_epoch
