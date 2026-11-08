@@ -19,6 +19,39 @@ _TRACE_LOG = logging.getLogger("cifereca")
 
 
 
+def _task_has_typed_lock_busy(error: BaseException) -> bool:
+    """Only a genuine LockBusyError (possibly chained) proves lock contention.
+
+    Error messages, provider text and a lone BlockingIOError are insufficient.
+    Avoid unbounded or cyclic exception chains.
+    """
+    from ..locking import LockBusyError
+    visited: set[int] = set()
+    current: BaseException | None = error
+    for _ in range(6):
+        if current is None or id(current) in visited:
+            break
+        visited.add(id(current))
+        if isinstance(current, LockBusyError):
+            return True
+        current = getattr(current, "__cause__", None)
+    return False
+
+
+def _task_feedback_classification(origin: str, kind: str, control: object) -> str:
+    """Closed, non-sensitive attribution from the submitted task contract."""
+    if origin == "user" or control is not None:
+        return "user_action"
+    if kind == "provider-connect":
+        return "provider_connect"
+    if kind in {
+        "opening-sync", "deep-sync", "source-sync", "source-materialize",
+        "sync-preflight", "sync-audit",
+    }:
+        return "sync"
+    return "background_task"
+
+
 class TaskRunner:
     """Run non-UI operations outside GTK with priority and global feedback."""
 
@@ -398,6 +431,13 @@ class TaskRunner:
                 else (self._borrow_outcome(outcome[1]) if trace_kind == "borrow"
                       else self._source_sync_outcome(outcome[1], trace_kind))
             )
+            typed_lock_busy = (
+                outcome[0] == "error"
+                and _task_has_typed_lock_busy(outcome[1])
+            )
+            task_classification = _task_feedback_classification(
+                origin, trace_kind, control,
+            )
             # A completed worker may still be awaiting GTK delivery. Keep
             # its original result as the authoritative pending operation
             # until the UI consumes it; close() clears detached reservations.
@@ -461,7 +501,15 @@ class TaskRunner:
                 if control is not None and control.get_root() is not None:
                     control.set_sensitive(True)
                 kind_outcome, payload = outcome
+                if typed_lock_busy:
+                    from .ui_dialog_observation import observe_background_busy_task
+                    observe_background_busy_task(
+                        self.window, task_ref=task_id,
+                        classification=task_classification,
+                    )
                 feedback_error = None if business_status == "success" else (
+                    "Une autre opération est déjà en cours"
+                    if typed_lock_busy else
                     "Demande d’emprunt envoyée ; confirmation indisponible. "
                     "Ne réempruntez pas : actualisez vos prêts ultérieurement."
                     if (trace_kind == "borrow" and business_status == "pending"
@@ -528,20 +576,33 @@ class TaskRunner:
                 else:
                     if getattr(self.window, "_closed", False):
                         return False
-                    if err:
-                        try:
-                            err(payload)
-                        except Exception as callback_error:
-                            trace_failure("gtk_error_callback", callback_error)
-                            if getattr(self.window, "_closed", False):
-                                return False
-                            if origin != "automatic":
-                                self.present_error(callback_error)
-                    elif origin != "automatic":
-                        # Automatic exceptions are already visible in the
-                        # activity feedback and correlated local diagnostics.
-                        # Only an intentional request gets a blocking modal.
-                        self.present_error(payload)
+                    # Carry the exact TaskRunner identity into *this* GTK
+                    # completion only; no context survives a later callback.
+                    # A background lock contention is nonmodal even if an
+                    # existing provider-specific err() calls show_error().
+                    from .ui_dialog_observation import task_dialog_context
+                    with task_dialog_context(
+                        self.window, task_ref=task_id,
+                        classification=task_classification,
+                        reason_code="lock_busy" if typed_lock_busy else "unknown",
+                        suppress_busy_modal=(
+                            typed_lock_busy and origin != "user" and control is None
+                        ),
+                    ):
+                        if err:
+                            try:
+                                err(payload)
+                            except Exception as callback_error:
+                                trace_failure("gtk_error_callback", callback_error)
+                                if getattr(self.window, "_closed", False):
+                                    return False
+                                if origin != "automatic":
+                                    self.present_error(callback_error)
+                        elif origin != "automatic":
+                            # The caller remains responsible for marking user
+                            # intent. Background contention keeps its task
+                            # receipt and nonblocking status instead of a modal.
+                            self.present_error(payload)
                 return False
 
             # Terminal outcomes are more important than repaint/progress
