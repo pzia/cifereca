@@ -126,9 +126,22 @@ def _identifier_mappings(item: Any) -> tuple[Mapping[str, Any], ...]:
     return tuple(out)
 
 
+# These are bibliographic identifier namespaces, never arbitrary keys from
+# provider or account metadata. Unknown keys may carry access tokens or other
+# private application coordinates and must not enter public ranking keys.
+_PUBLIC_IDENTIFIER_SCHEMES = frozenset((
+    "doi", "ark", "oclc", "lccn", "issn", "ismn", "isni",
+    "asin", "ean", "urn", "idref", "viaf", "wikidata",
+))
+
+
 def _identifier_scalar(value: Any) -> str:
-    raw = _text(value)
-    if not raw:
+    if type(value) is not str or not 0 < len(value) <= 256:
+        return ""
+    raw = value.strip()
+    if (not raw or not raw.isprintable()
+            or any(char in raw for char in "?&#=@\\")
+            or raw.startswith(("http:", "https:", "//"))):
         return ""
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", raw)).casefold()
 
@@ -217,7 +230,7 @@ def identifier_values(item: Any) -> set[str]:
                     if isbn:
                         cleaned.add("isbn:" + isbn)
                 continue
-            if key in ignored_mapping_keys:
+            if key in ignored_mapping_keys or key not in _PUBLIC_IDENTIFIER_SCHEMES:
                 continue
             for value in values:
                 scalar = _identifier_scalar(value)
