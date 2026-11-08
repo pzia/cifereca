@@ -125,7 +125,8 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
                 if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
                     before.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_size,
                     after.st_mtime_ns, after.st_ctime_ns) or size != before.st_size or (
-                        linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino) or not\n                        _directory_chain_unchanged(root_fd, tuple(chain), flags):
+                        linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino) or not
+                        _directory_chain_unchanged(root_fd, tuple(chain), flags):
                     result.append(UsbFileObservation(path, "unverified"))
                 else:
                     remaining -= size
