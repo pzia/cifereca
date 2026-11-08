@@ -26,10 +26,6 @@ CANONICAL = {
 
 
 @pytest.mark.parametrize("dispatch", (
-    {"file_only": True, **FILE_ONLY, "undo_operation": "legacy-undo"},
-    {"file_only": True, **FILE_ONLY, "context_current": lambda: True},
-    {"file_only": True, **{k: v for k, v in FILE_ONLY.items()
-                           if k != "item_id"}},
     {"canonical_relink": True, **CANONICAL, "undo_operation": "legacy-undo"},
     {"canonical_relink": True, **CANONICAL, "context_current": lambda: True},
     {"canonical_relink": True, **CANONICAL, "cancelled": lambda: False},
@@ -39,16 +35,29 @@ CANONICAL = {
 def test_invalid_offline_dispatch_rejected_before_any_profile_access(
     monkeypatch, dispatch,
 ):
-    monkeypatch.setattr(
-        repair, "config_file",
-        lambda **_kw: pytest.fail("invalid request cannot open Config"),
-    )
-    monkeypatch.setattr(
-        repair, "database_file",
-        lambda **_kw: pytest.fail("invalid request cannot open SQLite"),
-    )
+    monkeypatch.setattr(repair, "config_file",
+                        lambda **kw: pytest.fail("cannot open Config"))
+    monkeypatch.setattr(repair, "database_file",
+                        lambda **kw: pytest.fail("cannot open SQLite"))
     with pytest.raises(repair.ReconciliationRejected, match="^invalid_request$"):
         repair.reconcile_existing_profile(**dispatch)
+
+
+@pytest.mark.parametrize("extra", (
+    {"undo_operation": "legacy-undo"},
+    {"context_current": lambda: True},
+    {"identity_id": "alice"},
+))
+def test_retired_file_only_dispatch_never_opens_private_data(monkeypatch, extra):
+    monkeypatch.setattr(repair, "config_file",
+                        lambda **kw: pytest.fail("cannot open Config"))
+    monkeypatch.setattr(repair, "database_file",
+                        lambda **kw: pytest.fail("cannot open SQLite"))
+    with pytest.raises(repair.ReconciliationRejected,
+                       match="^legacy_file_observation_retired$"):
+        repair.reconcile_existing_profile(
+            file_only=True, **{**FILE_ONLY, **extra},
+        )
 
 
 def test_retired_legacy_default_fails_before_option_or_profile_read(monkeypatch):
