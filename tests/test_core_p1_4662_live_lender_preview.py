@@ -140,6 +140,7 @@ def test_alex_exact_observation_is_visible_under_default_but_not_executable(harn
     option = preview.options[0]
     assert option.borrowing_identity_id == "alex"
     assert option.transfer_state == "unknown"
+    assert preview.rejection_reasons == ()
     assert option.executable is preview.executable is False
     assert session.calls == 0
     assert service.current_identity.identity_id == "default"
@@ -150,7 +151,9 @@ def test_missing_supplier_evidence_is_never_a_borrowable_offer(harness):
     service, account, session = harness
     candidate = _candidate()
     no_evidence = replace(candidate, evidence=None)
-    assert _preview(service, no_evidence).status == "none"
+    preview = _preview(service, no_evidence)
+    assert preview.status == "none"
+    assert preview.rejection_reasons == ("permission_unverified",)
     assert _preview(service, replace(
         candidate, evidence=replace(candidate.evidence, permission="unknown"),
     )).options == ()
@@ -163,12 +166,20 @@ def test_missing_supplier_evidence_is_never_a_borrowable_offer(harness):
     assert session.calls == 0
 
 
-@pytest.mark.parametrize("mutation", [
-    "disconnected", "foreign_owner", "disabled", "wrong_primary",
-    "account_missing", "not_primary", "foreign_evidence", "session_rebind",
-    "plugin_disabled", "provider_capability_missing", "claim_spent",
+@pytest.mark.parametrize(("mutation", "reason"), [
+    ("disconnected", "lender_unavailable"),
+    ("foreign_owner", "lender_unavailable"),
+    ("disabled", "lender_unavailable"),
+    ("wrong_primary", "lender_unavailable"),
+    ("account_missing", "lender_unavailable"),
+    ("not_primary", "lender_unavailable"),
+    ("foreign_evidence", "lender_unavailable"),
+    ("session_rebind", "lender_unavailable"),
+    ("plugin_disabled", "capability_unverified"),
+    ("provider_capability_missing", "capability_unverified"),
+    ("claim_spent", "previous_attempt"),
 ])
-def test_broken_lender_scope_rejects_without_fallback(harness, mutation):
+def test_broken_lender_scope_rejects_without_fallback(harness, mutation, reason):
     service, account, session = harness
     row = _candidate()
     if mutation == "disconnected":
@@ -213,7 +224,10 @@ def test_broken_lender_scope_rejects_without_fallback(harness, mutation):
         service.storage.metadata_set(
             borrow_claim_key(account, row.notice), "spent-claim",
         )
-    assert _preview(service, row).options == ()
+    preview = _preview(service, row)
+    assert preview.options == ()
+    assert preview.rejected_count == 1
+    assert preview.rejection_reasons == (reason,)
     assert session.calls == 0
 
 
@@ -253,7 +267,9 @@ def test_rebind_during_plugin_inspection_returns_no_actions(harness):
         return old_status(plugin_id)
 
     service._plugin_manager.status = rebind
-    assert _preview(service, _candidate()).options == ()
+    preview = _preview(service, _candidate())
+    assert preview.options == ()
+    assert preview.rejection_reasons == ("context_changed",)
     assert session.calls == 0
 
 
@@ -535,8 +551,11 @@ def test_conflicting_same_edition_observation_blocks_old_positive_in_any_order(
         ))
     else:
         other = replace(positive, transfer_state="blocked")
-    assert _preview(service, positive, other).status == "none"
-    assert _preview(service, other, positive).status == "none"
+    for rows in ((positive, other), (other, positive)):
+        preview = _preview(service, *rows)
+        assert preview.status == "none"
+        assert preview.rejected_count == 1
+        assert preview.rejection_reasons == ("conflicting_observations",)
     assert session.calls == 0
 
 

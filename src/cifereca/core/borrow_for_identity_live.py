@@ -7,7 +7,7 @@ options are non-executable; a later explicit action must revalidate everything.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import time
 
 from ..models import Account, SearchResult
@@ -22,7 +22,7 @@ from ..plugin_api.lending_borrower_eligibility import (
 from ..providers.base import ProviderDescriptor
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_preview import (
-    BorrowForIdentityPreview, BorrowForIdentityWitness,
+    BorrowForIdentityPreview, BorrowForIdentityWitness, BorrowOfferRejection,
     _display_account_label, preview_borrow_for_identity,
 )
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
@@ -95,7 +95,7 @@ def _observation_route(row: ObservedBorrowOffer) -> tuple[str, ...] | None:
 
 def _noncontradictory_observations(
     observations: tuple[ObservedBorrowOffer, ...] | list[ObservedBorrowOffer],
-) -> tuple[ObservedBorrowOffer, ...]:
+) -> tuple[tuple[ObservedBorrowOffer, ...], list[BorrowOfferRejection]]:
     """Do not let an old positive survive a denial for the exact same route.
 
     Only same-identity/credential/borrower/book/collection candidates
@@ -105,9 +105,13 @@ def _noncontradictory_observations(
     """
     seen: dict[tuple[str, ...], ObservedBorrowOffer] = {}
     contradictions: set[tuple[str, ...]] = set()
+    rejected: list[BorrowOfferRejection] = []
     for row in observations:
         route = _observation_route(row)
-        if route is None or route in contradictions:
+        if route is None:
+            rejected.append("scope_unverified")
+            continue
+        if route in contradictions:
             continue
         previous = seen.get(route)
         if previous is None:
@@ -120,20 +124,22 @@ def _noncontradictory_observations(
              row.transfer_state, row.notice.medium)):
             contradictions.add(route)
             del seen[route]
-    return tuple(seen.values())
+            rejected.append("conflicting_observations")
+    return tuple(seen.values()), rejected
 
 
 def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
-             source_epoch: int) -> BorrowForIdentityWitness | None:
+             source_epoch: int) -> BorrowForIdentityWitness | BorrowOfferRejection:
     """Rebind every coordinate to in-memory Core and owned SQLite state.
 
     Never invoke session.accounts, source getters, provider operations, or
     remote eligibility checks. An unknown fact is a rejected preview option.
     """
     item, evidence = row.notice, row.evidence
+    if (type(evidence) is not BorrowerOperationEvidence
+            or type(row.edition_evidence) is not ExactEditionBorrowerEvidence):
+        return "permission_unverified"
     if (type(item) is not SearchResult
-            or type(evidence) is not BorrowerOperationEvidence
-            or type(row.edition_evidence) is not ExactEditionBorrowerEvidence
             or type(row.edition_id) is not str
             or type(row.observed_at) is not int
             or row.transfer_state not in ("unknown", "blocked")
@@ -147,7 +153,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                     item.source_provider, item.source_credential, item.docbase,
                 )
             or item.medium != "digital"):
-        return None
+        return "scope_unverified"
 
     try:
         # All cross-profile lenders must already be known locally; never
@@ -156,7 +162,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or service.storage.identity_for_connection(
                     evidence.provider_id, evidence.credential_id,
                 ) != evidence.identity_id):
-            return None
+            return "lender_unavailable"
         connections = service.storage.provider_connections(
             identity_id=evidence.identity_id,
         )
@@ -169,11 +175,11 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                     and conn.get("enabled") is True
                     for conn in connections
                 ) != 1):
-            return None
+            return "lender_unavailable"
 
         accounts = service.accounts
         if type(accounts) not in (list, tuple) or len(accounts) > 512:
-            return None
+            return "lender_unavailable"
         matches = [
             account for account in accounts
             if type(account) is Account and account.is_primary is True
@@ -184,7 +190,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                  )
         ]
         if len(matches) != 1:
-            return None
+            return "lender_unavailable"
         account = matches[0]
         session_key = service._session_key(
             evidence.provider_id, evidence.credential_id,
@@ -198,7 +204,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or state.get("provider_id") != evidence.provider_id
                 or state.get("credential_id") != evidence.credential_id
                 or sum(other is account for other in rows) != 1):
-            return None
+            return "lender_unavailable"
 
         # Paris's normal borrow contract supports exactly the selected
         # primary. Other profiles are NEVER activated to inspect this fact.
@@ -206,38 +212,40 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 and not _normal_paris_source_current(
                     service, item, evidence.identity_id,
                 )):
-            return None
+            return "lender_unavailable"
 
         plugin_id = service._provider_plugin_ids.get(evidence.provider_id)
         manager = service._plugin_manager
         if type(plugin_id) is not str or not plugin_id or manager is None:
-            return None
+            return "capability_unverified"
         plugin_status = manager.status(plugin_id)
         declaration = plugin_status.descriptor
         if (plugin_status.enabled is not True
                 or plugin_status.state != "ready"
                 or declaration.id != plugin_id
                 or declaration.type != "provider.library"):
-            return None
+            return "capability_unverified"
         enabled_for = getattr(manager, "enabled_for_identity", None)
         if callable(enabled_for) and enabled_for(
                 plugin_id, evidence.identity_id) is not True:
-            return None
+            return "capability_unverified"
         descriptor = state.get("descriptor")
         if (type(descriptor) is not ProviderDescriptor
                 or descriptor.id != evidence.provider_id):
-            return None
+            return "capability_unverified"
         capability = assess_lending_operation(
             "loan.borrow",
             manifest_capabilities=declaration.capabilities,
             descriptor=descriptor, session=session, account=account,
         )
+        if capability.usable is not True:
+            return "capability_unverified"
         eligibility = assess_borrower_operation_eligibility(
             capability, account=account, branch=item.docbase,
             evidence=evidence,
         )
         if eligibility.state != "eligible_observed":
-            return None
+            return "permission_unverified"
         # #4662: borrower-wide readiness can be true while *this book*
         # is unavailable. Never qualify a different edition/collection,
         # a catalogue-only CanLoan hint, or a generic branch permission.
@@ -246,17 +254,19 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             evidence=row.edition_evidence,
         )
         if exact_offer.status != "eligible":
-            return None
+            return "permission_unverified"
         key = borrow_claim_key(account, item)
-        if key is None or service.storage.metadata_get(key) is not None:
-            return None
+        if key is None:
+            return "scope_unverified"
+        if service.storage.metadata_get(key) is not None:
+            return "previous_attempt"
 
         # The context/source generation must be stable throughout reads.
         # This avoids publishing even a non-executable stale option after
         # an ABA switch or a credential/session replacement.
         session_epoch = state.get("_epoch", source_epoch)
         if type(session_epoch) is not int or session_epoch < 0:
-            return None
+            return "scope_unverified"
         # A reconnected session may reuse an identical local _epoch and
         # credential. Include the Core's independent source-generation in
         # the option ID: Cantor pairing is injective for nonnegative ints,
@@ -272,7 +282,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or service.storage.identity_for_connection(
                     evidence.provider_id, evidence.credential_id,
                 ) != evidence.identity_id):
-            return None
+            return "context_changed"
         lender = service.identity_by_id(evidence.identity_id)
         name = _lender_label(getattr(lender, "label", None))
         return BorrowForIdentityWitness(
@@ -285,7 +295,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
     except Exception:
         # A failed local fact lookup is UNKNOWN, never a reason to offer an
         # action or to expose the provider exception in UI/diagnostics.
-        return None
+        return "local_check_failed"
 
 
 def preview_live_borrow_for_current_identity(
@@ -315,13 +325,16 @@ def preview_live_borrow_for_current_identity(
     # A newer denial or unknown status for one exact borrower/edition must
     # not be discarded while retaining an older positive witness. Refuse
     # contradictory duplicates before converting them to admissible options.
-    scoped = _noncontradictory_observations(observations)
-    witnesses = tuple(
-        witness for row in scoped
-        if (witness := _witness(
+    scoped, rejected = _noncontradictory_observations(observations)
+    witnesses: list[BorrowForIdentityWitness] = []
+    for row in scoped:
+        witness = _witness(
             service, row, context_epoch=context, source_epoch=source,
-        )) is not None
-    )
+        )
+        if isinstance(witness, BorrowForIdentityWitness):
+            witnesses.append(witness)
+        else:
+            rejected.append(witness)
     # The pure preview validates all user-provided edition/time identifiers.
     result = preview_borrow_for_identity(
         requesting_identity_id=requesting,
@@ -331,12 +344,14 @@ def preview_live_borrow_for_current_identity(
     if (service.current_identity is not identity
             or getattr(service, "_account_context_epoch", None) != context
             or source_context_epoch(service) != source):
-        return preview_borrow_for_identity(
+        empty = preview_borrow_for_identity(
             requesting_identity_id=requesting,
             expected_edition_id=expected_edition_id,
             witnesses=(), now=now, context_epoch=context,
         )
-    return result
+        return replace(empty, rejected_count=1, rejection_reasons=("context_changed",))
+    reasons = tuple(sorted((*rejected, *result.rejection_reasons)))
+    return replace(result, rejected_count=len(reasons), rejection_reasons=reasons)
 
 
 @dataclass(frozen=True, slots=True)

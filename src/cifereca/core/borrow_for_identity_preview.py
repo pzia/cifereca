@@ -13,7 +13,7 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
 import json
-from typing import Any
+from typing import Any, Literal
 
 from ..models import Account, SearchResult
 from ..plugin_api.lending_capabilities import (
@@ -25,6 +25,12 @@ _MAX_OFFERS = 64
 _MAX_AGE = 300
 _MAX_ID = 160
 _MAX_NAME = 80
+
+BorrowOfferRejection = Literal[
+    "scope_unverified", "lender_unavailable", "capability_unverified",
+    "permission_unverified", "previous_attempt", "conflicting_observations",
+    "context_changed", "local_check_failed",
+]
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -76,6 +82,9 @@ class BorrowForIdentityPreview:
     requires_explicit_choice: bool
     # Never a lending claim or mutation/transfer approval.
     executable: bool = False
+    # One reason per rejected candidate or conflicting route, in stable order.
+    # If the entire snapshot is invalidated, only context_changed is reported.
+    rejection_reasons: tuple[BorrowOfferRejection, ...] = ()
 
 
 def _id(value: object) -> bool:
@@ -257,10 +266,12 @@ def preview_borrow_for_identity(
         requesting_identity_id=requesting_identity_id,
         status=status, label=label, options=ordered,
         rejected_count=rejected, requires_explicit_choice=requires_choice,
+        rejection_reasons=("scope_unverified",) * rejected,
     )
 
 
 __all__ = [
+    "BorrowOfferRejection",
     "BorrowForIdentityWitness", "BorrowForIdentityOption",
     "BorrowForIdentityPreview", "preview_borrow_for_identity",
 ]
