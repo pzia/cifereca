@@ -12,6 +12,9 @@ from ..models import Loan
 from .covers import CoverResolution, candidate, resolve_cover
 from .loan_source_identity import loan_source_key
 
+# Read-only library fallback must not scan an unbounded or lazy provider view.
+_MAX_LOAN_COVER_ROWS = 10000
+
 
 def attested_local_loan_cover_proof(
     loan: Loan | None, entitlement: Mapping[str, object],
@@ -91,39 +94,46 @@ def loan_local_cover(
 
     scope = loan_source_key(loan)
     candidates = []
-    for row in library_rows:
-        if (type(row) is not dict or row.get("local") is not True
-                or row.get("identity_id") != loan.identity_id
-                or type(row.get("placement_id")) is not str
-                or not row["placement_id"]
-                or type(row.get("artifact_id")) is not str
-                or not row["artifact_id"]):
-            continue
-        proofs = row.get("_exact_loan_cover_proofs", ())
-        if type(proofs) not in (tuple, list) or len(proofs) > 128:
-            continue
-        for proof in proofs:
-            if (type(proof) is not dict
-                    or proof.get("loan_source_key") != scope
-                    or proof.get("identity_id") != loan.identity_id
-                    or proof.get("source_provider") != loan.source_provider
-                    or proof.get("source_credential") != loan.source_credential
-                    or proof.get("source_account_id") != loan.source_account_id
-                    or proof.get("record_id") != loan.record_id
-                    or proof.get("loan_id") != loan.id
-                    or proof.get("artifact_id") != row["artifact_id"]
-                    or proof.get("placement_id") != row["placement_id"]):
+    try:
+        for index, row in enumerate(library_rows):
+            if index >= _MAX_LOAN_COVER_ROWS:
+                return missing
+            if (type(row) is not dict or row.get("local") is not True
+                    or row.get("identity_id") != loan.identity_id
+                    or type(row.get("placement_id")) is not str
+                    or not row["placement_id"]
+                    or type(row.get("artifact_id")) is not str
+                    or not row["artifact_id"]):
                 continue
-            tier = proof.get("tier")
-            if tier not in ("embedded", "origin", "catalog"):
+            proofs = row.get("_exact_loan_cover_proofs", ())
+            if type(proofs) not in (tuple, list) or len(proofs) > 128:
                 continue
-            # Equal-strength conflicting evidence must remain ambiguous.
-            cover = candidate(
-                proof.get("url"), tier=tier, source="verified-local-placement",
-                evidence_id=str(row["placement_id"]), evidence_strength=100,
-            )
-            if cover is not None:
-                candidates.append(cover)
+            for proof in proofs:
+                if (type(proof) is not dict
+                        or proof.get("loan_source_key") != scope
+                        or proof.get("identity_id") != loan.identity_id
+                        or proof.get("source_provider") != loan.source_provider
+                        or proof.get("source_credential") != loan.source_credential
+                        or proof.get("source_account_id") != loan.source_account_id
+                        or proof.get("record_id") != loan.record_id
+                        or proof.get("loan_id") != loan.id
+                        or proof.get("artifact_id") != row["artifact_id"]
+                        or proof.get("placement_id") != row["placement_id"]):
+                    continue
+                tier = proof.get("tier")
+                if tier not in ("embedded", "origin", "catalog"):
+                    continue
+                # Equal-strength conflicting evidence must remain ambiguous.
+                cover = candidate(
+                    proof.get("url"), tier=tier, source="verified-local-placement",
+                    evidence_id=str(row["placement_id"]), evidence_strength=100,
+                )
+                if cover is not None:
+                    candidates.append(cover)
+    except Exception:
+        # A lazy projection may fail mid-stream. Never return a partial
+        # candidate set or allow provider/private exception text to escape.
+        return missing
     return resolve_cover(candidates)
 
 
