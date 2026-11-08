@@ -98,3 +98,7 @@ Les anciens guides [projection backup](CORE-P1-3196-BACKUP-PROJECTION-AUDIT.md),
 Voir [SIMULATION.md](SIMULATION.md), [TEST-ORGANIZATION.md](TEST-ORGANIZATION.md) et [RATIONALIZATION-STATUS.md](RATIONALIZATION-STATUS.md).
 
 **Recette cible** : ≥2 faux providers interchangeables et adaptateurs réels, 0/1/N, même droit/édition sur branches différentes, 2 comptes/profils avec SHA égal et droits distincts, même titre/SHA divergents, inventaires partiels, transfert A→B→C et huit liens persistés, suppression B/C, import manuel, ADEPT, conversion, fichier déplacé, crash FS/SQLite et seconde Sync sans mutation/téléchargement inutile. Ces exigences ne sont **pas** des affirmations de tests déjà passés.
+
+## Données de profils : visibilité commune (décision 08/11/2026)
+
+Les données métier de tous les profils sont consultables par tous les utilisateurs de l'installation ; un profil est un contexte/filtres, pas une ACL de lecture. La provenance et la titularité exactes demeurent visibles ; les secrets d'authentification et les opérations mutatrices auprès des fournisseurs conservent leurs contrôles distincts. Contrat détaillé : [PROFILE-DATA-SHARING.md](PROFILE-DATA-SHARING.md) (#2385, #3104, #4761, #4662).
