@@ -17,8 +17,11 @@ def remember_import(service, result, scope):
     if candidate is None:
         return
     acquisition_id, path, artifact_id = candidate
-    service.storage.acquisition_bind_bnf_display_loan(
-        acquisition_id, path=str(path), artifact_id=artifact_id, scope=scope)
+    service.storage.acquisition_bind_observed_display_loan(
+        acquisition_id, path=str(path), artifact_id=artifact_id, scope=scope,
+        placement_provider_id='bnf-pret',
+        provenance_field='bnf_observed_loan',
+    )
 
 
 def display_links(storage, placements, local_keys):

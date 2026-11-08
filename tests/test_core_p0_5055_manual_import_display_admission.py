@@ -19,7 +19,7 @@ def receipt(tmp_path, monkeypatch):
     calls = []
     service = NS(storage=NS(
         acquisition_get=lambda aid: row if aid == "purchase-1" else None,
-        acquisition_bind_bnf_display_loan=lambda *args, **kwargs:
+        acquisition_bind_observed_display_loan=lambda *args, **kwargs:
             calls.append((args, kwargs)),
     ))
     result = {
@@ -46,6 +46,8 @@ def test_unchanged_import_is_only_an_eligible_display_candidate(receipt):
     assert calls[0][1] == {
         "path": str(path), "artifact_id": row["artifact_id"],
         "scope": _scope(),
+        "placement_provider_id": "bnf-pret",
+        "provenance_field": "bnf_observed_loan",
     }
     assert calls[0][0] == ("purchase-1",)
 
