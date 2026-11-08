@@ -47,7 +47,7 @@ def test_exact_source_to_loan_and_borrow_with_library_local_fallback_gap():
         obs(a, "provider_loan", "missing"),
         obs(a, "library", "observed"),  # Local/EPUB evidence, not loan proof.
         obs(a, "borrow_view", "missing"),
-        obs(a, "search", "unrecognized") if False else obs(a, "search", "missing"),
+        obs(a, "search", "missing"),
     )
     (row,) = reconcile_exact_cover_matrix((a,), rows)
     assert row.transitions == (
