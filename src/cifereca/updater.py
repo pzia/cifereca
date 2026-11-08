@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import quote
 
+from .core.plugin_package_mutation_lock import package_mutation_lease, PackageMutationLeaseError
 from .install_paths import ArchiveNotFoundError, resolve_archive
 from .paths import config_dir, data_dir, database_file, state_dir
 from .update_progress import (step, update_phase, update_operation, skip_update_phase,
@@ -1219,98 +1220,102 @@ def reconcile_lost_previous(
         return _previous_reconciliation_plan(root, transaction_id)
     if type(acknowledge) is not str or not re.fullmatch(r"[a-f0-9]{64}", acknowledge):
         raise UpdateError("reconciliation_acknowledgement_invalid")
-    with _exclusive_updater_lock(root):
-        plan = _previous_reconciliation_plan(root, transaction_id)
-        if acknowledge != plan["acknowledgement_sha256"]:
-            raise UpdateError("reconciliation_evidence_changed")
-        folder = _transaction_path(root, transaction_id)
-        original = _read_transaction(folder)
-        private_audit = root / "reconciliation-audit"
-        if private_audit.is_symlink():
-            raise UpdateError("reconciliation_audit_store_unsafe")
-        private_audit.mkdir(mode=0o700, exist_ok=True)
-        if (not private_audit.is_dir() or private_audit.is_symlink()
-                or private_audit.stat().st_uid != os.getuid()
-                or private_audit.stat().st_mode & 0o077):
-            raise UpdateError("reconciliation_audit_store_unsafe")
-        audit = private_audit / (transaction_id + "-" + acknowledge[:16] + ".json")
-        receipt = {
-            "schema": "cifereca.updater.reconciliation-audit/1",
-            "transaction_id": transaction_id,
-            "reason": "before_previous_missing",
-            "result": "reconciled_degraded",
-            "acknowledgement_sha256": acknowledge,
-            "original_transaction": original,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        data = (json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2)
-                + "\n").encode("utf-8")
-        if audit.exists() or audit.is_symlink():
-            # Recovery from a crash *after* fsync(audit) but *before* saving
-            # the degraded journal is allowed only for the identical proof.
-            # A partial, foreign or replaced audit must not be rewritten.
-            if audit.is_symlink():
-                raise UpdateError("reconciliation_existing_audit_unsafe")
-            fd = -1
-            try:
-                fd = os.open(audit, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-                existing_stat = os.fstat(fd)
-                if (not stat.S_ISREG(existing_stat.st_mode)
-                        or existing_stat.st_nlink != 1
-                        or existing_stat.st_uid != os.getuid()
-                        or existing_stat.st_mode & 0o077
-                        or existing_stat.st_size > 128 * 1024 * 1024):
-                    raise UpdateError("reconciliation_existing_audit_unsafe")
-                with os.fdopen(fd, "rb") as stream:
+    try:
+        with _exclusive_updater_lock(root):
+            with package_mutation_lease(_plugin_packages_root()):
+                plan = _previous_reconciliation_plan(root, transaction_id)
+                if acknowledge != plan["acknowledgement_sha256"]:
+                    raise UpdateError("reconciliation_evidence_changed")
+                folder = _transaction_path(root, transaction_id)
+                original = _read_transaction(folder)
+                private_audit = root / "reconciliation-audit"
+                if private_audit.is_symlink():
+                    raise UpdateError("reconciliation_audit_store_unsafe")
+                private_audit.mkdir(mode=0o700, exist_ok=True)
+                if (not private_audit.is_dir() or private_audit.is_symlink()
+                        or private_audit.stat().st_uid != os.getuid()
+                        or private_audit.stat().st_mode & 0o077):
+                    raise UpdateError("reconciliation_audit_store_unsafe")
+                audit = private_audit / (transaction_id + "-" + acknowledge[:16] + ".json")
+                receipt = {
+                    "schema": "cifereca.updater.reconciliation-audit/1",
+                    "transaction_id": transaction_id,
+                    "reason": "before_previous_missing",
+                    "result": "reconciled_degraded",
+                    "acknowledgement_sha256": acknowledge,
+                    "original_transaction": original,
+                    "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                }
+                data = (json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2)
+                        + "\n").encode("utf-8")
+                if audit.exists() or audit.is_symlink():
+                    # Recovery from a crash *after* fsync(audit) but *before* saving
+                    # the degraded journal is allowed only for the identical proof.
+                    # A partial, foreign or replaced audit must not be rewritten.
+                    if audit.is_symlink():
+                        raise UpdateError("reconciliation_existing_audit_unsafe")
                     fd = -1
-                    saved = json.loads(stream.read().decode("utf-8"))
-            except (OSError, ValueError, UnicodeError):
-                raise UpdateError("reconciliation_existing_audit_unreadable") from None
-            finally:
-                if fd >= 0:
-                    os.close(fd)
-            if (type(saved) is not dict
-                    or saved.get("schema") != receipt["schema"]
-                    or saved.get("transaction_id") != transaction_id
-                    or saved.get("reason") != receipt["reason"]
-                    or saved.get("result") != receipt["result"]
-                    or saved.get("acknowledgement_sha256") != acknowledge
-                    or saved.get("original_transaction") != original):
-                raise UpdateError("reconciliation_existing_audit_mismatch")
-        else:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-            try:
-                fd = os.open(audit, flags, 0o600)
-            except OSError:
-                raise UpdateError("reconciliation_audit_write_refused") from None
-            try:
-                with os.fdopen(fd, "wb") as stream:
-                    stream.write(data)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-            except OSError:
-                raise UpdateError("reconciliation_audit_write_failed") from None
-        directory_fd = os.open(private_audit, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-        # Any drift between proof and journal commit must still fail closed;
-        # leaving the audit receipt without a state switch is recoverable.
-        refreshed = _previous_reconciliation_plan(root, transaction_id)
-        if refreshed["acknowledgement_sha256"] != acknowledge:
-            raise UpdateError("reconciliation_evidence_changed")
-        original["reconciliation"] = {
-            "schema": 1, "reason": "before_previous_missing",
-            "audit": audit.name, "acknowledgement_sha256": acknowledge,
-        }
-        _save_transaction(folder, original, "reconciled_degraded")
-        return {
-            "ok": True, "id": transaction_id, "state": "reconciled_degraded",
-            "reason": "before_previous_missing", "audit": audit.name,
-            "no_previous_release_restored": True,
-        }
+                    try:
+                        fd = os.open(audit, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                        existing_stat = os.fstat(fd)
+                        if (not stat.S_ISREG(existing_stat.st_mode)
+                                or existing_stat.st_nlink != 1
+                                or existing_stat.st_uid != os.getuid()
+                                or existing_stat.st_mode & 0o077
+                                or existing_stat.st_size > 128 * 1024 * 1024):
+                            raise UpdateError("reconciliation_existing_audit_unsafe")
+                        with os.fdopen(fd, "rb") as stream:
+                            fd = -1
+                            saved = json.loads(stream.read().decode("utf-8"))
+                    except (OSError, ValueError, UnicodeError):
+                        raise UpdateError("reconciliation_existing_audit_unreadable") from None
+                    finally:
+                        if fd >= 0:
+                            os.close(fd)
+                    if (type(saved) is not dict
+                            or saved.get("schema") != receipt["schema"]
+                            or saved.get("transaction_id") != transaction_id
+                            or saved.get("reason") != receipt["reason"]
+                            or saved.get("result") != receipt["result"]
+                            or saved.get("acknowledgement_sha256") != acknowledge
+                            or saved.get("original_transaction") != original):
+                        raise UpdateError("reconciliation_existing_audit_mismatch")
+                else:
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                    try:
+                        fd = os.open(audit, flags, 0o600)
+                    except OSError:
+                        raise UpdateError("reconciliation_audit_write_refused") from None
+                    try:
+                        with os.fdopen(fd, "wb") as stream:
+                            stream.write(data)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                    except OSError:
+                        raise UpdateError("reconciliation_audit_write_failed") from None
+                directory_fd = os.open(private_audit, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+                # Any drift between proof and journal commit must still fail closed;
+                # leaving the audit receipt without a state switch is recoverable.
+                refreshed = _previous_reconciliation_plan(root, transaction_id)
+                if refreshed["acknowledgement_sha256"] != acknowledge:
+                    raise UpdateError("reconciliation_evidence_changed")
+                original["reconciliation"] = {
+                    "schema": 1, "reason": "before_previous_missing",
+                    "audit": audit.name, "acknowledgement_sha256": acknowledge,
+                }
+                _save_transaction(folder, original, "reconciled_degraded")
+                return {
+                    "ok": True, "id": transaction_id, "state": "reconciled_degraded",
+                    "reason": "before_previous_missing", "audit": audit.name,
+                    "no_previous_release_restored": True,
+                }
 
+    except PackageMutationLeaseError:
+        raise UpdateError("reconciliation_plugin_package_lock_unavailable") from None
 
 def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | None:
     expected = _release_plugin_manifest(release)
