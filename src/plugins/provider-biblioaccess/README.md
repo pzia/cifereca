@@ -321,3 +321,31 @@ brut canonique (après revue des données sensibles) ; activer `post`
 légitimement et fraîches. Sinon, ne pas envoyer de POST et qualifier ces
 champs lors de l'instrumentation suivante. Aucun navigateur interactif
 n'est embarqué dans le provider.
+
+
+### Recette manuelle depuis l'éditeur de compte (après #3691)
+
+L'option `interactive_authentication=True` continue de **bloquer toute
+connexion automatique** au démarrage, lors des synchronisations et des
+reconnexions globales. Les captures terrain ont confirmé le code
+`interactive_auth_required` dans le startup ; aucune requête La Rochelle
+ne partait.
+
+Une action générique **« Tester ce compte »** est désormais proposée par
+l'éditeur des comptes **interactifs** enregistrés et activés. Elle vérifie
+le compte persisté (identité/provider/credential) puis lance **une seule
+session temporaire** via le contrat public du provider, sur un worker UI,
+sans déconnecter les autres sources. Les modifications non enregistrées
+doivent être sauvegardées au préalable. Le clic est la demande explicite
+de recette du compte. Le provider applique ensuite son propre mode
+`experimental_http_probe=on` ou `post`, et garde ses validations.
+
+La session temporaire est systématiquement fermée. L'action ne crée
+aucun compte Core, aucun droit et ne lance aucun prêt/acquisition.
+Les traces `La Rochelle HTTP probe` se trouvent dans le journal brut
+canonique. **Pour une première recette terrain, utiliser `on`** :
+les deux GET devraient apparaître. Si les GET et la structure du login
+sont confirmés, le mode `post` permet ensuite un unique POST explicitement
+consenti, seulement avec les paramètres réellement connus, sans deviner de
+valeur. Un retour `200` et `MyLoans` seul ne démontre toujours pas
+l'identité d'un emprunteur et ne justifie pas l'activation de `sync.loans`.
