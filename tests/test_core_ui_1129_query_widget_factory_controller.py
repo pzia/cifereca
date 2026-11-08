@@ -430,7 +430,7 @@ def test_library_selector_includes_scoped_local_and_numilog_origins():
     }]
     refresh_library_origin_choices(window, snapshot, identity_id="alice")
     options = dict(window.library_controls.set_provider_choices.call_args.args[0])
-    assert options["numilog"] == "Numilog — Mes achats (compte)"
+    assert options["numilog"] == "Display numilog"  # historical plugin descriptor authority
     assert options["local"] == "Local"
     assert len(options) == len(set(options))
     # An offline Library filter must not authorize or announce an online
