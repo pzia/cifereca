@@ -134,9 +134,9 @@ def project_library_rows(
                 if row.get("desired_state") == "keep"
             )
             if present_count:
-                meta_parts.append(f"Kobo {present_count}/{len(device_statuses)}")
+                meta_parts.append(f"Appareil {present_count}/{len(device_statuses)}")
             elif keep_count:
-                meta_parts.append("Kobo à synchroniser")
+                meta_parts.append("Appareil à synchroniser")
         rows.append(row_factory(
             key, str(item.get("title") or "Sans titre"),
             str(item.get("author") or ""),
