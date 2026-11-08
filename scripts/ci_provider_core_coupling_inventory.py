@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 DEFAULT_PROVIDERS = ("kobo", "bnf", "numilog")
-CORE_ROOTS = ("core", "gui", "providers")
 
 
 def _provider_literal(node: ast.AST, providers: set[str]) -> str | None:
@@ -32,12 +31,23 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
         if isinstance(node, ast.Import):
             modules = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
-            modules = [("." * node.level) + (node.module or "")]
+            stem = ("." * node.level) + (node.module or "")
+            # Count an import statement once when its module is already
+            # provider-specific; inspect imported aliases for generic parents.
+            stem_parts = stem.casefold().lstrip(".").split(".")
+            is_provider_module = any(
+                part == provider or part.startswith(provider + "_")
+                for part in stem_parts for provider in names
+            )
+            modules = [stem] if is_provider_module else [
+                stem + "." + alias.name for alias in node.names
+            ]
         else:
             modules = []
         for module in modules:
             parts = module.casefold().lstrip(".").split(".")
-            matched = sorted(set(parts) & names)
+            matched = sorted({provider for part in parts for provider in names
+                              if part == provider or part.startswith(provider + "_")})
             if matched:
                 imports.append({"line": node.lineno, "module": module, "providers": matched})
         if isinstance(node, ast.Compare):
@@ -60,11 +70,10 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
     src = root / "src" / "cifereca"
     findings: dict[str, object] = {}
     parse_errors: dict[str, str] = {}
-    for relative_root in (*CORE_ROOTS, "kobo"):
-        directory = src / relative_root
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.rglob("*.py")):
+    # All installed source modules are Core-owned unless explicitly shipped
+    # as external plugins (which live outside src/cifereca).
+    if src.is_dir():
+        for path in sorted(src.rglob("*.py")):
             relative = path.relative_to(root).as_posix()
             try:
                 result = inspect_source(path.read_text(encoding="utf-8"), providers)
@@ -73,15 +82,6 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
                 continue
             if result["imports"] or result["comparisons"]:
                 findings[relative] = result
-    service = src / "services.py"
-    if service.is_file():
-        relative = service.relative_to(root).as_posix()
-        try:
-            result = inspect_source(service.read_text(encoding="utf-8"), providers)
-            if result["imports"] or result["comparisons"]:
-                findings[relative] = result
-        except (SyntaxError, UnicodeError) as exc:
-            parse_errors[relative] = type(exc).__name__
     return {"metric": "core.provider.static-coupling/1",
             "providers": list(providers),
             "files_with_signals": len(findings),
