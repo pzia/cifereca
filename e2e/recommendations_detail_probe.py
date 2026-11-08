@@ -628,6 +628,33 @@ def main():
                 "image_requests": min(20, len(image_requests)),
                 "list_stack_mapped": int(page.list_stack.get_mapped()),
                 "detail_pane_mapped": int(page.detail.get_mapped()),
+                # Closed bounded diagnostics: no URL, account or widget text.
+                # A mapped blank cover can be an unbound cell, a cancelled
+                # preview, a completed failure or an invalidated generation.
+                "list_url_bound": min(20, sum(
+                    cover._url == COVER_URL for cover in all_list
+                )),
+                "detail_url_bound": min(20, sum(
+                    cover._url == COVER_URL for cover in all_detail
+                )),
+                "list_spinner": min(20, sum(
+                    cover.spinner.get_visible() for cover in all_list
+                )),
+                "detail_spinner": min(20, sum(
+                    cover.spinner.get_visible() for cover in all_detail
+                )),
+                "list_request_live": min(20, sum(
+                    cover._request is not None for cover in all_list
+                )),
+                "detail_request_live": min(20, sum(
+                    cover._request is not None for cover in all_detail
+                )),
+                "list_generation_max": min(100, max(
+                    (cover._generation for cover in all_list), default=0
+                )),
+                "detail_generation_max": min(100, max(
+                    (cover._generation for cover in all_detail), default=0
+                )),
             }
             if attempt >= 20:
                 # Exported source lines distinguish a lost bind from a
