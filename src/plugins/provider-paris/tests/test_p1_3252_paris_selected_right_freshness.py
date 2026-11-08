@@ -375,3 +375,32 @@ def test_selected_candidate_missing_latest_card_blocks_without_content_get(tmp_p
         assert session._selected_delivery_inventory.get() is None
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("fail", "expected"), [
+    (False, "paris_selected_offer_unobserved"),
+    (True, "paris_selected_offer_observation_unavailable"),
+])
+def test_selected_preflight_distinguishes_attested_absence_from_transport_failure(
+    fail, expected, tmp_path, monkeypatch,
+):
+    session, account, _loan, client, gets = prepare(tmp_path, monkeypatch)
+    client.digital = []
+    if fail:
+        original = client.loans
+
+        def unavailable(upstream, borrower):
+            if upstream == "DILICOM":
+                raise RuntimeError("synthetic DILICOM timeout")
+            return original(upstream, borrower)
+
+        client.loans = unavailable
+    try:
+        with pytest.raises(ProviderCapabilityError, match=expected):
+            session.rights_selected_delivery_offer_snapshot(
+                account, edition_id="edition-1", right_id="loan-1",
+                kind="loan", branch="dilicom", explicit_user_action=True,
+            )
+        assert gets == []
+    finally:
+        session.close()
