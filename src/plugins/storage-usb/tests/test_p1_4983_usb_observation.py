@@ -1,0 +1,75 @@
+"""P1 #4983: bounded, read-only observation of caller-selected USB paths."""
+from __future__ import annotations
+
+from hashlib import sha256
+from pathlib import Path
+import sys
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cifereca_storage_usb import PLUGIN, observe_usb_files
+
+
+def test_two_device_profiles_and_verified_bytes(tmp_path):
+    service = PLUGIN.activate(None)
+    a = tmp_path / "reader-a"
+    b = tmp_path / "reader-b"
+    for root in (a, b):
+        (root / "cifereca").mkdir(parents=True)
+    (a / "cifereca" / "book.epub").write_bytes(b"ebook-a")
+    (b / "cifereca" / "book.epub").write_bytes(b"ebook-b")
+    first = service.observe_usb_files(a, ("cifereca/book.epub", "cifereca/absent.epub"))
+    second = service.observe_usb_files(b, ("cifereca/book.epub",))
+    assert [(row.status, row.size) for row in first] == [("present", 7), ("missing", None)]
+    assert first[0].sha256 == sha256(b"ebook-a").hexdigest()
+    assert second[0].sha256 == sha256(b"ebook-b").hexdigest()
+    assert first[0].sha256 != second[0].sha256
+
+
+def test_symlinks_and_special_objects_never_attest_presence(tmp_path):
+    (tmp_path / "managed").mkdir()
+    (tmp_path / "outside.epub").write_bytes(b"outside")
+    (tmp_path / "managed" / "link.epub").symlink_to(tmp_path / "outside.epub")
+    (tmp_path / "alias").symlink_to(tmp_path / "managed", target_is_directory=True)
+    rows = observe_usb_files(tmp_path, ("managed/link.epub", "alias/no.epub", "managed"))
+    assert [row.status for row in rows] == ["unverified"] * 3
+    assert all(row.sha256 is None for row in rows)
+
+
+@pytest.mark.parametrize("name", (
+    "../escape", "/absolute", "a//b", "./book", "a/./b", "a/../b",
+    "x\\y", "C:drive", "bad\x00name",
+))
+def test_path_traversal_rejected_before_read(tmp_path, name):
+    with pytest.raises(ValueError, match="usb_observation_path_invalid"):
+        observe_usb_files(tmp_path, (name,))
+
+
+def test_collisions_rejected_and_absent_root_is_not_missing(tmp_path):
+    with pytest.raises(ValueError, match="usb_observation_paths_collide"):
+        observe_usb_files(tmp_path, ("Books/a.epub", "books/A.EPUB"))
+    assert observe_usb_files(tmp_path / "removed", ("book.epub",))[0].status == "unverified"
+
+
+def test_observation_does_not_modify_files(tmp_path):
+    root = tmp_path / "reader"
+    root.mkdir()
+    file = root / "book.pdf"
+    file.write_bytes(b"%PDF-offline")
+    before = file.stat()
+    row = observe_usb_files(root, ("book.pdf",))[0]
+    assert row.sha256 == sha256(b"%PDF-offline").hexdigest()
+    assert row.status == "present"
+    assert file.read_bytes() == b"%PDF-offline"
+    assert file.stat().st_mtime_ns == before.st_mtime_ns
+
+
+def test_large_file_and_batch_are_bounded(tmp_path):
+    from cifereca_storage_usb import _MAX_TOTAL_BYTES
+    oversized = tmp_path / "huge.epub"
+    with oversized.open("wb") as stream:
+        stream.truncate(_MAX_TOTAL_BYTES + 1)
+    assert observe_usb_files(tmp_path, ("huge.epub",))[0].status == "unverified"
+    with pytest.raises(ValueError, match="usb_observation_request_invalid"):
+        observe_usb_files(tmp_path, ("unrelated",) * 257)
