@@ -15,6 +15,17 @@ et une façade `ProviderSession` qui échoue explicitement à `connect()`.
 `interactive_authentication=True` empêche un démarrage automatique, mais
 ne constitue pas un navigateur, un protocole d'auth, ni un transport de cookies.
 
+### Composants hors réseau ajoutés
+
+`biblioaccess_observations.py` fournit :
+- construction bornée de la route `SearchResultSummary` ; classification conservatrice de 302, 200, 401/403, 429 et erreurs serveur ;
+- extraction de liens vers `Catalog/Book/{id}` limitée au domaine HTTPS et au tenant 1409, et détection d'une pagination `pageindex` bornée (100 pages maximum) ; la couverture est **toujours partielle** tant qu'aucun contrat métier ne garantit la liste complète ;
+- inspection structurelle de XML ACSM ADEPT, avec limite d'octets et rejet DTD/entités ; seul le format, le type déclaré et les durées sont restitués, jamais les tokens, les URL, les identifiants, un droit ou un fichier acquis.
+
+Les tests utilisent exclusivement du HTML/XML synthétique. Ces helpers ne
+remplacent **ni** un parseur de fiche/listes validé sur observations
+expurgées, **ni** l'authentification, **ni** un runtime ADEPT.
+
 ### Portée effective
 
 - `catalog.search/detail` : non publiés ; parsing HTTP/HTML réel et
