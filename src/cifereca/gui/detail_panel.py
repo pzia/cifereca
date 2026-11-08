@@ -1135,15 +1135,20 @@ class DetailPanel(Gtk.Box):
                        for option in preview.options)):
             return False
 
+        try:
+            service = self.window.service
+            requester = service.current_identity
+        except Exception:
+            return False
+
         def current() -> bool:
             try:
-                service = self.window.service
                 rendered = self._rendered_search_detail
                 return bool(
                     type(rendered) is tuple and len(rendered) == 2
                     and rendered[0] is expected_item
-                    and service.current_identity is not None
-                    and service.current_identity.identity_id ==
+                    and service.current_identity is requester
+                    and getattr(requester, "identity_id", None) ==
                         preview.requesting_identity_id
                     and service._account_context_epoch == expected_context_epoch
                     and service._source_context_epoch == expected_source_epoch
