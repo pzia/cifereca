@@ -140,3 +140,26 @@ def test_symlinked_active_pointer_is_blocker_and_all_pinned(tmp_path):
     assert "unsafe_plugin_pointer" in report["blockers"]
     assert report["plan"]["candidates"] == 0
     assert "SECRET" not in json.dumps(report)
+
+
+def test_symlinked_install_receipt_never_reads_external_content(tmp_path):
+    store = tmp_path / "packages"
+    version = _version(store, "org.test", "1.0.0", 200_000)
+    receipt = version / ".cifereca-install.json"
+    receipt.unlink()
+    outside = tmp_path / "user-private.json"
+    outside.write_text('{"access_token":"DO_NOT_READ"}', encoding="utf-8")
+    receipt.symlink_to(outside)
+    report = _plan(store)
+    assert "plugin_version_ownership_unqualified" in report["blockers"]
+    assert "DO_NOT_READ" not in json.dumps(report)
+    assert report["plan"]["objects"][0]["decision"] == "retain"
+
+
+def test_hardlinked_install_receipt_is_not_owned_by_updater(tmp_path):
+    store = tmp_path / "packages"
+    version = _version(store, "org.test", "1.0.0", 200_000)
+    os.link(version / ".cifereca-install.json", tmp_path / "extra-link")
+    report = _plan(store)
+    assert "plugin_version_ownership_unqualified" in report["blockers"]
+    assert report["plan"]["objects"][0]["decision"] == "retain"
