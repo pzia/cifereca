@@ -71,8 +71,8 @@ def test_v2_passive_kobo_backups_survive_without_synthesizing_v3_rights(tmp_path
          "sha256": "a" * 64, "size": 111},
         {"item_id": "pending", "status": "pending"},
         {"item_id": "queued", "status": "queued"},
-        # A prior acquisition attempt is not *passive*. Keep the legacy
-        # compatibility ledger until W2 supervision can replace it.
+        # Even a recorded attempt is historical; its 0.7 receipt is not
+        # a provider-backed entitlement or canonical acquisition.
         {"item_id": "interrupted", "status": "pending",
          "attempt_count": 1, "last_attempt_at": 1700000000},
         {"item_id": "complete", "status": "complete",
@@ -113,8 +113,8 @@ def test_v2_passive_kobo_backups_survive_without_synthesizing_v3_rights(tmp_path
             selected = set(facts[table])
             for passive in ("archived", "pending", "queued"):
                 assert ("kobo", "vault", passive) not in selected
-            assert ("kobo", "vault", "complete") in selected
-            assert ("kobo", "vault", "interrupted") in selected
+            assert ("kobo", "vault", "complete") not in selected
+            assert ("kobo", "vault", "interrupted") not in selected
             assert ("external", "other", "other-provider") in selected
     finally:
         storage.close()
@@ -154,9 +154,12 @@ def test_v2_pending_with_interruption_clue_remains_reviewable(tmp_path, clue):
     try:
         assert storage.schema_version() == 14
         assert storage.backup_get("kobo", "vault", "edition") is not None
-        assert (
-            "kobo", "vault", "edition"
-        ) in set(_positive(storage)["receipts"])
+        assert ("kobo", "vault", "edition") not in set(
+            _positive(storage)["receipts"]
+        )
+        assert ("kobo", "vault", "edition") not in set(
+            _positive(storage)["rights"]
+        )
         with storage._lock, storage._connect() as db:
             assert db.execute("SELECT COUNT(*) FROM source_references").fetchone()[0] == 0
     finally:
