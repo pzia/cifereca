@@ -87,6 +87,44 @@ def identity_statistics(self, identity_id, *, window_seconds: int=2592000):
             'scope':'persisted_inventory_last_observed_provider_loans_and_action_window'}
 
 
+def _configured_source_keys_for_identity(service, identity_id: str) -> set[tuple[str, str]] | None:
+    """Read configured accounts as negative-capability proof, fail closed.
+
+    Live upstream accounts may omit a configured lender after login failure.
+    A connected store alone cannot prove absence of lending sources.
+    """
+    try:
+        rows = service.config.get("providers.accounts", None)
+    except Exception:
+        return None
+    if type(rows) is not list or len(rows) > 2048:
+        return None
+    keys: set[tuple[str, str]] = set()
+    for row in rows:
+        if type(row) is not dict:
+            return None
+        enabled = row.get("enabled", True)
+        if enabled is False:
+            continue
+        if enabled is not True:
+            return None
+        owner = row.get("identity_id")
+        # An unscoped legacy account might belong to this profile.
+        if type(owner) is not str or not owner:
+            return None
+        if owner != identity_id:
+            continue
+        provider, credential = row.get("provider"), row.get("id")
+        if (type(provider) is not str or not provider
+                or type(credential) is not str or not credential):
+            return None
+        key = (provider, credential)
+        if key in keys:
+            return None
+        keys.add(key)
+    return keys
+
+
 def dashboard_state(self) -> list[dict[str, Any]]:
     """Return dashboard cards without triggering network I/O."""
     cards: list[dict[str, Any]] = []
@@ -110,7 +148,11 @@ def dashboard_state(self) -> list[dict[str, Any]]:
         # Negative lending evidence is only available from a unique, live
         # session for EVERY configured private source. A missing/disconnected
         # or partially declared source is unknown, never "no loan source".
-        non_lending_proven = bool(account_rows) and len(credentials) == len(credential_rows)
+        configured_keys = _configured_source_keys_for_identity(self, identity.identity_id)
+        non_lending_proven = (
+            bool(account_rows) and len(credentials) == len(credential_rows)
+            and configured_keys is not None and configured_keys == credentials
+        )
         matched_private_sessions = Counter()
         for session in self._sessions.values():
             descriptor = session.descriptor
