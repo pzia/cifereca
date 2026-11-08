@@ -155,6 +155,9 @@ class LibraryService:
         self.config = config
         self.storage = storage
         self.diagnostics = diagnostics
+        # Runtime-only boundary: an old opening run is history, not a
+        # current-startup incident. Set before any initialization work.
+        self._dashboard_launch_at = int(time.time())
         # Final 0.9.2 core: concrete providers are supplied exclusively by
         # Plugin API packages. The core registry starts empty and is populated
         # when the PluginManager is attached.
@@ -172,6 +175,16 @@ class LibraryService:
         self._source_context_epoch = 0
         recovered = self._recover_identity_directory_migration()
         self._sync_identity_configuration()
+        # Baseline by identity and run ID avoids same-second restart ambiguity.
+        # A persisted run present at launch remains historic even if its
+        # started_at equals the first run of this process.
+        self._dashboard_initial_run_ids = {
+            identity.identity_id: (
+                (row or {}).get("sync_run_id")
+                if (row := self.storage.latest_sync_run(identity.identity_id)) else None
+            )
+            for identity in self.identities
+        }
         if recovered:
             self.catalog_scan()
             self._identity_directory_engine().finish()

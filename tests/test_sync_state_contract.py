@@ -114,7 +114,59 @@ def test_dashboard_state_reports_latest_sync_without_remote_work(tmp_path: Path)
         })
         cards = service.dashboard_state()
         assert [card["identity_id"] for card in cards] == ["default", "alex"]
-        assert cards[0]["sync"]["new_acquisitions"] == 3
+        # A pre-launch run remains queryable, never an active dashboard fact.
+        assert cards[0]["sync"] is None
+        assert service.storage.latest_sync_run("default")["new_acquisitions"] == 3
         assert cards[1]["sync"] is None
     finally:
         service.close()
+
+
+def test_dashboard_current_opening_isolated_from_historic_partial(tmp_path: Path):
+    service = _service(tmp_path)
+    try:
+        launch = service._dashboard_launch_at
+        service.storage.sync_run_put({
+            "identity_id": "default", "scope": "opening", "status": "partial",
+            "started_at": launch - 100, "finished_at": launch - 99,
+            "errors": 2, "attention_required": 0,
+        })
+        assert all(card["sync"] is None for card in service.dashboard_state())
+        assert service.storage.latest_sync_run("default")["errors"] == 2
+
+        run_id = service.storage.sync_run_put({
+            "identity_id": "default", "scope": "opening", "status": "running",
+            "started_at": launch + 1,
+        })
+        cards = service.dashboard_state()
+        assert cards[0]["sync"]["status"] == "running"
+        assert cards[1]["sync"] is None
+        service.storage.sync_run_put({
+            "sync_run_id": run_id, "identity_id": "default", "scope": "opening",
+            "status": "partial", "started_at": launch + 1,
+            "finished_at": launch + 2, "errors": 1,
+        })
+        cards = service.dashboard_state()
+        assert cards[0]["sync"]["errors"] == 1
+        assert cards[1]["sync"] is None
+    finally:
+        service.close()
+
+
+def test_dashboard_restart_does_not_reuse_previous_launch_errors(tmp_path: Path):
+    first = _service(tmp_path)
+    try:
+        first.storage.sync_run_put({
+            "identity_id": "alex", "scope": "opening", "status": "failed",
+            "started_at": first._dashboard_launch_at + 1,
+            "errors": 2,
+        })
+        assert first.dashboard_state()[1]["sync"]["errors"] == 2
+    finally:
+        first.close()
+    second = _service(tmp_path)
+    try:
+        assert second.dashboard_state()[1]["sync"] is None
+        assert second.storage.latest_sync_run("alex")["errors"] == 2
+    finally:
+        second.close()
