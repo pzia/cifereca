@@ -109,6 +109,9 @@ def test_interactive_background_auth_does_not_accept_undeclared_or_non_dict_opti
                 {"options": {"authenticated_sync": True}}):
         assert not provider_sessions._interactive_background_opted_in(
             descriptor, row)
+    for flag in (False, "true", 1, None):
+        assert not provider_sessions._interactive_background_opted_in(
+            descriptor, {"enabled": flag, "options": {"authenticated_sync": "on"}})
     descriptor.background_authentication_option_key = None
     assert not provider_sessions._interactive_background_opted_in(
         descriptor, {"options": {"authenticated_sync": "on"}})
