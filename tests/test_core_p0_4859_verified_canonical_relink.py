@@ -729,3 +729,37 @@ def test_offline_cli_undo_is_exact_and_does_not_start_core(
     public = json.dumps(preview) + json.dumps(applied) + json.dumps(reverse) + json.dumps(finished)
     for secret in ("vault-1", "buyer-A", "book-1", str(original), str(moved), SHA):
         assert secret not in public
+
+
+def test_journal_undo_rejects_intervening_relink_aba_with_original_path_again(
+    published,
+):
+    """A→B→C→B cannot reuse A→B's undo, even in one SQLite second."""
+    store, original, moved, args, _source, _finished = published
+    unchanged = _unchanged(store)
+    original.rename(moved)
+    token = relink(store, **args)["plan_token"]
+    first = relink(store, **args, confirmation=token)["operation_id"]
+
+    third = moved.with_name("intermediate.pdf")
+    moved.rename(third)
+    step2 = relink(store, **{**args, "new_path": third})["plan_token"]
+    relink(store, **{**args, "new_path": third}, confirmation=step2)
+    third.rename(moved)
+    step3 = relink(store, **args)["plan_token"]
+    relink(store, **args, confirmation=step3)
+
+    # Same SourceReference, origin, SHA and path as immediately after first
+    # operation, but another user-controlled operation intervened.
+    moved.rename(original)
+    before = _read(store, "placements")
+    with pytest.raises(
+        CanonicalRelinkRejected, match="canonical_relink_plan_changed",
+    ):
+        relink(
+            store, **{**args, "new_path": original},
+            undo_operation=first,
+        )
+    assert _read(store, "placements") == before
+    assert _unchanged(store) == unchanged
+    assert original.read_bytes() == BYTES
