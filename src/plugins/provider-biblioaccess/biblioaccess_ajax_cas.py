@@ -286,9 +286,14 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise AjaxCasError("cas_loans_unverified")
                 body = _bounded(response)
-                from biblioaccess_loans_page import inspect_myloans_html
-                candidates = inspect_myloans_html(
-                    body.decode("utf-8", errors="strict"))
+                from biblioaccess_loans_page import (
+                    inspect_myloans_html, LoanPageError,
+                )
+                try:
+                    candidates = inspect_myloans_html(
+                        body.decode("utf-8", errors="strict"))
+                except LoanPageError:
+                    raise AjaxCasError("cas_loans_structure_unverified") from None
                 return CasHttpObservation(
                     "loans_html_unverified", 200,
                     page_book_link_count=candidates.page_book_link_count,
