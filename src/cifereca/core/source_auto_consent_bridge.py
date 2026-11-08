@@ -103,15 +103,21 @@ def toggle_state(db, source: SourceKey):
 
 
 def _consent_generation_key(scope):
-    """Generation key for every source-wide automatic acquisition switch."""
+    """Read the exact legacy epoch key from the same compatibility policy.
+
+    The policy itself remains legacy until every provider has migrated to
+    versioned CAS consent. Unknown or ambiguous provider mappings fail closed.
+    """
+    specs = [
+        spec for (provider, _kind), spec in _POLICIES.items()
+        if provider == scope.provider_id
+    ]
+    if len(specs) != 1:
+        return None
+    prefix, _active, epoch_prefix = specs[0]
     sid = _source_id(scope)
-    if scope.provider_id == "numilog":
-        return "sync.source.numilog.materialization.epoch.v1." + sid
-    if scope.provider_id == "kobo":
-        return "sync.source.materialization.on_start." + sid + ".revision"
-    if scope.provider_id == "bnf-pret":
-        return "sync.source.bnf_auto." + sid + ".revision"
-    return None
+    return (epoch_prefix + sid if epoch_prefix is not None
+            else prefix + sid + ".revision")
 
 
 def consent_generation(storage, scope):
