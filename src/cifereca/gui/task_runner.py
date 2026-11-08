@@ -19,41 +19,42 @@ _TRACE_LOG = logging.getLogger("cifereca")
 
 
 
-def _task_has_typed_lock_busy(error: BaseException) -> bool:
-    """Only a genuine LockBusyError (possibly chained) proves lock contention.
-
-    Error messages, provider text and a lone BlockingIOError are insufficient.
-    Avoid unbounded or cyclic exception chains.
-    """
-    from ..locking import LockBusyError
-    visited: set[int] = set()
-    current: BaseException | None = error
-    for _ in range(6):
-        if current is None or id(current) in visited:
-            break
-        visited.add(id(current))
-        if isinstance(current, LockBusyError):
-            return True
-        current = getattr(current, "__cause__", None)
-    return False
-
-
-def _task_feedback_classification(origin: str, kind: str, control: object) -> str:
-    """Closed, non-sensitive attribution from the submitted task contract."""
-    if origin == "user" or control is not None:
-        return "user_action"
-    if kind == "provider-connect":
-        return "provider_connect"
-    if kind in {
-        "opening-sync", "deep-sync", "source-sync", "source-materialize",
-        "sync-preflight", "sync-audit",
-    }:
-        return "sync"
-    return "background_task"
-
-
 class TaskRunner:
     """Run non-UI operations outside GTK with priority and global feedback."""
+
+    @staticmethod
+    def _task_has_typed_lock_busy(error: BaseException) -> bool:
+        """Only a genuine LockBusyError (possibly chained) proves lock contention.
+    
+        Error messages, provider text and a lone BlockingIOError are insufficient.
+        Avoid unbounded or cyclic exception chains.
+        """
+        from cifereca.locking import LockBusyError
+        visited: set[int] = set()
+        current: BaseException | None = error
+        for _ in range(6):
+            if current is None or id(current) in visited:
+                break
+            visited.add(id(current))
+            if isinstance(current, LockBusyError):
+                return True
+            current = getattr(current, "__cause__", None)
+        return False
+    
+    
+    @staticmethod
+    def _task_feedback_classification(origin: str, kind: str, control: object) -> str:
+        """Closed, non-sensitive attribution from the submitted task contract."""
+        if origin == "user" or control is not None:
+            return "user_action"
+        if kind == "provider-connect":
+            return "provider_connect"
+        if kind in {
+            "opening-sync", "deep-sync", "source-sync", "source-materialize",
+            "sync-preflight", "sync-audit",
+        }:
+            return "sync"
+        return "background_task"
 
 
     def __init__(
@@ -433,9 +434,9 @@ class TaskRunner:
             )
             typed_lock_busy = (
                 outcome[0] == "error"
-                and _task_has_typed_lock_busy(outcome[1])
+                and self._task_has_typed_lock_busy(outcome[1])
             )
-            task_classification = _task_feedback_classification(
+            task_classification = self._task_feedback_classification(
                 origin, trace_kind, control,
             )
             # A completed worker may still be awaiting GTK delivery. Keep
