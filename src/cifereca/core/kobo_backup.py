@@ -3430,6 +3430,11 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
     summary["attempted"] += 1
     attempt_count = int(current.get("attempt_count") or 0) + 1 if current else 1
     attempted_at = int(time.time())
+    # Once the opaque executor returns, its GET may have committed bytes.
+    # A later validation/hash/SQLite error must never downgrade the durable
+    # acquiring checkpoint to retryable error, even if no result can be
+    # safely attributed to this borrower.
+    opaque_get_returned = False
     backup_put({
         **base_record,
         "status": "acquiring",
@@ -3453,6 +3458,7 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         if source_current is not None and not source_current():
             raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
         result = self._execute_kobo_acquisition(search_item, session_target_dir)
+        opaque_get_returned = True
         # The provider executor has already performed its GET. On account,
         # edition, revision or session mismatch, preserve the acquiring
         # checkpoint; NEVER attribute its bytes to the manifest borrower or
@@ -3513,6 +3519,20 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
         # complete/error receipt or trigger another content GET.
         raise
     except Exception as exc:
+        if opaque_get_returned:
+            # A post-GET failure (including mismatched owner, malformed
+            # artifact, SHA inspection or SQLite commit failure) leaves
+            # acquiring intact. The next manifest already quarantines
+            # this status without another GET. Do not write a guessed path,
+            # status or rights on the authority of the unverified result.
+            summary["reconcile_pending"] += 1
+            summary["reconcile_skipped"] += 1
+            emit(
+                "reconcile_required", current=index + 1, total=total,
+                item_id=product_id, title=title,
+                code="legacy_post_get_uncommitted",
+            )
+            return False
         if isinstance(exc, (KoboAdeptError, UserFacingError)) and getattr(exc, "code", "") == "result_unparseable_artifact_present":
             details = dict(getattr(exc, "details", {}) or {})
             artifact_path = Path(str(details.get("artifact_path") or "")) if details.get("artifact_path") else None
