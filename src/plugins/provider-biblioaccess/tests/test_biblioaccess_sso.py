@@ -191,7 +191,7 @@ def test_post_mode_never_gets_network_when_dynamic_input_missing():
 
 def test_post_mode_invalid_dynamic_field_never_gets_network():
     options = _post_options()
-    options["ajax_dc"] = "SYNTHETIC\\nINVALID"
+    options["ajax_dc"] = "SYNTHETIC" + chr(10) + "INVALID"
     session = _post_session(options)
     try:
         with pytest.raises(mod.ProviderConfigurationError, match="shape_mismatch"):
