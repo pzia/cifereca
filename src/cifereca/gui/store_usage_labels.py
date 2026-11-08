@@ -1,17 +1,9 @@
-"""P1 #1867: fixed UI vocabulary for private stores vs public catalogues.
+"""Legacy plugin-manager help text, separate from search route labels.
 
-Only provider/plugin IDs explicitly known to Core get custom display wording.
-These helpers do not discover, authenticate, enable or query any provider.
-Search filters retain the original provider ID and its exact routing scope.
+P0 #5083: selectable source names are supplied by plugin descriptors.
+These compatibility hints never discover or authorize a provider.
 """
 from __future__ import annotations
-
-
-_SEARCH_LABELS = {
-    "kobo": "Kobo — Catalogue et compte",
-    "numilog": "Numilog — Mes achats (compte)",
-    "numilog-catalog": "Numilog — Catalogue public",
-}
 
 
 _PLUGIN_USAGE_HINTS = {
@@ -34,11 +26,6 @@ _PLUGIN_USAGE_HINTS = {
         "indépendante du compte Numilog — Mes achats."
     ),
 }
-
-
-def store_search_source_label(provider_id: str, default_label: str) -> str:
-    """Pure, fixed label; never adds a selectable provider or changes its ID."""
-    return _SEARCH_LABELS.get(provider_id, default_label)
 
 
 def store_plugin_usage_hint(plugin_id: str) -> str:

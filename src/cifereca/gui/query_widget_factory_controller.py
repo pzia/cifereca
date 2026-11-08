@@ -6,7 +6,6 @@ importable without PyGObject and to preserve the optional widget service.
 """
 from __future__ import annotations
 
-from .store_usage_labels import store_search_source_label
 from ..core.provider_identifier import valid_provider_identifier
 
 
@@ -28,13 +27,9 @@ def _provider_choices(window, *, library=False):
             for provider in getattr(window, "_library_origin_provider_ids", ()):
                 providers.setdefault(provider, window.service.provider_display_name(provider))
     # The source filter is a *route selector* (stable provider ID), not a
-    # purchase/loan filter. Relabel known stores after discovery: do not
-    # manufacture a second Kobo provider or display a disabled Numilog
-    # public plugin as selectable.
-    choices = [
-        (provider_id, store_search_source_label(provider_id, label))
-        for provider_id, label in providers.items()
-    ]
+    # purchase/loan filter. Keep only discovered routes; their labels come
+    # directly from plugin descriptors, never from Core brand aliases.
+    choices = list(providers.items())
     return sorted(choices, key=lambda pair: pair[1].casefold())
 
 
