@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Lock
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 
@@ -63,6 +63,9 @@ class BiblioAccessHTTPQualification:
         self._form_actions = {}
         self._login_inspected = False
         self._idp_login_url = None
+        self._cas_service = None
+        self._cas_attempted = False
+        self._logon_status = None
 
     def close(self):
         if not self._closed:
@@ -71,6 +74,7 @@ class BiblioAccessHTTPQualification:
             self._inspected_form_shapes = ()
             self._form_actions = {}
             self._idp_login_url = None
+            self._cas_service = None
             self.http.close()
 
     def inspect_cas_entry(self) -> CasEntryObservation:
@@ -109,6 +113,7 @@ class BiblioAccessHTTPQualification:
                                 or service.query):
                             raise SsoProtocolError("sso_entry_redirect_refused")
                         self._idp_login_url = target
+                        self._cas_service = query["service"][0]
                     return CasEntryObservation(
                         status=302, route="institutional_redirect_unverified")
                 # A landing 200 may represent an already connected user, or
@@ -181,6 +186,7 @@ class BiblioAccessHTTPQualification:
                     content_type=response.headers.get("content-type", ""),
                     body=body,
                 )
+                self._logon_status = observed["status"]
                 return LogonObservation(
                     status=observed["status"],
                     media_type=observed["media_type"],
@@ -189,3 +195,49 @@ class BiblioAccessHTTPQualification:
         except (httpx.HTTPError, UnicodeError):
             # A POST could already have reached the server. No implicit retry.
             raise SsoProtocolError("sso_post_outcome_unknown") from None
+
+    def inspect_cas_return_once(self) -> CasEntryObservation:
+        """One bounded CAS GET and one same-session ticket landing GET.
+
+        Never returns or caches the service ticket, and never marks the
+        provider connected. A POST 200 is not an account proof. No browser.
+        """
+        if self._closed:
+            raise SsoProtocolError("sso_transport_closed")
+        with self._post_lock:
+            if self._cas_attempted:
+                raise SsoProtocolError("sso_cas_already_attempted")
+            if (not self._cas_service or not self._login_inspected
+                    or self._logon_status != 200):
+                raise SsoProtocolError("sso_cas_unqualified")
+            self._cas_attempted = True
+        request_url = ORIGIN + "/cas/login?" + urlencode({"service": self._cas_service})
+        try:
+            with self.http.stream("GET", request_url, follow_redirects=False,
+                                  headers={"Accept": "text/html"}) as response:
+                if response.status_code != 302:
+                    raise SsoProtocolError("sso_cas_return_unverified")
+                location = response.headers.get("location", "")
+                if not location:
+                    raise SsoProtocolError("sso_cas_return_refused")
+                target = urljoin(request_url, location)
+                try:
+                    p = _url(target)
+                except SsoProtocolError:
+                    raise SsoProtocolError("sso_cas_return_refused") from None
+                query = parse_qs(p.query, keep_blank_values=True)
+                if (p.hostname != "www.biblioaccess.com"
+                        or not (p.path == "/1409" or p.path.startswith("/1409/"))
+                        or set(query) != {"ticket"} or len(query["ticket"]) != 1
+                        or not 1 <= len(query["ticket"][0]) <= 2048):
+                    raise SsoProtocolError("sso_cas_return_refused")
+            # Ticket goes only to its exact validated BiblioAccess tenant,
+            # once, in the live HTTPX session. The receipt omits its URL.
+            with self.http.stream("GET", target, follow_redirects=False,
+                                  headers={"Accept": "text/html"}) as landing:
+                if landing.status_code != 200:
+                    raise SsoProtocolError("sso_cas_landing_unverified")
+                return CasEntryObservation(
+                    status=200, route="cas_landing_unverified")
+        except (httpx.HTTPError, UnicodeError):
+            raise SsoProtocolError("sso_cas_transport_unavailable") from None
