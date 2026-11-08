@@ -609,7 +609,9 @@ class TaskRunner:
                         classification=feedback_classification,
                         reason_code="lock_busy" if busy_lock_attested else "unknown",
                         suppress_busy_modal=(
-                            busy_lock_attested and origin != "user" and control is None
+                            busy_lock_attested
+                            and origin in {"automatic", "maintenance", "navigation"}
+                            and control is None
                         ),
                     ):
                         if err:
@@ -620,7 +622,17 @@ class TaskRunner:
                                 if getattr(self.window, "_closed", False):
                                     return False
                                 if origin != "automatic":
-                                    self.present_error(callback_error)
+                                    # A *new* failure in the error callback is
+                                    # not the worker's attested busy lock.
+                                    # Preserve its actionable dialog, scoped
+                                    # to the same task, with no suppression.
+                                    with task_dialog_context(
+                                        self.window, task_ref=task_id,
+                                        classification=feedback_classification,
+                                        reason_code="unknown",
+                                        suppress_busy_modal=False,
+                                    ):
+                                        self.present_error(callback_error)
                         elif origin != "automatic":
                             # The caller remains responsible for marking user
                             # intent. Background contention keeps its task
