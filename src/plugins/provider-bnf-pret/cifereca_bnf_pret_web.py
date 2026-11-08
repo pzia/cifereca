@@ -442,12 +442,50 @@ def _catalog_book_cover(book: _Node, resource_id: str | None = None) -> str | No
     # Keep the old conservative fallback for legacy Book markup without
     # explicit microdata/class markers. Conflicting declared covers stay null.
     sources = declared if declared else unmarked
-    if not sources or len(sources) > 4:
-        return None
+    return _cover_candidates_diagnosis(sources, limit=4)[1]
+
+
+def _cover_candidates_diagnosis(
+    sources: list[str], *, limit: int,
+) -> tuple[str, str | None]:
+    """Classify already-extracted image attributes, without HTTP or rights.
+
+    A missing source, rejected/credential-bearing URL, conflicting public
+    candidates and excessive candidate count are distinct observations.
+    The only positive result is one identical, allowed public image URL.
+    Callers must not promote statuses to loan eligibility or infer a match
+    by book title/ISBN. The status is a fixed vocabulary; raw URLs stay
+    inside the existing thumbnail field, not in the status.
+    """
+    if not sources:
+        return "missing", None
+    if len(sources) > limit:
+        return "ambiguous", None
     images = [_public_cover_url(source) for source in sources]
-    if any(url is None for url in images) or len(set(images)) != 1:
-        return None
-    return images[0]
+    if any(image is None for image in images):
+        return "rejected", None
+    if len(set(images)) != 1:
+        return "conflicting", None
+    return "observed", images[0]
+
+
+def _loan_cover_candidates(card: _Node, resource_id: str) -> list[str]:
+    """Only attributes nested in the *exact* linked resource of this loan."""
+    sources: list[str] = []
+    for anchor in card.walk():
+        if anchor.tag != 'a' or _id(anchor.attrs.get('href', ''), 'resources') != resource_id:
+            continue
+        for node in anchor.walk():
+            if node.tag == 'img':
+                sources.append(node.attrs.get('data-src') or node.attrs.get('src') or '')
+    return sources
+
+
+def _loan_cover_diagnosis(card: _Node, resource_id: str) -> tuple[str, str | None]:
+    """Non-authorizing, in-memory classification of one exact loan card."""
+    return _cover_candidates_diagnosis(
+        _loan_cover_candidates(card, resource_id), limit=3,
+    )
 
 
 def _loan_cover(card: _Node, resource_id: str) -> str | None:
@@ -456,19 +494,7 @@ def _loan_cover(card: _Node, resource_id: str) -> str | None:
     A global image, profile avatar, homonymous catalogue image, or second
     conflicting cover stays unknown. Never use a title/ISBN fallback.
     """
-    sources = []
-    for anchor in card.walk():
-        if anchor.tag != 'a' or _id(anchor.attrs.get('href', ''), 'resources') != resource_id:
-            continue
-        for node in anchor.walk():
-            if node.tag == 'img':
-                sources.append(node.attrs.get('data-src') or node.attrs.get('src') or '')
-    if not sources or len(sources) > 3:
-        return None
-    images = [_public_cover_url(value) for value in sources]
-    if any(value is None for value in images) or len(set(images)) != 1:
-        return None
-    return images[0]
+    return _loan_cover_diagnosis(card, resource_id)[1]
 
 
 
