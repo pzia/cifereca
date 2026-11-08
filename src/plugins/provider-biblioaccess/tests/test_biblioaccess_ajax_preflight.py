@@ -156,7 +156,7 @@ def test_realistic_concatenated_ajax_endpoint_without_leading_slash():
         "'logon.svc/logon?_dc=' + new Date().getTime(); "
         "var captchaCheckValue = $('#logon-captcha-checkvalue').val();")
     assert observed.ajax_endpoint_referenced
-    assert observed.identifier_names == ("_dc", "captchaCheckValue")
+    assert observed.identifier_names == ("_dc", "captcha", "captchaCheckValue")
     assert not observed.value_provenance_verified
 
 
