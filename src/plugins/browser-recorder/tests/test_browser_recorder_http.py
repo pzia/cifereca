@@ -1270,3 +1270,86 @@ def test_closed_coverage_explains_unfinished_without_invented_response():
     assert evidence["text_responses"] == 0
     assert "unread" not in repr(evidence)
     trace.destroy()
+
+
+def test_auth_schema_is_names_and_types_only_across_consented_https_origins():
+    from browser_recorder_vault import _record
+    request_body = (
+        b"username=PRIVATE_LOGIN&password=PRIVATE_PASSWORD&rememberMe=true"
+        b"&captcha=PRIVATE_CAPTCHA&captchaCheckValue=PRIVATE_CODE"
+    )
+    response_body = (
+        b'{"errors":[],"message":"PRIVATE_MESSAGE","success":false,'
+        b'"d":{"token":"PRIVATE_TOKEN"}}'
+    )
+    trace = PrivateHttpTrace((ORIGIN, FOREIGN))
+    try:
+        req = Request(
+            FOREIGN + "/logon.svc/logon?changeUser=private&provider=secret&_dc=123",
+            method="POST",
+            headers={"content-type": "application/x-www-form-urlencoded",
+                     "content-length": str(len(request_body))},
+            data=request_body,
+        )
+        resp = Response(req, data=response_body)
+        emit(trace, req, resp)
+        row = trace.exchanges[0]
+        assert row.request_body is row.response_body is None
+        assert row.request_body_reason == row.response_body_reason == "auth_redacted"
+        assert row.auth_request_schema_state == "schema_captured"
+        assert row.auth_response_schema_state == "schema_captured"
+        assert row.auth_request_schema == {
+            "version": 1,
+            "query_names": ["_dc", "changeUser", "provider"],
+            "form_names": ["captcha", "captchaCheckValue", "password",
+                           "rememberMe", "username"],
+        }
+        assert row.auth_response_schema == {
+            "version": 1,
+            "keys": [["d", "object"], ["errors", "array"],
+                     ["message", "string"], ["success", "boolean"]],
+        }
+        row_snapshot = _record(trace, "b" * 32, "completed")
+        for private in (b"PRIVATE_LOGIN", b"PRIVATE_PASSWORD", b"PRIVATE_CAPTCHA",
+                        b"PRIVATE_CODE", b"PRIVATE_MESSAGE", b"PRIVATE_TOKEN",
+                        b"changeUser=private", b"provider=secret", b"_dc=123"):
+            assert private not in row_snapshot
+        assert b"auth_request_schema" in row_snapshot
+        assert b"auth_response_schema" in row_snapshot
+    finally:
+        trace.destroy()
+
+
+@pytest.mark.parametrize("hazard", ["metadata_only", "compressed", "too_big", "unknown_size"])
+def test_auth_schema_unavailable_does_not_read_private_bodies(hazard):
+    request_body = b"username=SECRET_USER&password=SECRET_PASS"
+    trace = PrivateHttpTrace(
+        (ORIGIN,), metadata_only_origins=(FOREIGN,) if hazard == "metadata_only" else (),
+        max_body=32 if hazard == "too_big" else DEFAULT_BODY_BYTES,
+    )
+    try:
+        url = (FOREIGN if hazard == "metadata_only" else ORIGIN) + "/login"
+        req = Request(
+            url, method="POST",
+            headers={"content-type": "application/x-www-form-urlencoded",
+                     "content-length": str(len(request_body))},
+            data=request_body,
+        )
+        if hazard == "unknown_size":
+            req.sizes = lambda: {}
+        resp = Response(
+            req, data=b'{"token":"SECRET_RESPONSE"}',
+            headers={"content-encoding": "gzip"} if hazard == "compressed" else {},
+        )
+        if hazard == "compressed":
+            req.headers["content-encoding"] = "gzip"
+        emit(trace, req, resp)
+        row = trace.exchanges[0]
+        assert row.auth_request_schema is None
+        assert row.auth_response_schema is None if hazard != "too_big" else True
+        assert req.read_post_data == 0
+        if hazard in ("metadata_only", "compressed", "unknown_size"):
+            assert resp.body_reads == 0
+        assert row.request_body is row.response_body is None
+    finally:
+        trace.destroy()
