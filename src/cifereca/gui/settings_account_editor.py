@@ -176,10 +176,10 @@ def build_provider_account_editor(
     probe_status = None
     if getattr(descriptor, "interactive_authentication", False) is True:
         probe_row = Adw.ActionRow()
-        probe_row.set_title("Recette HTTP de ce compte")
+        probe_row.set_title("Vérifier la connexion au compte")
         probe_row.set_subtitle(
-            "Lancer volontairement le diagnostic du compte enregistré ; "
-            "aucune synchronisation ni connexion implicite.")
+            "Une tentative SSO ponctuelle avec les identifiants enregistrés. "
+            "La session est refermée et n'active pas la synchronisation.")
         probe_button = Gtk.Button(label="Tester ce compte")
         probe_button.set_valign(Gtk.Align.CENTER)
         probe_row.add_suffix(probe_button)
