@@ -754,7 +754,7 @@ def test_opaque_provider_session_epoch_is_scoped_without_provider_io(
     assert session.calls == 0
 
 
-@pytest.mark.parametrize("invalid", ["", "a" * 129, "bad\nsecret", -1, True, None])
+@pytest.mark.parametrize("invalid", ["", "a" * 129, "bad\nsecret", -1, 1 << 256, True, None])
 def test_malformed_provider_session_epoch_cannot_create_lender_offer(
     harness, invalid,
 ):
