@@ -42,7 +42,9 @@ def test_six_step_cas_ajax_remains_unverified():
         if req.url.path == "/login":
             assert str(req.url) == LOGIN
             return httpx.Response(200, headers={"content-type": "text/html"},
-                                  text="<html>Institutional login</html>")
+                                  text='<html><script src="/assets/login.js?v=SYNTHETIC-OPAQUE"></script>'
+                                  '<script>const _dc = 0; const captchaCheckValue = "SYNTHETIC";</script>'
+                                  '<input name="username" value="SYNTHETIC-SECRET"></html>')
         if req.url.path == "/logon.svc/logon":
             assert req.method == "POST"
             assert set(req.url.params) == set(QUERY)
@@ -66,6 +68,12 @@ def test_six_step_cas_ajax_remains_unverified():
         assert not seen
         assert c.observe_entry_once().phase == "entry_redirect_unverified"
         assert c.observe_login_once().phase == "login_html_unverified"
+        preflight = c.login_preflight()
+        assert preflight.same_origin_script_paths == ("/assets/login.js",)
+        assert preflight.inline_identifier_names == ("_dc", "captchaCheckValue")
+        assert preflight.field_names == ("username",)
+        assert not preflight.challenge_resolved
+        assert "SYNTHETIC-SECRET" not in repr(preflight)
         assert c.submit_once(query=QUERY, fields=FORM, consent=True).outcome == "success_reported"
         landing = c.observe_cas_once()
         assert landing.phase == "landing_unverified" and not landing.connected
@@ -151,3 +159,13 @@ def test_loans_redirect_not_evidence_and_no_follow():
         assert seen == [cas.LOANS]
     finally:
         c.close()
+
+def test_preflight_not_available_before_login_or_after_close():
+    c = client_for(lambda _: pytest.fail("No network"))
+    try:
+        with pytest.raises(cas.AjaxCasError, match="preflight_unavailable"):
+            c.login_preflight()
+    finally:
+        c.close()
+    with pytest.raises(cas.AjaxCasError, match="preflight_unavailable"):
+        c.login_preflight()
