@@ -44,9 +44,10 @@ def _pending(tmp_path):
 
 
 def _verify(service, account, item, operation_id):
-    return service.verify_paris_borrow_without_submission(
+    return service.verify_borrow_without_submission(
         item, expected_identity_id="default", expected_account=account,
         expected_operation_id=operation_id,
+        expected_provider_id="paris", expected_docbase="DILICOM",
     )
 
 
