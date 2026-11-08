@@ -127,8 +127,14 @@ class _Metadata(HTMLParser):
         # Prevent unbounded nested graph traversal or recursive expansion.
         nodes = parsed if type(parsed) is list else [parsed]
         for node in nodes[:30]:
-            if type(node) is dict:
-                self.structured.append(node)
+            if type(node) is not dict:
+                continue
+            self.structured.append(node)
+            graph = node.get("@graph")
+            if type(graph) is list:
+                self.structured.extend(
+                    item for item in graph[:30] if type(item) is dict
+                )
 
 
 def parse_book_metadata(page_url: str, html: str) -> BibliographicNotice | None:
@@ -142,7 +148,8 @@ def parse_book_metadata(page_url: str, html: str) -> BibliographicNotice | None:
     parser.close()
     if parser.overflow:
         return None  # Don't accept truncated structured-data evidence.
-    for entry in parser.structured[:30]:
+    candidates = []
+    for entry in parser.structured[:60]:
         categories = entry.get("@type")
         kinds = categories if isinstance(categories, list) else [categories]
         if not any(kind in ("Book", "https://schema.org/Book", "http://schema.org/Book")
@@ -151,6 +158,23 @@ def parse_book_metadata(page_url: str, html: str) -> BibliographicNotice | None:
         title = _short(entry.get("name") or entry.get("headline"))
         if not title:
             continue
+        item_url = entry.get("url")
+        if item_url is not None and (
+                type(item_url) is not str
+                or book_id_from_url(item_url) != book_id):
+            continue
+        candidates.append((entry, title, item_url is not None))
+    # A page with several unrelated Book objects is ambiguous without
+    # an exact canonical URL match; never attach a recommendation to the page.
+    exact = [row for row in candidates if row[2]]
+    if len(exact) == 1:
+        selected = exact[0]
+    elif not exact and len(candidates) == 1:
+        selected = candidates[0]
+    else:
+        selected = None
+    if selected is not None:
+        entry, title, _ = selected
         return BibliographicNotice(
             book_id=book_id, title=title,
             author=_name(entry.get("author")),
