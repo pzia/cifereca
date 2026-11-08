@@ -81,3 +81,28 @@ def test_response_shape_has_no_json_keys_or_values():
     assert "PRIVATE-SYNTHETIC" not in repr(data)
     with pytest.raises(mod.SsoProtocolError):
         mod.logon_response_shape(status=200, content_type="text/xml", body=body)
+
+
+@pytest.mark.parametrize("target", [
+    "https://mediatheques.agglo-larochelle.fr/portal/logon?changeUser=0&provider=A&param=B",
+    "https://mediatheques.agglo-larochelle.fr/logon?changeUser=0&provider=A&param=B",
+])
+def test_observed_logon_request_shape_never_exposes_values(target):
+    result = mod.logon_route_shape(target)
+    assert result == {"method": "POST", "path_family": "institutional_logon",
+                      "query_keys": ("changeUser", "param", "provider"),
+                      "authentication_verified": False}
+    assert "provider=A" not in repr(result)
+
+
+@pytest.mark.parametrize("url", [
+    "https://mediatheques.agglo-larochelle.fr/portal/logon?ticket=SECRET",
+    "https://mediatheques.agglo-larochelle.fr/portal/logon?changeUser=0&provider=A&param=B&token=SECRET",
+    "https://mediatheques.agglo-larochelle.fr/portal/logon?changeUser=0&provider=A&provider=B&param=C",
+    "https://mediatheques.agglo-larochelle.fr/portal/logon?changeUser=0&provider=A",
+    "https://mediatheques.agglo-larochelle.fr/portal/logout?changeUser=0&provider=A&param=B",
+    "https://evil.example/portal/logon?changeUser=0&provider=A&param=B",
+])
+def test_logon_request_shape_rejects_unobserved_variants(url):
+    with pytest.raises(mod.SsoProtocolError):
+        mod.logon_route_shape(url)
