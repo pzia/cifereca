@@ -110,3 +110,27 @@ Core ou une continuation CAS attestée. Le module est encore hors parcours
 
 Une seule transaction ne prouve pas le GET initial, la récupération de la
 valeur dynamique, la continuation CAS, ni l'identité finale BiblioAccess.
+
+
+### Continuation HTTP CAS après le POST AJAX observé
+
+`biblioaccess_ajax_cas.py` réutilise le client `ObservedAjaxLogonClient`
+et sa **même session HTTPX** pour : GET entrée BiblioAccess 1409 (302),
+GET institutionnel `/login?service=...` (200), unique POST AJAX qualifié
+(`/logon.svc/logon`), GET `/cas/login?service=...` (302), unique GET
+retour avec ticket de service, puis unique GET `/1409/Catalog/MyLoans`.
+
+Chaque transition valide le tenant et l'origine avant transfert, sans
+redirection automatique, et les réponses sont bornées. Le ticket CAS, les
+corps privés et l'URL complète de continuation ne sont pas retournés.
+`success=true` et `MyLoans` 200 demeurent respectivement une déclaration
+AJAX et une observation de HTML, **pas une preuve de compte ni de droit**.
+Aucun inventaire A, téléchargement B ou mutation n'est activé.
+
+**Limite V1 importante :** les valeurs dynamiques de `_dc` et
+`captchaCheckValue` ne sont pas dérivées du GET institutionnel : le contrat
+observé ne garantit pas comment les obtenir sans navigateur. Aucun champ
+n'est inventé. Cette classe reste un outil de qualification non relié à
+`ProviderSession.connect()`, sans navigateur interactif ni trafic réel
+dans les tests. La suite métier doit établir un fournisseur valide de ces
+valeurs fraîches et une preuve d'identité avant activation.
