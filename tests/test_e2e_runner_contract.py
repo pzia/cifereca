@@ -758,3 +758,40 @@ def test_2332_baen_native_gtk_offline_partial_and_failures_are_routed():
     assert "baen-fault-search-1366" in selector.select(
         ["e2e/public_fault_search_probe.py"]
     )
+
+
+def test_4996_hidpi_cover_diagnostics_are_whitelisted_and_bounded():
+    """The CI runner must not silently drop the new safe E2E telemetry."""
+    runner = (ROOT / "e2e/run.py").read_text(encoding="utf-8")
+    probe = (ROOT / "e2e/recommendations_detail_probe.py").read_text(
+        encoding="utf-8"
+    )
+    for key in (
+        "preview_source_none", "preview_worker_skipped", "preview_no_future",
+        "preview_result_none", "preview_result_path",
+        "preview_callback_suppressed",
+    ):
+        assert f'"{key}"' in runner
+        assert f'"{key}"' in probe
+    for key in (
+        "count", "generation", "expected_url", "same_loader",
+        "request_present", "request_active", "source_present",
+        "source_active", "spinner", "placeholder",
+    ):
+        assert f'"{key}"' in runner
+        assert f'"{key}"' in probe
+    for marker in (
+        'set(bindings) == {"list", "detail"}',
+        'set(row) == bound_keys',
+        'type(row[key]) is int',
+        '0 <= row[key] <= (',
+        'P1_774_BIND_NUMERIC_',
+        'P1_774_LOADER_NUMERIC_',
+    ):
+        assert marker in runner
+    for forbidden in (
+        'print("P1_774_BIND_URL',
+        'print("P1_774_BIND_PATH',
+        'print("P1_774_BIND_CALLBACK',
+    ):
+        assert forbidden not in runner
