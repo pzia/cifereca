@@ -42,12 +42,15 @@ class CoverDouble:
         self.missing = 0
         self.started = []
         self.spinner = SimpleNamespace(get_visible=lambda: self.loading)
+        self.paintable = None
+        self.picture = SimpleNamespace(get_paintable=lambda: self.paintable)
 
     def reset(self):
         self.resets += 1
         self._loader = None
         self._url = None
         self.loading = False
+        self.paintable = None
 
     def _show_missing(self):
         self.missing += 1
@@ -94,8 +97,8 @@ def test_completed_failed_and_absent_cover_keep_refresh_and_placeholder_contract
     cover = CoverDouble()
     loader = object()
     bind(cover, loader, "https://covers.example.test/a.png")
-    # A completed or failed callback hides the spinner; rebinding is then
-    # a genuine refresh and must not be mistaken for an in-flight duplicate.
+    # A failed callback hides the spinner and has no texture, so an explicit
+    # rebind may retry rather than preserving a failed result.
     cover.loading = False
     bind(cover, loader, "https://covers.example.test/a.png")
     assert cover.resets == 2
@@ -105,3 +108,36 @@ def test_completed_failed_and_absent_cover_keep_refresh_and_placeholder_contract
     assert cover.missing == 1
     assert not cover.loading
     assert cover._url is None
+
+
+def test_identical_rendered_cover_rebind_never_blanks_texture_or_reloads():
+    """#4996: local GTK redraw must preserve a successfully painted URL."""
+    bind = real_bind_url()
+    loader = object()
+    cover = CoverDouble()
+    bind(cover, loader, "https://covers.example.test/a.png", priority=7)
+    cover.loading = False
+    cover.paintable = object()
+    original = (cover.resets, list(cover.started), cover.paintable)
+    for _ in range(20):
+        bind(cover, loader, "https://covers.example.test/a.png", priority=7)
+    assert (cover.resets, cover.started, cover.paintable) == original
+
+
+def test_completed_texture_still_invalidated_for_different_source():
+    """A cached texture must never survive a changed URL/loader/priority."""
+    bind = real_bind_url()
+    cover = CoverDouble()
+    loader, other = object(), object()
+    bind(cover, loader, "https://covers.example.test/a.png")
+    for params in (
+        (loader, "https://covers.example.test/b.png", 10),
+        (other, "https://covers.example.test/b.png", 10),
+        (other, "https://covers.example.test/b.png", 4),
+    ):
+        cover.loading = False
+        cover.paintable = object()
+        before = cover.resets
+        bind(cover, params[0], params[1], priority=params[2])
+        assert cover.resets == before + 1
+        assert cover.paintable is None
