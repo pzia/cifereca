@@ -13,6 +13,7 @@ import re
 import logging
 
 from .source_convergence import SourceKey
+from .legacy_source_account_id import ambiguous_legacy_source_account_id
 from .source_sync_consent import read_policy, policy_in_transaction
 
 # Scoped *automatic acquisition* policies, NOT source-inventory switches.
@@ -73,11 +74,8 @@ def toggle_state(db, source: SourceKey):
     # current account list. Deny the ambiguous *literal* borrower until it
     # receives the new exact-scope, CAS-versioned source policy above.
     scope = source.scope
-    if scope.account_id and (
-        scope.account_id != scope.account_id.strip()
-        or scope.account_id == (
-            scope.provider_id + ":" + scope.credential_id + ":primary"
-        )
+    if ambiguous_legacy_source_account_id(
+        scope.provider_id, scope.credential_id, scope.account_id
     ):
         return "off"
     prefix, active, epoch_prefix = spec
