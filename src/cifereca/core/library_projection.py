@@ -1286,6 +1286,19 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         thumbnail = cover.url or None
         combined_meta = {**existing_meta, **meta}
         combined_meta["cover_resolution"] = cover.metadata()
+        from .loan_cover_fallback import attested_local_loan_cover_proof
+        proof = (
+            attested_local_loan_cover_proof(
+                loan, entitlement, existing,
+                identity_id=entitlement_identity,
+                provider_id=provider_id, item_id=item_id,
+            )
+            if entitlement_type == "loan" else None
+        )
+        if proof is not None:
+            proofs = existing.setdefault("_exact_loan_cover_proofs", [])
+            if proof not in proofs:
+                proofs.append(proof)
         remote_state = ("remote_archived" if status == "archived" else
                         "remote_owned" if entitlement_type == "owned" else
                         "remote_loan_active" if entitlement_type == "loan" else "remote_entitled")
