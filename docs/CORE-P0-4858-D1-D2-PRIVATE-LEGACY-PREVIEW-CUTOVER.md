@@ -14,6 +14,12 @@ diagnostic. **Aucune des deux sources n'est une preuve de livraison B.**
 - Le préflight D2 ne peut donc plus utiliser
   `already_local_linked|already_local_verified` issus du reçu 0.7
   pour valider une confirmation et un faux état « déjà présent ».
+  Une archive complète dont l'identité/emprunteur et le fichier passent
+  les gardes négatives est en revanche **non bloquante pour les autres
+  livres** du lot : l'exécuteur W2 la met en quarantaine individuellement
+  sans GET, et peut acquérir une autre édition avec consentement exact.
+  Le compteur `needs_reconciliation` reste visible et le lot n'est pas
+  annoncé comme B totalement satisfait.
 - Un manifeste frais explicitement étranger
   (provider, credential, borrower, alias d'édition) ou marqué prêt/expiration
   suit exactement le veto W2 : `invalid_manifest_items`, aucun candidat
