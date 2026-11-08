@@ -199,3 +199,29 @@ def test_historical_completed_archive_never_creates_a_new_canonical_row(
         assert _snapshot(storage) == original
     finally:
         storage.close()
+
+
+def test_archive_only_survives_storage_restart_and_multiple_status_retries(tmp_path):
+    """The 0.7 complete transition is durable, not a process-local flag."""
+    path = tmp_path / "restart.sqlite3"
+    storage = Storage(path)
+    try:
+        storage.backup_put(_row(status="complete"))
+        canonical = _snapshot(storage)
+        storage.backup_put(_row(status="acquiring", title="Interrupted retry"))
+        assert _snapshot(storage) == canonical
+    finally:
+        storage.close()
+
+    storage = Storage(path)
+    try:
+        assert storage.backup_get("kobo", "vault", "edition")["status"] == "acquiring"
+        assert _snapshot(storage) == canonical
+        storage.backup_put(_row(status="error", title="Restarted retry"))
+        assert _snapshot(storage) == canonical
+        assert storage.backup_get("kobo", "vault", "edition")["status"] == "error"
+        storage.backup_put(_row(status="complete", title="Legacy re-complete"))
+        assert _snapshot(storage) == canonical
+        assert storage.backup_get("kobo", "vault", "edition")["status"] == "complete"
+    finally:
+        storage.close()
