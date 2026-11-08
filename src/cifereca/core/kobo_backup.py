@@ -1498,9 +1498,7 @@ def kobo_backup_diagnostic(self) -> dict[str, Any]:
 
 
 
-def safe_kobo_backup_report(
-    report: dict[str, Any], *, observed_at: int | None = None,
-) -> dict[str, Any]:
+def safe_kobo_backup_report(report: dict[str, Any]) -> dict[str, Any]:
     """Create a shareable *persisted* Kobo report without personal data.
 
     The internal kobo_backup_diagnostic is deliberately rich for the local UI
@@ -1575,35 +1573,8 @@ def safe_kobo_backup_report(
                     item[key] = value
             sources.append(item)
 
-    # These counters and checkpoints come exclusively from the legacy Kobo
-    # backup store. They cannot attest or override a newer canonical Core
-    # source cycle. No account/source join is guessed from filenames, titles,
-    # SHA, a legacy timestamp, or another scope.
-    as_of = int(time.time()) if observed_at is None else observed_at
-    valid_clock = type(as_of) is int and 946_684_800 <= as_of <= 4_102_444_800
-    legacy_freshness: list[dict[str, Any]] = []
-    for source in sources:
-        last = source.get("updated_at")
-        age_known = (
-            valid_clock and type(last) is int
-            and 946_684_800 <= last <= as_of
-            and as_of - last <= 1_000_000_000
-        )
-        entry: dict[str, Any] = {
-            "source_index": source["source_index"],
-            "age_known": bool(age_known),
-        }
-        if age_known:
-            entry["age_seconds"] = as_of - last
-        legacy_freshness.append(entry)
-
     return {
         "redacted": True,
-        "status_authority": "historical_legacy_backup",
-        "current_canonical_cycle": {
-            "status": "not_evaluated", "same_source_proof": "unavailable",
-        },
-        "legacy_checkpoint_freshness": legacy_freshness,
         "items": count(report.get("items")),
         "items_blocked_by_scope": count(report.get("items_blocked_by_scope")),
         "statuses": statuses,
