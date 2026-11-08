@@ -87,3 +87,34 @@ sera extrait seulement lors d'une implémentation prouvée pour les deux.
 - **Au plus un POST par instance**, même après HTTP 200, erreur, timeout ou résultat incertain. Recommencer implique un nouveau client et une nouvelle inspection explicite.
 - `inspect_cas_entry()` consulte uniquement `/1409/Account/Login`, **sans suivre la redirection** : elle classe la destination institutionnelle autorisée et ne renvoie ni URL ni ticket de service. HTTP 200 demeure une observation non vérifiée.
 - `connect()` reste refusé avec le code `biblioaccess_http_sso_logon_unqualified` ; aucun navigateur ni droit d'emprunt n'est inféré.
+
+### Route POST observée et continuation CAS (#3691)
+
+La capture de terrain consignée dans le ticket établit **POST institutionnel
+sur une route terminant par `/logon`**, avec les **noms** de paramètres de query
+`changeUser`, `provider`, `param` ; elle n'établit pas les valeurs, les
+champs du corps ni un formulaire HTML postable. La première version supposait
+à tort `POST /logon` sans query.
+
+Le client HTTPX qualifie désormais **l'action exacte fournie par le formulaire
+GET dans la même instance** et n'autorise le POST qu'après consentement ;
+la query d'action reste éphémère en mémoire du client, **jamais dans les
+`FormShape` exposés**. La vérification autorise le suffixe `/logon` sur
+l'hôte institutionnel exact, et seulement la triade attestée si query présente.
+Un formulaire absant ou du login JavaScript non reconnu reste `unsupported` :
+aucun POST fictif ne se substitue au script de connexion.
+
+Le premier GET de BiblioAccess peut livrer `/login?service=...` ; le client
+conserve cette URL uniquement en mémoire, contrôle que `service` désigne le
+tenant HTTPS 1409 et l'utilise pour **le GET de login suivant**. Après un POST
+HTTP 200 qualifié, `inspect_cas_return_once()` peut effectuer un GET
+`/cas/login?service=...`, puis **un seul GET** de retour muni du ticket CAS
+fraîchement émis, à destination strictement identique au service initial.
+Les 30x ne sont jamais suivis automatiquement, la destination est contrôlée
+avant l'envoi, et ni le ticket ni l'URL ne sont retournés au consommateur.
+Cela reste un **probe non branché à `ProviderSession.connect()`** ; une page
+de retour 200 n'est pas une preuve de compte connecté.
+
+La chaîne de cinq échanges est vérifiée avec HTTPX `MockTransport` et des
+valeurs totalement fictives. Aucune authentification réelle, capture nouvelle,
+navigateur ni transition vers `MyLoans` n'a été effectuée.
