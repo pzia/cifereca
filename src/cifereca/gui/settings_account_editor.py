@@ -170,6 +170,21 @@ def build_provider_account_editor(
             observation.set_title(title)
             observation.set_subtitle(subtitle)
             group.add(observation)
+    # An explicit per-account diagnostic is separate from startup reconnect.
+    # The host binds the callback only for a persisted enabled account.
+    probe_button = None
+    probe_status = None
+    if getattr(descriptor, "interactive_authentication", False) is True:
+        probe_row = Adw.ActionRow()
+        probe_row.set_title("Recette HTTP de ce compte")
+        probe_row.set_subtitle(
+            "Lancer volontairement le diagnostic du compte enregistré ; "
+            "aucune synchronisation ni connexion implicite.")
+        probe_button = Gtk.Button(label="Tester ce compte")
+        probe_button.set_valign(Gtk.Align.CENTER)
+        probe_row.add_suffix(probe_button)
+        group.add(probe_row)
+        probe_status = probe_row
     delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette source de la configuration")
     delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
     editor = {
@@ -181,5 +196,7 @@ def build_provider_account_editor(
         "original_account": dict(data),
         "invalid_saved_snapshot": invalid_saved_snapshot,
         "deleted": False,
+        "explicit_probe_button": probe_button,
+        "explicit_probe_status": probe_status,
     }
     return editor, delete_button
