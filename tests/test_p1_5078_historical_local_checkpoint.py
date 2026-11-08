@@ -31,7 +31,7 @@ def _source(
         source_id="fixture:source", identity_id="alice",
         provider_id="fixture", account_id="synthetic", label="Synthetic",
         enabled=True, connected=True, sync_capable=True,
-        status=status,
+        status=status, last_attempt=cycle_at, last_success=cycle_at,
         sync_capabilities=("local_materialization",),
         phase_states=(
             SyncPhaseState("discover_rights", "success"),
