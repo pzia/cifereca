@@ -84,7 +84,7 @@ def task_dialog_context(
         "action_id": "unknown",
         "task_ref": task_ref if valid_ref else None,
         "task_classification": (
-            classification if classification in _TASK_CLASSIFICATIONS else "background_task"
+            classification if type(classification) is str and classification in _TASK_CLASSIFICATIONS else "background_task"
         ),
         "reason_code": reason_code if reason_code == "lock_busy" else "unknown",
         "suppress_busy_modal": suppress_busy_modal is True and valid_ref,
@@ -126,7 +126,7 @@ def observe_background_busy_task(
     """Typed, private-data-free task receipt, including when no modal exists."""
     if (getattr(window, "_closed", False)
             or type(task_ref) is not int or not 1 <= task_ref <= 2**53 - 1
-            or classification not in _TASK_CLASSIFICATIONS):
+            or type(classification) is not str or classification not in _TASK_CLASSIFICATIONS):
         return
     add = getattr(getattr(window, "diagnostics", None), "add", None)
     if not callable(add):
@@ -219,7 +219,7 @@ def observe_unavailable_dialog(window: object, *, title: object, message: object
         "task_ref": task_ref,
     }
     classification = context.get("task_classification")
-    if classification in _TASK_CLASSIFICATIONS and task_ref is not None:
+    if type(classification) is str and classification in _TASK_CLASSIFICATIONS and task_ref is not None:
         detail["task_classification"] = classification
         detail["reason_code"] = (
             "lock_busy" if context.get("reason_code") == "lock_busy" else "unknown"
