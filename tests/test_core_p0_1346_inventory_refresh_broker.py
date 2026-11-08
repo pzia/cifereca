@@ -9,7 +9,7 @@ import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.core.source_materialization_schedule import policy_key as acquisition_policy_key
-from cifereca.core.source_refresh_policy import kobo_inventory_source_eligible
+from cifereca.core.source_refresh_policy import inventory_source_eligible
 from cifereca.models import Account
 from cifereca.plugin_api import SourceInventoryRefreshScheduleBroker
 from cifereca.storage import Storage
@@ -76,7 +76,7 @@ def test_manual_default_does_not_dispatch_and_never_inherits_backup_consent(tmp_
         assert service.storage.metadata_get(acquisition_policy_key(sid)) is None
         # No backup capability is necessary for *inventory* synchronization.
         assert session.capabilities.backup is False
-        assert kobo_inventory_source_eligible(service, account)
+        assert inventory_source_eligible(service, account)
     finally:
         service.storage.close()
 
