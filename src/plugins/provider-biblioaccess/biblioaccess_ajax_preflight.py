@@ -209,11 +209,11 @@ def inspect_login_preflight(html: str, *, page_url: str = IDP + _LOGIN_PATH) -> 
     # The ordinary first POST includes the server's hidden checkValue even
     # when its visual CAPTCHA is initially hidden. Never persist or log it.
     provider_matches = re.findall(
-        r"logonManager\\.provider\\s*=\\s*['\\\"]([A-Za-z]{1,32})['\\\"]",
+        r"logonManager\.provider\s*=\s*['\"]([A-Za-z]{1,32})['\"]",
         inline_text,
     )
     action_matches = re.findall(
-        r"logonManager\\.action\\s*=\\s*['\\\"]([A-Za-z]{1,32})['\\\"]",
+        r"logonManager\.action\s*=\s*['\"]([A-Za-z]{1,32})['\"]",
         inline_text,
     )
     context = None
