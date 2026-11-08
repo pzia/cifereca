@@ -7,6 +7,7 @@ No provider session is marked connected; a POST 200 is unverified evidence.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 
@@ -55,6 +56,7 @@ class BiblioAccessHTTPQualification:
         )
         self._closed = False
         self._post_attempted = False
+        self._post_lock = Lock()
         self._inspected_form_shapes = ()
         self._login_inspected = False
 
@@ -123,8 +125,6 @@ class BiblioAccessHTTPQualification:
             raise SsoProtocolError("sso_transport_closed")
         if explicit_consent is not True:
             raise SsoProtocolError("sso_consent_required")
-        if self._post_attempted:
-            raise SsoProtocolError("sso_post_already_attempted")
         if (type(shape) is not FormShape or shape.method != "POST"
                 or shape.action_origin != ORIGIN
                 or shape.action_path != LOGON_PATH
@@ -134,10 +134,13 @@ class BiblioAccessHTTPQualification:
                        for k, v in fields.items())
                 or not shape.password_field_present
                 or not self._login_inspected
-                or shape not in self._inspected_form_shapes):
+                or not any(shape is inspected for inspected in self._inspected_form_shapes)):
             raise SsoProtocolError("sso_post_schema_unqualified")
         # Mark before any I/O: an uncertain POST must never retry on this client.
-        self._post_attempted = True
+        with self._post_lock:
+            if self._post_attempted:
+                raise SsoProtocolError("sso_post_already_attempted")
+            self._post_attempted = True
         try:
             with self.http.stream(
                 "POST", ORIGIN + LOGON_PATH, data=fields,
