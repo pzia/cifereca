@@ -16,7 +16,7 @@ import sys
 
 from scripts.ci_provider_core_coupling_inventory import inspect_source
 
-_SHA = re.compile(r"[0-9a-f]{40}\\Z")
+_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _SOURCE = "src/cifereca/"
 
 
