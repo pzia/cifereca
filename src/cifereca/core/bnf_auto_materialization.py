@@ -10,7 +10,10 @@ from pathlib import Path
 from ..artifact_inspection import inspect_artifact
 from ..models import Account, Loan
 from ..plugin_api import Cancelled
-from .bnf_explicit_acsm import _discard_invalid_candidate, _valid_loan_token
+from .loan_acsm_token_validation import (
+    discard_untrusted_staged_acsm as _discard_invalid_candidate,
+    valid_loan_acsm_token as _valid_loan_token,
+)
 
 
 _TRACE_LOG = logging.getLogger("cifereca")
