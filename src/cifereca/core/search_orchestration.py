@@ -383,10 +383,35 @@ def _paris_search_owner(self, session: ProviderSession) -> str | None:
     return owner if type(owner) is str and owner else None
 
 
+def _shared_paris_catalogue_cover_url(value: Any) -> str | None:
+    """Preserve an ordinary public catalogue image, never account/private URLs.
+
+    Catalogue URLs are public by default unless marked/revealed otherwise.
+    Sharing an image is NOT sharing a foreign credential, loan or entitlement.
+    Use the existing conservative HTTPS host/query guard and exclude account,
+    acquisition, or session path segments even on a public-looking hostname.
+    """
+    from urllib.parse import urlsplit
+
+    public = _numilog_public_catalog_url(value, cover=True)
+    if public is None:
+        return None
+    segments = {segment.casefold() for segment in urlsplit(public).path.split("/")}
+    if segments & {
+        "account", "accounts", "profile", "profiles", "member", "members",
+        "reader", "readers", "session", "sessions", "auth", "login", "oauth",
+        "token", "tokens", "download", "downloads", "acquisition", "acquire",
+        "loan", "loans", "borrow", "borrows", "private", "personal",
+        "user", "users", "drm", "adept", "licence", "license",
+    }:
+        return None
+    return public
+
+
 def _shared_paris_catalogue_row(
     row: SearchResult, session: ProviderSession,
 ) -> SearchResult | None:
-    """Only Paris search bibliography, never foreign entitlement or private URLs.
+    """Only Paris catalogue bibliography and ordinary public image URLs.
 
     Preserve the exact source credential for provenance; never rebind to A.
     Refuse inventory/purchase rows and unqualified provider responses.
@@ -400,7 +425,8 @@ def _shared_paris_catalogue_row(
         return None
     return replace(
         row, owned=False, downloadable=False, download_url=None,
-        thumbnail_url=None, friendly_url=None,
+        thumbnail_url=_shared_paris_catalogue_cover_url(row.thumbnail_url),
+        friendly_url=None,
         price=None, currency=None, revision_id=None,
         metadata={"catalogue_access": "shared_read_only"},
         document_classification=None,
