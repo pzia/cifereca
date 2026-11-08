@@ -193,6 +193,85 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             observed_loans=getattr(self.service, "last_loans", ()),
         )
         account_editors.append(editor)
+
+        probe_button = editor.get("explicit_probe_button")
+        if probe_button is not None:
+            probe_button.set_sensitive(
+                bool(data.get("id")) and data.get("enabled") is True
+            )
+
+            def explicit_probe(_button, *, e=editor, saved=dict(data),
+                               pid=provider_id):
+                # This callback is the explicit consent action. Never use the
+                # global reconnect/startup connection sweep here.
+                if (not saved.get("id") or saved.get("enabled") is not True
+                        or e.get("deleted") or e.get("_probe_pending")
+                        or getattr(self, "_closed", False)
+                        or (page_lifetime is not None and not page_lifetime.alive)):
+                    return
+                # A modified draft is not the persisted credential being
+                # tested. Save/reopen first; never send stale credentials.
+                if (e["enabled"].get_active() is not True
+                        or e["identity"].get_text() != saved.get("identity_id")
+                        or e["label"].get_text() != str(
+                            saved.get("label") or descriptor.display_name)
+                        or any(
+                            row.get_text() != str(
+                                (saved.get("credentials") or {}).get(key) or "")
+                            for key, row in e["fields"].items()
+                        ) or any(
+                            row.get_text() != str(
+                                (saved.get("options") or {}).get(key, next(
+                                    (spec.default for spec in
+                                     getattr(descriptor, "account_options", ())
+                                     if spec.key == key), ""))
+                            )
+                            for key, row in e["option_fields"].items()
+                        )):
+                    e["explicit_probe_status"].set_subtitle(
+                        "Enregistrer les modifications avant la recette.")
+                    return
+                e["_probe_pending"] = True
+                button = e["explicit_probe_button"]
+                button.set_sensitive(False)
+                e["explicit_probe_status"].set_subtitle(
+                    "Recette HTTP du compte sélectionné en cours…")
+
+                def release():
+                    e["_probe_pending"] = False
+                    if page_lifetime is None or page_lifetime.alive:
+                        button.set_sensitive(True)
+
+                def done(result):
+                    release()
+                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                        e["explicit_probe_status"].set_subtitle(
+                            "Diagnostic terminé (sans compte connecté). "
+                            "Consulter et exporter le journal brut."
+                            if getattr(result, "status", None) == "observed"
+                            else "Diagnostic indisponible. Consulter le journal brut.")
+
+                def error(_exc):
+                    release()
+                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                        e["explicit_probe_status"].set_subtitle(
+                            "Diagnostic refusé. Enregistrer, activer le compte "
+                            "et vérifier l’option de recette.")
+
+                try:
+                    self.runner.submit(
+                        "Recette HTTP fournisseur…",
+                        lambda: self.service.explicit_provider_diagnostic(
+                            identity_id=saved["identity_id"], provider_id=pid,
+                            credential_id=saved["id"], user_consent=True,
+                        ),
+                        done, error, control=button,
+                    )
+                except Exception:
+                    release()
+                    error(None)
+            probe_button.connect("clicked", explicit_probe)
+
         def delete_account(_button, e=editor):
             e["deleted"] = True
             e["group"].set_visible(False)
