@@ -30,6 +30,16 @@ _SCHEMA = "core.kobo.canonical-placement-relink/1"
 _JOURNAL = "core.kobo.canonical-placement-relink."
 
 
+def _unique_journal_fields(pairs):
+    """An undo operation may only consume an unambiguous durable receipt."""
+    record = {}
+    for key, value in pairs:
+        _require(key not in record, "canonical_relink_plan_changed")
+        record[key] = value
+    return record
+
+
+
 class CanonicalRelinkRejected(ValueError):
     """Stable non-sensitive refusal; never surface SQLite or path errors."""
 
@@ -217,6 +227,7 @@ def relink_verified_canonical_kobo(
     placement_id: str, new_path: Path, confirmation: str | None = None,
     reference_kind: str = "purchase",
     context_current: Callable[[], bool] | None = None,
+    undo_operation: str | None = None,
 ) -> dict[str, object]:
     """Preview/relink only an EXISTING provider B, never infer fresh ownership.
 
@@ -243,7 +254,11 @@ def relink_verified_canonical_kobo(
             type(confirmation) is str and len(confirmation) == 64
             and all(c in "0123456789abcdef" for c in confirmation)
         ))
-        and (context_current is None or callable(context_current)),
+        and (context_current is None or callable(context_current))
+        and (undo_operation is None or (
+            type(undo_operation) is str and len(undo_operation) == 64
+            and all(c in "0123456789abcdef" for c in undo_operation)
+        )),
         "invalid_relink_request",
     )
     scope = ProviderRightsScope(identity_id, "kobo", credential_id, account_id)
@@ -265,6 +280,55 @@ def relink_verified_canonical_kobo(
                 placement_id=placement_id,
                 new_path=new_path,
             )
+            if undo_operation is not None:
+                # An undo is another physically verified relink, NEVER a
+                # restoration of backup_items or a revocation of OriginLink.
+                # The old path must contain the exact bytes again; the
+                # forward path must be absent. _inspect() enforces both.
+                archived = db.execute(
+                    "SELECT value FROM metadata WHERE key=?",
+                    (_JOURNAL + undo_operation,),
+                ).fetchone()
+                _require(
+                    archived is not None and type(archived[0]) is str
+                    and len(archived[0]) <= 65536,
+                    "canonical_relink_plan_changed",
+                )
+                try:
+                    previous = json.loads(
+                        archived[0], object_pairs_hook=_unique_journal_fields,
+                    )
+                except (TypeError, ValueError, RecursionError):
+                    raise CanonicalRelinkRejected(
+                        "canonical_relink_plan_changed",
+                    ) from None
+                _require(
+                    type(previous) is dict
+                    and previous.get("schema") == _SCHEMA
+                    and previous.get("source_reference_id") == source_ref
+                    and previous.get("identity_id") == identity_id
+                    and previous.get("placement_id") == placement_id
+                    and previous.get("old_path") == str(new_path)
+                    and previous.get("new_path") == old_path
+                    and previous.get("verified_file_sha256") == artifact_sha
+                    and previous.get("verified_file_size") == observed.st_size
+                    and type(previous.get("confirmed_at")) is int
+                    and type(previous.get("placement_updated_at")) is int
+                    and db.execute(
+                        "SELECT updated_at,last_seen_at,state FROM placements "
+                        "WHERE placement_id=?", (placement_id,),
+                    ).fetchone() == (
+                        previous["placement_updated_at"],
+                        previous["confirmed_at"], "present",
+                    ),
+                    "canonical_relink_plan_changed",
+                )
+                # A generic reverse confirmation never substitutes for an
+                # exact journal-bound cancellation token.
+                token = hashlib.sha256(
+                    ("canonical-kobo-undo/1\0" + undo_operation + "\0" + token)
+                    .encode("utf-8"),
+                ).hexdigest()
             if not write:
                 return {
                     "schema": _SCHEMA, "status": "preview", "ok": True,
@@ -286,19 +350,20 @@ def relink_verified_canonical_kobo(
                  identity_id, "sha256:" + artifact_sha),
             )
             _require(changed.rowcount == 1, "canonical_relink_plan_changed")
-            key = _JOURNAL + hashlib.sha256(
+            operation_id = hashlib.sha256(
                 "\x1f".join((placement_id, old_path, str(new_path)))
                 .encode("utf-8"),
             ).hexdigest()
             db.execute(
                 "INSERT INTO metadata(key,value) VALUES(?,?)",
-                (key, json.dumps({
+                (_JOURNAL + operation_id, json.dumps({
                     "schema": _SCHEMA, "source_reference_id": source_ref,
                     "identity_id": identity_id, "placement_id": placement_id,
                     "old_path": old_path, "new_path": str(new_path),
                     "verified_file_size": observed.st_size,
                     "verified_file_sha256": artifact_sha,
-                    "confirmed_at": now,
+                    "confirmed_at": now, "placement_updated_at": now,
+                    "undo_of": undo_operation,
                 }, ensure_ascii=True, sort_keys=True)),
             )
             # SQL triggers or injected maintenance must not transform a
@@ -339,6 +404,7 @@ def relink_verified_canonical_kobo(
             return {
                 "schema": _SCHEMA, "status": "relinked", "ok": True,
                 "changed": 1, "plan_token": None,
+                "operation_id": operation_id,
                 "legacy_backup_mutations": 0, "rights_mutations": 0,
                 "file_mutations": 0,
             }
