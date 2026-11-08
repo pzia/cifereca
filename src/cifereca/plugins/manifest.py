@@ -247,6 +247,8 @@ def parse_manifest(data: Mapping[str, Any]) -> PluginPackageManifest:
             config_schema=dict(schema),
             instantiation=instantiation,  # type: ignore[arg-type]
             help_text=_help_text(row.get("help_text")),
+            ui_usage_hint=_plugin_ui_usage_hint(
+                row.get("ui_contribution"), f"plugins[{index}].ui_contribution"),
             capabilities=_capabilities(row.get("capabilities"), f"plugins[{index}].capabilities"),
             requires_brokers=_string_tuple(row.get("requires_brokers"), f"plugins[{index}].requires_brokers"),
             requires_contracts=_contract_requirements(row.get("requires_contracts"), f"plugins[{index}].requires_contracts"),
@@ -263,6 +265,23 @@ def load_manifest(path: Path) -> PluginPackageManifest:
     if not isinstance(data, dict):
         raise ManifestError("plugin manifest root must be an object")
     return parse_manifest(data)
+
+
+def _plugin_ui_usage_hint(value: object, field: str) -> str:
+    """Versioned, bounded textual UI contribution; never creates a route."""
+    if value is None:
+        return ""
+    if type(value) is not dict or set(value) != {"schema", "usage_hint"}:
+        raise ManifestError(f"{field} must declare schema and usage_hint only")
+    if value["schema"] != "cifereca.plugin.ui/1":
+        raise ManifestError(f"{field} schema is unsupported")
+    hint = value["usage_hint"]
+    if (type(hint) is not str or not 1 <= len(hint) <= 384
+            or hint != hint.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in hint)
+            or re.search(r"(?i)(?:https?://|bearer\\s+|(?:password|token|secret)=)", hint)):
+        raise ManifestError(f"{field} usage_hint is unsafe")
+    return hint
 
 
 def _help_text(value):
