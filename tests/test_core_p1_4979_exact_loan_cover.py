@@ -7,7 +7,7 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
-from cifereca.core.loan_cover_fallback import loan_local_cover
+from cifereca.core.loan_cover_fallback import (\n    attested_local_loan_cover_proof, loan_local_cover,\n)
 from cifereca.core.loan_source_identity import loan_source_key
 from cifereca.models import Loan
 
@@ -132,11 +132,78 @@ def test_url_scheme_and_untrusted_proof_types_are_fail_closed():
         assert loan_local_cover(current, [row]).status == "missing"
 
 
+def projection_args(current):
+    row = local_row(current)
+    url = row["_exact_loan_cover_proofs"][0]["url"]
+    row["thumbnail_url"] = url
+    row["metadata"] = {
+        "cover_resolution": {"status": "selected", "url": url, "tier": "embedded"}
+    }
+    entitlement = {
+        "loan_id": current.id, "credential_id": current.source_credential,
+        "account_id": current.source_account_id,
+    }
+    scope = {
+        "identity_id": current.identity_id,
+        "provider_id": current.source_provider,
+        "item_id": current.record_id,
+    }
+    return row, entitlement, scope
+
+
+def test_core_projection_creates_only_exact_local_loan_cover_proof():
+    current = loan()
+    row, entitlement, scope = projection_args(current)
+    proof = attested_local_loan_cover_proof(
+        current, entitlement, row, **scope
+    )
+    assert proof == row["_exact_loan_cover_proofs"][0]
+    assert loan_local_cover(current, [{**row, "_exact_loan_cover_proofs": [proof]}]).url
+
+
+def test_core_projection_rejects_foreign_profiles_credentials_and_accounts():
+    current = loan()
+    row, entitlement, scope = projection_args(current)
+    for changed in (
+        loan(identity="bob"), loan(credential="card-b"),
+        loan(account="borrower-b"), loan(identifier="loan-2"),
+        loan(record="edition-2"),
+    ):
+        assert attested_local_loan_cover_proof(changed, entitlement, row, **scope) is None
+    for key, value in (
+        ("loan_id", "different-loan"),
+        ("account_id", "other-borrower"),
+        ("credential_id", "other-credential"),
+    ):
+        other = dict(entitlement)
+        other[key] = value
+        assert attested_local_loan_cover_proof(current, other, row, **scope) is None
+
+
+def test_core_projection_refuses_unplaced_unselected_and_conflicting_cover():
+    current = loan()
+    row, entitlement, scope = projection_args(current)
+    for key, value in (
+        ("local", False), ("identity_id", "bob"),
+        ("placement_id", ""), ("artifact_id", ""),
+        ("thumbnail_url", "https://different.example/cover.png"),
+    ):
+        changed = deepcopy(row)
+        changed[key] = value
+        assert attested_local_loan_cover_proof(current, entitlement, changed, **scope) is None
+    for status, tier in (("ambiguous", "origin"), ("missing", "catalog"),
+                         ("selected", "unverified")):
+        changed = deepcopy(row)
+        changed["metadata"]["cover_resolution"].update(status=status, tier=tier)
+        assert attested_local_loan_cover_proof(current, entitlement, changed, **scope) is None
+    assert attested_local_loan_cover_proof(current, entitlement, row, **{
+        **scope, "provider_id": "other-provider",
+    }) is None
+
+
 def test_projection_attests_only_existing_local_placement_and_exact_borrower():
     source = (Path(__file__).resolve().parents[1] /
               "src/cifereca/core/library_projection.py").read_text(encoding="utf-8")
-    assert 'existing.get("local") is True' in source
-    assert 'loan.source_account_id == entitlement["account_id"]' in source
-    assert 'entitlement["loan_id"] == loan.id' in source
-    assert 'loan.record_id == item_id' in source
-    assert 'existing["_exact_loan_cover_proofs"]' not in source or '_exact_loan_cover_proofs' in source
+    assert "attested_local_loan_cover_proof(" in source
+    assert 'if entitlement_type == "loan" else None' in source
+    assert '_exact_loan_cover_proofs' in source
