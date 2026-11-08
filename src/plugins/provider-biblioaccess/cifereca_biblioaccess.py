@@ -6,6 +6,7 @@ session transport contract. No network or implicit browser access is attempted.
 from __future__ import annotations
 
 from typing import Any
+from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
@@ -68,6 +69,7 @@ DESCRIPTOR = ProviderDescriptor(
     state="ready",
     capabilities=ProviderCapabilities(
         authentication=True, multiple_credentials=True, loans=True,
+        digital_download=True, opening_loan_auto_acquisition=True,
     ),
     credential_fields=(
         CredentialField("username", "Identifiant de bibliothèque", required=True),
@@ -185,7 +187,7 @@ class LaRochelleSession(ProviderSession):
         # Live inventory events have no need for a local account identifier.
         # It may be user-configured private text. The session scope is
         # verified in memory, not reconstructed from diagnostic payloads.
-        if phase == "loan_inventory":
+        if phase in {"loan_inventory", "acsm_stage"}:
             detail.pop("credential_id", None)
         try:
             if self._diagnostics is not None:
@@ -489,8 +491,11 @@ class LaRochelleSession(ProviderSession):
                         source_account_id=account.unique_id,
                         identity_id=account.identity_id,
                         can_return=False, renewable=False, ebook_url=None,
-                        raw={"due_at_local": row.due_at_local,
-                             "acsm_offer_present": row.acsm_offer_present},
+                        # The Core needs only positive offer presence. Do not
+                        # publish a signed link or attest a downloadable book
+                        # for a row with no ACSM action.
+                        raw=({"acsm_offer_present": True}
+                             if row.acsm_offer_present else {}),
                     ))
                 snapshot = LoanInventorySnapshot(
                     scope=LoanInventoryScope.for_account(account),
@@ -550,6 +555,67 @@ class LaRochelleSession(ProviderSession):
                         pass
                 raise ProviderCapabilityError(
                     "biblioaccess_loan_inventory_unavailable") from None
+
+    def download_digital(self, loan: Loan, account: Account,
+                         target_dir: Path) -> tuple[Path, str]:
+        """Download a fresh signed ACSM offer for this exact live loan.
+
+        Source URLs never leave the plugin: the second return value is empty.
+        Core handles ADEPT fulfillment into an EPUB/PDF, post-download hooks,
+        local publication, caching and force-refresh when requested.
+        """
+        with self._lock:
+            self._validate_local_account(account)
+            if (type(loan) is not Loan
+                    or loan.source_provider != PROVIDER_ID
+                    or loan.source_credential != self.credential_id
+                    or loan.source_account_id != account.unique_id
+                    or loan.identity_id != account.identity_id
+                    or type(loan.id) is not str
+                    or not loan.id.startswith("biblioaccess:1409:")):
+                raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+            product_ref = loan.id[len("biblioaccess:1409:"):]
+            if not product_ref.isascii() or not product_ref.isdigit():
+                raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+            try:
+                # Fresh MyLoans GET each time. No reuse prevention: request a
+                # new signed link when redownloading the same active loan.
+                observation = self._http.read_authenticated_loans()
+                matches = [
+                    row for row in observation._loan_rows
+                    if row.product_ref == product_ref
+                    and row.book_id == loan.record_id
+                    and row.acsm_offer_present
+                    and type(row.acsm_url) is str
+                ]
+                if len(matches) != 1:
+                    raise ProviderCapabilityError("biblioaccess_acsm_offer_unavailable")
+                from biblioaccess_acsm_delivery import stage_loan_acsm
+                path = stage_loan_acsm(matches[0].acsm_url, target_dir)
+                self._last_probe_phase = "acsm_staged"
+                self._event(
+                    "acsm_stage", "observed", probe="authenticated_sync",
+                    connected=True, staged=True, signed_url_logged=False,
+                )
+                # Never return the signed ACSM link to Core/receipts/hooks.
+                return path, ""
+            except Exception:
+                self._last_probe_phase = "acsm_failed"
+                self._event(
+                    "acsm_stage", "error", probe="authenticated_sync",
+                    connected=False, staged=False, signed_url_logged=False,
+                )
+                self.connected = False
+                self._sync_auth_live = False
+                self._accounts = []
+                client, self._http = self._http, None
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+                raise ProviderCapabilityError(
+                    "biblioaccess_acsm_stage_unavailable") from None
 
     def loans(self, account: Account) -> list[Loan]:
         return list(self.loan_inventory_snapshot(account).loans)
