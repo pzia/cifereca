@@ -113,8 +113,9 @@ DESCRIPTOR = ProviderDescriptor(
     interactive_authentication=True,
     background_authentication_option_key="authenticated_sync",
     notes=(
-        "Recette HTTP GET avec on ; POST AJAX et CAS avec post, paramètres explicites.",
-        "Aucune synchronisation de prêts ni acquisition activée ; résultat jamais connecté.",
+        "Prêts numériques positifs, inventaire partiel, sans clôture par absence.",
+        "authenticated_sync=on requis pour le SSO HTTP en arrière-plan.",
+        "Aucune acquisition, mutation ou livraison ACSM automatique.",
     ),
 )
 
@@ -138,6 +139,7 @@ _HTTP_PROBE_CODES = frozenset((
     "cas_landing_unverified", "cas_loans_already_attempted",
     "cas_landing_required", "cas_loans_unverified",
     "cas_loans_structure_unverified", "cas_authenticated_page_unverified",
+    "biblioaccess_authenticated_page_unverified",
     "ajax_logon_consent_required", "ajax_logon_shape_mismatch",
     "ajax_logon_credentials_missing", "ajax_logon_challenge_missing",
     "ajax_logon_response_invalid", "ajax_logon_response_type",
