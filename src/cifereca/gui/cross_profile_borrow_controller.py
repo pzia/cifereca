@@ -155,6 +155,30 @@ def present_cross_profile_lender_choice(
                     "Prêt confirmé sur le profil prêteur. "
                     "Livraison et transfert vers ce profil non autorisés."
                 )
+                # #5124: the optional renderer is inert, and accepts only
+                # the same visible Search detail plus pinned context epochs.
+                # A positive supplier loan never licenses a file transfer.
+                try:
+                    from ..core.borrow_for_identity_progress import (
+                        CrossProfileBorrowProgress,
+                    )
+                    render = getattr(
+                        panel, "show_cross_profile_borrow_progress_detail",
+                        None,
+                    )
+                    if callable(render) and current():
+                        render(
+                            CrossProfileBorrowProgress(
+                                "confirmed", "unavailable", "blocked",
+                                "lender_loan_confirmed_transfer_unverified",
+                            ),
+                            expected_item=expected_item,
+                            requesting_identity_id=preview.requesting_identity_id,
+                            expected_context_epoch=context_epoch,
+                            expected_source_epoch=source_epoch,
+                        )
+                except Exception:
+                    pass
             elif type(result) is dict and result.get("status") == "blocked":
                 window.show_error(
                     "Ce choix de prêteur n'est plus admissible. "
@@ -227,11 +251,13 @@ def present_cross_profile_lender_choice(
         if response_id == "cancel":
             release()
             return
-        if not current() or not response_id.startswith("choice-"):
+        if (not current() or type(response_id) is not str
+                or not response_id.startswith("choice-")):
             release()
             return
         suffix = response_id[len("choice-"):]
-        if not suffix.isascii() or not suffix.isdigit():
+        if (not 0 < len(suffix) <= 3
+                or not suffix.isascii() or not suffix.isdigit()):
             release()
             return
         index = int(suffix)
