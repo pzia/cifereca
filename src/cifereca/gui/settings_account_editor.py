@@ -191,13 +191,19 @@ def build_provider_account_editor(
     # Compare *what GTK actually rendered*, not raw storage: absent legacy
     # options may display declared defaults without being modified. Never
     # store this baseline in diagnostics or any persistent configuration.
+    def rendered_text(widget):
+        # Standard GTK exposes get_text(); lightweight headless widget stubs
+        # store their last set_text value directly.
+        getter = getattr(widget, "get_text", None)
+        return getter() if callable(getter) else widget.text
+
     probe_rendered_baseline = {
-        "enabled": enabled.get_active(),
-        "identity": identity_row.get_text(),
-        "label": label_row.get_text(),
-        "fields": {key: widget.get_text() for key, widget in fields.items()},
+        "enabled": saved_enabled is True,
+        "identity": chosen_owner,
+        "label": rendered_text(label_row),
+        "fields": {key: rendered_text(widget) for key, widget in fields.items()},
         "option_fields": {
-            key: widget.get_text() for key, widget in option_fields.items()
+            key: rendered_text(widget) for key, widget in option_fields.items()
         },
     }
     editor = {
