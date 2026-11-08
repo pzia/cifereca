@@ -527,6 +527,36 @@ def _kobo_manifest_flags_invalid(raw: dict[str, Any]) -> bool:
 
 
 
+def _kobo_legacy_manifest_claim_invalid(
+    raw: dict[str, Any], *, credential_id: str, account_id: str,
+) -> bool:
+    """Reject a foreign or loan-like W2 row before 0.7 rights are mirrored.
+
+    The old compatibility writer *always* labels a manifest item 'owned'.
+    A provider row with explicit contradictory coordinates or a loan marker
+    cannot be rewritten as a purchase merely because it arrived inside a
+    previously pinned Kobo session. Missing optional fields remain valid for
+    the legacy Vault 2.x manifest.
+    """
+    for key, expected in (
+        ("provider_id", "kobo"), ("credential_id", credential_id),
+        ("account_id", account_id),
+    ):
+        if key in raw and (type(raw[key]) is not str or raw[key] != expected):
+            return True
+    if ("product_id" in raw and "id" in raw
+            and (type(raw["product_id"]) is not str
+                 or type(raw["id"]) is not str
+                 or raw["product_id"] != raw["id"])):
+        return True
+    if raw.get("loan_id") is not None or raw.get("expires_at") is not None:
+        return True
+    kind = raw.get("entitlement_type")
+    if kind is not None and (type(kind) is not str or kind != "owned"):
+        return True
+    return False
+
+
 def _canonical_kobo_backup_offline_preview(
     self, credential_id, identity_id, session, *, verify_local_files: bool,
 ):
@@ -2343,9 +2373,14 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                     summary["skipped"] += 1
                     item_committed = True
                     continue
-                if _kobo_manifest_flags_invalid(raw):
-                    # Fail closed before even touching an existing backup row.
-                    # An ambiguous rights manifest is never prune authority.
+                if (_kobo_manifest_flags_invalid(raw)
+                        or _kobo_legacy_manifest_claim_invalid(
+                            raw, credential_id=session.credential_id,
+                            account_id=session.accounts[0].unique_id,
+                        )):
+                    # Fail closed BEFORE any backup_put/entitlement mirror.
+                    # The 0.7 key omits borrower/branch and otherwise labels
+                    # every accepted manifest row as an owned purchase.
                     malformed = True
                     summary["malformed_manifest_items"] += 1
                     summary["skipped"] += 1
