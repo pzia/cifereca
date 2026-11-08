@@ -157,10 +157,9 @@ def _observed_logon_script(paths: tuple[str, ...]) -> str:
     candidates = [
         path for path in paths
         if type(path) is str
-        and path.rsplit("/", 1)[-1] == "logon.js"
-        or (type(path) is str
-            and path.rsplit("/", 1)[-1].startswith("logon.js.pagespeed.")
-            and path.endswith(".js"))
+        and (path.rsplit("/", 1)[-1] == "logon.js"
+             or (path.rsplit("/", 1)[-1].startswith("logon.js.pagespeed.")
+                 and path.endswith(".js")))
     ]
     return candidates[0] if len(candidates) == 1 else ""
 
