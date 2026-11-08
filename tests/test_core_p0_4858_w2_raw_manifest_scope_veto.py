@@ -95,3 +95,59 @@ def test_exact_legacy_purchase_claim_keeps_first_delivery_contract(
         assert row["status"] == "complete"
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("extra", [
+    {"product_id": 123},
+    {"product_id": True},
+    {"product_id": " book-1"},
+    {"product_id": "book-1 "},
+    {"product_id": "book-1\n"},
+    {"product_id": "book-1\x00"},
+    {"product_id": "x" * 1025},
+    {"product_id": "book-1", "id": 123},
+    {"product_id": "book-1", "id": "book-1 "},
+    {"product_id": "book-1", "id": "book-1\r"},
+])
+def test_malformed_raw_edition_key_never_mints_right_or_get(
+    tmp_path: Path, monkeypatch, extra,
+):
+    service = _service(tmp_path)
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    session._manifest = [{**_manifest_row(), **extra}]
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_a, **_kw: pytest.fail("invalid edition key cannot GET"),
+    )
+    try:
+        result = service.sync_kobo_backup()
+        assert result["attempted"] == result["downloaded"] == 0
+        assert result["malformed_manifest_items"] >= 1
+        assert service.storage.backup_get("kobo", "vault-1", "book-1") is None
+        assert not service.storage.entitlements(provider_id="kobo")
+    finally:
+        service.close()
+
+
+def test_raw_exact_dual_edition_aliases_remain_compatible(
+    tmp_path: Path, monkeypatch,
+):
+    service = _service(tmp_path)
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    session._manifest = [{**_manifest_row(), "id": "book-1"}]
+    calls = []
+
+    def acquire(_item, target):
+        calls.append("GET")
+        path = Path(target) / "dual-alias.epub"
+        _write_epub(path)
+        return SimpleNamespace(path=path, account_id="account", metadata={})
+
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", acquire)
+    try:
+        result = service.sync_kobo_backup()
+        assert result["downloaded"] == 1
+        assert calls == ["GET"]
+        assert service.storage.backup_get("kobo", "vault-1", "book-1")["status"] == "complete"
+    finally:
+        service.close()

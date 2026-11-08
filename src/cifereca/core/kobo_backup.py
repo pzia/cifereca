@@ -544,10 +544,20 @@ def _kobo_legacy_manifest_claim_invalid(
     ):
         if key in raw and (type(raw[key]) is not str or raw[key] != expected):
             return True
+    # Never stringify, trim or silently substitute an invalid edition key:
+    # W2's backup PK and the canonical SourceKey must refer to the *same*
+    # provider edition. Otherwise a malformed provider row can mint a new
+    # positive W1 entitlement under a different identifier.
+    for key in ("product_id", "id"):
+        if key not in raw:
+            continue
+        value = raw[key]
+        if (type(value) is not str or not value or value != value.strip()
+                or len(value) > 1024
+                or any(char in value for char in "\x00\r\n")):
+            return True
     if ("product_id" in raw and "id" in raw
-            and (type(raw["product_id"]) is not str
-                 or type(raw["id"]) is not str
-                 or raw["product_id"] != raw["id"])):
+            and raw["product_id"] != raw["id"]):
         return True
     if raw.get("loan_id") is not None or raw.get("expires_at") is not None:
         return True
