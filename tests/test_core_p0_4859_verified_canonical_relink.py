@@ -763,3 +763,75 @@ def test_journal_undo_rejects_intervening_relink_aba_with_original_path_again(
     assert _read(store, "placements") == before
     assert _unchanged(store) == unchanged
     assert original.read_bytes() == BYTES
+
+
+def test_relink_after_exact_undo_reuses_paths_but_never_journal_identity(
+    published,
+):
+    """W4/D5: A→B→A (undo)→B→A (undo) remains usable and unforgeable."""
+    store, original, moved, args, _source, finished = published
+    immutable = _unchanged(store)
+    original.rename(moved)
+    first_preview = relink(store, **args)
+    first = relink(
+        store, **args, confirmation=first_preview["plan_token"],
+    )["operation_id"]
+
+    moved.rename(original)
+    undo_kwargs = {**args, "new_path": original}
+    first_undo_preview = relink(
+        store, **undo_kwargs, undo_operation=first,
+    )
+    first_undo = relink(
+        store, **undo_kwargs, undo_operation=first,
+        confirmation=first_undo_preview["plan_token"],
+    )["operation_id"]
+    assert first != first_undo
+    assert store.placement_get(finished.placement_id)["path"] == str(original)
+
+    # Another manual move to the SAME target is legitimate. The old
+    # path-pair-only operation key would collide with the first journal.
+    original.rename(moved)
+    redo_preview = relink(store, **args)
+    assert redo_preview["plan_token"] != first_preview["plan_token"]
+    redo = relink(store, **args, confirmation=redo_preview["plan_token"])
+    assert redo["status"] == "relinked"
+    second = redo["operation_id"]
+    assert len({first, first_undo, second}) == 3
+    assert store.placement_get(finished.placement_id)["path"] == str(moved)
+
+    moved.rename(original)
+    before = _read(store, "placements")
+    # An old undo token cannot revoke the newer B pointer, even when
+    # the same old/new path and SHA have returned in a single second.
+    with pytest.raises(CanonicalRelinkRejected, match="canonical_relink_plan_changed"):
+        relink(store, **undo_kwargs, undo_operation=first)
+    assert _read(store, "placements") == before
+
+    second_undo_preview = relink(
+        store, **undo_kwargs, undo_operation=second,
+    )
+    second_undo = relink(
+        store, **undo_kwargs, undo_operation=second,
+        confirmation=second_undo_preview["plan_token"],
+    )
+    assert second_undo["status"] == "relinked"
+    assert len({first, first_undo, second, second_undo["operation_id"]}) == 4
+    assert store.placement_get(finished.placement_id)["path"] == str(original)
+    assert _unchanged(store) == immutable
+    with store._lock, store._connect() as db:
+        rows = db.execute(
+            "SELECT key,value FROM metadata WHERE key LIKE "
+            "'core.kobo.canonical-placement-relink.%'"
+        ).fetchall()
+        cursor = db.execute(
+            "SELECT value FROM metadata WHERE key LIKE "
+            "'core.kobo.canonical-placement-last-operation.v1.%'"
+        ).fetchone()
+    assert len(rows) == 4
+    assert {key.rsplit(".", 1)[1] for key, _ in rows} == {
+        first, first_undo, second, second_undo["operation_id"],
+    }
+    assert cursor == (second_undo["operation_id"],)
+    assert original.read_bytes() == BYTES
+    assert not moved.exists()
