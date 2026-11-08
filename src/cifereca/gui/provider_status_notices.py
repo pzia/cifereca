@@ -35,7 +35,7 @@ def _safe_text(value: object) -> bool:
         and not any(ord(ch) < 32 or ord(ch) == 127
                     or ch in "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
                     for ch in value)
-        and re.search(r"(?i)(?:https?://|bearer\\s+|(?:token|password|secret)=)", value) is None
+        and re.search(r"(?i)(?:https?://|bearer\s+|(?:token|password|secret)=)", value) is None
     )
 
 
