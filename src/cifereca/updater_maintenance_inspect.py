@@ -14,7 +14,8 @@ import time
 from typing import Any
 
 from . import updater
-from .paths import data_dir
+from .paths import data_dir, state_dir
+from .updater_retention_backup_inventory import inspect_updater_backup_history
 from .updater_retention_inventory import inspect_core_transaction_history
 from .updater_retention_plugin_inventory import inspect_plugin_version_history
 
@@ -45,9 +46,11 @@ def _summarize(plan: dict[str, Any] | None, kinds: tuple[str, ...]) -> list[dict
 def inspect_maintenance(
     *, runtime_root: Path | None = None,
     packages_root: Path | None = None,
+    state_root: Path | None = None,
     now: float | None = None,
 ) -> dict[str, Any]:
     """Cross-store *summary* only; no unsafe cross-store graph merge."""
+    explicit_runtime = runtime_root is not None
     runtime_root = runtime_root if runtime_root is not None else updater.install_root()
     # The standard updater._plugin_packages_root() calls data_dir() and
     # creates a directory. Inspection must not do so, even when not installed.
@@ -56,25 +59,35 @@ def inspect_maintenance(
     instant = time.time() if now is None else now
     core = inspect_core_transaction_history(runtime_root, now=instant)
     plugins = inspect_plugin_version_history(packages_root, now=instant)
+    if state_root is None and explicit_runtime:
+        # Tests and explicit offline investigations may point at a foreign
+        # runtime; never silently jump to the operator's actual XDG state.
+        backups = {
+            "blockers": ["updater_state_not_supplied"],
+            "coverage": [], "plan": None,
+        }
+    else:
+        backup_root = state_root if state_root is not None else state_dir(create=False)
+        backups = inspect_updater_backup_history(backup_root, now=instant)
     blockers = {
         *(f"core:{reason}" for reason in core["blockers"]),
         *(f"plugins:{reason}" for reason in plugins["blockers"]),
+        *(f"backups:{reason}" for reason in backups["blockers"]),
         "cross_store_reference_graph_not_attested",
-        "updater_backup_ownership_unqualified",
         "persistent_staging_ownership_unqualified",
         "plugin_activation_lock_not_shared",
     }
     return {
         "schema": "cifereca.updater.maintenance-inspect/1",
         "ok": True, "read_only": True, "safe_to_apply": False,
-        "coverage": sorted(set(core.get("coverage", []) + plugins.get("coverage", []))),
+        "coverage": sorted(set(core.get("coverage", []) + plugins.get("coverage", []) + backups.get("coverage", []))),
         "pending_stores": [
-            "updater_backups", "persistent_staging", "cross_store_references",
+            "persistent_staging", "cross_store_references",
         ],
         "stores": _summarize(
             core.get("plan"),
             ("release", "transaction", "snapshot"),
-        ) + _summarize(plugins.get("plan"), ("version",)),
+        ) + _summarize(plugins.get("plan"), ("version",)) + _summarize(backups.get("plan"), ("backup",)),
         "blockers": sorted(blockers),
     }
 
