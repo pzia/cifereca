@@ -84,3 +84,26 @@ def test_invalid_registry_fails_closed(declarations):
 
 def test_absence_of_registry_candidates_is_not_error_or_fallback():
     assert resolve([], "plugin.age.alpha", "1.0.0") is None
+
+
+@pytest.mark.parametrize("declarations", [
+    [object()],
+    [D("", "age", "edition:fr", "1.0.0", "schema:age.v1")],
+    [ONE] * 129,
+    [ONE, D("plugin.other", "genre", "", "1.0.0", "schema:genre.v1")],
+])
+def test_missing_selection_still_validates_entire_registry(declarations):
+    """No configured consolidator is not permission to skip admission."""
+    with pytest.raises(ValueError, match="invalid_consolidator"):
+        resolve(declarations)
+
+
+def test_missing_selection_with_valid_competing_candidates_is_inert():
+    """Competing valid declarations never imply a default winner."""
+    assert resolve([ONE, TWO, GENRE]) is None
+
+
+def test_invalid_unrelated_declaration_rejected_with_explicit_selection():
+    bad = D("plugin.other", "genre", "", "1.0.0", "schema:genre.v1")
+    with pytest.raises(ValueError, match="invalid_consolidator_declaration"):
+        resolve([ONE, bad], "plugin.age.alpha", "1.0.0")
