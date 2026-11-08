@@ -100,6 +100,7 @@ class CatalogueLinks:
     book_ids: tuple[str, ...]
     next_page_url: str | None
     completeness: str = "partial"
+    book_urls: tuple[tuple[str, str], ...] = ()
 
 
 class _Links(HTMLParser):
@@ -111,6 +112,7 @@ class _Links(HTMLParser):
         page = current.get("pageindex", ["0"])
         self.current_page = int(page[0]) if (len(page) == 1 and re.fullmatch(r"[0-9]{1,5}", page[0])) else -1
         self.book_ids = []
+        self.book_urls = {}
         self.next_page_url = None
         self._candidate = None
         self._anchor_text = []
@@ -127,6 +129,10 @@ class _Links(HTMLParser):
         ident = book_id_from_url(link)
         if ident and ident not in self.book_ids and len(self.book_ids) < 300:
             self.book_ids.append(ident)
+            # Preserve only a validated, same-tenant HTTPS detail URL. The
+            # slug can be required for the actual book GET; never reconstruct
+            # an unrelated/cross-tenant link from an opaque book identifier.
+            self.book_urls[ident] = link
         parts = _parts(link)
         self._candidate = None
         if parts and parts.path == _SEARCH_PATH:
@@ -170,7 +176,8 @@ def extract_catalogue_links(page_url: str, html: str) -> CatalogueLinks:
     parser = _Links(page_url)
     parser.feed(html)
     parser.close()
-    return CatalogueLinks(tuple(parser.book_ids), parser.next_page_url)
+    return CatalogueLinks(tuple(parser.book_ids), parser.next_page_url,
+                          book_urls=tuple(parser.book_urls.items()))
 
 
 @dataclass(frozen=True)
