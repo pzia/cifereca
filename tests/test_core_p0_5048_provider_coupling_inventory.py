@@ -92,3 +92,34 @@ def test_provider_ids_are_data_not_python_import_module_names():
         'from .core import numilog_manifest_rights\n'
     )
     assert [x["providers"] for x in result["imports"]] == [["bnf"], ["numilog"]]
+
+def test_provider_membership_and_match_or_are_reported_without_evaluation():
+    source = '''
+if provider_id in {"bnf-pret", "numilog", "unknown"}:
+    pass
+if provider_id not in ("kobo", "bnf-catalogue"):
+    pass
+match provider_id:
+    case "bnf-pret" | "kobo":
+        pass
+'''
+    result = inspect_source(source)
+    assert [x["providers"] for x in result["comparisons"]] == [
+        ["bnf-pret", "numilog"],
+        ["bnf-catalogue", "kobo"],
+        ["bnf-pret", "kobo"],
+    ]
+
+
+def test_dynamic_membership_is_never_evaluated_or_guessed():
+    source = '''
+if provider_id in build_provider_set():
+    pass
+if provider_id == "not-registered":
+    pass
+match provider_id:
+    case value:
+        pass
+'''
+    result = inspect_source(source)
+    assert result["comparisons"] == []
