@@ -312,3 +312,72 @@ def test_cas_entry_rejects_foreign_or_signed_service(service):
             client.inspect_cas_entry()
     finally:
         client.close()
+
+
+def test_complete_synthetic_http_cas_chain_stays_unverified_and_ticket_once():
+    from urllib.parse import quote
+    service = "https://www.biblioaccess.com/1409/"
+    login = sso.ORIGIN + "/login?service=" + quote(service, safe="")
+    target = service + "?ticket=ST-SYNTHETIC-NEVER-REAL"
+    observed = []
+    def handler(request):
+        observed.append((request.method, str(request.url)))
+        if request.url.path == sso.ACCOUNT_PATH:
+            return httpx.Response(302, headers={"location": login})
+        if request.url.path == "/login":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                text='<form method="POST" action="/sso/logon?changeUser=0&provider=A&param=B">'
+                     '<input name="login"><input type="password" name="password">'
+                     '</form>')
+        if request.url.path == "/sso/logon":
+            return httpx.Response(200, headers={"content-type": "application/json"},
+                                  json={"synthetic": True})
+        if request.url.path == "/cas/login":
+            assert request.url.params["service"] == service
+            return httpx.Response(302, headers={"location": target})
+        if str(request.url) == target:
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  text="<html>Unverified landing</html>")
+        pytest.fail("Unexpected SSO request")
+    client = mock(handler)
+    try:
+        assert client.inspect_cas_entry().status == 302
+        shape = client.inspect_login()[0]
+        post = client.submit_once(shape=shape, fields={
+            "login": "SYNTHETIC", "password": "SYNTHETIC"}, explicit_consent=True)
+        assert not post.authentication_verified
+        result = client.inspect_cas_return_once()
+        assert result.route == "cas_landing_unverified"
+        assert not result.authentication_verified
+        assert [method for method, _ in observed] == [
+            "GET", "GET", "POST", "GET", "GET"]
+        assert target in [url for _, url in observed]
+        assert "ST-SYNTHETIC" not in repr(result)
+        with pytest.raises(sso.SsoProtocolError, match="cas_already_attempted"):
+            client.inspect_cas_return_once()
+        assert len(observed) == 5
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("landing_location", [
+    "https://evil.example/1409/?ticket=ST-SYNTHETIC",
+    "https://www.biblioaccess.com/1717/?ticket=ST-SYNTHETIC",
+    "https://www.biblioaccess.com/1409/?ticket=A&token=OTHER",
+    "https://www.biblioaccess.com/1409/Catalog/MyLoans?ticket=ST-SYNTHETIC",
+])
+def test_cas_ticket_redirect_refused_without_ticket_get(landing_location):
+    seen = []
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={"location": landing_location})
+    client = mock(handler)
+    client._cas_service = "https://www.biblioaccess.com/1409/"
+    client._login_inspected = True
+    client._logon_status = 200
+    try:
+        with pytest.raises(sso.SsoProtocolError, match="cas_return_refused"):
+            client.inspect_cas_return_once()
+        assert len(seen) == 1
+    finally:
+        client.close()
