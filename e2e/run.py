@@ -674,6 +674,30 @@ def main() -> int:
                         for key in sorted(search_keys):
                             print("P1_3687_NUMERIC_" + key + "=" +
                                   str(search_geometry[key]), flush=True)
+                    # Only our fixed widget IDs and numeric GTK measurements
+                    # from the synthetic 1024px probe may reach Actions.
+                    # The probe may retain richer local debugging state, but
+                    # no widget text, titles, query or account IDs are output.
+                    widths = report_data.get("p1_3687_minimum_widths")
+                    width_keys = frozenset({
+                        "shell_header", "header_controls", "identity_dropdown",
+                        "account_dropdown", "statistics_button", "sidebar",
+                        "view_stack", "search_page", "search_controls",
+                        "search_detail",
+                    })
+                    if (type(widths) is dict and set(widths) == width_keys
+                            and all(type(widths[k]) in (tuple, list)
+                                    and len(widths[k]) == 3
+                                    and all(type(v) is int and 0 <= v <= 4096
+                                            for v in widths[k])
+                                    for k in width_keys)):
+                        for key in sorted(width_keys):
+                            minimum, natural, allocated = widths[key]
+                            print(
+                                f"P1_3687_WIDTH_{key}="
+                                f"{minimum}/{natural}/{allocated}",
+                                flush=True,
+                            )
                 # #774: export only closed phase codes and bounded numeric
                 # XTEST geometry for the synthetic Recommendations probe.
                 # Raw exceptions, search text and GTK widget labels stay local.
