@@ -68,7 +68,7 @@ def test_core_switch_while_busy_cancels_old_worker_before_its_completion():
     assert labels[-1] == "Plugin non activé."
 
 
-def test_disappearing_profile_while_busy_clears_rows_without_selecting_other():
+def test_disappearing_profile_while_busy_follows_core_selection_without_leaking_old_rows():
     rows = [
         {"identity_id": "default", "selected": True},
         {"identity_id": "other", "selected": False},
@@ -87,7 +87,7 @@ def test_disappearing_profile_while_busy_clears_rows_without_selecting_other():
     assert view._ranked == []
     assert rendered[0] == ("rows", ())
     assert view._base_complete(41, None, None) is False
-    assert labels[-1] == "Aucun profil disponible."
+    assert labels[-1] == "Plugin non activé."
     assert not view._overview_refresh_pending
 
 
