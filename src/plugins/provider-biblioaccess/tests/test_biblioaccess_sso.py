@@ -953,3 +953,18 @@ def test_background_sync_requires_literal_opt_in_even_for_valid_probe_options():
         session.connect()
     assert client.closed and not session.connected and session.accounts == []
     session.close()
+
+
+def test_authenticated_sync_does_not_get_stale_experimental_js():
+    """Legacy diagnostic JS cannot block background auth or add a GET."""
+    session, http, calls = _synced_session()
+    session.options["experimental_http_probe"] = "on"
+    session.options["experimental_login_script_path"] = "/scripts/old.pagespeed.js"
+    try:
+        accounts = session.connect()
+        assert len(accounts) == 1 and session.connected is True
+        assert calls.count("post") == 1
+        assert calls == [
+            "entry", "login", "preflight", "post", "cas", "initial_loans"]
+    finally:
+        session.close()
