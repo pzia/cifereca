@@ -12,7 +12,8 @@ import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from biblioaccess_http_sso import (
-    ORIGIN, LOGON_PATH, FormShape, SsoProtocolError,\n    BIBLIO_ORIGIN, ACCOUNT_PATH, _url,
+    ORIGIN, LOGON_PATH, FormShape, SsoProtocolError,
+    BIBLIO_ORIGIN, ACCOUNT_PATH, _url,
     inspect_login_forms, logon_response_shape, classify_http_step,
 )
 
