@@ -1088,3 +1088,43 @@ def test_diagnostic_sink_failure_never_leaks_private_traceback(caplog):
         assert calls.count("post") == 1
     finally:
         session.close()
+
+
+def test_production_account_declaration_has_no_stale_ajax_or_manual_diagnostic_fields():
+    descriptor = mod.PLUGIN.descriptor
+    assert [field.key for field in descriptor.credential_fields] == [
+        "username", "password"]
+    assert [field.key for field in descriptor.account_options] == [
+        "authenticated_sync"]
+    assert descriptor.account_options[0].default == "off"
+    assert descriptor.background_authentication_option_key == "authenticated_sync"
+    assert descriptor.interactive_authentication is True
+    assert descriptor.capabilities.loans is True
+
+
+def test_legacy_technical_options_are_still_supported_when_already_persisted():
+    """Retiring Settings rows must not silently delete a legacy probe path."""
+    session = mod.PLUGIN.create_session(
+        credential_id="SYNTHETIC-CREDENTIAL",
+        label="SYNTHETIC",
+        credentials={"username": "SYNTHETIC-USER", "password": "SYNTHETIC-PASS"},
+        options={
+            "authenticated_sync": "off",
+            "experimental_http_probe": "post",
+            "ajax_change_user": "false",
+            "ajax_provider": "SYNTHETIC-IDP",
+            "ajax_dc": "SYNTHETIC-FRESH-DYNAMIC",
+            "ajax_remember_me": "false",
+            "ajax_captcha": "",
+            "ajax_captcha_check_value": "SYNTHETIC-CHALLENGE",
+        },
+        config=None, storage=None, diagnostics=None,
+    )
+    try:
+        query, fields = session._post_payload()
+        assert query["provider"] == "SYNTHETIC-IDP"
+        assert fields["username"] == "SYNTHETIC-USER"
+        assert fields["captchaCheckValue"] == "SYNTHETIC-CHALLENGE"
+        assert session.connected is False
+    finally:
+        session.close()
