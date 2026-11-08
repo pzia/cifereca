@@ -33,7 +33,7 @@ def test_ajax_endpoint_fields_and_status_never_connect_core():
         assert request.headers["content-type"].startswith("application/x-www-form-urlencoded")
         assert request.headers["x-requested-with"] == "XMLHttpRequest"
         assert set(k for k, _ in __import__("urllib.parse", fromlist=["parse_qsl"]).parse_qsl(
-            request.content.decode("ascii"))) == set(FORM)
+            request.content.decode("ascii"), keep_blank_values=True)) == set(FORM)
         return httpx.Response(200, headers={"content-type": "application/json; charset=utf-8"},
                               json={"errors": [], "message": None,
                                     "success": True, "d": "SYNTHETIC-OPAQUE"})
