@@ -326,9 +326,9 @@ def _valid_auth_schema(value: object, *, direction: str) -> bool:
         groups = (value["query_names"], value["form_names"])
         return all(
             type(group) is list and len(group) <= _AUTH_SCHEMA_FIELDS
-            and group == sorted(set(group))
             and all(type(name) is str and _SAFE_QUERY_NAME.fullmatch(name)
                     for name in group)
+            and group == sorted(set(group))
             for group in groups
         ) and bool(value["form_names"])
     if direction == "response":
@@ -824,7 +824,9 @@ class PrivateHttpTrace:
                 entry.response_body_state = "body_omitted"
                 entry.response_body_reason = "auth_redacted"
                 entry.auth_response_schema_state = "auth_schema_unavailable"
-                if scoped and resp is not None:
+                if (scoped and resp is not None
+                        and entry.mime in {"application/json", "text/json"}):
+                    # Never read a previously excluded download/license body.
                     structure = _auth_response_structure(
                         resp, req, max_bytes=min(self.max_body, self.total_body),
                     )
