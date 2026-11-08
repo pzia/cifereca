@@ -14,7 +14,7 @@ import json
 from ..models import Account
 from .canonical_publication import _stable
 from .source_convergence import SourceKey
-from .source_auto_consent_bridge import toggle_state, configured_kind
+from .source_auto_consent_bridge import toggle_state
 from ..plugin_api.provider_rights_observation import (
     ProviderRightObservation, ProviderRightsScope,
 )
