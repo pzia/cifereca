@@ -488,7 +488,11 @@ for _name, _value in _TEST_ONLY_DEPENDENCIES.items():
 _TEST_ONLY_NAMES = ["_json","_transaction","_file","_JOURNAL","_FILE_EVIDENCE_JOURNAL","_FILE_EVIDENCE_SCHEMA","_SCHEMA","_KEYS","_CHANGES","_token","_rows","_unique_catalogue_fields","_metadata","_snapshot","_validate","_proposed","_write_row","_operation_id","_journal","_validate_undo","_validate_historical_links","_record_offline_file_evidence","_receipt"]
 for _name in _TEST_ONLY_NAMES:
     _value = globals()[_name]
-    if isinstance(_value, FunctionType):
+    # contextlib.contextmanager's wrapper is implemented inside contextlib.
+    # Its globals contain _GeneratorContextManager; rebinding that wrapper
+    # to the Core module would lose the contextlib factory and fail before
+    # entering the test-only transaction. Keep the original decorated callable.
+    if isinstance(_value, FunctionType) and _name != "_transaction":
         _value = _bind_to_runtime_globals(_value)
     setattr(_runtime, _name, _value)
 # The historical transaction generated a random operation ID; only
