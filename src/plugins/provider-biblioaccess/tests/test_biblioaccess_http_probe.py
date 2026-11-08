@@ -154,7 +154,7 @@ def test_reject_forged_form_even_when_fields_match():
 
 
 @pytest.mark.parametrize(("location", "ok"), [
-    ("https://mediatheques.agglo-larochelle.fr/login?service=SYNTHETIC", True),
+    ("https://mediatheques.agglo-larochelle.fr/login?service=https%3A%2F%2Fwww.biblioaccess.com%2F1409%2F", True),
     ("https://mediatheques.agglo-larochelle.fr/cas/login?service=SYNTHETIC", True),
     ("https://evil.example/login", False),
     ("https://mediatheques.agglo-larochelle.fr/logon", False),
@@ -266,5 +266,49 @@ def test_logon_invalid_query_keys_cannot_be_sent():
         with pytest.raises(sso.SsoProtocolError, match="form_target_refused"):
             client.inspect_login()
         assert seen == ["GET"]
+    finally:
+        client.close()
+
+
+def test_cas_service_carried_to_login_get_same_http_client():
+    from urllib.parse import quote
+    service = "https://www.biblioaccess.com/1409/"
+    redirect = sso.ORIGIN + "/login?service=" + quote(service, safe="")
+    observed = []
+    def handler(request):
+        observed.append(str(request.url))
+        if request.url.path == "/1409/Account/Login":
+            return httpx.Response(302, headers={"location": redirect})
+        if request.url.path == "/login":
+            return httpx.Response(
+                200, headers={"content-type": "text/html"},
+                text='<form method="POST" action="/logon">'
+                     '<input name="login"><input name="password" type="password">'
+                     '</form>')
+        pytest.fail("Unexpected route")
+    client = mock(handler)
+    try:
+        assert client.inspect_cas_entry().route == "institutional_redirect_unverified"
+        assert client.inspect_login()[0].field_names == ("login", "password")
+        assert observed == [sso.BIBLIO_ORIGIN + sso.ACCOUNT_PATH, redirect]
+        assert client._idp_login_url == redirect
+    finally:
+        client.close()
+    assert client._idp_login_url is None
+
+
+@pytest.mark.parametrize("service", [
+    "https://evil.example/1409/",
+    "http://www.biblioaccess.com/1409/",
+    "https://www.biblioaccess.com/1717/",
+    "https://www.biblioaccess.com/1409/?ticket=SYNTHETIC",
+])
+def test_cas_entry_rejects_foreign_or_signed_service(service):
+    from urllib.parse import quote
+    redirect = sso.ORIGIN + "/login?service=" + quote(service, safe="")
+    client = mock(lambda _: httpx.Response(302, headers={"location": redirect}))
+    try:
+        with pytest.raises(sso.SsoProtocolError, match="entry_redirect_refused"):
+            client.inspect_cas_entry()
     finally:
         client.close()
