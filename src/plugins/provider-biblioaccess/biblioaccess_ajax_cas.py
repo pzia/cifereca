@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Lock
-from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
 import httpx
 
@@ -21,7 +21,11 @@ from biblioaccess_ajax_preflight import (
 
 BIBLIO = "https://www.biblioaccess.com"
 IDP = "https://mediatheques.agglo-larochelle.fr"
-ENTRY = BIBLIO + "/1409/Account/Login"
+# Exact navigation target observed when the user clicks BiblioAccess login.
+# returnUrl is a navigation parameter, not a CAS service ticket.
+RETURN_URL = BIBLIO + "/1409/"
+ENTRY = (BIBLIO + "/1409/Account/Login?returnUrl="
+         + quote(RETURN_URL, safe=""))
 CAS = IDP + "/cas/login"
 LOANS = BIBLIO + "/1409/Catalog/MyLoans"
 _LIMIT = 256 * 1024
