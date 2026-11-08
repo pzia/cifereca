@@ -44,23 +44,31 @@ def unambiguous_loan_rows(loans: Iterable[Any]) -> tuple[Loan, ...]:
     """
     rows: dict[str, Loan] = {}
     conflicting: set[str] = set()
-    for loan in loans:
-        if type(loan) is not Loan:
-            continue
-        key = loan_source_key(loan)
-        if key in conflicting:
-            continue
-        previous = rows.get(key)
-        if previous is None:
-            rows[key] = loan
-            continue
-        try:
-            identical = previous == loan
-        except (ValueError, TypeError, RecursionError):
-            identical = False
-        if not identical:
-            conflicting.add(key)
-            rows.pop(key, None)
+    try:
+        for index, loan in enumerate(loans):
+            if index >= 10000:
+                # A truncated inventory cannot establish that any source key
+                # is unique; the missing tail may contradict an earlier card.
+                return ()
+            if type(loan) is not Loan:
+                continue
+            key = loan_source_key(loan)
+            if key in conflicting:
+                continue
+            previous = rows.get(key)
+            if previous is None:
+                rows[key] = loan
+                continue
+            try:
+                identical = previous == loan
+            except (ValueError, TypeError, RecursionError):
+                identical = False
+            if not identical:
+                conflicting.add(key)
+                rows.pop(key, None)
+    except Exception:
+        # Never publish early action rows from a failed lazy provider source.
+        return ()
     return tuple(rows.values())
 
 
