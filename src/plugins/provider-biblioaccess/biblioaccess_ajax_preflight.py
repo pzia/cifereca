@@ -34,7 +34,7 @@ _KNOWN_FIELDS = frozenset((
     "captchaCheckValue", "mailaddress", "RequestKey", "oldpassword",
     "passwordconfirm", "provider", "changeUser",
 ))
-_STATIC_SEGMENT = re.compile(r"[A-Za-z0-9_.-]{1,64}\\Z")
+_STATIC_SEGMENT = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
 _OPAQUE_SEGMENT = re.compile(
     r"(?:[0-9a-f]{16,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
     r"[0-9a-f]{4}-[0-9a-f]{12})", re.IGNORECASE,
