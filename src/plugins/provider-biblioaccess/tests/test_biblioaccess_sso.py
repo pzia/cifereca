@@ -43,7 +43,7 @@ def test_no_live_capabilities_and_fail_closed():
     assert session.provider_id == "biblioaccess.la-rochelle"
     assert session.credential_id == "fake-credential"
     assert session.credentials == {}
-    with pytest.raises(mod.ProviderCapabilityError, match="session_transfer_unsupported"):
+    with pytest.raises(mod.ProviderCapabilityError, match="http_sso_logon_unqualified"):
         session.connect()
     assert session.accounts == []
     assert not session.connected
