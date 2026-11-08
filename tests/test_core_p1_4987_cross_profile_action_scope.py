@@ -129,3 +129,38 @@ def test_lender_binding_rebound_during_callback_never_yields_live_lease(
     assert lease.current(service) is False
     assert lease_for(service, account, session) is None
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("change", [
+    "account", "session", "notice", "session_epoch", "reader_context",
+])
+def test_lender_storage_callback_rebinding_without_epoch_increment_is_revoked(
+    harness, monkeypatch, change,
+):
+    service, account, session = harness
+    notice = _candidate().notice
+    lease = lease_for(service, account, session, notice=notice)
+    assert lease is not None
+    original = service.storage.provider_connections
+
+    def changed_without_epoch(*, identity_id):
+        rows = original(identity_id=identity_id)
+        if change == "account":
+            service.accounts = [replace(account)]
+        elif change == "session":
+            service._sessions[service._session_key(
+                "paris", "card-alex",
+            )] = object()
+        elif change == "notice":
+            notice.record_id = "another-edition"
+        elif change == "session_epoch":
+            session._epoch += 1
+        else:
+            service.current_identity = replace(service.current_identity)
+        return rows
+
+    monkeypatch.setattr(
+        service.storage, "provider_connections", changed_without_epoch,
+    )
+    assert lease.current(service) is False
+    assert session.calls == 0
