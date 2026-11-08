@@ -65,8 +65,22 @@ def classify_search_response(*, request_url: str, status: int,
         return "remote_error"
     if status == 302 and parts.path == _SUMMARY_PATH:
         target = _parts(urljoin(request_url, location))
-        return ("search_redirect" if target and target.path == _SEARCH_PATH
-                else "untrusted_redirect")
+        if target is None or target.path != _SEARCH_PATH:
+            return "untrusted_redirect"
+        source_params = parse_qs(parts.query, keep_blank_values=True)
+        target_params = parse_qs(target.query, keep_blank_values=True)
+        if (set(source_params) != {"query"}
+                or len(source_params["query"]) != 1
+                or not source_params["query"][0]
+                or not set(target_params) <= _ALLOWED_SEARCH_PARAMS
+                or target_params.get("query") != source_params["query"]
+                or any(len(v) != 1 or len(v[0]) > 512
+                       for v in target_params.values())):
+            return "untrusted_redirect"
+        page = target_params.get("pageindex", ["0"])[0]
+        if not re.fullmatch(r"[0-9]{1,3}", page) or int(page) > 100:
+            return "untrusted_redirect"
+        return "search_redirect"
     if status == 200:
         return "html_unparsed"
     return "unsupported"
@@ -118,13 +132,16 @@ class _Links(HTMLParser):
         if parts and parts.path == _SEARCH_PATH:
             params = parse_qs(parts.query, keep_blank_values=True)
             if (params.keys() <= _ALLOWED_SEARCH_PARAMS
+                    and all(len(values) == 1 and len(values[0]) <= 512
+                            for values in params.values())
                     and "pageindex" in params
                     and len(params["pageindex"]) == 1
                     and re.fullmatch(r"[0-9]{1,5}", params["pageindex"][0])
                     and self.current_query is not None
                     and params.get("query") == self.current_query
                     and self.current_page >= 0
-                    and self.current_page < int(params["pageindex"][0]) <= 100):
+                    and int(params["pageindex"][0]) == self.current_page + 1
+                    and int(params["pageindex"][0]) <= 100):
                 self._candidate = link
                 self._anchor_text = []
                 if "next" in str(values.get("rel") or "").lower().split():
