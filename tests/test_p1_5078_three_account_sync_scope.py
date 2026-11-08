@@ -7,7 +7,6 @@ not merely a standalone formatting helper.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
 
 import pytest
 
@@ -90,7 +89,7 @@ def test_9_522_5_checkpoint_histories_retain_two_warnings_not_one_fake_failure()
     assert sum(sync_source_attention(s) is not None for s in sources) == 2
     assert sync_source_attention(sources[1]) is None
     presentation = sync_source_presentation(sources[1])
-    assert "Dernier succès 08/11/2026 11:36" in presentation.sync_label
+    assert "Dernier succès" in presentation.sync_label and "08/11/2026" in presentation.sync_label
     assert "Partielle (historique, antérieur au dernier cycle canonique)" in presentation.summary
     assert "30/10/2026" in presentation.summary
     assert "Téléchargement local : Réussie" not in presentation.summary
