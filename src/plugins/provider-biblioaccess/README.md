@@ -3,7 +3,7 @@
 ## État actuel — synchronisation positive des prêts (opt-in)
 
 Suite à la double recette HTTP AJAX/CAS réelle du 08/11/2026,
-la version **0.2.0** peut établir une session **HTTPS directe**, sans
+la branche **0.2.x** peut établir une session **HTTPS directe**, sans
 navigateur ni cookie importé, et relire les prêts actifs de MyLoans.
 
 **Consentement nécessaire par compte :**
@@ -40,6 +40,12 @@ Le cookie jar est conservé en RAM par la session et détruit sur
 authentifiée ou expirée **invalide la session** : aucune reconnexion
 automatique, aucun rejeu de POST en cours de lecture. Les comptes de
 credentials distincts ont des clients et des états séparés.
+
+### Correctif 0.2.1 — diagnostics et cohérence des prêts
+
+Version corrective du bundle `provider-biblioaccess` diffusée après
+la validation de la session `authenticated_sync=on` en 0.2.0.
+Aucun changement de contrat ni nouvelle capacité demandée.
 
 ### Diagnostic des relectures de prêts et ambiguïtés
 
