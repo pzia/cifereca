@@ -97,3 +97,15 @@ projection W1 et six transitions depuis une archive `complete|ok`
 préexistante sans preuve B ; elle affirme l'immuabilité exacte de
 `entitlements/acquisition_ledger/artifacts/placements/catalog_entries/
 source_references/origin_links`, tout en conservant les lignes 0.7.
+
+### Marqueur monotone de l'archive complète
+
+Une comparaison avec le seul `status` antérieur ne suffit pas : après
+`complete → acquiring`, un second `acquiring → error` réactivait le
+miroir positif W1. `backup_put` conserve donc dans `metadata` un marqueur
+monotone `core.kobo.completed-legacy-archive.v1.<sha256>`, adressé par la
+clé historique exacte `(credential_id,item_id)`, dans la même transaction
+que l'UPSERT. Ce marqueur n'est ni un droit ni une preuve de livraison et
+ne contient aucune donnée privée en clair. Il est conservé après les
+transitions de statut et les reprises. Les tests vérifient deux mises à jour
+consécutives et l'absence de nouvelle publication canonique.
