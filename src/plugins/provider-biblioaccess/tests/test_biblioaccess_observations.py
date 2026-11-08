@@ -52,10 +52,12 @@ def test_catalogue_is_partial_even_without_cards():
     """
     found = mod.extract_catalogue_links(url, html)
     assert found.book_ids == ("123",)
+    assert found.book_urls == (("123", "https://www.biblioaccess.com/1409/Catalog/Book/123/example"),)
     assert found.next_page_url.endswith("pageindex=1")
     assert found.completeness == "partial"
     empty = mod.extract_catalogue_links(url, "<p>Aucune carte trouvée</p>")
     assert empty.book_ids == ()
+    assert empty.book_urls == ()
     assert empty.completeness == "partial"
     assert mod.book_id_from_url("https://www.biblioaccess.com/1409/Catalog/Book/123/title") == "123"
     assert mod.book_id_from_url("https://www.biblioaccess.com/1717/Catalog/Book/123") is None
