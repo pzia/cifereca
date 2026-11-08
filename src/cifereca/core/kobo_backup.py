@@ -1137,9 +1137,16 @@ def kobo_backup_preview(
             counts["invalid_manifest_items"] += 1
             continue
         seen.add(product_id)
-        if refresh_manifest and _kobo_manifest_flags_invalid(raw):
-            # A preview must not suggest "potentially missing" when the
-            # source explicitly denies ownership or has invalid rights flags.
+        if refresh_manifest and (
+            _kobo_manifest_flags_invalid(raw)
+            or (len(accounts) == 1 and _kobo_legacy_manifest_claim_invalid(
+                raw, credential_id=credential_id,
+                account_id=accounts[0].unique_id,
+            ))
+        ):
+            # D1/D2 must apply the SAME exact manifest admission as W2.
+            # A foreign borrower or loan must not become a seemingly owned
+            # download candidate in a public preview or private confirmation.
             counts["invalid_manifest_items"] += 1
             continue
         current = previous.get(product_id)
@@ -1179,26 +1186,15 @@ def kobo_backup_preview(
         else:
             reason = "skipped_archived" if _manifest_archived(raw, current) else ""
         path_raw = str((current or {}).get("local_path") or "").strip()
-        # #3196 D1: neither a fresh provider inventory nor an *offline*
-        # 0.7 path/record can prove B's delivery or exact file origin.
-        # Historical complete/ok rows in the PUBLIC read-only preview are
-        # therefore always review cases, even if the current file happens to
-        # hash to the old receipt. No file needs to be opened to decide this.
-        # Keep the private _item_reasons execution preflight unchanged until
-        # W2 is migrated: it still uses legacy admission under its lock.
-        if (_item_reasons is None and not reason and current
+        # #3196 D1/D2: a historical complete/ok receipt is only an
+        # archive, even if a currently readable file hashes to the old SHA.
+        # Both the PUBLIC preview and the PRIVATE _item_reasons confirmation
+        # must refuse to project it as verified/linked Core B presence. The
+        # W2 executor also quarantines this receipt without a second GET.
+        # Do not even open the unproven file to decide this.
+        if (not reason and current
                 and current.get("status") in {"ok", "complete"}
                 and path_raw):
-            reason = "needs_reconciliation"
-        # #3196 W2/D1: the private _item_reasons plan historically treated
-        # any old complete+filename as already linked, even if the original
-        # download left no usable SHA/size. The actual sync now quarantines
-        # that row before opening its bytes (#4812). Keep the *private*
-        # admission consistent: a candidate file cannot invent an original
-        # delivery baseline or authorize a legacy confirmation.
-        if (not reason and _item_reasons is not None and current
-                and current.get("status") in {"ok", "complete"} and path_raw
-                and not _kobo_legacy_has_integrity_baseline(current)):
             reason = "needs_reconciliation"
         if path_raw and not reason:
             linked = Path(path_raw)
