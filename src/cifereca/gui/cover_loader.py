@@ -112,6 +112,9 @@ class CoverLoader:
         self._threads: list[threading.Thread] = []
         self._stats = {
             "preview_created":0,"preview_hit":0,"preview_fallback":0,
+            "preview_source_none": 0, "preview_worker_skipped": 0,
+            "preview_no_future": 0, "preview_result_none": 0,
+            "preview_result_path": 0, "preview_callback_suppressed": 0,
             "requested": 0,
             "cache_hit_valid": 0,
             "cache_invalid": 0,
@@ -391,13 +394,24 @@ class CoverLoader:
         request = CoverRequest(holder)
 
         def deliver(path):
-            if holder.active and not self._stop.is_set():
+            active = holder.active and not self._stop.is_set()
+            with self._lock:
+                if not active:
+                    self._stats["preview_callback_suppressed"] += 1
+                else:
+                    self._stats[
+                        "preview_result_none" if path is None
+                        else "preview_result_path"
+                    ] += 1
+            if active:
                 callback(path)
 
         def source_ready(source):
             if not holder.active or self._stop.is_set():
                 return
             if source is None:
+                with self._lock:
+                    self._stats["preview_source_none"] += 1
                 deliver(None)
                 return
 
@@ -415,6 +429,8 @@ class CoverLoader:
                         for subscriber in self._preview_waiters.get(key, ())
                     )
                 if not needed or self._stop.is_set():
+                    with self._lock:
+                        self._stats["preview_worker_skipped"] += 1
                     return None
                 try:
                     dest = preview_path(source, self.preview_root, width, height)
@@ -455,6 +471,8 @@ class CoverLoader:
                 else:
                     self._preview_waiters.setdefault(key, []).append(holder)
             if future is None:
+                with self._lock:
+                    self._stats["preview_no_future"] += 1
                 deliver(None)
                 return
 
