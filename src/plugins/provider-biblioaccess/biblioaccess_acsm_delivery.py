@@ -53,7 +53,16 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
                 headers={"Accept": "application/vnd.adobe.adept+xml, application/xml, */*"},
             ) as response:
                 if response.status_code != 200:
-                    raise ACSMDeliveryError("biblioaccess_acsm_unavailable")
+                    status = response.status_code
+                    code = (
+                        "biblioaccess_acsm_redirect" if 300 <= status < 400 else
+                        "biblioaccess_acsm_denied" if status in (401, 403) else
+                        "biblioaccess_acsm_missing" if status == 404 else
+                        "biblioaccess_acsm_rate_limited" if status == 429 else
+                        "biblioaccess_acsm_remote_error" if status >= 500 else
+                        "biblioaccess_acsm_unavailable"
+                    )
+                    raise ACSMDeliveryError(code)
                 chunks, size = [], 0
                 for chunk in response.iter_bytes():
                     size += len(chunk)
