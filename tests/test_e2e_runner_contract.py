@@ -25,7 +25,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728",
-        "capture-session-gtk-1366", "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366",
+        "task-busy-settings-1366", "capture-session-gtk-1366", "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366",
     ]
 
 
