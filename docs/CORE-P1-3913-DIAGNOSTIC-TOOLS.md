@@ -252,6 +252,20 @@ Les wrappers environnementaux ne doivent pas être exécutés par le rôle backl
 `pyproject.toml`. Requalifier la classe d'effets après toute mutation des
 parcours, pas seulement après changement de documentation.
 
+
+### Audit statique de la neutralité fournisseur (P0 #5048/#5057)
+
+`scripts/ci_provider_core_coupling_inventory.py` (**F — lecture locale autonome, contrôle de CI**) :
+`python -m scripts.ci_provider_core_coupling_inventory --json` inventorie les imports
+et comparaisons AST de noms fournisseurs dans les modules Python installés
+`src/cifereca`, en excluant les plugins externes. Il n'importe pas le runtime,
+n'ouvre ni SQLite ni les fichiers de la bibliothèque et ne fait aucun appel réseau
+ou écriture. Sa sortie JSON signale séparément les erreurs de parsing et les
+couplages statiques ; elle ne démontre ni accessibilité du chemin ni absence
+d'import dynamique. Le code de sortie non nul signale une erreur de parsing.
+Les noms de providers sont définis par défaut et surchargeables avec
+`--providers` ; ce n'est pas une permission de connexion/acquisition.
+
 ## Interpréteur Python du Core actif
 
 `cifereca-python` est publié dans le même répertoire de commandes que `cifereca` par l'Updater Core. Il exécute `current/.venv/bin/python` à chaque invocation et suit les mises à jour et rollbacks, sans se rabattre sur le Python système. Exemples :

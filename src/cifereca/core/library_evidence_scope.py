@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+import re
 
 from .library_inventory import Inventory
 from .library_reconciliation import EvidenceSnapshot, ReconciliationReport
@@ -75,6 +76,20 @@ class GroupedEvidence:
                 'adept_remote_inventory': 'not_requested'}
 
 
+# Public/redacted group keys must be stable structural provider identifiers,
+# never arbitrary upstream text, account names, paths or diagnostic payloads.
+_PROVIDER_ID = re.compile(r"[a-z][a-z0-9]*(?:[-.][a-z0-9]+)*\Z")
+_RESERVED_PROVIDER_GROUPS = frozenset({"all", "other", "unattributed"})
+
+
+def _public_provider_group(value: object, *, fallback: str) -> str:
+    if (type(value) is str and len(value) <= 64
+            and value not in _RESERVED_PROVIDER_GROUPS
+            and _PROVIDER_ID.fullmatch(value)):
+        return value
+    return fallback
+
+
 def group_evidence(inventory: Inventory, snapshot: EvidenceSnapshot,
                    report: ReconciliationReport, identity_ids: tuple[str, ...]) -> GroupedEvidence:
     """Per-provider counts only when provenance is explicitly attested."""
@@ -89,14 +104,13 @@ def group_evidence(inventory: Inventory, snapshot: EvidenceSnapshot,
     for edge in report.edges:
         if edge.table == 'entitlements' and edge.certainty == 'attested' and 0 <= edge.row_index < len(rights):
             confirmed[edge.file_index].add(rights[edge.row_index].get('provider_id'))
-    safe_providers = {'kobo', 'numilog', 'paris', 'local'}
     for fi, observation in enumerate(inventory.files):
         if observation.identity_id not in indices:
             continue
         statuses = report.files.get(fi, {'unverified_file'})
         providers = confirmed[fi] if 'confirmed_link' in statuses else set()
         provider = next(iter(providers)) if len(providers) == 1 else 'unattributed'
-        provider = provider if provider in safe_providers else 'unattributed'
+        provider = _public_provider_group(provider, fallback='unattributed')
         counter = counts[(indices[observation.identity_id], provider)]
         counter['observed_files'] += 1
         counter['sha_verified'] += int(observation.sha256 is not None)
@@ -108,7 +122,7 @@ def group_evidence(inventory: Inventory, snapshot: EvidenceSnapshot,
         if identity not in indices or right.get('state') != 'active':
             continue
         provider = right.get('provider_id')
-        provider = provider if provider in safe_providers else 'other'
+        provider = _public_provider_group(provider, fallback='other')
         counter = counts[(indices[identity], provider)]
         counter['observed_active_rights'] += 1
         if ri in unverified:

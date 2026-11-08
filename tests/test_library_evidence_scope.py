@@ -106,6 +106,29 @@ class ScopeTests(unittest.TestCase):
             self.assertEqual(groups.redacted()['adept_status'], 'not_requested')
 
 
+    def test_unknown_attested_provider_uses_structural_id_not_core_allowlist(self):
+        from cifereca.core.library_evidence_scope import _public_provider_group
+        self.assertEqual(
+            _public_provider_group('future-provider.v2', fallback='other'),
+            'future-provider.v2',
+        )
+        self.assertEqual(
+            _public_provider_group('bnf-pret', fallback='other'),
+            'bnf-pret',
+        )
+
+    def test_untrusted_provider_labels_never_become_public_group_keys(self):
+        from cifereca.core.library_evidence_scope import _public_provider_group
+        for raw in (
+            None, '', 'PRIVATE_HOSTILE', 'a' * 65, 'provider/secret',
+            'provider\\nsecret', 'other', 'unattributed', 'all',
+            'provider..secret', 'provider-', 'a\\x00b',
+        ):
+            self.assertEqual(
+                _public_provider_group(raw, fallback='unattributed'),
+                'unattributed',
+            )
+
     def test_cli_scopes_private_rows_and_only_counts_local_adept_references(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
