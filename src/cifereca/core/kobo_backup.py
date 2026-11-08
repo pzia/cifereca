@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from .source_context import source_context_epoch
 from .canonical_delivery_abi import has_complete_delivery_abi
-from .kobo_legacy_source_guard import has_typed_kobo_source
+from .source_reference_guard import has_typed_source
 
 import time
 import os
@@ -90,8 +90,8 @@ def _guarded_kobo_legacy_put(self, item, source_current):
     # callback: absence of source_current is not proof of legacy authority.
     # The 0.7 checkpoint has no account/branch and must not update a
     # canonical source's parallel historical status or local locator.
-    if has_typed_kobo_source(
-        self.storage, item.get("credential_id"), item.get("item_id"),
+    if has_typed_source(
+                self.storage, "kobo", item.get("credential_id"), item.get("item_id"),
     ):
         raise _KoboLegacySessionChanged("kobo_canonical_source_delivery_active")
     # This is also reached by internal recovery writers with no session
@@ -2425,8 +2425,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 # already owns this credential/edition. Do not touch the raw
                 # backup, synthesize a mirror, inspect legacy bytes or GET.
                 # No completed delivery is inferred: report unresolved here.
-                if has_typed_kobo_source(
-                    self.storage, session.credential_id, product_id,
+                if has_typed_source(
+                            self.storage, "kobo", session.credential_id, product_id,
                 ):
                     summary["pending"] += 1
                     item_committed = True
@@ -2453,8 +2453,8 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
                 # Last admission before the 0.7 acquiring row and provider
                 # I/O. If a canonical intake appeared since the preflight,
                 # leave its publication to Core rather than double GET.
-                if has_typed_kobo_source(
-                    self.storage, session.credential_id, product_id,
+                if has_typed_source(
+                            self.storage, "kobo", session.credential_id, product_id,
                 ):
                     summary["pending"] += 1
                     item_committed = True
@@ -2673,8 +2673,8 @@ def _recover_local_remnants(self, summary, target_dirs, emit, *, credential_id: 
             continue
         # Interruption recovery is also a writer: a prior 0.7 receipt cannot
         # update/claim a typed Core source before the manifest is inspected.
-        if has_typed_kobo_source(
-            self.storage, previous.get("credential_id"),
+        if has_typed_source(
+                    self.storage, "kobo", previous.get("credential_id"),
             previous.get("item_id"),
         ):
             continue
