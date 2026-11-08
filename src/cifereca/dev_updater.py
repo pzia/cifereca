@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+from functools import wraps
 import hmac
 import json
 import os
@@ -21,6 +22,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
+from .core.plugin_package_mutation_lock import package_mutation_lease
 from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer, child_progress_receiver, SMOKE_FAILURE_CODES
 from .update_child import PROGRESS_ENV, ChildOutputError, run_plugin_child
 from .paths import data_dir, state_dir
@@ -178,6 +180,15 @@ def _plugin_store_root() -> Path:
     return data_dir() / "plugins" / "packages"
 
 
+def _serialized_package_task(operation):
+    @wraps(operation)
+    def wrapped(*args, **kwargs):
+        with package_mutation_lease(_plugin_store_root()):
+            return operation(*args, **kwargs)
+    return wrapped
+
+
+@_serialized_package_task
 def _backup_plugins(package_ids: list[str], backup_root: Path) -> None:
     store = _plugin_store_root()
     backup_root.mkdir(parents=True, exist_ok=True)
@@ -187,6 +198,7 @@ def _backup_plugins(package_ids: list[str], backup_root: Path) -> None:
             shutil.copytree(source, backup_root / package_id, symlinks=False)
 
 
+@_serialized_package_task
 def _restore_plugins(package_ids: list[str], backup_root: Path) -> None:
     store = _plugin_store_root()
     store.mkdir(parents=True, exist_ok=True)
@@ -511,6 +523,7 @@ def _validate_plugins_only_index(
     return index
 
 
+@_serialized_package_task
 def _record_partial_install_provenance(
     indexed: dict[str, Any], packages: list[tuple[str, str, Path, bool]],
     *, snapshot_id: str, snapshot_sha256: str, trusted_digest_verified: bool,
@@ -690,9 +703,8 @@ def apply_snapshot(
         try:
             backup_base.parent.mkdir(parents=True, exist_ok=True)
             backup_base.mkdir(mode=0o700, exist_ok=False)
-            # Create the empty backup envelope before the copy stage. Some
-            # valid snapshots back up zero installed plugins; test doubles
-            # must not affect the receipt's filesystem preconditions.
+            # The receipt requires an explicit empty backup envelope even
+            # if no plugin was installed or a test replaces the copy routine.
             backup_plugins.mkdir(mode=0o700, exist_ok=False)
         except OSError:
             raise DevUpdateError("répertoire de sauvegarde non sûr") from None
