@@ -78,6 +78,7 @@ class Core0915(unittest.TestCase):
         session=NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='c',connected=True,capabilities=NS(search=True,loans=True,bookings=True))
         self.service.accounts=[NS(unique_id='main',identity_id='stable',provider_id='paris',credential_id='c')];self.service._sessions={'c':session}
         self.assertEqual([r['id'] for r in self.service.dashboard_state()[0]['capabilities']],['search','loans'])
+        self.assertEqual(self.service.dashboard_state()[0]['sources'][0]['public_catalogue'], False)
         # Older installed plugins can still announce bookings=True; retired
         # reservations never reappear in the Home capability chips.
         self.assertNotIn('bookings', {r['id'] for r in self.service.dashboard_state()[0]['capabilities']})
