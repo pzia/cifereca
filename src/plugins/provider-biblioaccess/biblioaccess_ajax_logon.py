@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import re
+from urllib.parse import urlencode
 
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
@@ -108,10 +108,11 @@ class ObservedAjaxLogonClient:
             self._attempted = True
         try:
             with self.http.stream(
-                "POST", ORIGIN + LOGON_PATH, params=query, data=fields,
+                "POST", ORIGIN + LOGON_PATH, params=query, content=urlencode(fields).encode("ascii"),
                 headers={
                     "Accept": "application/json",
                     "X-Requested-With": "XMLHttpRequest",
+                    "Content-Type": "application/x-www-form-urlencoded",
                     "Origin": ORIGIN,
                 },
                 follow_redirects=False,
