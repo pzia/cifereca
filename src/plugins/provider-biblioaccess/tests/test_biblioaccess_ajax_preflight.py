@@ -71,3 +71,17 @@ def test_duplicate_input_names_observed_only_once():
         '<input name="username" value="two">'
         '<input name="password"></form>')
     assert out.field_names == ("username", "password")
+
+
+def test_js_evidence_recognizes_only_names_and_route_not_computation():
+    observation = mod.inspect_javascript_evidence(
+        'function f(){ const _dc = "PRIVATE-DYNAMIC";'
+        ' const captchaCheckValue = "PRIVATE-CHALLENGE";'
+        ' return "/logon.svc/logon"; }')
+    assert observation.identifier_names == ("_dc", "captchaCheckValue")
+    assert observation.ajax_endpoint_referenced
+    assert not observation.executable
+    assert not observation.value_provenance_verified
+    assert "PRIVATE" not in repr(observation)
+    with pytest.raises(mod.LoginPreflightError, match="limit"):
+        mod.inspect_javascript_evidence("x" * 200000)

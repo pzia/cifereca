@@ -158,3 +158,22 @@ dans un JS externe. La suite requiert une qualification explicite du
 calcul `_dc` et surtout du challenge institutionnel, sans supposer
 qu'ils sont facultatifs ni contourner de CAPTCHA. Aucun navigateur
 interactif, aucun login réel ou capacité provider n'est activé.
+
+### Inspection optionnelle d'un script institutionnel référencé
+
+`ObservedAjaxCasClient.inspect_login_script_once(path=..., consent=True)`
+peut lire **un seul** script `.js` dont le chemin exact a été observé
+dans le GET `/login`. Cette opération est séparée, sous consentement
+explicite, limitée à **128 Kio**, autorise uniquement HTTPS sur l'origine
+institutionnelle, sans query cache ni suivi de redirection. Le script est
+analysé en mémoire et **jamais exécuté**. Aucun GET n'est déclenché par
+la simple consultation du login.
+
+Le résultat `JavascriptEvidence` donne seulement les identifiants
+référencés parmi les cinq noms de paramètres AJAX connus, et l'indicateur
+lexical de la présence de `/logon.svc/logon`. Il ne renvoie aucun octet
+de JS, valeur de formulaire, cookie, mot de passe ou challenge. Une
+référence `captchaCheckValue` **ne prouve pas** qu'on peut obtenir ou
+reconstituer sa valeur ; aucun CAPTCHA n'est résolu ou contourné.
+L'absence de référence ne prouve pas que le paramètre n'est pas produit
+ailleurs. Toujours aucune capacité de connexion réelle.
