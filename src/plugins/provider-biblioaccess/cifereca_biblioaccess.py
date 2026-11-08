@@ -255,6 +255,8 @@ class LaRochelleSession(ProviderSession):
             self._last_probe_phase = "started"
             # An explicitly requested POST remains a diagnostic, NEVER a successful connect().
             # Do not require actual password values for this pre-auth probe.
+            # Independent public C read even if the institution SSO GET fails.
+            self._probe_public_catalogue()
             client = None
             try:
                 if self._client_factory is None:
@@ -282,7 +284,6 @@ class LaRochelleSession(ProviderSession):
                     inline_identifier_names=list(preflight.inline_identifier_names),
                     challenge_resolved=False,
                 )
-                self._probe_public_catalogue()
                 if mode == "post":
                     # Exactly one explicitly consented credential POST on this
                     # client. The query/fields are ephemeral, never journaled.
