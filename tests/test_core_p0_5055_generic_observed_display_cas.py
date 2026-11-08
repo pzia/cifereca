@@ -4,6 +4,7 @@ from dataclasses import replace
 import pytest
 
 from cifereca.core.observed_loan_scope import observed_loan
+from tests.test_core_p0_2055_bnf_explicit_stage import connected_core
 from tests.test_bnf_import_library_link import bnf_importer, staged
 
 
