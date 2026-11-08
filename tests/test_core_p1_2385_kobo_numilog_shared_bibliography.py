@@ -81,7 +81,7 @@ def test_shared_catalogue_rejects_unsafe_and_unsupported_metadata(provider):
         base, source_provider=provider,
         scenario="KOBO" if provider == "kobo" else "NUMILOG_PUBLIC",
         metadata={
-            "language": "bad\\x00value", "series": "Bearer SECRET",
+            "language": "bad\x00value", "series": "Bearer SECRET",
             "publisher": "reader@example.com",
             "subjects": ["Fiction", "token=SECRET"],
             "rights": "SECRET", "account": "BOB",
