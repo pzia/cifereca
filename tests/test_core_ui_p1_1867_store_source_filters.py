@@ -7,7 +7,9 @@ from __future__ import annotations
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
-from cifereca.gui.store_usage_labels import store_plugin_usage_hint
+from pathlib import Path
+
+from cifereca.plugins.manifest import load_manifest
 from cifereca.gui.query_widget_factory_controller import (
     _provider_choices, build_query_controls, refresh_query_providers,
 )
@@ -134,20 +136,23 @@ def test_refresh_between_profiles_never_keeps_disabled_numilog_public_selection(
     assert events.count("historical") == 2
 
 
-def test_plugin_manager_wording_preserves_optional_public_identity_switch():
-    kobo = store_plugin_usage_hint("provider.kobo")
-    assert "aucun second compte" in kobo
-    assert "Mes achats" in kobo
-    assert "aucun droit d’achat" in store_plugin_usage_hint("provider.kobo.catalog")
-
-    private = store_plugin_usage_hint("provider.numilog")
-    public = store_plugin_usage_hint("provider.numilog.catalog")
+def test_plugin_manager_wording_comes_from_versioned_plugin_manifests():
+    root = Path(__file__).resolve().parents[1] / "src" / "plugins"
+    rows = {}
+    for package in ("provider-kobo", "provider-numilog"):
+        manifest = load_manifest(root / package / "cifereca-plugin.json")
+        rows.update({plugin.id: plugin.ui_usage_hint for plugin in manifest.plugins})
+    kobo = rows["provider.kobo"]
+    assert "aucun second compte" in kobo and "Mes achats" in kobo
+    assert "aucun droit d’achat" in rows["provider.kobo.catalog"]
+    private = rows["provider.numilog"]
+    public = rows["provider.numilog.catalog"]
     assert "Mes achats" in private and "source optionnelle distincte" in private
     assert "sans compte" in public and "sans téléchargement" in public
     assert "indépendante" in public
-    assert store_plugin_usage_hint("ui.page.recommendations") == ""
-    # Usage is an explanation, never a permission object or a source.
-    for value in (kobo, private, public):
+    # Read-only hints are not a permission, route or acquisition proof.
+    for value in rows.values():
+        assert len(value) <= 384
         assert "https://" not in value
         assert "credential_id" not in value
 
