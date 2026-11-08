@@ -73,3 +73,28 @@ def test_large_file_and_batch_are_bounded(tmp_path):
     assert observe_usb_files(tmp_path, ("huge.epub",))[0].status == "unverified"
     with pytest.raises(ValueError, match="usb_observation_request_invalid"):
         observe_usb_files(tmp_path, ("unrelated",) * 257)
+
+
+def test_rename_during_read_is_unverified(tmp_path, monkeypatch):
+    import os
+    import cifereca_storage_usb as usb
+    root = tmp_path / "reader"
+    root.mkdir()
+    (root / "book.epub").write_bytes(b"original")
+    real_read = os.read
+    changed = False
+
+    def swap(fd, size):
+        nonlocal changed
+        chunk = real_read(fd, size)
+        if chunk and not changed:
+            changed = True
+            (root / "replacement.epub").write_bytes(b"replaced")
+            (root / "replacement.epub").replace(root / "book.epub")
+        return chunk
+
+    monkeypatch.setattr(usb.os, "read", swap)
+    result = usb.observe_usb_files(root, ("book.epub",))
+    assert changed
+    assert result[0].status == "unverified"
+    assert result[0].sha256 is None
