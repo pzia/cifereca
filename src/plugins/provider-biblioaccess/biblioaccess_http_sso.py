@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html.parser import HTMLParser
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 ORIGIN = "https://mediatheques.agglo-larochelle.fr"
 BIBLIO_ORIGIN = "https://www.biblioaccess.com"
@@ -27,6 +27,11 @@ MAX_FIELDS = 32
 MAX_NAME = 64
 MAX_FORMS = 8
 _ALLOWED_METHODS = frozenset(("GET", "POST"))
+# Captured POST #42: institutional route *ends in* /logon, with these
+# observed query NAMES. Their values and full endpoint were not published.
+_LOGON_QUERY_KEYS = frozenset(("changeUser", "provider", "param"))
+_LOGON_ROUTE = re.compile(r"^/(?:[A-Za-z0-9_-]{1,64}/){0,4}logon/?$")
+
 
 
 class SsoProtocolError(ValueError):
@@ -68,7 +73,7 @@ def classify_http_step(method: str, url: str, status: int, *, location: str = ""
     if p.hostname == "mediatheques.agglo-larochelle.fr":
         if (method, p.path, status) == ("GET", LOGIN_PATH, 200):
             return "login_form_unverified"
-        if (method, p.path, status) == ("POST", LOGON_PATH, 200):
+        if method == "POST" and status == 200 and _LOGON_ROUTE.fullmatch(p.path):
             # A 200 with JSON is NOT verified credentials or CAS completion.
             return "logon_response_unverified"
         if (method, p.path, status) == ("GET", CAS_PATH, 302):
@@ -102,6 +107,7 @@ class FormShape:
     field_names: tuple[str, ...]
     password_field_present: bool
     submit_ready: bool = False  # Not evidence of a complete login contract.
+    action_query_keys: tuple[str, ...] = ()  # No values, ever.
 
 
 class _LoginFormParser(HTMLParser):
@@ -143,8 +149,38 @@ class _LoginFormParser(HTMLParser):
             self.current = None
 
 
-def inspect_login_forms(page_url: str, html: str) -> tuple[FormShape, ...]:
-    """Document only form structure; never preserve input values or HTML."""
+def _logon_target(url: str) -> None:
+    """Validate observed POST route family, without retaining query values."""
+    p = _url(url)
+    if p.hostname != "mediatheques.agglo-larochelle.fr":
+        raise SsoProtocolError("sso_form_target_refused")
+    if not _LOGON_ROUTE.fullmatch(p.path):
+        raise SsoProtocolError("sso_form_target_refused")
+    if p.query:
+        params = parse_qs(p.query, keep_blank_values=True)
+        if (set(params) != _LOGON_QUERY_KEYS
+                or any(len(values) != 1 or len(values[0]) > 2048
+                       for values in params.values())):
+            raise SsoProtocolError("sso_form_target_refused")
+
+
+def logon_route_shape(url: str, *, method: str = "POST") -> dict[str, object]:
+    """Offline classification of POST #42; expose names and shape only."""
+    if method != "POST":
+        raise SsoProtocolError("sso_post_method_refused")
+    _logon_target(url)
+    p = urlsplit(url)
+    return {"method": "POST", "path_family": "institutional_logon",
+            "query_keys": tuple(sorted(parse_qs(p.query, keep_blank_values=True))),
+            "authentication_verified": False}
+
+
+def inspect_login_form_actions(page_url: str, html: str) -> tuple[tuple[FormShape, str], ...]:
+    """Private in-memory form actions, for same-session HTTP only.
+
+    Callers must not log, persist or return the raw action URL; it can carry
+    opaque IdP parameters. No other HTTP operation uses this helper.
+    """
     p = _url(page_url)
     if p.hostname != "mediatheques.agglo-larochelle.fr" or p.path != LOGIN_PATH:
         raise SsoProtocolError("sso_login_page_refused")
@@ -165,15 +201,21 @@ def inspect_login_forms(page_url: str, html: str) -> tuple[FormShape, ...]:
             u = _url(target)
         except SsoProtocolError:
             raise SsoProtocolError("sso_form_target_refused") from None
-        if (u.hostname != "mediatheques.agglo-larochelle.fr"
-                or u.path != LOGON_PATH or u.query
-                or form["method"] not in _ALLOWED_METHODS):
+        _logon_target(target)
+        if form["method"] not in _ALLOWED_METHODS:
             raise SsoProtocolError("sso_form_target_refused")
-        shapes.append(FormShape(
+        shapes.append((FormShape(
             method=form["method"], action_origin=ORIGIN,
-            action_path=LOGON_PATH, field_names=tuple(form["names"]),
-            password_field_present=form["password"]))
+            action_path=u.path, field_names=tuple(form["names"]),
+            password_field_present=form["password"],
+            action_query_keys=tuple(sorted(
+                parse_qs(u.query, keep_blank_values=True)))), target))
     return tuple(shapes)
+
+
+def inspect_login_forms(page_url: str, html: str) -> tuple[FormShape, ...]:
+    """Public shape-only projection: never return action query values."""
+    return tuple(shape for shape, _ in inspect_login_form_actions(page_url, html))
 
 
 def logon_response_shape(*, status: int, content_type: str,
