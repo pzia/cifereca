@@ -99,7 +99,7 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     evidence = getattr(self, "_loan_cover_projection", None)
     if (type(evidence) is tuple and len(evidence) == 3
             and evidence[0] == getattr(self.service, "_account_context_epoch", None)
-            and evidence[1] == active):
+            and evidence[1] == active and evidence[2]):
         cover_rows = evidence[2]
     else:
         cover_rows = getattr(self, "_library_entries_cache", ())
