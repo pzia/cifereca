@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.core.kobo_reconciliation_plan import kobo_manual_reconciliation_plan
+from tests.kobo_legacy_reconciliation_plan_archive import kobo_manual_reconciliation_plan
 from tests.test_core_1345_kobo_local_audit import _backup, _catalog, _no_mutation
 from tests.test_kobo_backup_fault_isolation import _service, _write_epub
 
@@ -213,17 +213,16 @@ def test_real_kobo_sha_audit_plan_preserves_all_files_and_reports_no_secrets(
         service.close()
 
 
-def test_cli_exposes_opt_in_plan_without_enabling_sync_or_implicit_download():
+def test_retired_kobo_manual_plan_has_no_core_runtime_entry():
     source = Path(__file__).resolve().parents[1] / "src/cifereca/cli.py"
     code = source.read_text(encoding="utf-8")
-    assert 'kobo_audit.add_argument(\n        "--plan"' in code
-    assert "if a.plan:" in code
-    assert "kobo_manual_reconciliation_plan(result)" in code
+    assert "if a.plan:" not in code
+    assert "from .core.kobo_reconciliation_plan import " not in code
     assert '"kobo-audit"' in code.split("local_adept_commands =", 1)[1]
-    assert "service.connect_configured()" in code  # bypassed for kobo-audit
+    assert not (source.parent / "core" / "kobo_reconciliation_plan.py").exists()
 
 
-def test_cli_plan_outputs_only_redacted_report_and_does_not_connect(
+def test_cli_kobo_audit_stays_read_only_without_legacy_manual_plan(
     capsys, monkeypatch,
 ):
     from unittest.mock import Mock
@@ -237,25 +236,24 @@ def test_cli_plan_outputs_only_redacted_report_and_does_not_connect(
     core = NS(library=service, close=Mock())
     monkeypatch.setattr(cli.CiferecaCore, "open", Mock(return_value=core))
     calls = []
+
     def audit(_service, *, credential_id):
         assert _service is service
         calls.append(credential_id)
         return report
+
     monkeypatch.setattr(audit_module, "kobo_local_reconciliation_audit", audit)
 
-    assert cli.main(["kobo-audit", "--plan", "--credential", "private-vault"]) == 0
-    result = json.loads(capsys.readouterr().out)
-    assert set(result) == {"audit", "plan"}
-    assert result["plan"]["case_count"] == 1
-    assert result["plan"]["delete_authorized"] is False
-    assert "private-vault" not in json.dumps(result)
+    assert cli.main(["kobo-audit", "--credential", "private-vault"]) == 0
+    assert json.loads(capsys.readouterr().out) == report
     service.connect_configured.assert_not_called()
     core.close.assert_called_once()
     assert calls == ["private-vault"]
 
-    core.close.reset_mock()
-    assert cli.main(["kobo-audit"]) == 0
-    assert json.loads(capsys.readouterr().out) == report
-    service.connect_configured.assert_not_called()
+    # No old W4 review checklist in installable Core: explicit refusal
+    # happens at argparse, without starting the Core or any provider.
+    with pytest.raises(SystemExit) as refused:
+        cli.main(["kobo-audit", "--plan"])
+    assert refused.value.code != 0
+    assert calls == ["private-vault"]
     core.close.assert_called_once()
-    assert calls == ["private-vault", None]

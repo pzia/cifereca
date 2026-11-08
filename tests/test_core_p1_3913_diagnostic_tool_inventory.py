@@ -85,7 +85,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
         "--provider", "--identity", "--credential", "--account-id",
         "--confirm", "--json", "--report", "--verify-files",
         "--trace-export", "--confirm-trace-export", "--output",
-        "--plan", "--refresh-manifest", "--confirm-downloads",
+        "--refresh-manifest", "--confirm-downloads",
         "--confirm-ownership",
     }
     assert required_commands <= commands
