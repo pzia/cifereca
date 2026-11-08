@@ -306,6 +306,8 @@ def relink_verified_canonical_kobo(
                     type(previous) is dict
                     and previous.get("schema") == _SCHEMA
                     and previous.get("source_reference_id") == source_ref
+                    and previous.get("source_evidence_ref") == source_evidence
+                    and previous.get("origin_evidence_ref") == origin_evidence
                     and previous.get("identity_id") == identity_id
                     and previous.get("placement_id") == placement_id
                     and previous.get("old_path") == str(new_path)
@@ -358,6 +360,8 @@ def relink_verified_canonical_kobo(
                 "INSERT INTO metadata(key,value) VALUES(?,?)",
                 (_JOURNAL + operation_id, json.dumps({
                     "schema": _SCHEMA, "source_reference_id": source_ref,
+                    "source_evidence_ref": source_evidence,
+                    "origin_evidence_ref": origin_evidence,
                     "identity_id": identity_id, "placement_id": placement_id,
                     "old_path": old_path, "new_path": str(new_path),
                     "verified_file_size": observed.st_size,
