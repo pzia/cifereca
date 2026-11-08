@@ -485,10 +485,10 @@ class LocalInspectionController:
             f"{overview.get('rights_unverified_total', 0)} sans fichier vérifié"
             f" (n'implique pas l'absence)\n"
             + (
-                f"PRÊTS PARIS NON ACTIFS · {overview.get('paris_inactive_loans', 0)} "
+                f"PRÊTS NON ACTIFS · {overview.get('inactive_loans', 0)} "
                 "prêt(s) rendus / expirés / inactifs enregistrés, "
                 "distincts des droits actifs et consultables seulement.\n"
-                if overview.get('paris_inactive_loans', 0) else ""
+                if overview.get('inactive_loans', 0) else ""
             )
             + (
                 "REPÈRES DE COMPTAGE · le scan dénombre des fichiers physiques : "
