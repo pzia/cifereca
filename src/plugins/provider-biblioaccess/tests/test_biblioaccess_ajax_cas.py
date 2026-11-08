@@ -307,3 +307,44 @@ def test_successful_login_get_still_allows_exactly_one_ajax_post():
         assert seen == ["GET /1409/Account/Login", "GET /login", "POST /logon.svc/logon"]
     finally:
         c.close()
+
+def test_login_click_returnurl_is_sent_before_any_sso_network():
+    """Reproduces the observed BiblioAccess 1409 authentication click."""
+    from urllib.parse import parse_qs, urlsplit
+    assert cas.ENTRY == (
+        "https://www.biblioaccess.com/1409/Account/Login"
+        "?returnUrl=https%3A%2F%2Fwww.biblioaccess.com%2F1409%2F"
+    )
+    sent = []
+    def handler(req):
+        sent.append(str(req.url))
+        assert req.method == "GET"
+        assert req.url.path == "/1409/Account/Login"
+        assert parse_qs(req.url.query.decode()) == {
+            "returnUrl": ["https://www.biblioaccess.com/1409/"]
+        }
+        return httpx.Response(302, headers={"location": LOGIN})
+    c = client_for(handler)
+    try:
+        assert c.observe_entry_once().phase == "entry_redirect_unverified"
+        assert sent == [cas.ENTRY]
+    finally:
+        c.close()
+
+
+def test_login_click_refuses_empty_cas_service_without_following():
+    """Fixing returnUrl must not relax the CAS service guard."""
+    seen = []
+    def handler(req):
+        seen.append(str(req.url))
+        return httpx.Response(
+            302, headers={"location": cas.IDP + "/login?service="})
+    c = client_for(handler)
+    try:
+        with pytest.raises(cas.AjaxCasError, match="cas_url_refused"):
+            c.observe_entry_once()
+        assert seen == [cas.ENTRY]
+        with pytest.raises(cas.AjaxCasError, match="cas_login_unavailable"):
+            c.observe_login_once()
+    finally:
+        c.close()
