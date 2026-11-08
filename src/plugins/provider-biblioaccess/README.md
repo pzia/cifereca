@@ -371,3 +371,15 @@ l'exhaustivité du catalogue ; `completeness=partial` reste systématique.
 **Aucune capacité `catalog.search`, `sync.loans` ni emprunt
 n'est encore publiée** : la prochaine capture terrain établira le
 véritable comportement fournisseur avant cette promotion.
+
+
+### Verrou fail-closed de la préqualification CAS
+
+Le GET institutionnel `/login?service=...` est désormais différencié en
+`attempted` et `qualified`. La préqualification n'est validée **qu'après**
+un HTTP 200 HTML, la lecture complète bornée et l'inspection structurelle
+réussie. Redirection, 401/403, type inattendu, corps trop volumineux,
+encodage invalide, HTML invalide et erreur de transport interdisent le POST
+`/logon.svc/logon` sur cette instance. Aucune seconde tentative implicite
+n'est autorisée. L'absence de cette preuve technique ne déclenche aucun
+contournement de challenge ni activation de `connect()`.
