@@ -71,9 +71,7 @@ def test_disabling_exact_b_account_rejects_warm_shared_search_cache(
     service, session = _setup(tmp_path, monkeypatch, provider)
     try:
         summary, rows = _search(service, provider, progressive, force=True)
-        assert len(rows) == 1 and rows[0].metadata == {
-            "catalogue_access": "shared_read_only",
-        }
+        assert len(rows) == 1 and rows[0].metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         assert summary is None or not summary.cancelled
         before = _calls(session, provider)
         assert before >= 1
@@ -97,7 +95,7 @@ def test_disabling_exact_b_account_rejects_warm_shared_search_cache(
         summary, again = _search(service, provider, progressive, force=True)
         assert summary is None or not summary.cancelled
         assert len(again) == 1
-        assert again[0].metadata == {"catalogue_access": "shared_read_only"}
+        assert again[0].metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         assert _calls(session, provider) > before
         if provider != "paris":
             assert session.private_calls == 0
@@ -132,7 +130,7 @@ def test_disabling_exact_b_account_during_search_cancels_inflight_result(
         recovered, rows = _search(service, provider, progressive, force=False)
         assert recovered is None or not recovered.cancelled
         assert len(rows) == 1
-        assert rows[0].metadata == {"catalogue_access": "shared_read_only"}
+        assert rows[0].metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         if provider != "paris":
             assert session.private_calls == 0
     finally:

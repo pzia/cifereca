@@ -78,7 +78,7 @@ def test_shared_bibliography_survives_recommendations_ranking_without_b_rights(
             assert item.download_url is None
             assert item.friendly_url is None
             assert item.thumbnail_url is None
-            assert item.metadata == {"catalogue_access": "shared_read_only"}
+            assert item.metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
             assert ranked.sources == (provider,)
             assert ranked.notices
             expected_credential = "__public__" if provider == "numilog" else session.credential_id
@@ -193,7 +193,7 @@ def test_recommendations_never_rank_foreign_catalogue_after_provider_revocation(
         resumed, partials = compute()
         assert not resumed.cancelled and resumed.ranked and partials
         for row in resumed.ranked:
-            assert row.item.metadata == {"catalogue_access": "shared_read_only"}
+            assert row.item.metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
             assert row.item.owned is False
             assert row.item.downloadable is False
             assert row.item.download_url is None

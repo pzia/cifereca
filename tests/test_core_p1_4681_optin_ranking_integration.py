@@ -96,7 +96,7 @@ def test_saved_feedback_changes_only_explicit_ranking_path(
             identity_id="alice", library_key="book:0", preference="liked",
         ),)
         for row in saved.ranked:
-            assert row.item.metadata == {"catalogue_access": "shared_read_only"}
+            assert row.item.metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
             assert row.item.owned is False and row.item.downloadable is False
             assert row.item.download_url is None
         if provider != "paris":
