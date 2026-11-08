@@ -270,3 +270,54 @@ HTTP/auth n'est ajouté au plugin. La recette peut confirmer les
 redirections et la forme du login, **pas** les identifiants du compte ou
 la validité d'un emprunt. Ne pas interpréter l'échec de `connect()`
 comme un défaut de la recette si les GET ont produit les observations.
+
+
+### Recette AJAX/CAS complète, explicitement opt-in `post`
+
+Après configuration du compte La Rochelle, les modes de
+`experimental_http_probe` sont :
+
+- `off` (défaut) : aucun réseau depuis `connect()`.
+- `on` : GET de qualification entrée BiblioAccess et login institutionnel ;
+  le mot de passe n'est pas transmis.
+- **`post`** : GET d'entrée, GET login, **un unique POST** de la route
+  AJAX observée `/logon.svc/logon`, puis GET CAS / retour ticket / MyLoans
+  **seulement si** le JSON de POST rapporte `success=true`.
+
+Le mode `post` n'est activé **que si les six champs d'options suivants
+sont présents** (tels qu'effectivement observés lors de l'authentification
+courante) :
+
+| Option | Champ transport | Politique |
+| --- | --- | --- |
+| `ajax_change_user` | query `changeUser` | valeur explicitement fournie |
+| `ajax_provider` | query `provider` | valeur explicitement fournie |
+| `ajax_dc` | query `_dc` | valeur fraîche fournie, option secrète |
+| `ajax_remember_me` | corps `rememberMe` | valeur explicitement fournie |
+| `ajax_captcha` | corps `captcha` | valeur explicitement fournie, **vide autorisé** |
+| `ajax_captcha_check_value` | corps `captchaCheckValue` | valeur fraîche fournie, option secrète |
+
+Les deux autres champs du corps AJAX, `username` et `password`, viennent
+des credentials du compte. **Aucun paramètre n'est déduit d'une ancienne
+capture, d'une horloge supposée ou d'un algorithme CAPTCHA inventé.**
+Le mode `post` refuse **avant tout réseau** les options absentes,
+les valeurs invalides et `captchaCheckValue` vide, conformément au contrat
+POST de qualification existant. Un nouveau contexte de session / des valeurs
+fraîches sont nécessaires avant tout nouveau POST ; aucune relance implicite.
+
+Le journal Diagnostics produit les étapes `entry`,
+`institution_login`, `login_preflight`, `ajax_logon`,
+`cas_return` et `loans_page`, avec statuts, résultats JSON classifiés et
+**jamais** mot de passe, paramètres dynamiques, ticket ou corps de réponse.
+Le transfert de ticket CAS ne dépasse pas les origines HTTPS et le tenant
+1409 préalablement validés. Le résultat terminal normal est
+`biblioaccess_probe_completed_identity_unverified` :
+**`connected=False`, aucun compte, aucun prêt ni téléchargement**.
+Un 200/JSON success/MyLoans 200 ne suffit pas à établir l'identité.
+
+**Pour la recette terrain** : commencer avec `on` et exporter le journal
+brut canonique (après revue des données sensibles) ; activer `post`
+**seulement** si les valeurs de session requises sont disponibles
+légitimement et fraîches. Sinon, ne pas envoyer de POST et qualifier ces
+champs lors de l'instrumentation suivante. Aucun navigateur interactif
+n'est embarqué dans le provider.

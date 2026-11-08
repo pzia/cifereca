@@ -69,23 +69,53 @@ DESCRIPTOR = ProviderDescriptor(
         CredentialField("username", "Identifiant La Rochelle", required=True),
         CredentialField("password", "Mot de passe La Rochelle", secret=True, required=True),
     ),
-    account_options=(AccountOptionField(
-        "experimental_http_probe", "Recette HTTP expérimentale", default="off",
-        help_text="Écrire exactement on pour autoriser les GET de diagnostic du SSO "
-                  "La Rochelle. Aucun POST de connexion, prêt ou téléchargement.",
-    ),),
+    account_options=(
+        AccountOptionField(
+            "experimental_http_probe", "Recette HTTP expérimentale", default="off",
+            help_text="off = aucun réseau, on = GET seul ; post = POST AJAX unique "
+                      "explicitement consenti avec TOUS les paramètres fournis. "
+                      "Aucune connexion Core ni synchronisation de prêt."),
+        AccountOptionField("ajax_change_user", "POST AJAX : changeUser (valeur observée)"),
+        AccountOptionField("ajax_provider", "POST AJAX : provider (valeur observée)"),
+        AccountOptionField("ajax_dc", "POST AJAX : _dc (valeur fraîche)", secret=True),
+        AccountOptionField("ajax_remember_me", "POST AJAX : rememberMe (valeur observée)"),
+        AccountOptionField("ajax_captcha", "POST AJAX : captcha (valeur observée)", secret=True),
+        AccountOptionField("ajax_captcha_check_value", "POST AJAX : captchaCheckValue (valeur fraîche)", secret=True),
+    ),
     homepage="https://www.biblioaccess.com/1409/",
     # Suppress the automatic startup sweep until direct HTTP CAS is qualified.
     # This flag does not authorize an interactive browser in the provider.
     interactive_authentication=True,
     notes=(
-        "Compte configurable, HTTP GET de qualification uniquement sous opt-in on.",
-        "POST AJAX, synchronisation de prêts et acquisition non activés ; résultat jamais connecté.",
+        "Recette HTTP GET avec on ; POST AJAX et CAS avec post, paramètres explicites.",
+        "Aucune synchronisation de prêts ni acquisition activée ; résultat jamais connecté.",
     ),
 )
 
 
 _LOG = logging.getLogger("cifereca.plugin.biblioaccess")
+
+# Allowlisted technical outcomes only; no raw exception/URL/auth fields
+# can be written to journal even when a dependency raises an odd ValueError.
+_HTTP_PROBE_CODES = frozenset((
+    "cas_url_refused", "cas_body_limit", "cas_client_closed",
+    "cas_entry_already_attempted", "cas_entry_unverified",
+    "cas_entry_redirect_refused", "cas_service_refused",
+    "cas_login_unavailable", "cas_login_unverified",
+    "cas_transport_unavailable", "cas_preflight_unavailable",
+    "cas_post_not_confirmed", "cas_already_attempted",
+    "cas_ticket_unverified", "cas_ticket_refused",
+    "cas_landing_unverified", "cas_loans_already_attempted",
+    "cas_landing_required", "cas_loans_unverified",
+    "ajax_logon_consent_required", "ajax_logon_shape_mismatch",
+    "ajax_logon_credentials_missing", "ajax_logon_challenge_missing",
+    "ajax_logon_response_invalid", "ajax_logon_response_type",
+    "ajax_logon_json_invalid", "ajax_logon_json_shape",
+    "ajax_logon_response_limit", "ajax_logon_outcome_unknown",
+    "ajax_logon_client_closed", "ajax_logon_already_attempted",
+    "login_preflight_limit", "login_preflight_invalid_html",
+    "login_preflight_url_refused",
+))
 
 
 class LaRochelleSession(ProviderSession):
@@ -106,7 +136,7 @@ class LaRochelleSession(ProviderSession):
         detail = {
             "provider": PROVIDER_ID, "tenant": TENANT_ID,
             "credential_id": self.credential_id,
-            "phase": phase, "probe": "http_get_only",
+            "phase": phase, "probe": "experimental_http",
             "connected": False, **facts,
         }
         try:
@@ -124,19 +154,49 @@ class LaRochelleSession(ProviderSession):
             # Diagnostic failures are not authorization to proceed with login.
             _LOG.exception("biblioaccess_probe_diagnostic_sink_failed")
 
+    def _post_payload(self):
+        """No default/derived AJAX fields: require full observed input."""
+        from biblioaccess_ajax_logon import _validate_params, AjaxLogonError
+        keys = (
+            "ajax_change_user", "ajax_provider", "ajax_dc",
+            "ajax_remember_me", "ajax_captcha", "ajax_captcha_check_value",
+        )
+        if any(key not in self.options for key in keys):
+            raise ProviderConfigurationError("biblioaccess_post_inputs_required")
+        query = {
+            "changeUser": self.options["ajax_change_user"],
+            "provider": self.options["ajax_provider"],
+            "_dc": self.options["ajax_dc"],
+        }
+        fields = {
+            "username": self.credentials.get("username"),
+            "password": self.credentials.get("password"),
+            "rememberMe": self.options["ajax_remember_me"],
+            "captcha": self.options["ajax_captcha"],
+            "captchaCheckValue": self.options["ajax_captcha_check_value"],
+        }
+        try:
+            _validate_params(query, fields)
+        except AjaxLogonError as exc:
+            raise ProviderConfigurationError(str(exc)) from None
+        return query, fields
+
     def connect(self):
         with self._lock:
             self.connected = False
             self._accounts = []
             if self._closed:
                 raise ProviderConfigurationError("biblioaccess_probe_session_closed")
-            if self.options.get("experimental_http_probe") != "on":
+            mode = self.options.get("experimental_http_probe")
+            if mode not in ("on", "post"):
                 raise ProviderCapabilityError("biblioaccess_probe_opt_in_required")
+            # Validate all POST inputs BEFORE ANY remote GET. None are invented.
+            query, fields = self._post_payload() if mode == "post" else (None, None)
             if self._attempted:
                 raise ProviderCapabilityError("biblioaccess_probe_already_attempted")
             self._attempted = True
             self._last_probe_phase = "started"
-            # This is an HTTP GET diagnostic, NEVER a successful connect().
+            # An explicitly requested POST remains a diagnostic, NEVER a successful connect().
             # Do not require actual password values for this pre-auth probe.
             client = None
             try:
@@ -165,11 +225,36 @@ class LaRochelleSession(ProviderSession):
                     inline_identifier_names=list(preflight.inline_identifier_names),
                     challenge_resolved=False,
                 )
+                if mode == "post":
+                    # Exactly one explicitly consented credential POST on this
+                    # client. The query/fields are ephemeral, never journaled.
+                    self._event("ajax_logon", "started", request_method="POST")
+                    answer = client.submit_once(query=query, fields=fields, consent=True)
+                    self._last_probe_phase = "ajax_" + answer.outcome
+                    self._event("ajax_logon", "observed",
+                                response_status=answer.status, outcome=answer.outcome,
+                                cas_completed=False, identity_verified=False)
+                    if answer.outcome == "success_reported":
+                        self._event("cas_return", "started", request_method="GET")
+                        cas = client.observe_cas_once()
+                        self._last_probe_phase = cas.phase
+                        self._event("cas_return", "observed",
+                                    response_status=cas.status, observation=cas.phase)
+                        self._event("loans_page", "started", request_method="GET")
+                        loans = client.observe_loans_once()
+                        self._last_probe_phase = loans.phase
+                        self._event("loans_page", "observed",
+                                    response_status=loans.status, observation=loans.phase,
+                                    identity_verified=False, loans_verified=False)
             except Exception as exc:
                 # The provider remains disconnected even if the login HTML
                 # cannot be parsed; preserve the exact technical step/code.
-                code = str(exc)
-                if not (code.startswith("cas_") or code.startswith("login_preflight_")):
+                from biblioaccess_ajax_cas import AjaxCasError
+                from biblioaccess_ajax_logon import AjaxLogonError
+                from biblioaccess_ajax_preflight import LoginPreflightError
+                code = str(exc) if isinstance(
+                    exc, (AjaxCasError, AjaxLogonError, LoginPreflightError)) else ""
+                if code not in _HTTP_PROBE_CODES:
                     code = "biblioaccess_probe_http_failure"
                 self._last_probe_phase = code
                 self._event("preflight", "error", error_code=code,
@@ -178,6 +263,8 @@ class LaRochelleSession(ProviderSession):
             finally:
                 if client is not None:
                     client.close()
+            if mode == "post":
+                raise ProviderCapabilityError("biblioaccess_probe_completed_identity_unverified")
             raise ProviderCapabilityError("biblioaccess_probe_completed_login_not_attempted")
 
     def diagnostic_state(self) -> dict[str, Any]:

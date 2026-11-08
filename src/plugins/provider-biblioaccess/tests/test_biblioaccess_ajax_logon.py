@@ -59,7 +59,6 @@ def test_ajax_endpoint_fields_and_status_never_connect_core():
     ({"changeUser": "false", "provider": "0"}, FORM),
     (QUERY, {"username": "x", "password": "y"}),
     ({"changeUser": "false", "provider": "0", "_dc": "123", "token": "secret"}, FORM),
-    (QUERY, {**FORM, "captchaCheckValue": ""}),
 ])
 def test_shape_changes_refused_without_post(changed_query, changed_form):
     client = mod.ObservedAjaxLogonClient(transport=httpx.MockTransport(
@@ -118,5 +117,22 @@ def test_json_payload_opaque_and_bounded():
     try:
         with pytest.raises(mod.AjaxLogonError, match="response_limit"):
             client.submit_once(query=QUERY, fields=FORM, consent=True)
+    finally:
+        client.close()
+
+
+def test_explicit_empty_captcha_check_value_is_not_assumed_invalid():
+    calls = []
+    def handler(request):
+        calls.append(request.content.decode("ascii"))
+        return httpx.Response(200, headers={"content-type": "application/json"},
+                              json={"success": False, "errors": [], "message": None})
+    client = mod.ObservedAjaxLogonClient(transport=httpx.MockTransport(handler))
+    try:
+        result = client.submit_once(
+            query=QUERY, fields={**FORM, "captchaCheckValue": ""}, consent=True)
+        assert result.outcome == "failure_reported"
+        assert len(calls) == 1
+        assert "captchaCheckValue=" in calls[0]
     finally:
         client.close()

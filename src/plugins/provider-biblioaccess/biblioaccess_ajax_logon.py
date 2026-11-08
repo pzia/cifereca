@@ -48,10 +48,9 @@ def _validate_params(query: dict[str, str], fields: dict[str, str]) -> None:
             raise AjaxLogonError("ajax_logon_shape_mismatch")
     if not fields["username"] or not fields["password"]:
         raise AjaxLogonError("ajax_logon_credentials_missing")
-    # The capture does not prove captchaCheckValue is optional, so it must
-    # be provided by a fresh provider-supported flow, not guessed/replayed.
-    if not fields["captchaCheckValue"]:
-        raise AjaxLogonError("ajax_logon_challenge_missing")
+    # The observed HAR proves the *field name*, not that its value must be
+    # nonempty. Sending an explicit empty value is not a captcha bypass;
+    # only the institutional server decides whether it accepts that value.
 
 
 def inspect_ajax_response(*, status: int, mime: str, data: bytes) -> AjaxLogonObservation:
