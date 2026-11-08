@@ -662,8 +662,9 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
     # private file paths. These two safe entry points have different exact
     # contracts; silently forwarding extra/omitted kwargs to a downstream
     # Python function exposes TypeError rather than a stable refusal.
-    # In particular, a caller cannot inject its own context_current callback
-    # or a legacy undo_operation into the canonical or file-only route.
+    # In particular, a caller cannot inject a context_current callback
+    # or use the legacy undo operation on the file-only route. The canonical
+    # path accepts only the separately validated canonical journal digest.
     provided = set(options)
     if file_only:
         required = {
@@ -676,7 +677,7 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
             "identity_id", "credential_id", "account_id", "edition_id",
             "right_id", "branch_id", "placement_id", "path",
         }
-        allowed = required | {"confirmation", "reference_kind"}
+        allowed = required | {"confirmation", "reference_kind", "undo_operation"}
     _require(required <= provided <= allowed, "invalid_request")
     config_path = Path(config_path) if config_path is not None else config_file(create=False)
     database_path = Path(database_path) if database_path is not None else database_file(create=False)
