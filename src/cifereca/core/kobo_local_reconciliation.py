@@ -1,30 +1,22 @@
-"""Guarded, file-only Kobo observation and already-canonical relink.
+"""Offline canonical Kobo relink facade, with historical W4 paths retired.
 
-The former W4 positive reconciliation engine is retired from production.
-Only historical tests retain that engine and its mutable SQLite helpers.
-Local observations here create no rights, delivery or canonical Placement.
+No 0.7 receipt or local-file observation is an acquisition or a right.
+Retired SQL and filesystem repair helpers live in test-only archives.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
-import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import sqlite3
-import stat
 import threading
-import time
 from types import SimpleNamespace
 
 from ..library_files import safe_library_component
-from ..locking import InterProcessLock, LockBusyError
-from ..paths import acquisition_lock_file, config_file, database_file
+from ..paths import config_file, database_file
 from ..identities import Identity
 from ..storage import Storage, CURRENT_SCHEMA_VERSION
 from .kobo_backup import _kobo_preview_paths
-from .kobo_local_audit import _read_hash_within
 
 
 class ReconciliationRejected(ValueError):
@@ -38,48 +30,6 @@ class ReconciliationRejected(ValueError):
 def _require(condition, code):
     if not condition:
         raise ReconciliationRejected(code)
-
-
-def _json(value):
-    return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
-
-
-@contextmanager
-def _transaction(storage, write, completion, on_committed=None):
-    with storage._lock:
-        db = storage._connect()
-        _require(not db.in_transaction, "storage_busy")
-        previous = db.execute("PRAGMA synchronous").fetchone()[0]
-        if write:
-            db.execute("PRAGMA synchronous=FULL")
-        try:
-            db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
-            try:
-                _require(Storage._read_schema_version(db) == CURRENT_SCHEMA_VERSION, "schema_upgrade_required")
-                pending = db.execute("SELECT value FROM metadata WHERE key='identity-directory-migration-v1'").fetchone()
-                _require(not pending or not pending[0], "directory_migration_pending")
-                yield db
-                db.commit()
-                completion["committed"] = True
-                # Allow CoreUI to advance the private snapshot guard only
-                # after a successful write, while still under Storage's lock.
-                if write and callable(on_committed):
-                    try:
-                        on_committed()
-                    except Exception:
-                        # A committed write must never become a false failure.
-                        pass
-            except BaseException:
-                db.rollback()
-                raise
-        finally:
-            if write:
-                try:
-                    db.execute(f"PRAGMA synchronous={int(previous)}")
-                except sqlite3.Error:
-                    # Connection cleanup must never turn a durable commit
-                    # into a false "no changes" error receipt.
-                    pass
 
 
 def _roots(service, identity):
@@ -103,17 +53,6 @@ def _within(path, roots):
         return False
     value = Path(os.path.abspath(value))
     return any(value != root and value.is_relative_to(root) for root in roots)
-
-
-def _file(path, roots, sha, size):
-    _require(hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"), "platform_not_supported")
-    _require(_within(path, roots), "file_outside_identity")
-    result = _read_hash_within(path, roots)
-    _require(result is not None, "file_unverified")
-    _require(result[:2] == (sha, size), "file_hash_mismatch")
-    info = os.lstat(path)
-    _require(stat.S_ISREG(info.st_mode) and info.st_size == size, "file_changed")
-    return (result, info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns)
 
 
 def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expected_sha256,

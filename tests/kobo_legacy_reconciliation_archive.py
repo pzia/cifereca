@@ -8,9 +8,30 @@ neither these positive SQLite writers nor the legacy confirmation engine.
 from __future__ import annotations
 
 from types import FunctionType
+from contextlib import contextmanager, nullcontext
+from pathlib import Path
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import stat
+import time
 import uuid
 
+from cifereca.library_files import safe_library_component
+from cifereca.locking import InterProcessLock, LockBusyError
+from cifereca.paths import acquisition_lock_file
+from cifereca.core.kobo_backup import _kobo_preview_paths
+from cifereca.core.kobo_local_audit import _read_hash_within
+
 from cifereca.core import kobo_local_reconciliation as _runtime
+
+# Only historical regression fixtures use these dependencies; the installed
+# Core no longer imports their provider-specific W4 repair counterparts.
+_require = _runtime._require
+Storage = _runtime.Storage
+CURRENT_SCHEMA_VERSION = _runtime.CURRENT_SCHEMA_VERSION
 
 
 def _bind_to_runtime_globals(func):
@@ -391,10 +412,87 @@ def _receipt(status, *, token=None, operation=None, changed=0):
 
 
 
-_TEST_ONLY_NAMES = ["_JOURNAL","_FILE_EVIDENCE_JOURNAL","_FILE_EVIDENCE_SCHEMA","_SCHEMA","_KEYS","_CHANGES","_token","_rows","_unique_catalogue_fields","_metadata","_snapshot","_validate","_proposed","_write_row","_operation_id","_journal","_validate_undo","_validate_historical_links","_record_offline_file_evidence","_receipt"]
+def _json(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+
+
+@contextmanager
+def _transaction(storage, write, completion, on_committed=None):
+    with storage._lock:
+        db = storage._connect()
+        _require(not db.in_transaction, "storage_busy")
+        previous = db.execute("PRAGMA synchronous").fetchone()[0]
+        if write:
+            db.execute("PRAGMA synchronous=FULL")
+        try:
+            db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+            try:
+                _require(Storage._read_schema_version(db) == CURRENT_SCHEMA_VERSION, "schema_upgrade_required")
+                pending = db.execute("SELECT value FROM metadata WHERE key='identity-directory-migration-v1'").fetchone()
+                _require(not pending or not pending[0], "directory_migration_pending")
+                yield db
+                db.commit()
+                completion["committed"] = True
+                # Allow CoreUI to advance the private snapshot guard only
+                # after a successful write, while still under Storage's lock.
+                if write and callable(on_committed):
+                    try:
+                        on_committed()
+                    except Exception:
+                        # A committed write must never become a false failure.
+                        pass
+            except BaseException:
+                db.rollback()
+                raise
+        finally:
+            if write:
+                try:
+                    db.execute(f"PRAGMA synchronous={int(previous)}")
+                except sqlite3.Error:
+                    # Connection cleanup must never turn a durable commit
+                    # into a false "no changes" error receipt.
+                    pass
+
+
+def _file(path, roots, sha, size):
+    _require(hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"), "platform_not_supported")
+    _require(_within(path, roots), "file_outside_identity")
+    result = _read_hash_within(path, roots)
+    _require(result is not None, "file_unverified")
+    _require(result[:2] == (sha, size), "file_hash_mismatch")
+    info = os.lstat(path)
+    _require(stat.S_ISREG(info.st_mode) and info.st_size == size, "file_changed")
+    return (result, info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns)
+
+
+
+
+# Test process only: historical functions were bound to the Core namespace
+# to keep existing monkeypatch/WAL fixtures exercisable. Do not add these
+# names to the installable Core or any provider plugin.
+_TEST_ONLY_DEPENDENCIES = {
+    "hashlib": hashlib,
+    "re": re,
+    "stat": stat,
+    "time": time,
+    "InterProcessLock": InterProcessLock,
+    "LockBusyError": LockBusyError,
+    "nullcontext": nullcontext,
+    "acquisition_lock_file": acquisition_lock_file,
+    "_kobo_preview_paths": _kobo_preview_paths,
+    "_read_hash_within": _read_hash_within,
+}
+for _name, _value in _TEST_ONLY_DEPENDENCIES.items():
+    setattr(_runtime, _name, _value)
+
+_TEST_ONLY_NAMES = ["_json","_transaction","_file","_JOURNAL","_FILE_EVIDENCE_JOURNAL","_FILE_EVIDENCE_SCHEMA","_SCHEMA","_KEYS","_CHANGES","_token","_rows","_unique_catalogue_fields","_metadata","_snapshot","_validate","_proposed","_write_row","_operation_id","_journal","_validate_undo","_validate_historical_links","_record_offline_file_evidence","_receipt"]
 for _name in _TEST_ONLY_NAMES:
     _value = globals()[_name]
-    if isinstance(_value, FunctionType):
+    # contextlib.contextmanager's wrapper is implemented inside contextlib.
+    # Its globals contain _GeneratorContextManager; rebinding that wrapper
+    # to the Core module would lose the contextlib factory and fail before
+    # entering the test-only transaction. Keep the original decorated callable.
+    if isinstance(_value, FunctionType) and _name != "_transaction":
         _value = _bind_to_runtime_globals(_value)
     setattr(_runtime, _name, _value)
 # The historical transaction generated a random operation ID; only
