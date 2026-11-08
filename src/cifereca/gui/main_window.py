@@ -1685,21 +1685,37 @@ class MainWindow(Adw.ApplicationWindow):
             return session, []
         return session, accounts
 
-    def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
+    def borrow_search_item(
+        self, item: SearchResult, control: Gtk.Widget | None = None, *,
+        account=None, verification_only: bool = False,
+    ) -> None:
         # #2055: the historic session.borrow() path must NEVER be used for
         # BnF. Source-specific consent and a durable Core claim are required.
         if getattr(item, "source_provider", None) == "bnf-pret":
+            if verification_only:
+                return
             from .bnf_borrow_controller import present_bnf_borrow
             present_bnf_borrow(
                 self, item, control, Adw=Adw, TaskPriority=TaskPriority,
             )
             return
         if getattr(item, "source_provider", None) == "paris":
-            from .bnf_borrow_controller import present_paris_borrow
-            present_paris_borrow(
-                self, item, control, Adw=Adw, TaskPriority=TaskPriority, account=account,
+            # One established provider routing import; the read-only branch
+            # is segregated from the one permitted mutating borrower call.
+            from .bnf_borrow_controller import (
+                present_paris_borrow, present_paris_borrow_verification,
             )
+            if verification_only:
+                present_paris_borrow_verification(
+                    self, item, control, TaskPriority=TaskPriority,
+                )
+            else:
+                present_paris_borrow(
+                    self, item, control, Adw=Adw, TaskPriority=TaskPriority, account=account,
+                )
             return
+        if verification_only:
+            return  # Never transform a follow-up click into another provider borrow.
         try:
             session, accounts = self._eligible_borrow_accounts(item)
         except Exception as exc:
