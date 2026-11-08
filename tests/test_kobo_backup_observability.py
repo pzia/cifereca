@@ -214,7 +214,9 @@ def test_vault_auth_error_aborts_batch_and_persists_compact_summary(tmp_path: Pa
             "count": 1,
         }]
 
-        assert service.storage.backup_get("kobo", "vault-1", "book-0")["status"] == "error"
+        # Opaque supplier 401 may be raised after an unobservable GET;
+        # retain a non-retryable per-item checkpoint despite source abort.
+        assert service.storage.backup_get("kobo", "vault-1", "book-0")["status"] == "acquiring"
         assert service.storage.backup_get("kobo", "vault-1", "book-1") is None
 
         diag = service.diagnostics.snapshot()[-1]
