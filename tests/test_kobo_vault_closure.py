@@ -282,10 +282,10 @@ def test_real_adept_failure_is_counted_only_in_adept_errors(tmp_path: Path, monk
 
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert row is not None
-        assert row["status"] == "error"
-        # Durable receipts are public diagnostic data; the typed in-process
-        # summary above retains the ADEPT decision detail.
-        assert row["error"] == "Sauvegarde Kobo impossible"
-        assert "EPUB invalide" not in row["error"]
+        # The opaque ADEPT process might have written bytes before
+        # failing: quarantine rather than storing a retryable error.
+        assert row["status"] == "acquiring"
+        assert row["error"] is None
+        # The in-process error summary above retains ADEPT's typed failure.
     finally:
         service.close()
