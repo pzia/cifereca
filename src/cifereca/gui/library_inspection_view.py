@@ -485,10 +485,10 @@ class LocalInspectionController:
             f"{overview.get('rights_unverified_total', 0)} sans fichier vérifié"
             f" (n'implique pas l'absence)\n"
             + (
-                f"PRÊTS PARIS NON ACTIFS · {overview.get('paris_inactive_loans', 0)} "
+                f"PRÊTS NON ACTIFS · {overview.get('inactive_loans', 0)} "
                 "prêt(s) rendus / expirés / inactifs enregistrés, "
                 "distincts des droits actifs et consultables seulement.\n"
-                if overview.get('paris_inactive_loans', 0) else ""
+                if overview.get('inactive_loans', 0) else ""
             )
             + (
                 "REPÈRES DE COMPTAGE · le scan dénombre des fichiers physiques : "
@@ -1673,14 +1673,14 @@ class LocalInspectionController:
                 selected_right[0] = (
                     case.key if (
                         'rights_without_verified_file' in case.states
-                        or (case.provider == 'paris'
-                            and 'loan_inactive' in case.states)
+                        or 'loan_inactive' in case.states
                     ) else None
                 )
                 selected_provider[0] = case.provider if selected_right[0] else None
                 action_scroll.set_visible(selected_right[0] is not None)
                 pair_prepare.set_label(
-                    'Examiner le prêt (lecture seule)' if case.provider == 'paris'
+                    'Examiner le prêt (lecture seule)'
+                    if ('loan_inactive' in case.states or case.provider == 'paris')
                     else 'Préparer le rattachement'
                 )
                 reset_pair()
