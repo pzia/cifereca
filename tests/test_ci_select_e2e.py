@@ -15,7 +15,10 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 37)
+        self.assertEqual(len(mod.ALL), 38)
+        self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
+        self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
+        self.assertEqual(runner.SCENARIOS["search-filter-1024"]["height"], 768)
         self.assertEqual(runner.SCENARIOS["recommendations-detail-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["recommendations-detail-1024"]["height"], 768)
         hidpi = runner.SCENARIOS["recommendations-detail-1024-hidpi"]
@@ -180,9 +183,22 @@ class SelectionTests(unittest.TestCase):
 
     def test_local_widget(self):
         self.assertEqual(mod.select(["src/cifereca/gui/book_widgets.py"]),
-                         ("search-filter-p0",) + mod.BOOK_DETAIL + mod.RECOMMENDATIONS_GTK + mod.BNF_COVERS)
+                         mod.SEARCH_GTK + mod.BOOK_DETAIL + mod.RECOMMENDATIONS_GTK + mod.BNF_COVERS)
         self.assertEqual(mod.select(["src/cifereca/gui/cover_loader.py"]),
                          mod.BOOK_DETAIL + mod.RECOMMENDATIONS_GTK + mod.BNF_COVERS)
+
+    def test_p1_3687_search_1024_selected_for_shared_local_filters(self):
+        self.assertEqual(
+            mod.select(["e2e/search_filter_probe.py"]), mod.SEARCH_GTK,
+        )
+        for path in (
+            "src/cifereca/gui/query_controls.py",
+            "src/cifereca/gui/query_model.py",
+            "src/cifereca/gui/book_facets.py",
+            "src/cifereca/gui/book_widgets.py",
+        ):
+            selected = mod.select([path])
+            self.assertTrue(set(mod.SEARCH_GTK).issubset(selected), path)
 
     def test_1269_diagnostics_shared_probe_keeps_transitive_consumers(self):
         self.assertEqual(
@@ -200,7 +216,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_1269_query_model_keeps_book_detail_consumers(self):
         selected = mod.select(["src/cifereca/gui/query_model.py"])
-        self.assertEqual(set(selected), set(("search-filter-p0",) + mod.BOOK_DETAIL + mod.BNF_COVERS))
+        self.assertEqual(set(selected), set(mod.SEARCH_GTK + mod.BOOK_DETAIL + mod.BNF_COVERS))
 
     def test_1269_mainwindow_imports_cover_core_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
