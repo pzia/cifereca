@@ -6,6 +6,7 @@ synthetic catalogue counts local reads; no p95 or network speed is claimed.
 from __future__ import annotations
 
 import ast
+from copy import copy
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -18,6 +19,7 @@ from cifereca.gui.loan_view import (
 )
 from cifereca.core.loan_source_identity import loan_source_key
 from cifereca.models import Loan
+from cifereca.core.loan_cover_fallback import loan_local_cover
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controller.py"
@@ -34,8 +36,12 @@ def _renderer():
     module = ast.parse(SOURCE.read_text(encoding="utf-8"))
     fn = next(node for node in module.body
               if isinstance(node, ast.FunctionDef) and node.name == "_render_loans")
+    display_helper = next(node for node in module.body
+                          if isinstance(node, ast.FunctionDef) and node.name == "_loan_display_cover")
     namespace = {
         "Loan": Loan,
+        "copy": copy,
+        "loan_local_cover": loan_local_cover,
         "BookListItem": Row,
         "loan_source_key": loan_source_key,
         "loan_due_presentation": loan_due_presentation,
@@ -46,7 +52,7 @@ def _renderer():
         "history_language_projection": history_language_projection,
     }
     exec(compile(ast.fix_missing_locations(
-        ast.Module(body=[fn], type_ignores=[]),
+        ast.Module(body=[display_helper, fn], type_ignores=[]),
     ), str(SOURCE), "exec"), namespace)
     return namespace["_render_loans"]
 
