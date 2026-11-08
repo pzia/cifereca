@@ -676,7 +676,9 @@ def _release_plugin_manifest(source: Path) -> dict[str, str]:
 
 
 def _plugin_packages_root() -> Path:
-    return data_dir() / "plugins" / "packages"
+    # Resolving the package store must not allocate XDG data during read-only
+    # recovery/retention inspection. Writers create their own directories.
+    return data_dir(create=False) / "plugins" / "packages"
 
 
 def _safe_package_id(package_id: str) -> str:
@@ -2011,6 +2013,7 @@ def main(argv: list[str] | None = None) -> int:
             from .updater_retention_plugins import inspect_updater_retention_readonly
             result = inspect_updater_retention_readonly(
                 install_root(), _plugin_packages_root(), now=time.time(),
+                backups_root=state_dir(create=False) / "dev-updates",
             )
         elif a.recovery_inspect:
             result = recovery_inspect()
