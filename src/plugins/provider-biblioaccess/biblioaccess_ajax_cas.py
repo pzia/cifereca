@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 import httpx
 
 from biblioaccess_ajax_logon import ObservedAjaxLogonClient, AjaxLogonError
+from biblioaccess_ajax_preflight import inspect_login_preflight, LoginPreflight
 
 BIBLIO = "https://www.biblioaccess.com"
 IDP = "https://mediatheques.agglo-larochelle.fr"
@@ -53,11 +54,12 @@ def _url(url: str):
 
 
 def _bounded(response, limit=_LIMIT):
-    length = 0
+    content = bytearray()
     for block in response.iter_bytes():
-        length += len(block)
-        if length > limit:
+        if len(content) + len(block) > limit:
             raise AjaxCasError("cas_body_limit")
+        content.extend(block)
+    return bytes(content)
 
 
 class ObservedAjaxCasClient(ObservedAjaxLogonClient):
@@ -69,6 +71,7 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         self._service = None
         self._login_url = None
         self._login_seen = False
+        self._preflight = None
         self._entry_attempted = False
         self._cas_attempted = False
         self._loans_attempted = False
@@ -123,10 +126,18 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 media = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise AjaxCasError("cas_login_unverified")
-                _bounded(response)
+                body = _bounded(response)
+                self._preflight = inspect_login_preflight(
+                    body.decode("utf-8", errors="strict"), page_url=self._login_url)
                 return CasHttpObservation("login_html_unverified", 200)
         except (httpx.HTTPError, UnicodeError):
             raise AjaxCasError("cas_transport_unavailable") from None
+
+    def login_preflight(self) -> LoginPreflight:
+        """Return structural evidence from the one already-read login HTML."""
+        if self._closed or self._preflight is None:
+            raise AjaxCasError("cas_preflight_unavailable")
+        return self._preflight
 
     def submit_once(self, *, query: dict[str, str], fields: dict[str, str],
                     consent: bool):
@@ -211,6 +222,7 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
     def close(self):
         self._service = None
         self._login_url = None
+        self._preflight = None
         self._ajax_succeeded = False
         self._cas_landed = False
         super().close()

@@ -134,3 +134,27 @@ n'est inventé. Cette classe reste un outil de qualification non relié à
 `ProviderSession.connect()`, sans navigateur interactif ni trafic réel
 dans les tests. La suite métier doit établir un fournisseur valide de ces
 valeurs fraîches et une preuve d'identité avant activation.
+
+### Qualification des paramètres AJAX dynamiques sans navigateur
+
+`biblioaccess_ajax_preflight.py` ajoute un inspecteur **hors réseau**
+de la page de connexion institutionnelle, utilisé par
+`ObservedAjaxCasClient.observe_login_once()` sur le HTML **déjà reçu** :
+inventaire borné des scripts `src` HTTPS de même origine (chemins sans
+query), nombres de scripts tiers/inline, **noms** de champs `input`, et
+présence structurelle des identifiants `_dc`, `captchaCheckValue`,
+`captcha`, `changeUser`, `provider` dans les scripts inline. Les
+valeurs, mots de passe, textes de scripts, query de cache et corps HTML
+ne sont pas restitués ; aucun script n'est téléchargé ou exécuté.
+
+`login_preflight()` expose cette observation **uniquement après**
+`observe_login_once()` sur la même instance ; elle ne provoque aucun
+nouveau GET. Les indicateurs restent `status=unverified`,
+`values_extracted=False`, `challenge_resolved=False`.
+
+**Interprétation** : un nom trouvé dans un script ne prouve pas la façon
+de calculer sa valeur ; l'absence du nom ne prouve pas qu'il n'existe pas
+dans un JS externe. La suite requiert une qualification explicite du
+calcul `_dc` et surtout du challenge institutionnel, sans supposer
+qu'ils sont facultatifs ni contourner de CAPTCHA. Aucun navigateur
+interactif, aucun login réel ou capacité provider n'est activé.
