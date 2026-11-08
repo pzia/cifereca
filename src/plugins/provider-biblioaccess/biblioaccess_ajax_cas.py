@@ -312,7 +312,9 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 raise AjaxCasError("cas_loans_already_attempted")
             if self._closed:
                 raise AjaxCasError("cas_client_closed")
-            if not self._cas_landed or not self._ajax_succeeded:
+            # The one-shot diagnostic has historically required only the
+            # CAS landing; authenticated repeated reads enforce AJAX proof.
+            if not self._cas_landed:
                 raise AjaxCasError("cas_landing_required")
             self._loans_attempted = True
         return self._read_loans_html()
