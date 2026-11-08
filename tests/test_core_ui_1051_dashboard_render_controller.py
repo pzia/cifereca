@@ -524,7 +524,7 @@ def test_p1_1867_store_only_dashboard_distinguishes_ownership_catalogue_and_loan
     labels = _descendant_labels(window.dashboard_cards.children[0])
     assert "0 livres locaux · aucune source de prêt configurée" in labels
     assert "5 droits d’achat distants · fichier local non présumé" in labels
-    assert "Sources : Kobo (Mes achats / Catalogue), Numilog (Mes achats)" in labels
+    assert "Sources : Kobo, Numilog" in labels
     assert events == ["statistics", "snapshot"]
 
 
@@ -533,7 +533,8 @@ def test_p1_1867_optional_numilog_catalogue_not_mistaken_for_purchases():
         providers=["numilog"],
         sources=[
             {"provider_id": "numilog", "label": "Numilog", "connected": True},
-            {"provider_id": "numilog-catalog", "label": "Numilog", "connected": False},
+            {"provider_id": "numilog-catalog", "label": "Numilog — Catalogue public",
+             "connected": False, "public_catalogue": True},
         ],
         statistics={"local_books": 2, "known_loans": 0,
                     "loan_sources_observed": 0, "remote_owned_rights": 1},
@@ -542,7 +543,7 @@ def test_p1_1867_optional_numilog_catalogue_not_mistaken_for_purchases():
     render()
     labels = _descendant_labels(window.dashboard_cards.children[0])
     assert "2 livres locaux · aucune source de prêt configurée" in labels
-    assert "Sources : Numilog (Mes achats), Numilog (Catalogue public) (recherche indisponible)" in labels
+    assert "Sources : Numilog, Numilog — Catalogue public (recherche indisponible)" in labels
 
 
 def test_p1_1867_loan_evidence_or_unknown_source_keeps_existing_count():
@@ -606,3 +607,32 @@ def test_p1_1867_catalogue_descriptor_with_scope_already_named_not_duplicated():
     labels = _descendant_labels(window.dashboard_cards.children[0])
     assert "Sources : Numilog — Catalogue public" in labels
     assert "Catalogue public (Catalogue public)" not in str(labels)
+
+
+def test_source_presentation_is_descriptor_driven_for_unknown_private_and_public():
+    card = _card(
+        sources=[
+            {"provider_id": "future-private", "label": "Librairie inconnue",
+             "connected": False, "public_catalogue": False},
+            {"provider_id": "future-public", "label": "Catalogue futur",
+             "connected": False, "public_catalogue": True},
+            {"provider_id": "numilog-catalog", "label": "Catalogue privé simulé",
+             "connected": False, "public_catalogue": False},
+        ],
+    )
+    window, _, _, _, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert ("Sources : Librairie inconnue (à connecter), "
+            "Catalogue futur (recherche indisponible), "
+            "Catalogue privé simulé (à connecter)") in labels
+    assert "Mes achats" not in repr(labels)
+
+
+def test_dashboard_source_name_is_not_inferred_from_provider_id():
+    from cifereca.gui.dashboard_render_controller import _dashboard_source_label
+    for name in ("Kobo", "Numilog", "Bibliothèque future"):
+        assert _dashboard_source_label({
+            "provider_id": "kobo", "label": name, "connected": True,
+        }) == name
+    assert _dashboard_source_label({"provider_id": "numilog-catalog"}) == "Source inconnue"

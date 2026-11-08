@@ -112,7 +112,10 @@ def dashboard_state(self) -> list[dict[str, Any]]:
             if not public and (session.provider_id, session.credential_id) not in credentials:
                 continue
             sources.append({"provider_id": session.provider_id, "label": descriptor.display_name,
-                            "connected": bool(session.connected)})
+                            "connected": bool(session.connected),
+                            # Presentation-only descriptor fact; never a grant
+                            # to search, connect or access any private account.
+                            "public_catalogue": public})
             if session.connected:
                 capabilities.update(key for key in labels if bool(getattr(session.capabilities, key, False)))
         cards.append({

@@ -78,11 +78,30 @@ class Core0915(unittest.TestCase):
         session=NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='c',connected=True,capabilities=NS(search=True,loans=True,bookings=True))
         self.service.accounts=[NS(unique_id='main',identity_id='stable',provider_id='paris',credential_id='c')];self.service._sessions={'c':session}
         self.assertEqual([r['id'] for r in self.service.dashboard_state()[0]['capabilities']],['search','loans'])
+        self.assertEqual(self.service.dashboard_state()[0]['sources'][0]['public_catalogue'], False)
         # Older installed plugins can still announce bookings=True; retired
         # reservations never reappear in the Home capability chips.
         self.assertNotIn('bookings', {r['id'] for r in self.service.dashboard_state()[0]['capabilities']})
         session.connected=False;self.assertEqual(self.service.dashboard_state()[0]['capabilities'],[])
         self.service._sessions={}
+    def test_public_singleton_projection_is_read_only_and_provider_neutral(self):
+        session=NS(
+            descriptor=NS(instantiation='singleton_public',display_name='Catalogue fictif'),
+            provider_id='future-public',credential_id='',connected=False,
+            capabilities=NS(search=True),
+        )
+        self.service._sessions={'public':session}
+        self.service._provider_enabled_for_identity=lambda provider, identity: (
+            provider == 'future-public' and identity == 'stable'
+        )
+        sources=self.service.dashboard_state()[0]['sources']
+        self.assertEqual(sources, [{
+            'provider_id':'future-public','label':'Catalogue fictif',
+            'connected':False,'public_catalogue':True,
+        }])
+        self.assertFalse(self.service.dashboard_state()[0]['capabilities'])
+        self.service._sessions={}
+
     def test_overview_does_not_expose_another_identity_session(self):
         self.service._sessions={'c':NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='other',connected=True,capabilities=NS(search=True))}
         self.assertEqual(self.service.dashboard_state()[0]['sources'],[]);self.service._sessions={}
