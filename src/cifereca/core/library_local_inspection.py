@@ -1013,15 +1013,15 @@ class LocalInspection:
                     )
             case_heading = (
                 'Prêt non actif (lecture seule)'
-                if is_closed_paris_loan else 'Droit sans fichier vérifié'
+                if is_inactive_loan else 'Droit sans fichier vérifié'
             )
             case_state = (
-                {'loan_inactive'} if is_closed_paris_loan
+                {'loan_inactive'} if is_inactive_loan
                 else {'rights_without_verified_file'}
             )
             # Both states intentionally coexist: a user assertion is NOT
             # supplier provenance nor verified local-file presence.
-            if (not is_closed_paris_loan and scope in recorded_scopes
+            if (not is_inactive_loan and scope in recorded_scopes
                     and scope_counts[scope] == 1):
                 case_state.add('declared_link_recorded')
                 case_heading = 'Association manuelle enregistrée · droit sans fichier attesté'
