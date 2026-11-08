@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Lock
+from urllib.parse import parse_qs, urljoin, urlsplit
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 
@@ -61,12 +62,15 @@ class BiblioAccessHTTPQualification:
         self._inspected_form_shapes = ()
         self._form_actions = {}
         self._login_inspected = False
+        self._idp_login_url = None
 
     def close(self):
         if not self._closed:
             self._closed = True
             self.http.cookies.clear()
             self._inspected_form_shapes = ()
+            self._form_actions = {}
+            self._idp_login_url = None
             self.http.close()
 
     def inspect_cas_entry(self) -> CasEntryObservation:
@@ -82,7 +86,6 @@ class BiblioAccessHTTPQualification:
                 if response.status_code not in (200, 302):
                     raise SsoProtocolError("sso_entry_unavailable")
                 if response.status_code == 302:
-                    from urllib.parse import urljoin
                     target = urljoin(BIBLIO_ORIGIN + ACCOUNT_PATH,
                                      response.headers.get("location", ""))
                     try:
@@ -92,6 +95,20 @@ class BiblioAccessHTTPQualification:
                     if (p.hostname != "mediatheques.agglo-larochelle.fr"
                             or p.path not in ("/login", "/cas/login")):
                         raise SsoProtocolError("sso_entry_redirect_refused")
+                    if p.path == "/login":
+                        query = parse_qs(p.query, keep_blank_values=True)
+                        if set(query) != {"service"} or len(query["service"]) != 1:
+                            raise SsoProtocolError("sso_entry_redirect_refused")
+                        try:
+                            service = _url(query["service"][0])
+                        except SsoProtocolError:
+                            raise SsoProtocolError("sso_entry_redirect_refused") from None
+                        if (service.hostname != "www.biblioaccess.com"
+                                or not (service.path == "/1409"
+                                        or service.path.startswith("/1409/"))
+                                or service.query):
+                            raise SsoProtocolError("sso_entry_redirect_refused")
+                        self._idp_login_url = target
                     return CasEntryObservation(
                         status=302, route="institutional_redirect_unverified")
                 # A landing 200 may represent an already connected user, or
@@ -104,7 +121,8 @@ class BiblioAccessHTTPQualification:
         if self._closed:
             raise SsoProtocolError("sso_transport_closed")
         try:
-            with self.http.stream("GET", ORIGIN + "/login",
+            request_url = self._idp_login_url or ORIGIN + "/login"
+            with self.http.stream("GET", request_url,
                                   headers={"Accept": "text/html"},
                                   follow_redirects=False) as response:
                 if response.status_code != 200:
@@ -114,7 +132,7 @@ class BiblioAccessHTTPQualification:
                     raise SsoProtocolError("sso_unexpected_content")
                 body = _bounded_body(response, 256000)
                 pairs = inspect_login_form_actions(
-                    ORIGIN + "/login", body.decode("utf-8", errors="strict"))
+                    request_url, body.decode("utf-8", errors="strict"))
                 shapes = tuple(shape for shape, _ in pairs)
                 self._form_actions = {id(shape): target for shape, target in pairs}
                 self._inspected_form_shapes = shapes
