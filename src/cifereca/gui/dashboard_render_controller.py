@@ -45,19 +45,11 @@ def _dashboard_has_no_loan_source(card: object, stats: object) -> bool:
 
 
 def _dashboard_source_label(source: object) -> str:
-    # Presentation only. A store account does not attest a downloaded file,
-    # and the Kobo catalogue is not a second configured account.
+    """Display the plugin-provided name without interpreting its provider ID."""
     if type(source) is not dict:
         return "Source inconnue"
-    name = str(source.get("label") or "Source inconnue")
-    pid = source.get("provider_id")
-    if pid == "kobo":
-        return name + " (Mes achats / Catalogue)"
-    if pid == "numilog":
-        return name + " (Mes achats)"
-    if pid == "numilog-catalog":
-        return name if "catalogue" in name.casefold() else name + " (Catalogue public)"
-    return name
+    label = source.get("label")
+    return label if type(label) is str and label.strip() else "Source inconnue"
 
 
 def render_dashboard(window, *, Gtk, add_css) -> None:
@@ -153,7 +145,7 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
             _dashboard_source_label(source) + (
                 "" if source.get("connected") is True
                 else " (recherche indisponible)"
-                if source.get("provider_id") == "numilog-catalog"
+                if source.get("public_catalogue") is True
                 else " (à connecter)"
             )
             for source in card.get("sources", [])
