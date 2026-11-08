@@ -194,6 +194,11 @@ def execute_cross_profile_borrow(
         )
         if finished is None:
             return _result("verification_unavailable", "borrow_checkpoint_unavailable")
+        # A callback may revoke the requester while the confirmed receipt
+        # is being written. Keep the durable fact, but do not publish its
+        # private positive status to a context that no longer owns this click.
+        if not current():
+            return _result("verification_unavailable", "lender_scope_revoked")
         return _result("confirmed", "lender_loan_confirmed_transfer_unverified")
     except BorrowRequestNotSubmitted:
         # CAS release only when the provider *proved* that no mutation was
