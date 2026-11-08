@@ -11,7 +11,9 @@ import ast
 
 from cifereca.core.borrow_for_identity_detail import (
     cross_profile_borrow_detail_section,
+    cross_profile_borrow_progress_detail_section,
 )
+from cifereca.core.borrow_for_identity_progress import CrossProfileBorrowProgress
 from cifereca.plugin_api.models import DetailSection, DetailField
 from tests.test_core_p1_4662_cross_profile_borrow_preview import (
     project, witness,
@@ -130,3 +132,69 @@ def test_standard_search_detail_has_opt_in_no_eager_provider_observation():
     assert "holdings" not in names
     assert "borrow_paris_manual" not in names
     assert "borrow_search_item" not in names
+
+
+def test_confirmed_lender_loan_never_presents_delivery_or_copy_as_complete():
+    progress = CrossProfileBorrowProgress(
+        "confirmed", "unavailable", "blocked",
+        "lender_loan_confirmed_transfer_unverified",
+    )
+    section = cross_profile_borrow_progress_detail_section(progress)
+    assert type(section) is DetailSection
+    assert [field.label for field in section.fields] == [
+        "Prêt", "Livraison", "Transfert",
+    ]
+    assert "Prêt confirmé" in section.fields[0].value
+    assert "non vérifiée" in section.fields[1].value
+    assert "bloquée" in section.fields[2].value
+    assert "droits non vérifiés" in section.fields[2].value
+    assert not hasattr(section, "actions")
+    assert not hasattr(section, "callback")
+
+
+def test_unknown_borrow_does_not_recommend_a_second_supplier_post():
+    progress = CrossProfileBorrowProgress(
+        "unknown", "unavailable", "blocked",
+        "loan_result_not_confirmed",
+    )
+    section = cross_profile_borrow_progress_detail_section(progress)
+    assert "ne pas recommencer" in section.fields[0].value
+    assert section.fields[2].value.endswith("bloquée")
+    assert all(field.kind == "text" for field in section.fields)
+
+
+def test_absent_loan_does_not_imply_fresh_offer_or_copy_rights():
+    progress = CrossProfileBorrowProgress(
+        "not_attempted", "unavailable", "not_attempted",
+        "loan_not_attempted",
+    )
+    section = cross_profile_borrow_progress_detail_section(progress)
+    assert "Aucun emprunt effectué" in section.fields[0].value
+    assert "Aucun transfert effectué" in section.fields[2].value
+    assert "Éligible" not in repr(section)
+
+
+def test_unverified_lender_scope_does_not_expose_foreign_loan_status():
+    progress = CrossProfileBorrowProgress(
+        "unknown", "unavailable", "blocked", "lender_scope_unverified",
+    )
+    section = cross_profile_borrow_progress_detail_section(progress)
+    assert "statut du prêt inaccessible" in section.fields[0].value
+    assert "confirmé" not in section.fields[0].value
+
+
+def test_forged_or_actionable_progress_produces_no_detail_section():
+    progress = CrossProfileBorrowProgress(
+        "confirmed", "unavailable", "blocked",
+        "lender_loan_confirmed_transfer_unverified",
+    )
+    assert cross_profile_borrow_progress_detail_section(None) is None
+    for forged in (
+        replace(progress, executable=True),
+        replace(progress, retry_borrow=True),
+        replace(progress, delivery="available"),
+        replace(progress, transfer="completed"),
+        replace(progress, reason_code="PRIVATE_LOAN_ID"),
+        replace(progress, loan="unknown"),
+    ):
+        assert cross_profile_borrow_progress_detail_section(forged) is None
