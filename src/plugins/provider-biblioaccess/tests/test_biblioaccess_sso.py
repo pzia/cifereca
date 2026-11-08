@@ -550,3 +550,70 @@ def test_explicit_script_probe_failure_never_sends_post():
         assert not session.connected and session.accounts == []
     finally:
         session.close()
+
+
+def test_unique_pagespeed_logon_is_selected_without_manual_account_option():
+    from types import SimpleNamespace
+    found = "/ui/250297600004/plug-in/logon/logon.js.pagespeed.ce.E1q2XCAAyC.js"
+    calls = []
+    diagnostics = []
+    class Client:
+        def observe_entry_once(self):
+            calls.append("entry")
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            calls.append("login")
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            calls.append("preflight")
+            return SimpleNamespace(
+                script_count=3,
+                same_origin_script_paths=("/scripts/vendor.js", found, "/assets/app.js"),
+                external_script_count=3,
+                field_names=("username", "password"),
+                inline_identifier_names=())
+        def inspect_login_script_once(self, *, path, consent):
+            assert consent is True and path == found
+            calls.append("script")
+            return SimpleNamespace(
+                identifier_names=("_dc", "captchaCheckValue"),
+                ajax_endpoint_referenced=True)
+        def close(self):
+            calls.append("close")
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            diagnostics.append(detail)
+    s = mod.PLUGIN.create_session(
+        credential_id="synthetic", label="reader",
+        credentials={"username": "PRIVATE-USER", "password": "PRIVATE-PASS"},
+        options={"experimental_http_probe": "on"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    s._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderCapabilityError, match="completed_login_not_attempted"):
+            s.connect()
+        assert calls == ["entry", "login", "preflight", "script", "close"]
+        assert diagnostics[-1]["phase"] == "login_script"
+        assert diagnostics[-1]["selection"] == "auto"
+        assert diagnostics[-1]["ajax_endpoint_referenced"] is True
+        assert s.diagnostic_state()["probe_phase"] == "script_structure_unverified"
+        assert found not in repr(diagnostics[-1])
+        assert not s.connected and s.accounts == []
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("paths", [
+    (),
+    ("/assets/app.js",),
+    ("/scripts/logon.js", "/plugins/logon.js"),
+    ("/scripts/logon.js", "/plugins/logon.js.pagespeed.ce.AA.js"),
+])
+def test_auto_logon_skips_absent_or_ambiguous_sources(paths):
+    assert mod._observed_logon_script(paths) == ""
+
+
+def test_auto_logon_picks_plain_static_script_too():
+    assert mod._observed_logon_script(
+        ("/assets/jquery.js", "/plug-in/logon/logon.js")
+    ) == "/plug-in/logon/logon.js"
