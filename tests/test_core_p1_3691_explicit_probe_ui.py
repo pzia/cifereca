@@ -162,7 +162,9 @@ def test_save_can_be_followed_by_test_without_reopening_settings(monkeypatch):
     editor, submits, entries, action, saved = _harness(
         monkeypatch, return_saved=True)
     # Simulate completed Save on the same mounted Settings page.
-    saved["options"]["experimental_http_probe"] = "on"
+    # A successful commit replaces the persisted options mapping, rather
+    # than mutating the initial page-open account snapshot by reference.
+    saved["options"] = {"experimental_http_probe": "on"}
     editor["option_fields"]["experimental_http_probe"].text = "on"
     editor["explicit_probe_button"].emit("clicked")
     assert len(submits) == 1
