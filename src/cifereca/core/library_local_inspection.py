@@ -241,13 +241,12 @@ def _right_bibliography(right, matches):
     media = right.get('display_media_format')
     media = (media if type(media) is str
              and media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné')
-    # Provider-private right kind matters for temporary library loans.
-    # Neither state="active" nor an expiry string confirms that a Paris
-    # loan is currently valid. No ADEPT/license/remote read is performed.
-    is_paris_loan = (right.get('provider_id') == 'paris'
-                     and right.get('entitlement_type') == 'loan')
+    # The canonical entitlement type, not a provider ID, identifies a loan.
+    # Neither state="active" nor an expiry string proves a loan is valid.
+    # Rendering performs no license, provider or remote check.
+    is_loan = right.get('entitlement_type') == 'loan'
     kind = (
-        'Prêt temporaire (consultation uniquement)' if is_paris_loan
+        'Prêt temporaire (consultation uniquement)' if is_loan
         else 'Achat / possession enregistrée'
         if right.get('entitlement_type') == 'owned'
         else 'Nature non attestée (consultation uniquement)'
@@ -255,13 +254,13 @@ def _right_bibliography(right, matches):
     expiry = _text(right.get('expires_at'))[:96].strip()
     loan_notes = (
         '• Échéance déclarée dans SQLite : ' + (expiry or 'Non renseignée'),
-        '• Validité actuelle du prêt / identité ADEPT : non démontrée '
+        '• Validité actuelle du prêt / identité de l’emprunteur : non démontrée '
         'par cet enregistrement local. Aucune prolongation, restitution '
         'ou association permanente autorisée.',
-    ) if is_paris_loan else ()
+    ) if is_loan else ()
     lines = (
         ('Bibliographie du prêt (description, pas preuve de fichier) :'
-         if is_paris_loan else
+         if is_loan else
          'Bibliographie de l’achat / droit (description, pas preuve de fichier) :'),
         '• Nature du droit : ' + kind,
         '• Titre : ' + title,
