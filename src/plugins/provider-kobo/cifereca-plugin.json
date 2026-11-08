@@ -15,6 +15,10 @@
       "priority": 59,
       "display_name": "Kobo — Catalogue",
       "description": "Normalisation et recherche du catalogue Kobo, séparées de la bibliothèque personnelle.",
+      "ui_contribution": {
+        "schema": "cifereca.plugin.ui/1",
+        "usage_hint": "Service technique du catalogue Kobo : pas de deuxième compte utilisateur, aucun droit d’achat ou téléchargement déduit."
+      },
       "version": "1.2.29",
       "help_text": "Service technique de recherche et normalisation du catalogue Kobo, consommé via cifereca.catalog.service/1 ; il n’est pas exposé comme source utilisateur configurable. Lorsqu'un résultat du catalogue se superpose à une notice du compte, les champs bibliographiques publics non vides (résumé, sujets, série, prix littéraires, image) sont conservés si la notice de bibliothèque est incomplète ; propriété, disponibilité et révision restent autoritaires côté compte. Le Core définit séparément l'indexation/recherche multi-champs.",
       "capabilities": [
@@ -36,6 +40,10 @@
       "priority": 60,
       "display_name": "Kobo",
       "description": "Bibliothèque personnelle/ownership Kobo via Kobo-Vault; le catalogue est une dépendance plugin séparée.",
+      "ui_contribution": {
+        "schema": "cifereca.plugin.ui/1",
+        "usage_hint": "Kobo : Mes achats proviennent du compte connecté. Le catalogue utilise le service technique Kobo existant ; il ne crée aucun second compte ni ne prouve un achat."
+      },
       "recommends": [
         {
           "plugin": "drm.ade",
