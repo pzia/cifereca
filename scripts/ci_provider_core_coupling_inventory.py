@@ -32,7 +32,16 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             modules = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
             stem = ("." * node.level) + (node.module or "")
-            modules = [stem, *(stem + "." + alias.name for alias in node.names)]
+            # Count an import statement once when its module is already
+            # provider-specific; inspect imported aliases for generic parents.
+            stem_parts = stem.casefold().lstrip(".").split(".")
+            is_provider_module = any(
+                part == provider or part.startswith(provider + "_")
+                for part in stem_parts for provider in names
+            )
+            modules = [stem] if is_provider_module else [
+                stem + "." + alias.name for alias in node.names
+            ]
         else:
             modules = []
         for module in modules:
