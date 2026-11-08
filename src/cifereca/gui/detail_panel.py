@@ -1058,6 +1058,38 @@ class DetailPanel(Gtk.Box):
                     except Exception:
                         diagnostic = None
                     explanation = paris_borrow_status_message(diagnostic)
+                    # P1 #5136: a spent uncertain loan claim is NOT an
+                    # invitation to repeat Emprunter. Only an exact local
+                    # pending claim may expose a later read-only GET action.
+                    available = getattr(
+                        self.window.service, "paris_borrow_followup_available", None,
+                    )
+                    try:
+                        followup = callable(available) and available(item) is True
+                    except Exception:
+                        followup = False
+                    if followup:
+                        explanation = (
+                            "Demande de prêt Paris déjà envoyée ; confirmation "
+                            "indisponible. Ne réempruntez pas. "
+                            "La vérification ci-dessous ne soumet aucun prêt."
+                        )
+                        from ..task_queue import TaskPriority
+                        from .bnf_borrow_controller import (
+                            present_paris_borrow_verification,
+                        )
+                        verify = self.window.action_button(
+                            "Vérifier le prêt sans réemprunter",
+                            "view-refresh-symbolic",
+                        )
+                        verify.connect(
+                            "clicked",
+                            lambda _b: present_paris_borrow_verification(
+                                self.window, item, verify,
+                                TaskPriority=TaskPriority,
+                            ),
+                        )
+                        self._actions([verify])
                 row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)
