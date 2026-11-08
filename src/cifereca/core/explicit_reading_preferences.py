@@ -46,8 +46,19 @@ def _decode(value: Any) -> tuple[int, dict[str, str]]:
         return 0, {}
     if type(value) is not str or len(value.encode("utf-8")) > _MAX_BYTES:
         raise ValueError("reading_preference_state_invalid")
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        # json.loads normally keeps the *last* occurrence of a key. A
+        # duplicated user preference or schema/revision is contradictory
+        # evidence and must never silently overwrite an earlier choice.
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("reading_preference_state_invalid")
+            result[key] = item
+        return result
+
     try:
-        payload = json.loads(value)
+        payload = json.loads(value, object_pairs_hook=unique_object)
     except (TypeError, ValueError):
         raise ValueError("reading_preference_state_invalid") from None
     if (type(payload) is not dict or set(payload) != {"schema", "revision", "preferences"}
