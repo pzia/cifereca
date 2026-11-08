@@ -62,6 +62,11 @@ def test_read_login_then_single_post_never_attests_authentication():
         assert not observed.cas_completed
         assert "SYNTHETIC-PASS" not in repr(observed)
         assert "access_token" not in repr(observed)
+        with pytest.raises(sso.SsoProtocolError, match="post_already_attempted"):
+            client.submit_once(shape=shapes[0], fields={
+                "login": "another", "password": "another", "csrf": "another"},
+                explicit_consent=True)
+        assert [method for method, _ in requests] == ["GET", "POST"]
     finally:
         client.close()
 
@@ -88,6 +93,8 @@ def test_post_30x_is_not_followed():
     client = mock(handler)
     shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
                           ("login", "password"), True)
+    client._inspected_form_shapes = (shape,)
+    client._login_inspected = True
     try:
         answer = client.submit_once(shape=shape,
                 fields={"login": "x", "password": "y"},
@@ -107,6 +114,8 @@ def test_post_failure_not_retried():
     client = mock(handler)
     shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
                           ("login", "password"), True)
+    client._inspected_form_shapes = (shape,)
+    client._login_inspected = True
     try:
         with pytest.raises(sso.SsoProtocolError, match="post_outcome_unknown"):
             client.submit_once(shape=shape,
@@ -121,9 +130,23 @@ def test_large_body_refused_without_trusting_content_length():
         200, headers={"Content-Type": "application/json"}, content=b"x" * 66000))
     shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
                           ("login", "password"), True)
+    client._inspected_form_shapes = (shape,)
+    client._login_inspected = True
     try:
         with pytest.raises(sso.SsoProtocolError, match="response_limit"):
             client.submit_once(shape=shape,
                 fields={"login": "x", "password": "y"}, explicit_consent=True)
+    finally:
+        client.close()
+
+
+def test_reject_forged_form_even_when_fields_match():
+    client = mock(lambda request: pytest.fail("Unexpected HTTP request"))
+    shape = sso.FormShape("POST", sso.ORIGIN, "/logon", ("login", "password"), True)
+    try:
+        with pytest.raises(sso.SsoProtocolError, match="schema_unqualified"):
+            client.submit_once(shape=shape,
+                               fields={"login": "x", "password": "y"},
+                               explicit_consent=True)
     finally:
         client.close()
