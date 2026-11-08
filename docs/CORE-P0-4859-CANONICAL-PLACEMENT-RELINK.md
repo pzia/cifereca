@@ -62,6 +62,9 @@ seule, puis confirmation explicite `--confirm PLAN_TOKEN`.
 Le Core vérifie transactionnellement que le journal initial correspond au
 même SourceReference fournisseur, au même Placement et aux chemins de
 l'aller, et que le Placement n'a pas été repris par une autre opération.
+Un curseur transactionnel de la dernière relocalisation par Placement
+empêche notamment le rejeu **A→B→C→B**, y compris dans la même seconde
+SQLite. Ce curseur n'est ni un verrou durable ni une autorité de droit.
 La source, l'OriginLink et l'Artifact **doivent toujours être attestés**
 et le fichier retourné doit avoir les octets, taille et inode attendus.
 L'ancien chemin SQL (chemin aller) doit être physiquement absent ; un
