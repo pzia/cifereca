@@ -141,11 +141,16 @@ class CoverView(Gtk.Overlay):
         # asynchronous cache/preview callback reaches the main loop.
         # Resetting here invalidates that callback's generation repeatedly,
         # leaving even mapped rows with an empty picture at HiDPI scale.
-        # Preserve only the identical *in-flight* request. A completed or
-        # failed request may still be refreshed by an ordinary rebind, and
-        # changing loader, URL or priority retains the normal cancellation.
+        # Preserve the identical in-flight request OR its already rendered
+        # texture. Rebinding a successful URL previously cleared a valid image
+        # and restarted the request on every GTK row/detail redraw, sometimes
+        # leaving the HiDPI views blank under rapid local filter changes.
+        # A completed *failed* request (no spinner/texture) remains retryable.
+        # Changing loader, URL or priority still invalidates the old binding.
         if (url and self._loader is loader and self._url == url
-                and self._priority == priority and self.spinner.get_visible()):
+                and self._priority == priority
+                and (self.spinner.get_visible()
+                     or self.picture.get_paintable() is not None)):
             return
         self.reset()
         if not url:
