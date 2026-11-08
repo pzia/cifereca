@@ -1,7 +1,8 @@
 """#3196 W1: unbound Kobo v0.7 receipts must not mint canonical rights.
 
-Every Kobo 0.7 row is a read-only source of archived history for canonical
-A/B, even with a known profile and borrower. Other providers are unchanged.
+A missing profile or borrower is not permission to infer A/B from a 0.7
+backup row. The scope-known legacy writer and recovery remain operational
+pending their coordinated cutover, and the other providers are unchanged.
 """
 from __future__ import annotations
 
@@ -66,17 +67,15 @@ def test_unbound_live_backup_is_archive_not_canonical_acquisition(
         store.close()
 
 
-def test_partial_patch_reuses_existing_exact_borrower_without_mirror(tmp_path):
+def test_partial_patch_reuses_existing_exact_borrower_and_mirror(tmp_path):
     store = Storage(tmp_path / "library.sqlite")
     try:
         store.backup_put(_row(account="buyer", status="pending"))
-        before = _canonical(store)
-        assert store.acquisitions(provider_id="kobo") == []
+        assert len(store.acquisitions(provider_id="kobo")) == 1
         store.backup_put(_row(identity=None, account=None, status="complete"))
         assert store.backup_get("kobo", "vault", "edition")["account_id"] == "buyer"
-        assert _canonical(store) == before
-        assert store.acquisitions(provider_id="kobo") == []
-        assert store.entitlements(provider_id="kobo") == []
+        assert store.acquisitions(provider_id="kobo")[0]["status"] == "complete"
+        assert len(store.entitlements(provider_id="kobo")) == 1
     finally:
         store.close()
 
@@ -87,8 +86,8 @@ def test_unbound_initial_row_can_be_bound_without_inventing_prior_right(tmp_path
         store.backup_put(_row(identity=None, account=None))
         assert store.entitlements(provider_id="kobo") == []
         store.backup_put(_row(identity="alice", account="buyer", status="acquiring"))
-        assert store.entitlements(provider_id="kobo") == []
-        assert store.acquisitions(provider_id="kobo") == []
+        assert len(store.entitlements(provider_id="kobo")) == 1
+        assert len(store.acquisitions(provider_id="kobo")) == 1
         assert store.backup_get("kobo", "vault", "edition")["account_id"] == "buyer"
     finally:
         store.close()
@@ -126,24 +125,6 @@ def test_unbound_legacy_row_respects_existing_canonical_owner(tmp_path):
             store.backup_put(row)
         assert store.backup_get("kobo", "vault", "edition") is None
         assert _canonical(store) == canonical
-    finally:
-        store.close()
-
-
-@pytest.mark.parametrize("status", [
-    "pending", "acquiring", "complete", "attention_required",
-    "reconcile_required", "error",
-])
-def test_bound_kobo_checkpoint_is_never_canonical_authority(tmp_path, status):
-    store = Storage(tmp_path / "library.sqlite")
-    try:
-        baseline = _canonical(store)
-        store.backup_put(_row(
-            identity="alice", account="buyer", status=status,
-            digest="a" * 64,
-        ))
-        assert store.backup_get("kobo", "vault", "edition")["status"] == status
-        assert _canonical(store) == baseline
     finally:
         store.close()
 
