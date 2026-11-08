@@ -464,3 +464,79 @@ def test_myloans_http_200_exposes_staged_book_links_but_never_a_loan():
             c.observe_loans_once()
     finally:
         c.close()
+
+
+def test_auto_post_uses_fresh_html_hidden_value_and_epoch_ms():
+    from time import time
+    seen = []
+    token = "SYNTHETIC-HIDDEN-FRESH-NO-REUSE"
+    def handler(req):
+        seen.append(req.method + " " + req.url.path)
+        if req.url.path == "/1409/Account/Login":
+            return httpx.Response(302, headers={"location": LOGIN})
+        if req.url.path == "/login":
+            return httpx.Response(
+                200, headers={"content-type": "text/html"},
+                text='<div id="logon-captcha-form-group" style="display:none"></div>'
+                     '<input id="logon-captcha" name="captcha">'
+                     '<input type="hidden" id="logon-captcha-checkvalue" '
+                     'name="checkValue" value="' + token + '">'
+                     '<script>logonManager.provider = "Form";'
+                     'logonManager.action = "logon";</script>')
+        if req.url.path == "/logon.svc/logon":
+            assert req.url.params["changeUser"] == "true"
+            assert req.url.params["provider"] == "Form"
+            assert abs(int(req.url.params["_dc"])/1000 - time()) < 15
+            from urllib.parse import parse_qs
+            posted = parse_qs(req.content.decode(), keep_blank_values=True)
+            assert posted == {
+                "username": ["SYNTHETIC-USER"],
+                "password": ["SYNTHETIC-PASSWORD"],
+                "rememberMe": ["false"],
+                "captcha": [""],
+                "captchaCheckValue": [token],
+            }
+            return httpx.Response(200, headers={"content-type": "application/json"},
+                                  json={"success": False, "errors": []})
+        pytest.fail("No CAS after failed AJAX POST")
+    c = client_for(handler)
+    try:
+        c.observe_entry_once()
+        c.observe_login_once()
+        assert token not in repr(c.login_preflight())
+        result = c.submit_observed_login_once(
+            username="SYNTHETIC-USER",
+            password="SYNTHETIC-PASSWORD", consent=True)
+        assert result.outcome == "failure_reported"
+        assert seen == [
+            "GET /1409/Account/Login", "GET /login",
+            "POST /logon.svc/logon"]
+        with pytest.raises(ajax.AjaxLogonError, match="ajax_logon_already_attempted"):
+            c.submit_observed_login_once(
+                username="SYNTHETIC-USER",
+                password="SYNTHETIC-PASSWORD", consent=True)
+    finally:
+        c.close()
+
+
+def test_auto_post_refuses_unknown_challenge_before_credentials_leave():
+    seen = []
+    def handler(req):
+        seen.append(req.url.path)
+        if req.url.path == "/1409/Account/Login":
+            return httpx.Response(302, headers={"location": LOGIN})
+        if req.url.path == "/login":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  text='<div id="logon-captcha-form-group" '
+                                       'style="display:block"></div>')
+        pytest.fail("No credential POST on unqualified challenge")
+    c = client_for(handler)
+    try:
+        c.observe_entry_once()
+        c.observe_login_once()
+        with pytest.raises(cas.AjaxCasError, match="cas_login_dynamic_inputs_unavailable"):
+            c.submit_observed_login_once(
+                username="SYNTHETIC", password="SYNTHETIC", consent=True)
+        assert seen == ["/1409/Account/Login", "/login"]
+    finally:
+        c.close()
