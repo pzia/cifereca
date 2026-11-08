@@ -617,3 +617,52 @@ def test_auto_logon_picks_plain_static_script_too():
     assert mod._observed_logon_script(
         ("/assets/jquery.js", "/plug-in/logon/logon.js")
     ) == "/plug-in/logon/logon.js"
+
+
+def test_auto_post_mode_reuses_one_session_without_manual_ajax_options():
+    from types import SimpleNamespace
+    events = []
+    calls = []
+    class Client:
+        def observe_entry_once(self):
+            calls.append("entry")
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            calls.append("login")
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            calls.append("preflight")
+            return SimpleNamespace(
+                script_count=0, same_origin_script_paths=(),
+                external_script_count=0, field_names=("username",),
+                inline_identifier_names=())
+        def submit_observed_login_once(self, *, username, password, consent):
+            calls.append("auto_post")
+            assert consent is True
+            assert username == "PRIVATE-SYNTHETIC-USER"
+            assert password == "PRIVATE-SYNTHETIC-PASSWORD"
+            return SimpleNamespace(status=200, outcome="failure_reported")
+        def observe_cas_once(self):
+            pytest.fail("no CAS for unsuccessful AJAX response")
+        def close(self):
+            calls.append("close")
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            events.append(detail)
+    s = mod.PLUGIN.create_session(
+        credential_id="cred", label="reader",
+        credentials={"username": "PRIVATE-SYNTHETIC-USER",
+                     "password": "PRIVATE-SYNTHETIC-PASSWORD"},
+        options={"experimental_http_probe": "auto-post"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    s._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderCapabilityError, match="completed_identity_unverified"):
+            s.connect()
+        assert calls == ["entry", "login", "preflight", "auto_post", "close"]
+        assert any(e["phase"] == "ajax_logon" and e.get("outcome") == "failure_reported"
+                   for e in events)
+        assert "PRIVATE-SYNTHETIC" not in repr(events)
+        assert not s.connected and s.accounts == []
+    finally:
+        s.close()
