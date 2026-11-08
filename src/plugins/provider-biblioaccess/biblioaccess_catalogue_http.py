@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
+from biblioaccess_metadata import BibliographicNotice, parse_book_metadata
 from biblioaccess_observations import (
     MAX_HTML_BYTES, _SEARCH_PATH, _SUMMARY_PATH, _ALLOWED_SEARCH_PARAMS,
     _parts, classify_search_response, extract_catalogue_links, search_summary_url,
@@ -79,12 +80,14 @@ class BiblioAccessCatalogueHTTP:
         )
         self._lock = Lock()
         self._closed = False
+        self._last_search_ids: frozenset[str] = frozenset()
 
     def close(self):
         with self._lock:
             if self._closed:
                 return
             self._closed = True
+        self._last_search_ids = frozenset()
         self.http.cookies.clear()
         self.http.close()
 
@@ -101,7 +104,10 @@ class BiblioAccessCatalogueHTTP:
             if self._closed:
                 raise CatalogueHTTPError("catalogue_client_closed")
             # Avoid parallel cookie jar mutation or interleaved pagination.
-            return self._search_locked(summary, normalized_query, max_pages)
+            self._last_search_ids = frozenset()
+            result = self._search_locked(summary, normalized_query, max_pages)
+            self._last_search_ids = frozenset(result.book_ids)
+            return result
 
     def _search_locked(self, summary, query, max_pages):
         try:
@@ -155,3 +161,35 @@ class BiblioAccessCatalogueHTTP:
                 tuple(sorted(seen)), page_count, "page_budget_exhausted")
         except httpx.HTTPError:
             raise CatalogueHTTPError("catalogue_transport_unavailable") from None
+
+
+    def read_observed_notice(self, book_id: str) -> BibliographicNotice | None:
+        """Read only one book ID observed in this client's last search.
+
+        Never enumerate arbitrary IDs, infer ownership or follow redirects.
+        A missing JSON-LD Book is unknown, not a missing or unavailable book.
+        """
+        if (type(book_id) is not str or not book_id.isascii()
+                or not book_id.isdigit() or not 1 <= len(book_id) <= 18):
+            raise CatalogueHTTPError("catalogue_book_id_refused")
+        with self._lock:
+            if self._closed:
+                raise CatalogueHTTPError("catalogue_client_closed")
+            if book_id not in self._last_search_ids:
+                raise CatalogueHTTPError("catalogue_book_not_observed")
+            url = "https://www.biblioaccess.com/1409/Catalog/Book/" + book_id
+            try:
+                with self.http.stream(
+                    "GET", url, follow_redirects=False,
+                    headers={"Accept": "text/html"},
+                ) as response:
+                    if response.status_code != 200:
+                        raise CatalogueHTTPError({
+                            401: "catalogue_auth_required",
+                            403: "catalogue_auth_required",
+                            429: "catalogue_rate_limited",
+                        }.get(response.status_code, "catalogue_book_unavailable"))
+                    html = _read_html(response)
+                return parse_book_metadata(url, html)
+            except httpx.HTTPError:
+                raise CatalogueHTTPError("catalogue_transport_unavailable") from None
