@@ -1,5 +1,38 @@
 # BiblioAccess — La Rochelle (tenant 1409)
 
+## Déclaration simplifiée du compte (v0.2.2)
+
+L'écran **Paramètres → Sources et comptes fournisseurs → Médiathèques
+de La Rochelle** expose les seuls champs utiles au lecteur :
+compte activé, libellé, identité Cifereca, identifiant de bibliothèque,
+mot de passe, et **Synchronisation des prêts (on/off)**, `off`
+par défaut.
+
+L'utilisateur ne doit plus renseigner manuellement `_dc`,
+`captchaCheckValue`, le fournisseur AJAX, des champs de POST ou le
+chemin JS : ces valeurs proviennent du formulaire distant frais lors de
+l'authentification normale. Les anciennes options `experimental_*` et
+`ajax_*` déjà enregistrées sont **conservées à l'identique dans la
+configuration**, mais n'apparaissent plus dans l'éditeur normal. La
+recette HTTP historique reste accessible au code, sans migration
+destructive de paramètres de comptes.
+
+Le bouton **« Tester ce compte »** lance une unique authentification
+HTTP explicite à partir des **credentials enregistrés** (un POST,
+CAS et MyLoans), même lorsque `authenticated_sync=off`. Cette
+autorisation est **ponctuelle et non persistée** ; la session de test
+est systématiquement fermée et aucun compte ou prêt n'est enregistré
+par cette opération. Un formulaire réellement modifié doit d'abord
+être enregistré. Après une sauvegarde terminée, le test peut cibler
+la nouvelle configuration **sans rouvrir l'écran**.
+
+La validation terrain de la capture privée du 08/11/2026 à 21h08
+(build `b52ab11`) confirmait une connexion SSO suivie de deux relectures
+MyLoans positives et sept clics de test refusés comme brouillons.
+La v0.2.2 simplifie l'éditeur et corrige la comparaison fausse avec
+les défauts de champs non enregistrés ; elle doit encore être
+recettée sur l'interface installée.
+
 ## État actuel — synchronisation positive des prêts (opt-in)
 
 Suite à la double recette HTTP AJAX/CAS réelle du 08/11/2026,
