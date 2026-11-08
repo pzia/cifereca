@@ -235,6 +235,11 @@ SCENARIOS = {
         "runner": "gtk-diagnostics-navigation",
         "width": 1366,
     },
+    "task-busy-settings-1366": {
+        "plugin": "core", "fixture": "startup",
+        "description": "P1 #5178: GTK4 Settings, trois workers LockBusyError, aucun modal, reçus corrélés.",
+        "runner": "gtk-task-busy-settings", "width": 1366,
+    },
     "capture-session-gtk-1366": {
         "plugin": "core",
         "fixture": "startup",
@@ -538,6 +543,12 @@ def main() -> int:
                     xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
                     args.python, str(ROOT / "e2e/llm_settings_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-task-busy-settings":
+                command = [
+                    xvfb, "-a", "-s", "-screen 0 1366x900x24",
+                    args.python, str(ROOT / "e2e/task_busy_settings_probe.py"),
+                    "--out", str(scenario_dir), "--width", "1366",
                 ]
             elif scenario.get("runner") == "gtk-capture-session":
                 command = [
