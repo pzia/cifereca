@@ -412,3 +412,29 @@ dupliquées (y compris dans un objet imbriqué) et les constantes JSON
 non standard `NaN`/`Infinity` sont refusées. Les valeurs d'erreur et
 de continuation demeurent opaques. Cela ne prouve toujours ni identité,
 ni propriété de prêts, ni mécanisme d'authentification supporté.
+
+
+### Qualification consentie du JavaScript institutionnel (sans exécution)
+
+Après un test GET `experimental_http_probe=on` réussi, le journal
+`login_preflight.same_origin_script_paths` indique les chemins JS
+institutionnels déjà observés dans le HTML du **même** GET /login. Pour
+inspecter un seul de ces scripts, renseigner l'option facultative du compte
+`experimental_login_script_path` avec son **chemin exact** (ex.
+`/assets/logon.js` seulement si ce chemin a été observé), enregistrer,
+puis cliquer **« Tester ce compte »**.
+
+Le probe effectue les deux GET initiaux puis un unique GET additionnel,
+uniquement sur l'origine IdP HTTPS, sans redirection, avec MIME JavaScript
+autorisé et corps borné à 128 Kio. La sélection ne permet ni URL externe,
+ni query, ni découverte/enregistrement arbitraire des scripts. Le journal
+`login_script` publie uniquement les noms d'identifiants reconnus dans une
+liste fermée et la présence lexicale de `/logon.svc/logon` : **ni source JS,
+ni valeurs dynamiques, ni URL/headers/tokens de réponse**. Une référence
+lexicale à `_dc` ou `captchaCheckValue` ne démontre pas leur provenance.
+
+Sans option renseignée, aucun GET JS n'est effectué. Un chemin absent du
+HTML observé, une redirection ou une erreur HTTP bloquent la recette ; en
+mode `post`, ces erreurs bloquent également le POST. Il ne s'agit ni d'une
+exécution JavaScript ni d'une résolution automatique de CAPTCHA. Aucun
+état connecté ni droit de prêt n'est déduit de ces observations.

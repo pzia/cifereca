@@ -425,3 +425,128 @@ def test_no_catalogue_query_means_no_http_or_catalogue_client(monkeypatch):
         assert not s.connected
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("script_path", [
+    "https://mediatheques.agglo-larochelle.fr/assets/logon.js",
+    "//evil.example/logon.js",
+    "/assets/logon.js?token=SECRET",
+    "/assets/logon.js#frag",
+    "/assets/secret js",
+    "/assets/\u00e9tape.js",
+    "/" + "a" * 300,
+])
+def test_selected_script_path_invalid_before_any_network(script_path):
+    session = mod.PLUGIN.create_session(
+        credential_id="cred", label="test",
+        credentials={"username": "SYNTHETIC", "password": "PRIVATE"},
+        options={"experimental_http_probe": "on",
+                 "experimental_login_script_path": script_path},
+        config=None, storage=None, diagnostics=None)
+    session._client_factory = lambda: pytest.fail("must fail before network")
+    try:
+        with pytest.raises(mod.ProviderConfigurationError, match="script_path_invalid"):
+            session.connect()
+        assert not session.diagnostic_state()["probe_attempted"]
+    finally:
+        session.close()
+
+
+def test_explicit_script_probe_uses_observed_path_and_logs_only_structure():
+    from types import SimpleNamespace
+    recorded = []
+    events = []
+
+    class Client:
+        def observe_entry_once(self):
+            recorded.append("entry")
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            recorded.append("login")
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            recorded.append("preflight")
+            return SimpleNamespace(
+                script_count=1,
+                same_origin_script_paths=("/assets/logon.js",),
+                external_script_count=1,
+                field_names=("username",), inline_identifier_names=())
+        def inspect_login_script_once(self, *, path, consent):
+            recorded.append("script")
+            assert consent is True and path == "/assets/logon.js"
+            return SimpleNamespace(
+                identifier_names=("_dc", "captchaCheckValue"),
+                ajax_endpoint_referenced=True, executable=False,
+                value_provenance_verified=False)
+        def close(self):
+            recorded.append("close")
+
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            events.append((status, detail))
+
+    session = mod.PLUGIN.create_session(
+        credential_id="cred", label="test",
+        credentials={"username": "PRIVATE-USER", "password": "PRIVATE-PASS"},
+        options={"experimental_http_probe": "on",
+                 "experimental_login_script_path": "/assets/logon.js"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    session._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderCapabilityError, match="completed_login_not_attempted"):
+            session.connect()
+        assert recorded == ["entry", "login", "preflight", "script", "close"]
+        phases = [detail["phase"] for _, detail in events]
+        assert phases[-2:] == ["login_script", "login_script"]
+        last = events[-1][1]
+        assert last["identifier_names"] == ["_dc", "captchaCheckValue"]
+        assert last["ajax_endpoint_referenced"] is True
+        assert last["value_provenance_verified"] is False
+        assert last["challenge_resolved"] is False
+        assert "PRIVATE-PASS" not in repr(events)
+        assert not session.connected and session.accounts == []
+    finally:
+        session.close()
+
+
+def test_explicit_script_probe_failure_never_sends_post():
+    from types import SimpleNamespace
+    calls = []
+    details = []
+    class Client:
+        def observe_entry_once(self):
+            calls.append("entry")
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            calls.append("login")
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            calls.append("preflight")
+            return SimpleNamespace(
+                script_count=1, same_origin_script_paths=("/assets/other.js",),
+                external_script_count=1, field_names=(),
+                inline_identifier_names=())
+        def inspect_login_script_once(self, *, path, consent):
+            from biblioaccess_ajax_cas import AjaxCasError
+            calls.append("script")
+            raise AjaxCasError("cas_script_unobserved")
+        def submit_once(self, **kwargs):
+            pytest.fail("POST must not run if explicit JS probe fails")
+        def close(self):
+            calls.append("close")
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            details.append(detail)
+
+    options = _post_options()
+    options["experimental_login_script_path"] = "/assets/logon.js"
+    session = _post_session(options, client=Client(), diagnostics=Diagnostics())
+    try:
+        with pytest.raises(mod.ProviderConfigurationError, match="cas_script_unobserved"):
+            session.connect()
+        assert calls == ["entry", "login", "preflight", "script", "close"]
+        assert details[-1]["error_code"] == "cas_script_unobserved"
+        assert "logon.js" not in repr(details[-1])
+        assert not session.connected and session.accounts == []
+    finally:
+        session.close()
