@@ -21,9 +21,9 @@ if str(BNF_TESTS) not in sys.path:
 from test_p0_2055_borrow_explicit_execution import BnfExplicitExecutionTests
 
 
-def setup(tmp_path):
+def setup(tmp_path, **provider_options):
     producer = BnfExplicitExecutionTests()
-    session, account, item, transport = producer.make()
+    session, account, item, transport = producer.make(**provider_options)
     service = _service(tmp_path)
     account.identity_id = "alex"
     service.accounts = [account]
@@ -128,6 +128,67 @@ def test_actual_bnf_adapter_rebind_mid_post_preserves_uncertain_claim(tmp_path):
         assert service.storage.loan_borrow_state(
             borrow_claim_key(account, item),
         )["status"] == "verification_unavailable"
+    finally:
+        session.close()
+        service.close()
+
+
+def test_actual_bnf_timeout_after_post_keeps_lender_claim_consumed(tmp_path):
+    import httpx
+
+    service, session, account, item, transport, row, preview = setup(
+        tmp_path, post_failure=httpx.ReadTimeout("synthetic-post-timeout"),
+    )
+    try:
+        def execute():
+            return service.execute_cross_profile_borrow(
+                captured_preview=preview,
+                selected_option_id=preview.options[0].option_id,
+                expected_edition_id="edition-1", observations=(row,),
+                confirmed=True, now=1100,
+            )
+        result = execute()
+        assert result["status"] == "verification_unavailable"
+        assert result["provider_verified"] is False
+        assert result["retry_borrow"] is False
+        assert result["transfer"] == "blocked"
+        assert transport["post_count"] == 1
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item),
+        )["status"] == "verification_unavailable"
+        assert execute()["status"] == "blocked"
+        assert transport["post_count"] == 1
+    finally:
+        session.close()
+        service.close()
+
+
+def test_actual_bnf_unavailable_book_button_never_posts_and_releases_unsent_claim(
+    tmp_path,
+):
+    from test_p0_2055_borrow_explicit_execution import DETAIL
+
+    disabled = DETAIL.replace(
+        '<a class="button-borrow"',
+        '<a disabled class="button-borrow"',
+    )
+    service, session, account, item, transport, row, preview = setup(
+        tmp_path, detail_html=disabled,
+    )
+    try:
+        result = service.execute_cross_profile_borrow(
+            captured_preview=preview,
+            selected_option_id=preview.options[0].option_id,
+            expected_edition_id="edition-1", observations=(row,),
+            confirmed=True, now=1100,
+        )
+        assert result["reason_code"] == "borrow_not_submitted"
+        assert result["retry_borrow"] is False
+        assert transport["post_count"] == 0
+        assert service.storage.metadata_get(
+            borrow_claim_key(account, item),
+        ) is None
+        assert not service.storage.acquisitions()
     finally:
         session.close()
         service.close()
