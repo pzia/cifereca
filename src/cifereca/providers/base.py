@@ -164,6 +164,9 @@ class ProviderDescriptor:
     # account option for an exact "on", never infers consent from a password.
     # A provider MUST implement the connect/session lifecycle itself.
     background_authentication_option_key: str | None = None
+    # Optional, strictly versioned presentational contribution. Never rights.
+    search_status_notice_schema: str = ""
+    search_status_notices: tuple[tuple[str, str], ...] = ()
 
 
 class ProviderSession(ABC):
