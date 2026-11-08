@@ -1074,19 +1074,14 @@ class DetailPanel(Gtk.Box):
                             "indisponible. Ne réempruntez pas. "
                             "La vérification ci-dessous ne soumet aucun prêt."
                         )
-                        from ..task_queue import TaskPriority
-                        from .bnf_borrow_controller import (
-                            present_paris_borrow_verification,
-                        )
                         verify = self.window.action_button(
                             "Vérifier le prêt sans réemprunter",
                             "view-refresh-symbolic",
                         )
                         verify.connect(
                             "clicked",
-                            lambda _b: present_paris_borrow_verification(
-                                self.window, item, verify,
-                                TaskPriority=TaskPriority,
+                            lambda _b: self.window.borrow_search_item(
+                                item, verify, verification_only=True,
                             ),
                         )
                         self._actions([verify])
