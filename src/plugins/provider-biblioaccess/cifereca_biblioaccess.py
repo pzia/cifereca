@@ -72,8 +72,9 @@ DESCRIPTOR = ProviderDescriptor(
     account_options=(
         AccountOptionField(
             "experimental_http_probe", "Recette HTTP expérimentale", default="off",
-            help_text="off = aucun réseau, on = GET seul ; post = POST AJAX unique "
-                      "explicitement consenti avec TOUS les paramètres fournis. "
+            help_text="off = aucun réseau, on = GET seuls ; auto-post = premier POST AJAX "
+                      "avec paramètres frais de la page HTML et consentement explicite ; "
+                      "post = recette historique avec paramètres fournis. "
                       "Aucune connexion Core ni synchronisation de prêt."),
         AccountOptionField(
             "experimental_login_script_path", "SSO : chemin JS à inspecter (GET)",
@@ -118,6 +119,7 @@ _HTTP_PROBE_CODES = frozenset((
     "cas_script_consent_required", "cas_script_already_attempted",
     "cas_script_unobserved", "cas_script_unavailable",
     "cas_script_unexpected_content", "cas_script_transport_unavailable",
+    "cas_login_consent_required", "cas_login_dynamic_inputs_unavailable",
     "cas_post_not_confirmed", "cas_already_attempted",
     "cas_ticket_unverified", "cas_ticket_refused",
     "cas_landing_unverified", "cas_loans_already_attempted",
@@ -273,7 +275,7 @@ class LaRochelleSession(ProviderSession):
             if self._closed:
                 raise ProviderConfigurationError("biblioaccess_probe_session_closed")
             mode = self.options.get("experimental_http_probe")
-            if mode not in ("on", "post"):
+            if mode not in ("on", "post", "auto-post"):
                 raise ProviderCapabilityError("biblioaccess_probe_opt_in_required")
             # Reject malformed optional script selection before any HTTP.
             # The client separately checks exact membership in the freshly
@@ -348,11 +350,16 @@ class LaRochelleSession(ProviderSession):
                         executable=False, value_provenance_verified=False,
                         challenge_resolved=False,
                     )
-                if mode == "post":
+                if mode in ("post", "auto-post"):
                     # Exactly one explicitly consented credential POST on this
                     # client. The query/fields are ephemeral, never journaled.
                     self._event("ajax_logon", "started", request_method="POST")
-                    answer = client.submit_once(query=query, fields=fields, consent=True)
+                    if mode == "auto-post":
+                        answer = client.submit_observed_login_once(
+                            username=self.credentials.get("username"),
+                            password=self.credentials.get("password"), consent=True)
+                    else:
+                        answer = client.submit_once(query=query, fields=fields, consent=True)
                     self._last_probe_phase = "ajax_" + answer.outcome
                     self._event("ajax_logon", "observed",
                                 response_status=answer.status, outcome=answer.outcome,
@@ -389,7 +396,7 @@ class LaRochelleSession(ProviderSession):
             finally:
                 if client is not None:
                     client.close()
-            if mode == "post":
+            if mode in ("post", "auto-post"):
                 raise ProviderCapabilityError("biblioaccess_probe_completed_identity_unverified")
             raise ProviderCapabilityError("biblioaccess_probe_completed_login_not_attempted")
 
