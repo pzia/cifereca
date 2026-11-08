@@ -12,7 +12,7 @@ from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_live import (
     ObservedBorrowOffer, _witness, revalidate_live_borrow_lender_selection,
 )
-from .borrow_for_identity_preview import BorrowForIdentityPreview
+from .borrow_for_identity_preview import (BorrowForIdentityPreview, BorrowForIdentityWitness)
 from .source_context import source_context_epoch
 
 
@@ -83,7 +83,7 @@ def prepare_cross_profile_lender_action_plan(
                 service, row, context_epoch=context_epoch,
                 source_epoch=source_epoch,
             )
-            if not hasattr(witness, "account"):
+            if type(witness) is not BorrowForIdentityWitness:
                 continue
             account, notice = witness.account, witness.notice
             coordinates = (
