@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import ast
+from copy import copy
 from dataclasses import replace
 from pathlib import Path
 
 from cifereca.models import Loan
+from cifereca.core.loan_cover_fallback import loan_local_cover
 from cifereca.core.loan_source_identity import (
     loan_source_key, unique_library_loan, unambiguous_loan_rows,
 )
@@ -168,11 +170,15 @@ def _run_refresh_without_gtk(host, rows):
         node for node in syntax.body
         if isinstance(node, ast.FunctionDef) and node.name == "_loans_refreshed"
     )
+    display_helper = next(
+        node for node in syntax.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_loan_display_cover"
+    )
     compiled = compile(
-        ast.fix_missing_locations(ast.Module(body=[handler], type_ignores=[])),
+        ast.fix_missing_locations(ast.Module(body=[display_helper, handler], type_ignores=[])),
         str(LOANS), "exec",
     )
-    namespace = {"Loan": Loan, "loan_source_key": loan_source_key}
+    namespace = {"Loan": Loan, "loan_source_key": loan_source_key, "loan_local_cover": loan_local_cover, "copy": copy}
     exec(compiled, namespace)
     return namespace["_loans_refreshed"](host, rows)
 

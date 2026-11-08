@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import ast
+from copy import copy
 from pathlib import Path
 from types import SimpleNamespace
 
 from cifereca.models import Loan
+from cifereca.core.loan_cover_fallback import loan_local_cover
 from cifereca.core.loan_source_identity import loan_source_key
 
 
@@ -14,8 +16,11 @@ SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controlle
 def _method(name: str):
     tree = ast.parse(SOURCE.read_text())
     fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
-    ns = {"Loan": Loan, "loan_source_key": loan_source_key}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(SOURCE), "exec"), ns)
+    display_helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                          and node.name == "_loan_display_cover")
+    ns = {"Loan": Loan, "loan_source_key": loan_source_key,
+          "copy": copy, "loan_local_cover": loan_local_cover}
+    exec(compile(ast.Module(body=[display_helper, fn], type_ignores=[]), str(SOURCE), "exec"), ns)
     return ns[name]
 
 

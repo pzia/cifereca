@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from copy import copy
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -11,6 +12,7 @@ from cifereca.gui.loan_view import (
     loan_medium_counts, loan_row_metadata,
 )
 from cifereca.models import Loan
+from cifereca.core.loan_cover_fallback import loan_local_cover
 
 
 class Row:
@@ -22,10 +24,15 @@ class Row:
 
 def _render_actual(loans):
     path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controller.py"
-    method = next(node for node in ast.parse(path.read_text()).body
+    tree = ast.parse(path.read_text())
+    display_helper = next(node for node in tree.body
+                          if isinstance(node, ast.FunctionDef) and node.name == "_loan_display_cover")
+    method = next(node for node in tree.body
                   if isinstance(node, ast.FunctionDef) and node.name == "_render_loans")
     namespace = {
         "Loan": Loan,
+        "copy": copy,
+        "loan_local_cover": loan_local_cover,
         "BookListItem": Row,
         "loan_source_key": loan_source_key,
         "loan_due_presentation": loan_due_presentation,
@@ -34,7 +41,7 @@ def _render_actual(loans):
         "loan_context_label": loan_context_label,
         "LOAN_FILTER_LABELS": LOAN_FILTER_LABELS,
     }
-    module = ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[]))
+    module = ast.fix_missing_locations(ast.Module(body=[display_helper, method], type_ignores=[]))
     exec(compile(module, str(path), "exec"), namespace)
     rendered = []
     host = NS(
