@@ -155,6 +155,9 @@ class LibraryService:
         self.config = config
         self.storage = storage
         self.diagnostics = diagnostics
+        # Runtime-only boundary: an old opening run is history, not a
+        # current-startup incident. Set before any initialization work.
+        self._dashboard_launch_at = int(time.time())
         # Final 0.9.2 core: concrete providers are supplied exclusively by
         # Plugin API packages. The core registry starts empty and is populated
         # when the PluginManager is attached.
