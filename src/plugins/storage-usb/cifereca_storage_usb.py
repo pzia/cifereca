@@ -39,6 +39,26 @@ def _parts(path: object) -> tuple[str, ...]:
     return parts
 
 
+def _directory_chain_unchanged(
+    root_fd: int, chain: tuple[tuple[str, int, int], ...], flags: int
+) -> bool:
+    """Reopen ancestors from the pinned root before attesting a file."""
+    current = os.dup(root_fd)
+    try:
+        for name, device, inode in chain:
+            next_fd = os.open(name, flags, dir_fd=current)
+            os.close(current)
+            current = next_fd
+            observed = os.fstat(current)
+            if (observed.st_dev, observed.st_ino) != (device, inode):
+                return False
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(current)
+
+
 def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbFileObservation, ...]:
     """Hash explicit regular files under a caller-selected managed root.
 
@@ -64,11 +84,14 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
         for path, parts in selected:
             parent_fd = os.dup(root_fd)
             file_fd = None
+            chain: list[tuple[str, int, int]] = []
             try:
                 for part in parts[:-1]:
                     next_fd = os.open(part, flags, dir_fd=parent_fd)
                     os.close(parent_fd)
                     parent_fd = next_fd
+                    entry = os.fstat(parent_fd)
+                    chain.append((part, entry.st_dev, entry.st_ino))
                 try:
                     file_fd = os.open(
                         parts[-1],
@@ -99,10 +122,15 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
                 # Renames can replace the path while the old FD stays live.
                 # Compare the directory entry as well as the opened inode.
                 linked = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
-                if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
-                    before.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_size,
-                    after.st_mtime_ns, after.st_ctime_ns) or size != before.st_size or (
-                        linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino):
+                if (
+                    (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                     before.st_ctime_ns) !=
+                    (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+                     after.st_ctime_ns)
+                    or size != before.st_size
+                    or (linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino)
+                    or not _directory_chain_unchanged(root_fd, tuple(chain), flags)
+                ):
                     result.append(UsbFileObservation(path, "unverified"))
                 else:
                     remaining -= size
