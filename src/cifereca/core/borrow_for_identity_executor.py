@@ -131,14 +131,29 @@ def execute_cross_profile_borrow(
                 type(session), "borrow_explicit_with_claim", None))):
             return _result("unsupported", "borrow_capability_unavailable")
         key = lease._claim_key
+        manifest = tuple(plugin.descriptor.capabilities)
 
         def current() -> bool:
-            return (lease.current(service)
-                    and service.current_identity is requester
-                    and service._account_context_epoch == context_epoch
-                    and service._source_context_epoch == source_epoch
-                    and manager.status(plugin_id).enabled is True
-                    and manager.status(plugin_id).state == "ready")
+            try:
+                runtime = manager.status(plugin_id)
+                descriptor = runtime.descriptor
+                enabled_for = getattr(manager, "enabled_for_identity", None)
+                if (runtime.enabled is not True or runtime.state != "ready"
+                        or descriptor.id != plugin_id
+                        or descriptor.type != "provider.library"
+                        or tuple(descriptor.capabilities) != manifest
+                        or (callable(enabled_for) and enabled_for(
+                            plugin_id, account.identity_id,
+                        ) is not True)):
+                    return False
+                # Lease is last: reject context/source/account changes
+                # caused during plugin manager or identity-status lookup.
+                return (lease.current(service)
+                        and service.current_identity is requester
+                        and service._account_context_epoch == context_epoch
+                        and service._source_context_epoch == source_epoch)
+            except Exception:
+                return False
 
         if not current():
             return revoked
