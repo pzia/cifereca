@@ -11,7 +11,7 @@ import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from biblioaccess_http_sso import (
-    ORIGIN, LOGON_PATH, FormShape, SsoProtocolError,
+    ORIGIN, LOGON_PATH, FormShape, SsoProtocolError,\n    BIBLIO_ORIGIN, ACCOUNT_PATH, _url,
     inspect_login_forms, logon_response_shape, classify_http_step,
 )
 
@@ -37,6 +37,13 @@ class LogonObservation:
     post_sent: bool = True
 
 
+@dataclass(frozen=True)
+class CasEntryObservation:
+    status: int
+    route: str
+    authentication_verified: bool = False
+
+
 class BiblioAccessHTTPQualification:
     """Ephemeral HTTP-only client, caller owns shutdown and cancellation."""
 
@@ -57,6 +64,34 @@ class BiblioAccessHTTPQualification:
             self.http.cookies.clear()
             self._inspected_form_shapes = ()
             self.http.close()
+
+    def inspect_cas_entry(self) -> CasEntryObservation:
+        """Observe the first BiblioAccess redirect without following an IdP."""
+        if self._closed:
+            raise SsoProtocolError("sso_transport_closed")
+        try:
+            with self.http.stream(
+                "GET", BIBLIO_ORIGIN + ACCOUNT_PATH,
+                headers={"Accept": "text/html"},
+                follow_redirects=False,
+            ) as response:
+                if response.status_code not in (200, 302):
+                    raise SsoProtocolError("sso_entry_unavailable")
+                if response.status_code == 302:
+                    from urllib.parse import urljoin
+                    target = urljoin(BIBLIO_ORIGIN + ACCOUNT_PATH,
+                                     response.headers.get("location", ""))
+                    p = _url(target)
+                    if (p.hostname != "mediatheques.agglo-larochelle.fr"
+                            or p.path not in ("/login", "/cas/login")):
+                        raise SsoProtocolError("sso_entry_redirect_refused")
+                    return CasEntryObservation(
+                        status=302, route="institutional_redirect_unverified")
+                # A landing 200 may represent an already connected user, or
+                # a login shell. Never infer identity from this.
+                return CasEntryObservation(status=200, route="entry_unverified")
+        except (httpx.HTTPError, UnicodeError):
+            raise SsoProtocolError("sso_transport_unavailable") from None
 
     def inspect_login(self) -> tuple[FormShape, ...]:
         if self._closed:
