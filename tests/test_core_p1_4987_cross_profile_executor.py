@@ -54,6 +54,8 @@ class BorrowingOffline(ParisOffline):
         )
         if self.outcome == "wrong_lender":
             loan.identity_id = "default"
+        if self.outcome == "inactive":
+            loan.state = "expired"
         return loan
 
 
@@ -104,6 +106,7 @@ def test_explicit_lender_loan_confirms_once_without_profile_switch_or_copy(harne
     ("unknown", "verification_unavailable"),
     ("wrong_lender", "verification_unavailable"),
     ("rebind", "verification_unavailable"),
+    ("inactive", "verification_unavailable"),
 ])
 def test_ambiguous_or_foreign_result_consumes_claim_no_auto_retry(
     harness, outcome, expected,
@@ -213,3 +216,28 @@ def test_reader_rebound_during_confirmed_checkpoint_suppresses_positive_reply(
     assert service.storage.loan_borrow_state(
         borrow_claim_key(account, row.notice),
     )["status"] == "confirmed"
+
+
+def test_non_paris_primary_alias_is_never_positive_evidence(harness, monkeypatch):
+    # A provider result cannot invent Paris's special "primary" borrower
+    # alias for an unrelated supplier. Exercise the exact normalized check
+    # without giving the account a different owner mid-request.
+    service, account, session, row, preview = setup_borrower(harness)
+    original = session.borrow_explicit_with_claim
+
+    def forged_alias(*args, **kwargs):
+        loan = original(*args, **kwargs)
+        loan.source_account_id = "primary"
+        account.provider_id = "bnf-pret"
+        loan.source_provider = "bnf-pret"
+        return loan
+
+    # A mid-call mutation of account provider must also revoke scope.
+    monkeypatch.setattr(session, "borrow_explicit_with_claim", forged_alias)
+    result = execute(service, row, preview)
+    assert result["status"] == "verification_unavailable"
+    assert result["provider_verified"] is False
+    assert result["retry_borrow"] is False
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(replace(account, provider_id="paris"), row.notice),
+    )["status"] == "verification_unavailable"
