@@ -190,7 +190,7 @@ def test_detail_only_for_id_from_same_client_search():
         if request.url.path.endswith("/Catalog/Search"):
             return httpx.Response(200, headers={"content-type": "text/html"},
                 text='<a href="/1409/Catalog/Book/123/example">Un roman</a>')
-        assert request.url.path == "/1409/Catalog/Book/123"
+        assert request.url.path == "/1409/Catalog/Book/123/example"
         return httpx.Response(200, headers={"content-type": "text/html"},
             text='<script type="application/ld+json">'
                  '{"@context":"https://schema.org","@type":"Book",'
@@ -204,6 +204,7 @@ def test_detail_only_for_id_from_same_client_search():
         assert not requests
         observed = c.search("roman")
         assert observed.book_ids == ("123",)
+        assert observed.book_urls == (("123", "https://www.biblioaccess.com/1409/Catalog/Book/123/example"),)
         with pytest.raises(mod.CatalogueHTTPError, match="book_not_observed"):
             c.read_observed_notice("456")
         with pytest.raises(mod.CatalogueHTTPError, match="book_id_refused"):
@@ -266,5 +267,34 @@ def test_detail_redirect_no_follow_and_last_search_ids_replaced():
         with pytest.raises(mod.CatalogueHTTPError, match="book_unavailable"):
             c.read_observed_notice("456")
         assert len(calls) == 5
+    finally:
+        c.close()
+
+
+def test_detail_uses_first_observed_slug_with_duplicate_links():
+    calls = []
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={"location":
+                "/1409/Catalog/Search?query=q&pageindex=0"})
+        if request.url.path.endswith("/Catalog/Search"):
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                text='<a href="/1409/Catalog/Book/88/correct-slug">Livre</a>'
+                     '<a href="/1409/Catalog/Book/88/other-slug">Doublon</a>'
+                     '<a href="/1717/Catalog/Book/91/foreign">Autre</a>')
+        assert request.url.path == "/1409/Catalog/Book/88/correct-slug"
+        return httpx.Response(200, headers={"content-type": "text/html"},
+            text='<script type="application/ld+json">'
+                 '{"@type":"Book","name":"Titre",'
+                 '"url":"https://www.biblioaccess.com/1409/Catalog/Book/88/correct-slug"}'
+                 '</script>')
+    c = client(handler)
+    try:
+        result = c.search("q")
+        assert result.book_urls == (
+            ("88", "https://www.biblioaccess.com/1409/Catalog/Book/88/correct-slug"),)
+        assert c.read_observed_notice("88").title == "Titre"
+        assert len(calls) == 3
     finally:
         c.close()

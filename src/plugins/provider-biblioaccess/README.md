@@ -217,3 +217,13 @@ pas « livre absent ». Une notice structurée reste de type **C** :
 `entitlement=unverified`, `acquisition=unsupported`, sans modifier
 un emprunt, calculer un droit, ni publier de capacité provider.
 Les tests utilisent des fiches et ISBN fictifs.
+
+### Conservation du lien de fiche réellement observé
+
+La recherche conserve désormais, avec chaque identifiant C, le premier lien
+HTTPS validé vers `/1409/Catalog/Book/{id}/{slug}` rencontré dans le HTML.
+Le détail HTTPX utilise **ce lien réellement observé** (slug compris),
+plutôt que de reconstruire `/Book/{id}`, route susceptible de rediriger.
+Les liens étrangers, les query signées et les tenants différents restent
+rejetés ; aucune redirection n'est suivie. Une nouvelle recherche remplace
+l'ensemble des liens admissibles ; aucun droit ni acquisition n'en est déduit.
