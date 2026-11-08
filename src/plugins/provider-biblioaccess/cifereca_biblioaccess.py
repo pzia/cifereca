@@ -76,6 +76,12 @@ DESCRIPTOR = ProviderDescriptor(
                       "explicitement consenti avec TOUS les paramètres fournis. "
                       "Aucune connexion Core ni synchronisation de prêt."),
         AccountOptionField(
+            "experimental_login_script_path", "SSO : chemin JS à inspecter (GET)",
+            help_text="Facultatif, chemin exact déjà observé dans le HTML /login "
+                      "(ex. /scripts/logon.js). Lors du test explicite du compte, "
+                      "un seul GET, sans exécuter JS ni enregistrer son contenu. "
+                      "Ne renseignez pas d'URL complète ni de query."),
+        AccountOptionField(
             "experimental_catalogue_query", "Catalogue : recherche de recette",
             help_text="Optionnel : mot-clé saisi volontairement pour rechercher "
                       "une page du catalogue 1409 et lire une fiche. Aucun prêt "
@@ -109,6 +115,9 @@ _HTTP_PROBE_CODES = frozenset((
     "cas_entry_redirect_refused", "cas_service_refused",
     "cas_login_unavailable", "cas_login_unverified",
     "cas_transport_unavailable", "cas_preflight_unavailable",
+    "cas_script_consent_required", "cas_script_already_attempted",
+    "cas_script_unobserved", "cas_script_unavailable",
+    "cas_script_unexpected_content", "cas_script_transport_unavailable",
     "cas_post_not_confirmed", "cas_already_attempted",
     "cas_ticket_unverified", "cas_ticket_refused",
     "cas_landing_unverified", "cas_loans_already_attempted",
@@ -247,6 +256,18 @@ class LaRochelleSession(ProviderSession):
             mode = self.options.get("experimental_http_probe")
             if mode not in ("on", "post"):
                 raise ProviderCapabilityError("biblioaccess_probe_opt_in_required")
+            # Reject malformed optional script selection before any HTTP.
+            # The client separately checks exact membership in the freshly
+            # observed HTML; no arbitrary third-party GET is allowed.
+            script_path = self.options.get("experimental_login_script_path", "")
+            if (type(script_path) is not str or len(script_path) > 256
+                    or (script_path and (
+                        not script_path.startswith("/")
+                        or script_path.startswith("//")
+                        or "?" in script_path or "#" in script_path
+                        or any(ord(ch) < 33 or ord(ch) > 126 for ch in script_path)
+                    ))):
+                raise ProviderConfigurationError("biblioaccess_script_path_invalid")
             # Validate all POST inputs BEFORE ANY remote GET. None are invented.
             query, fields = self._post_payload() if mode == "post" else (None, None)
             if self._attempted:
@@ -284,6 +305,21 @@ class LaRochelleSession(ProviderSession):
                     inline_identifier_names=list(preflight.inline_identifier_names),
                     challenge_resolved=False,
                 )
+                # A second, independently selected GET is opt-in by exact
+                # script path, and only on a previously observed IdP script.
+                # Never log the script source, query, URL or response bytes.
+                script_path = self.options.get("experimental_login_script_path", "")
+                if script_path:
+                    self._event("login_script", "started", request_method="GET")
+                    evidence = client.inspect_login_script_once(
+                        path=script_path, consent=True)
+                    self._event(
+                        "login_script", "observed",
+                        identifier_names=list(evidence.identifier_names),
+                        ajax_endpoint_referenced=evidence.ajax_endpoint_referenced,
+                        executable=False, value_provenance_verified=False,
+                        challenge_resolved=False,
+                    )
                 if mode == "post":
                     # Exactly one explicitly consented credential POST on this
                     # client. The query/fields are ephemeral, never journaled.
