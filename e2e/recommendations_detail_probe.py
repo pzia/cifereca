@@ -629,7 +629,15 @@ def main():
                 "list_stack_mapped": int(page.list_stack.get_mapped()),
                 "detail_pane_mapped": int(page.detail.get_mapped()),
             }
-            assert attempt < 20, "La couverture n’est pas chargée dans la liste et le détail"
+            if attempt >= 20:
+                # Exported source lines distinguish a lost bind from a
+                # pending callback without exposing widget or request data.
+                assert len(list_covers) == len(detail_covers) == 1, "Couvertures non mappées"
+                for cover in (*list_covers, *detail_covers):
+                    if cover.picture.get_paintable() is None:
+                        assert cover._url == COVER_URL, "Référence de couverture perdue"
+                        assert not cover.spinner.get_visible(), "Chargement de couverture toujours affiché"
+                raise AssertionError("Chargement terminé sans texture de couverture")
             later(100, lambda: verify_cover_a(attempt + 1))
             return
         assert image_requests == [COVER_URL]
