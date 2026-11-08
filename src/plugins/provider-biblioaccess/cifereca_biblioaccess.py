@@ -204,6 +204,11 @@ class LaRochelleSession(ProviderSession):
             "phase": phase, "probe": "experimental_http",
             "connected": False, **facts,
         }
+        # Live inventory events have no need for a local account identifier.
+        # It may be user-configured private text. The session scope is
+        # verified in memory, not reconstructed from diagnostic payloads.
+        if phase == "loan_inventory":
+            detail.pop("credential_id", None)
         try:
             if self._diagnostics is not None:
                 self._diagnostics.add("API", "La Rochelle HTTP probe", status, detail=detail)
@@ -216,8 +221,9 @@ class LaRochelleSession(ProviderSession):
                     }, ensure_ascii=False),
                 )
         except Exception:
-            # Diagnostic failures are not authorization to proceed with login.
-            _LOG.exception("biblioaccess_probe_diagnostic_sink_failed")
+            # Diagnostic sink exceptions can contain signed links, credentials
+            # or raw upstream data. Never log exception text or traceback.
+            _LOG.warning("biblioaccess_probe_diagnostic_sink_failed")
 
     def _post_payload(self):
         """No default/derived AJAX fields: require full observed input."""
@@ -541,12 +547,11 @@ class LaRochelleSession(ProviderSession):
                     "cas_transport_unavailable",
                     "biblioaccess_authenticated_page_unverified",
                 })
-                code = (
-                    str(exc)
-                    if type(exc) in (AjaxCasError, ProviderCapabilityError)
-                    and str(exc) in allowed else
-                    "biblioaccess_loan_inventory_unavailable"
-                )
+                code = "biblioaccess_loan_inventory_unavailable"
+                if type(exc) in (AjaxCasError, ProviderCapabilityError):
+                    candidate = str(exc)
+                    if candidate in allowed:
+                        code = candidate
                 self._last_probe_phase = "loan_inventory_failed"
                 self._event(
                     "loan_inventory", "error",
