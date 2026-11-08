@@ -438,3 +438,22 @@ HTML observé, une redirection ou une erreur HTTP bloquent la recette ; en
 mode `post`, ces erreurs bloquent également le POST. Il ne s'agit ni d'une
 exécution JavaScript ni d'une résolution automatique de CAPTCHA. Aucun
 état connecté ni droit de prêt n'est déduit de ces observations.
+
+
+### Confidentialité des métadonnées HTML du login
+
+Le diagnostic `login_preflight` ne restitue désormais que les **noms
+de champs SSO connus** (liste fermée, notamment `username`,
+`password`, `checkValue`, `rememberMe`, `captcha`, `RequestKey`).
+Les noms de champs arbitraires peuvent incorporer des données de session :
+ils sont ignorés et ne constituent pas une absence de champs sur le site.
+
+Les chemins JS présentés pour l'inspection explicite sont filtrés avant
+la journalisation : chemins statiques HTTPS même origine uniquement, sans
+segments encodés, de traversée ou de forme manifestement opaque/tokenisée,
+sans query affichée. Un script non admissible n'est **jamais** téléchargé
+par le probe facultatif. Les nombres globaux de scripts restent observables
+sans que les éléments écartés soient qualifiés de preuves négatives.
+
+Ce filtrage ne valide toujours pas la provenance des paramètres du POST ;
+l'activation de l'authentification et des droits reste exclue.

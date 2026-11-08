@@ -27,6 +27,20 @@ _NAMES = frozenset(("_dc", "captchaCheckValue", "captcha", "changeUser", "provid
 _SAFE_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9.:-]{0,63}\Z")
 
 
+# Only recognized SSO field names may enter canonical diagnostics.
+# Arbitrary remote field names can themselves encode session credentials.
+_KNOWN_FIELDS = frozenset((
+    "username", "password", "rememberMe", "checkValue", "captcha",
+    "captchaCheckValue", "mailaddress", "RequestKey", "oldpassword",
+    "passwordconfirm", "provider", "changeUser",
+))
+_STATIC_SEGMENT = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
+_OPAQUE_SEGMENT = re.compile(
+    r"(?:[0-9a-f]{16,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12})", re.IGNORECASE,
+)
+
+
 class LoginPreflightError(ValueError):
     """Closed non-sensitive error identifiers."""
 
@@ -73,7 +87,7 @@ class _Page(HTMLParser):
             self.scripts.append(values.get("src") or "")
         elif tag == "input":
             name = values.get("name") or ""
-            if name and _SAFE_FIELD_NAME.fullmatch(name):
+            if name in _KNOWN_FIELDS and _SAFE_FIELD_NAME.fullmatch(name):
                 if len(self.fields) >= MAX_FIELDS:
                     raise LoginPreflightError("login_preflight_limit")
                 self.fields.append(name)
@@ -97,15 +111,27 @@ def _script_path(raw: str) -> str | None:
             or any(ord(ch) <= 32 or ch == "\\" for ch in raw)):
         return None
     try:
+        # Reject traversal *before* urljoin normalizes dot segments away.
+        original = urlsplit(raw)
+        if any(segment in (".", "..") for segment in original.path.split("/")):
+            return None
         target = urljoin(IDP + _LOGIN_PATH, raw)
         p = urlsplit(target)
         if (p.scheme != "https" or p.netloc != "mediatheques.agglo-larochelle.fr"
                 or not p.path.endswith(".js") or p.fragment
                 or p.username is not None or p.password is not None):
             return None
-        # Query values may embed dynamic IDs or tokens; path is enough for
-        # offline inventory. Script paths are bounded and not auto-fetched.
-        if not 1 <= len(p.path) <= 512:
+        # Only ordinary static segments can enter diagnostics or opt-in GET.
+        # No encoded, opaque or tokenized segments; no query values retained.
+        if not 1 <= len(p.path) <= 256 or "%" in p.path:
+            return None
+        segments = p.path.split("/")[1:]
+        if (not segments or any(
+            not _STATIC_SEGMENT.fullmatch(segment)
+            or segment in (".", "..")
+            or _OPAQUE_SEGMENT.search(segment)
+            for segment in segments
+        )):
             return None
         return p.path
     except (TypeError, ValueError):
