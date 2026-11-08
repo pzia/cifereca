@@ -14,6 +14,10 @@
       "entrypoint": "cifereca_numilog:PLUGIN",
       "display_name": "Numilog",
       "description": "Bibliothèque personnelle, EPUB direct et fulfillment ACSM/ADEPT ; achats sur le site Numilog.",
+      "ui_contribution": {
+        "schema": "cifereca.plugin.ui/1",
+        "usage_hint": "Numilog — Mes achats : compte privé avec droits éventuels. Le catalogue commercial public est une source optionnelle distincte."
+      },
       "priority": 50,
       "config_schema": {
         "type": "object",
@@ -72,6 +76,10 @@
       "entrypoint": "cifereca_numilog_public_provider:PLUGIN",
       "display_name": "Numilog — Catalogue public",
       "description": "Recherche commerciale anonyme distincte de Mes achats, sans droits ni téléchargement.",
+      "ui_contribution": {
+        "schema": "cifereca.plugin.ui/1",
+        "usage_hint": "Numilog — Catalogue public : recherche anonyme optionnelle, sans compte, sans achat attesté et sans téléchargement. L’activation par identité est indépendante du compte Numilog — Mes achats."
+      },
       "priority": 51,
       "instantiation": "singleton_public",
       "enabled_by_default": false,
