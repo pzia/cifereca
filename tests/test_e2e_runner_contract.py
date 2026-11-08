@@ -777,3 +777,27 @@ def test_2332_baen_native_gtk_offline_partial_and_failures_are_routed():
     assert "baen-fault-search-1366" in selector.select(
         ["e2e/public_fault_search_probe.py"]
     )
+
+
+
+def test_p1_774_search_1024_diagnostic_minimum_widths_are_whitelisted():
+    """Every bounded GTK measurement must survive the private CI report gate."""
+    import ast
+    runner = (ROOT / "e2e/run.py").read_text(encoding="utf-8")
+    probe = (ROOT / "e2e/search_filter_probe.py").read_text(encoding="utf-8")
+    keys = (
+        "shell_header", "header_controls", "identity_dropdown",
+        "account_dropdown", "statistics_button", "sidebar",
+        "view_stack", "search_page", "search_page_header",
+        "search_page_actions", "search_toolbar", "search_controls",
+        "search_primary", "search_filter_scroller", "search_paned",
+        "search_list_stack", "search_list_scroll", "search_listview",
+        "search_detail",
+    )
+    assert all(f'"{key}"' in runner for key in keys)
+    assert all(f'"{key}"' in probe for key in keys)
+    ast.parse(runner)
+    ast.parse(probe)
+    assert 'set(widths) == width_keys' in runner
+    assert 'all(type(v) is int and 0 <= v <= 4096' in runner
+    assert 'P1_3687_WIDTH_' in runner
