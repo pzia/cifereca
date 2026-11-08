@@ -166,8 +166,6 @@ def test_dashboard_restart_does_not_reuse_previous_launch_errors(tmp_path: Path)
         first.close()
     second = _service(tmp_path)
     try:
-        # A distinct restart boundary, independent of wall-clock precision.
-        second._dashboard_launch_at = first._dashboard_launch_at + 2
         assert second.dashboard_state()[1]["sync"] is None
         assert second.storage.latest_sync_run("alex")["errors"] == 2
     finally:
