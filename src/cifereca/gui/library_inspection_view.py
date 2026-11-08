@@ -579,7 +579,8 @@ class LocalInspectionController:
         legend.set_wrap(True)
         overview_content.append(legend)
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        provider = Gtk.DropDown.new_from_strings(list(PROVIDERS.values()))
+        provider_options = session.provider_options()
+        provider = Gtk.DropDown.new_from_strings(list(provider_options.values()))
         provider.set_tooltip_text('Filtrer par fournisseur attesté pour les fichiers ; source déclarée pour les droits')
         state = Gtk.DropDown.new_from_strings(list(STATES.values()))
         # Default to the action-oriented right list before GTK callbacks are
@@ -1655,7 +1656,7 @@ class LocalInspectionController:
             case = session.detail(row._local_case_key)
             if case is not None:
                 states = ', '.join(STATES[name] for name in case.states)
-                detail.set_text(PROVIDERS[case.provider]+' · '+states+'\n\n'+case.details)
+                detail.set_text(provider_options.get(case.provider, PROVIDERS['other'])+' · '+states+'\n\n'+case.details)
                 if 'stored_path_missing_historical' in case.states:
                     missing_case[0] = case.key
                     missing_actions_scroll.set_visible(True)
@@ -2261,7 +2262,7 @@ class LocalInspectionController:
                 return
             reset_missing()
             if reset: offset[0] = 0
-            page = session.page(provider=list(PROVIDERS)[provider.get_selected()],
+            page = session.page(provider=list(provider_options)[provider.get_selected()],
                                 state=list(STATES)[state.get_selected()], offset=offset[0],
                                 query=search.get_text()[:160],
                                 hide_historical_paths=hide_history.get_active())
@@ -2327,7 +2328,7 @@ class LocalInspectionController:
                 return
             # GTK dropdown callbacks will redraw, always clear the textual
             # query only if explicitly requested by the user.
-            provider.set_selected(list(PROVIDERS).index(prov))
+            provider.set_selected(list(provider_options).index(prov))
             state.set_selected(list(STATES).index(status))
             render(reset=True)
 

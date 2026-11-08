@@ -33,7 +33,7 @@ def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
     before = filesystem(root)
     _audit, session = session_for(root, database)
     cases = session.page(
-        provider=provider if provider != "unrecognized" else "other",
+        provider=provider,
         state="rights_without_verified_file",
     ).cases
     right = next(case for case in cases if "edition" in case.details)

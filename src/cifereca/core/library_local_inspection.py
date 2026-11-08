@@ -11,6 +11,7 @@ from pathlib import Path
 import unicodedata
 
 from .library_audit_broker import _run_scoped_audit, _unavailable
+from .library_evidence_scope import _public_provider_group
 from .library_inspection_cache import take_inspection_cache
 from .library_sqlite_freshness import sqlite_source_stamp
 from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
@@ -75,7 +76,22 @@ def _text(value):
 
 
 def _provider(value):
-    return value if value in ('kobo', 'numilog', 'paris', 'bnf-pret', 'local') else 'other'
+    return _public_provider_group(value, fallback='other')
+
+
+def _provider_options(cases):
+    """Only provider identifiers in this private, audited session become facets.
+
+    Preserve familiar built-in labels for existing choices; a newly installed
+    provider requires no Core change or inferred rights. Untrusted strings
+    remain grouped as `other` and never become new GTK labels.
+    """
+    options = dict(PROVIDERS)
+    found = {case.provider for case in cases if type(case.provider) is str}
+    for provider_id in sorted(found):
+        if provider_id not in options and _provider(provider_id) == provider_id:
+            options[provider_id] = provider_id
+    return options
 
 
 def _display_book(title, authors, fallback):
@@ -1446,9 +1462,14 @@ class LocalInspection:
                 'skipped_symlinks': self._skipped_symlinks,
                 'skipped_special': self._skipped_special}
 
+    def provider_options(self):
+        """Local UI facets; not a source entitlement or plugin API."""
+        return _provider_options(self._cases.values()) if self.valid() else dict(PROVIDERS)
+
     def page(self, *, provider='all', state='all', offset=0, limit=50, query='',
              hide_historical_paths=False):
-        if (provider not in PROVIDERS or state not in STATES or
+        if (type(provider) is not str or provider not in self.provider_options()
+                or state not in STATES or
                 type(hide_historical_paths) is not bool or
                 type(offset) is not int or offset < 0 or type(limit) is not int or
                 not 1 <= limit <= 50 or type(query) is not str or len(query) > 160):

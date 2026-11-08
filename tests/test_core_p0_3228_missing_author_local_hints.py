@@ -72,9 +72,7 @@ def test_missing_right_author_offers_private_title_only_manual_epub(
     )
     try:
         rights = inspection.page(
-            state="rights_without_verified_file", provider=(
-                "bnf-pret" if provider == "bnf-pret" else "other"
-            ),
+            state="rights_without_verified_file", provider=provider,
         ).cases
         right, = rights
         assert inspection.candidate_files(right.key) == ()
