@@ -15,7 +15,7 @@ from ..library_files import sha256_file
 def local_receipt_file_verified(
     service, *, identity_id: str, placement_provider_id: str,
     acquisition_provider_id: str, acquisition_credential_id: str,
-    row: object, path: Path,
+    row: object, path: Path, on_read_failure=None,
 ) -> bool:
     """Return False on ambiguous evidence or any unsuccessful filesystem read."""
     try:
@@ -69,5 +69,10 @@ def local_receipt_file_verified(
                                 "st_mtime_ns", "st_ctime_ns"))
         )
     except (OSError, ValueError, TypeError, KeyError):
-        # Never log the path, metadata, exception or user-supplied input.
+        # An optional bounded caller-owned diagnostic never receives a cause.
+        if callable(on_read_failure):
+            try:
+                on_read_failure()
+            except Exception:
+                pass
         return False
