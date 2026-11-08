@@ -136,8 +136,11 @@ def dashboard_state(self) -> list[dict[str, Any]]:
         # current launch. Keep the original in SQLite for diagnostics/history.
         started = historic.get("started_at") if isinstance(historic, dict) else None
         launch = getattr(self, "_dashboard_launch_at", None)
+        baseline = getattr(self, "_dashboard_initial_run_ids", {})
+        initial_id = baseline.get(identity.identity_id) if isinstance(baseline, dict) else None
         latest = (historic if type(started) is int and type(launch) is int
-                  and started >= launch else None)
+                  and started >= launch and historic.get("sync_run_id") != initial_id
+                  else None)
         profile_id = self.storage.adept_profile_binding_get("identity", identity.identity_id)
         try:
             deep_last_at = int(self.storage.metadata_get("catalog_deep_last_at") or 0) or None
