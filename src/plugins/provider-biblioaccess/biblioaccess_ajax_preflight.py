@@ -11,7 +11,7 @@ these names in the initial HTML.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 import re
@@ -58,6 +58,10 @@ class LoginPreflight:
     status: str = "unverified"
     values_extracted: bool = False
     challenge_resolved: bool = False
+    # Ephemeral, never in repr/diagnostics; only for the selected GET.
+    _script_request_urls: tuple[tuple[str, str], ...] = field(
+        default=(), repr=False, compare=False,
+    )
 
 
 class _Page(HTMLParser):
@@ -159,9 +163,23 @@ def inspect_login_preflight(html: str, *, page_url: str = IDP + _LOGIN_PATH) -> 
         raise LoginPreflightError("login_preflight_invalid_html") from None
     if page.depth:
         raise LoginPreflightError("login_preflight_invalid_html")
-    paths = tuple(dict.fromkeys(
-        p for raw in page.scripts if (p := _script_path(raw)) is not None
-    ))
+    # The browser may load /logon.js?v=...; silently fetching /logon.js
+    # instead can inspect the wrong code. Keep the exact observed URL only
+    # in this private, in-memory preflight record, never in its repr or log.
+    # Ambiguous paths mapped to multiple URLs cannot be selected safely.
+    observed: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for raw in page.scripts:
+        path = _script_path(raw)
+        if path is None:
+            continue
+        full_url = urljoin(IDP + _LOGIN_PATH, raw)
+        if path in observed and observed[path] != full_url:
+            ambiguous.add(path)
+        else:
+            observed[path] = full_url
+    paths = tuple(path for path in observed if path not in ambiguous)
+    script_request_urls = tuple((path, observed[path]) for path in paths)
     external = sum(bool(raw) for raw in page.scripts)
     inline_text = "\n".join(page.inline_chunks)
     identifiers = tuple(sorted(
@@ -172,6 +190,7 @@ def inspect_login_preflight(html: str, *, page_url: str = IDP + _LOGIN_PATH) -> 
     return LoginPreflight(
         script_count=len(page.scripts),
         same_origin_script_paths=paths,
+        _script_request_urls=script_request_urls,
         external_script_count=external,
         inline_script_count=len(page.scripts) - external,
         field_names=tuple(dict.fromkeys(page.fields)),

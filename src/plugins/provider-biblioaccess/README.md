@@ -457,3 +457,23 @@ sans que les éléments écartés soient qualifiés de preuves négatives.
 
 Ce filtrage ne valide toujours pas la provenance des paramètres du POST ;
 l'activation de l'authentification et des droits reste exclue.
+
+
+### Fidélité du GET JavaScript aux ressources observées
+
+La page d'authentification peut référencer un script versionné
+`/scripts/logon.js?v=...`. Le préflight n'affiche **que le chemin**
+admissible, mais conserve en mémoire de la session temporaire l'URL
+exacte observée. Le GET explicitement consenti vise désormais **cette
+URL exacte**, avec sa query si elle était présente ; demander seulement
+`/scripts/logon.js` risquait de recevoir un autre contenu.
+
+La query et ses valeurs ne figurent jamais dans les diagnostics de
+préflight ou de lecture du JS, ni dans la représentation textuelle des
+observations. Le ZIP HTTP brut peut néanmoins contenir la requête :
+il doit être considéré comme sensible et revu avant tout partage.
+Si deux références HTML distinctes ont le même chemin mais des queries
+différentes, ce chemin est **exclu** de l'inspection facultative pour
+éviter toute sélection ambiguë. Aucun GET supplémentaire n'est lancé
+pour résoudre cette ambiguïté. Ces garanties ne prouvent pas la
+provenance des champs dynamiques ni un résultat d'authentification.
