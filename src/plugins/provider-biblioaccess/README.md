@@ -584,3 +584,43 @@ Interprétation après un **log réel privé** :
 
 Le maintien de `connected=False` est volontaire : ces indicateurs ne
 constituent pas une preuve de compte ni de droit.
+
+
+### Qualification MyLoans sur capture réelle 08/11/2026 19:11
+
+La recette `auto-post` a **réussi deux fois** sur la source réelle :
+entrée 302, institution `/login` 200, POST AJAX 200
+`success_reported` avec 0 erreur déclarée, CAS 302 avec ticket éphémère,
+landing tenant 1409 200, puis `Catalog/MyLoans` 200.
+Les cookies, tickets, identifiants, corps et liens signés sont **privés**
+et ne figurent pas dans Git.
+
+Les deux pages MyLoans capturées (réponses Brotli décompressées hors du
+dépôt) comportent une ligne de prêt stable de structure
+`div.JSProductRow-<product-ref>`, avec `p.titleLoans`,
+`span.jsDateEnd` au format jour/mois/année et heure,
+et un lien de notice `/1409/Catalog/Book/<book-id>/...`.
+La référence de produit de la ligne **diffère** de l'identifiant de la
+notice. Une action ACSM porte un hôte exact
+`entrepot2r.numilog.com` et un chemin `/fulfillment/URLLink.acsm` :
+l'observation ne garde qu'un booléen et **ne conserve aucun paramètre de
+son URL**, sans GET de téléchargement. Le formulaire de déconnexion
+`POST /1409/Account/LogOff` est présent, sans être utilisé.
+
+Le parseur MyLoans fournit désormais des **observations positives
+strictes** `page_loan_row_count`, `page_loan_row_partial_count` et
+`logout_form_observed` ; les références produit, notice, titre et
+échéance restent mémoire et hors `repr`/journal. Il refuse les liens
+d'autres tenants, les lignes ambiguës et les dates invalides.
+Aucune valeur ni DOM réel n'est intégrée aux tests : uniquement des
+fixtures synthétiques fondées sur la **structure** observée.
+
+**Ne pas confondre cette étape avec la synchronisation :**
+`identity_verified=False`, `loans_verified=False`,
+`inventory_verified=False` et couverture `unknown` ;
+les lignes sont des candidats positifs, ni des identifiants de prêts
+définitifs ni un signal d'inventaire complet.
+Reste à établir le contrat d'identité du compte et la durée de vie
+d'une session authentifiée pour fournir des `Account`/`Loan`
+scoppés sous le contrat public Core ; seul le Core autorisera
+l'admission d'une acquisition (ACSM traité séparément).
