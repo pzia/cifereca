@@ -312,38 +312,56 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 raise AjaxCasError("cas_loans_already_attempted")
             if self._closed:
                 raise AjaxCasError("cas_client_closed")
-            if not self._cas_landed:
+            if not self._cas_landed or not self._ajax_succeeded:
                 raise AjaxCasError("cas_landing_required")
             self._loans_attempted = True
-        try:
-            with self.http.stream("GET", LOANS, follow_redirects=False,
-                                  headers={"Accept": "text/html"}) as response:
-                if response.status_code != 200:
-                    raise AjaxCasError("cas_loans_unverified")
-                media = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
-                if media not in ("text/html", "application/xhtml+xml"):
-                    raise AjaxCasError("cas_loans_unverified")
-                body = _bounded(response)
-                from biblioaccess_loans_page import (
-                    inspect_myloans_html, LoanPageError,
-                )
-                try:
-                    candidates = inspect_myloans_html(
-                        body.decode("utf-8", errors="strict"))
-                except LoanPageError:
-                    raise AjaxCasError("cas_loans_structure_unverified") from None
-                return CasHttpObservation(
-                    "loans_html_unverified", 200,
-                    page_book_link_count=candidates.page_book_link_count,
-                    page_book_unique_count=candidates.page_book_unique_count,
-                    page_loan_row_count=candidates.page_loan_row_count,
-                    page_loan_row_partial_count=candidates.page_loan_row_partial_count,
-                    logout_form_observed=candidates.logout_form_observed,
-                    _loan_rows=candidates._loan_rows,
-                    _candidate_book_urls=candidates._book_urls,
-                )
-        except (httpx.HTTPError, UnicodeError):
-            raise AjaxCasError("cas_transport_unavailable") from None
+        return self._read_loans_html()
+
+    def read_authenticated_loans(self) -> CasHttpObservation:
+        """Fresh same-session read after a complete initial CAS+MyLoans flow.
+
+        Must not replay the POST, re-import cookies or follow an SSO redirect.
+        A 200 public/login page without the observed logout form is refused.
+        """
+        with self._cas_lock:
+            if (self._closed or not self._ajax_succeeded
+                    or not self._cas_landed or not self._loans_attempted):
+                raise AjaxCasError("cas_landing_required")
+        observation = self._read_loans_html()
+        if not observation.logout_form_observed:
+            raise AjaxCasError("cas_authenticated_page_unverified")
+        return observation
+
+    def _read_loans_html(self) -> CasHttpObservation:
+            try:
+                with self.http.stream("GET", LOANS, follow_redirects=False,
+                                      headers={"Accept": "text/html"}) as response:
+                    if response.status_code != 200:
+                        raise AjaxCasError("cas_loans_unverified")
+                    media = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
+                    if media not in ("text/html", "application/xhtml+xml"):
+                        raise AjaxCasError("cas_loans_unverified")
+                    body = _bounded(response)
+                    from biblioaccess_loans_page import (
+                        inspect_myloans_html, LoanPageError,
+                    )
+                    try:
+                        candidates = inspect_myloans_html(
+                            body.decode("utf-8", errors="strict"))
+                    except LoanPageError:
+                        raise AjaxCasError("cas_loans_structure_unverified") from None
+                    return CasHttpObservation(
+                        "loans_html_unverified", 200,
+                        page_book_link_count=candidates.page_book_link_count,
+                        page_book_unique_count=candidates.page_book_unique_count,
+                        page_loan_row_count=candidates.page_loan_row_count,
+                        page_loan_row_partial_count=candidates.page_loan_row_partial_count,
+                        logout_form_observed=candidates.logout_form_observed,
+                        _loan_rows=candidates._loan_rows,
+                        _candidate_book_urls=candidates._book_urls,
+                    )
+            except (httpx.HTTPError, UnicodeError):
+                raise AjaxCasError("cas_transport_unavailable") from None
 
     def close(self):
         self._service = None
