@@ -221,6 +221,40 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
             )
         return result
 
+    def submit_observed_login_once(
+        self, *, username: str, password: str, consent: bool,
+    ):
+        """One consented ordinary AJAX login with fresh HTML-derived values.
+
+        No screenshot, JS execution, CAPTCHA solving or manual token entry.
+        Never use this path when the HTML already requires a CAPTCHA.
+        """
+        from time import time_ns
+        if consent is not True:
+            raise AjaxCasError("cas_login_consent_required")
+        with self._cas_lock:
+            if self._closed or not self._login_qualified or self._preflight is None:
+                raise AjaxCasError("cas_login_required")
+            context = self._preflight._login_post_context
+            if context is None:
+                raise AjaxCasError("cas_login_dynamic_inputs_unavailable")
+            provider, action, check_value, captcha, remember = context
+            if provider != "Form" or action != "logon":
+                raise AjaxCasError("cas_login_dynamic_inputs_unavailable")
+        query = {
+            "changeUser": "true",
+            "provider": provider,
+            "_dc": str(time_ns() // 1_000_000),
+        }
+        fields = {
+            "username": username,
+            "password": password,
+            "rememberMe": "true" if remember else "false",
+            "captcha": captcha,
+            "captchaCheckValue": check_value,
+        }
+        return self.submit_once(query=query, fields=fields, consent=True)
+
     def observe_cas_once(self) -> CasHttpObservation:
         with self._cas_lock:
             if self._cas_attempted:
