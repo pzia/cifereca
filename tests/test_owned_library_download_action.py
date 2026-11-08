@@ -76,6 +76,35 @@ def test_public_and_local_notices_do_not_claim_missing_acquisition(state):
     assert groups == [] and actions == [] and submissions == []
 
 
+@pytest.mark.parametrize("provider", [None, "", "unknown-store", "numilog-catalog"])
+def test_unrecognized_owned_target_never_creates_provider_action(provider):
+    window, entry, detail, actions, events, submissions, _, deps = _environment(
+        item={"provider_id": "kobo", "item_id": "book", "state": "remote_owned"},
+        local=False,
+    )
+    values = {"identity_id": "alice"}
+    if provider is not None:
+        values["provider_id"] = provider
+    window.service.owned_library_download_target = lambda _item: NS(**values)
+    called = []
+    window.service.obtain_owned_library_item = lambda _target: called.append(_target)
+    add_local_book_actions(window, detail, entry, **deps)
+    assert actions == [] and submissions == [] and called == []
+
+
+def test_canonical_kobo_owned_target_declares_provider_as_immutable_class_contract():
+    from cifereca.core.owned_library_download import OwnedDownloadTarget
+    from dataclasses import fields
+    assert OwnedDownloadTarget.provider_id == "kobo"
+    assert "provider_id" not in {field.name for field in fields(OwnedDownloadTarget)}
+    target = OwnedDownloadTarget(
+        entitlement_id="right", identity_id="alice", source_id="source",
+        scope=("alice",), configuration="configuration", item_id="book",
+        revision_id="revision",
+    )
+    assert target.provider_id == "kobo"
+
+
 def test_render_is_passive_and_only_explicit_click_submits_one_book():
     window, actions, calls, submissions, target = setup_action()
     assert len(actions) == 1 and actions[0]._cifereca_action_id == "download-owned-kobo"

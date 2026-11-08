@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from ..models import SearchResult
 from .materialization import MaterializationCoordinator
@@ -13,6 +14,9 @@ class OwnedDownloadRejected(ValueError):
 
 @dataclass(frozen=True, repr=False)
 class OwnedDownloadTarget:
+    # Exact source identity, matching Numilog's typed manual-download target.
+    # Never infer Kobo from a missing provider field in CoreUI.
+    provider_id: ClassVar[str] = 'kobo'
     entitlement_id: str
     identity_id: str
     source_id: str

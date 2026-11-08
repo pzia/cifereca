@@ -93,7 +93,8 @@ def _add_owned_download(window, detail, item, TaskPriority):
                      'Indisponible : aucune cible exacte vérifiée pour ce compte et cette identité.'),
                 ])
         return
-    provider = getattr(target, 'provider_id', 'kobo')
+    # No provider on a target is not an implicit Kobo acquisition authority.
+    provider = getattr(target, 'provider_id', None)
     if provider not in {'kobo', 'numilog'}:
         return
     label = 'Numilog' if provider == 'numilog' else 'Kobo'
