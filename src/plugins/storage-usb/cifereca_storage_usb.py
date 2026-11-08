@@ -122,11 +122,15 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
                 # Renames can replace the path while the old FD stays live.
                 # Compare the directory entry as well as the opened inode.
                 linked = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
-                if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
-                    before.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_size,
-                    after.st_mtime_ns, after.st_ctime_ns) or size != before.st_size or (
-                        linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino) or not
-                        _directory_chain_unchanged(root_fd, tuple(chain), flags):
+                if (
+                    (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                     before.st_ctime_ns) !=
+                    (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+                     after.st_ctime_ns)
+                    or size != before.st_size
+                    or (linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino)
+                    or not _directory_chain_unchanged(root_fd, tuple(chain), flags)
+                ):
                     result.append(UsbFileObservation(path, "unverified"))
                 else:
                     remaining -= size
