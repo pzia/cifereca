@@ -8,6 +8,7 @@ neither these positive SQLite writers nor the legacy confirmation engine.
 from __future__ import annotations
 
 from types import FunctionType
+import uuid
 
 from cifereca.core import kobo_local_reconciliation as _runtime
 
@@ -396,6 +397,10 @@ for _name in _TEST_ONLY_NAMES:
     if isinstance(_value, FunctionType):
         _value = _bind_to_runtime_globals(_value)
     setattr(_runtime, _name, _value)
+# The historical transaction generated a random operation ID; only
+# regression tests may reattach the retired helper dependency to Core.
+_runtime.uuid = uuid
+
 del _name, _value
 
 
