@@ -501,3 +501,32 @@ def test_interactive_provider_has_explicit_probe_button_only():
     normal, _, _, _ = _render("ordinary-provider")
     assert normal["explicit_probe_button"] is None
     assert normal["explicit_probe_status"] is None
+
+
+def test_cleaned_account_editor_shows_only_current_option_but_keeps_legacy_config():
+    """#3691: removed technical options are opaque, not silently deleted."""
+    descriptor_options = [_url_option(
+        'authenticated_sync', 'Synchronisation des prêts (on/off)', default='off',
+    )]
+    saved = {
+        "id": "la-rochelle-1", "enabled": True, "identity_id": "identity-a",
+        "label": "Lecteur", "credentials": {"card": "SYNTHETIC-USER",
+                                             "password": "SYNTHETIC-SECRET"},
+        "options": {"experimental_http_probe": "auto-post",
+                    "ajax_dc": "PRIVATE-SYNTHETIC-DYNAMIC"},
+    }
+    editor, _delete, _container, _adw = _render(
+        "biblioaccess.la-rochelle", data=saved,
+        descriptor_options=descriptor_options, interactive=True,
+    )
+    assert set(editor["option_fields"]) == {"authenticated_sync"}
+    assert editor["option_fields"]["authenticated_sync"].text == "off"
+    assert editor["original_options"] == saved["options"]
+    initial = editor["probe_rendered_baseline"]
+    assert initial["enabled"] is True
+    assert initial["identity"] == "identity-a"
+    assert initial["fields"]["password"] == "SYNTHETIC-SECRET"
+    assert initial["option_fields"] == {"authenticated_sync": "off"}
+    # The initial snapshot is internal; it must never appear in page labels.
+    assert all("PRIVATE-SYNTHETIC-DYNAMIC" not in str(row.title)
+               for row in editor["group"].children)
