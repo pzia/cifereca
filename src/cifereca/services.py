@@ -387,6 +387,22 @@ class LibraryService:
             observations=observations, now=now,
         )
 
+    def execute_cross_profile_borrow(
+        self, *, captured_preview, selected_option_id: str,
+        expected_edition_id: str, observations: object,
+        confirmed: bool = False, now: int | None = None,
+    ) -> dict[str, object]:
+        """#4987: exact one-shot lender loan; no implicit identity switch/copy."""
+        from .core.borrow_for_identity_executor import (
+            execute_cross_profile_borrow,
+        )
+        return execute_cross_profile_borrow(
+            self, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id,
+            observations=observations, confirmed=confirmed, now=now,
+        )
+
     def can_borrow_paris(self, item: SearchResult) -> bool:
         """Inert Paris action availability, without provider I/O."""
         from .core.manual_paris_borrow import manual_paris_borrow_available
