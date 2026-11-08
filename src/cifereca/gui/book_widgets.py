@@ -164,7 +164,14 @@ class CoverView(Gtk.Overlay):
         self.show_loading()
 
         def received(path: Path | None) -> None:
-            GLib.idle_add(self._apply_result, generation, loader, path)
+            # Default-idle (priority 200) can starve behind repeated GTK
+            # layout/timeout work while already validated covers wait to be
+            # painted. Dispatch at normal main-context priority (0), keeping
+            # the generation check in _apply_result as the safety barrier.
+            GLib.idle_add(
+                self._apply_result, generation, loader, path,
+                priority=GLib.PRIORITY_DEFAULT,
+            )
 
         if self._width<=80 and hasattr(loader,'load_preview'):
             scale=max(3,int(self.get_scale_factor()))
