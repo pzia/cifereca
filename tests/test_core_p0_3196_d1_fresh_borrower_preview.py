@@ -72,7 +72,7 @@ def test_fresh_private_preview_refuses_foreign_or_unbound_legacy_file(
         service.close()
 
 
-def test_same_exact_borrower_retains_private_legacy_repair_preflight(
+def test_same_exact_borrower_does_not_recreate_positive_legacy_b_preflight(
     tmp_path, monkeypatch,
 ):
     service, session, _ = _rig(tmp_path, owner="default", borrower="account")
@@ -83,8 +83,10 @@ def test_same_exact_borrower_retains_private_legacy_repair_preflight(
             "vault-1", refresh_manifest=True, verify_local_files=True,
             _item_reasons=reasons,
         )
-        assert reasons == {"book": "already_local_verified"}
-        assert result["counts"]["already_local_verified"] == 1
+        assert reasons == {"book": "needs_reconciliation"}
+        assert result["counts"]["already_local_verified"] == 0
+        assert result["counts"]["already_local_linked"] == 0
+        assert result["counts"]["needs_reconciliation"] == 1
         assert result["acquisition_authorized"] is False
     finally:
         service.close()
