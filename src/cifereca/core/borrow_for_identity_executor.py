@@ -137,7 +137,8 @@ def execute_cross_profile_borrow(
                     and service.current_identity is requester
                     and service._account_context_epoch == context_epoch
                     and service._source_context_epoch == source_epoch
-                    and manager.status(plugin_id).enabled is True)
+                    and manager.status(plugin_id).enabled is True
+                    and manager.status(plugin_id).state == "ready")
 
         if not current():
             return revoked
