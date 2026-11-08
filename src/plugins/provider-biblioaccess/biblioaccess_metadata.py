@@ -74,7 +74,7 @@ def _image(value):
         if (parts.scheme != "https" or not parts.hostname
                 or parts.username or parts.password
                 or parts.port not in (None, 443)
-                or parts.fragment):
+                or parts.fragment or parts.query):
             return None
     except ValueError:
         return None
@@ -95,7 +95,7 @@ class _Metadata(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag == "script":
             values = dict(attrs)
-            self.script = (values.get("type", "").strip().lower() ==
+            self.script = (str(values.get("type") or "").strip().lower() ==
                            "application/ld+json")
             self.script_data = []
             self.script_len = 0
