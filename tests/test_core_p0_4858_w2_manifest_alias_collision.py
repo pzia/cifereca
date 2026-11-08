@@ -16,7 +16,7 @@ from tests.test_kobo_backup_guard import _manifest_row, _service, _write_epub
 @pytest.mark.parametrize("ambiguous", [
     {"product_id": "other-edition", "id": "book-1"},
     {"product_id": "other-edition", "id": " book-1 "},
-    {"product_id": "other-edition", "id": "book-1\\n"},
+    {"product_id": "other-edition", "id": "book-1\n"},
 ])
 def test_conflicting_secondary_alias_quarantines_entire_edition(
     tmp_path: Path, monkeypatch, reverse: bool, ambiguous: dict,
