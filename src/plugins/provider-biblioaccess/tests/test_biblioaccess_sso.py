@@ -30,26 +30,115 @@ def test_synthetic_routes(url, status, expected):
     assert mod.classify_sso_transition(url, status) == expected
 
 
-def test_no_live_capabilities_and_fail_closed():
+def test_configurable_account_probe_opt_in_no_automatic_network():
     p = mod.PLUGIN
-    assert p.descriptor.state == "skeleton"
+    assert p.descriptor.state == "ready"
     assert p.descriptor.interactive_authentication
     assert p.descriptor.capabilities.names() == []
+    assert [f.key for f in p.descriptor.credential_fields] == ["username", "password"]
+    assert p.descriptor.credential_fields[1].secret
     session = p.create_session(
         credential_id="fake-credential", label="fake",
-        credentials={"secret": "SYNTHETIC"}, options={"tenant_id": "1717"},
+        credentials={"username": "SYNTHETIC", "password": "PRIVATE-SYNTHETIC"},
+        options={"experimental_http_probe": "off"},
         config=None, storage=None, diagnostics=None,
     )
     assert session.provider_id == "biblioaccess.la-rochelle"
     assert session.credential_id == "fake-credential"
-    assert session.credentials == {}
-    with pytest.raises(mod.ProviderCapabilityError, match="http_sso_logon_unqualified"):
+    assert session.credentials["username"] == "SYNTHETIC"
+    with pytest.raises(mod.ProviderCapabilityError, match="probe_opt_in_required"):
         session.connect()
     assert session.accounts == []
     assert not session.connected
     session.close()
     assert not session.connected
+    assert session.credentials == {}
 
+
+def test_opt_in_get_probe_reports_stages_but_never_connects():
+    class Stage:
+        def __init__(self, phase, status):
+            self.phase, self.status = phase, status
+
+    class Preflight:
+        script_count = 2
+        same_origin_script_paths = ("/scripts/login.js",)
+        external_script_count = 1
+        field_names = ("username", "password")
+        inline_identifier_names = ("_dc",)
+ 
+    class FakeClient:
+        calls = []
+        def observe_entry_once(self):
+            self.calls.append("entry")
+            return Stage("entry_redirect_unverified", 302)
+        def observe_login_once(self):
+            self.calls.append("login")
+            return Stage("login_html_unverified", 200)
+        def login_preflight(self):
+            self.calls.append("preflight")
+            return Preflight()
+        def close(self):
+            self.calls.append("close")
+
+    class Diagnostics:
+        def __init__(self):
+            self.events = []
+        def add(self, category, operation, status, *, detail):
+            self.events.append((category, operation, status, detail))
+
+    client = FakeClient()
+    diagnostics = Diagnostics()
+    session = mod.PLUGIN.create_session(
+        credential_id="cred-1", label="reader",
+        credentials={"username": "PRIVATE-USER", "password": "PRIVATE-PASS"},
+        options={"experimental_http_probe": "on"}, config=None, storage=None,
+        diagnostics=diagnostics,
+    )
+    session._client_factory = lambda: client
+    with pytest.raises(mod.ProviderCapabilityError, match="completed_login_not_attempted"):
+        session.connect()
+    assert client.calls == ["entry", "login", "preflight", "close"]
+    assert not session.connected and session.accounts == []
+    assert session.diagnostic_state()["probe_phase"] == "login_html_unverified"
+    assert [x[2] for x in diagnostics.events] == [
+        "started", "observed", "started", "observed", "observed"]
+    assert diagnostics.events[-1][3]["field_names"] == ["username", "password"]
+    assert diagnostics.events[-1][3]["challenge_resolved"] is False
+    assert "PRIVATE-PASS" not in repr(diagnostics.events)
+    with pytest.raises(mod.ProviderCapabilityError, match="already_attempted"):
+        session.connect()
+    assert client.calls == ["entry", "login", "preflight", "close"]
+    session.close()
+
+
+def test_probe_failure_logged_but_no_account_promoted():
+    class BadClient:
+        calls = []
+        def observe_entry_once(self):
+            self.calls.append("entry")
+            raise ValueError("cas_entry_redirect_refused")
+        def close(self):
+            self.calls.append("close")
+    class Diagnostics:
+        events = []
+        def add(self, category, operation, status, *, detail):
+            self.events.append((status, detail))
+    client = BadClient()
+    diag = Diagnostics()
+    session = mod.PLUGIN.create_session(
+        credential_id="cred-1", label="reader",
+        credentials={"username": "x", "password": "y"},
+        options={"experimental_http_probe": "on"}, config=None, storage=None,
+        diagnostics=diag,
+    )
+    session._client_factory = lambda: client
+    with pytest.raises(mod.ProviderConfigurationError, match="cas_entry_redirect_refused"):
+        session.connect()
+    assert client.calls == ["entry", "close"]
+    assert not session.connected and session.accounts == []
+    assert diag.events[-1][1]["error_code"] == "cas_entry_redirect_refused"
+    session.close()
 
 def test_no_query_or_ticket_retained():
     classification = mod.classify_sso_transition(
