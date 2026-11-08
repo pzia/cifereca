@@ -58,6 +58,14 @@ def _search_key_interaction(self: SearchControllerHost, _controller, keyval, _ke
 
 def _build_search_page(self: SearchControllerHost) -> MasterDetailPage:
     page = MasterDetailPage(self, "Recherche", "", "Lancez une recherche", "Recherche dans le connu, puis extension aux catalogues en ligne sur demande.")
+    # Search also has a response-facets control next to the title/count.
+    # Keeping its page actions on that same horizontal row forces GTK's
+    # natural minimum beyond the physical 1024px Xvfb viewport (1111px
+    # page minimum observed in #774). Put the unchanged action bar on its
+    # own row, above the query controls, without hiding any action.
+    page.page_header.remove(page.header_actions)
+    page.insert_child_after(page.header_actions, page.page_header)
+    page.header_actions.source = page
     self.search_controls = self._query_controls(self._search_controls_changed, self._search_enter)
     page.toolbar.append(self.search_controls)
     self.search_entry = self.search_controls.entry
