@@ -241,7 +241,9 @@ def verify_paris_borrow_followup(service, item: SearchResult) -> dict[str, objec
     # An account can be disabled or replaced during provider I/O, even when
     # the underlying legacy session object remains registered. Never publish
     # a positive result after that change.
-    if (_pending_paris_borrow_scope(service, item) != pinned
+    current = _pending_paris_borrow_scope(service, item)
+    if (current is None or current[0] is not account
+            or current[1] != operation_id
             or not _normal_paris_source_current(service, item, account.identity_id)):
         return blocked()
     if (type(result) is not dict
