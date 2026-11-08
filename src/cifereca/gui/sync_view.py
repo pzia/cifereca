@@ -544,11 +544,15 @@ def _historical_local_phase_after_canonical_success(source: object, row: object)
     from ..plugin_api import SyncSourceCycleReceipt
     from ..core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
 
+    local_status = getattr(row, "status", None)
+    source_status = getattr(source, "status", None)
     if (getattr(row, "phase", None) != "materialize"
-            or getattr(row, "status", None) not in {
+            or type(local_status) is not str
+            or local_status not in {
                 "partial", "attention_required", "failed", "interrupted",
             }
-            or getattr(source, "status", None) not in {"ok", "success"}
+            or type(source_status) is not str
+            or source_status not in {"ok", "success"}
             or getattr(source, "enabled", None) is not True):
         return False
     receipt = getattr(source, "last_cycle", None)
