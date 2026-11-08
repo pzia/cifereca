@@ -71,3 +71,29 @@ validation déjà présente dans `_mirror_backup_row`, en mode
 Le test de catalogue conserve désormais sa projection canonique initiale,
 son propriétaire et son SHA, tout en acceptant la mise à jour descriptive
 de l'archive 0.7. Les tests de refus canonical JSON restent inchangés.
+
+
+## Complément : transitions post-`complete` (08/11/2026)
+
+Le premier cutover W1 conservait encore un repli positif si un reçu
+Kobo **déjà** `complete|ok` passait ensuite dans une autre catégorie
+(`acquiring`, `error`, `pending_acquisition`, `reconcile_required`
+ou assimilée). Il pouvait alors reprendre `_mirror_backup_row` et
+modifier des droits/acquisitions/placements 0.8 sur la seule autorité
+du checkpoint 0.7.
+
+L'état `complete|ok` **avant l'UPSERT** suffit désormais à marquer
+**toute transition ultérieure** archive-only, sous `BEGIN IMMEDIATE`.
+Le checkpoint 0.7 reste mis à jour pour la reprise/diagnostic, et le
+préflight négatif vérifie toujours l'owner, le journal JSON et la
+cohérence du CompletedDelivery. Aucune nouvelle projection 0.8
+n'est permise, même si le statut, la révision, le SHA ou le chemin
+historique sont modifiés. La première arrivée `acquiring→complete`
+sans état `complete` antérieur conserve le contrat de compatibilité
+W2/ W1 du jalon précédent.
+
+La recette paramétrique couvre neuf statuts après une première
+projection W1 et six transitions depuis une archive `complete|ok`
+préexistante sans preuve B ; elle affirme l'immuabilité exacte de
+`entitlements/acquisition_ledger/artifacts/placements/catalog_entries/
+source_references/origin_links`, tout en conservant les lignes 0.7.
