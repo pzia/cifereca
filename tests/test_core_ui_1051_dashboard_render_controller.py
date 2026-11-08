@@ -509,6 +509,7 @@ def test_dashboard_invalid_counts_never_leak_private_data_or_create_fake_ownersh
 
 def test_p1_1867_store_only_dashboard_distinguishes_ownership_catalogue_and_loans():
     card = _card(
+        loan_sources_explicitly_absent=True,
         providers=["kobo", "numilog"],
         statistics={
             "local_books": 0, "known_loans": None,
@@ -530,6 +531,7 @@ def test_p1_1867_store_only_dashboard_distinguishes_ownership_catalogue_and_loan
 
 def test_p1_1867_optional_numilog_catalogue_not_mistaken_for_purchases():
     card = _card(
+        loan_sources_explicitly_absent=True,
         providers=["numilog"],
         sources=[
             {"provider_id": "numilog", "label": "Numilog", "connected": True},
@@ -581,7 +583,8 @@ def test_p1_1867_no_implicit_provider_call_for_unrecognized_or_malformed_scope()
               statistics={"local_books": 0, "known_loans": None}),
         _card(providers="kobo",
               statistics={"local_books": 0, "known_loans": None}),
-        _card(providers=["numilog"], statistics={
+        _card(providers=["numilog"], loan_sources_explicitly_absent=True,
+              statistics={
             "local_books": 0, "known_loans": 0, "loan_sources_observed": 0
         }),
     ]
@@ -636,3 +639,29 @@ def test_dashboard_source_name_is_not_inferred_from_provider_id():
             "provider_id": "kobo", "label": name, "connected": True,
         }) == name
     assert _dashboard_source_label({"provider_id": "numilog-catalog"}) == "Source inconnue"
+
+
+def test_p0_no_loan_statement_requires_canonical_capability_evidence():
+    cases = [
+        (_card(providers=["fixture-store"], loan_sources_explicitly_absent=True,
+               statistics={"local_books": 0, "known_loans": 0,
+                           "loan_sources_observed": 0}), True),
+        (_card(providers=["kobo"], loan_sources_explicitly_absent=False,
+               statistics={"local_books": 0, "known_loans": None,
+                           "loan_sources_observed": 0}), False),
+        (_card(providers=["future-store"], statistics={
+            "local_books": 0, "known_loans": None,
+            "loan_sources_observed": 0}), False),
+        (_card(providers=["fixture-store"], loan_sources_explicitly_absent=True,
+               statistics={"local_books": 0, "known_loans": 2,
+                           "loan_sources_observed": 1}), False),
+        (_card(providers=["fixture-store"], loan_sources_explicitly_absent=True,
+               capabilities=[{"id": "loans", "label": "Emprunts"}],
+               statistics={"local_books": 0, "known_loans": 0,
+                           "loan_sources_observed": 0}), False),
+    ]
+    window, _events, _, _, render = _window([row for row, _ in cases])
+    render()
+    for node, (_row, should_say_none) in zip(window.dashboard_cards.children, cases):
+        labels = _descendant_labels(node)
+        assert any("aucune source de prêt configurée" in label for label in labels) is should_say_none

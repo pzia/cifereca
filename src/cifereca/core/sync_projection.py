@@ -91,7 +91,8 @@ def dashboard_state(self) -> list[dict[str, Any]]:
     """Return dashboard cards without triggering network I/O."""
     cards: list[dict[str, Any]] = []
     for identity in self.identities:
-        providers = sorted({a.provider_id for a in self.accounts_for_identity(identity.identity_id)})
+        account_rows = tuple(self.accounts_for_identity(identity.identity_id))
+        providers = sorted({a.provider_id for a in account_rows})
         latest = self.storage.latest_sync_run(identity.identity_id)
         profile_id = self.storage.adept_profile_binding_get("identity", identity.identity_id)
         try:
@@ -103,7 +104,14 @@ def dashboard_state(self) -> list[dict[str, Any]]:
                   "direct_download": "Téléchargement direct", "personal_library": "Livres de mon compte fournisseur",
                   "return_loan": "Restituer un prêt", "renew_loan": "Prolonger un prêt"}
         capabilities = set(); sources = []
-        credentials = {(account.provider_id, account.credential_id) for account in self.accounts_for_identity(identity.identity_id)}
+        credential_rows = [(account.provider_id, account.credential_id)
+                           for account in account_rows]
+        credentials = set(credential_rows)
+        # Negative lending evidence is only available from a unique, live
+        # session for EVERY configured private source. A missing/disconnected
+        # or partially declared source is unknown, never "no loan source".
+        non_lending_proven = bool(account_rows) and len(credentials) == len(credential_rows)
+        matched_private_sessions = Counter()
         for session in self._sessions.values():
             descriptor = session.descriptor
             public = getattr(descriptor, "instantiation", "multiple") == "singleton_public"
@@ -111,6 +119,12 @@ def dashboard_state(self) -> list[dict[str, Any]]:
                 continue
             if not public and (session.provider_id, session.credential_id) not in credentials:
                 continue
+            if not public:
+                matched_private_sessions[(session.provider_id, session.credential_id)] += 1
+            loans = getattr(getattr(session, "capabilities", None), "loans", None)
+            if (getattr(session, "connected", None) is not True
+                    or type(loans) is not bool or loans):
+                non_lending_proven = False
             sources.append({"provider_id": session.provider_id, "label": descriptor.display_name,
                             "connected": bool(session.connected),
                             # Presentation-only descriptor fact; never a grant
@@ -118,7 +132,14 @@ def dashboard_state(self) -> list[dict[str, Any]]:
                             "public_catalogue": public})
             if session.connected:
                 capabilities.update(key for key in labels if bool(getattr(session.capabilities, key, False)))
+        non_lending_proven = (
+            non_lending_proven
+            and all(matched_private_sessions[key] == 1 for key in credentials)
+        )
         cards.append({
+            # A closed, identity-scoped capability statement. This is not a
+            # lender-right, loan expiry check or authorization for acquisition.
+            "loan_sources_explicitly_absent": non_lending_proven,
             "sources": sources,
             "statistics": self.identity_statistics(identity.identity_id),
             "selected": bool(self.current_identity and self.current_identity.identity_id == identity.identity_id),
