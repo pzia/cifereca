@@ -103,3 +103,25 @@ def test_unsafe_metadata_values_cannot_become_provenance_or_inferred_ownership()
     assert "private" not in details.lower()
     assert "Format déclaré : Non renseigné" in details
     assert "preuve de fichier" in details
+
+
+@pytest.mark.parametrize("provider", ["paris", "bnf-pret", "fixture-lending"])
+def test_any_typed_loan_has_read_only_bibliography_and_no_purchase_claim(provider):
+    right = _right(provider=provider, source="not-a-purchase-proof",
+                   entitlement_type="loan", expires_at="2099-01-01T00:00:00Z")
+    _title, _author, details = _right_bibliography(right, [])
+    assert "Bibliographie du prêt" in details
+    assert "Prêt temporaire (consultation uniquement)" in details
+    assert "Validité actuelle du prêt / identité de l’emprunteur : non démontrée" in details
+    assert "2099-01-01T00:00:00Z" in details
+    assert "association permanente autorisée" in details
+    assert "Bibliographie de l’achat" not in details
+
+
+def test_future_provider_owned_entitlement_is_not_mistaken_for_a_loan():
+    _title, _author, details = _right_bibliography(
+        _right(provider="fixture-lending", source="untrusted",
+               entitlement_type="owned"), []
+    )
+    assert "Bibliographie de l’achat / droit" in details
+    assert "Prêt temporaire" not in details
