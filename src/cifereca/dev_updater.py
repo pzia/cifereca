@@ -565,6 +565,7 @@ def _record_partial_install_provenance(
                     pass
 
 
+@updater._serial_updater_operation
 def apply_snapshot(
     archive: Path,
     *,
@@ -575,6 +576,11 @@ def apply_snapshot(
     expected_sha256: str | None = None,
     require_plugins_only: bool = False,
 ) -> dict[str, Any]:
+    # A delegated child runs inside Core's already-validated transaction.
+    # The parent's in-flight journal is not a *new* incomplete update to
+    # preflight or independently recover; direct DevUpdater calls still check.
+    if not dry_run and not getattr(updater._UPDATER_LOCK_DEPTH, "borrowed", False):
+        updater._preflight_incomplete_recovery(updater.install_root())
     try:
         archive = step("resolve_archive", resolve_archive, archive)
     except ArchiveNotFoundError as exc:
