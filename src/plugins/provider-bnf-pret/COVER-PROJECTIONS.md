@@ -72,3 +72,31 @@ leurs cartes officielles, vérifier les miniatures et les mêmes images en
 Détail ; vérifier le fallback sur une notice sans image. Une réponse HTTP
 image 200 et le décodage GTK ne sont **pas** déductibles du test simulé.
 Les comptes, HTML authentifiés et URLs signées restent exclusivement privés.
+
+
+## P1 #4978 — diagnostic de la source de couverture, strictement en mémoire
+
+Le parseur partagé utilise une classification de candidats d'image **dans la
+carte liée à une ressource exacte**. Son vocabulaire est borné : `missing`
+(aucune image dans l'ancre exacte), `rejected` (au moins un hôte/chemin/paramètre
+interdit), `conflicting` (URL publiques distinctes), `ambiguous` (trop de
+candidats) et `observed` (une unique image publique autorisée). Seul
+`observed` fournit `thumbnail_url` ; aucune inférence par titre, ISBN,
+prêt voisin ou avatar, et aucun GET ajouté. Le même validateur est conservé
+pour les cartes catalogue ; les extractions existantes ne changent pas.
+
+Les tests `test_p1_4978_cover_source_diagnosis.py` exercent Feedbooks,
+l'hôte BnF, l'ancien hôte public, les URL rejetées, 0/1/N candidats,
+les conflits et les liens de ressources voisins. Ces résultats sont
+des **observations de balisage**, pas la preuve d'un téléchargement,
+d'un rendu GTK, d'un droit d'accès ni de l'appartenance d'un prêt à un compte.
+
+**Handoff pour la matrice inter-vues** : la prochaine étape du lot #4978
+doit comparer pour chaque clé exacte de provenance (identité, credential,
+compte, prêt, ressource), la source BnF et `Loan.thumbnail_url`,
+puis les projections Search/Détail/Bibliothèque/Emprunts et les compteurs
+du chargeur/GTK. La classification de la source ne suffit pas à attribuer
+une absence d'image au plugin ; si `observed` mais projection perdue,
+diagnostiquer l'étape de transformation. Le résolveur CoreUI et la hiérarchie
+de couverture locale restent propres au lot #4979, indépendamment du
+balisage source BnF.
