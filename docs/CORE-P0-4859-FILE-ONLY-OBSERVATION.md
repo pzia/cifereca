@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **Archive historique — P0 #4859, retrait du 08/11/2026.** La commande `kobo-observe-local` et l'option `file_only=True` sont supprimées du Core/CLI. Un constat d'octets 0.7 ne constitue ni un droit fournisseur ni une livraison attestée. Les instructions ci-dessous sont conservées uniquement comme historique et **ne sont plus exécutables**. Utiliser l'audit consultatif `kobo-audit` ou un relink sur preuves canoniques A→B.
+
 # P0 #4859 — Observation physique Kobo sans autorité historique W4
 
 ## Contrat du premier opérateur de remplacement

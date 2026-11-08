@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         "--credential", help="Limiter l'audit à un compte Kobo (non affiché dans le rapport)"
     )
     reconcile = sub.add_parser(
-        "kobo-reconcile-local", help="Commande legacy retirée : utiliser kobo-observe-local / kobo-relink-canonical"
+        "kobo-reconcile-local", help="Commande legacy retirée : relink canonique attesté uniquement"
     )
     reconcile.add_argument("--credential", required=True)
     reconcile.add_argument("--identity", help="Refuser une connexion liée à une autre identité")
@@ -162,23 +162,6 @@ def main(argv: list[str] | None = None) -> int:
     reconcile.add_argument("--path", help="Fichier EPUB/PDF dans le dossier de cette identité")
     reconcile.add_argument("--undo", help="Identifiant opaque du rapprochement à annuler (aperçu par défaut)")
     reconcile.add_argument("--confirm", help="Token de l’aperçu exact ; son absence interdit toute écriture")
-    # #4859: a separate, rights-neutral operation. Unlike the historical
-    # kobo-reconcile-local, this cannot mutate ledger/placement/catalogue or
-    # claim provider delivery merely because historical bytes match.
-    observe_local = sub.add_parser(
-        "kobo-observe-local",
-        help="Constat hors réseau des octets Kobo, sans droit ni placement",
-    )
-    observe_local.add_argument("--credential", required=True)
-    observe_local.add_argument("--identity", required=True)
-    observe_local.add_argument("--account-id", required=True)
-    observe_local.add_argument("--item", required=True)
-    observe_local.add_argument("--sha256", required=True)
-    observe_local.add_argument("--size", type=int, required=True)
-    observe_local.add_argument("--path", required=True)
-    observe_local.add_argument(
-        "--confirm", help="Token exact du constat ; sinon lecture seule",
-    )
     # P0 #4859: existing canonical B path repair, no 0.7 inference.
     relink_b = sub.add_parser(
         "kobo-relink-canonical",
@@ -414,36 +397,12 @@ def main(argv: list[str] | None = None) -> int:
         # Deny even preview and undo: a historical token cannot authorize
         # a new positive mutation after this cutover, and the CLI must never
         # open SQLite or inspect a private file on this deprecated route.
-        # Explicit safe alternatives: kobo-observe-local (bytes-only) and
-        # kobo-relink-canonical (only an independently published Core B).
+        # Only independently published canonical B may be relinked.
         print(json.dumps({
             "ok": False, "offline": True, "changed": 0,
             "reason": "legacy_reconciliation_retired",
         }, ensure_ascii=False, indent=2))
         return 2
-
-    if a.cmd == "kobo-observe-local":
-        from .core.kobo_local_reconciliation import (
-            ReconciliationRejected, reconcile_existing_profile,
-        )
-        try:
-            if a.account and a.account != a.credential:
-                raise ReconciliationRejected("source_scope_mismatch")
-            result = reconcile_existing_profile(
-                file_only=True, credential_id=a.credential,
-                identity_id=a.identity, account_id=a.account_id,
-                item_id=a.item, expected_sha256=a.sha256,
-                expected_size=a.size, path=a.path, confirmation=a.confirm,
-            )
-        except Exception as exc:
-            # Never echo SQLite errors, path, account, stored SHA or provider
-            # messages into a user-visible stdout/stderr CLI receipt.
-            result = {"ok": False, "changed": 0,
-                      "reason": (exc.code if isinstance(
-                          exc, ReconciliationRejected,
-                      ) else "observation_unavailable")}
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0 if result["ok"] else 2
 
     if a.cmd == "kobo-relink-canonical":
         from .core.kobo_local_reconciliation import (
