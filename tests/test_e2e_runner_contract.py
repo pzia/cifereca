@@ -21,12 +21,31 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     runner = _module()
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
     assert [name for name, _ in runner.select(None, "core")] == [
-        "search-filter-p0", "book-detail-1300", "book-detail-1366", "book-detail-1600",
+        "search-filter-p0", "search-filter-1024", "book-detail-1300", "book-detail-1366", "book-detail-1600",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728",
         "capture-session-gtk-1366", "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366",
     ]
+
+
+def test_p1_3687_search_filter_real_1024_and_original_baseline():
+    runner = _module()
+    legacy = runner.SCENARIOS["search-filter-p0"]
+    narrow = runner.SCENARIOS["search-filter-1024"]
+    assert legacy["runner"] == narrow["runner"] == "gtk-probe"
+    assert legacy["fixture"] == narrow["fixture"] == "search-filters"
+    assert (narrow["width"], narrow["height"]) == (1024, 768)
+    assert [name for name, _ in runner.select("search-filter-1024", None)] == [
+        "search-filter-1024",
+    ]
+    source = RUNNER.read_text(encoding="utf-8")
+    assert '-screen 0 1024x768x24' in source
+    assert '-screen 0 1280x1024x24' in source
+    probe = (ROOT / "e2e/search_filter_probe.py").read_text(encoding="utf-8")
+    assert 'choices=(1024, 1366, 1600)' in probe
+    assert 'P1_3687_search_real_1024_geometry' in probe
+    assert 'device.click_widget(widget)' in probe
 
 
 def test_p1_4118_bnf_real_gtk_search_detail_two_cover_acceptance():
@@ -137,8 +156,8 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         assert scenario["fixture"] == "search-filters"
         assert scenario["runner"] == "gtk-detail"
         assert scenario["width"] == width
-    assert [n for n, _ in runner.select(None, "core")][:4] == [
-        "search-filter-p0", "book-detail-1300", "book-detail-1366", "book-detail-1600",
+    assert [n for n, _ in runner.select(None, "core")][:5] == [
+        "search-filter-p0", "search-filter-1024", "book-detail-1300", "book-detail-1366", "book-detail-1600",
     ]
     source = (ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8")
     for marker in (
