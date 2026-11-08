@@ -2194,19 +2194,21 @@ class Storage:
             # with omitted owner/account must not demote an earlier exact
             # owner in the backup projection.
             merged = dict(zip(keys, persisted))
-            # A previously completed v0.7 archive can receive a newer title,
-            # cover or updated_at, but that is not a newly completed delivery.
-            # Do not replay the W1 mirror or refresh canonical rights,
-            # artifacts, placements or ledger from this archival state.
-            # Keep the exact-owner collision checks before returning.
-            if (item.get("provider_id") == "kobo"
-                    and was_complete_kobo_archive
-                    and merged.get("status") in {"complete", "ok"}):
+            # Once a Kobo v0.7 archive was complete, *any* subsequent
+            # status transition is only historical recovery metadata. In
+            # particular, complete -> acquiring/error/reconcile_required
+            # cannot republish or demote canonical rights/receipts on the
+            # authority of this old row. Fresh canonical A/B independently
+            # owns any new delivery; preserve the 0.7 row for rollback.
+            # Keep every exact-owner/canonical-checkpoint refusal even when
+            # publication is suppressed.
+            if item.get("provider_id") == "kobo" and was_complete_kobo_archive:
                 self._check_kobo_legacy_canonical_owner(db, merged)
                 # Do not bypass the canonical checkpoint validation embedded
                 # in the W1 mirror (malformed/duplicate JSON, inconsistent
                 # CompletedDelivery status, cross-credential stage). Run its
-                # read-only half; skip only the downstream positive SQL.
+                # read-only half for every post-complete status, skipping
+                # only the downstream positive SQL.
                 self._mirror_backup_row(
                     db, merged, now=now, migration=False, archive_only=True,
                 )
