@@ -155,6 +155,7 @@ def test_cancel_never_schedules_mutator(cancel_at):
 @pytest.mark.parametrize("change", [
     "identity_object", "identity_epoch", "account_epoch",
     "source_epoch", "selection", "detail_epoch", "different_item",
+    "service_rebind", "search_page_rebind",
 ])
 def test_rebound_ui_between_choice_and_confirm_never_schedules(change):
     h = setup()
@@ -171,6 +172,10 @@ def test_rebound_ui_between_choice_and_confirm_never_schedules(change):
         h.window._selected_search_id = "new-search"
     elif change == "detail_epoch":
         h.window._search_detail_request_generation += 1
+    elif change == "service_rebind":
+        h.window.service = NS(**vars(h.service))
+    elif change == "search_page_rebind":
+        h.window.search_page = NS(detail=h.window.search_page.detail)
     else:
         h.window.search_page.detail._rendered_search_detail = (
             replace(h.item), object(),
