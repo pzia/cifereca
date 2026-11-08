@@ -432,12 +432,21 @@ class TaskRunner:
                 else (self._borrow_outcome(outcome[1]) if trace_kind == "borrow"
                       else self._source_sync_outcome(outcome[1], trace_kind))
             )
+            # Isolated legacy submit() adapters do not carry the class's
+            # helper methods. Those adapters cannot attest lock contention,
+            # so they fail closed without changing their established result.
+            lock_classifier = getattr(self, "_task_has_typed_lock_busy", None)
             typed_lock_busy = (
                 outcome[0] == "error"
-                and self._task_has_typed_lock_busy(outcome[1])
+                and callable(lock_classifier)
+                and lock_classifier(outcome[1])
             )
-            task_classification = self._task_feedback_classification(
-                origin, trace_kind, control,
+            classify_task = getattr(self, "_task_feedback_classification", None)
+            task_classification = (
+                classify_task(origin, trace_kind, control)
+                if callable(classify_task) else
+                "user_action" if origin == "user" or control is not None
+                else "background_task"
             )
             # A completed worker may still be awaiting GTK delivery. Keep
             # its original result as the authoritative pending operation
