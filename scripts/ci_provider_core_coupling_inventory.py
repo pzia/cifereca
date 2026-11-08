@@ -21,6 +21,26 @@ def _provider_literal(node: ast.AST, providers: set[str]) -> str | None:
     return None
 
 
+
+def _literal_providers(node: ast.AST, providers: set[str]) -> set[str]:
+    """Bounded static ID alternatives, never evaluate expressions or calls."""
+    direct = _provider_literal(node, providers)
+    if direct is not None:
+        return {direct}
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return {value for item in node.elts
+                if (value := _provider_literal(item, providers)) is not None}
+    return set()
+
+
+def _match_providers(pattern: ast.pattern, providers: set[str]) -> set[str]:
+    if isinstance(pattern, ast.MatchValue):
+        return _literal_providers(pattern.value, providers)
+    if isinstance(pattern, ast.MatchOr):
+        return set().union(*(_match_providers(part, providers) for part in pattern.patterns))
+    return set()
+
+
 def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
     """Report imports of implementations and comparisons to concrete provider IDs."""
     tree = ast.parse(content)
@@ -54,15 +74,16 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
                 imports.append({"line": node.lineno, "module": module, "providers": matched})
         if isinstance(node, ast.Compare):
             values = [node.left, *node.comparators]
-            matches = sorted({p for value in values if (p := _provider_literal(value, names))})
+            matches = sorted(set().union(*(
+                _literal_providers(value, names) for value in values
+            )))
             if matches:
                 dispatches.append({"line": node.lineno, "providers": matches})
         if isinstance(node, ast.Match):
             for case in node.cases:
-                if isinstance(case.pattern, ast.MatchValue):
-                    matched = _provider_literal(case.pattern.value, names)
-                    if matched:
-                        dispatches.append({"line": case.pattern.lineno, "providers": [matched]})
+                matched = sorted(_match_providers(case.pattern, names))
+                if matched:
+                    dispatches.append({"line": case.pattern.lineno, "providers": matched})
     return {"imports": sorted(imports, key=lambda x: x["line"]),
             "comparisons": sorted(dispatches, key=lambda x: x["line"])}
 
