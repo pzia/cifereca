@@ -46,7 +46,7 @@ def test_disabled_foreign_session_not_queried_even_after_cached_search(
     try:
         first = search(force=True)
         assert len(first) == 1
-        assert first[0].metadata == {"catalogue_access": "shared_read_only"}
+        assert first[0].metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         before = calls()
         assert before >= 1
 
@@ -59,7 +59,7 @@ def test_disabled_foreign_session_not_queried_even_after_cached_search(
         session.connected = True
         recovered = search(force=True)
         assert len(recovered) == 1
-        assert recovered[0].metadata == {"catalogue_access": "shared_read_only"}
+        assert recovered[0].metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         assert calls() > before
         if provider != "paris":
             assert session.private_calls == 0
@@ -164,7 +164,7 @@ def test_disabling_provider_during_foreign_search_revokes_results(
                 "Progressive Book", provider_id=provider, force=False,
             )
         assert len(rows) == 1
-        assert rows[0].metadata == {"catalogue_access": "shared_read_only"}
+        assert rows[0].metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         if provider != "paris":
             assert session.private_calls == 0
     finally:
