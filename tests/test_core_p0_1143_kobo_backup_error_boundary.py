@@ -43,8 +43,11 @@ def test_kobo_vault_failure_is_typed_in_logs_and_constant_in_sqlite(
             result = service.sync_kobo_backup()
         assert result["attempted"] == result["errors"] == 1
         saved = service.storage.backup_get("kobo", "vault-1", ITEM)
-        assert saved["status"] == "error"
-        assert saved["error"] == "Sauvegarde Kobo impossible"
+        # After the opaque executor was entered, even an HTTP 403
+        # exception cannot prove that no GET produced bytes. Do not
+        # persist a retryable `error` receipt.
+        assert saved["status"] == "acquiring"
+        assert saved["error"] is None
         # The in-process summary is now typed and redacted too.
         diagnostic = service.diagnostics.snapshot()[-1]["detail"]
         assert diagnostic["error_summary"][0]["code"] == "provider_http_error"
