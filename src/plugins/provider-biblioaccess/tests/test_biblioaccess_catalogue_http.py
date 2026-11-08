@@ -178,3 +178,93 @@ def test_bad_query_budget_and_closed_client_no_network():
         c.close()
     with pytest.raises(mod.CatalogueHTTPError, match="client_closed"):
         c.search("test")
+
+
+def test_detail_only_for_id_from_same_client_search():
+    requests = []
+    def handler(request):
+        requests.append((request.method, str(request.url)))
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0"})
+        if request.url.path.endswith("/Catalog/Search"):
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                text='<a href="/1409/Catalog/Book/123/example">Un roman</a>')
+        assert request.url.path == "/1409/Catalog/Book/123"
+        return httpx.Response(200, headers={"content-type": "text/html"},
+            text='<script type="application/ld+json">'
+                 '{"@context":"https://schema.org","@type":"Book",'
+                 '"name":"Titre de test","url":"https://www.biblioaccess.com/1409/Catalog/Book/123",'
+                 '"author":{"@type":"Person","name":"Auteur fictif"}}'
+                 '</script>')
+    c = client(handler)
+    try:
+        with pytest.raises(mod.CatalogueHTTPError, match="book_not_observed"):
+            c.read_observed_notice("123")
+        assert not requests
+        observed = c.search("roman")
+        assert observed.book_ids == ("123",)
+        with pytest.raises(mod.CatalogueHTTPError, match="book_not_observed"):
+            c.read_observed_notice("456")
+        with pytest.raises(mod.CatalogueHTTPError, match="book_id_refused"):
+            c.read_observed_notice("../123")
+        assert len(requests) == 2
+        notice = c.read_observed_notice("123")
+        assert notice is not None
+        assert notice.book_id == "123"
+        assert notice.title == "Titre de test"
+        assert notice.author == "Auteur fictif"
+        assert notice.entitlement == "unverified"
+        assert notice.acquisition == "unsupported"
+        assert len(requests) == 3
+    finally:
+        c.close()
+
+
+def test_detail_unrecognized_html_returns_none_not_zero():
+    seen = []
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=x&pageindex=0"})
+        if request.url.path.endswith("/Catalog/Search"):
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                text='<a href="/1409/Catalog/Book/99/test">Livre</a>')
+        return httpx.Response(200, headers={"content-type": "text/html"},
+                              text="<p>Unknown book metadata layout</p>")
+    c = client(handler)
+    try:
+        c.search("x")
+        assert c.read_observed_notice("99") is None
+        assert len(seen) == 3
+    finally:
+        c.close()
+
+
+def test_detail_redirect_no_follow_and_last_search_ids_replaced():
+    calls = []
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.path.endswith("SearchResultSummary"):
+            q = request.url.params["query"]
+            return httpx.Response(302, headers={
+                "location": f"/1409/Catalog/Search?query={q}&pageindex=0"})
+        if request.url.path.endswith("/Catalog/Search"):
+            book = "123" if request.url.params["query"] == "first" else "456"
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                text=f'<a href="/1409/Catalog/Book/{book}/test">Livre</a>')
+        return httpx.Response(302, headers={"location":
+            "https://evil.example/1409/Catalog/Book/123"})
+    c = client(handler)
+    try:
+        c.search("first")
+        c.search("second")
+        with pytest.raises(mod.CatalogueHTTPError, match="book_not_observed"):
+            c.read_observed_notice("123")
+        assert len(calls) == 4
+        with pytest.raises(mod.CatalogueHTTPError, match="book_unavailable"):
+            c.read_observed_notice("456")
+        assert len(calls) == 5
+    finally:
+        c.close()

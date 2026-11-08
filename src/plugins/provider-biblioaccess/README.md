@@ -200,3 +200,20 @@ n'importe aucune session navigateur, n'accède pas aux prêts, et ne
 déclare **aucune nouvelle capacité** dans le manifeste. Les tests
 utilisent uniquement un transport HTTPX fictif. L'accès catalogue
 réel et la forme HTML exacte restent à recetter avant publication.
+
+
+### Lecture des notices bibliographiques du catalogue 1409
+
+`BiblioAccessCatalogueHTTP.read_observed_notice(book_id)` réutilise la
+même session HTTPX pour récupérer le HTML d'une fiche **uniquement si son
+identifiant apparaît dans la dernière recherche effectuée par ce client**.
+L'appel ne permet pas d'énumérer des identifiants arbitraires, n'importe
+aucune session navigateur et ne suit jamais de redirection. Le corps
+HTML est borné ; le parseur existant `parse_book_metadata` n'accepte
+que des métadonnées structurées `schema.org/Book`.
+
+Si la fiche n'est pas reconnue, le résultat est `None` (indéterminé),
+pas « livre absent ». Une notice structurée reste de type **C** :
+`entitlement=unverified`, `acquisition=unsupported`, sans modifier
+un emprunt, calculer un droit, ni publier de capacité provider.
+Les tests utilisent des fiches et ISBN fictifs.
