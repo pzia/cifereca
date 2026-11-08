@@ -414,6 +414,23 @@ class LibraryService:
             expected_account=expected_account,
         )
 
+    def verify_paris_borrow_without_submission(
+        self, item: SearchResult, *, expected_identity_id: str,
+        expected_account: Account, expected_operation_id: str,
+    ) -> dict[str, object]:
+        """Read-only follow-up of one uncertain Paris manual borrow claim.
+
+        Does not submit, import or confirm an entitlement; never frees claim.
+        """
+        from .core.paris_borrow_later_verification import (
+            verify_paris_borrow_without_submission,
+        )
+        return verify_paris_borrow_without_submission(
+            self, item, expected_identity_id=expected_identity_id,
+            expected_account=expected_account,
+            expected_operation_id=expected_operation_id,
+        )
+
     def stage_bnf_loan_acsm(
         self, loan: Loan, *, confirmed: bool = False,
         expected_identity_id: str = "",
