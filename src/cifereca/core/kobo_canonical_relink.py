@@ -206,12 +206,29 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
             "st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns",
         )),
     )
+    # A→B followed by a journal-bound B→A undo is a legitimate cycle.
+    # The next A→B must have a NEW operation identity, even when the same
+    # file/path/SHA reappears within one SQLite timestamp second. Bind the
+    # preview and subsequent operation to the last committed Placement cursor.
+    latest = db.execute(
+        "SELECT value FROM metadata WHERE key=?",
+        (_LATEST + hashlib.sha256(placement_id.encode("utf-8")).hexdigest(),),
+    ).fetchone()
+    _require(
+        latest is None or (
+            len(latest) == 1 and type(latest[0]) is str
+            and len(latest[0]) == 64
+            and all(char in "0123456789abcdef" for char in latest[0])
+        ),
+        "canonical_relink_plan_changed",
+    )
     plan = {
         "schema": _SCHEMA,
         "scope": [scope.identity_id, "kobo", scope.credential_id, scope.account_id,
                   branch_id, edition_id, right_id, reference_kind],
         "placement_id": placement_id,
         "old_path": old_path, "new_path": str(new_path),
+        "latest_operation_id": latest[0] if latest else None,
         "evidence": stamp,
     }
     token = hashlib.sha256(
@@ -361,8 +378,12 @@ def relink_verified_canonical_kobo(
                  identity_id, "sha256:" + artifact_sha),
             )
             _require(changed.rowcount == 1, "canonical_relink_plan_changed")
+            # The path pair alone is not an operation ID: redo after undo
+            # would collide with the immutable first journal. A token also
+            # binds the prior per-Placement cursor and exact physical/SQL
+            # preview, making each confirmed link in the chain distinct.
             operation_id = hashlib.sha256(
-                "\x1f".join((placement_id, old_path, str(new_path)))
+                "\x1f".join((placement_id, old_path, str(new_path), token))
                 .encode("utf-8"),
             ).hexdigest()
             db.execute(
