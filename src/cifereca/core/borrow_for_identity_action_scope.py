@@ -83,11 +83,29 @@ class CrossProfileBorrowScopeLease:
             ]
             if len(exact) != 1 or exact[0].get("enabled") is not True:
                 return False
-            # Recheck after storage reads: a profile or source rebind in a
-            # callback must not leave a formerly valid lease current.
-            return (service.current_identity is self._requester
-                    and service._account_context_epoch == self._context_epoch
-                    and source_context_epoch(service) == self._source_epoch)
+            # A hostile/lazy storage callback can rebind the account or
+            # session without updating Core epochs. Recheck the complete
+            # local scalar/registry boundary *after* reading SQLite too.
+            fresh_state = _inert_session_state(session)
+            fresh_rows = _inert_session_accounts(session)
+            return (
+                service.current_identity is self._requester
+                and service._account_context_epoch == self._context_epoch
+                and source_context_epoch(service) == self._source_epoch
+                and _fields(account, notice) == self._account_fields
+                and borrow_claim_key(account, notice) == self._claim_key
+                and account.is_primary is True
+                and fresh_state is not None
+                and fresh_state.get("_epoch") == self._session_epoch
+                and fresh_state.get("connected") is True
+                and fresh_state.get("_closed") is not True
+                and fresh_rows is not None
+                and sum(row is account for row in fresh_rows) == 1
+                and sum(row is account for row in service.accounts) == 1
+                and service._sessions.get(service._session_key(
+                    account.provider_id, account.credential_id,
+                )) is session
+            )
         except Exception:
             return False
 
