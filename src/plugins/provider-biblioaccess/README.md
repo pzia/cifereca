@@ -115,6 +115,6 @@ avant l'envoi, et ni le ticket ni l'URL ne sont retournés au consommateur.
 Cela reste un **probe non branché à `ProviderSession.connect()`** ; une page
 de retour 200 n'est pas une preuve de compte connecté.
 
-La chaîne de cinq échanges est vérifiée avec HTTPX `MockTransport` et des
+La chaîne de six échanges est vérifiée avec HTTPX `MockTransport` et des
 valeurs totalement fictives. Aucune authentification réelle, capture nouvelle,
-navigateur ni transition vers `MyLoans` n'a été effectuée.
+navigateur ni lecture réelle de `MyLoans` n'a été effectuée. La nouvelle méthode\n`inspect_loans_once()` effectue un unique GET borné après le retour CAS et\nrenvoie `loans_html_unverified`, sans publier HTML, compte ni droits.
