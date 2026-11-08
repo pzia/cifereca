@@ -796,6 +796,10 @@ def _interactive_background_opted_in(descriptor: object, row: object) -> bool:
         getattr(spec, "key", None) == key for spec in specs
     )):
         return False
+    # Defense in depth, even if Config.provider_accounts(enabled_only=True)
+    # was bypassed by an adapter: never connect a disabled/malformed source.
+    if row.get("enabled", True) is not True:
+        return False
     opts = row.get("options")
     return type(opts) is dict and opts.get(key) == "on"
 
