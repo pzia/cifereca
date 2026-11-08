@@ -71,9 +71,7 @@ def test_disabling_exact_b_account_rejects_warm_shared_search_cache(
     service, session = _setup(tmp_path, monkeypatch, provider)
     try:
         summary, rows = _search(service, provider, progressive, force=True)
-        assert len(rows) == 1 and rows[0].metadata == {
-            "catalogue_access": "shared_read_only",
-        }
+        assert len(rows) == 1 and rows[0].metadata == {"catalogue_access": "shared_read_only", **({"language": "fr"} if provider == "paris" else {})}
         assert summary is None or not summary.cancelled
         before = _calls(session, provider)
         assert before >= 1
