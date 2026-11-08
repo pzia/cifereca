@@ -56,14 +56,14 @@ def test_bad_python_is_reported_not_silently_ignored(tmp_path: Path):
 def test_relative_implementation_imports_and_root_modules_are_included(tmp_path: Path):
     from scripts.ci_provider_core_coupling_inventory import inspect_source
 
-    result = inspect_source("from .core import kobo_backup\\nfrom . import bnf_reader\\n")
+    result = inspect_source("from .core import kobo_backup\nfrom . import bnf_reader\n")
     assert len(result["imports"]) == 2
     assert result["imports"][0]["providers"] == ["kobo"]
     assert result["imports"][1]["providers"] == ["bnf"]
 
     package = tmp_path / "src" / "cifereca"
     package.mkdir(parents=True)
-    (package / "brokers.py").write_text('if provider_id == "numilog":\\n    pass\\n', encoding="utf-8")
+    (package / "brokers.py").write_text('if provider_id == "numilog":\n    pass\n', encoding="utf-8")
     report = inventory(tmp_path)
     assert report["files_with_signals"] == 1
     assert list(report["findings"]) == ["src/cifereca/brokers.py"]
