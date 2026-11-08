@@ -953,6 +953,15 @@ def main():
         outer = page[0].get_vadjustment()
         outer.set_value(max(0, min(float(bounds.get_y()) - 60,
                                  outer.get_upper() - outer.get_page_size())))
+
+        def focus_timeout():
+            # The exporter reports only the assertion's source line.
+            assert button.get_mapped(), "Bulk action is not mapped"
+            assert button.get_sensitive(), "Bulk action is not sensitive"
+            assert window[0].is_active(), "Bulk action toplevel is not active"
+            assert window[0].get_focus() is button, "Bulk action did not retain the GTK focus target"
+            raise AssertionError("Bulk action target does not report keyboard focus")
+
         def focused():
             # GTK may reallocate/reparent a FlowBox child while the mapped
             # diagnostics window narrows to 760px. A one-shot grab_focus()
@@ -963,7 +972,7 @@ def main():
                     return False
                 button.grab_focus()
                 return button.has_focus()
-            until(acquired_focus, activate, seconds=4)
+            until(acquired_focus, activate, seconds=4, on_timeout=focus_timeout)
         def activate():
             assert button.has_focus()
             press("space")
