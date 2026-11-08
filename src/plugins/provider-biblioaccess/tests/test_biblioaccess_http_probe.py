@@ -31,13 +31,13 @@ def test_read_login_then_single_post_never_attests_authentication():
         requests.append((request.method, str(request.url)))
         if request.method == "GET":
             return httpx.Response(200, headers={"Content-Type": "text/html"},
-                text='<form method="POST" action="/logon">'
+                text='<form method="POST" action="/logon.svc/logon">'
                      '<input name="login" value="SYNTHETIC"/>'
                      '<input type="password" name="password"/>'
                      '<input type="hidden" name="csrf" value="SYNTHETIC"/>'
                      '</form>')
         assert request.method == "POST"
-        assert request.url.path == "/logon"
+        assert request.url.path == "/logon.svc/logon"
         return httpx.Response(200, headers={"Content-Type": "application/json"},
                               json={"status": "ok", "access_token": "SYNTHETIC"})
     client = mock(handler)
@@ -74,7 +74,7 @@ def test_read_login_then_single_post_never_attests_authentication():
 def test_bad_form_shape_no_network_post():
     client = mock(lambda request: pytest.fail("Unexpected HTTP request"))
     try:
-        shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
+        shape = sso.FormShape("POST", sso.ORIGIN, "/logon.svc/logon",
                               ("login", "password"), True)
         with pytest.raises(sso.SsoProtocolError, match="schema_unqualified"):
             client.submit_once(shape=shape,
@@ -91,7 +91,7 @@ def test_post_30x_is_not_followed():
             "location": "https://evil.example/accept", "content-type": "text/html"
         }, text="")
     client = mock(handler)
-    shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
+    shape = sso.FormShape("POST", sso.ORIGIN, "/logon.svc/logon",
                           ("login", "password"), True)
     client._inspected_form_shapes = (shape,)
     client._login_inspected = True
@@ -101,7 +101,7 @@ def test_post_30x_is_not_followed():
                 explicit_consent=True)
         assert answer.status == 302
         assert not answer.authentication_verified
-        assert seen == ["/logon"]
+        assert seen == ["/logon.svc/logon"]
     finally:
         client.close()
 
@@ -112,7 +112,7 @@ def test_post_failure_not_retried():
         sent.append(request.method)
         raise httpx.ConnectError("PRIVATE-SYNTHETIC", request=request)
     client = mock(handler)
-    shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
+    shape = sso.FormShape("POST", sso.ORIGIN, "/logon.svc/logon",
                           ("login", "password"), True)
     client._inspected_form_shapes = (shape,)
     client._login_inspected = True
@@ -128,7 +128,7 @@ def test_post_failure_not_retried():
 def test_large_body_refused_without_trusting_content_length():
     client = mock(lambda request: httpx.Response(
         200, headers={"Content-Type": "application/json"}, content=b"x" * 66000))
-    shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
+    shape = sso.FormShape("POST", sso.ORIGIN, "/logon.svc/logon",
                           ("login", "password"), True)
     client._inspected_form_shapes = (shape,)
     client._login_inspected = True
@@ -142,7 +142,7 @@ def test_large_body_refused_without_trusting_content_length():
 
 def test_reject_forged_form_even_when_fields_match():
     client = mock(lambda request: pytest.fail("Unexpected HTTP request"))
-    shape = sso.FormShape("POST", sso.ORIGIN, "/logon", ("login", "password"), True)
+    shape = sso.FormShape("POST", sso.ORIGIN, "/logon.svc/logon", ("login", "password"), True)
     try:
         with pytest.raises(sso.SsoProtocolError, match="schema_unqualified"):
             client.submit_once(shape=shape,
@@ -156,7 +156,7 @@ def test_reject_forged_form_even_when_fields_match():
     ("https://mediatheques.agglo-larochelle.fr/login?service=SYNTHETIC", True),
     ("https://mediatheques.agglo-larochelle.fr/cas/login?service=SYNTHETIC", True),
     ("https://evil.example/login", False),
-    ("https://mediatheques.agglo-larochelle.fr/logon", False),
+    ("https://mediatheques.agglo-larochelle.fr/logon.svc/logon", False),
     ("https://www.biblioaccess.com/1717/Account/Login", False),
 ])
 def test_cas_entry_redirect_allowlist_no_follow(location, ok):
@@ -199,7 +199,7 @@ def test_structurally_equal_but_forged_form_cannot_submit():
         if request.method == "GET":
             return httpx.Response(
                 200, headers={"content-type": "text/html"},
-                text='<form method="POST" action="/logon">'
+                text='<form method="POST" action="/logon.svc/logon">'
                      '<input name="login"><input type="password" name="password">'
                      '</form>')
         pytest.fail("No POST for a fabricated form")

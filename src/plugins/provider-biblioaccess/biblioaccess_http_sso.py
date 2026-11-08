@@ -18,7 +18,7 @@ from urllib.parse import urljoin, urlsplit
 ORIGIN = "https://mediatheques.agglo-larochelle.fr"
 BIBLIO_ORIGIN = "https://www.biblioaccess.com"
 LOGIN_PATH = "/login"
-LOGON_PATH = "/logon"
+LOGON_PATH = "/logon.svc/logon"
 CAS_PATH = "/cas/login"
 ACCOUNT_PATH = "/1409/Account/Login"
 LOANS_PATH = "/1409/Catalog/MyLoans"

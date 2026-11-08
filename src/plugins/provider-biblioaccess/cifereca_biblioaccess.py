@@ -64,7 +64,7 @@ DESCRIPTOR = ProviderDescriptor(
     # This flag does not authorize an interactive browser in the provider.
     interactive_authentication=True,
     notes=(
-        "SSO CAS institutionnel via futur client HTTP du provider ; POST /logon non qualifié.",
+        "SSO CAS institutionnel via futur client HTTP du provider ; POST /logon.svc/logon non qualifié.",
         "Aucune recherche, synchronisation de prêts ni acquisition disponible dans ce prototype.",
     ),
 )

@@ -49,25 +49,25 @@ expurgées, **ni** l'authentification, **ni** un runtime ADEPT.
 Browser Recorder est une exception technique explicite et indépendante.
 
 `biblioaccess_http_sso.py` qualifie **hors réseau** la forme du futur client
-HTTP : routes institutionnelles `GET /login`, `POST /logon`,
+HTTP : routes institutionnelles `GET /login`, `POST /logon.svc/logon`,
 `GET /cas/login`, retour tenant 1409, classification conservatrice des
 statuts et origines. Il inspecte les formulaires HTML sans lire ni retenir
 la valeur des champs (noms/types uniquement), et produit un diagnostic de
 réponse POST portant sur statut/type/taille, **sans contenu ni clés JSON**.
 Les champs de formulaire synthétiques sont des exemples et ne prouvent
-pas le vrai schéma de `/logon`.
+pas le vrai schéma de `/logon.svc/logon`.
 
 Le module `biblioaccess_http_probe.py` fournit **un client HTTPX de
 qualification** utilisant le broker public `HTTPX_TRANSPORT` :
 GET `/login` borné, inspection de la structure du formulaire, puis **un
-POST `/logon` unique** sous consentement explicite et correspondance exacte
+POST `/logon.svc/logon` unique** sous consentement explicite et correspondance exacte
 des champs transmis, avec redirections désactivées, limites de temps et
 taille, aucun rejeu après échec. Les réponses sont observées uniquement
 sous forme statut/type/taille ; ni ticket CAS ni preuve de session ne sont
 inférés. Le client n'est appelé par aucun parcours de production : le
 provider reste `skeleton` et `connect()` refuse la connexion.
 
-Le vrai schéma `/logon` (en particulier champs cachés et continuation CAS)
+Le vrai schéma `/logon.svc/logon` (en particulier champs cachés et continuation CAS)
 doit encore être qualifié par recapture ciblée ou instrumentation V1 sous
 recette consentie. Les tests HTTPX utilisent seulement un transport fictif.
 Aucun POST réel n'a été effectué.
@@ -87,3 +87,26 @@ sera extrait seulement lors d'une implémentation prouvée pour les deux.
 - **Au plus un POST par instance**, même après HTTP 200, erreur, timeout ou résultat incertain. Recommencer implique un nouveau client et une nouvelle inspection explicite.
 - `inspect_cas_entry()` consulte uniquement `/1409/Account/Login`, **sans suivre la redirection** : elle classe la destination institutionnelle autorisée et ne renvoie ni URL ni ticket de service. HTTP 200 demeure une observation non vérifiée.
 - `connect()` reste refusé avec le code `biblioaccess_http_sso_logon_unqualified` ; aucun navigateur ni droit d'emprunt n'est inféré.
+
+### HAR institutionnel reçu le 08/11/2026 — POST AJAX confirmé
+
+Capture utilisateur privée (1 transaction) : POST HTTPS
+`https://mediatheques.agglo-larochelle.fr/logon.svc/logon`,
+`application/x-www-form-urlencoded`, paramètres URL **noms uniquement**
+`changeUser`, `provider`, `_dc`, corps **noms uniquement** :
+`username`, `password`, `rememberMe`, `captcha`, `captchaCheckValue`.
+Réponse HTTP 200 `application/json`, clés : `errors`, `message`,
+`success`, `d`. Deux `Set-Cookie` observés, sans reproduction des
+noms/valeurs ; aucun 302 immédiatement attaché au POST.
+
+`biblioaccess_ajax_logon.py` encode cette forme AJAX et propose un POST
+HTTPX **explicite et unique**, sans navigateur, avec `X-Requested-With`,
+limites réseau et réponse JSON structurelle. Les champs dynamiques,
+notamment `captchaCheckValue`, doivent provenir d'un parcours courant
+validé : ils ne sont jamais fabriqués ni lus dans la capture. `success=true`
+reste un résultat déclaré par le service, **pas** une authentification
+Core ou une continuation CAS attestée. Le module est encore hors parcours
+`connect()`, et la capture privée HAR n'est pas versionnée.
+
+Une seule transaction ne prouve pas le GET initial, la récupération de la
+valeur dynamique, la continuation CAS, ni l'identité finale BiblioAccess.
