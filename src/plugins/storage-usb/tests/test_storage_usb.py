@@ -34,3 +34,37 @@ def test_transport_stops_at_core_sink_failure():
         service.write_usb_stage(b"a" * _CHUNK_SIZE + b"tail", append)
     assert error.value.errno == errno.ENOSPC
     assert len(calls) == 1
+
+
+def test_empty_payload_does_not_call_core_sink():
+    service = PLUGIN.activate(None)
+    chunks = []
+    assert service.write_usb_stage(b"", chunks.append) is None
+    assert chunks == []
+
+
+def test_transport_never_retries_a_failed_chunk_or_publishes_itself():
+    service = PLUGIN.activate(None)
+    payload = b"a" * _CHUNK_SIZE + b"b" * _CHUNK_SIZE + b"tail"
+    observed = []
+
+    def interrupted_sink(chunk):
+        observed.append(chunk)
+        if len(observed) == 2:
+            raise InterruptedError(errno.EINTR, "synthetic unplug")
+
+    with pytest.raises(InterruptedError):
+        service.write_usb_stage(payload, interrupted_sink)
+    assert observed == [b"a" * _CHUNK_SIZE, b"b" * _CHUNK_SIZE]
+    assert not hasattr(service, "commit")
+    assert not hasattr(service, "delete")
+
+
+def test_two_independent_device_stages_never_share_chunk_state():
+    service = PLUGIN.activate(None)
+    first, second = [], []
+    service.write_usb_stage(b"1" * (_CHUNK_SIZE + 7), first.append)
+    service.write_usb_stage(b"2" * 3, second.append)
+    assert [len(chunk) for chunk in first] == [_CHUNK_SIZE, 7]
+    assert second == [b"222"]
+    assert b"".join(first) == b"1" * (_CHUNK_SIZE + 7)
