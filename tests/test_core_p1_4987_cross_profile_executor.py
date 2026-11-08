@@ -309,3 +309,23 @@ def test_plugin_reconfiguration_during_claim_cannot_dispatch_provider(
     assert service.storage.loan_borrow_state(
         borrow_claim_key(account, row.notice),
     )["status"] == "blocked"
+
+
+@pytest.mark.parametrize("gate", ["missing", "disabled"])
+def test_per_identity_plugin_admission_must_be_explicit_even_when_globally_enabled(
+    harness, gate,
+):
+    service, account, session, row, preview = setup_borrower(harness)
+    manager = service._plugin_manager
+    if gate == "missing":
+        delattr(manager, "enabled_for_identity")
+    else:
+        manager.enabled_for_identity = lambda *_args: False
+    result = execute(service, row, preview)
+    assert result["status"] == "blocked"
+    assert result["provider_verified"] is False
+    assert result["retry_borrow"] is False
+    assert session.actions == 0
+    assert service.storage.metadata_get(
+        borrow_claim_key(account, row.notice),
+    ) is None
