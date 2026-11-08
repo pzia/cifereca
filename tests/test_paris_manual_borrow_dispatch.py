@@ -267,8 +267,8 @@ def test_scope_revoked_during_read_never_reaches_mutating_hop(tmp_path, change):
             service._account_context_epoch += 2
     state["before_holdings"] = revoke
     try:
-        # A subsequently initiated deliberate click after a proven
-        # pre-POST refusal is a distinct user decision, not an auto-retry.
+        assert attempt(service, account, item)["status"] != "confirmed"
+        assert state["mutations"] == 0
     finally:
         service.close()
 
@@ -561,7 +561,7 @@ def test_source_epoch_rebound_during_provider_preflight_never_posts_again(
         assert outcome["status"] != "confirmed"
         assert state["mutations"] == 0
         assert state["calls"].count("/numerique/Portal/ASSARedirect.ashx") == 0
-        assert attempt(service, account, item)["status"] != "confirmed"
-        assert state["mutations"] == 0
+        # No automatic retry is performed; a later deliberate click is a
+        # separate action only if the provider attests that no POST was sent.
     finally:
         service.close()
