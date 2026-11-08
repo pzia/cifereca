@@ -218,3 +218,36 @@ def test_final_inode_replaced_before_receipt_is_not_adopted(copy):
     assert result.reason == "usb_copy_final_changed"
     assert args["journal"].get(args["consent"].operation_id).receipt is None
     assert final.read_bytes() == args["payload"]
+
+
+@pytest.mark.parametrize("change", [
+    "foreign_profile", "foreign_device", "revoked_copy_right", "payload_changed",
+])
+def test_copy_refuses_changed_exact_scope_or_rights_before_journal(copy, change):
+    """#4984: no reservation or USB bytes on scope/rights/SHA mismatch."""
+    args, managed, observations, _ = copy
+    if change == "foreign_profile":
+        args["consent"] = replace(args["consent"], identity_id="bob")
+    elif change == "foreign_device":
+        args["rights"] = replace(args["rights"], device_id="other-reader")
+    elif change == "revoked_copy_right":
+        args["rights"] = replace(args["rights"], personal_usb_copy_permitted=False)
+    else:
+        args["payload"] = args["payload"] + b"altered"
+    result = supervisor.execute_usb_copy(**args)
+    assert result.status == "blocked"
+    assert result.reason == "usb_copy_request_invalid"
+    assert args["journal"].get(args["consent"].operation_id) is None
+    assert not observations
+    assert list(managed.iterdir()) == []
+
+
+def test_user_rejecting_target_review_never_reserves_or_stages(copy):
+    """#4984: a preview is never an authorization or implicit commit."""
+    args, managed, observations, _ = copy
+    result = supervisor.execute_usb_copy(**(args | {"review_target": lambda: False}))
+    assert result.status == "blocked"
+    assert result.reason == "usb_copy_target_review_refused"
+    assert args["journal"].get(args["consent"].operation_id) is None
+    assert not observations
+    assert list(managed.iterdir()) == []
