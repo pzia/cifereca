@@ -408,6 +408,26 @@ def _shared_catalogue_cover_url(value: Any) -> str | None:
     return public
 
 
+def _shared_catalogue_bibliography(row: SearchResult) -> dict[str, Any]:
+    """Preserve bounded catalogue metadata across profiles, not raw account data.
+
+    Only known bibliographic fields of an admitted exact public catalogue
+    result may cross this projection. Identity is not a read ACL; these fields
+    do not grant a loan, a download or access to credentials.
+    """
+    raw = row.metadata if type(row.metadata) is dict else {}
+    result: dict[str, Any] = {"catalogue_access": "shared_read_only"}
+    for key in (
+        "language", "languages", "original_language", "isbn", "isbns",
+        "series", "collection", "publisher", "subjects", "subject",
+        "genres", "genre", "authors", "contributors", "edition",
+    ):
+        cleaned = _safe_public_search_text(key, raw.get(key))
+        if cleaned is not None:
+            result[key] = cleaned
+    return result
+
+
 def _shared_paris_catalogue_bibliography(row: SearchResult) -> dict[str, Any]:
     """Keep attested catalogue metadata when the reader is not its account owner.
 
@@ -476,7 +496,7 @@ def _shared_numilog_public_row(row: SearchResult) -> SearchResult | None:
         revision_id=None,
         thumbnail_url=_shared_catalogue_cover_url(row.thumbnail_url),
         friendly_url=None,
-        metadata={"catalogue_access": "shared_read_only"},
+        metadata=_shared_catalogue_bibliography(row),
         document_classification=None,
     )
 
@@ -510,7 +530,7 @@ def _shared_kobo_public_row(
         friendly_url=None,
         thumbnail_url=_shared_catalogue_cover_url(row.thumbnail_url),
         revision_id=None,
-        metadata={"catalogue_access": "shared_read_only"},
+        metadata=_shared_catalogue_bibliography(row),
         document_classification=None,
     )
 
