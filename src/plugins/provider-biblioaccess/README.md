@@ -58,10 +58,20 @@ réponse POST portant sur statut/type/taille, **sans contenu ni clés JSON**.
 Les champs de formulaire synthétiques sont des exemples et ne prouvent
 pas le vrai schéma de `/logon`.
 
-L'étape suivante est l'**instrumentation métier explicite dans la V1**
-(ou une recapture ciblée si le POST reste ambigu), puis le client `HTTPX`
-utilisant la surface publique `HTTPX_TRANSPORT`. Ni POST authentifié,
-ni client HTTP live, ni activation de `connect()` ne sont prétendus ici.
+Le module `biblioaccess_http_probe.py` fournit **un client HTTPX de
+qualification** utilisant le broker public `HTTPX_TRANSPORT` :
+GET `/login` borné, inspection de la structure du formulaire, puis **un
+POST `/logon` unique** sous consentement explicite et correspondance exacte
+des champs transmis, avec redirections désactivées, limites de temps et
+taille, aucun rejeu après échec. Les réponses sont observées uniquement
+sous forme statut/type/taille ; ni ticket CAS ni preuve de session ne sont
+inférés. Le client n'est appelé par aucun parcours de production : le
+provider reste `skeleton` et `connect()` refuse la connexion.
+
+Le vrai schéma `/logon` (en particulier champs cachés et continuation CAS)
+doit encore être qualifié par recapture ciblée ou instrumentation V1 sous
+recette consentie. Les tests HTTPX utilisent seulement un transport fictif.
+Aucun POST réel n'a été effectué.
 Aucun Playwright, Chromium, profil ni cookie de navigateur.
 
 Les redirections CAS et une page de prêts HTTP 200 ne constituent pas une
