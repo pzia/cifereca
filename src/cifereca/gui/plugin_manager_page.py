@@ -720,9 +720,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         if d.instantiation == "singleton_public":
             identities = Gtk.MenuButton(label="Identités…")
             identities.set_tooltip_text(
-                "Activer ce catalogue public, indépendamment des comptes privés, pour chaque identité"
-                if d.id == "provider.numilog.catalog"
-                else "Activer ce catalogue pour chaque identité"
+                "Activer ce catalogue public pour chaque identité ; "
+                "cette activation ne confère aucun droit sur les achats ou emprunts."
             )
             identity_popover = Gtk.Popover()
             choices = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
