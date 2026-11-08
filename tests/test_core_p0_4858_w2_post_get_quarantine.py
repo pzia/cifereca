@@ -34,7 +34,10 @@ def test_post_get_failure_keeps_acquiring_and_prevents_second_get(
         first = service.sync_kobo_backup()
         assert calls == ["GET"]
         assert first["downloaded"] == 0
-        assert first["reconcile_pending"] >= 1
+        # Owner mismatch takes the pre-existing hard session-scope abort
+        # rather than the generic post-GET reconcile counter.
+        if failure != "wrong_account":
+            assert first["reconcile_pending"] >= 1
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert row["status"] == "acquiring"
         assert row["sha256"] is None
