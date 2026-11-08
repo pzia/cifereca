@@ -100,3 +100,34 @@ une absence d'image au plugin ; si `observed` mais projection perdue,
 diagnostiquer l'étape de transformation. Le résolveur CoreUI et la hiérarchie
 de couverture locale restent propres au lot #4979, indépendamment du
 balisage source BnF.
+
+
+## P1 #4978 — matrice de diagnostic strictement liée aux sources
+
+`cifereca_bnf_pret_cover_matrix.py` offre un comparateur **en mémoire**
+pour les observations collectées séparément aux étapes `source_card`,
+`provider_loan`, `catalogue`, `search`, `detail`, `library`,
+`borrow_view` et `gtk_image`. Chaque observation porte obligatoirement
+**identité, provider, credential, compte, prêt et ressource exacts** ; une
+évidence d'un autre compte, profil, prêt ou exemplaire est refusée, même si
+un titre ou ISBN coïncident. Les étapes non observées restent `unobserved`,
+jamais converties en `missing` ni en résultat positif.
+
+Les seules transitions diagnostiquées sont des **états explicitement
+observés** à chaque extrémité : carte→Loan, catalogue→Recherche,
+Recherche→Détail, Loan→Emprunts, Bibliothèque→Emprunts, Emprunts→GTK.
+Une miniature locale dans Bibliothèque ne démontre pas que l'URL devait
+figurer sur la carte BnF. Deux déclarations contradictoires deviennent
+`ambiguous`, indépendamment de l'ordre. Le rapport agrégé
+`public_cover_matrix_summary` ne porte que compteurs et codes fermés :
+aucun compte, URL ou titre ; il conclut toujours `rights_verified=False`
+et `supplier_reachability_verified=False`.
+
+La matrice est un **outil de qualification**, pas une instrumentation
+automatique ni une preuve terrain. Les futures mesures CoreUI GTK,
+notamment cache froid/chaud, décodage, annulation et état réellement
+`paintable`, doivent être fournies explicitement par le propriétaire
+CoreUI. Ne pas relier artificiellement deux notices BnF à un même Loan :
+sans clé de provenance complète, conserver le statut inconnu. L'intégration
+au chargeur partagé reste #4979 et la comparaison de vrais prêts sous
+session consentie reste une recette distincte.
