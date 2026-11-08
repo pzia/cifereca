@@ -218,9 +218,17 @@ def inspect_updater_retention_readonly(
     if core_backups_root is not None:
         from .updater_retention_core_backups import inspect_core_preactivation_backups
         core_backups = inspect_core_preactivation_backups(core_backups_root, now=now)
-    coverage = set(core["coverage"]) | set(plugins["coverage"])
-    blockers = set(core["blockers"]) | set(plugins["blockers"])
-    plans = {"core_transactions": core["plan"], "plugin_versions": plugins["plan"]}
+    from .updater_retention_staging import inspect_persistent_staging
+    staging = inspect_persistent_staging(
+        runtime_root, packages_root, core_backups_root=core_backups_root, now=now,
+    )
+    coverage = set(core["coverage"]) | set(plugins["coverage"]) | set(staging["coverage"])
+    blockers = set(core["blockers"]) | set(plugins["blockers"]) | set(staging["blockers"])
+    plans = {
+        "core_transactions": core["plan"],
+        "plugin_versions": plugins["plan"],
+        "known_persistent_staging": staging["plan"],
+    }
     pending = ["persistent_staging", "cross_store_reference_proofs"]
     if backups is not None:
         coverage.update(backups["coverage"])
