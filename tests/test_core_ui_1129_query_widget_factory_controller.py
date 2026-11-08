@@ -402,7 +402,7 @@ def test_search_paris_plugin_absent_or_disabled_is_scoped(
     window.search_controls = controls
     window.service.current_identity = NS(identity_id="alice")
     window.service.catalogue_source_capabilities = lambda identity_id=None: []
-    window.service.config = NS(provider_accounts=lambda provider: [
+    window.service.config = NS(provider_accounts=lambda provider=None: [
         {"provider": "paris", "identity_id": "alice", "enabled": True,
          "credentials": {"password": "PRIVATE_NOT_FOR_DIAGNOSTICS"}},
     ])
