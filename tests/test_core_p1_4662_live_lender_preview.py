@@ -678,3 +678,28 @@ def test_held_lender_choice_revoked_after_positive_fact_refresh(harness):
     assert _click(service, next_preview, next_preview.options[0].option_id,
                   refreshed).status == "current"
     assert session.calls == 0
+
+
+def test_ambiguous_enabled_and_disabled_lender_binding_fails_closed(harness):
+    """A second disabled row cannot be ignored when choosing a lender."""
+    service, account, session = harness
+    original = service.storage.provider_connections
+    exact = original(identity_id="alex")
+    assert len(exact) == 1 and exact[0]["enabled"] is True
+
+    def ambiguous_connections(*, identity_id):
+        rows = original(identity_id=identity_id)
+        if identity_id == "alex":
+            return rows + [{**rows[0], "enabled": False}]
+        return rows
+
+    service.storage.provider_connections = ambiguous_connections
+    try:
+        result = _preview(service, _candidate())
+        assert result.options == ()
+        assert result.status == "none"
+        assert result.rejection_reasons == ("lender_unavailable",)
+        assert session.calls == 0
+        assert service.current_identity.identity_id == "default"
+    finally:
+        service.storage.provider_connections = original
