@@ -312,9 +312,29 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 raise AjaxCasError("cas_loans_already_attempted")
             if self._closed:
                 raise AjaxCasError("cas_client_closed")
+            # The one-shot diagnostic has historically required only the
+            # CAS landing; authenticated repeated reads enforce AJAX proof.
             if not self._cas_landed:
                 raise AjaxCasError("cas_landing_required")
             self._loans_attempted = True
+        return self._read_loans_html()
+
+    def read_authenticated_loans(self) -> CasHttpObservation:
+        """Fresh same-session read after a complete initial CAS+MyLoans flow.
+
+        Must not replay the POST, re-import cookies or follow an SSO redirect.
+        A 200 public/login page without the observed logout form is refused.
+        """
+        with self._cas_lock:
+            if (self._closed or not self._ajax_succeeded
+                    or not self._cas_landed or not self._loans_attempted):
+                raise AjaxCasError("cas_landing_required")
+        observation = self._read_loans_html()
+        if not observation.logout_form_observed:
+            raise AjaxCasError("cas_authenticated_page_unverified")
+        return observation
+
+    def _read_loans_html(self) -> CasHttpObservation:
         try:
             with self.http.stream("GET", LOANS, follow_redirects=False,
                                   headers={"Accept": "text/html"}) as response:

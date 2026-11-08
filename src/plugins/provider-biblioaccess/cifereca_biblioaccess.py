@@ -6,6 +6,8 @@ session transport contract. No network or implicit browser access is attempted.
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import json
 import logging
 from threading import RLock
@@ -14,7 +16,8 @@ from urllib.parse import urlsplit
 from cifereca.plugin_api import (
     ProviderCapabilities, ProviderCapabilityError, ProviderConfigurationError,
     ProviderDescriptor, ProviderPlugin, ProviderSession, CredentialField,
-    AccountOptionField,
+    AccountOptionField, Account, Loan,
+    LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
 )
 
 PROVIDER_ID = "biblioaccess.la-rochelle"
@@ -64,12 +67,21 @@ DESCRIPTOR = ProviderDescriptor(
     # Ready for account configuration and an explicit diagnostic GET only.
     # No login, catalog, loans or acquisition capabilities are published.
     state="ready",
-    capabilities=ProviderCapabilities(),
+    capabilities=ProviderCapabilities(
+        authentication=True, multiple_credentials=True, loans=True,
+    ),
     credential_fields=(
         CredentialField("username", "Identifiant La Rochelle", required=True),
         CredentialField("password", "Mot de passe La Rochelle", secret=True, required=True),
     ),
     account_options=(
+        AccountOptionField(
+            "authenticated_sync", "Synchroniser mes prêts La Rochelle", default="off",
+            help_text="off = aucune authentification automatique. on = consentement "
+                      "explicite par compte : authentification HTTP SSO lors des "
+                      "reconnexions/synchronisations, lecture de MyLoans uniquement. "
+                      "Inventaire partiel : aucune clôture par absence et aucun ACSM "
+                      "téléchargé ou emprunt lancé."),
         AccountOptionField(
             "experimental_http_probe", "Recette HTTP expérimentale", default="off",
             help_text="off = aucun réseau, on = GET seuls ; auto-post = premier POST AJAX "
@@ -99,9 +111,11 @@ DESCRIPTOR = ProviderDescriptor(
     # Suppress the automatic startup sweep until direct HTTP CAS is qualified.
     # This flag does not authorize an interactive browser in the provider.
     interactive_authentication=True,
+    background_authentication_option_key="authenticated_sync",
     notes=(
-        "Recette HTTP GET avec on ; POST AJAX et CAS avec post, paramètres explicites.",
-        "Aucune synchronisation de prêts ni acquisition activée ; résultat jamais connecté.",
+        "Prêts numériques positifs, inventaire partiel, sans clôture par absence.",
+        "authenticated_sync=on requis pour le SSO HTTP en arrière-plan.",
+        "Aucune acquisition, mutation ou livraison ACSM automatique.",
     ),
 )
 
@@ -124,7 +138,8 @@ _HTTP_PROBE_CODES = frozenset((
     "cas_ticket_unverified", "cas_ticket_refused",
     "cas_landing_unverified", "cas_loans_already_attempted",
     "cas_landing_required", "cas_loans_unverified",
-    "cas_loans_structure_unverified",
+    "cas_loans_structure_unverified", "cas_authenticated_page_unverified",
+    "biblioaccess_authenticated_page_unverified",
     "ajax_logon_consent_required", "ajax_logon_shape_mismatch",
     "ajax_logon_credentials_missing", "ajax_logon_challenge_missing",
     "ajax_logon_response_invalid", "ajax_logon_response_type",
@@ -177,6 +192,8 @@ class LaRochelleSession(ProviderSession):
         self._closed = False
         self._attempted = False
         self._last_probe_phase = "not_attempted"
+        self._http = None
+        self._sync_auth_live = False
 
     def _event(self, phase: str, status: str, **facts: Any) -> None:
         # Structured facts are included in the canonical raw journal.
@@ -275,12 +292,16 @@ class LaRochelleSession(ProviderSession):
             if self._closed:
                 raise ProviderConfigurationError("biblioaccess_probe_session_closed")
             mode = self.options.get("experimental_http_probe")
-            if mode not in ("on", "post", "auto-post"):
+            sync_opt_in = self.options.get("authenticated_sync") == "on"
+            if not sync_opt_in and mode not in ("on", "post", "auto-post"):
                 raise ProviderCapabilityError("biblioaccess_probe_opt_in_required")
             # Reject malformed optional script selection before any HTTP.
             # The client separately checks exact membership in the freshly
             # observed HTML; no arbitrary third-party GET is allowed.
-            script_path = self.options.get("experimental_login_script_path", "")
+            script_path = (
+                "" if sync_opt_in else
+                self.options.get("experimental_login_script_path", "")
+            )
             if (type(script_path) is not str or len(script_path) > 256
                     or (script_path and (
                         not script_path.startswith("/")
@@ -290,7 +311,10 @@ class LaRochelleSession(ProviderSession):
                     ))):
                 raise ProviderConfigurationError("biblioaccess_script_path_invalid")
             # Validate all POST inputs BEFORE ANY remote GET. None are invented.
-            query, fields = self._post_payload() if mode == "post" else (None, None)
+            query, fields = (
+                self._post_payload()
+                if mode == "post" and not sync_opt_in else (None, None)
+            )
             if self._attempted:
                 raise ProviderCapabilityError("biblioaccess_probe_already_attempted")
             self._attempted = True
@@ -298,7 +322,8 @@ class LaRochelleSession(ProviderSession):
             # An explicitly requested POST remains a diagnostic, NEVER a successful connect().
             # Do not require actual password values for this pre-auth probe.
             # Independent public C read even if the institution SSO GET fails.
-            self._probe_public_catalogue()
+            if not sync_opt_in:
+                self._probe_public_catalogue()
             client = None
             # Keep the in-flight stage separate from the last completed one.
             active_phase = "entry"
@@ -333,9 +358,12 @@ class LaRochelleSession(ProviderSession):
                 # A second, independently selected GET is opt-in by exact
                 # script path, and only on a previously observed IdP script.
                 # Never log the script source, query, URL or response bytes.
-                script_path = self.options.get("experimental_login_script_path", "")
+                script_path = (
+                "" if sync_opt_in else
+                self.options.get("experimental_login_script_path", "")
+            )
                 selection = "configured" if script_path else ""
-                if not script_path and mode == "on":
+                if not script_path and mode == "on" and not sync_opt_in:
                     script_path = _observed_logon_script(
                         preflight.same_origin_script_paths)
                     if script_path:
@@ -355,12 +383,14 @@ class LaRochelleSession(ProviderSession):
                         executable=False, value_provenance_verified=False,
                         challenge_resolved=False,
                     )
-                if mode in ("post", "auto-post"):
-                    # Exactly one explicitly consented credential POST on this
-                    # client. The query/fields are ephemeral, never journaled.
+                if mode in ("post", "auto-post") or sync_opt_in:
+                    # Exactly one consented credential POST on this client.
+                    # Background auth requires the separately persisted
+                    # authenticated_sync=on; probe remains explicit UI only.
+                    # The query/fields are ephemeral and never journaled.
                     active_phase = "ajax_logon"
                     self._event("ajax_logon", "started", request_method="POST")
-                    if mode == "auto-post":
+                    if mode == "auto-post" or sync_opt_in:
                         answer = client.submit_observed_login_once(
                             username=self.credentials.get("username"),
                             password=self.credentials.get("password"), consent=True)
@@ -392,6 +422,25 @@ class LaRochelleSession(ProviderSession):
                                     page_loan_row_count=getattr(loans, "page_loan_row_count", 0),
                                     page_loan_row_partial_count=getattr(loans, "page_loan_row_partial_count", 0),
                                     logout_form_observed=getattr(loans, "logout_form_observed", False))
+                        if sync_opt_in:
+                            if not getattr(loans, "logout_form_observed", False):
+                                raise ProviderConfigurationError(
+                                    "biblioaccess_authenticated_page_unverified")
+                            # The identity is credential-scoped, not a guessed
+                            # remote borrower ID. The HTTPX jar has no imported
+                            # browser cookies. All account scopes are local.
+                            self._accounts = [Account(
+                                display_name=self.label, unique_id="primary",
+                                is_primary=True, provider_id=PROVIDER_ID,
+                                credential_id=self.credential_id,
+                                provider_label=DESCRIPTOR.display_name,
+                                identity_id="default",
+                            )]
+                            self._http = client
+                            self._sync_auth_live = True
+                            self.connected = True
+                            self._last_probe_phase = "authenticated_partial_inventory"
+                            client = None  # session now owns the one HTTPX jar
             except Exception as exc:
                 # The provider remains disconnected even if the login HTML
                 # cannot be parsed; preserve the exact technical step/code.
@@ -399,7 +448,8 @@ class LaRochelleSession(ProviderSession):
                 from biblioaccess_ajax_logon import AjaxLogonError
                 from biblioaccess_ajax_preflight import LoginPreflightError
                 code = str(exc) if isinstance(
-                    exc, (AjaxCasError, AjaxLogonError, LoginPreflightError)) else ""
+                    exc, (AjaxCasError, AjaxLogonError, LoginPreflightError,
+                          ProviderConfigurationError)) else ""
                 if code not in _HTTP_PROBE_CODES:
                     code = "biblioaccess_probe_http_failure"
                 self._last_probe_phase = code
@@ -409,9 +459,83 @@ class LaRochelleSession(ProviderSession):
             finally:
                 if client is not None:
                     client.close()
-            if mode in ("post", "auto-post"):
+            if sync_opt_in and self.connected:
+                return self.accounts
+            if mode in ("post", "auto-post") or sync_opt_in:
                 raise ProviderCapabilityError("biblioaccess_probe_completed_identity_unverified")
             raise ProviderCapabilityError("biblioaccess_probe_completed_login_not_attempted")
+
+    def _validate_local_account(self, account: Account) -> None:
+        if (not self.connected or not self._sync_auth_live
+                or self._http is None or self._closed
+                or type(account) is not Account
+                or len(self._accounts) != 1 or account is not self._accounts[0]
+                or account.provider_id != PROVIDER_ID
+                or account.credential_id != self.credential_id
+                or account.unique_id != "primary"):
+            raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+
+    def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
+        """Fresh, positive-only digital loans from one live CAS cookie jar.
+
+        No deleted/returned loan is inferred by absence, even on a 200 page
+        with zero rows. A session lost mid-read is revoked before re-use.
+        """
+        with self._lock:
+            self._validate_local_account(account)
+            try:
+                observation = self._http.read_authenticated_loans()
+                if not observation.logout_form_observed:
+                    raise ProviderCapabilityError(
+                        "biblioaccess_authenticated_page_unverified")
+                loan_rows = []
+                for row in observation._loan_rows:
+                    due_local = datetime.strptime(
+                        row.due_at_local, "%d/%m/%Y %H:%M:%S")
+                    # Institution locale France; keep the source string
+                    # separately to avoid treating a naive timestamp as UTC.
+                    due_at = due_local.replace(
+                        tzinfo=ZoneInfo("Europe/Paris")).isoformat()
+                    loan_rows.append(Loan(
+                        id="biblioaccess:1409:" + row.product_ref,
+                        provider="BIBLIOACCESS", medium="digital",
+                        record_id=row.book_id, title=row.title,
+                        due_at=due_at, source_provider=PROVIDER_ID,
+                        source_credential=self.credential_id,
+                        source_account_id=account.unique_id,
+                        identity_id=account.identity_id,
+                        can_return=False, renewable=False, ebook_url=None,
+                        raw={"due_at_local": row.due_at_local,
+                             "acsm_offer_present": row.acsm_offer_present},
+                    ))
+                return LoanInventorySnapshot(
+                    scope=LoanInventoryScope.for_account(account),
+                    loans=tuple(loan_rows), status="partial",
+                    branches=(LoanBranchCoverage(
+                        upstream="biblioaccess", medium="digital",
+                        completeness="partial",
+                        reason_code="inventory_not_exhaustive",
+                    ),),
+                    reason_code="inventory_not_exhaustive",
+                )
+            except Exception:
+                # An exception or expiry voids the account and cookie jar.
+                # Never silently reuse stale loans or fall back to another
+                # identity's source. The next reconnect makes a new client.
+                self.connected = False
+                self._sync_auth_live = False
+                self._accounts = []
+                http, self._http = self._http, None
+                if http is not None:
+                    try:
+                        http.close()
+                    except Exception:
+                        pass
+                raise ProviderCapabilityError(
+                    "biblioaccess_loan_inventory_unavailable") from None
+
+    def loans(self, account: Account) -> list[Loan]:
+        return list(self.loan_inventory_snapshot(account).loans)
 
     def diagnostic_state(self) -> dict[str, Any]:
         with self._lock:
@@ -426,7 +550,13 @@ class LaRochelleSession(ProviderSession):
             self._closed = True
             self.connected = False
             self._accounts = []
-            self.credentials.clear()
+            self._sync_auth_live = False
+            http, self._http = self._http, None
+            try:
+                if http is not None:
+                    http.close()
+            finally:
+                self.credentials.clear()
 
  
 class LaRochellePlugin(ProviderPlugin):

@@ -2,19 +2,19 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.biblioaccess",
-    "version": "0.1.0",
-    "name": "BiblioAccess (recette HTTP expérimentale)",
+    "version": "0.2.0",
+    "name": "La Rochelle BiblioAccess — prêts en lecture seule",
     "publisher": "cifereca",
-    "plugin_api": ">=1.4.1,<2"
+    "plugin_api": ">=1.4.7,<2"
   },
   "plugins": [
     {
       "id": "provider.biblioaccess.la-rochelle",
       "type": "provider.library",
       "entrypoint": "cifereca_biblioaccess:PLUGIN",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "display_name": "La Rochelle — BiblioAccess",
-      "description": "Compte La Rochelle configurable : recette HTTP GET ou POST AJAX/CAS explicite, aucun compte confirmé.",
+      "description": "CAS/SSO HTTP et inventaire numérique partiel de prêts, sur consentement explicite par compte.",
       "priority": 85,
       "enabled_by_default": false,
       "config_schema": {
@@ -23,13 +23,17 @@
         "additionalProperties": false,
         "properties": {}
       },
-      "capabilities": [],
+      "capabilities": [
+        "sync.loans"
+      ],
       "requires": [],
       "recommends": [],
-      "requires_brokers": [],
+      "requires_brokers": [
+        "httpx"
+      ],
       "requires_contracts": [],
       "system_requires": [],
-      "help_text": "Compte La Rochelle : experimental_http_probe=off (aucun réseau), on (GET SSO), post (POST AJAX unique suivi de CAS/MyLoans uniquement si résultat JSON success). Le mode post exige ajax_change_user, ajax_provider, ajax_dc, ajax_remember_me, ajax_captcha (même vide) et ajax_captcha_check_value : saisir leurs valeurs effectivement observées et fraîches, sans les deviner. Le login et le mot de passe du compte ne sont envoyés qu'en mode post. Toutes les étapes sont journalisées comme observations ; le connect() échoue délibérément, aucun droit, emprunt ou téléchargement n'est activé. Ne partager le journal HTTP brut qu'après contrôle explicite des cookies, credentials et tickets."
+      "help_text": "authenticated_sync=off par défaut : aucune connexion automatique. authenticated_sync=on permet au Core la connexion HTTP AJAX/CAS et la lecture des prêts sur le seul compte enregistré. Inventaire partiel (aucune suppression par absence). Aucun emprunt, ACSM, téléchargement ni traitement DRM. La recette expérimentale via Tester ce compte reste distincte."
     }
   ]
 }

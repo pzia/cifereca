@@ -159,6 +159,11 @@ class ProviderDescriptor:
     account_note: tuple[str, str] | None = None
     # Append-only optional API extension: preserve historical positional args.
     borrower_scoped_options: tuple[BorrowerScopedOptionField, ...] = ()
+    # Optional per-credential opt-in for direct HTTP background authentication
+    # of an otherwise-interactive provider. The Core checks only the declared
+    # account option for an exact "on", never infers consent from a password.
+    # A provider MUST implement the connect/session lifecycle itself.
+    background_authentication_option_key: str | None = None
 
 
 class ProviderSession(ABC):
