@@ -60,7 +60,9 @@ DESCRIPTOR = ProviderDescriptor(
     state="skeleton",
     capabilities=ProviderCapabilities(),
     homepage="https://www.biblioaccess.com/1409/",
-    # Suppress the automatic startup sweep until direct HTTP CAS is qualified.\n    # This flag does not authorize an interactive browser in the provider.\n    interactive_authentication=True,
+    # Suppress the automatic startup sweep until direct HTTP CAS is qualified.
+    # This flag does not authorize an interactive browser in the provider.
+    interactive_authentication=True,
     notes=(
         "SSO CAS institutionnel via futur client HTTP du provider ; POST /logon non qualifié.",
         "Aucune recherche, synchronisation de prêts ni acquisition disponible dans ce prototype.",
