@@ -332,18 +332,24 @@ def test_fresh_kobo_right_does_not_turn_legacy_sha_into_b_presence(
         fresh = service.kobo_backup_preview(
             "vault-1", refresh_manifest=True, verify_local_files=verify,
         )
-        # W2 still supplies a mutable reason sink for its internal legacy
-        # execution preflight; do not change that ABI until W2 is migrated.
+        # D2 private confirmation cannot promote an old complete+SHA
+        # to a verified B receipt when public D1 and actual W2 refuse it.
         from cifereca.core.kobo_backup import kobo_backup_preview
 
         internal_reasons = {}
-        internal = kobo_backup_preview(
-            service, "vault-1", refresh_manifest=True, verify_local_files=verify,
-            _item_reasons=internal_reasons,
-        )
-        assert internal_reasons["historical"] == (
-            "already_local_verified" if verify else "already_local_linked"
-        )
+        with monkeypatch.context() as no_legacy_read:
+            no_legacy_read.setattr(
+                kobo_backup, "_observed_backup_artifact",
+                lambda *_a, **_kw: pytest.fail("D2 must not hash old receipt"),
+            )
+            internal = kobo_backup_preview(
+                service, "vault-1", refresh_manifest=True,
+                verify_local_files=verify, _item_reasons=internal_reasons,
+            )
+        assert internal_reasons["historical"] == "needs_reconciliation"
+        assert internal["counts"]["already_local_verified"] == 0
+        assert internal["counts"]["already_local_linked"] == 0
+        assert internal["blocking_items"] == 1
         assert internal["acquisition_authorized"] is False
         assert fresh["counts"]["already_local_linked"] == 0
         assert fresh["counts"]["already_local_verified"] == 0
