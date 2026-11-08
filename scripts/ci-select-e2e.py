@@ -24,7 +24,8 @@ CAPTURE_GTK = ("capture-session-gtk-1366",)
 BOOK_DETAIL = ("book-detail-1300", "book-detail-1366", "book-detail-1600")
 BNF_COVERS = ("bnf-covers-1366",)
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
-CORE = ("search-filter-p0",) + BOOK_DETAIL + ("mainwindow-baseline-1366",
+SEARCH_GTK = ("search-filter-p0", "search-filter-1024")
+CORE = SEARCH_GTK + BOOK_DETAIL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600",) + CAPTURE_GTK + ("startup", "core-navigation") + LLM + MAINT + ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366")
 DIAG = ("diagnostics-1366", "diagnostics-raw-export-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
@@ -57,14 +58,14 @@ DIAG_STATES = ("diagnostics-states-1366", "diagnostics-navigation-1366",
 LOCAL_GUI = {
     "action_layout.py": BOOK_DETAIL,
     "action_widgets.py": BOOK_DETAIL + RECOMMENDATIONS_GTK,
-    "book_facets.py": ("search-filter-p0",) + BOOK_DETAIL,
-    "book_widgets.py": BOOK_DETAIL + ("search-filter-p0",) + RECOMMENDATIONS_GTK + BNF_COVERS,
+    "book_facets.py": SEARCH_GTK + BOOK_DETAIL,
+    "book_widgets.py": SEARCH_GTK + BOOK_DETAIL + RECOMMENDATIONS_GTK + BNF_COVERS,
     "cover_loader.py": BOOK_DETAIL + RECOMMENDATIONS_GTK + BNF_COVERS,
     "cover_preview.py": BOOK_DETAIL,
-    "facet_text.py": ("search-filter-p0",),
-    "query_controls.py": ("search-filter-p0", "core-navigation"),
-    "query_model.py": ("search-filter-p0",) + BOOK_DETAIL + BNF_COVERS,
-    "search_intent.py": ("search-filter-p0",),
+    "facet_text.py": SEARCH_GTK,
+    "query_controls.py": SEARCH_GTK + ("core-navigation",),
+    "query_model.py": SEARCH_GTK + BOOK_DETAIL + BNF_COVERS,
+    "search_intent.py": SEARCH_GTK,
     "settings_ai_actions.py": LLM,
     "settings_ai_section.py": LLM,
     "settings_lifetime.py": LLM,
@@ -84,7 +85,7 @@ PROBES = {
     "e2e/optimizer_handoff_probe.py": OPTIMIZER_GTK,
     "e2e/llm_settings_probe.py": LLM,
     "e2e/maintenance_tools_probe.py": MAINT,
-    "e2e/search_filter_probe.py": ("search-filter-p0",),
+    "e2e/search_filter_probe.py": SEARCH_GTK,
     "e2e/diagnostics_page_probe.py": DIAG_SHARED,
     "e2e/diagnostics_raw_export_probe.py": ("diagnostics-raw-export-1366",),
     "e2e/diagnostics_states_probe.py": DIAG_STATES,
