@@ -150,10 +150,11 @@ def check_home_summary(window, *, later, capture, report, done):
         assert set(dict(choices)) == {"kobo", "numilog", "numilog-catalog", "local"}
         selection_changes = []
         selector = MultiSelect("Source", choices, lambda: selection_changes.append(True))
+        # Route labels are the exact plugin descriptors, not Core brand overrides.
         options = selector.buttons
-        assert options["numilog"].get_label() == "Numilog — Mes achats (compte)"
+        assert options["numilog"].get_label() == "Numilog"
         assert options["numilog-catalog"].get_label() == "Numilog — Catalogue public"
-        assert options["kobo"].get_label() == "Kobo — Catalogue et compte"
+        assert options["kobo"].get_label() == "Kobo"
 
         selector.set_values(("numilog-catalog",))
         assert selector.values() == ("numilog-catalog",)
