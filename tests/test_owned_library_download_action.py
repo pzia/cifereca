@@ -32,7 +32,7 @@ def test_owned_action_presents_exact_plugin_display_name_without_new_authority()
     assert len(submissions) == 1
 
 
-@pytest.mark.parametrize("untrusted_label", ["A\\nPRIVATE", "X" * 81, "  "])
+@pytest.mark.parametrize("untrusted_label", ["A\nPRIVATE", "X" * 81, "  "])
 def test_owned_action_does_not_render_invalid_provider_display_name(untrusted_label):
     _window, actions, calls, submissions, _ = setup_action(
         "kobo", provider_label=untrusted_label
