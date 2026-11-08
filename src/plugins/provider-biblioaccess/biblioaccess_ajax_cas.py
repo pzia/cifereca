@@ -14,7 +14,10 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 import httpx
 
 from biblioaccess_ajax_logon import ObservedAjaxLogonClient, AjaxLogonError
-from biblioaccess_ajax_preflight import inspect_login_preflight, LoginPreflight
+from biblioaccess_ajax_preflight import (
+    inspect_login_preflight, inspect_javascript_evidence,
+    LoginPreflight, JavascriptEvidence,
+)
 
 BIBLIO = "https://www.biblioaccess.com"
 IDP = "https://mediatheques.agglo-larochelle.fr"
@@ -72,6 +75,7 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         self._login_url = None
         self._login_seen = False
         self._preflight = None
+        self._script_attempted = False
         self._entry_attempted = False
         self._cas_attempted = False
         self._loans_attempted = False
@@ -138,6 +142,41 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         if self._closed or self._preflight is None:
             raise AjaxCasError("cas_preflight_unavailable")
         return self._preflight
+
+    def inspect_login_script_once(
+        self, *, path: str, consent: bool,
+    ) -> JavascriptEvidence:
+        """Explicit single GET of an observed, same-origin JS (no execution).
+
+        Only a path already present in the parsed login HTML is admissible.
+        No query values, redirects or script bytes escape the client.
+        """
+        if consent is not True:
+            raise AjaxCasError("cas_script_consent_required")
+        with self._cas_lock:
+            if self._closed:
+                raise AjaxCasError("cas_client_closed")
+            if self._script_attempted:
+                raise AjaxCasError("cas_script_already_attempted")
+            if (self._preflight is None or type(path) is not str
+                    or path not in self._preflight.same_origin_script_paths):
+                raise AjaxCasError("cas_script_unobserved")
+            self._script_attempted = True
+        try:
+            with self.http.stream(
+                "GET", IDP + path, follow_redirects=False,
+                headers={"Accept": "application/javascript, text/javascript"},
+            ) as response:
+                if response.status_code != 200:
+                    raise AjaxCasError("cas_script_unavailable")
+                media = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
+                if media not in ("text/javascript", "application/javascript",
+                                 "application/x-javascript"):
+                    raise AjaxCasError("cas_script_unexpected_content")
+                return inspect_javascript_evidence(
+                    _bounded(response, 128 * 1024).decode("utf-8", errors="strict"))
+        except (httpx.HTTPError, UnicodeError):
+            raise AjaxCasError("cas_script_transport_unavailable") from None
 
     def submit_once(self, *, query: dict[str, str], fields: dict[str, str],
                     consent: bool):
