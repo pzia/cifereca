@@ -1461,7 +1461,12 @@ class ParisProviderSession(ProviderSession):
         snapshot = self.rights_observation_snapshot(account)
         right = snapshot.exact(edition_id, right_id, "loan")
         if right is None or not right.provider_attested:
-            raise ProviderCapabilityError("paris_selected_offer_unobserved")
+            # A failed or incomplete private inventory is not evidence that
+            # this already-attested loan disappeared or was revoked.
+            reason = ("paris_selected_offer_observation_unavailable"
+                      if snapshot.coverage != "complete"
+                      else "paris_selected_offer_unobserved")
+            raise ProviderCapabilityError(reason)
         # State='unknown' is descriptive. The PNB action is independently
         # attested only when the fresh private ListLoans has EbookUrl.
         return replace(snapshot, rights=(right,))
