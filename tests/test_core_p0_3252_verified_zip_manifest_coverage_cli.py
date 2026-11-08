@@ -10,7 +10,7 @@ from zipfile import ZipFile
 
 import pytest
 
-from cifereca.core.kobo_final_verdict_summary import main
+from scripts.kobo_final_verdict_summary import main
 from cifereca.journal_zip_contract import (
     MANIFEST_MEMBER, RAW_MEMBER, README_MEMBER,
     daily_journal_manifest, read_raw_journal_zip,
