@@ -127,7 +127,7 @@ class _ParisFixtureManager:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--width", type=int, choices=(1366, 1600), default=1366)
+    parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), default=1366)
     args = parser.parse_args()
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -307,7 +307,7 @@ def main() -> int:
         def do_activate(self):
             nonlocal window, device
             window = MainWindow(self, core.config, core.library, core.diagnostics)
-            window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
+            window.set_default_size(args.width - 40, {1024: 700, 1366: 780, 1600: 880}[args.width])
             window.present()
             device = X11Input()
             later(600, start_search)
@@ -332,6 +332,24 @@ def main() -> int:
     def capture_stage(stage: str, *, popup: bool = False):
         nonlocal capture
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
+        if args.width == 1024:
+            # An actual 1024x768 Xvfb screen and allocated GTK window, not
+            # a requested window size rendered on a larger display.
+            assert image.size == (1024, 768), (
+                "Recette Search 1024: dimensions physiques X11 non conformes"
+            )
+            allocated_width, allocated_height = window.get_width(), window.get_height()
+            assert 924 <= allocated_width <= 1024, (
+                "Recette Search 1024: fenêtre réelle hors budget horizontal"
+            )
+            assert 500 <= allocated_height <= 768, (
+                "Recette Search 1024: fenêtre réelle hors budget vertical"
+            )
+            result["checks"]["P1_3687_search_real_1024_geometry"] = True
+            result["search_1024_geometry"] = {
+                "display_width": image.width, "display_height": image.height,
+                "window_width": allocated_width, "window_height": allocated_height,
+            }
         path = output / f"{stage}.png"
         image.save(path)
         capture = path
