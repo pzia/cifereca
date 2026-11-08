@@ -1673,14 +1673,14 @@ class LocalInspectionController:
                 selected_right[0] = (
                     case.key if (
                         'rights_without_verified_file' in case.states
-                        or (case.provider == 'paris'
-                            and 'loan_inactive' in case.states)
+                        or 'loan_inactive' in case.states
                     ) else None
                 )
                 selected_provider[0] = case.provider if selected_right[0] else None
                 action_scroll.set_visible(selected_right[0] is not None)
                 pair_prepare.set_label(
-                    'Examiner le prêt (lecture seule)' if case.provider == 'paris'
+                    'Examiner le prêt (lecture seule)'
+                    if ('loan_inactive' in case.states or case.provider == 'paris')
                     else 'Préparer le rattachement'
                 )
                 reset_pair()
