@@ -383,3 +383,20 @@ encodage invalide, HTML invalide et erreur de transport interdisent le POST
 `/logon.svc/logon` sur cette instance. Aucune seconde tentative implicite
 n'est autorisée. L'absence de cette preuve technique ne déclenche aucun
 contournement de challenge ni activation de `connect()`.
+
+
+### Entrée SSO : paramètre `returnUrl` observé sur le clic BiblioAccess
+
+Le clic réel d'authentification sur BiblioAccess 1409 ouvre
+`/1409/Account/Login?returnUrl=https%3A%2F%2Fwww.biblioaccess.com%2F1409%2F`.
+Le GET expérimental utilisait auparavant la route **sans** `returnUrl`.
+Dans la capture Cifereca du 08/11/2026 14:27, ce GET sans query a obtenu
+une redirection 302 vers `/login?service=` (vide), refusée par
+`cas_url_refused`. La valeur de `returnUrl` est désormais fixée à
+la racine exacte du tenant 1409, telle que fournie par le clic utilisateur ;
+elle n'est pas personnalisable et ne sert pas à fabriquer `service`.
+
+**À vérifier après déploiement :** la nouvelle réponse 302 fournit-elle
+un paramètre `service` CAS non vide, de même origine et de tenant exact ?
+Les gardes sur la destination, le service, le POST AJAX et les tickets
+demeurent inchangés ; aucune identité ni capacité de prêt n'est attestée.
