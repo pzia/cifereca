@@ -20,6 +20,10 @@ _OWNED = threading.local()
 _LOCK_NAME = ".cifereca-managed-package-mutation.lock"
 
 
+class PackageMutationLeaseError(RuntimeError):
+    """Closed, non-sensitive package-lock failure."""
+
+
 @contextmanager
 def package_mutation_lease(package_root: Path) -> Iterator[None]:
     """Reentrant within one thread, mutually exclusive across OS processes.
@@ -36,7 +40,7 @@ def package_mutation_lease(package_root: Path) -> Iterator[None]:
             yield
             return
         if parent.is_symlink():
-            raise RuntimeError("package_mutation_directory_unsafe")
+            raise PackageMutationLeaseError("package_mutation_directory_unsafe")
         try:
             import fcntl
             parent.mkdir(parents=True, exist_ok=True)
@@ -46,17 +50,17 @@ def package_mutation_lease(package_root: Path) -> Iterator[None]:
                 0o600,
             )
         except (ImportError, OSError):
-            raise RuntimeError("package_mutation_lock_unavailable") from None
+            raise PackageMutationLeaseError("package_mutation_lock_unavailable") from None
         try:
             file = os.fstat(descriptor)
             if (not stat.S_ISREG(file.st_mode) or file.st_nlink != 1
                     or file.st_uid != os.getuid()
                     or file.st_mode & 0o077):
-                raise RuntimeError("package_mutation_lock_unsafe")
+                raise PackageMutationLeaseError("package_mutation_lock_unsafe")
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
-                raise RuntimeError("package_mutation_busy") from None
+                raise PackageMutationLeaseError("package_mutation_busy") from None
             owned.add(key)
             _OWNED.paths = owned
             try:
