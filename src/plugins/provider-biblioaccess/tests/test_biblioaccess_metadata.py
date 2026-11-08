@@ -79,3 +79,32 @@ def test_oversized_jsonld_does_not_fallback():
 def test_invalid_isbn_is_not_inferred():
     html = '<script type="application/ld+json">{"@type":"Book","name":"X","isbn":"9780000000000"}</script>'
     assert mod.parse_book_metadata(URL, html).isbn13 is None
+
+
+def test_graph_with_exact_item_does_not_select_recommendation():
+    html = """<script type="application/ld+json">
+    {"@graph":[
+      {"@type":"Book","name":"Other book",
+       "url":"https://www.biblioaccess.com/1409/Catalog/Book/999/other"},
+      {"@type":"Book","name":"Correct book",
+       "url":"https://www.biblioaccess.com/1409/Catalog/Book/123/correct"}
+    ]}
+    </script>"""
+    book = mod.parse_book_metadata(URL, html)
+    assert book is not None and book.title == "Correct book"
+    assert book.book_id == "123"
+
+
+def test_ambiguous_book_cards_are_not_the_book_detail():
+    html = """<script type="application/ld+json">
+    [{"@type":"Book","name":"A"},{"@type":"Book","name":"B"}]
+    </script>"""
+    assert mod.parse_book_metadata(URL, html) is None
+
+
+def test_wrong_tenant_structured_book_does_not_attach_to_page():
+    html = """<script type="application/ld+json">
+    {"@type":"Book","name":"Foreign",
+     "url":"https://www.biblioaccess.com/1717/Catalog/Book/123/foreign"}
+    </script>"""
+    assert mod.parse_book_metadata(URL, html) is None
