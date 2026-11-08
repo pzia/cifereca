@@ -41,21 +41,11 @@ def remember_import(service, result, scope):
 
 
 def display_links(storage, placements, local_keys):
-    """Only exact, unambiguous SQLite links; no filesystem/provider work."""
-    candidates = {}
-    by_path = {p.get('path'): p for p in placements}
-    for row in storage.acquisitions(provider_id='manual', status='complete'):
-        meta = row.get('metadata') or {}
-        scope = meta.get('bnf_observed_loan')
-        key = scope_key(scope)
-        if (not key or row.get('identity_id') != key[0] or row.get('entitlement_id')
-                or row.get('strategy') != 'manual_acsm'):
-            continue
-        placement = by_path.get(meta.get('path'), {})
-        artifact = row.get('artifact_id')
-        local_key = local_keys.get((placement.get('placement_id'), artifact))
-        if (local_key and placement.get('identity_id') == key[0]
-                and placement.get('provider_id') == 'bnf-pret'
-                and placement.get('artifact_id') == artifact):
-            candidates.setdefault(key, set()).add(local_key)
-    return {scope: next(iter(keys)) for scope, keys in candidates.items() if len(keys) == 1}
+    """BnF observed-loan hints are read-only, never ownership or receipt."""
+    from .local_import_display_links import observed_import_display_links
+    return observed_import_display_links(
+        storage, placements, local_keys,
+        provenance_field='bnf_observed_loan',
+        placement_provider_id='bnf-pret',
+        validate_scope=scope_key,
+    )
