@@ -59,6 +59,20 @@ def _directory_chain_unchanged(
         os.close(current)
 
 
+def _selected_root_unchanged(root: Path, root_fd: int, flags: int) -> bool:
+    """Check the selected path still names the pinned directory, not its replacement."""
+    try:
+        reopened = os.open(root, flags)
+    except OSError:
+        return False
+    try:
+        original = os.fstat(root_fd)
+        current = os.fstat(reopened)
+        return (original.st_dev, original.st_ino) == (current.st_dev, current.st_ino)
+    finally:
+        os.close(reopened)
+
+
 def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbFileObservation, ...]:
     """Hash explicit regular files under a caller-selected managed root.
 
@@ -130,6 +144,7 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
                     or size != before.st_size
                     or (linked.st_dev, linked.st_ino) != (before.st_dev, before.st_ino)
                     or not _directory_chain_unchanged(root_fd, tuple(chain), flags)
+                    or not _selected_root_unchanged(root, root_fd, flags)
                 ):
                     result.append(UsbFileObservation(path, "unverified"))
                 else:
