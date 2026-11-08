@@ -7,7 +7,6 @@ No provider session is marked connected; a POST 200 is unverified evidence.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import time
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 
@@ -17,6 +16,15 @@ from biblioaccess_http_sso import (
 )
 
 _MAX_RESPONSE_BYTES = 65536
+
+
+def _bounded_body(response, limit):
+    result = bytearray()
+    for chunk in response.iter_bytes():
+        if len(result) + len(chunk) > limit:
+            raise SsoProtocolError("sso_response_limit")
+        result.extend(chunk)
+    return bytes(result)
 _ALLOWED_CONTENT_TYPES = frozenset((
     "application/json", "text/html", "application/xhtml+xml",
 ))
@@ -61,9 +69,7 @@ class BiblioAccessHTTPQualification:
                 media = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise SsoProtocolError("sso_unexpected_content")
-                body = response.read()
-                if len(body) > 256000:
-                    raise SsoProtocolError("sso_html_limit")
+                body = _bounded_body(response, 256000)
                 return inspect_login_forms(
                     ORIGIN + "/login", body.decode("utf-8", errors="strict"))
         except (httpx.HTTPError, UnicodeError):
@@ -93,7 +99,7 @@ class BiblioAccessHTTPQualification:
                 headers={"Accept": "application/json, text/html"},
                 follow_redirects=False,
             ) as response:
-                body = response.read()
+                body = _bounded_body(response, _MAX_RESPONSE_BYTES)
                 observed = logon_response_shape(
                     status=response.status_code,
                     content_type=response.headers.get("content-type", ""),
