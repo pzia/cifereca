@@ -113,18 +113,30 @@ def present_cross_profile_lender_choice(
         return False
     token = object()
     window._cross_profile_borrow_pending = token
+    stage = {"value": "choose"}
 
     def release() -> None:
+        stage["value"] = "done"
         if getattr(window, "_cross_profile_borrow_pending", None) is token:
             window._cross_profile_borrow_pending = None
 
     def submit(option_id: str) -> None:
+        if (stage["value"] != "confirm"
+                or getattr(window, "_cross_profile_borrow_pending", None)
+                    is not token):
+            return
+        # Mark submitted *before* scheduling: duplicate GTK response
+        # callbacks cannot schedule two workers from the same consent.
+        stage["value"] = "submitted"
         if not selection_current(option_id):
             release()
             return
 
         def work():
-            if not selection_current(option_id):
+            if (stage["value"] != "submitted"
+                    or getattr(window, "_cross_profile_borrow_pending", None)
+                        is not token
+                    or not selection_current(option_id)):
                 return {"status": "blocked", "reason_code": "lender_scope_revoked"}
             return execute(
                 captured_preview=preview, selected_option_id=option_id,
@@ -181,6 +193,11 @@ def present_cross_profile_lender_choice(
                 )
 
     def confirm(option_id: str) -> None:
+        if (stage["value"] != "choose"
+                or getattr(window, "_cross_profile_borrow_pending", None)
+                    is not token):
+            return
+        stage["value"] = "confirm"
         if not selection_current(option_id):
             release()
             return
@@ -194,6 +211,8 @@ def present_cross_profile_lender_choice(
         dialog.add_response("borrow", "Emprunter sur ce profil")
 
         def answer(_dialog, response_id):
+            if stage["value"] != "confirm":
+                return
             if response_id != "borrow":
                 release()
                 return
@@ -203,6 +222,8 @@ def present_cross_profile_lender_choice(
         dialog.present()
 
     def selected(_dialog, response_id):
+        if stage["value"] != "choose":
+            return
         if response_id == "cancel":
             release()
             return
