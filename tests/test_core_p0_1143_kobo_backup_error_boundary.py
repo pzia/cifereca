@@ -62,7 +62,7 @@ def test_kobo_vault_failure_is_typed_in_logs_and_constant_in_sqlite(
         assert "http_status=403" in failures[0]
         for private in (SECRET, SIGNED, ITEM, TITLE, "vault-1", "default"):
             assert private not in failures[0]
-        assert SECRET not in saved["error"]
+        assert SECRET not in json.dumps(saved)
     finally:
         service.close()
 
