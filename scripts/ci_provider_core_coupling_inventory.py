@@ -7,10 +7,17 @@ from __future__ import annotations
 
 import argparse
 import ast
+from collections import Counter
 import json
 from pathlib import Path
 
-DEFAULT_PROVIDERS = ("kobo", "bnf", "bnf-pret", "bnf-catalogue", "numilog")
+DEFAULT_PROVIDERS = (
+    "kobo", "bnf", "bnf-pret", "bnf-catalogue", "numilog", "paris",
+    # Package IDs and legacy spelling variants are real routing aliases,
+    # not neutral capabilities. No partial/substring matches for literals.
+    "provider-kobo", "provider-numilog", "provider-bnf-pret",
+    "provider-bnf-catalogue", "provider-paris", "bnf_pret", "bnf_catalogue",
+)
 
 
 def _provider_literal(node: ast.AST, providers: set[str]) -> str | None:
@@ -21,23 +28,58 @@ def _provider_literal(node: ast.AST, providers: set[str]) -> str | None:
     return None
 
 
+def _immutable_provider_constants(tree: ast.Module, providers: set[str]) -> dict[str, str]:
+    """Identify unambiguous MODULE constants, never execute source code.
 
-def _literal_providers(node: ast.AST, providers: set[str]) -> set[str]:
+    Only ALL_CAPS simple assignments with one write anywhere in the AST are
+    eligible. A local shadow/reassignment invalidates the entire binding.
+    Dynamic or imported values are intentionally ignored.
+    """
+    writes: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            writes[node.id] += 1
+        elif isinstance(node, ast.arg):
+            writes[node.arg] += 1
+    constants: dict[str, str] = {}
+    for stmt in tree.body:
+        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)):
+            name, value = stmt.targets[0].id, stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            name, value = stmt.target.id, stmt.value
+        else:
+            continue
+        if not name.isupper() or writes[name] != 1 or value is None:
+            continue
+        provider = _provider_literal(value, providers)
+        if provider is not None:
+            constants[name] = provider
+    return constants
+
+
+def _literal_providers(
+    node: ast.AST, providers: set[str], constants: dict[str, str] | None = None,
+) -> set[str]:
     """Bounded static ID alternatives, never evaluate expressions or calls."""
+    constants = constants or {}
     direct = _provider_literal(node, providers)
+    if direct is None and isinstance(node, ast.Name):
+        direct = constants.get(node.id)
     if direct is not None:
         return {direct}
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return {value for item in node.elts
-                if (value := _provider_literal(item, providers)) is not None}
+        return set().union(*(_literal_providers(item, providers, constants) for item in node.elts))
     return set()
 
 
-def _match_providers(pattern: ast.pattern, providers: set[str]) -> set[str]:
+def _match_providers(
+    pattern: ast.pattern, providers: set[str], constants: dict[str, str],
+) -> set[str]:
     if isinstance(pattern, ast.MatchValue):
-        return _literal_providers(pattern.value, providers)
+        return _literal_providers(pattern.value, providers, constants)
     if isinstance(pattern, ast.MatchOr):
-        return set().union(*(_match_providers(part, providers) for part in pattern.patterns))
+        return set().union(*(_match_providers(part, providers, constants) for part in pattern.patterns))
     return set()
 
 
@@ -45,6 +87,19 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     """Report imports of implementations and comparisons to concrete provider IDs."""
     tree = ast.parse(content)
     names = set(providers)
+    constants = _immutable_provider_constants(tree, names)
+    # Track actual importlib bindings before accepting dynamic module loading.
+    importlib_names: set[str] = set()
+    import_module_names: set[str] = set()
+    for stmt in ast.walk(tree):
+        if isinstance(stmt, ast.Import):
+            for alias in stmt.names:
+                if alias.name == "importlib":
+                    importlib_names.add(alias.asname or alias.name)
+        elif isinstance(stmt, ast.ImportFrom) and stmt.module == "importlib":
+            for alias in stmt.names:
+                if alias.name == "import_module":
+                    import_module_names.add(alias.asname or alias.name)
     # Import names are Python identifiers; provider IDs may contain hyphens.
     import_names = {name for name in names if name.isidentifier()}
     imports: list[dict[str, object]] = []
@@ -64,6 +119,24 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             modules = [stem] if is_provider_module else [
                 stem + "." + alias.name for alias in node.names
             ]
+        elif isinstance(node, ast.Call):
+            # Closed set: importlib.import_module, its explicitly imported
+            # aliases, and Python's built-in __import__. No generic getattr
+            # or arbitrary function with an import-like name.
+            fn = node.func
+            dynamic = (
+                isinstance(fn, ast.Name)
+                and (fn.id == "__import__" or fn.id in import_module_names)
+            ) or (
+                isinstance(fn, ast.Attribute) and fn.attr == "import_module"
+                and isinstance(fn.value, ast.Name)
+                and fn.value.id in importlib_names
+            )
+            modules = (
+                [node.args[0].value]
+                if dynamic and node.args and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str) else []
+            )
         else:
             modules = []
         for module in modules:
@@ -75,13 +148,13 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
         if isinstance(node, ast.Compare):
             values = [node.left, *node.comparators]
             matches = sorted(set().union(*(
-                _literal_providers(value, names) for value in values
+                _literal_providers(value, names, constants) for value in values
             )))
             if matches:
                 dispatches.append({"line": node.lineno, "providers": matches})
         if isinstance(node, ast.Match):
             for case in node.cases:
-                matched = sorted(_match_providers(case.pattern, names))
+                matched = sorted(_match_providers(case.pattern, names, constants))
                 if matched:
                     dispatches.append({"line": case.pattern.lineno, "providers": matched})
     return {"imports": sorted(imports, key=lambda x: x["line"]),
