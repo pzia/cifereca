@@ -37,6 +37,16 @@ SCENARIOS = {
         ),
         "runner": "gtk-probe",
     },
+    "search-filter-1024": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": (
+            "P1 #3687/#774 : même vraie Recherche GTK/XTEST à 1024x768 "
+            "physiques ; cinq popovers, frappe, scroll, identité et droits isolés."
+        ),
+        "runner": "gtk-probe",
+        "width": 1024, "height": 768,
+    },
     "book-detail-1300": {
         "plugin": "core",
         "fixture": "search-filters",
@@ -560,10 +570,17 @@ def main() -> int:
                     *(["--geometry-1300"] if scenario.get("geometry_1300") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
+                # Keep the existing P0 baseline's 1280x1024 display stable.
+                # The additional P1 acceptance runs in a physically smaller
+                # Xvfb, and the probe asserts actual screen/window geometry.
+                narrow = scenario.get("width") == 1024
                 command = [
-                    xvfb, "-a", "-s", "-screen 0 1280x1024x24",
+                    xvfb, "-a", "-s",
+                    ("-screen 0 1024x768x24" if narrow
+                     else "-screen 0 1280x1024x24"),
                     args.python, str(ROOT / "e2e/search_filter_probe.py"),
                     "--out", str(scenario_dir),
+                    *(["--width", "1024"] if narrow else []),
                 ]
             else:
                 command = [
@@ -629,6 +646,58 @@ def main() -> int:
                                     width, height = item.get("width"), item.get("height")
                                     if type(width) is int and type(height) is int and 0 <= width <= 5000 and 0 <= height <= 5000:
                                         print(f"UX611_NUMERIC {route}.{family}={width}x{height}", flush=True)
+                # P1 #3687: closed diagnostic for the *synthetic* Search
+                # 1024 variant only; no query, account, title or raw traceback.
+                if name == "search-filter-1024" and report_data.get("status") != "PASS":
+                    allowed_search_phases = frozenset({
+                        "setup", "start", "focus", "type", "results", "scroll",
+                        "baseline", "geometry", "filter_0", "filter_1",
+                        "filter_2", "filter_3", "filter_4", "filter_5",
+                        "post_filters", "continuation",
+                    })
+                    search_stage = report_data.get("p1_3687_phase")
+                    if type(search_stage) is str and search_stage in allowed_search_phases:
+                        print("P1_3687_CLOSED_FAILURE_STAGE=" + search_stage, flush=True)
+                    search_line = report_data.get("p1_3687_probe_line")
+                    if type(search_line) is int and 1 <= search_line <= 1100:
+                        print("P1_3687_PROBE_LINE=" + str(search_line), flush=True)
+                    search_geometry = report_data.get("search_1024_geometry")
+                    search_keys = frozenset({
+                        "display_width", "display_height",
+                        "window_width", "window_height",
+                    })
+                    if (type(search_geometry) is dict
+                            and set(search_geometry) == search_keys
+                            and all(type(search_geometry[k]) is int
+                                    and 0 <= search_geometry[k] <= 4096
+                                    for k in search_keys)):
+                        for key in sorted(search_keys):
+                            print("P1_3687_NUMERIC_" + key + "=" +
+                                  str(search_geometry[key]), flush=True)
+                    # Only our fixed widget IDs and numeric GTK measurements
+                    # from the synthetic 1024px probe may reach Actions.
+                    # The probe may retain richer local debugging state, but
+                    # no widget text, titles, query or account IDs are output.
+                    widths = report_data.get("p1_3687_minimum_widths")
+                    width_keys = frozenset({
+                        "shell_header", "header_controls", "identity_dropdown",
+                        "account_dropdown", "statistics_button", "sidebar",
+                        "view_stack", "search_page", "search_controls",
+                        "search_detail",
+                    })
+                    if (type(widths) is dict and set(widths) == width_keys
+                            and all(type(widths[k]) in (tuple, list)
+                                    and len(widths[k]) == 3
+                                    and all(type(v) is int and 0 <= v <= 4096
+                                            for v in widths[k])
+                                    for k in width_keys)):
+                        for key in sorted(width_keys):
+                            minimum, natural, allocated = widths[key]
+                            print(
+                                f"P1_3687_WIDTH_{key}="
+                                f"{minimum}/{natural}/{allocated}",
+                                flush=True,
+                            )
                 # #774: export only closed phase codes and bounded numeric
                 # XTEST geometry for the synthetic Recommendations probe.
                 # Raw exceptions, search text and GTK widget labels stay local.
