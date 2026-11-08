@@ -32,5 +32,5 @@ def test_invalid_alias_is_not_reinterpreted_as_a_permission_or_global_timeout(tm
          "options": {"timeout_seconds": "not-a-number"}},
         {"id": "two", "provider": "future-store", "options": {}},
     ])
-    assert config.request_timeout_seconds("future-store", "one") != 27.0
+    assert config.request_timeout_seconds("future-store", "one") == 25.0
     assert config.request_timeout_seconds("future-store", "two") == 27.0
