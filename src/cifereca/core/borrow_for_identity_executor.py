@@ -178,22 +178,20 @@ def execute_cross_profile_borrow(
                 or loan.identity_id != account.identity_id
                 or loan.source_provider != account.provider_id
                 or loan.source_credential != account.credential_id
-                # The string "primary" is a Paris PNB borrower alias,
-                # never a generic substitute for a supplier account ID.
+                # Account aliases are validated against an explicitly
+                # primary *empty-ID* account only. The provider is solely
+                # responsible for attesting the authoritative borrower.
                 or loan.source_account_id not in (
                     {account.unique_id, "primary"}
-                    if account.provider_id == "paris"
-                    and account.unique_id == "" and account.is_primary is True
+                    if account.unique_id == "" and account.is_primary is True
                     else {account.unique_id}
                 )
                 or loan.record_id != notice.record_id
                 or loan.provider != notice.docbase
                 or loan.medium != "digital"
-                # The generic BnF contract attests an ACTIVE loan. Paris
-                # returns supplier-native states, but not a closed loan.
-                or (account.provider_id != "paris" and loan.state != "active")
-                or (account.provider_id == "paris"
-                    and loan.state in ("returned", "expired", "inactive"))
+                # Provider-native states may be numeric; do not invent an
+                # active state from HTTP success or accept explicit closure.
+                or loan.state in ("returned", "expired", "inactive")
                 or type(loan.id) is not str or not loan.id):
             raise ValueError("unverified_lender_loan")
         finished = service.storage.loan_borrow_finish(
