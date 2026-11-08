@@ -466,6 +466,7 @@ class TaskRunner:
                     "Ne réempruntez pas : actualisez vos prêts ultérieurement."
                     if (trace_kind == "borrow" and business_status == "pending"
                         and kind_outcome == "ok" and type(payload) is dict
+                        and payload.get("status") == "verification_unavailable"
                         and payload.get("reason_code") == "borrow_result_unverified")
                     else "Emprunt non confirmé — vérification nécessaire"
                     if trace_kind == "borrow" and business_status == "pending"
