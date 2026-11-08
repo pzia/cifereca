@@ -99,6 +99,8 @@ de prêt. Cf. `docs/CORE-P1-4093-GUI-CAPTURE.md`.
 Paris/ADEPT ; `kobo-audit` et `kobo-resume-preview` sont les entrées Kobo
 historiques. Ces noms ne créent pas de deuxième moteur générique de Sync.
 
+**Analyseur externe Kobo (#3252, script hors Core)** : `scripts/kobo_final_verdict_summary.py` (O — lecture locale uniquement). Depuis la racine du dépôt, lancer `python -m scripts.kobo_final_verdict_summary CHEMIN-PRIVE.zip` pour extraire les compteurs fermés des rejets finaux. N'ouvre pas le Core, ne modifie aucune donnée, ne déclenche aucune connexion ni acquisition et ne publie aucun contenu brut du ZIP. Le dossier `scripts/` ne fait pas partie du package Core installable.
+
 ## Expert : réconciliation de bibliothèque hors réseau
 
 **Point d'entrée Core non installé comme commande shell :**
