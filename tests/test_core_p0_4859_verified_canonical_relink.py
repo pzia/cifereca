@@ -555,3 +555,177 @@ def test_offline_cli_selects_canonical_loan_kind_without_core_start(
     assert done["rights_mutations"] == 0
     assert _unchanged(store) == immutable
     assert store.placement_get(published.placement_id)["path"] == str(moved)
+
+
+def test_exact_journal_undo_relinks_only_after_physical_return(published):
+    """W4/D5: undo is a new attested reverse placement, never v0.7 rewind."""
+    store, original, moved, args, _source, _completed = published
+    unchanged = _unchanged(store)
+    original.rename(moved)
+    forward = relink(store, **args)
+    done = relink(store, **args, confirmation=forward["plan_token"])
+    operation = done["operation_id"]
+    assert len(operation) == 64
+    assert _unchanged(store) == unchanged
+
+    # A SQL-only undo would strand B while its actual bytes remain at moved.
+    with pytest.raises(CanonicalRelinkRejected):
+        relink(
+            store, **{**args, "new_path": original},
+            undo_operation=operation,
+        )
+    assert store.placement_get(args["placement_id"])["path"] == str(moved)
+    moved.rename(original)
+    before_preview = _read(store, "placements")
+    reverse = relink(
+        store, **{**args, "new_path": original},
+        undo_operation=operation,
+    )
+    assert reverse["status"] == "preview"
+    assert reverse["changed"] == 0
+    assert _read(store, "placements") == before_preview
+    # A normal reverse token cannot be used for a journal-bound undo.
+    plain = relink(store, **{**args, "new_path": original})
+    assert plain["plan_token"] != reverse["plan_token"]
+    with pytest.raises(
+        CanonicalRelinkRejected, match="canonical_relink_plan_changed",
+    ):
+        relink(
+            store, **{**args, "new_path": original},
+            undo_operation=operation, confirmation=plain["plan_token"],
+        )
+    assert _read(store, "placements") == before_preview
+    finished = relink(
+        store, **{**args, "new_path": original},
+        undo_operation=operation, confirmation=reverse["plan_token"],
+    )
+    assert finished["status"] == "relinked"
+    assert finished["changed"] == 1
+    assert finished["legacy_backup_mutations"] == 0
+    assert finished["rights_mutations"] == 0
+    assert finished["file_mutations"] == 0
+    assert store.placement_get(args["placement_id"])["path"] == str(original)
+    assert original.read_bytes() == BYTES and not moved.exists()
+    assert _unchanged(store) == unchanged
+    with store._lock, store._connect() as db:
+        journals = [
+            json.loads(record) for (record,) in db.execute(
+                "SELECT value FROM metadata WHERE key LIKE "
+                "'core.kobo.canonical-placement-relink.%'"
+            )
+        ]
+    assert len(journals) == 2
+    assert any(row.get("undo_of") == operation for row in journals)
+    assert sum(row.get("undo_of") is None for row in journals) == 1
+
+    # Stale undo is consumed by the reverse placement and cannot be replayed.
+    with pytest.raises(CanonicalRelinkRejected):
+        relink(
+            store, **{**args, "new_path": original},
+            undo_operation=operation, confirmation=reverse["plan_token"],
+        )
+
+
+@pytest.mark.parametrize("tamper", (
+    "wrong_operation", "changed_source", "changed_origin", "changed_placement",
+    "same_sha_new_inode", "duplicate_json_field",
+))
+def test_journal_undo_rejects_rebound_right_or_file_without_mutation(
+    published, tamper,
+):
+    store, original, moved, args, source, completed = published
+    original.rename(moved)
+    forward = relink(store, **args)["plan_token"]
+    operation = relink(store, **args, confirmation=forward)["operation_id"]
+    moved.rename(original)
+    if tamper == "wrong_operation":
+        operation = "f" * 64
+    elif tamper == "changed_source":
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE source_references SET evidence_ref='changed-provider-evidence'"
+            )
+    elif tamper == "changed_origin":
+        with store._lock, store._connect() as db:
+            db.execute("DELETE FROM origin_links WHERE origin_kind='provider'")
+    elif tamper == "changed_placement":
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE placements SET last_seen_at=last_seen_at+1 "
+                "WHERE placement_id=?", (args["placement_id"],),
+            )
+    elif tamper == "same_sha_new_inode":
+        plan = relink(
+            store, **{**args, "new_path": original},
+            undo_operation=operation,
+        )["plan_token"]
+        replacement = original.with_name("same-content.pdf")
+        replacement.write_bytes(BYTES)
+        os.replace(replacement, original)
+    else:
+        with store._lock, store._connect() as db:
+            key = "core.kobo.canonical-placement-relink." + operation
+            value = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,),
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE metadata SET value=? WHERE key=?",
+                (value[:-1] + ',"schema":"canonical-relink-replayed"}', key),
+            )
+    before = _read(store, "placements")
+    kwargs = {
+        **args, "new_path": original, "undo_operation": operation,
+    }
+    if tamper == "same_sha_new_inode":
+        kwargs["confirmation"] = plan
+    with pytest.raises(CanonicalRelinkRejected):
+        relink(store, **kwargs)
+    assert _read(store, "placements") == before
+    assert original.read_bytes() == BYTES
+
+
+def test_offline_cli_undo_is_exact_and_does_not_start_core(
+    published, tmp_path, monkeypatch, capsys,
+):
+    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca import cli
+
+    store, original, moved, args, _source, _finished = published
+    profile = _offline(published, tmp_path)
+    monkeypatch.setattr(repair, "config_file", lambda **_kw: profile)
+    monkeypatch.setattr(repair, "database_file", lambda **_kw: store.path)
+    monkeypatch.setattr(
+        cli.CiferecaCore, "open",
+        lambda **_kw: pytest.fail("offline canonical undo may not start Core"),
+    )
+    before = _unchanged(store)
+    common = [
+        "kobo-relink-canonical", "--credential", "vault-1",
+        "--identity", "A", "--account-id", "buyer-A", "--item", "book-1",
+        "--right", "purchase", "--branch", "purchases",
+        "--placement", args["placement_id"],
+    ]
+    original.rename(moved)
+    forward = common + ["--path", str(moved)]
+    assert cli.main(forward) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert cli.main(forward + ["--confirm", preview["plan_token"]]) == 0
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["status"] == "relinked"
+    assert len(applied["operation_id"]) == 64
+    moved.rename(original)
+    undo = common + [
+        "--path", str(original), "--undo", applied["operation_id"],
+    ]
+    assert cli.main(undo) == 0
+    reverse = json.loads(capsys.readouterr().out)
+    assert reverse["status"] == "preview"
+    assert cli.main(undo + ["--confirm", reverse["plan_token"]]) == 0
+    finished = json.loads(capsys.readouterr().out)
+    assert finished["status"] == "relinked"
+    assert store.placement_get(args["placement_id"])["path"] == str(original)
+    assert _unchanged(store) == before
+    assert original.read_bytes() == BYTES
+    public = json.dumps(preview) + json.dumps(applied) + json.dumps(reverse) + json.dumps(finished)
+    for secret in ("vault-1", "buyer-A", "book-1", str(original), str(moved), SHA):
+        assert secret not in public
