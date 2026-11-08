@@ -6,6 +6,7 @@ session transport contract. No network or implicit browser access is attempted.
 from __future__ import annotations
 
 from typing import Any
+from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
@@ -63,11 +64,12 @@ def classify_sso_transition(url: str, status: int) -> str:
 DESCRIPTOR = ProviderDescriptor(
     id=PROVIDER_ID,
     display_name="Médiathèques de La Rochelle",
-    description="Compte lecteur La Rochelle : identification et suivi des prêts numériques.",
-    # Live account and positive-only digital loan inventory; no acquisition.
+    description="Compte lecteur : synchronisation des prêts et téléchargement ADEPT autorisé.",
+    # Live account, positive loans and opt-in automatic ACSM acquisition.
     state="ready",
     capabilities=ProviderCapabilities(
         authentication=True, multiple_credentials=True, loans=True,
+        digital_download=True, opening_loan_auto_acquisition=True,
     ),
     credential_fields=(
         CredentialField("username", "Identifiant de bibliothèque", required=True),
@@ -80,10 +82,11 @@ DESCRIPTOR = ProviderDescriptor(
     account_options=(
         AccountOptionField(
             "authenticated_sync", "Synchronisation des prêts (on/off)", default="off",
-            help_text="on : autorise les connexions SSO et lectures de prêts "
-                      "pour CE compte enregistré. off : désactive toute "
-                      "connexion automatique. Aucun emprunt ni téléchargement "
-                      "ACSM. Les réglages de diagnostic SSO ne sont pas requis.",
+            help_text="on : autorise la connexion SSO, la synchronisation de "
+                      "vos prêts numériques et l'acquisition automatique ACSM "
+                      "des prêts disponibles via votre profil Kobo-Adept. "
+                      "off : aucun SSO ni téléchargement automatique. "
+                      "Vous pouvez retélécharger un prêt au besoin.",
         ),
     ),
     homepage="https://www.biblioaccess.com/1409/",
@@ -93,7 +96,7 @@ DESCRIPTOR = ProviderDescriptor(
     notes=(
         "Prêts numériques positifs, inventaire partiel, sans clôture par absence.",
         "authenticated_sync=on requis pour le SSO HTTP en arrière-plan.",
-        "Aucune acquisition, mutation ou livraison ACSM automatique.",
+        "Téléchargement ACSM des prêts actifs ; fulfillment par Kobo-Adept Core.",
     ),
 )
 
@@ -185,7 +188,7 @@ class LaRochelleSession(ProviderSession):
         # Live inventory events have no need for a local account identifier.
         # It may be user-configured private text. The session scope is
         # verified in memory, not reconstructed from diagnostic payloads.
-        if phase == "loan_inventory":
+        if phase in {"loan_inventory", "acsm_stage"}:
             detail.pop("credential_id", None)
         try:
             if self._diagnostics is not None:
@@ -489,8 +492,11 @@ class LaRochelleSession(ProviderSession):
                         source_account_id=account.unique_id,
                         identity_id=account.identity_id,
                         can_return=False, renewable=False, ebook_url=None,
-                        raw={"due_at_local": row.due_at_local,
-                             "acsm_offer_present": row.acsm_offer_present},
+                        # The Core needs only positive offer presence. Do not
+                        # publish a signed link or attest a downloadable book
+                        # for a row with no ACSM action.
+                        raw=({"acsm_offer_present": True}
+                             if row.acsm_offer_present else {}),
                     ))
                 snapshot = LoanInventorySnapshot(
                     scope=LoanInventoryScope.for_account(account),
@@ -551,6 +557,110 @@ class LaRochelleSession(ProviderSession):
                 raise ProviderCapabilityError(
                     "biblioaccess_loan_inventory_unavailable") from None
 
+    def download_digital(self, loan: Loan, account: Account,
+                         target_dir: Path) -> tuple[Path, str]:
+        """Download a fresh signed ACSM offer for this exact live loan.
+
+        Source URLs never leave the plugin: the second return value is empty.
+        Core handles ADEPT fulfillment into an EPUB/PDF, post-download hooks,
+        local publication, caching and force-refresh when requested.
+        """
+        with self._lock:
+            self._validate_local_account(account)
+            if (type(loan) is not Loan
+                    or loan.source_provider != PROVIDER_ID
+                    or loan.source_credential != self.credential_id
+                    or loan.source_account_id != account.unique_id
+                    or loan.identity_id != account.identity_id
+                    or type(loan.id) is not str
+                    or not loan.id.startswith("biblioaccess:1409:")):
+                raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+            product_ref = loan.id[len("biblioaccess:1409:"):]
+            if not product_ref.isascii() or not product_ref.isdigit():
+                raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+            # Fresh MyLoans GET each time. No reuse prevention: request a
+            # new signed link when redownloading the same active loan.
+            try:
+                observation = self._http.read_authenticated_loans()
+            except Exception:
+                self._last_probe_phase = "acsm_session_failed"
+                self._event(
+                    "acsm_stage", "error", probe="authenticated_sync",
+                    connected=False, stage="myloans_refresh",
+                    error_code="biblioaccess_acsm_session_unavailable",
+                    session_revoked=True,
+                )
+                # Only a loss of the authenticated page revokes the session.
+                # An ACSM delivery 403/429 may be retried with a new offer.
+                self.connected = False
+                self._sync_auth_live = False
+                self._accounts = []
+                client, self._http = self._http, None
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+                raise ProviderCapabilityError(
+                    "biblioaccess_acsm_session_unavailable") from None
+            matches = [
+                row for row in observation._loan_rows
+                if row.product_ref == product_ref
+                and row.book_id == loan.record_id
+                and row.acsm_offer_present
+                and type(row.acsm_url) is str
+            ]
+            if len(matches) != 1:
+                self._event(
+                    "acsm_stage", "warning", probe="authenticated_sync",
+                    connected=True, stage="offer_selection",
+                    error_code="biblioaccess_acsm_offer_unavailable",
+                    session_revoked=False,
+                )
+                raise ProviderCapabilityError(
+                    "biblioaccess_acsm_offer_unavailable")
+            from biblioaccess_acsm_delivery import (
+                stage_loan_acsm, ACSMDeliveryError,
+            )
+            try:
+                path = stage_loan_acsm(matches[0].acsm_url, target_dir)
+            except Exception as exc:
+                allowed = frozenset({
+                    "biblioaccess_acsm_url_invalid",
+                    "biblioaccess_acsm_destination_invalid",
+                    "biblioaccess_acsm_unavailable",
+                    "biblioaccess_acsm_redirect",
+                    "biblioaccess_acsm_denied",
+                    "biblioaccess_acsm_missing",
+                    "biblioaccess_acsm_rate_limited",
+                    "biblioaccess_acsm_remote_error",
+                    "biblioaccess_acsm_body_limit",
+                    "biblioaccess_acsm_transport_unavailable",
+                    "biblioaccess_acsm_structure_invalid",
+                    "biblioaccess_acsm_stage_unavailable",
+                })
+                code = (
+                    exc.args[0] if type(exc) is ACSMDeliveryError
+                    and len(exc.args) == 1 and type(exc.args[0]) is str
+                    and exc.args[0] in allowed
+                    else "biblioaccess_acsm_stage_unavailable"
+                )
+                self._last_probe_phase = "acsm_failed"
+                self._event(
+                    "acsm_stage", "error", probe="authenticated_sync",
+                    connected=True, stage="signed_get", error_code=code,
+                    session_revoked=False,
+                )
+                raise ProviderCapabilityError(
+                    "biblioaccess_acsm_stage_unavailable") from None
+            self._last_probe_phase = "acsm_staged"
+            self._event(
+                "acsm_stage", "observed", probe="authenticated_sync",
+                connected=True, stage="staged", signed_url_logged=False,
+            )
+            # Never return the signed ACSM link to Core/receipts/hooks.
+            return path, ""
+
     def loans(self, account: Account) -> list[Loan]:
         return list(self.loan_inventory_snapshot(account).loans)
 
@@ -583,8 +693,8 @@ class LaRochellePlugin(ProviderPlugin):
         self, *, credential_id: str, label: str, credentials: dict[str, Any],
         options: dict[str, Any], config: Any, storage: Any, diagnostics: Any,
     ) -> ProviderSession:
-        # Account configuration is retained in the per-credential session;
-        # authentication remains disabled pending a qualified AJAX flow.
+        # Credentials are isolated per account. The exact persisted opt-in
+        # decides whether HTTP SSO, loan sync and acquisition are available.
         return LaRochelleSession(
             credential_id=credential_id, label=label,
             credentials=credentials, options=options, diagnostics=diagnostics,
