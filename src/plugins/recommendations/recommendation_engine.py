@@ -223,14 +223,19 @@ def identifier_values(item: Any) -> set[str]:
             key = normalize(raw_key).replace(" ", "_")
             if not key:
                 continue
+            # Do not even coerce opaque account/token payloads from an
+            # unknown key; only descriptive bibliographic schemes are read.
+            if key in ignored_mapping_keys or (
+                key not in isbn_mapping_keys
+                and key not in _PUBLIC_IDENTIFIER_SCHEMES
+            ):
+                continue
             values = _as_values(raw_value)
             if key in isbn_mapping_keys:
                 for value in values:
                     isbn = _canonical_isbn(value)
                     if isbn:
                         cleaned.add("isbn:" + isbn)
-                continue
-            if key in ignored_mapping_keys or key not in _PUBLIC_IDENTIFIER_SCHEMES:
                 continue
             for value in values:
                 scalar = _identifier_scalar(value)
