@@ -102,6 +102,32 @@ class Core0915(unittest.TestCase):
         self.assertFalse(self.service.dashboard_state()[0]['capabilities'])
         self.service._sessions={}
 
+    def test_no_loan_source_is_proved_by_exact_live_capability_not_brand(self):
+        account=NS(unique_id='source-user',identity_id='stable',
+                   provider_id='fixture-store',credential_id='c')
+        session=NS(descriptor=NS(instantiation='multiple',display_name='Fixture Store'),
+                   provider_id='fixture-store',credential_id='c',
+                   connected=True,capabilities=NS(search=True,loans=False))
+        self.service.accounts=[account]
+        self.service._sessions={'source':session}
+        self.service._provider_enabled_for_identity=lambda _provider,_identity: True
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],True)
+        session.connected=False
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        session.connected=True
+        session.capabilities.loans=True
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        session.capabilities.loans=None
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        session.capabilities.loans=False
+        self.service._sessions['duplicate']=session
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        self.service._sessions.pop('duplicate')
+        self.service.accounts.append(NS(unique_id='another',identity_id='stable',
+                                        provider_id='fixture-other',credential_id='x'))
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        self.service._sessions={}
+
     def test_overview_does_not_expose_another_identity_session(self):
         self.service._sessions={'c':NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='other',connected=True,capabilities=NS(search=True))}
         self.assertEqual(self.service.dashboard_state()[0]['sources'],[]);self.service._sessions={}
