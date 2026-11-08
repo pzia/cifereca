@@ -1353,3 +1353,26 @@ def test_auth_schema_unavailable_does_not_read_private_bodies(hazard):
         assert row.request_body is row.response_body is None
     finally:
         trace.destroy()
+
+
+def test_auth_schema_total_budget_exhaustion_skips_all_optional_body_reads():
+    payload = b"username=PRIVATE&password=NEVER_READ"
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace._auth_schema_remaining = 0
+    try:
+        req = Request(
+            ORIGIN + "/login", method="POST",
+            headers={"content-type": "application/x-www-form-urlencoded",
+                     "content-length": str(len(payload))},
+            data=payload,
+        )
+        resp = Response(req, data=b'{"token":"NEVER_READ"}')
+        emit(trace, req, resp)
+        row = trace.exchanges[0]
+        assert row.auth_request_schema is row.auth_response_schema is None
+        assert row.auth_request_schema_state == "auth_schema_unavailable"
+        assert row.auth_response_schema_state == "auth_schema_unavailable"
+        assert req.read_post_data == resp.body_reads == 0
+        assert row.request_body is row.response_body is None
+    finally:
+        trace.destroy()
