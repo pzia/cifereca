@@ -679,6 +679,13 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
         }
         allowed = required | {"confirmation", "reference_kind", "undo_operation"}
     _require(required <= provided <= allowed, "invalid_request")
+    if canonical_relink and "undo_operation" in options:
+        operation = options["undo_operation"]
+        _require(
+            type(operation) is str and len(operation) == 64
+            and all(char in "0123456789abcdef" for char in operation),
+            "invalid_request",
+        )
     config_path = Path(config_path) if config_path is not None else config_file(create=False)
     database_path = Path(database_path) if database_path is not None else database_file(create=False)
 
