@@ -98,3 +98,29 @@ def test_rename_during_read_is_unverified(tmp_path, monkeypatch):
     assert changed
     assert result[0].status == "unverified"
     assert result[0].sha256 is None
+
+
+
+def test_growing_file_never_causes_unbounded_read(tmp_path, monkeypatch):
+    import os
+    import cifereca_storage_usb as usb
+
+    book = tmp_path / "book.epub"
+    book.write_bytes(b"a")
+    original_read = os.read
+    observed_limits = []
+
+    def continuously_growing_read(fd, limit):
+        observed_limits.append(limit)
+        if len(observed_limits) > 3:
+            raise AssertionError("observation consumed an unbounded growing file")
+        with book.open("ab") as writer:
+            writer.write(b"x" * (1024 * 1024))
+        return original_read(fd, limit)
+
+    monkeypatch.setattr(usb.os, "read", continuously_growing_read)
+    row = usb.observe_usb_files(tmp_path, ("book.epub",))[0]
+    assert row.status == "unverified"
+    assert row.sha256 is None
+    assert row.size is None
+    assert observed_limits == [2]
