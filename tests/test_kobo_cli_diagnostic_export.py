@@ -142,7 +142,7 @@ def test_export_allowlist_rejects_untrusted_statuses_and_source_metadata():
         "reconcile_examples": [{"local_path": "/home/PRIVATE_FOLDER"}],
     }
     raw_before = json.dumps(report, sort_keys=True)
-    exported = safe_kobo_backup_report(report)
+    exported = cli._kobo_legacy_report_view(safe_kobo_backup_report(report))
     published = json.dumps(exported, sort_keys=True)
     assert exported["status_authority"] == "historical_legacy_backup"
     assert exported["current_canonical_cycle"] == {
