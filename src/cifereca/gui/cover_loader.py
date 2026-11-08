@@ -464,7 +464,13 @@ class CoverLoader:
                         self._preview_jobs.pop(key, None)
                         self._preview_waiters.pop(key, None)
                 if not f.cancelled():
-                    deliver(f.result())
+                    # A conversion may have returned None because all its
+                    # subscribers were canceled *when work started*. A newly
+                    # bound live cell can attach before this future completes.
+                    # Keep its already validated source instead of rendering
+                    # a false missing cover. No extra download or retry.
+                    preview = f.result()
+                    deliver(source if preview is None else preview)
 
             future.add_done_callback(done)
 
