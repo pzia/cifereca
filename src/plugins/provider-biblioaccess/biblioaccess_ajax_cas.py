@@ -44,7 +44,11 @@ class CasHttpObservation:
     loans_verified: bool = False
     page_book_link_count: int = 0
     page_book_unique_count: int = 0
+    page_loan_row_count: int = 0
+    page_loan_row_partial_count: int = 0
+    logout_form_observed: bool = False
     inventory_verified: bool = False
+    _loan_rows: tuple[object, ...] = field(default=(), repr=False, compare=False)
     _candidate_book_urls: tuple[tuple[str, str], ...] = field(
         default=(), repr=False, compare=False,
     )
@@ -332,6 +336,10 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                     "loans_html_unverified", 200,
                     page_book_link_count=candidates.page_book_link_count,
                     page_book_unique_count=candidates.page_book_unique_count,
+                    page_loan_row_count=candidates.page_loan_row_count,
+                    page_loan_row_partial_count=candidates.page_loan_row_partial_count,
+                    logout_form_observed=candidates.logout_form_observed,
+                    _loan_rows=candidates._loan_rows,
                     _candidate_book_urls=candidates._book_urls,
                 )
         except (httpx.HTTPError, UnicodeError):
