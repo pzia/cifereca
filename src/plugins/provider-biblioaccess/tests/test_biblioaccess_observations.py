@@ -56,6 +56,8 @@ def test_catalogue_is_partial_even_without_cards():
     "https://evil.example/1409/Catalog/Search?query=q&pageindex=1",
     "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=999999",
     "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=1&ticket=SYNTHETIC",
+    "https://www.biblioaccess.com/1409/Catalog/Search?query=different&pageindex=1",
+    "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=0",
 ])
 def test_untrusted_next_href(href):
     url = "https://www.biblioaccess.com/1409/Catalog/Search?query=q&pageindex=0"
