@@ -105,7 +105,8 @@ def _add_owned_download(window, detail, item, TaskPriority):
     if callable(display_name):
         try:
             candidate = display_name(provider)
-            if type(candidate) is str and 0 < len(candidate.strip()) <= 80:
+            if (type(candidate) is str and 0 < len(candidate.strip()) <= 80
+                    and all(char.isprintable() for char in candidate)):
                 label = candidate.strip()
         except Exception:
             pass
