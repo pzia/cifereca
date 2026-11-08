@@ -37,12 +37,13 @@ class Widget:
 
 def _render(provider_id="paris", *, data=None, credentials=None, url=None,
             descriptor_fields=None, descriptor_options=None, descriptor_note=None,
-            legacy_values=None, provider_values=None, configured=None):
+            legacy_values=None, provider_values=None, configured=None, interactive=False):
     secret = SimpleNamespace(key="password", label="Mot de passe", secret=True)
     plain = SimpleNamespace(key="card", label="Numéro de carte", secret=False)
     fields = descriptor_fields if descriptor_fields is not None else [plain, secret]
     descriptor = SimpleNamespace(display_name=provider_id.upper(), credential_fields=fields,
-                                 account_options=descriptor_options or (), account_note=descriptor_note)
+                                 account_options=descriptor_options or (), account_note=descriptor_note,
+                                 interactive_authentication=interactive)
     gtk = SimpleNamespace(
         Switch=Widget, Button=lambda label=None: Widget(),
         Align=SimpleNamespace(CENTER="center"),
@@ -484,3 +485,19 @@ def test_p1_bnf_manual_loan_limit_default_and_hint_are_descriptor_driven():
               "options": {"manual_loan_limit": "9"}},
     )
     assert saved["option_fields"]["manual_loan_limit"].text == "9"
+
+
+def test_interactive_provider_has_explicit_probe_button_only():
+    editor, delete, container, _adw = _render(
+        "synthetic-interactive",
+        interactive=True,
+        data={"id": "saved", "identity_id": "alice",
+              "enabled": True, "credentials": {"card": "x"}},
+    )
+    assert editor["explicit_probe_button"] is not None
+    assert editor["explicit_probe_status"].title == "Recette HTTP de ce compte"
+    assert delete in container.children[0].children[-1].suffixes
+
+    normal, _, _, _ = _render("ordinary-provider")
+    assert normal["explicit_probe_button"] is None
+    assert normal["explicit_probe_status"] is None
