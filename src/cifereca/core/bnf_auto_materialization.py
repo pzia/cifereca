@@ -158,17 +158,17 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     if not current():
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
     manual_acquisitions = service.storage.acquisitions(provider_id='manual', status='complete')
-    for row in manual_acquisitions:
-        # Inspect only a record explicitly bound to this identity and loan.
-        # All other manual acquisitions may contain unrelated personal files:
-        # do not stat, open or parse them on each BnF synchronization.
-        if row.get('identity_id') != account.identity_id:
-            continue
-        meta = row.get('metadata') or {}
-        if type(meta) is not dict or meta.get('bnf_auto_ref') != ref:
-            continue
-        path = Path(str(meta.get('path') or ''))
-        usable = _receipt_local_file_verified(service, account, row, path)
+    from .manual_receipt_scope_lookup import exact_manual_receipt
+    receipt_status, matched_row, matched_path = exact_manual_receipt(
+        manual_acquisitions, identity_id=account.identity_id,
+        metadata_ref='bnf_auto_ref', expected_ref=ref,
+    )
+    if receipt_status == 'ambiguous':
+        return {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'}
+    if receipt_status == 'matched':
+        usable = _receipt_local_file_verified(
+            service, account, matched_row, matched_path,
+        )
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         return ({'status': 'unchanged'} if usable else
