@@ -200,8 +200,11 @@ def test_forged_or_actionable_progress_produces_no_detail_section():
         assert cross_profile_borrow_progress_detail_section(forged) is None
 
 
-def _progress_gtk_renderer():
-    """Compile only the method: exercise actual GTK code without importing GI."""
+def _progress_gtk_renderer(
+    method_name="show_cross_profile_borrow_progress_detail",
+    on_group_title=None,
+):
+    """Compile the real GTK method without importing GI."""
     from types import SimpleNamespace as NS
 
     source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
@@ -210,7 +213,7 @@ def _progress_gtk_renderer():
                  if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
     method = next(node for node in owner.body
                   if isinstance(node, ast.FunctionDef)
-                  and node.name == "show_cross_profile_borrow_progress_detail")
+                  and node.name == method_name)
     events = []
 
     class Group:
@@ -218,6 +221,8 @@ def _progress_gtk_renderer():
             self.rows = []
         def set_title(self, title):
             self.title = title
+            if on_group_title is not None:
+                on_group_title()
         def add(self, row):
             self.rows.append(row)
 
@@ -237,7 +242,7 @@ def _progress_gtk_renderer():
     exec(compile(ast.fix_missing_locations(
         ast.Module(body=[method], type_ignores=[])
     ), str(source), "exec"), scope)
-    return scope["show_cross_profile_borrow_progress_detail"], events
+    return scope[method_name], events
 
 
 def test_gtk_progress_renders_three_nonactionable_rows_on_same_search_detail():
@@ -292,3 +297,34 @@ def test_gtk_progress_never_appends_stale_or_rebound_detail():
     service.current_identity = NS(identity_id="alex")
     assert render(host, progress, **kwargs) is False
     assert events == []
+
+
+def test_gtk_lender_preview_refuses_same_id_context_rebind_mid_render():
+    from types import SimpleNamespace as NS
+
+    item = witness("alice").notice
+    preview = project(witness("alice"))
+    identity = NS(identity_id="bob")
+    service = NS(current_identity=identity, _account_context_epoch=4,
+                 _source_context_epoch=9)
+    rendered = []
+    host = NS(window=NS(service=service),
+              _rendered_search_detail=(item, object()),
+              _append_content=lambda group: rendered.append(group))
+
+    def change_context_during_gtk_build():
+        # The ID and both Core epochs stay unchanged. The context object
+        # itself was replaced after the first guard and before append.
+        service.current_identity = NS(identity_id=identity.identity_id)
+
+    render, _ = _progress_gtk_renderer(
+        "show_cross_profile_borrow_detail",
+        on_group_title=change_context_during_gtk_build,
+    )
+    assert render(
+        host, preview, expected_item=item, expected_edition_id="edition-1",
+        expected_context_epoch=4, expected_source_epoch=9,
+    ) is False
+    assert rendered == []
+    assert service.current_identity.identity_id == identity.identity_id
+    assert service.current_identity is not identity
