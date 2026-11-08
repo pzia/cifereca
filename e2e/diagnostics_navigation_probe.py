@@ -2880,6 +2880,14 @@ def main() -> int:
         # Replace only local synthetic broker results; never touch SQLite or
         # source activation, provider, HTTP, user identity or consent.
         f["source_fixture_rows"][:] = rows
+        # The prior consent scenario temporarily replaced broker.sources()
+        # with one generic row. Point this already-owned synthetic override
+        # at exactly the three historical sources. cleanup_loan_sync restores
+        # the pre-fixture broker method via the existing saved override entry.
+        sync_broker = w.plugin_manager.broker("sync")
+        sync_broker.sources = lambda identity_id: (
+            tuple(f["source_fixture_rows"]) if identity_id == "camille" else ()
+        )
         w._refresh_sync_page()
         later(220, p1_5078_historical_kobo_sync_check)
 
