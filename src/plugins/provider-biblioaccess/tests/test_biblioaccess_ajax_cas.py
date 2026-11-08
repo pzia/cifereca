@@ -203,7 +203,7 @@ def test_observed_script_get_is_opt_in_single_no_redirect_and_never_executable()
         with pytest.raises(cas.AjaxCasError, match="already_attempted"):
             c.inspect_login_script_once(path="/assets/sso.js", consent=True)
         assert len(seen) == 3
-        assert seen[2] == ("GET", cas.IDP + "/assets/sso.js")
+        assert seen[2] == ("GET", cas.IDP + "/assets/sso.js?cache=PRIVATE-SYNTHETIC")
     finally:
         c.close()
 
@@ -219,7 +219,8 @@ def test_observed_script_redirect_denied_without_external_get():
         c._preflight = LoginPreflight(
             script_count=1, same_origin_script_paths=("/assets/sso.js",),
             external_script_count=1, inline_script_count=0,
-            field_names=(), inline_identifier_names=())
+            field_names=(), inline_identifier_names=(),
+            _script_request_urls=(("/assets/sso.js", cas.IDP + "/assets/sso.js"),))
         with pytest.raises(cas.AjaxCasError, match="script_unavailable"):
             c.inspect_login_script_once(path="/assets/sso.js", consent=True)
         assert seen == [cas.IDP + "/assets/sso.js"]
@@ -380,3 +381,56 @@ def test_ajax_contradiction_never_triggers_cas_get(ajax_payload):
                          "POST /logon.svc/logon"]
     finally:
         c.close()
+
+
+def test_exact_script_url_selected_without_query_values_in_diagnostics():
+    seen = []
+    token = "SYNTHETIC-PRIVATE-CACHE-VALUE"
+    def handler(req):
+        seen.append(str(req.url))
+        if req.url.path == "/1409/Account/Login":
+            return httpx.Response(302, headers={"location": LOGIN})
+        if req.url.path == "/login":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                text='<script src="/scripts/logon.js?version=' + token + '"></script>')
+        if req.url.path == "/scripts/logon.js":
+            assert req.url.params["version"] == token
+            return httpx.Response(200, headers={"content-type": "application/javascript"},
+                                  text='const _dc=123;')
+        pytest.fail("Unexpected request")
+    client = client_for(handler)
+    try:
+        client.observe_entry_once()
+        client.observe_login_once()
+        preflight = client.login_preflight()
+        assert preflight.same_origin_script_paths == ("/scripts/logon.js",)
+        assert token not in repr(preflight)
+        evidence = client.inspect_login_script_once(path="/scripts/logon.js", consent=True)
+        assert evidence.identifier_names == ("_dc",)
+        assert token not in repr(evidence)
+        assert seen[-1] == cas.IDP + "/scripts/logon.js?version=" + token
+    finally:
+        client.close()
+
+
+def test_ambiguous_observed_script_urls_never_qualify_a_get():
+    seen = []
+    def handler(req):
+        seen.append(str(req.url))
+        if req.url.path == "/1409/Account/Login":
+            return httpx.Response(302, headers={"location": LOGIN})
+        if req.url.path == "/login":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                text='<script src="/scripts/logon.js?v=one"></script>'
+                     '<script src="/scripts/logon.js?v=two"></script>')
+        pytest.fail("Ambiguous script must not be requested")
+    client = client_for(handler)
+    try:
+        client.observe_entry_once()
+        client.observe_login_once()
+        assert client.login_preflight().same_origin_script_paths == ()
+        with pytest.raises(cas.AjaxCasError, match="cas_script_unobserved"):
+            client.inspect_login_script_once(path="/scripts/logon.js", consent=True)
+        assert len(seen) == 2
+    finally:
+        client.close()
