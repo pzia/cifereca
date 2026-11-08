@@ -136,3 +136,41 @@ def test_explicit_empty_captcha_check_value_is_not_assumed_invalid():
         assert "captchaCheckValue=" in calls[0]
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("payload", [
+    b'{"success":true,"errors":["SYNTHETIC-FAILURE"]}',
+    b'{"success":true,"errors":{"code":"SYNTHETIC-FAILURE"}}',
+    b'{"success":true,"errors":null}',
+    b'{"success":true,"errors":"SYNTHETIC-FAILURE"}',
+])
+def test_ajax_contradictory_errors_cannot_report_success(payload):
+    observation = mod.inspect_ajax_response(
+        status=200, mime="application/json", data=payload)
+    assert observation.outcome == "unknown"
+    assert not observation.identity_verified
+    assert not observation.cas_completed
+    assert "SYNTHETIC-FAILURE" not in repr(observation)
+
+
+@pytest.mark.parametrize("payload", [
+    b'{"success":false,"success":true,"errors":[]}',
+    b'{"success":true,"errors":[],"errors":["SYNTHETIC-FAILURE"]}',
+    b'{"success":true,"errors":[],"d":{"a":1,"a":2}}',
+    b'{"success":true,"errors":[],"d":NaN}',
+    b'{"success":true,"errors":[],"d":Infinity}',
+])
+def test_ajax_ambiguous_json_is_refused(payload):
+    with pytest.raises(mod.AjaxLogonError, match="ajax_logon_json_invalid"):
+        mod.inspect_ajax_response(
+            status=200, mime="application/json", data=payload)
+
+
+def test_ajax_reported_success_without_errors_key_remains_unverified():
+    observation = mod.inspect_ajax_response(
+        status=200, mime="application/json",
+        data=b'{"success":true,"d":"SYNTHETIC-OPAQUE"}')
+    assert observation.outcome == "success_reported"
+    assert not observation.cas_completed
+    assert not observation.identity_verified
+    assert "SYNTHETIC-OPAQUE" not in repr(observation)
