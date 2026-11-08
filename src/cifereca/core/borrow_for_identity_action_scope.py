@@ -25,7 +25,7 @@ class CrossProfileBorrowScopeLease:
     _claim_key: str = field(repr=False)
     _context_epoch: int
     _source_epoch: int
-    _session_epoch: int
+    _session_epoch: object = field(repr=False)
 
     def current(self, service: object) -> bool:
         """Validate both identities and exact account without mutating them."""
@@ -135,8 +135,10 @@ def capture_cross_profile_borrow_scope(
                     != requesting_identity_id
                 or type(context) is not int or context < 0
                 or type(source) is not int or source < 0
-                or type(state.get("_epoch")) is not int
-                or state["_epoch"] < 0):
+                ):
+            # Some provider sessions have no private local _epoch. Exact
+            # object/session registry checks and Core's source epoch remain
+            # mandatory; absence is not permission to skip those guards.
             return None
         lease = CrossProfileBorrowScopeLease(
             _account=borrowing_account, _notice=exact_notice,
@@ -144,7 +146,7 @@ def capture_cross_profile_borrow_scope(
             _requester_identity_id=requesting_identity_id,
             _account_fields=fields, _claim_key=claim,
             _context_epoch=context, _source_epoch=source,
-            _session_epoch=state["_epoch"],
+            _session_epoch=state.get("_epoch"),
         )
         return lease if lease.current(service) else None
     except Exception:
