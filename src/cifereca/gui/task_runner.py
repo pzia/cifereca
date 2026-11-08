@@ -462,12 +462,7 @@ class TaskRunner:
                     control.set_sensitive(True)
                 kind_outcome, payload = outcome
                 feedback_error = None if business_status == "success" else (
-                    "Demande d’emprunt envoyée ; confirmation indisponible. "
-                    "Ne réempruntez pas : actualisez vos prêts ultérieurement."
-                    if (trace_kind == "borrow" and business_status == "pending"
-                        and kind_outcome == "ok" and type(payload) is dict
-                        and payload.get("reason_code") == "borrow_result_unverified")
-                    else "Emprunt non confirmé — vérification nécessaire"
+                    "Emprunt non confirmé — vérification nécessaire"
                     if trace_kind == "borrow" and business_status == "pending"
                     else "Emprunt bloqué — aucune confirmation"
                     if trace_kind == "borrow" and business_status == "blocked"
@@ -484,6 +479,18 @@ class TaskRunner:
                     else payload.user_message if isinstance(payload, UserFacingError)
                     else "Traitement indisponible"
                 )
+                # Pending means the remote borrow may already have been
+                # submitted. Keep the non-retry instruction explicit instead
+                # of depending on the nested fallback-status expression.
+                # Neither raw provider text nor an unverified loan can become
+                # a success message through this path.
+                if (trace_kind == "borrow" and business_status == "pending"
+                        and kind_outcome == "ok" and type(payload) is dict
+                        and payload.get("reason_code") == "borrow_result_unverified"):
+                    feedback_error = (
+                        "Demande d’emprunt envoyée ; confirmation indisponible. "
+                        "Ne réempruntez pas : actualisez vos prêts ultérieurement."
+                    )
                 finish_args = (
                     task_id, remaining, label,
                     business_status == "success", feedback_error,
