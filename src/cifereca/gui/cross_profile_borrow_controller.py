@@ -152,8 +152,12 @@ def present_cross_profile_lender_choice(
             if not current():
                 return
             if (type(result) is dict and result.get("status") == "confirmed"
+                    and result.get("reason_code") ==
+                        "lender_loan_confirmed_transfer_unverified"
                     and result.get("provider_verified") is True
-                    and result.get("transfer") == "blocked"):
+                    and result.get("delivery") == "unavailable"
+                    and result.get("transfer") == "blocked"
+                    and result.get("retry_borrow") is False):
                 window._activity_result(
                     "Prêt confirmé sur le profil prêteur. "
                     "Livraison et transfert vers ce profil non autorisés."
