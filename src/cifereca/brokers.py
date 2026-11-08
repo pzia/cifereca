@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from inspect import getattr_static
 from datetime import datetime, timezone
-import hashlib
 import json
 import threading
 from pathlib import Path
@@ -166,13 +165,13 @@ class SynchronizationBrokerImpl:
 
     @staticmethod
     def _source_id(account: Any) -> str:
-        raw = "\0".join((
+        from .core.legacy_source_identifier import legacy_source_id
+        return legacy_source_id(
             str(getattr(account, "identity_id", "") or ""),
             str(getattr(account, "provider_id", "") or ""),
             str(getattr(account, "credential_id", "") or ""),
             _account_id(account),
-        ))
-        return "sync:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+        )
 
     def _preference_key(self, source_id: str) -> str:
         return "sync.source.enabled." + source_id
