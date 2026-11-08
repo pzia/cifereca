@@ -1,5 +1,46 @@
 # BiblioAccess — La Rochelle (tenant 1409)
 
+## Acquisition des prêts numériques — bundle 0.4.0
+
+La synchronisation du lecteur `authenticated_sync=on` relève toujours les
+prêts positifs via AJAX/CAS et MyLoans. Lorsqu'une ligne affiche réellement
+une action ACSM, le provider annonce `digital_download` et
+`opening_loan_auto_acquisition`. Le Core peut déclencher sa pipeline
+d'acquisition existante (staging, Kobo-Adept, publication EPUB/PDF, indexation
+locale, suivi des erreurs et reprise).
+
+**Flux effectif :**
+1. à la demande d'acquisition, relire MyLoans **dans le cookie jar du
+   credential exact**, sans rejouer l'authentification AJAX ;
+2. sélectionner la ligne selon la référence produit du prêt ET son identifiant
+   de notice ; utiliser l'URL ACSM signée fraîchement exposée ;
+3. effectuer le GET HTTPS sur le seul hôte observé
+   `entrepot2r.numilog.com/fulfillment/URLLink.acsm` via un client neuf
+   sans cookies du lecteur, valider le jeton XML ADEPT et écrire un fichier
+   temporaire `.acsm` ;
+4. remettre au Core uniquement le **chemin du fichier ACSM**, jamais l'URL
+   signée. Le Core exploite son profil Kobo-Adept lié à l'identité pour
+   produire le document final. Le fournisseur ne contourne pas les DRM.
+
+**Retéléchargement :** le provider ne mémorise aucun drapeau
+« déjà récupéré » ; un nouvel appel obtient une nouvelle action depuis
+MyLoans. Le Core conserve sa politique habituelle de cache/reprise et
+accepte ses actions explicites de rafraîchissement forcé.
+
+**Échec :** un prêt sans offre ACSM reste un prêt synchronisable, mais n'est
+pas éligible à l'acquisition automatique. Un rejet distant, un XML qui n'est
+pas un token ADEPT ou la disparition du prêt produit un code fermé ; jamais
+de journalisation du corps HTTP, du token, du lien signé ou du cookie.
+Une session devenue non fiable est fermée. Le profil ADEPT doit être
+configuré sur l'identité ; l'acquisition peut rester en attente si
+Kobo-Adept n'est pas opérationnel.
+
+**Limite terrain** : le lien ACSM a été observé dans deux MyLoans privés le
+08/11/2026, mais **sa récupération effective et le fulfillment ADEPT
+n'ont pas encore été capturés** sur le nouveau code. Les tests sont
+entièrement synthétiques ; une erreur de livraison sera corrigée à partir
+des journaux de recette.
+
 ## Catalogue public et prêts privés — bundle 0.3.0
 
 Le même bundle déclare désormais **deux providers indépendants** :
