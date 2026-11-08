@@ -103,8 +103,6 @@ def test_actual_bnf_adapter_claimed_post_is_one_and_remains_on_lender(tmp_path):
 def test_actual_bnf_adapter_rebind_mid_post_preserves_uncertain_claim(tmp_path):
     service, session, account, item, transport, row, preview = setup(tmp_path)
     try:
-        session.client._http  # keep real provider session alive
-        original = session.client
         # BnF's MockTransport callback is closed over its test fixture;
         # a Core source generation can also be revoked during the HTTP
         # transport via its preflight callback, simulated by wrapping the
