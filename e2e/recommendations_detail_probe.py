@@ -608,6 +608,9 @@ def main():
                 "download_failed", "preview_created", "preview_hit",
                 "preview_fallback", "ui_applied", "ui_stale", "ui_failed",
                 "decode_failed", "cancelled_callbacks", "queue", "inflight_urls",
+                "preview_source_none", "preview_worker_skipped",
+                "preview_no_future", "preview_result_none",
+                "preview_result_path", "preview_callback_suppressed",
             )
             report["p1_774_cover_loader_state"] = {
                 key: min(100, max(0, int(cover_stats[key])))
@@ -628,6 +631,34 @@ def main():
                 "image_requests": min(20, len(image_requests)),
                 "list_stack_mapped": int(page.list_stack.get_mapped()),
                 "detail_pane_mapped": int(page.detail.get_mapped()),
+            }
+            # Only bounded lifecycle booleans, not the cover URL, local
+            # filesystem path, credentials, account IDs or callback repr.
+            def bound_state(covers):
+                if len(covers) != 1:
+                    return {"count": min(20, len(covers))}
+                cover = covers[0]
+                handle = cover._request
+                source = getattr(handle, "_source_request", None)
+                return {
+                    "count": 1,
+                    "generation": min(100, max(0, int(cover._generation))),
+                    "expected_url": int(cover._url == COVER_URL),
+                    "same_loader": int(cover._loader is cover_loader),
+                    "request_present": int(handle is not None),
+                    "request_active": int(bool(
+                        getattr(getattr(handle, "_callback", None), "active", False)
+                    )),
+                    "source_present": int(source is not None),
+                    "source_active": int(bool(
+                        getattr(getattr(source, "_callback", None), "active", False)
+                    )),
+                    "spinner": int(cover.spinner.get_visible()),
+                    "placeholder": int(cover.placeholder.get_visible()),
+                }
+            report["p1_774_cover_bind_state"] = {
+                "list": bound_state(all_list),
+                "detail": bound_state(all_detail),
             }
             if attempt >= 20:
                 # Exported source lines distinguish a lost bind from a
