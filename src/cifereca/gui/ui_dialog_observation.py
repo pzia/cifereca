@@ -60,6 +60,88 @@ def action_dialog_context(window: object, action: object):
             window._ui_dialog_observation_context = old
 
 
+
+_TASK_CLASSIFICATIONS = frozenset({
+    "user_action", "background_task", "provider_connect", "sync",
+})
+
+
+@contextmanager
+def task_dialog_context(
+    window: object, *, task_ref: int, classification: str,
+    reason_code: str = "unknown", suppress_busy_modal: bool = False,
+):
+    """Bind precisely one TaskRunner GTK completion, never an adjacent task.
+
+    Only a typed lock contention with background origin may suppress a modal.
+    The context is restored on exception and cannot persist across callbacks.
+    """
+    sentinel = object()
+    old = getattr(window, "_ui_dialog_observation_context", sentinel)
+    valid_ref = type(task_ref) is int and 1 <= task_ref <= 2**53 - 1
+    window._ui_dialog_observation_context = {
+        "trigger": "async_callback",
+        "action_id": "unknown",
+        "task_ref": task_ref if valid_ref else None,
+        "task_classification": (
+            classification if classification in _TASK_CLASSIFICATIONS else "background_task"
+        ),
+        "reason_code": reason_code if reason_code == "lock_busy" else "unknown",
+        "suppress_busy_modal": suppress_busy_modal is True and valid_ref,
+    }
+    try:
+        yield
+    finally:
+        if old is sentinel:
+            try:
+                delattr(window, "_ui_dialog_observation_context")
+            except AttributeError:
+                pass
+        else:
+            window._ui_dialog_observation_context = old
+
+
+def suppress_background_busy_modal(window: object) -> bool:
+    """Decision only: the caller renders fixed nonmodal feedback.
+
+    A missing or invalid task identifier cannot authorize suppression, nor
+    can a genuine user action. Never derive lock state from exception text.
+    """
+    ctx = getattr(window, "_ui_dialog_observation_context", None)
+    return (
+        type(ctx) is dict
+        and ctx.get("suppress_busy_modal") is True
+        and ctx.get("reason_code") == "lock_busy"
+        and ctx.get("task_classification") in {
+            "background_task", "provider_connect", "sync",
+        }
+        and type(ctx.get("task_ref")) is int
+        and 1 <= ctx["task_ref"] <= 2**53 - 1
+    )
+
+
+def observe_background_busy_task(
+    window: object, *, task_ref: int, classification: str,
+) -> None:
+    """Typed, private-data-free task receipt, including when no modal exists."""
+    if (getattr(window, "_closed", False)
+            or type(task_ref) is not int or not 1 <= task_ref <= 2**53 - 1
+            or classification not in _TASK_CLASSIFICATIONS):
+        return
+    add = getattr(getattr(window, "diagnostics", None), "add", None)
+    if not callable(add):
+        return
+    try:
+        add("UI", "background task contention", "warning", detail={
+            "schema_version": 1,
+            "code": "lock_busy",
+            "task_ref": task_ref,
+            "task_classification": classification,
+        }, level="normal")
+    except Exception:
+        pass
+
+
 def _current_route(window: object) -> str:
     stack = getattr(window, "view_stack", None)
     getter = getattr(stack, "get_visible_child_name", None)
@@ -136,6 +218,12 @@ def observe_unavailable_dialog(window: object, *, title: object, message: object
         "provider_id": "unknown",
         "task_ref": task_ref,
     }
+    classification = context.get("task_classification")
+    if classification in _TASK_CLASSIFICATIONS and task_ref is not None:
+        detail["task_classification"] = classification
+        detail["reason_code"] = (
+            "lock_busy" if context.get("reason_code") == "lock_busy" else "unknown"
+        )
     try:
         add("UI", "action unavailable dialog", "warning", detail=detail, level="normal")
     except Exception:
