@@ -45,11 +45,6 @@ def _source_id(scope):
     return "sync:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
-def configured_kind(provider_id, kind):
-    """Whether an existing source/type-wide acquisition switch is available."""
-    return (provider_id, kind) in _POLICIES
-
-
 def toggle_state(db, source: SourceKey):
     """Read the current committed mode INSIDE the caller's SQLite snapshot.
 
