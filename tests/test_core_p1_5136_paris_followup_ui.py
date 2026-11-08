@@ -186,7 +186,11 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
            / "src/cifereca/gui/detail_panel.py").read_text(encoding="utf-8")
     assert '"Vérifier le prêt sans réemprunter"' in src
     assert "paris_borrow_followup_available" in src
-    assert "present_paris_borrow_verification(" in src
+    assert "verification_only=True" in src
+    router = (Path(__file__).resolve().parents[1]
+              / "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
+    assert "present_paris_borrow_verification(" in router
+    assert "if verification_only:" in router
     method = (Path(__file__).resolve().parents[1]
               / "src/cifereca/gui/bnf_borrow_controller.py").read_text(encoding="utf-8")
     body = method.split("def present_paris_borrow_verification(", 1)[1]
