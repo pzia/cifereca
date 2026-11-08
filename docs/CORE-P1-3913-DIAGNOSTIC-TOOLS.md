@@ -51,7 +51,7 @@ ne jamais choisir arbitrairement un compte dans une identité tierce.
 | `sync run ... --trace-export TRACE.zip --confirm-trace-export` | **N+M+E** | ZIP **HTTP brut** capturé sur la sync sélectionnée, séparation obligatoire d'avec `--report` ; confirmation supplémentaire. Peut contenir les secrets de session. |
 | `statistics [--identity I]` ; `catalog-list [--state local|missing]` ; `acquisition-ledger [--status discovered|pending|acquiring|complete|retryable_error|attention_required]` | O | JSON de compteurs, catalogue et ledger locaux ; le ledger seul ne certifie pas SHA/Placement/OriginLink. |
 | `kobo-sync-errors` ; `kobo-backup-errors` | O | Rapport local d'erreurs de backup. Les deux noms sont alias historiques ; ne déclenchent pas une sync. |
-| `kobo-audit [--credential C] [--plan]` | O | Audit local Kobo et, si demandé, plan de vérifications manuelles, sans téléchargement ni mutation de bibliothèque. |
+| `kobo-audit [--credential C]` | O | Audit local Kobo en lecture seule ; l'ancien `--plan` de rapprochement 0.7 est retiré, sans téléchargement ni mutation de bibliothèque. |
 | `kobo-resume-preview --credential C [--verify-files]` | O | Preview à partir des données locales ; option SHA/FS. |
 | `kobo-resume-preview --credential C --refresh-manifest` | **N** | **Exception** : lecture explicite du manifeste distant ; ne plus classer cette variante « hors réseau ». Pas de téléchargement de livre par la seule preview. |
 | `paris-adept list [--credential C]` ; `paris-adept audit [--credential C]` | O | Liaisons et prêts historiques locaux ; aucune autorité Adobe déduite d'une coïncidence. |
@@ -229,7 +229,7 @@ Les wrappers environnementaux ne doivent pas être exécutés par le rôle backl
 | Numilog : structure HTML inconnue, capture **déjà disponible** | `python3 scripts/numilog_html_shape.py --context book-detail CHEMIN.html` | JSON de forme ; jamais la page privée brute en issue publique. |
 | BnF-Prêt : ACSM obtenu mais livre absent | `cifereca-cli acquisition-audit --provider bnf-pret --identity I --verify-files --json` | Distinguer reçu/staging, transfert ADEPT, Placement final, OriginLink. Statut partiel des prêts ≠ retour attesté. |
 | BnF-Prêt : signal DOM d'emprunt introuvable dans une capture **déjà disponible** | `python3 scripts/bnf_borrow_dom_probe.py --page detail < PAGE_PRIVEE.html` (ou `--page profile`) | Seulement la structure DOM et le statut de reconnaissance ; **ne qualifie jamais le consentement, le quota, l'éligibilité ou l'autorisation de POST**. Ne pas publier le HTML privé. |
-| Kobo : état local ou rattrapage envisagé | `cifereca-cli kobo-audit --plan` puis `kobo-resume-preview --credential C` | Aucun téléchargement sans commande de reprise explicitement consentie. |
+| Kobo : état local ou rattrapage envisagé | `cifereca-cli kobo-audit` puis `kobo-resume-preview --credential C` | Aucun téléchargement sans commande de reprise explicitement consentie. |
 | Paris : prêt/ADEPT mal attribué | `cifereca-cli paris-adept audit-transaction --loan-id L --item-id B` | Comparer les sources exactes, sans interpréter ni muter les droits Adobe. |
 | Échec d'install d'un plugin | `cifereca-cli plugin diagnose PLUGIN_ID` | Version/manifest et diagnostic plugin ; `plugin deps-repair` est une mutation, pas une sonde. |
 
