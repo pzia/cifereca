@@ -279,7 +279,7 @@ def _plugin_ui_usage_hint(value: object, field: str) -> str:
     if (type(hint) is not str or not 1 <= len(hint) <= 384
             or hint != hint.strip()
             or any(ord(char) < 32 or ord(char) == 127 for char in hint)
-            or re.search(r"(?i)(?:https?://|bearer\\s+|(?:password|token|secret)=)", hint)):
+            or re.search(r"(?i)(?:https?://|bearer\s+|(?:password|token|secret)=)", hint)):
         raise ManifestError(f"{field} usage_hint is unsafe")
     return hint
 
