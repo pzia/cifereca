@@ -223,7 +223,9 @@ def test_p1_5078_history_age_is_scoped_and_no_current_success_is_invented():
         ],
     }
     before = json.dumps(raw, sort_keys=True)
-    exported = safe_kobo_backup_report(raw, observed_at=1_800_086_400)
+    exported = cli._kobo_legacy_report_view(
+        safe_kobo_backup_report(raw), observed_at=1_800_086_400,
+    )
     assert exported["legacy_checkpoint_freshness"] == [
         {"source_index": 1, "age_known": True, "age_seconds": 86400},
         {"source_index": 2, "age_known": False},  # Future clock: not fresh
@@ -233,10 +235,12 @@ def test_p1_5078_history_age_is_scoped_and_no_current_success_is_invented():
         "partial", "complete", "failed",
     ]
     assert exported["current_canonical_cycle"]["status"] == "not_evaluated"
+    assert safe_kobo_backup_report(raw).get("status_authority") is None
+    assert "legacy_checkpoint_freshness" not in safe_kobo_backup_report(raw)
     assert exported["error_count"] == 1  # Historical, not a current failure.
     assert "SECRET_5078" not in json.dumps(exported, sort_keys=True)
     assert json.dumps(raw, sort_keys=True) == before
     # Invalid clock must not forge zero-age freshness.
-    assert all(not row["age_known"] for row in safe_kobo_backup_report(
-        raw, observed_at=True,
+    assert all(not row["age_known"] for row in cli._kobo_legacy_report_view(
+        safe_kobo_backup_report(raw), observed_at=True,
     )["legacy_checkpoint_freshness"])
