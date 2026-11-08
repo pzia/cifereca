@@ -7,12 +7,14 @@ No provider session is marked connected; a POST 200 is unverified evidence.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from biblioaccess_http_sso import (
     ORIGIN, LOGON_PATH, FormShape, SsoProtocolError,
-    inspect_login_forms, logon_response_shape,
+    BIBLIO_ORIGIN, ACCOUNT_PATH, _url,
+    inspect_login_forms, logon_response_shape, classify_http_step,
 )
 
 _MAX_RESPONSE_BYTES = 65536
@@ -25,9 +27,6 @@ def _bounded_body(response, limit):
             raise SsoProtocolError("sso_response_limit")
         result.extend(chunk)
     return bytes(result)
-_ALLOWED_CONTENT_TYPES = frozenset((
-    "application/json", "text/html", "application/xhtml+xml",
-))
 
 
 @dataclass(frozen=True)
@@ -40,6 +39,13 @@ class LogonObservation:
     post_sent: bool = True
 
 
+@dataclass(frozen=True)
+class CasEntryObservation:
+    status: int
+    route: str
+    authentication_verified: bool = False
+
+
 class BiblioAccessHTTPQualification:
     """Ephemeral HTTP-only client, caller owns shutdown and cancellation."""
 
@@ -50,12 +56,48 @@ class BiblioAccessHTTPQualification:
             follow_redirects=False, trust_env=False, transport=transport,
         )
         self._closed = False
+        self._post_attempted = False
+        self._post_lock = Lock()
+        self._inspected_form_shapes = ()
+        self._login_inspected = False
 
     def close(self):
         if not self._closed:
             self._closed = True
             self.http.cookies.clear()
+            self._inspected_form_shapes = ()
             self.http.close()
+
+    def inspect_cas_entry(self) -> CasEntryObservation:
+        """Observe the first BiblioAccess redirect without following an IdP."""
+        if self._closed:
+            raise SsoProtocolError("sso_transport_closed")
+        try:
+            with self.http.stream(
+                "GET", BIBLIO_ORIGIN + ACCOUNT_PATH,
+                headers={"Accept": "text/html"},
+                follow_redirects=False,
+            ) as response:
+                if response.status_code not in (200, 302):
+                    raise SsoProtocolError("sso_entry_unavailable")
+                if response.status_code == 302:
+                    from urllib.parse import urljoin
+                    target = urljoin(BIBLIO_ORIGIN + ACCOUNT_PATH,
+                                     response.headers.get("location", ""))
+                    try:
+                        p = _url(target)
+                    except SsoProtocolError:
+                        raise SsoProtocolError("sso_entry_redirect_refused") from None
+                    if (p.hostname != "mediatheques.agglo-larochelle.fr"
+                            or p.path not in ("/login", "/cas/login")):
+                        raise SsoProtocolError("sso_entry_redirect_refused")
+                    return CasEntryObservation(
+                        status=302, route="institutional_redirect_unverified")
+                # A landing 200 may represent an already connected user, or
+                # a login shell. Never infer identity from this.
+                return CasEntryObservation(status=200, route="entry_unverified")
+        except (httpx.HTTPError, UnicodeError):
+            raise SsoProtocolError("sso_transport_unavailable") from None
 
     def inspect_login(self) -> tuple[FormShape, ...]:
         if self._closed:
@@ -70,8 +112,11 @@ class BiblioAccessHTTPQualification:
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise SsoProtocolError("sso_unexpected_content")
                 body = _bounded_body(response, 256000)
-                return inspect_login_forms(
+                shapes = inspect_login_forms(
                     ORIGIN + "/login", body.decode("utf-8", errors="strict"))
+                self._inspected_form_shapes = shapes
+                self._login_inspected = True
+                return shapes
         except (httpx.HTTPError, UnicodeError):
             raise SsoProtocolError("sso_transport_unavailable") from None
 
@@ -91,8 +136,15 @@ class BiblioAccessHTTPQualification:
                 or set(fields) != set(shape.field_names)
                 or any(type(k) is not str or type(v) is not str or len(v) > 8192
                        for k, v in fields.items())
-                or not shape.password_field_present):
+                or not shape.password_field_present
+                or not self._login_inspected
+                or not any(shape is inspected for inspected in self._inspected_form_shapes)):
             raise SsoProtocolError("sso_post_schema_unqualified")
+        # Mark before any I/O: an uncertain POST must never retry on this client.
+        with self._post_lock:
+            if self._post_attempted:
+                raise SsoProtocolError("sso_post_already_attempted")
+            self._post_attempted = True
         try:
             with self.http.stream(
                 "POST", ORIGIN + LOGON_PATH, data=fields,

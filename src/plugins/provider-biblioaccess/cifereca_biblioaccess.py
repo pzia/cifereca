@@ -60,9 +60,11 @@ DESCRIPTOR = ProviderDescriptor(
     state="skeleton",
     capabilities=ProviderCapabilities(),
     homepage="https://www.biblioaccess.com/1409/",
+    # Suppress the automatic startup sweep until direct HTTP CAS is qualified.
+    # This flag does not authorize an interactive browser in the provider.
     interactive_authentication=True,
     notes=(
-        "Connexion par navigateur institutionnel : aucun transfert de session supporté attesté.",
+        "SSO CAS institutionnel via futur client HTTP du provider ; POST /logon non qualifié.",
         "Aucune recherche, synchronisation de prêts ni acquisition disponible dans ce prototype.",
     ),
 )
@@ -76,7 +78,7 @@ class LaRochelleSession(ProviderSession):
         self.connected = False
         self._accounts = []
         raise ProviderCapabilityError(
-            "biblioaccess_external_sso_session_transfer_unsupported"
+            "biblioaccess_http_sso_logon_unqualified"
         )
 
     def close(self) -> None:

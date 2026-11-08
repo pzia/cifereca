@@ -12,8 +12,7 @@ ni API officielle, ni permission de télécharger ou d'emprunter.
 
 Le module contient un classificateur **hors ligne** de transitions synthétiques
 et une façade `ProviderSession` qui échoue explicitement à `connect()`.
-`interactive_authentication=True` empêche un démarrage automatique, mais
-ne constitue pas un navigateur, un protocole d'auth, ni un transport de cookies.
+`interactive_authentication=True` empêche le démarrage automatique ; ce drapeau n'autorise aucun navigateur interactif dans le plugin. Le fournisseur utilise exclusivement les primitives HTTP.
 
 ### Composants hors réseau ajoutés
 
@@ -81,3 +80,10 @@ positive et les garde-fous d'identité avant publication des capacités.
 Les secrets, ACSM réel et captures privées ne sont jamais dans le dépôt.
 Le tenant 1717 (Place des Arts, #2056) reste distinct ; un moteur partagé
 sera extrait seulement lors d'une implémentation prouvée pour les deux.
+
+### Renforcement du client HTTP de qualification
+
+- Le POST de qualification est lié à la **forme effectivement inspectée** sur la même instance HTTPX ; aucune forme fabriquée par un appelant ne suffit à déclencher le réseau.
+- **Au plus un POST par instance**, même après HTTP 200, erreur, timeout ou résultat incertain. Recommencer implique un nouveau client et une nouvelle inspection explicite.
+- `inspect_cas_entry()` consulte uniquement `/1409/Account/Login`, **sans suivre la redirection** : elle classe la destination institutionnelle autorisée et ne renvoie ni URL ni ticket de service. HTTP 200 demeure une observation non vérifiée.
+- `connect()` reste refusé avec le code `biblioaccess_http_sso_logon_unqualified` ; aucun navigateur ni droit d'emprunt n'est inféré.
