@@ -498,3 +498,24 @@ encore absents. Même zéro lien candidat signifie `completeness=unknown`,
 jamais « aucun prêt ». Aucun `Account`, `Loan`, `sync.loans` ou
 acquisition n'est produit. Cette étape constitue le point de raccordement
 de la future normalisation quand le HTML authentifié aura été qualifié.
+
+
+### Inspection automatique du script de connexion observé
+
+En mode `experimental_http_probe=on`, après lecture de `/login`,
+le client détecte désormais automatiquement l'unique script de connexion
+`logon.js` ou `logon.js.pagespeed.*.js` **effectivement référencé** dans
+le HTML du portail institutionnel, et l'inspecte via le GET JS existant
+(même origine, URL exacte et query privée). Le chemin manuellement configuré
+dans `experimental_login_script_path` conserve la priorité s'il est renseigné.
+S'il n'existe aucun script de connexion reconnu ou plusieurs candidats,
+aucune inspection automatique n'a lieu.
+
+Pour la page observée le 08/11/2026 17:18, le chemin de cette famille est
+`/ui/250297600004/plug-in/logon/logon.js.pagespeed.ce.E1q2XCAAyC.js`.
+Le but est de supprimer une étape de saisie à chaque itération terrain ;
+ce n'est ni une authentification ni une résolution automatique du challenge.
+Le mode `post` ne déclenche pas cette inspection implicite : il continue
+d'exiger le consentement et les paramètres de POST explicites jusqu'à
+qualification du protocole. La future session syncable devra utiliser ce
+parcours sans options expérimentales.
