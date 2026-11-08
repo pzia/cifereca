@@ -94,6 +94,7 @@ def test_post_30x_is_not_followed():
     shape = sso.FormShape("POST", sso.ORIGIN, "/logon",
                           ("login", "password"), True)
     client._inspected_form_shapes = (shape,)
+    client._form_actions[id(shape)] = sso.ORIGIN + "/logon"
     client._login_inspected = True
     try:
         answer = client.submit_once(shape=shape,
@@ -215,6 +216,55 @@ def test_structurally_equal_but_forged_form_cannot_submit():
             client.submit_once(
                 shape=forged, fields={"login": "x", "password": "y"},
                 explicit_consent=True)
+        assert seen == ["GET"]
+    finally:
+        client.close()
+
+
+def test_observed_logon_suffix_and_three_query_keys_used_only_in_http_request():
+    seen = []
+    action = "/portal/auth/logon?changeUser=0&provider=SYNTHETIC-PROVIDER&param=SYNTHETIC-PARAM"
+    def handler(request):
+        seen.append((request.method, str(request.url)))
+        if request.method == "GET":
+            return httpx.Response(
+                200, headers={"content-type": "text/html"},
+                text='<form method="post" action="' + action + '">'
+                     '<input name="identifiant"><input type="password" name="secret">'
+                     '</form>')
+        return httpx.Response(200, headers={"content-type": "application/json"},
+                              json={"status": "synthetic"})
+    client = mock(handler)
+    try:
+        shapes = client.inspect_login()
+        assert len(shapes) == 1
+        assert shapes[0].action_path == "/portal/auth/logon"
+        assert shapes[0].action_query_keys == ("changeUser", "param", "provider")
+        assert "SYNTHETIC-PARAM" not in repr(shapes)
+        observed = client.submit_once(
+            shape=shapes[0],
+            fields={"identifiant": "SYNTHETIC", "secret": "SYNTHETIC"},
+            explicit_consent=True)
+        assert len(seen) == 2
+        assert seen[1][0] == "POST"
+        assert seen[1][1].endswith(action)
+        assert "SYNTHETIC-PROVIDER" not in repr(observed)
+    finally:
+        client.close()
+
+
+def test_logon_invalid_query_keys_cannot_be_sent():
+    seen = []
+    def handler(request):
+        seen.append(request.method)
+        return httpx.Response(200, headers={"content-type": "text/html"},
+            text='<form method="POST" action="/auth/logon?ticket=SYNTHETIC">'
+                 '<input name="login"><input type="password" name="password">'
+                 '</form>')
+    client = mock(handler)
+    try:
+        with pytest.raises(sso.SsoProtocolError, match="form_target_refused"):
+            client.inspect_login()
         assert seen == ["GET"]
     finally:
         client.close()
