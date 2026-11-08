@@ -1,19 +1,8 @@
 """A local import's observed loan is a display link, never a receipt/right."""
 from pathlib import Path
 
-FIELDS = ('identity_id', 'credential_id', 'account_id', 'loan_id', 'item_id')
-
-
-def observed_loan(loan):
-    return dict(zip(FIELDS, (loan.identity_id, loan.source_credential,
-                            loan.source_account_id, loan.id, loan.record_id)))
-
-
-def scope_key(value):
-    if (type(value) is not dict or set(value) != set(FIELDS)
-            or any(type(value.get(k)) is not str or not value[k] for k in FIELDS)):
-        return None
-    return tuple(value[k] for k in FIELDS)
+# Public compatibility names: the display join is provider-neutral.
+from .observed_loan_scope import FIELDS, observed_loan, scope_key
 
 
 def remember_import(service, result, scope):
