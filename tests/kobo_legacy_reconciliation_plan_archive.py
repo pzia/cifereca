@@ -1,4 +1,4 @@
-"""Kobo #1345: privacy-safe, non-executable manual reconciliation plan.
+"""ARCHIVED TEST-ONLY Kobo #1345 manual reconciliation plan.
 
 Consumes ONLY the already redacted Kobo audit report. Never accepts a file,
 path, credential, entitlement or product ID and has no service/storage handle.
