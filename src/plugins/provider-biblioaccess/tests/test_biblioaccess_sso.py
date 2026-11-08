@@ -364,3 +364,64 @@ def test_post_exception_is_not_echoed_in_journal():
         assert session.accounts == []
     finally:
         session.close()
+
+
+def test_optional_catalogue_probe_logs_partial_read_without_rights(monkeypatch):
+    from types import SimpleNamespace
+    import sys
+    observed = []
+    class Catalogue:
+        def __init__(self):
+            observed.append("new")
+        def search(self, query, *, max_pages):
+            assert query == "un roman"
+            assert max_pages == 1
+            observed.append("search")
+            return SimpleNamespace(status="page_budget_exhausted",
+                                   book_ids=("123",), pages_observed=1)
+        def read_observed_notice(self, book_id):
+            assert book_id == "123"
+            observed.append("detail")
+            return SimpleNamespace(title="SYNTHETIC PRIVATE UNUSED")
+        def close(self):
+            observed.append("close")
+    monkeypatch.setitem(sys.modules, "biblioaccess_catalogue_http",
+                        SimpleNamespace(BiblioAccessCatalogueHTTP=Catalogue,
+                                        CatalogueHTTPError=ValueError))
+    events = []
+    class Diagnostics:
+        def add(self, cat, op, status, *, detail):
+            events.append((status, detail))
+    s = mod.LaRochelleSession(
+        credential_id="test", label="test", credentials={},
+        options={"experimental_catalogue_query": "un roman"},
+        diagnostics=Diagnostics(),
+    )
+    try:
+        s._probe_public_catalogue()
+        assert observed == ["new", "search", "detail", "close"]
+        assert [entry[1]["phase"] for entry in events] == [
+            "catalogue_search", "catalogue_search",
+            "catalogue_detail", "catalogue_detail"]
+        assert events[1][1]["book_ids_observed"] == 1
+        assert events[1][1]["completeness"] == "partial"
+        assert events[3][1]["entitlements_verified"] is False
+        assert "SYNTHETIC PRIVATE UNUSED" not in repr(events)
+        assert not s.connected and s.accounts == []
+    finally:
+        s.close()
+
+
+def test_no_catalogue_query_means_no_http_or_catalogue_client(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "biblioaccess_catalogue_http",
+                        None)
+    s = mod.LaRochelleSession(
+        credential_id="test", label="test", credentials={},
+        options={"experimental_catalogue_query": ""},
+    )
+    try:
+        s._probe_public_catalogue()  # must return before any import
+        assert not s.connected
+    finally:
+        s.close()
