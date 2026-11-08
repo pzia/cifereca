@@ -167,3 +167,49 @@ def test_duplicate_exact_observation_never_falls_back_to_first(harness):
     assert service.storage.metadata_get(
         borrow_claim_key(account, row.notice),
     ) is None
+
+
+def test_source_rebind_during_atomic_claim_blocks_provider_dispatch(
+    harness, monkeypatch,
+):
+    service, account, session, row, preview = setup_borrower(harness)
+    original = service.storage.loan_borrow_claim_once
+
+    def revoked_at_commit(key, operation):
+        result = original(key, operation)
+        service._source_context_epoch += 1
+        return result
+
+    monkeypatch.setattr(
+        service.storage, "loan_borrow_claim_once", revoked_at_commit,
+    )
+    result = execute(service, row, preview)
+    assert result["status"] == "blocked"
+    assert result["transfer"] == "blocked"
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, row.notice),
+    )["status"] == "blocked"
+
+
+def test_reader_rebound_during_confirmed_checkpoint_suppresses_positive_reply(
+    harness, monkeypatch,
+):
+    service, account, session, row, preview = setup_borrower(harness)
+    original = service.storage.loan_borrow_finish
+
+    def rebind_on_finish(*args, **kwargs):
+        receipt = original(*args, **kwargs)
+        if kwargs.get("status") == "confirmed":
+            service.current_identity = replace(service.current_identity)
+        return receipt
+
+    monkeypatch.setattr(service.storage, "loan_borrow_finish", rebind_on_finish)
+    result = execute(service, row, preview)
+    assert result["status"] == "verification_unavailable"
+    assert result["provider_verified"] is False
+    assert result["retry_borrow"] is False
+    assert session.actions == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, row.notice),
+    )["status"] == "confirmed"
