@@ -13,6 +13,63 @@ from .covers import CoverResolution, candidate, resolve_cover
 from .loan_source_identity import loan_source_key
 
 
+def attested_local_loan_cover_proof(
+    loan: Loan | None, entitlement: Mapping[str, object],
+    library_row: Mapping[str, object], *,
+    identity_id: str, provider_id: str, item_id: str,
+) -> dict[str, str] | None:
+    """Project one exact loan-to-local-Placement proof, never a guessed join.
+
+    Core's canonical library projection calls this *only after* resolving
+    the entitlement's source to an actual local row with a checked Placement.
+    The evidence is source-specific, not a property of its shared content SHA.
+    """
+    if (type(loan) is not Loan or type(entitlement) is not dict
+            or type(library_row) is not dict
+            or library_row.get("local") is not True
+            or library_row.get("identity_id") != identity_id
+            or type(loan.identity_id) is not str
+            or loan.identity_id != identity_id
+            or type(loan.id) is not str or not loan.id
+            or type(entitlement.get("loan_id")) is not str
+            or entitlement["loan_id"] != loan.id
+            or type(loan.record_id) is not str or not loan.record_id
+            or loan.record_id != item_id
+            or loan.source_provider != provider_id
+            or type(entitlement.get("credential_id")) is not str
+            or loan.source_credential != entitlement["credential_id"]
+            or type(entitlement.get("account_id")) is not str
+            or loan.source_account_id != entitlement["account_id"]
+            or type(library_row.get("placement_id")) is not str
+            or not library_row["placement_id"]
+            or type(library_row.get("artifact_id")) is not str
+            or not library_row["artifact_id"]):
+        return None
+    metadata = library_row.get("metadata")
+    resolution = metadata.get("cover_resolution") if type(metadata) is dict else None
+    if (type(resolution) is not dict
+            or resolution.get("status") != "selected"
+            or resolution.get("tier") not in ("embedded", "origin", "catalog")
+            or type(resolution.get("url")) is not str
+            or resolution["url"] != library_row.get("thumbnail_url")
+            or candidate(resolution["url"], tier=resolution["tier"],
+                         source="verified-local-placement") is None):
+        return None
+    return {
+        "loan_source_key": loan_source_key(loan),
+        "identity_id": loan.identity_id,
+        "source_provider": loan.source_provider,
+        "source_credential": loan.source_credential,
+        "source_account_id": loan.source_account_id,
+        "record_id": loan.record_id,
+        "loan_id": loan.id,
+        "artifact_id": library_row["artifact_id"],
+        "placement_id": library_row["placement_id"],
+        "url": resolution["url"],
+        "tier": resolution["tier"],
+    }
+
+
 def loan_local_cover(
     loan: Loan, library_rows: Iterable[Mapping[str, object]],
 ) -> CoverResolution:
@@ -70,4 +127,4 @@ def loan_local_cover(
     return resolve_cover(candidates)
 
 
-__all__ = ["loan_local_cover"]
+__all__ = ["attested_local_loan_cover_proof", "loan_local_cover"]
