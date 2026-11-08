@@ -1000,6 +1000,7 @@ def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage
         assert detail["connected"] is True
         assert detail["session_revoked"] is False
         assert detail["probe"] == "authenticated_sync"
+        assert "credential_id" not in detail
         assert session.diagnostic_state()["probe_phase"] == "loan_inventory_observed"
         for secret in ("SYNTHETIC-BOOK", "SYNTHETIC-USER", "SYNTHETIC-SECRET"):
             assert secret not in repr(live_events)
@@ -1064,3 +1065,26 @@ def test_known_cas_expiry_code_remains_classified_without_leaking_url():
     assert failures[0]["session_revoked"] is True
     assert calls.count("post") == 1
     session.close()
+
+
+def test_diagnostic_sink_failure_never_leaks_private_traceback(caplog):
+    import logging
+    from cifereca.plugin_api import read_loan_inventory
+
+    class BrokenDiagnostics:
+        def add(self, category, operation, status, *, detail):
+            raise RuntimeError("PRIVATE-SYNTHETIC-ACSM-TOKEN-NEVER-LOG")
+
+    session, http, calls = _synced_session()
+    session._diagnostics = BrokenDiagnostics()
+    try:
+        with caplog.at_level(logging.WARNING, logger="cifereca.plugin.biblioaccess"):
+            account, = session.connect()
+            account.identity_id = "identity-a"
+            snapshot = read_loan_inventory(session, account)
+        assert snapshot.status == "partial" and len(snapshot.loans) == 1
+        assert "biblioaccess_probe_diagnostic_sink_failed" in caplog.text
+        assert "PRIVATE-SYNTHETIC-ACSM-TOKEN-NEVER-LOG" not in caplog.text
+        assert calls.count("post") == 1
+    finally:
+        session.close()
