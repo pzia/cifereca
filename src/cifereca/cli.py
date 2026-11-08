@@ -201,6 +201,10 @@ def main(argv: list[str] | None = None) -> int:
     relink_b.add_argument("--placement", required=True)
     relink_b.add_argument("--path", required=True)
     relink_b.add_argument("--confirm", help="Token exact d'aperçu, sinon lecture seule")
+    relink_b.add_argument(
+        "--undo", help="Opération de relocalisation canonique à inverser ; "
+                       "remettre physiquement le fichier au chemin d'origine avant l'aperçu",
+    )
     kobo_preview = sub.add_parser(
         "kobo-resume-preview",
         help="Aperçu en lecture seule des candidats Kobo (aucun téléchargement)",
@@ -460,6 +464,7 @@ def main(argv: list[str] | None = None) -> int:
                 branch_id=a.branch, reference_kind=a.kind,
                 placement_id=a.placement, path=a.path,
                 confirmation=a.confirm,
+                **({"undo_operation": a.undo} if a.undo is not None else {}),
             )
         except Exception as exc:
             result = {

@@ -47,10 +47,40 @@ chemin doit être libre. La commande n'est ni une adoption d'archives
 historiques, ni une autorisation de GET, ni une création de B. Le retour
 est expurgé (sans chemin, IDs personnels ou SHA).
 
-Une annulation physique nécessite de remettre le fichier à l'ancien chemin
-et de faire une nouvelle relocalisation vérifiée ; aucun undo opaque ne peut
-réhabiliter une provenance devenue invalide. L'ancienne commande W4/undo
-reste temporairement accessible pour son périmètre non migré.
+## Annulation supervisée (D5) de la relocalisation canonique
+
+La confirmation de relocalisation renvoie désormais `operation_id`, digest
+opaque du journal de l'opération. **Restaurer d'abord physiquement le fichier
+à son chemin d'origine** (sans jamais le supprimer). La commande n'effectue
+aucun déplacement de fichier.
+
+Relancer la commande avec les **mêmes coordonnées exactes** de source/compte/
+droit/branche/Placement, en remplaçant `--path` par le chemin d'origine et
+en ajoutant `--undo OPERATION_ID`. Comme pour l'aller : aperçu en lecture
+seule, puis confirmation explicite `--confirm PLAN_TOKEN`.
+
+Le Core vérifie transactionnellement que le journal initial correspond au
+même SourceReference fournisseur, au même Placement et aux chemins de
+l'aller, et que le Placement n'a pas été repris par une autre opération.
+Un curseur transactionnel de la dernière relocalisation par Placement
+empêche notamment le rejeu **A→B→C→B**, y compris dans la même seconde
+SQLite. Ce curseur n'est ni un verrou durable ni une autorité de droit.
+La source, l'OriginLink et l'Artifact **doivent toujours être attestés**
+et le fichier retourné doit avoir les octets, taille et inode attendus.
+L'ancien chemin SQL (chemin aller) doit être physiquement absent ; un
+symlink, une copie encore présente, un chemin revendiqué par autrui, un
+journal ancien/malformé ou une preuve modifiée provoque un refus.
+
+Le commit est **une nouvelle relocalisation B**, inscrite dans un second
+journal append-only (`undo_of`) : aucune suppression ni modification de
+droit, SourceReference, OriginLink, Artifact, acquisition, archive 0.7 ou
+fichier. L'opération initiale n'est jamais effacée. Une annulation ne
+réhabilite pas une provenance devenue invalide. Un relink inverse manuel
+sans `--undo` reste possible suivant son ancien contrat strict mais ne
+prétend pas être l'annulation d'une opération identifiée.
+
+Le retrait de l'ancien exécuteur W4 reste en place ; les autres cas non
+attestés ne sont pas « réconciliés » par cet undo.
 
 Recette : `tests/test_core_p0_4859_verified_canonical_relink.py`
 (origine A/B vraie, changement d'inode même SHA, rebind de config,
