@@ -120,7 +120,7 @@ def main() -> int:
                 and all(row[1] is False and row[2] ==
                         "Une autre opération est déjà en cours" for row in receipts)
                 and len(details) == 3
-                and [row["task_ref"] for row in details] == [1, 2, 3]
+                and sorted(row["task_ref"] for row in details) == [1, 2, 3]
                 and all(row["code"] == "lock_busy"
                         and row["task_classification"] == "background_task"
                         for row in details)
@@ -135,6 +135,16 @@ def main() -> int:
                 "status": "PASS" if success else "FAIL",
                 "workers": len(receipts), "modals": modal_count,
                 "typed_receipts": len(details),
+                "toast_count": len(window.toasts),
+                "refs_ok": int(sorted(row.get("task_ref") for row in details) == [1, 2, 3]),
+                "feedback_ok": int(all(row[1] is False and row[2] ==
+                    "Une autre opération est déjà en cours" for row in receipts)),
+                "navigation_ok": int(window.view_stack.get_visible_child_name() == "settings"),
+                "label_ok": int(window.status_label.get_text() ==
+                    "Une autre opération est déjà en cours"),
+                "scope_ok": int(all(row.get("code") == "lock_busy" and
+                    row.get("task_classification") == "background_task"
+                    for row in details)),
             })
             window.runner.close()
             window._closed = True
