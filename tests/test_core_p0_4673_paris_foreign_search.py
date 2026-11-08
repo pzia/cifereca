@@ -340,7 +340,7 @@ def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
 @pytest.mark.parametrize("unsafe", [
     "https://private.invalid/account",
     "Bearer Secret", "token=SECRET", "reader@example.com",
-    "bad\\x00value",  # NUL is not bibliographic data
+    "bad\x00value",  # NUL is not bibliographic data
 ])
 def test_shared_paris_bibliography_rejects_non_bibliographic_values(unsafe):
     from cifereca.core.search_orchestration import _shared_paris_catalogue_bibliography
