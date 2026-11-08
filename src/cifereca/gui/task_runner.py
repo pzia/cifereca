@@ -511,7 +511,7 @@ class TaskRunner:
                     control.set_sensitive(True)
                 kind_outcome, payload = outcome
                 if busy_lock_attested:
-                    from .ui_dialog_observation import observe_background_busy_task
+                    from cifereca.gui.ui_dialog_observation import observe_background_busy_task
                     observe_background_busy_task(
                         self.window, task_ref=task_id,
                         classification=feedback_classification,
@@ -589,7 +589,7 @@ class TaskRunner:
                     # completion only; no context survives a later callback.
                     # A background lock contention is nonmodal even if an
                     # existing provider-specific err() calls show_error().
-                    from .ui_dialog_observation import task_dialog_context
+                    from cifereca.gui.ui_dialog_observation import task_dialog_context
                     with task_dialog_context(
                         self.window, task_ref=task_id,
                         classification=feedback_classification,
