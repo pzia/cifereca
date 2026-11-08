@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-import re
 
 from .library_inventory import Inventory
 from .library_reconciliation import EvidenceSnapshot, ReconciliationReport
@@ -78,16 +77,11 @@ class GroupedEvidence:
 
 # Public/redacted group keys must be stable structural provider identifiers,
 # never arbitrary upstream text, account names, paths or diagnostic payloads.
-_PROVIDER_ID = re.compile(r"[a-z][a-z0-9]*(?:[-.][a-z0-9]+)*\Z")
-_RESERVED_PROVIDER_GROUPS = frozenset({"all", "other", "unattributed"})
+from .provider_identifier import valid_provider_identifier
 
 
 def _public_provider_group(value: object, *, fallback: str) -> str:
-    if (type(value) is str and len(value) <= 64
-            and value not in _RESERVED_PROVIDER_GROUPS
-            and _PROVIDER_ID.fullmatch(value)):
-        return value
-    return fallback
+    return value if valid_provider_identifier(value) else fallback
 
 
 def group_evidence(inventory: Inventory, snapshot: EvidenceSnapshot,
