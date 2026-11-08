@@ -387,6 +387,26 @@ class LibraryService:
             observations=observations, now=now,
         )
 
+    def prepare_cross_profile_lender_action_plan(
+        self, *, captured_preview, selected_option_id: str,
+        expected_edition_id: str, observations: object,
+        now: int | None = None,
+    ):
+        """#4987: prepare an exact *inert* lender plan for a later consent.
+
+        The plan cannot borrow, transfer, switch identities or authorize a
+        copy. Never treat its status as sufficient authority for a POST.
+        """
+        from .core.borrow_for_identity_action_plan import (
+            prepare_cross_profile_lender_action_plan,
+        )
+        return prepare_cross_profile_lender_action_plan(
+            self, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id,
+            observations=observations, now=now,
+        )
+
     def can_borrow_paris(self, item: SearchResult) -> bool:
         """Inert Paris action availability, without provider I/O."""
         from .core.manual_paris_borrow import manual_paris_borrow_available
