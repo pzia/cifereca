@@ -158,6 +158,8 @@ def test_plugin_manager_uses_the_vocabulary_in_read_only_rendering():
                 and n.name == "PluginManagerPage")
     render_source = ast.unparse(node)
     assert "store_plugin_usage_hint(d.id)" in render_source
-    assert "if d.id == 'provider.numilog.catalog'" in render_source
+    assert "if d.id == 'provider.numilog.catalog'" not in render_source
+    assert "cette activation ne confère aucun droit" in render_source
+    assert 'if d.instantiation == \'singleton_public\'' in render_source
     assert "activation.set_active(self.manager.enabled_for_identity" in render_source
     assert "self._identity_toggle(pid, iid, button.get_active())" in render_source
