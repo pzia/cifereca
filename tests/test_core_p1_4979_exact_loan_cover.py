@@ -7,7 +7,9 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
-from cifereca.core.loan_cover_fallback import (\n    attested_local_loan_cover_proof, loan_local_cover,\n)
+from cifereca.core.loan_cover_fallback import (
+    attested_local_loan_cover_proof, loan_local_cover,
+)
 from cifereca.core.loan_source_identity import loan_source_key
 from cifereca.models import Loan
 
