@@ -109,3 +109,21 @@ que l'UPSERT. Ce marqueur n'est ni un droit ni une preuve de livraison et
 ne contient aucune donnée privée en clair. Il est conservé après les
 transitions de statut et les reprises. Les tests vérifient deux mises à jour
 consécutives et l'absence de nouvelle publication canonique.
+
+
+## Première ligne 0.7 non complète : aucune projection positive W1
+
+Le worker de compatibilité Kobo peut d'abord écrire `pending`,
+`acquiring`, `error`, `attention_required`, etc. : ces statuts
+décrivent un workflow historique, **pas une acquisition canonique**.
+Avant le premier `complete`, `Storage.backup_put` conserve la ligne
+0.7 pour le diagnostic/reprise, vérifie les collisions de propriétaires
+et de journaux canoniques, mais ne crée ni droit `entitlements`, ni
+`acquisition_ledger`, Artifact ou Placement génériques.
+
+Le premier `complete` d'une session **sans ABI canonique** conserve
+provisoirement la transition W2/W1 de compatibilité ; les reprises
+ultérieures de la même archive complète restent archive-only par le
+marqueur durable introduit précédemment. La suppression de cette
+dernière projection de livraison 0.7 dépend de la migration W2.
+Aucune SourceReference ou OriginLink fournisseur n'est inventée.
