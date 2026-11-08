@@ -1,6 +1,6 @@
 """#3252: anonymous, offline summary of Kobo final-delivery rejections.
 
-Use: python -m cifereca.core.kobo_final_verdict_summary PRIVATE-JOURNAL.zip
+Use: python -m scripts.kobo_final_verdict_summary PRIVATE-JOURNAL.zip
 The ZIP is not copied, uploaded, extracted or modified. Only closed counters
 are printed; never print raw events, item IDs, credentials or exception text.
 An occurrence count is NOT a count of distinct books or independent syncs.

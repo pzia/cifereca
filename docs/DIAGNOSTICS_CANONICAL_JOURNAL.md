@@ -242,7 +242,10 @@ les mêmes codes d'erreur ; ne pas forcer l'import de GTK ou de la configuration
 
 ## #3252 — qualification fiable de la couverture du diagnostic Kobo privé
 
-Commande locale : `python -m cifereca.core.kobo_final_verdict_summary CHEMIN-PRIVE.zip`.
+#3252: module d'analyse Kobo déplacé hors du Core installable.
+Exécuter la commande ci-dessous **à la racine du dépôt** avec Cifereca installé.
+
+Commande locale : `python -m scripts.kobo_final_verdict_summary CHEMIN-PRIVE.zip`.
 Le rapport retourne uniquement des **compteurs et statuts fermés**, jamais
 des événements, identités, chemins ou noms de rotations. Les occurrences
 d'erreur ne constituent pas un nombre de titres distincts.

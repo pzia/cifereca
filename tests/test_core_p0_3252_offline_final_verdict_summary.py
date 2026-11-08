@@ -1,7 +1,7 @@
 """#3252: offline summary never leaks raw journal data or guesses old failures."""
 from __future__ import annotations
 
-from cifereca.core.kobo_final_verdict_summary import classify, summarize_document
+from scripts.kobo_final_verdict_summary import classify, summarize_document
 
 
 def _event(*, format="epub", expected="epub", protected="False",
