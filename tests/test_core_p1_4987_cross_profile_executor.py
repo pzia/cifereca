@@ -108,6 +108,19 @@ def test_explicit_lender_loan_confirms_once_without_profile_switch_or_copy(harne
         "confirmed", "unavailable", "blocked",
     )
     assert progress.retry_borrow is progress.executable is False
+    # A second SQLite connection (standing in for process restart) must
+    # observe the *same* lender-owned reservation, not a requester claim.
+    from cifereca.storage import Storage
+    reopened = Storage(service.storage.path)
+    try:
+        assert reopened.loan_borrow_claim_once(
+            borrow_claim_key(account, row.notice), "new-process-operation",
+        )[0] is False
+        assert reopened.loan_borrow_state(
+            borrow_claim_key(account, row.notice),
+        )["status"] == "confirmed"
+    finally:
+        reopened.close()
     assert execute(service, row, preview)["status"] == "blocked"
     assert session.actions == 1
 
