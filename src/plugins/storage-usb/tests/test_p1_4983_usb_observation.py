@@ -209,3 +209,47 @@ def test_parent_directory_replaced_by_symlink_during_read_is_unverified(tmp_path
     row = usb.observe_usb_files(tmp_path, ("managed/book.epub",))[0]
     assert row.status == "unverified"
     assert row.sha256 is None
+
+
+def test_selected_usb_root_replaced_during_read_is_unverified(tmp_path, monkeypatch):
+    import os
+    import cifereca_storage_usb as usb
+
+    root = tmp_path / "device"
+    root.mkdir()
+    (root / "book.epub").write_bytes(b"original")
+    original_read = os.read
+
+    def swap_root(fd, limit):
+        chunk = original_read(fd, limit)
+        if chunk and not (tmp_path / "detached").exists():
+            root.rename(tmp_path / "detached")
+            root.mkdir()
+            (root / "book.epub").write_bytes(b"original")
+        return chunk
+
+    monkeypatch.setattr(usb.os, "read", swap_root)
+    row = usb.observe_usb_files(root, ("book.epub",))[0]
+    assert row.status == "unverified"
+    assert row.sha256 is None
+
+
+def test_selected_usb_root_removed_during_read_is_unverified(tmp_path, monkeypatch):
+    import os
+    import cifereca_storage_usb as usb
+
+    root = tmp_path / "device"
+    root.mkdir()
+    (root / "book.epub").write_bytes(b"original")
+    original_read = os.read
+
+    def detach_root(fd, limit):
+        chunk = original_read(fd, limit)
+        if chunk and not (tmp_path / "detached").exists():
+            root.rename(tmp_path / "detached")
+        return chunk
+
+    monkeypatch.setattr(usb.os, "read", detach_root)
+    row = usb.observe_usb_files(root, ("book.epub",))[0]
+    assert row.status == "unverified"
+    assert row.sha256 is None
