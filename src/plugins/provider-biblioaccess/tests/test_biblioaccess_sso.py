@@ -189,12 +189,12 @@ def test_post_mode_never_gets_network_when_dynamic_input_missing():
             session.close()
 
 
-def test_post_mode_missing_or_invalid_challenge_never_gets_network():
+def test_post_mode_invalid_dynamic_field_never_gets_network():
     options = _post_options()
-    options["ajax_captcha_check_value"] = ""
+    options["ajax_dc"] = "SYNTHETIC\\nINVALID"
     session = _post_session(options)
     try:
-        with pytest.raises(mod.ProviderConfigurationError, match="challenge_missing"):
+        with pytest.raises(mod.ProviderConfigurationError, match="shape_mismatch"):
             session.connect()
         assert not session.diagnostic_state()["probe_attempted"]
     finally:
