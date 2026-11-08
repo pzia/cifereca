@@ -101,7 +101,7 @@ GET dans la même instance** et n'autorise le POST qu'après consentement ;
 la query d'action reste éphémère en mémoire du client, **jamais dans les
 `FormShape` exposés**. La vérification autorise le suffixe `/logon` sur
 l'hôte institutionnel exact, et seulement la triade attestée si query présente.
-Un formulaire absant ou du login JavaScript non reconnu reste `unsupported` :
+Un formulaire absent ou une connexion JavaScript non reconnue reste `unsupported` :
 aucun POST fictif ne se substitue au script de connexion.
 
 Le premier GET de BiblioAccess peut livrer `/login?service=...` ; le client
