@@ -304,6 +304,108 @@ def _sizes(request) -> dict:
         return {}
 
 
+
+# #5097: fixed-size, value-free authentication schema; never raw auth text.
+_AUTH_SCHEMA_BYTES = 8192
+_AUTH_SCHEMA_FIELDS = 32
+_AUTH_SCHEMA_REASONS = frozenset((
+    "not_applicable", "schema_captured", "auth_schema_unavailable",
+    "auth_schema_unsupported", "metadata_only",
+))
+
+
+def _auth_query_names(url: str) -> tuple[str, ...] | None:
+    try:
+        query = urlsplit(url).query
+        if len(query) > 4096:
+            return None
+        pairs = parse_qsl(query, keep_blank_values=True, max_num_fields=_AUTH_SCHEMA_FIELDS)
+        names = [key for key, _value in pairs]
+        if any(_SAFE_QUERY_NAME.fullmatch(name) is None for name in names):
+            return None
+        return tuple(sorted(set(names)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _auth_request_structure(req, *, max_bytes: int) -> dict | None:
+    """Transiently parse bounded form names, discarding every value."""
+    if (_url_origin(req.url) is None or urlsplit(req.url).scheme != "https"
+            or req.method != "POST"
+            or _mime(_headers(req)) != "application/x-www-form-urlencoded"):
+        return None
+    names = _auth_query_names(req.url)
+    if names is None:
+        return None
+    gate, declared = _body_envelope(req)
+    measured = _sizes(req).get("requestBodySize")
+    if (gate != "ready" or type(measured) is not int
+            or not 0 < measured <= min(_AUTH_SCHEMA_BYTES, max_bytes)
+            or (declared is not None and declared != measured)):
+        return None
+    try:
+        raw = req.post_data_buffer
+        if type(raw) is not bytes or len(raw) != measured:
+            return None
+        decoded = raw.decode("utf-8", "strict")
+        fields = parse_qsl(decoded, keep_blank_values=True,
+                           max_num_fields=_AUTH_SCHEMA_FIELDS)
+        if not fields or any(_SAFE_QUERY_NAME.fullmatch(name) is None
+                             for name, _value in fields):
+            return None
+        # Even multiplicities are descriptive only; no password/login bytes.
+        return {"version": 1, "query_names": list(names),
+                "form_names": sorted(set(name for name, _ in fields))}
+    except (AttributeError, TypeError, ValueError, UnicodeError):
+        return None
+
+
+def _auth_response_structure(resp, req, *, max_bytes: int) -> dict | None:
+    """Return top-level JSON key/types, never values or nested structure."""
+    if (_url_origin(req.url) is None or urlsplit(req.url).scheme != "https"
+            or _mime(_headers(resp)) not in ("application/json", "text/json")):
+        return None
+    gate, declared = _body_envelope(resp)
+    measured = _sizes(req).get("responseBodySize")
+    if (gate != "ready" or type(measured) is not int
+            or not 0 < measured <= min(_AUTH_SCHEMA_BYTES, max_bytes)
+            or (declared is not None and declared != measured)):
+        return None
+    try:
+        raw = resp.body()
+        if type(raw) is not bytes or len(raw) != measured:
+            return None
+        # Decode only a bounded response; reject duplicate top-level keys.
+        def pairs(rows):
+            if len(rows) > _AUTH_SCHEMA_FIELDS:
+                raise ValueError("too_many_fields")
+            result = {}
+            for key, value in rows:
+                if key in result:
+                    raise ValueError("duplicate_field")
+                result[key] = value
+            return result
+        data = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=pairs)
+        if type(data) is not dict or not 0 < len(data) <= _AUTH_SCHEMA_FIELDS:
+            return None
+        kinds = []
+        for key, value in data.items():
+            if type(key) is not str or _SAFE_QUERY_NAME.fullmatch(key) is None:
+                return None
+            kind = ("null" if value is None else
+                    "boolean" if type(value) is bool else
+                    "string" if type(value) is str else
+                    "number" if type(value) in (int, float) else
+                    "array" if type(value) is list else
+                    "object" if type(value) is dict else None)
+            if kind is None:
+                return None
+            kinds.append([key, kind])
+        return {"version": 1, "keys": sorted(kinds)}
+    except (AttributeError, TypeError, ValueError, UnicodeError, RecursionError):
+        return None
+
+
 class CapturePause:
     """Thread-safe pause control, without captured network data."""
 
@@ -346,6 +448,11 @@ class PrivateExchange:
     network_error: bool = False
     # Optional third-party context, never a URL, header, MIME or body.
     metadata_only: bool = False
+    # Only typed names/types, no auth values; persisted under v1 optional fields.
+    auth_request_schema: dict | None = field(default=None, repr=False)
+    auth_response_schema: dict | None = field(default=None, repr=False)
+    auth_request_schema_state: str = "not_applicable"
+    auth_response_schema_state: str = "not_applicable"
 
     def __repr__(self) -> str:
         # A debugging object representation must never leak its secret URL,
@@ -659,17 +766,35 @@ class PrivateHttpTrace:
         if entry.metadata_only:
             return
         if _auth_flow(entry.url):
-            # Browser still performs the login, but the recorder never reads
-            # credential POSTs or IdP HTML/JSON response bodies, including
-            # those hosted on an explicitly authorized extra origin.
+            # Auth flows are permanently body-omitted. Only the structure of
+            # explicitly consented HTTPS POST/JSON exchanges may be sampled.
+            # This is not evidence of successful login or a usable token.
+            scoped = (_url_origin(req.url) in self.origins
+                      and urlsplit(req.url).scheme == "https")
             if entry.method in {"POST", "PUT", "PATCH"}:
                 entry.request_body = None
                 entry.request_body_state = "body_omitted"
                 entry.request_body_reason = "auth_redacted"
+                entry.auth_request_schema_state = "auth_schema_unavailable"
+                if scoped and entry.method == "POST":
+                    structure = _auth_request_structure(
+                        req, max_bytes=min(self.max_body, self.total_body),
+                    )
+                    if structure is not None:
+                        entry.auth_request_schema = structure
+                        entry.auth_request_schema_state = "schema_captured"
             if entry.response_body_state != "redirect":
                 entry.response_body = None
                 entry.response_body_state = "body_omitted"
                 entry.response_body_reason = "auth_redacted"
+                entry.auth_response_schema_state = "auth_schema_unavailable"
+                if scoped and resp is not None:
+                    structure = _auth_response_structure(
+                        resp, req, max_bytes=min(self.max_body, self.total_body),
+                    )
+                    if structure is not None:
+                        entry.auth_response_schema = structure
+                        entry.auth_response_schema_state = "schema_captured"
             return
         sizes = _sizes(req)
         actual_request = sizes.get("requestBodySize")
