@@ -225,3 +225,85 @@ def test_observed_script_redirect_denied_without_external_get():
         assert seen == [cas.IDP + "/assets/sso.js"]
     finally:
         c.close()
+
+
+@pytest.mark.parametrize("failure_kind, expected_error", [
+    ("redirect", "cas_login_unverified"),
+    ("forbidden", "cas_login_unverified"),
+    ("bad_content_type", "cas_login_unverified"),
+    ("oversized_body", "cas_body_limit"),
+    ("bad_encoding", "cas_transport_unavailable"),
+    ("invalid_html", "login_preflight_invalid_html"),
+    ("transport", "cas_transport_unavailable"),
+])
+def test_failed_login_get_never_enables_ajax_post(failure_kind, expected_error):
+    """Credential POST must be impossible after any failed preflight."""
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, str(req.url)))
+        if req.url.path == "/1409/Account/Login":
+            return httpx.Response(302, headers={"location": LOGIN})
+        assert req.url.path == "/login"
+        if failure_kind == "redirect":
+            return httpx.Response(302, headers={"location": cas.IDP + "/another"})
+        if failure_kind == "forbidden":
+            return httpx.Response(403, headers={"content-type": "text/html"})
+        if failure_kind == "bad_content_type":
+            return httpx.Response(200, headers={"content-type": "application/json"},
+                                  json={"error": "unverified"})
+        if failure_kind == "oversized_body":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  content=b"x" * (256 * 1024 + 1))
+        if failure_kind == "bad_encoding":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  content=b"\xff")
+        if failure_kind == "invalid_html":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  text='<script src="a.js" src="b.js"></script>')
+        raise httpx.ConnectError("synthetic transport failure", request=req)
+
+    c = client_for(handler)
+    try:
+        c.observe_entry_once()
+        with pytest.raises(ValueError, match=expected_error):
+            c.observe_login_once()
+        with pytest.raises(cas.AjaxCasError, match="cas_login_required"):
+            c.submit_once(query=QUERY, fields=FORM, consent=True)
+        with pytest.raises(cas.AjaxCasError, match="cas_preflight_unavailable"):
+            c.login_preflight()
+        with pytest.raises(cas.AjaxCasError, match="cas_login_unavailable"):
+            c.observe_login_once()
+        assert len(seen) == 2
+        assert [method for method, _ in seen] == ["GET", "GET"]
+    finally:
+        c.close()
+
+
+def test_successful_login_get_still_allows_exactly_one_ajax_post():
+    seen = []
+
+    def handler(req):
+        seen.append(req.method + " " + req.url.path)
+        if req.url.path == "/1409/Account/Login":
+            return httpx.Response(302, headers={"location": LOGIN})
+        if req.url.path == "/login":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  text="<html>Login</html>")
+        if req.url.path == "/logon.svc/logon":
+            return httpx.Response(200, headers={"content-type": "application/json"},
+                                  json={"success": False})
+        pytest.fail("Unexpected request")
+
+    c = client_for(handler)
+    try:
+        c.observe_entry_once()
+        c.observe_login_once()
+        assert c.submit_once(query=QUERY, fields=FORM, consent=True).outcome == "failure_reported"
+        with pytest.raises(ajax.AjaxLogonError, match="already_attempted"):
+            c.submit_once(query=QUERY, fields=FORM, consent=True)
+        with pytest.raises(cas.AjaxCasError, match="post_not_confirmed"):
+            c.observe_cas_once()
+        assert seen == ["GET /1409/Account/Login", "GET /login", "POST /logon.svc/logon"]
+    finally:
+        c.close()
