@@ -28,6 +28,9 @@ from .convergence_verified_presence import _verified_copy
 _MAX_PROFILES = 10000
 _SCHEMA = "core.kobo.canonical-placement-relink/1"
 _JOURNAL = "core.kobo.canonical-placement-relink."
+# Transactional per-Placement cursor: second-resolution SQLite timestamps
+# cannot detect a relink ABA returning to an identical physical pathname.
+_LATEST = "core.kobo.canonical-placement-last-operation.v1."
 
 
 def _unique_journal_fields(pairs):
@@ -310,6 +313,12 @@ def relink_verified_canonical_kobo(
                     and previous.get("origin_evidence_ref") == origin_evidence
                     and previous.get("identity_id") == identity_id
                     and previous.get("placement_id") == placement_id
+                    and db.execute(
+                        "SELECT value FROM metadata WHERE key=?",
+                        (_LATEST + hashlib.sha256(
+                            placement_id.encode("utf-8"),
+                        ).hexdigest(),),
+                    ).fetchone() == (undo_operation,)
                     and previous.get("old_path") == str(new_path)
                     and previous.get("new_path") == old_path
                     and previous.get("verified_file_sha256") == artifact_sha
@@ -369,6 +378,16 @@ def relink_verified_canonical_kobo(
                     "confirmed_at": now, "placement_updated_at": now,
                     "undo_of": undo_operation,
                 }, ensure_ascii=True, sort_keys=True)),
+            )
+            # The latest operation is a revocable cursor, not a right:
+            # overwrite it only together with the validated Placement and
+            # the append-only journal in this very same transaction.
+            db.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (_LATEST + hashlib.sha256(
+                    placement_id.encode("utf-8"),
+                ).hexdigest(), operation_id),
             )
             # SQL triggers or injected maintenance must not transform a
             # canonical origin into an unrelated claim inside this transaction.
