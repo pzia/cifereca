@@ -167,6 +167,19 @@ DESCRIPTOR = ProviderDescriptor(
     id="paris",
     display_name="Bibliothèques de Paris",
     description="Catalogue, compte lecteur et prêt numérique PNB des Bibliothèques de Paris.",
+    # Versioned, read-only text contributions. State classification is the
+    # generic CoreUI projection, never a connection/acquisition permission.
+    search_status_notice_schema="cifereca.provider-search-ui/1",
+    search_status_notices=(
+        ("unknown", "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."),
+        ("plugin_missing", "Bibliothèques de Paris : plugin absent ; recherche en ligne indisponible."),
+        ("plugin_disabled", "Bibliothèques de Paris : plugin désactivé ; recherche en ligne indisponible."),
+        ("catalog_unavailable", "Bibliothèques de Paris : catalogue non disponible dans ce profil."),
+        ("account_disconnected", "Bibliothèques de Paris : compte configuré mais source non connectée ; recherche en ligne indisponible."),
+        ("account_disabled", "Bibliothèques de Paris : compte désactivé pour ce profil ; recherche en ligne indisponible."),
+        ("account_unscoped", "Bibliothèques de Paris : source non connectée ; profil du compte à vérifier."),
+        ("account_missing", "Bibliothèques de Paris : aucun compte rattaché à ce profil ; recherche en ligne indisponible."),
+    ),
     state="ready",
     capabilities=ProviderCapabilities(
         authentication=True,
