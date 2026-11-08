@@ -383,7 +383,7 @@ def _paris_search_owner(self, session: ProviderSession) -> str | None:
     return owner if type(owner) is str and owner else None
 
 
-def _shared_paris_catalogue_cover_url(value: Any) -> str | None:
+def _shared_catalogue_cover_url(value: Any) -> str | None:
     """Preserve an ordinary public catalogue image, never account/private URLs.
 
     Catalogue URLs are public by default unless marked/revealed otherwise.
@@ -443,7 +443,7 @@ def _shared_paris_catalogue_row(
         return None
     return replace(
         row, owned=False, downloadable=False, download_url=None,
-        thumbnail_url=_shared_paris_catalogue_cover_url(row.thumbnail_url),
+        thumbnail_url=_shared_catalogue_cover_url(row.thumbnail_url),
         friendly_url=None,
         price=None, currency=None, revision_id=None,
         metadata=_shared_paris_catalogue_bibliography(row),
@@ -473,7 +473,9 @@ def _shared_numilog_public_row(row: SearchResult) -> SearchResult | None:
         return None
     return replace(
         row, owned=False, downloadable=False, download_url=None,
-        revision_id=None, thumbnail_url=None, friendly_url=None,
+        revision_id=None,
+        thumbnail_url=_shared_catalogue_cover_url(row.thumbnail_url),
+        friendly_url=None,
         metadata={"catalogue_access": "shared_read_only"},
         document_classification=None,
     )
@@ -505,7 +507,9 @@ def _shared_kobo_public_row(
         return None
     return replace(
         row, owned=False, downloadable=False, download_url=None,
-        friendly_url=None, thumbnail_url=None, revision_id=None,
+        friendly_url=None,
+        thumbnail_url=_shared_catalogue_cover_url(row.thumbnail_url),
+        revision_id=None,
         metadata={"catalogue_access": "shared_read_only"},
         document_classification=None,
     )
