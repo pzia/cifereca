@@ -462,7 +462,12 @@ class TaskRunner:
                     control.set_sensitive(True)
                 kind_outcome, payload = outcome
                 feedback_error = None if business_status == "success" else (
-                    "Emprunt non confirmé — vérification nécessaire"
+                    "Demande d’emprunt envoyée ; confirmation indisponible. "
+                    "Ne réempruntez pas : actualisez vos prêts ultérieurement."
+                    if (trace_kind == "borrow" and business_status == "pending"
+                        and kind_outcome == "ok" and type(payload) is dict
+                        and payload.get("reason_code") == "borrow_result_unverified")
+                    else "Emprunt non confirmé — vérification nécessaire"
                     if trace_kind == "borrow" and business_status == "pending"
                     else "Emprunt bloqué — aucune confirmation"
                     if trace_kind == "borrow" and business_status == "blocked"
