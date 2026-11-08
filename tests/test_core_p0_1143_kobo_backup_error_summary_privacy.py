@@ -91,6 +91,9 @@ def test_item_failure_summary_and_progress_do_not_copy_private_error_payload(
         assert error_events[0]["code"] == "provider_http_error"
         assert CODE_SECRET not in error_events[0]["message"] + error_events[0]["code"]
         persisted = service.storage.backup_get("kobo", "vault-1", ITEM)
-        assert persisted["error"] == "Sauvegarde Kobo impossible"
+        # Public error summaries remain stable; an exception after
+        # executor entry retains the non-retryable acquiring checkpoint.
+        assert persisted["status"] == "acquiring"
+        assert persisted["error"] is None
     finally:
         service.close()

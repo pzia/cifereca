@@ -3470,6 +3470,9 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
     # acquiring checkpoint to retryable error, even if no result can be
     # safely attributed to this borrower.
     opaque_get_returned = False
+    # The opaque executor can write bytes and THEN raise without returning.
+    # Once entered, an exception alone cannot prove that no GET occurred.
+    opaque_executor_entered = False
     backup_put({
         **base_record,
         "status": "acquiring",
@@ -3492,6 +3495,7 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
             item_guard(search_item, product_id, revision_id)
         if source_current is not None and not source_current():
             raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
+        opaque_executor_entered = True
         result = self._execute_kobo_acquisition(search_item, session_target_dir)
         opaque_get_returned = True
         # The provider executor has already performed its GET. On account,
@@ -3631,11 +3635,27 @@ def _acquire_manifest_item(self, session, session_identity, item, raw, session_t
             "TRACE kobo acquisition failed code=backup_item_failed phase=%s http_status=%s",
             phase, http_status,
         )
-        backup_put({
-            **base_record, "status": "error", "error": "Sauvegarde Kobo impossible",
-            "attempt_count": attempt_count, "last_attempt_at": attempted_at,
-            "executor": "kobo-adept", "updated_at": int(time.time()),
-        })
+        if opaque_executor_entered:
+            # No return is NOT evidence that no bytes were delivered: network,
+            # ADEPT and validation exceptions may follow an irreversible GET.
+            # Keep the durable acquiring marker, preventing the next manifest
+            # from dispatching the same edition a second time. Explicit
+            # supplier denials (delegation/archived) were handled above.
+            summary["reconcile_pending"] += 1
+            summary["reconcile_skipped"] += 1
+            emit(
+                "reconcile_required", current=index + 1, total=total,
+                item_id=product_id, title=title,
+                code="legacy_executor_exception_delivery_unknown",
+            )
+        else:
+            # Validation failed BEFORE the executor was invoked. No content
+            # GET was dispatched, so the historical error state is safe.
+            backup_put({
+                **base_record, "status": "error", "error": "Sauvegarde Kobo impossible",
+                "attempt_count": attempt_count, "last_attempt_at": attempted_at,
+                "executor": "kobo-adept", "updated_at": int(time.time()),
+            })
         summary["errors"] += 1
         info = record_error(exc, title=title, item_id=product_id)
         emit(

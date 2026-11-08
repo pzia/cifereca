@@ -56,17 +56,23 @@ def test_post_get_failure_keeps_acquiring_and_prevents_second_get(
         service.close()
 
 
-def test_failure_before_executor_return_keeps_existing_error_contract(
+def test_exception_without_executor_return_is_not_safe_to_retry(
     tmp_path: Path, monkeypatch,
 ):
     service = _service(tmp_path)
-    monkeypatch.setattr(
-        service, "_execute_kobo_acquisition",
-        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("transport failed")),
-    )
+    calls = []
+    def explode(*_args, **_kw):
+        calls.append("executor_entered")
+        raise RuntimeError("transport failed; delivery unknown")
+
+    monkeypatch.setattr(service, "_execute_kobo_acquisition", explode)
     try:
         first = service.sync_kobo_backup()
         assert first["errors"] >= 1
-        assert service.storage.backup_get("kobo", "vault-1", "book-1")["status"] == "error"
+        assert first["reconcile_pending"] >= 1
+        assert service.storage.backup_get("kobo", "vault-1", "book-1")["status"] == "acquiring"
+        replay = service.sync_kobo_backup()
+        assert replay["attempted"] == replay["downloaded"] == 0
+        assert calls == ["executor_entered"]
     finally:
         service.close()

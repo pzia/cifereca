@@ -63,7 +63,7 @@ def test_item_outcomes_observe_committed_checkpoint_not_previous_item(tmp_path, 
             assert checkpoint["status"] == "running"
             assert checkpoint["last_item_digest"] is not None
             assert record["status"] == (
-                "complete" if name == "downloaded" else "error"
+                "complete" if name == "downloaded" else "acquiring"
             )
         assert [cp["counts"]["downloaded"] for _, cp, _ in observed] == [1, 1, 2]
         assert [cp["counts"]["errors"] for _, cp, _ in observed] == [0, 1, 1]
