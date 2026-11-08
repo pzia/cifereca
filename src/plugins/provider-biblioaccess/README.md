@@ -519,3 +519,29 @@ Le mode `post` ne déclenche pas cette inspection implicite : il continue
 d'exiger le consentement et les paramètres de POST explicites jusqu'à
 qualification du protocole. La future session syncable devra utiliser ce
 parcours sans options expérimentales.
+
+
+### Premier POST AJAX à partir de la page fraîche (qualification opt-in)
+
+La capture terrain du 08/11/2026 17:37 contient le JavaScript de connexion
+réel. Pour le formulaire ordinaire, `logonManager.provider='Form'`,
+`logonManager.action='logon'`, `changeUser=true`, et `_dc` est
+l'horodatage Unix en millisecondes. Le formulaire contient un
+`#logon-captcha-checkvalue` caché, dont la **valeur doit être prélevée
+dans le même GET /login**, pas enregistrée dans une option de compte.
+Le CAPTCHA visuel est initialement masqué ; après refus du serveur,
+le navigateur peut demander une vérification supplémentaire.
+
+Le mode facultatif `experimental_http_probe=auto-post` est déclenché
+**uniquement** par une action explicite « Tester ce compte » :
+entrée BiblioAccess, GET institutionnel, lecture du contexte du formulaire,
+POST AJAX **unique** avec identifiants déjà enregistrés et champs dynamiques
+frais du HTML. Aucun script n'est exécuté, aucun CAPTCHA n'est résolu ;
+un formulaire inattendu, un challenge initial visible ou une valeur
+cachée absente interdisent le POST. Le mode `on` reste en GET uniquement ;
+le mode `post` historique avec valeurs fournies reste disponible.
+Le résultat AJAX peut conduire aux observations CAS/MyLoans existantes,
+mais **ne constitue jamais** une authentification Core vérifiée :
+aucun compte, prêt, téléchargement ou `sync.loans` n'est publié.
+Les captures HTTP brutes de ce mode peuvent contenir des identifiants :
+fichiers privés et partage après expurgation uniquement.
