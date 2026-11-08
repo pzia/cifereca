@@ -400,3 +400,15 @@ elle n'est pas personnalisable et ne sert pas à fabriquer `service`.
 un paramètre `service` CAS non vide, de même origine et de tenant exact ?
 Les gardes sur la destination, le service, le POST AJAX et les tickets
 demeurent inchangés ; aucune identité ni capacité de prêt n'est attestée.
+
+
+### Refus des réponses AJAX contradictoires
+
+Une réponse `success=true` HTTP 200 n'est classée `success_reported`
+que si `errors` est absent ou explicitement une liste vide. Une réponse
+contenant `errors` non vide, `null` ou d'un autre type reste `unknown` :
+aucun GET CAS ne doit être déclenché sur cette seule base. Les clés JSON
+dupliquées (y compris dans un objet imbriqué) et les constantes JSON
+non standard `NaN`/`Infinity` sont refusées. Les valeurs d'erreur et
+de continuation demeurent opaques. Cela ne prouve toujours ni identité,
+ni propriété de prêts, ni mécanisme d'authentification supporté.
