@@ -43,9 +43,15 @@ def observed_import_display_links(
                 or row.get("entitlement_id")
                 or row.get("strategy") != "manual_acsm"):
             continue
-        placement = by_path.get(meta.get("path"), {})
+        path = meta.get("path")
         artifact = row.get("artifact_id")
-        local_key = local_keys.get((placement.get("placement_id"), artifact))
+        if type(path) is not str or type(artifact) is not str:
+            continue
+        placement = by_path.get(path, {})
+        placement_id = placement.get("placement_id")
+        if type(placement_id) is not str:
+            continue
+        local_key = local_keys.get((placement_id, artifact))
         if (local_key and placement.get("identity_id") == scope[0]
                 and placement.get("provider_id") == placement_provider_id
                 and placement.get("artifact_id") == artifact):
