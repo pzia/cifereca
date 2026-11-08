@@ -1134,9 +1134,11 @@ def _preflight_incomplete_recovery(root: Path) -> None:
         "transaction_state_invalid",
     }
     for row in report["incomplete_transactions"]:
-        if (row["state"] == "restoration_incomplete"
-                and set(row["reasons"]) & irrecoverable
+        if (set(row["reasons"]) & irrecoverable
                 or row["state"] == "unreadable"):
+            # Even a transaction still labelled 'prepared' may contain a
+            # manually deleted before_current/before_previous or a corrupt
+            # snapshot. Never enter automatic restore with broken evidence.
             code = next((reason for reason in row["reasons"] if reason in irrecoverable),
                         "transaction_unreadable")
             raise UpdateError(
