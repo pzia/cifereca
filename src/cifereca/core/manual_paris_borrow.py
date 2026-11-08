@@ -161,5 +161,117 @@ def manual_paris_borrow(
     )
 
 
+def _pending_paris_borrow_scope(service, item: SearchResult):
+    """Return one private exact claim, never an operation reference to the UI.
+
+    This is a read-only lookup of a previously *consumed* borrow attempt.
+    No fresh claim, GET, POST, provider permission or source remapping.
+    """
+    from .borrow_action_scope import borrow_claim_key
+    from .loan_action_scope import _inert_session_accounts, _inert_session_state
+
+    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+    if (type(item) is not SearchResult
+            or type(identity) is not str or not identity
+            or item.docbase != "DILICOM" or item.medium != "digital"
+            or not _normal_paris_source_current(service, item, identity)):
+        return None
+    try:
+        session = service._session_for_source("paris", item.source_credential)
+        registered = _inert_session_accounts(session)
+        state = _inert_session_state(session)
+        if (registered is None or state is None
+                or state.get("connected") is not True
+                or state.get("_closed") is True):
+            return None
+        accounts = [
+            row for row in service.accounts
+            if (type(row) is Account and row.is_primary is True
+                and row.unique_id == "" and row.identity_id == identity
+                and row.provider_id == "paris"
+                and row.credential_id == item.source_credential
+                and sum(member is row for member in registered) == 1)
+        ]
+        if len(accounts) != 1:
+            return None
+        account = accounts[0]
+        key = borrow_claim_key(account, item)
+        if key is None:
+            return None
+        checkpoint = service.storage.loan_borrow_state(key)
+        if (type(checkpoint) is not dict
+                or checkpoint.get("status") != "verification_unavailable"):
+            return None
+        operation_id = checkpoint.get("operation_id")
+        if (type(operation_id) is not str
+                or not 1 <= len(operation_id) <= 128
+                or any(ord(c) < 33 or ord(c) > 126 for c in operation_id)):
+            return None
+        return account, operation_id
+    except Exception:
+        return None
+
+
+def paris_borrow_followup_available(service, item: SearchResult) -> bool:
+    """Inert local UI admission for one pending Paris loan check after restart."""
+    return _pending_paris_borrow_scope(service, item) is not None
+
+
+def verify_paris_borrow_followup(service, item: SearchResult) -> dict[str, object]:
+    """Re-read a prior uncertain claim, never initiate or clear a loan request.
+
+    The one-use operation ID is resolved internally from the exact durable
+    checkpoint. The public result contains a closed status/reason only.
+    """
+    def blocked():
+        return {
+            "status": "blocked", "reason_code": "borrow_verification_claim_mismatch",
+            "retry_borrow": False, "mutated": False,
+        }
+
+    pinned = _pending_paris_borrow_scope(service, item)
+    if pinned is None:
+        return blocked()
+    account, operation_id = pinned
+    result = service.verify_borrow_without_submission(
+        item, expected_identity_id=account.identity_id,
+        expected_account=account, expected_operation_id=operation_id,
+        expected_provider_id="paris", expected_docbase="DILICOM",
+    )
+    # An account can be disabled or replaced during provider I/O, even when
+    # the underlying legacy session object remains registered. Never publish
+    # a positive result after that change.
+    if (_pending_paris_borrow_scope(service, item) != pinned
+            or not _normal_paris_source_current(service, item, account.identity_id)):
+        return blocked()
+    if (type(result) is not dict
+            or result.get("status") not in {
+                "blocked", "unavailable", "observed_current_loan",
+            }
+            or result.get("retry_borrow") is not False
+            or result.get("mutated") is not False):
+        return blocked()
+    return {
+        "status": result["status"],
+        "reason_code": (
+            result.get("reason_code")
+            if type(result.get("reason_code")) is str
+            and result["reason_code"] in {
+                "borrow_verification_scope_invalid",
+                "borrow_verification_claim_mismatch",
+                "borrow_verification_source_changed",
+                "borrow_verification_observation_invalid",
+                "borrow_verification_observation_partial",
+                "borrow_verification_loan_unconfirmed",
+                "borrow_verification_current_loan_observed",
+                "borrow_verification_observation_unavailable",
+            }
+            else "borrow_verification_observation_unavailable"
+        ),
+        "retry_borrow": False,
+        "mutated": False,
+    }
+
 __all__ = ["manual_paris_borrow", "manual_paris_borrow_available",
-           "manual_paris_borrow_diagnostic"]
+           "manual_paris_borrow_diagnostic", "paris_borrow_followup_available",
+           "verify_paris_borrow_followup"]
