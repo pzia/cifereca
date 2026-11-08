@@ -251,7 +251,9 @@ def test_plugin_reconfiguration_during_claim_cannot_dispatch_provider(
     original = service.storage.loan_borrow_claim_once
     original_status = manager.status
     switch = {"active": True}
-    manager.enabled_for_identity = lambda _plugin, _identity: switch["active"]
+    manager.enabled_for_identity = lambda _plugin, _identity: (
+        switch["active"] if revoke == "lender_plugin" else True
+    )
     if revoke == "manifest":
         manager.status = lambda plugin_id: (
             original_status(plugin_id) if switch["active"] else
