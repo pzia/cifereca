@@ -11,6 +11,18 @@ from .settings_identity_editor import build_identity_settings_editor
 from .settings_account_editor import build_provider_account_editor
 
 
+def _saved_interactive_probe_ready(row: dict[str, Any]) -> bool:
+    """Use the same legacy enabled semantics as Config.provider_accounts.
+
+    A persisted account without 'enabled' remains ON. Corrupt truthy values
+    must not unlock an authentication action.
+    """
+    return (
+        type(row.get("id")) is str and bool(row["id"])
+        and row.get("enabled", True) is True
+    )
+
+
 def build_settings_editors(self, *, box, descriptors, public_ids,
                            mark_settings_dirty, library_directory, Gtk, Adw, add_css,
                            page_lifetime=None):
@@ -196,18 +208,33 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
 
         probe_button = editor.get("explicit_probe_button")
         if probe_button is not None:
-            probe_button.set_sensitive(
-                bool(data.get("id")) and data.get("enabled") is True
-            )
+            eligible = _saved_interactive_probe_ready(data)
+            probe_button.set_sensitive(eligible)
+            if not eligible:
+                editor["explicit_probe_status"].set_subtitle(
+                    "Enregistrer et activer ce compte avant la recette.")
 
             def explicit_probe(_button, *, e=editor, saved=dict(data),
                                pid=provider_id):
-                # This callback is the explicit consent action. Never use the
+                # Closed, value-free diagnostic for the repeated field case
+                # where no provider HTTP request follows an attempted test.
+                # No credential, account ID, draft or exception is logged.
+                def record(phase, status="ok"):
+                    try:
+                        self.service.diagnostics.add(
+                            "PLUGIN", "explicit provider probe UI", status,
+                            detail={"provider_id": pid, "phase": phase})
+                    except Exception:
+                        pass
+
+                record("clicked")
+                # The callback is the explicit consent action. Never use the
                 # global reconnect/startup connection sweep here.
-                if (not saved.get("id") or saved.get("enabled") is not True
+                if (not _saved_interactive_probe_ready(saved)
                         or e.get("deleted") or e.get("_probe_pending")
                         or getattr(self, "_closed", False)
                         or (page_lifetime is not None and not page_lifetime.alive)):
+                    record("blocked_unavailable", "warning")
                     return
                 # A modified draft is not the persisted credential being
                 # tested. Save/reopen first; never send stale credentials.
@@ -230,6 +257,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         )):
                     e["explicit_probe_status"].set_subtitle(
                         "Enregistrer les modifications avant la recette.")
+                    record("blocked_unsaved", "warning")
                     return
                 e["_probe_pending"] = True
                 button = e["explicit_probe_button"]
@@ -244,15 +272,19 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
 
                 def done(result):
                     release()
+                    observed = getattr(result, "status", None) == "observed"
+                    record("completed_unverified" if observed else "unavailable",
+                           "ok" if observed else "warning")
                     if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
                         e["explicit_probe_status"].set_subtitle(
                             "Diagnostic terminé (sans compte connecté). "
                             "Consulter et exporter le journal brut."
-                            if getattr(result, "status", None) == "observed"
+                            if observed
                             else "Diagnostic indisponible. Consulter le journal brut.")
 
                 def error(_exc):
                     release()
+                    record("failed", "warning")
                     if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
                         e["explicit_probe_status"].set_subtitle(
                             "Diagnostic refusé. Enregistrer, activer le compte "
@@ -267,8 +299,8 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         ),
                         done, error, control=button,
                     )
+                    record("dispatched")
                 except Exception:
-                    release()
                     error(None)
             probe_button.connect("clicked", explicit_probe)
 
