@@ -204,7 +204,6 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     """
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
-            or item.source_provider != "paris"
             or item.docbase != "DILICOM"
             or item.medium != "digital"
             or not window.service.paris_borrow_followup_available(item)
