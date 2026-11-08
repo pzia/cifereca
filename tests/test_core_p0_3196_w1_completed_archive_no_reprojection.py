@@ -118,3 +118,84 @@ def test_foreign_borrower_cannot_relabel_existing_complete_archive(
         assert _snapshot(storage) == canonical
     finally:
         storage.close()
+
+
+
+@pytest.mark.parametrize("status", (
+    "pending", "queued", "pending_acquisition", "acquiring", "error",
+    "attention_required", "reconcile_required", "reconcile_conflict",
+    "skipped_archived",
+))
+def test_post_complete_status_transition_never_reprojects_old_kobo_bytes(
+    tmp_path, status,
+):
+    """After one complete 0.7 receipt, a new checkpoint is NOT a fresh B."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        storage.backup_put(_row(status="complete"))
+        previously_published = _snapshot(storage)
+        assert previously_published["entitlements"]
+        assert previously_published["acquisition_ledger"]
+        old = storage.backup_get("kobo", "vault", "edition")
+        changed = {
+            **_row(status=status, title="Changed legacy checkpoint"),
+            "revision_id": "later-historical-revision",
+            "sha256": "b" * 64, "size": 250,
+            "local_path": "/historical/alice/kobo/changed.epub",
+            "attention_code": None,
+        }
+        storage.backup_put(changed)
+        assert _snapshot(storage) == previously_published
+        archive = storage.backup_get("kobo", "vault", "edition")
+        assert archive["status"] == status
+        assert archive["title"] == changed["title"]
+        assert archive["sha256"] == "b" * 64
+        assert archive["revision_id"] == "later-historical-revision"
+        assert archive["account_id"] == old["account_id"]
+        # Repeated compatible status updates remain strictly historical,
+        # even when a receipt had previously been positively mirrored.
+        storage.backup_put({**changed, "title": "Retried metadata"})
+        assert _snapshot(storage) == previously_published
+        assert storage.backup_get("kobo", "vault", "edition")["title"] == "Retried metadata"
+    finally:
+        storage.close()
+
+
+@pytest.mark.parametrize(("old", "new"), (
+    ("complete", "acquiring"), ("complete", "error"),
+    ("complete", "reconcile_required"), ("ok", "pending_acquisition"),
+    ("ok", "attention_required"), ("ok", "reconcile_conflict"),
+))
+def test_historical_completed_archive_never_creates_a_new_canonical_row(
+    tmp_path, old, new,
+):
+    """A migrated v0.7 row with no A/B starts and stays an archive."""
+    storage = Storage(tmp_path / "state.sqlite3")
+    try:
+        connection = storage.provider_connection_put({
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "enabled": True,
+        })
+        storage.provider_account_put({
+            "connection_id": connection,
+            "identity_id": "alice", "provider_id": "kobo",
+            "credential_id": "vault", "account_id": "buyer",
+            "is_primary": True,
+        })
+        with storage._lock, storage._connect() as db:
+            db.execute(
+                "INSERT INTO backup_items("
+                "provider_id,credential_id,item_id,identity_id,account_id,"
+                "revision_id,title,format,status,local_path,sha256,size,"
+                "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("kobo", "vault", "edition", "alice", "buyer", "rev-1",
+                 "Historic title", "epub", old,
+                 "/historical/alice/kobo/edition.epub", "a" * 64, 128, 10),
+            )
+        original = _snapshot(storage)
+        assert not any(original.values())
+        storage.backup_put(_row(status=new, title="Still archive"))
+        assert storage.backup_get("kobo", "vault", "edition")["status"] == new
+        assert _snapshot(storage) == original
+    finally:
+        storage.close()
