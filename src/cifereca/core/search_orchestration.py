@@ -408,6 +408,24 @@ def _shared_paris_catalogue_cover_url(value: Any) -> str | None:
     return public
 
 
+def _shared_paris_catalogue_bibliography(row: SearchResult) -> dict[str, Any]:
+    """Keep attested catalogue metadata when the reader is not its account owner.
+
+    A different profile is not a read ACL. Only known bibliographic scalars
+    and same-notice Resource facets are admitted; never raw provider extras,
+    account identifiers, nested session payloads or authentication URLs.
+    """
+    raw = row.metadata if type(row.metadata) is dict else {}
+    result: dict[str, Any] = {"catalogue_access": "shared_read_only"}
+    for key in ("language", "languages", "original_language",
+                "isbn", "isbns", "series", "collection", "publisher"):
+        cleaned = _safe_public_search_text(key, raw.get(key))
+        if cleaned is not None:
+            result[key] = cleaned
+    result.update(_safe_paris_resource_facets(raw, row.scenario))
+    return result
+
+
 def _shared_paris_catalogue_row(
     row: SearchResult, session: ProviderSession,
 ) -> SearchResult | None:
@@ -428,7 +446,7 @@ def _shared_paris_catalogue_row(
         thumbnail_url=_shared_paris_catalogue_cover_url(row.thumbnail_url),
         friendly_url=None,
         price=None, currency=None, revision_id=None,
-        metadata={"catalogue_access": "shared_read_only"},
+        metadata=_shared_paris_catalogue_bibliography(row),
         document_classification=None,
     )
 
