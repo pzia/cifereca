@@ -106,23 +106,6 @@ def toggle_state(db, source: SourceKey):
     return "on"
 
 
-def numilog_generation(storage, scope):
-    """Opaque consent epoch for this exact account; None if unavailable.
-
-    This epoch changes on Numilog revoke/re-opt-in. Pinning it prevents an
-    ON→OFF→ON race from reviving a previously admitted delivery.
-    """
-    if getattr(scope, "provider_id", None) != "numilog":
-        return None
-    try:
-        value = storage.metadata_get(
-            "sync.source.numilog.materialization.epoch.v1." + _source_id(scope)
-        )
-        return value if type(value) is str and _HEX.fullmatch(value) else None
-    except Exception:
-        return None
-
-
 
 def _consent_generation_key(scope):
     """Generation key for every source-wide automatic acquisition switch."""
