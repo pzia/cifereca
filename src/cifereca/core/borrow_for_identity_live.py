@@ -269,15 +269,28 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         # This avoids publishing even a non-executable stale option after
         # an ABA switch or a credential/session replacement.
         session_epoch = state.get("_epoch", source_epoch)
-        if type(session_epoch) is not int or session_epoch < 0:
+        # ProviderSession implementations legitimately use opaque strings
+        # (for example a UUID) or no local epoch at all. Do not interpret
+        # a session token as a numeric counter, and never echo its value in
+        # the choice ID. Invalid/unbounded tokens are not proof of freshness.
+        if type(session_epoch) is int and session_epoch >= 0:
+            epoch_number = session_epoch
+        elif (type(session_epoch) is str
+              and 0 < len(session_epoch) <= 128
+              and session_epoch.isascii() and session_epoch.isprintable()):
+            from hashlib import sha256
+            epoch_number = int.from_bytes(
+                sha256(b"borrow-session-epoch.v1:" +
+                       session_epoch.encode("ascii")).digest(), "big",
+            )
+        else:
             return "scope_unverified"
-        # A reconnected session may reuse an identical local _epoch and
-        # credential. Include the Core's independent source-generation in
-        # the option ID: Cantor pairing is injective for nonnegative ints,
-        # unlike addition, and never exposes the two underlying counters.
+        # Cantor pairing binds this token to the independent Core source
+        # generation. Changing either value revokes the held click; this
+        # does not authorize any supplier request.
         pinned_epoch = (
-            (source_epoch + session_epoch) *
-            (source_epoch + session_epoch + 1) // 2 + session_epoch
+            (source_epoch + epoch_number) *
+            (source_epoch + epoch_number + 1) // 2 + epoch_number
         )
         if (service._sessions.get(session_key) is not session
                 or _inert_session_state(session) is not state
