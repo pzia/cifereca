@@ -207,3 +207,70 @@ def test_foreign_inventory_rows_cannot_enter_catalogue(
         assert _run(service, progressive) == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("progressive", [False, True])
+def test_foreign_catalogue_keeps_safe_public_cover_without_entitlements(
+    tmp_path, monkeypatch, progressive,
+):
+    """Public catalogue thumbnails are reusable in A, unlike B's account URLs."""
+    service, _, bob, _, _ = _fixture(tmp_path, monkeypatch)
+    original = bob.search
+    public_cover = "https://bibliotheques.paris.fr/media/cover.jpg"
+    bob.search = lambda *args, **kwargs: [
+        replace(row, thumbnail_url=public_cover)
+        for row in original(*args, **kwargs)
+    ]
+    service._sessions = {"foreign-paris": bob}
+    try:
+        rows = _run(service, progressive)
+        assert len(rows) == 1
+        shared = rows[0]
+        assert shared.thumbnail_url == public_cover
+        assert shared.metadata == {"catalogue_access": "shared_read_only"}
+        assert shared.owned is False and shared.downloadable is False
+        assert shared.download_url is None and shared.friendly_url is None
+        assert "PRIVATE" not in repr(asdict(shared))
+        assert _run(service, progressive, force=False)[0].thumbnail_url == public_cover
+        service.select_identity("bob")
+        own = _run(service, progressive, force=False)[0]
+        assert own.thumbnail_url == public_cover
+        assert own.owned is True
+        service.select_identity("alice")
+        assert _run(service, progressive, force=False)[0].thumbnail_url == public_cover
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("url", [
+    "http://bibliotheques.paris.fr/media/cover.jpg",
+    "https://private.invalid/cover.jpg",
+    "https://bibliotheques.paris.fr/media/cover.jpg?token=PRIVATE",
+    "https://bibliotheques.paris.fr/profile/PRIVATE/cover.jpg",
+    "https://bibliotheques.paris.fr/session/abc/image",
+    "https://bibliotheques.paris.fr/download/cover.jpg",
+    "https://bibliotheques.paris.fr/media/cover.jpg#PRIVATE",
+    "https://user:pass@bibliotheques.paris.fr/media/cover.jpg",
+    "https://127.0.0.1/image.jpg",
+    "file:///tmp/cover.jpg",
+    "//bibliotheques.paris.fr/media/cover.jpg",
+    None,
+])
+@pytest.mark.parametrize("progressive", [False, True])
+def test_foreign_paris_catalogue_rejects_nonpublic_and_signed_cover(
+    tmp_path, monkeypatch, progressive, url,
+):
+    service, _, bob, _, _ = _fixture(tmp_path, monkeypatch)
+    original = bob.search
+    bob.search = lambda *args, **kwargs: [
+        replace(row, thumbnail_url=url)
+        for row in original(*args, **kwargs)
+    ]
+    service._sessions = {"foreign-paris": bob}
+    try:
+        shared = _run(service, progressive)[0]
+        assert shared.thumbnail_url is None
+        assert shared.owned is False and shared.download_url is None
+        assert "PRIVATE" not in repr(asdict(shared))
+    finally:
+        service.close()
