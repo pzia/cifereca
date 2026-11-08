@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from functools import wraps
+import threading
 import hashlib
 import io
 import json
@@ -65,6 +68,65 @@ class ReleasePluginSmokeError(UpdateError):
         self.reason_code = reason_code
         self.smoke_counts = dict(smoke_counts)
         self.failed_contributions = [dict(row) for row in (failed_contributions or [])]
+
+
+
+_UPDATER_THREAD_LOCK = threading.RLock()
+_UPDATER_LOCK_DEPTH = threading.local()
+
+
+@contextmanager
+def _exclusive_updater_lock(root: Path):
+    """Shared process + OS lease, held for the full mutating updater command.
+
+    Never unlink the lock file; all official installations/rollbacks and
+    reconciliation must lock the same persistent inode (P0 #5069).
+    """
+    with _UPDATER_THREAD_LOCK:
+        depth = getattr(_UPDATER_LOCK_DEPTH, "count", 0)
+        if depth:
+            _UPDATER_LOCK_DEPTH.count = depth + 1
+            try:
+                yield
+            finally:
+                _UPDATER_LOCK_DEPTH.count -= 1
+            return
+        try:
+            import fcntl
+            root.mkdir(parents=True, exist_ok=True)
+            fd = os.open(root / ".cifereca-updater.lock",
+                         os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except (ImportError, OSError):
+            raise UpdateError("Verrou updater indisponible") from None
+        try:
+            current = os.fstat(fd)
+            if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                    or current.st_uid != os.getuid()
+                    or current.st_mode & 0o077):
+                raise UpdateError("Verrou updater non sûr")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                raise UpdateError("Une opération updater est déjà en cours") from None
+            _UPDATER_LOCK_DEPTH.count = 1
+            try:
+                yield
+            finally:
+                _UPDATER_LOCK_DEPTH.count = 0
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _serial_updater_operation(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        # Read-only dry-runs retain the existing no-runtime-directory contract.
+        if kwargs.get("dry_run", False):
+            return func(*args, **kwargs)
+        with _exclusive_updater_lock(install_root()):
+            return func(*args, **kwargs)
+    return wrapped
 
 
 def _run_bounded_process(command: list[str], *, timeout: int, **kwargs: Any) -> subprocess.CompletedProcess:
@@ -463,6 +525,7 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
                 }
             if transaction.get("state") not in {
                 "applied", "rolled_back", "update_failed_restored",
+                "reconciled_degraded",
             }:
                 raise UpdateError("Nettoyage refusé : état de transaction inconnu")
 
@@ -1082,6 +1145,171 @@ def _preflight_incomplete_recovery(root: Path) -> None:
                 "diagnostic: cifereca-update --recovery-inspect --json"
             )
 
+
+def _previous_reconciliation_plan(root: Path, transaction_id: str) -> dict[str, Any]:
+    """Strict read-only witness for the *single* lost-before_previous case.
+
+    The hash is a one-shot operator acknowledgement, not a cryptographic
+    signature. It binds the exact journal bytes, Core pointer, and current
+    package proofs; it is rederived inside the updater mutation lock.
+    """
+    if not re.fullmatch(r"\d{8}T\d{6}Z-[a-f0-9]{8,24}", transaction_id):
+        raise UpdateError("reconciliation_transaction_id_invalid")
+    report = recovery_inspect(root)
+    rows = report["incomplete_transactions"]
+    if (len(rows) != 1 or rows[0]["id"] != transaction_id
+            or rows[0]["state"] != "restoration_incomplete"
+            or rows[0]["reasons"] != ["before_previous_missing"]):
+        raise UpdateError("reconciliation_evidence_not_unique")
+    folder = _transaction_path(root, transaction_id)
+    journal = folder / "transaction.json"
+    if folder.is_symlink() or journal.is_symlink():
+        raise UpdateError("reconciliation_unsafe_journal")
+    transaction = _read_transaction(folder)
+    if transaction.get("restoration_errors") != ["verification"]:
+        raise UpdateError("reconciliation_incompatible_failure")
+    core = transaction["core"]
+    before = _path_from_identity(core["before_current"])
+    lost = _path_from_identity(core["before_previous"])
+    # Only the lost *older* previous Core generation may be irrecoverable.
+    # The full original current identity must still be attestable.
+    if (before is None or lost is None
+            or before.parent != root / "releases"
+            or lost.parent != root / "releases"
+            or not before.is_dir() or before.is_symlink()
+            or lost.exists() or lost.is_symlink()
+            or _symlink_target(root / "current") != before
+            or (root / "previous").exists() or (root / "previous").is_symlink()
+            or _core_identity(before) != core["before_current"]):
+        raise UpdateError("reconciliation_core_evidence_mismatch")
+    # The inventory above attested current package identities AND saved
+    # snapshots. Bind the receipt to them without disclosing package names.
+    raw = journal.read_bytes()
+    proof = {
+        package_id: _package_identity(package_id)
+        for package_id in sorted(transaction["packages"])
+    }
+    token = hashlib.sha256(
+        b"cifereca.reconcile-lost-previous/1\0"
+        + raw + b"\0" + os.readlink(root / "current").encode("utf-8")
+        + b"\0" + json.dumps(proof, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return {
+        "ok": True, "read_only": True, "id": transaction_id,
+        "reason": "before_previous_missing",
+        "proposed_state": "reconciled_degraded",
+        "acknowledgement_sha256": token,
+        "requires_acknowledgement": True,
+    }
+
+
+def reconcile_lost_previous(
+    transaction_id: str, *, acknowledge: str | None = None,
+) -> dict[str, Any]:
+    """Supervised resolution only: never fabricate a rollback generation.
+
+    Planning is read-only. Apply takes an exclusive lock, rechecks all proof,
+    fsyncs a private archival journal and only then changes transaction
+    state to *degraded* (not restored). No plugin or user-state mutation.
+    """
+    root = install_root()
+    if acknowledge is None:
+        return _previous_reconciliation_plan(root, transaction_id)
+    if type(acknowledge) is not str or not re.fullmatch(r"[a-f0-9]{64}", acknowledge):
+        raise UpdateError("reconciliation_acknowledgement_invalid")
+    with _exclusive_updater_lock(root):
+        plan = _previous_reconciliation_plan(root, transaction_id)
+        if acknowledge != plan["acknowledgement_sha256"]:
+            raise UpdateError("reconciliation_evidence_changed")
+        folder = _transaction_path(root, transaction_id)
+        original = _read_transaction(folder)
+        private_audit = root / "reconciliation-audit"
+        if private_audit.is_symlink():
+            raise UpdateError("reconciliation_audit_store_unsafe")
+        private_audit.mkdir(mode=0o700, exist_ok=True)
+        if (not private_audit.is_dir() or private_audit.is_symlink()
+                or private_audit.stat().st_uid != os.getuid()
+                or private_audit.stat().st_mode & 0o077):
+            raise UpdateError("reconciliation_audit_store_unsafe")
+        audit = private_audit / (transaction_id + "-" + acknowledge[:16] + ".json")
+        receipt = {
+            "schema": "cifereca.updater.reconciliation-audit/1",
+            "transaction_id": transaction_id,
+            "reason": "before_previous_missing",
+            "result": "reconciled_degraded",
+            "acknowledgement_sha256": acknowledge,
+            "original_transaction": original,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        data = (json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2)
+                + "\n").encode("utf-8")
+        if audit.exists() or audit.is_symlink():
+            # Recovery from a crash *after* fsync(audit) but *before* saving
+            # the degraded journal is allowed only for the identical proof.
+            # A partial, foreign or replaced audit must not be rewritten.
+            if audit.is_symlink():
+                raise UpdateError("reconciliation_existing_audit_unsafe")
+            fd = -1
+            try:
+                fd = os.open(audit, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                existing_stat = os.fstat(fd)
+                if (not stat.S_ISREG(existing_stat.st_mode)
+                        or existing_stat.st_nlink != 1
+                        or existing_stat.st_uid != os.getuid()
+                        or existing_stat.st_mode & 0o077
+                        or existing_stat.st_size > 128 * 1024 * 1024):
+                    raise UpdateError("reconciliation_existing_audit_unsafe")
+                with os.fdopen(fd, "rb") as stream:
+                    fd = -1
+                    saved = json.loads(stream.read().decode("utf-8"))
+            except (OSError, ValueError, UnicodeError):
+                raise UpdateError("reconciliation_existing_audit_unreadable") from None
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+            if (type(saved) is not dict
+                    or saved.get("schema") != receipt["schema"]
+                    or saved.get("transaction_id") != transaction_id
+                    or saved.get("reason") != receipt["reason"]
+                    or saved.get("result") != receipt["result"]
+                    or saved.get("acknowledgement_sha256") != acknowledge
+                    or saved.get("original_transaction") != original):
+                raise UpdateError("reconciliation_existing_audit_mismatch")
+        else:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                fd = os.open(audit, flags, 0o600)
+            except OSError:
+                raise UpdateError("reconciliation_audit_write_refused") from None
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except OSError:
+                raise UpdateError("reconciliation_audit_write_failed") from None
+        directory_fd = os.open(private_audit, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        # Any drift between proof and journal commit must still fail closed;
+        # leaving the audit receipt without a state switch is recoverable.
+        refreshed = _previous_reconciliation_plan(root, transaction_id)
+        if refreshed["acknowledgement_sha256"] != acknowledge:
+            raise UpdateError("reconciliation_evidence_changed")
+        original["reconciliation"] = {
+            "schema": 1, "reason": "before_previous_missing",
+            "audit": audit.name, "acknowledgement_sha256": acknowledge,
+        }
+        _save_transaction(folder, original, "reconciled_degraded")
+        return {
+            "ok": True, "id": transaction_id, "state": "reconciled_degraded",
+            "reason": "before_previous_missing", "audit": audit.name,
+            "no_previous_release_restored": True,
+        }
+
+
 def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | None:
     expected = _release_plugin_manifest(release)
     if not expected:
@@ -1283,6 +1511,7 @@ def _restore_release_links(root: Path, old_current: Path | None, old_previous: P
         previous_link.unlink(missing_ok=True)
 
 
+@_serial_updater_operation
 def install_source(
     source: Path,
     *,
@@ -1504,6 +1733,7 @@ def _prepare_github_wheelhouse(source: Path, python: str) -> None:
 
 
 
+@_serial_updater_operation
 def install_github(
     ref: str = "main",
     *,
@@ -1534,6 +1764,7 @@ def install_github(
         return result
 
 
+@_serial_updater_operation
 def install_archive(
     archive: Path,
     *,
@@ -1613,6 +1844,7 @@ def status() -> dict[str, Any]:
     }
 
 
+@_serial_updater_operation
 def rollback(to: str | None = None) -> dict[str, Any]:
     root = install_root()
     _preflight_incomplete_recovery(root)
@@ -1721,6 +1953,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--status", action="store_true")
     p.add_argument("--recovery-inspect", action="store_true",
                    help="Diagnostic en lecture seule des transactions de reprise bloquées")
+    p.add_argument("--recovery-reconcile", metavar="TRANSACTION_ID",
+                   help="Plan de réconciliation ciblée (lecture seule sauf --acknowledge)")
+    p.add_argument("--acknowledge", metavar="SHA256",
+                   help="Validation explicite du plan exact --recovery-reconcile")
     p.add_argument("--rollback", action="store_true")
     p.add_argument("--to")
     p.add_argument("--keep", type=int, default=MIN_RETAINED_RELEASES,
@@ -1731,6 +1967,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.recovery_inspect:
             result = recovery_inspect()
+        elif a.recovery_reconcile is not None:
+            if a.archive or a.github is not None or a.rollback or a.status or a.dry_run:
+                p.error("--recovery-reconcile incompatible avec installation, status ou rollback")
+            result = reconcile_lost_previous(a.recovery_reconcile, acknowledge=a.acknowledge)
         elif a.status:
             result = status()
         elif a.rollback:
