@@ -101,3 +101,48 @@ def test_shared_preview_remains_eligible_when_one_consumer_cancels(tmp_path, mon
         assert loader._preview_waiters == {}
     finally:
         loader.close()
+
+
+def test_preview_diagnostics_distinguish_path_delivery_and_cancelled_work(tmp_path, monkeypatch):
+    """#4996: counters are bounded metadata, never a cover URL or local path."""
+    loader, pool, conversions = setup(tmp_path, monkeypatch)
+    try:
+        received = []
+        request = loader.load_preview("book", received.append, width=60, height=90)
+        request.cancel()
+        pool.run(0)
+        snapshot = loader.stats()
+        assert snapshot["preview_worker_skipped"] == 1
+        assert snapshot["preview_result_path"] == 0
+        assert snapshot["preview_result_none"] == 0
+        assert snapshot["preview_callback_suppressed"] == 1
+        assert received == []
+
+        loader.load_preview("book", received.append, width=60, height=90)
+        pool.run(1)
+        snapshot = loader.stats()
+        assert snapshot["preview_result_path"] == 1
+        assert snapshot["preview_result_none"] == 0
+        assert received == [tmp_path / "60x90.png"]
+        assert all("book" not in key for key in snapshot)
+    finally:
+        loader.close()
+
+
+def test_preview_diagnostics_capture_none_source_without_retry(tmp_path, monkeypatch):
+    loader, pool, conversions = setup(tmp_path, monkeypatch)
+    try:
+        monkeypatch.setattr(
+            loader, "load", lambda _url, callback, **kw:
+                (callback(None), NS(cancel=lambda: None))[1],
+        )
+        received = []
+        loader.load_preview("book", received.append, width=60, height=90)
+        assert received == [None]
+        stats = loader.stats()
+        assert stats["preview_source_none"] == 1
+        assert stats["preview_result_none"] == 1
+        assert stats["preview_result_path"] == 0
+        assert pool.jobs == []
+    finally:
+        loader.close()
