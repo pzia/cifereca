@@ -71,7 +71,7 @@ def _assert_shared(row):
     assert row.source_provider == "paris"
     assert row.source_credential == "paris-bob"
     assert row.scenario == "EBOOKS" and row.docbase == "DILICOM"
-    assert row.metadata == {"catalogue_access": "shared_read_only"}
+    assert row.metadata == {"catalogue_access": "shared_read_only", "language": "fr"}
     assert row.owned is False and row.downloadable is False
     assert row.download_url is None and row.thumbnail_url is None
     assert row.friendly_url is None and row.revision_id is None
@@ -227,7 +227,7 @@ def test_foreign_catalogue_keeps_safe_public_cover_without_entitlements(
         assert len(rows) == 1
         shared = rows[0]
         assert shared.thumbnail_url == public_cover
-        assert shared.metadata == {"catalogue_access": "shared_read_only"}
+        assert shared.metadata == {"catalogue_access": "shared_read_only", "language": "fr"}
         assert shared.owned is False and shared.downloadable is False
         assert shared.download_url is None and shared.friendly_url is None
         assert "PRIVATE" not in repr(asdict(shared))
@@ -274,3 +274,83 @@ def test_foreign_paris_catalogue_rejects_nonpublic_and_signed_cover(
         assert "PRIVATE" not in repr(asdict(shared))
     finally:
         service.close()
+
+
+
+@pytest.mark.parametrize("progressive", [False, True])
+def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
+    tmp_path, monkeypatch, progressive,
+):
+    """The Core identity selector is not an ACL for catalogue language/facets."""
+    from cifereca.core.search_orchestration import _shared_paris_catalogue_row
+    service, _, bob, _, _ = _fixture(tmp_path, monkeypatch)
+    service._sessions = {"bob": bob}
+    try:
+        row = _run(service, progressive)[0]
+        assert row.metadata["language"] == "fr"
+        assert row.metadata["catalogue_access"] == "shared_read_only"
+        assert "account" not in row.metadata
+        assert row.thumbnail_url is None  # Private token URL is still not exposed.
+
+        original = replace(
+            row,
+            metadata={
+                "language": "fr", "languages": ["fr", "en"],
+                "series": "Romans", "collection": "Littérature",
+                "publisher": "Éditeur", "isbn": "9780306406157",
+                "account": "FOREIGN_SECRET", "rights": {"access_token": "SECRET"},
+                "session": "FOREIGN_SECRET", "language_original": "en",
+                "subject": "https://private.invalid?token=SECRET",
+                "bibliography_evidence": {
+                    "subjects": {
+                        "source": "paris.syracuse.search",
+                        "source_field": "Resource.Subj",
+                        "scope": "EBOOKS",
+                        "confidence": "upstream_field_present",
+                        "freshness": "search_response",
+                    }
+                },
+                "subjects": ["Science-fiction", "Histoire"],
+            },
+        )
+        qualified = _shared_paris_catalogue_row(original, bob)
+        assert qualified is not None
+        assert qualified.metadata == {
+            "catalogue_access": "shared_read_only",
+            "language": "fr", "languages": ["fr", "en"],
+            "series": "Romans", "collection": "Littérature",
+            "publisher": "Éditeur", "isbn": "9780306406157",
+            "subjects": ["Science-fiction", "Histoire"],
+            "bibliography_evidence": {
+                "subjects": {
+                    "source": "paris.syracuse.search",
+                    "source_field": "Resource.Subj",
+                    "scope": "EBOOKS",
+                    "confidence": "upstream_field_present",
+                    "freshness": "search_response",
+                }
+            },
+        }
+        assert "FOREIGN_SECRET" not in repr(asdict(qualified))
+        assert "access_token" not in repr(asdict(qualified))
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("unsafe", [
+    "https://private.invalid/account",
+    "Bearer Secret", "token=SECRET", "reader@example.com",
+    "bad\x00value",  # NUL is not bibliographic data
+])
+def test_shared_paris_bibliography_rejects_non_bibliographic_values(unsafe):
+    from cifereca.core.search_orchestration import _shared_paris_catalogue_bibliography
+    from tests.test_core043_progress_cache_stats import _FakeSession
+    session = _FakeSession("paris")
+    source = replace(
+        session.search("term", "all")[0],
+        source_provider="paris", source_credential="bob",
+        scenario="EBOOKS", docbase="DILICOM",
+        metadata={"language": unsafe, "series": unsafe, "account": "SECRET"},
+    )
+    metadata = _shared_paris_catalogue_bibliography(source)
+    assert metadata == {"catalogue_access": "shared_read_only"}
