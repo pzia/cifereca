@@ -67,3 +67,28 @@ def test_relative_implementation_imports_and_root_modules_are_included(tmp_path:
     report = inventory(tmp_path)
     assert report["files_with_signals"] == 1
     assert list(report["findings"]) == ["src/cifereca/brokers.py"]
+
+def test_composite_bnf_provider_ids_are_not_invisible_to_inventory():
+    source = '''
+if provider_id == "bnf-pret":
+    pass
+if provider_id != "bnf-catalogue":
+    pass
+if provider_id == "some-other-provider":
+    pass
+match provider_id:
+    case "bnf-pret":
+        pass
+'''
+    result = inspect_source(source)
+    assert [x["providers"] for x in result["comparisons"]] == [
+        ["bnf-pret"], ["bnf-catalogue"], ["bnf-pret"],
+    ]
+
+
+def test_provider_ids_are_data_not_python_import_module_names():
+    result = inspect_source(
+        'from .core import bnf_explicit_acsm\n'
+        'from .core import numilog_manifest_rights\n'
+    )
+    assert [x["providers"] for x in result["imports"]] == [["bnf"], ["numilog"]]
