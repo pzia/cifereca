@@ -96,7 +96,14 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     active = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
     if active is None or loan.identity_id != active:
         return loan
-    resolved = loan_local_cover(loan, getattr(self, "_library_entries_cache", ()))
+    evidence = getattr(self, "_loan_cover_projection", None)
+    if (type(evidence) is tuple and len(evidence) == 3
+            and evidence[0] == getattr(self.service, "_account_context_epoch", None)
+            and evidence[1] == active):
+        cover_rows = evidence[2]
+    else:
+        cover_rows = getattr(self, "_library_entries_cache", ())
+    resolved = loan_local_cover(loan, cover_rows)
     if resolved.status != "selected" or not resolved.url:
         return loan
     displayed = copy(loan)
@@ -190,15 +197,38 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
     # An A -> B -> A round trip has the same identity ID but invalidates an
     # earlier refresh. Guard the GTK callback by the Core account epoch too.
     account_epoch = getattr(self.service, "_account_context_epoch", None)
-    def done(rows):
+    def work():
+        rows = self.service.refresh_identity_loans(
+            force=force, identity_id=identity_id,
+        )
+        # Resolve a missing loan cover only on this existing background
+        # worker, once per refresh. Core's library_entries(scan=False) reads
+        # local placements/entitlements; it never contacts a catalogue,
+        # authenticates a borrower or acquires a file.
+        cover_rows = ()
+        if any(type(loan) is Loan and loan.identity_id == identity_id
+               and not loan.thumbnail_url for loan in rows):
+            try:
+                cover_rows = tuple(
+                    self.service.library_entries(identity_id=identity_id, scan=False)
+                )
+            except (OSError, RuntimeError, ValueError):
+                # Cover enrichment is optional. A valid loan inventory must
+                # remain visible if a local read/placement check is unavailable.
+                cover_rows = ()
+        return rows, cover_rows
+
+    def done(payload):
         current = self.service.current_identity
         if (current.identity_id if current else None) == identity_id:
             if getattr(self.service, "_account_context_epoch", None) != account_epoch:
                 return
+            rows, cover_rows = payload
+            self._loan_cover_projection = (account_epoch, identity_id, cover_rows)
             self._loans_refreshed(rows)
     self.runner.submit(
         "Actualisation des emprunts…",
-        lambda: self.service.refresh_identity_loans(force=force, identity_id=identity_id),
+        work,
         done,
         control=control,
         priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.ACTIVE_LOAN,
