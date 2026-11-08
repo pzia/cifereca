@@ -348,3 +348,35 @@ def test_login_click_refuses_empty_cas_service_without_following():
             c.observe_login_once()
     finally:
         c.close()
+
+
+@pytest.mark.parametrize("ajax_payload", [
+    {"success": True, "errors": ["SYNTHETIC-LOGIN-REJECTED"]},
+    {"success": True, "errors": {"code": "rejected"}},
+    {"success": True, "errors": None},
+])
+def test_ajax_contradiction_never_triggers_cas_get(ajax_payload):
+    calls = []
+    def handler(req):
+        calls.append(req.method + " " + req.url.path)
+        if req.url.path == "/1409/Account/Login":
+            return httpx.Response(302, headers={"location": LOGIN})
+        if req.url.path == "/login":
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  text="<html>Login</html>")
+        if req.url.path == "/logon.svc/logon":
+            return httpx.Response(200, headers={"content-type": "application/json"},
+                                  json=ajax_payload)
+        pytest.fail("CAS must not execute after contradictory AJAX result")
+    c = client_for(handler)
+    try:
+        c.observe_entry_once()
+        c.observe_login_once()
+        result = c.submit_once(query=QUERY, fields=FORM, consent=True)
+        assert result.outcome == "unknown"
+        with pytest.raises(cas.AjaxCasError, match="cas_post_not_confirmed"):
+            c.observe_cas_once()
+        assert calls == ["GET /1409/Account/Login", "GET /login",
+                         "POST /logon.svc/logon"]
+    finally:
+        c.close()
