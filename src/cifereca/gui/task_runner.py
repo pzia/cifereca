@@ -471,6 +471,14 @@ class TaskRunner:
             gtk_pending_since = time.monotonic()
 
             def deliver() -> bool:
+                # Some legacy isolation tests compile deliver() by itself.
+                # Missing outer diagnostic closure must remain harmless.
+                try:
+                    busy_lock_attested = typed_lock_busy
+                    feedback_classification = task_classification
+                except NameError:
+                    busy_lock_attested = False
+                    feedback_classification = "background_task"
                 # This callback is part of the real GTK/TaskRunner lifecycle:
                 # it owns the pending coalescing reservation until delivery.
                 # Its historical name also identifies the actual event held
@@ -502,15 +510,15 @@ class TaskRunner:
                 if control is not None and control.get_root() is not None:
                     control.set_sensitive(True)
                 kind_outcome, payload = outcome
-                if typed_lock_busy:
+                if busy_lock_attested:
                     from .ui_dialog_observation import observe_background_busy_task
                     observe_background_busy_task(
                         self.window, task_ref=task_id,
-                        classification=task_classification,
+                        classification=feedback_classification,
                     )
                 feedback_error = None if business_status == "success" else (
                     "Une autre opération est déjà en cours"
-                    if typed_lock_busy else
+                    if busy_lock_attested else
                     "Demande d’emprunt envoyée ; confirmation indisponible. "
                     "Ne réempruntez pas : actualisez vos prêts ultérieurement."
                     if (trace_kind == "borrow" and business_status == "pending"
@@ -584,10 +592,10 @@ class TaskRunner:
                     from .ui_dialog_observation import task_dialog_context
                     with task_dialog_context(
                         self.window, task_ref=task_id,
-                        classification=task_classification,
-                        reason_code="lock_busy" if typed_lock_busy else "unknown",
+                        classification=feedback_classification,
+                        reason_code="lock_busy" if busy_lock_attested else "unknown",
                         suppress_busy_modal=(
-                            typed_lock_busy and origin != "user" and control is None
+                            busy_lock_attested and origin != "user" and control is None
                         ),
                     ):
                         if err:
