@@ -22,7 +22,7 @@ from time import monotonic, time
 from browser_recorder_http import (
     MAX_BODY_BYTES, MAX_EXCHANGES, MAX_TOTAL_BODY_BYTES,
     PrivateExchange, PrivateHttpTrace, _BODY_REASONS,
-    _AUTH_SCHEMA_REASONS, _valid_auth_schema, _auth_flow,
+    _AUTH_SCHEMA_REASONS, _valid_auth_schema, _auth_flow, _url_origin,
 )
 
 SCHEMA = "cifereca.browser-recorder.private-session/1"
@@ -68,7 +68,7 @@ def _aead():
         raise VaultError("vault_crypto_unavailable") from exc
 
 
-def _validated_auth_structure_row(row: dict) -> bool:
+def _validated_auth_structure_row(row: dict, allowed_origins: tuple[str, ...]) -> bool:
     """Validate optional version-1, values-free schema at both storage edges."""
     schema_keys = ("auth_request_schema", "auth_response_schema")
     state_keys = ("auth_request_schema_state", "auth_response_schema_state")
@@ -84,12 +84,19 @@ def _validated_auth_structure_row(row: dict) -> bool:
             return False
         if schema is not None and (
             row.get("metadata_only") is not False
-            or row.get("request_body") is not None
-               and direction == "request"
-            or row.get("response_body") is not None
-               and direction == "response"
-            or not _auth_flow(row.get("url"))
+            or _url_origin(row.get("url")) not in allowed_origins
             or not str(row.get("url", "")).startswith("https://")
+            or not _auth_flow(row.get("url"))
+            or (direction == "request" and (
+                row.get("method") != "POST"
+                or row.get("request_body") is not None
+                or row.get("request_body_reason") != "auth_redacted"
+            ))
+            or (direction == "response" and (
+                row.get("response_body") is not None
+                or row.get("response_body_reason") != "auth_redacted"
+                or row.get("response_body_state") != "body_omitted"
+            ))
         ):
             return False
     return True
@@ -102,7 +109,7 @@ def _record(trace: PrivateHttpTrace, session_id: str, state: str) -> bytes:
         raise VaultError("vault_limit")
     entries = [asdict(e) for e in trace.exchanges]
     for row in entries:
-        if not _validated_auth_structure_row(row):
+        if not _validated_auth_structure_row(row, trace.origins):
             raise VaultError("vault_invalid")
     data = {
         "schema": SCHEMA,
@@ -187,7 +194,7 @@ def _unrecord(blob: bytes, session_id: str):
                 _FIELD_NAMES, new_legacy_fields, old_fields, legacy_fields,
             ):
                 raise ValueError("invalid entry")
-            if not _validated_auth_structure_row(row):
+            if not _validated_auth_structure_row(row, trace.origins):
                 raise ValueError("invalid auth structure")
             if any(
                 type(row[key]) is not str or row[key] not in _BODY_REASONS
