@@ -198,6 +198,7 @@ def inspect_plugin_version_history(packages_root: Path, *, now: float) -> dict[s
 def inspect_updater_retention_readonly(
     runtime_root: Path, packages_root: Path, *, now: float,
     backups_root: Path | None = None,
+    core_backups_root: Path | None = None,
 ) -> dict[str, Any]:
     """One redacted projection for the independently qualified store families.
 
@@ -213,6 +214,10 @@ def inspect_updater_retention_readonly(
     if backups_root is not None:
         from .updater_retention_backups import inspect_dev_updater_backups
         backups = inspect_dev_updater_backups(backups_root, now=now)
+    core_backups = None
+    if core_backups_root is not None:
+        from .updater_retention_core_backups import inspect_core_preactivation_backups
+        core_backups = inspect_core_preactivation_backups(core_backups_root, now=now)
     coverage = set(core["coverage"]) | set(plugins["coverage"])
     blockers = set(core["blockers"]) | set(plugins["blockers"])
     plans = {"core_transactions": core["plan"], "plugin_versions": plugins["plan"]}
@@ -225,6 +230,16 @@ def inspect_updater_retention_readonly(
             pending.append("updater_backups")
     else:
         pending.append("updater_backups")
+    # Distinct backup producers/ownership proofs require distinct plans:
+    # never sum them or pretend the graph of rollback references is known.
+    if core_backups is not None:
+        coverage.update(core_backups["coverage"])
+        blockers.update(core_backups["blockers"])
+        plans["core_preactivation_backups"] = core_backups["plan"]
+        if not core_backups["coverage"]:
+            pending.append("core_preactivation_backups")
+    else:
+        pending.append("core_preactivation_backups")
     return {
         "schema": "cifereca.updater.retention-inventory-combined/1",
         "safe_to_apply": False,
