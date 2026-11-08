@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import traceback
 from time import monotonic
 from threading import Event
 from types import SimpleNamespace
@@ -127,7 +128,7 @@ class _ParisFixtureManager:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--width", type=int, choices=(1366, 1600), default=1366)
+    parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), default=1366)
     args = parser.parse_args()
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -170,6 +171,7 @@ def main() -> int:
         "steps": [], "checks": {"query": True, "rows": True, "count": True,
                                "selection": True, "scroll": True, "search_requests": True},
     }
+    result["p1_3687_phase"] = "setup"
     capture = None
     window = None
     device = None
@@ -307,7 +309,7 @@ def main() -> int:
         def do_activate(self):
             nonlocal window, device
             window = MainWindow(self, core.config, core.library, core.diagnostics)
-            window.set_default_size(args.width - 40, 880 if args.width == 1600 else 780)
+            window.set_default_size(args.width - 40, {1024: 700, 1366: 780, 1600: 880}[args.width])
             window.present()
             device = X11Input()
             later(600, start_search)
@@ -323,8 +325,29 @@ def main() -> int:
     def later(ms, callback):
         def run():
             try:
+                if args.width == 1024:
+                    allowed = {
+                        "start_search": "start", "focus_search_entry": "focus",
+                        "type_search": "type", "wait_results": "results",
+                        "setup_scroll": "scroll", "set_baseline": "baseline",
+                        "begin_delayed_search": "post_filters",
+                    }
+                    result["p1_3687_phase"] = allowed.get(
+                        getattr(callback, "__name__", ""), "continuation",
+                    )
                 callback()
             except Exception as exc:
+                if args.width == 1024:
+                    try:
+                        frames = [
+                            frame.lineno for frame in traceback.extract_tb(exc.__traceback__)
+                            if Path(frame.filename).name == "search_filter_probe.py"
+                            and 1 <= frame.lineno <= 1100
+                        ]
+                        if frames:
+                            result["p1_3687_probe_line"] = frames[-1]
+                    except Exception:
+                        pass
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, run)
@@ -332,6 +355,65 @@ def main() -> int:
     def capture_stage(stage: str, *, popup: bool = False):
         nonlocal capture
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
+        if args.width == 1024:
+            result["p1_3687_phase"] = "geometry"
+            # An actual 1024x768 Xvfb screen and allocated GTK window, not
+            # a requested window size rendered on a larger display.
+            allocated_width, allocated_height = window.get_width(), window.get_height()
+            result["search_1024_geometry"] = {
+                "display_width": image.width, "display_height": image.height,
+                "window_width": allocated_width, "window_height": allocated_height,
+            }
+            if allocated_width > 1024:
+                # Closed numerical diagnosis of the true GTK minimum-width
+                # contributors. No labels, identities, titles or URLs.
+                widgets = {
+                    "shell_header": window.shell_header,
+                    "header_controls": window._header_controls,
+                    "identity_dropdown": window.identity_dropdown,
+                    "account_dropdown": window.account_dropdown,
+                    "statistics_button": window.statistics_button,
+                    "sidebar": window.sidebar,
+                    "view_stack": window.view_stack,
+                    "search_page": window.search_page,
+                    "search_page_header": window.search_page.page_header,
+                    "search_page_actions": window.search_page.header_actions,
+                    "search_toolbar": window.search_page.toolbar,
+                    "search_controls": window.search_controls,
+                    "search_primary": window.search_controls.primary,
+                    "search_filter_scroller": (
+                        window.search_controls.primary.get_next_sibling()
+                    ),
+                    "search_paned": window.search_page.paned,
+                    "search_list_stack": window.search_page.list_stack,
+                    "search_list_scroll": window.search_page.scroll,
+                    "search_listview": window.search_page.listview,
+                    "search_detail": window.search_page.detail,
+                }
+                measured = {}
+                for key, widget in widgets.items():
+                    minimum, natural, _min_baseline, _nat_baseline = widget.measure(
+                        Gtk.Orientation.HORIZONTAL, -1
+                    )
+                    measured[key] = (int(minimum), int(natural), int(widget.get_width()))
+                result["p1_3687_minimum_widths"] = measured
+                print(
+                    "P1_3687_GTK_MIN_WIDTHS="
+                    + ",".join(
+                        f"{key}:{minimum}/{natural}/{allocated}"
+                        for key, (minimum, natural, allocated) in measured.items()
+                    ), flush=True,
+                )
+            assert image.size == (1024, 768), (
+                "Recette Search 1024: dimensions physiques X11 non conformes"
+            )
+            assert 924 <= allocated_width <= 1024, (
+                "Recette Search 1024: fenêtre réelle hors budget horizontal"
+            )
+            assert 500 <= allocated_height <= 768, (
+                "Recette Search 1024: fenêtre réelle hors budget vertical"
+            )
+            result["checks"]["P1_3687_search_real_1024_geometry"] = True
         path = output / f"{stage}.png"
         image.save(path)
         capture = path
@@ -444,6 +526,8 @@ def main() -> int:
         next_filter(0)
 
     def next_filter(index: int):
+        if args.width == 1024:
+            result["p1_3687_phase"] = "filter_" + str(min(index, 5))
         if index == len(actions):
             begin_delayed_search()
             return

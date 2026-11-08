@@ -133,6 +133,24 @@ Artefacts : `e2e-artifacts/search-filter-p0/00-before.png`,
 du runner. En cas d'échec, conserver ces preuves et ouvrir un correctif
 CoreUI ; ce test ne clôt pas à lui seul #660 avant sa recette sur CI.
 
+### P1 #3687/#774 — Recherche à 1024 × 768 réels
+
+`python3 e2e/run.py --scenario search-filter-1024` rejoue le **même
+parcours GTK/XTEST** que la référence P0, sur un **écran Xvfb réellement
+1024 × 768**, et non dans une fenêtre réduite sur un écran plus grand.
+La fenêtre est demandée à 984 × 700 ; le probe valide son allocation
+**924–1024 px** et **500–768 px**, ainsi que la taille physique de chaque
+capture. La référence `search-filter-p0` conserve son Xvfb historique
+1280 × 1024 et ses assertions inchangées.
+
+La recette vérifie l'accès XTEST aux cinq filtres (défilement horizontal de
+la barre et focus GTK), la conservation de la requête, des 36 résultats,
+du compteur, de la sélection et du scroll, puis le comportement
+asynchrone et l'isolation des comptes/droits au changement d'identité.
+Aucun appel à un fournisseur réel. La recette parallèle de Recommandations
+`recommendations-detail-1024` rend possible la comparaison des deux vues ;
+elle ne constitue pas à elle seule une validation UX visuelle globale.
+
 ### P1 #942 — compteur réel et données exclues (GTK 1366)
 
 Le même scénario `book-detail-1366` vérifie après le parcours normal
