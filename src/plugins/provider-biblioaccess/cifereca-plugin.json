@@ -1,0 +1,35 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.provider.biblioaccess",
+    "version": "0.1.0",
+    "name": "BiblioAccess (qualification)",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4.1,<2"
+  },
+  "plugins": [
+    {
+      "id": "provider.biblioaccess.la-rochelle",
+      "type": "provider.library",
+      "entrypoint": "cifereca_biblioaccess:PLUGIN",
+      "version": "0.1.0",
+      "display_name": "La Rochelle — BiblioAccess",
+      "description": "Tenant 1409 : SSO institutionnel en qualification, aucune connexion automatisée.",
+      "priority": 85,
+      "enabled_by_default": false,
+      "config_schema": {
+        "type": "object",
+        "x-cifereca-scope": "plugin",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "capabilities": [],
+      "requires": [],
+      "recommends": [],
+      "requires_brokers": [],
+      "requires_contracts": [],
+      "system_requires": [],
+      "help_text": "Prototype désactivé : aucune capacité de recherche, prêt, téléchargement ou connexion n'est publiée. Le SSO CAS observé n'autorise pas l'import de session navigateur. Aucun secret ni ticket CAS n'est stocké."
+    }
+  ]
+}
