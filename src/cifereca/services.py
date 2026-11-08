@@ -984,6 +984,17 @@ class LibraryService:
         """Public facade with its stable, no-argument compatibility contract."""
         return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
 
+    def explicit_provider_diagnostic(
+        self, *, identity_id: str, provider_id: str, credential_id: str,
+        user_consent: bool,
+    ):
+        """One persisted credential, explicit user action, no startup sweep."""
+        from .core.provider_explicit_probe import run_explicit_provider_probe
+        return run_explicit_provider_probe(
+            self, identity_id=identity_id, provider_id=provider_id,
+            credential_id=credential_id, user_consent=user_consent,
+        )
+
     def connect_selected_source(
         self, *, identity: str, provider: str, credential: str,
     ) -> dict[str, Any]:
