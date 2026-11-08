@@ -391,7 +391,8 @@ def _auth_request_structure(req, *, max_bytes: int) -> dict | None:
         # Even multiplicities are descriptive only; no password/login bytes.
         return {"version": 1, "query_names": list(names),
                 "form_names": sorted(set(name for name, _ in fields))}
-    except (AttributeError, TypeError, ValueError, UnicodeError):
+    except Exception:
+        # Browser/decoder failures are private and must not abort capture.
         return None
 
 
@@ -438,7 +439,8 @@ def _auth_response_structure(resp, req, *, max_bytes: int) -> dict | None:
                 return None
             kinds.append([key, kind])
         return {"version": 1, "keys": sorted(kinds)}
-    except (AttributeError, TypeError, ValueError, UnicodeError, RecursionError):
+    except Exception:
+        # Chromium can evict a body; never reveal the exception or retry.
         return None
 
 
@@ -811,11 +813,18 @@ class PrivateHttpTrace:
                 entry.request_body = None
                 entry.request_body_state = "body_omitted"
                 entry.request_body_reason = "auth_redacted"
-                entry.auth_request_schema_state = "auth_schema_unavailable"
+                entry.auth_request_schema_state = (
+                    "auth_schema_unsupported"
+                    if _mime(entry.request_headers) != "application/x-www-form-urlencoded"
+                    else "auth_schema_unavailable"
+                )
                 if scoped and entry.method == "POST":
-                    structure = _auth_request_structure(
-                        req, max_bytes=min(self.max_body, self.total_body),
-                    )
+                    try:
+                        structure = _auth_request_structure(
+                            req, max_bytes=min(self.max_body, self.total_body),
+                        )
+                    except Exception:
+                        structure = None
                     if structure is not None:
                         entry.auth_request_schema = structure
                         entry.auth_request_schema_state = "schema_captured"
@@ -823,13 +832,20 @@ class PrivateHttpTrace:
                 entry.response_body = None
                 entry.response_body_state = "body_omitted"
                 entry.response_body_reason = "auth_redacted"
-                entry.auth_response_schema_state = "auth_schema_unavailable"
+                entry.auth_response_schema_state = (
+                    "auth_schema_unsupported"
+                    if entry.mime not in {"application/json", "text/json"}
+                    and entry.mime else "auth_schema_unavailable"
+                )
                 if (scoped and resp is not None
                         and entry.mime in {"application/json", "text/json"}):
                     # Never read a previously excluded download/license body.
-                    structure = _auth_response_structure(
-                        resp, req, max_bytes=min(self.max_body, self.total_body),
-                    )
+                    try:
+                        structure = _auth_response_structure(
+                            resp, req, max_bytes=min(self.max_body, self.total_body),
+                        )
+                    except Exception:
+                        structure = None
                     if structure is not None:
                         entry.auth_response_schema = structure
                         entry.auth_response_schema_state = "schema_captured"
