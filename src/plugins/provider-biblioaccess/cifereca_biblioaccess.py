@@ -146,6 +146,25 @@ _CATALOGUE_PROBE_CODES = frozenset((
     "catalogue_book_url_missing", "catalogue_book_unavailable",
 ))
 
+def _observed_logon_script(paths: tuple[str, ...]) -> str:
+    """Unique login script advertised by fresh institution HTML.
+
+    Selection is structural only; the inspected JS is never executed or
+    converted into dynamic POST fields. Do not guess a path absent from HTML.
+    """
+    if type(paths) is not tuple:
+        return ""
+    candidates = [
+        path for path in paths
+        if type(path) is str
+        and path.rsplit("/", 1)[-1] == "logon.js"
+        or (type(path) is str
+            and path.rsplit("/", 1)[-1].startswith("logon.js.pagespeed.")
+            and path.endswith(".js"))
+    ]
+    return candidates[0] if len(candidates) == 1 else ""
+
+
 class LaRochelleSession(ProviderSession):
     """Opt-in network diagnostic, deliberately not an authenticated session."""
 
@@ -310,12 +329,21 @@ class LaRochelleSession(ProviderSession):
                 # script path, and only on a previously observed IdP script.
                 # Never log the script source, query, URL or response bytes.
                 script_path = self.options.get("experimental_login_script_path", "")
+                selection = "configured" if script_path else ""
+                if not script_path and mode == "on":
+                    script_path = _observed_logon_script(
+                        preflight.same_origin_script_paths)
+                    if script_path:
+                        selection = "auto"
                 if script_path:
-                    self._event("login_script", "started", request_method="GET")
+                    self._event("login_script", "started",
+                                request_method="GET", selection=selection)
                     evidence = client.inspect_login_script_once(
                         path=script_path, consent=True)
+                    self._last_probe_phase = "script_structure_unverified"
                     self._event(
                         "login_script", "observed",
+                        selection=selection,
                         identifier_names=list(evidence.identifier_names),
                         ajax_endpoint_referenced=evidence.ajax_endpoint_referenced,
                         executable=False, value_provenance_verified=False,
