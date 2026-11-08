@@ -13,15 +13,15 @@ from typing import Any
 from .updater_retention import RetentionObject, plan_retention
 
 
-_TX_STAGE = re.compile(r"\\.[0-9]{8}T[0-9]{6}Z-[a-f0-9]{12}\\.[0-9]+\\.tmp\\Z")
-_CORE_BACKUP_STAGE = re.compile(r"\\.[0-9]{8}T[0-9]{6}Z-[a-f0-9]{10}\\.[0-9]+\\.tmp\\Z")
-_PLUGIN_STAGE = re.compile(r"\\.[A-Za-z0-9][A-Za-z0-9.!_+-]{0,127}-[A-Za-z0-9_]{8}\\Z")
+_TX_STAGE = re.compile(r"\.[0-9]{8}T[0-9]{6}Z-[a-f0-9]{12}\.[0-9]+\.tmp\Z")
+_CORE_BACKUP_STAGE = re.compile(r"\.[0-9]{8}T[0-9]{6}Z-[a-f0-9]{10}\.[0-9]+\.tmp\Z")
+_PLUGIN_STAGE = re.compile(r"\.[A-Za-z0-9][A-Za-z0-9.!_+-]{0,127}-[A-Za-z0-9_]{8}\Z")
 _LIMIT = 4096
 
 
 def _opaque(kind: str, *names: str) -> str:
     return "staging:" + sha256(
-        ("\\0".join((kind, *names))).encode("utf-8")
+        ("\0".join((kind, *names))).encode("utf-8")
     ).hexdigest()
 
 
