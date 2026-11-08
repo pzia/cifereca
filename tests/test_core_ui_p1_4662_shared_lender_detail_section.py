@@ -198,3 +198,97 @@ def test_forged_or_actionable_progress_produces_no_detail_section():
         replace(progress, loan="unknown"),
     ):
         assert cross_profile_borrow_progress_detail_section(forged) is None
+
+
+def _progress_gtk_renderer():
+    """Compile only the method: exercise actual GTK code without importing GI."""
+    from types import SimpleNamespace as NS
+
+    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    owner = next(node for node in tree.body
+                 if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
+    method = next(node for node in owner.body
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "show_cross_profile_borrow_progress_detail")
+    events = []
+
+    class Group:
+        def __init__(self):
+            self.rows = []
+        def set_title(self, title):
+            self.title = title
+        def add(self, row):
+            self.rows.append(row)
+
+    class Row:
+        def set_use_markup(self, enabled):
+            assert enabled is False
+        def set_title(self, title):
+            self.title = title
+        def set_subtitle(self, subtitle):
+            self.subtitle = subtitle
+
+    scope = {
+        "__package__": "cifereca.gui",
+        "SearchResult": __import__("cifereca.models", fromlist=["SearchResult"]).SearchResult,
+        "Adw": NS(PreferencesGroup=Group, ActionRow=Row),
+    }
+    exec(compile(ast.fix_missing_locations(
+        ast.Module(body=[method], type_ignores=[])
+    ), str(source), "exec"), scope)
+    return scope["show_cross_profile_borrow_progress_detail"], events
+
+
+def test_gtk_progress_renders_three_nonactionable_rows_on_same_search_detail():
+    from types import SimpleNamespace as NS
+
+    render, events = _progress_gtk_renderer()
+    item = witness("alice").notice
+    identity = NS(identity_id="default")
+    service = NS(current_identity=identity, _account_context_epoch=4,
+                 _source_context_epoch=9)
+    host = NS(window=NS(service=service),
+              _rendered_search_detail=(item, object()),
+              _append_content=lambda group: events.append(group))
+    progress = CrossProfileBorrowProgress(
+        "confirmed", "unavailable", "blocked",
+        "lender_loan_confirmed_transfer_unverified",
+    )
+    assert render(host, progress, expected_item=item,
+                  requesting_identity_id="default",
+                  expected_context_epoch=4, expected_source_epoch=9)
+    assert len(events) == 1
+    assert events[0].title == "Emprunt entre profils · suivi"
+    assert [row.title for row in events[0].rows] == ["Prêt", "Livraison", "Transfert"]
+    assert "droits non vérifiés" in events[0].rows[2].subtitle
+    assert "confirmé" in events[0].rows[0].subtitle
+    assert all(not hasattr(row, "connect") for row in events[0].rows)
+
+
+def test_gtk_progress_never_appends_stale_or_rebound_detail():
+    from types import SimpleNamespace as NS
+    from dataclasses import replace
+
+    render, events = _progress_gtk_renderer()
+    item = witness("alice").notice
+    other = replace(item, record_id="different")
+    service = NS(current_identity=NS(identity_id="default"),
+                 _account_context_epoch=4, _source_context_epoch=9)
+    host = NS(window=NS(service=service),
+              _rendered_search_detail=(item, object()),
+              _append_content=lambda group: events.append(group))
+    progress = CrossProfileBorrowProgress(
+        "unknown", "unavailable", "blocked", "loan_result_not_confirmed",
+    )
+    kwargs = dict(expected_item=item, requesting_identity_id="default",
+                  expected_context_epoch=4, expected_source_epoch=9)
+    assert render(host, progress, **{**kwargs, "expected_item": other}) is False
+    assert render(host, progress, **{**kwargs, "requesting_identity_id": "alex"}) is False
+    assert render(host, replace(progress, executable=True), **kwargs) is False
+    service._source_context_epoch += 1
+    assert render(host, progress, **kwargs) is False
+    service._source_context_epoch -= 1
+    service.current_identity = NS(identity_id="alex")
+    assert render(host, progress, **kwargs) is False
+    assert events == []
