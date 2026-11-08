@@ -51,7 +51,7 @@ def test_old_checkpoint_remains_visible_as_history_not_active_warning():
     summary = sync_source_phase_summary(source)
     assert "Partielle (historique, antérieur au dernier cycle canonique)" in summary
     assert "30/10/2026" in summary
-    assert "Réuss" in sync_source_presentation(source).sync_label
+    assert "Dernier succès" in sync_source_presentation(source).sync_label
 
 
 @pytest.mark.parametrize("changes", [
