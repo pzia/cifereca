@@ -338,6 +338,9 @@ def test_complete_synthetic_http_cas_chain_stays_unverified_and_ticket_once():
         if str(request.url) == target:
             return httpx.Response(200, headers={"content-type": "text/html"},
                                   text="<html>Unverified landing</html>")
+        if request.url.path == sso.LOANS_PATH:
+            return httpx.Response(200, headers={"content-type": "text/html"},
+                                  text="<html>Unverified loans</html>")
         pytest.fail("Unexpected SSO request")
     client = mock(handler)
     try:
@@ -349,13 +352,18 @@ def test_complete_synthetic_http_cas_chain_stays_unverified_and_ticket_once():
         result = client.inspect_cas_return_once()
         assert result.route == "cas_landing_unverified"
         assert not result.authentication_verified
+        loans = client.inspect_loans_once()
+        assert loans.route == "loans_html_unverified"
+        assert not loans.authentication_verified
         assert [method for method, _ in observed] == [
-            "GET", "GET", "POST", "GET", "GET"]
+            "GET", "GET", "POST", "GET", "GET", "GET"]
         assert target in [url for _, url in observed]
         assert "ST-SYNTHETIC" not in repr(result)
         with pytest.raises(sso.SsoProtocolError, match="cas_already_attempted"):
             client.inspect_cas_return_once()
-        assert len(observed) == 5
+        with pytest.raises(sso.SsoProtocolError, match="loans_already_attempted"):
+            client.inspect_loans_once()
+        assert len(observed) == 6
     finally:
         client.close()
 
@@ -379,5 +387,30 @@ def test_cas_ticket_redirect_refused_without_ticket_get(landing_location):
         with pytest.raises(sso.SsoProtocolError, match="cas_return_refused"):
             client.inspect_cas_return_once()
         assert len(seen) == 1
+    finally:
+        client.close()
+
+
+def test_loans_cannot_be_read_before_cas_landing():
+    client = mock(lambda request: pytest.fail("No HTTP call without CAS evidence"))
+    try:
+        with pytest.raises(sso.SsoProtocolError, match="loans_session_unverified"):
+            client.inspect_loans_once()
+    finally:
+        client.close()
+
+
+def test_loans_redirect_to_login_does_not_mark_session_verified():
+    observed = []
+    def handler(request):
+        observed.append(str(request.url))
+        return httpx.Response(302, headers={
+            "location": sso.ORIGIN + "/login?service=SYNTHETIC"})
+    client = mock(handler)
+    client._cas_landing_seen = True
+    try:
+        with pytest.raises(sso.SsoProtocolError, match="loans_session_unverified"):
+            client.inspect_loans_once()
+        assert observed == [sso.BIBLIO_ORIGIN + sso.LOANS_PATH]
     finally:
         client.close()
