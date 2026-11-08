@@ -162,3 +162,25 @@ def test_unclosed_real_row_refused_as_truncated_html():
         loans.inspect_myloans_html(
             '<div class="JSProductRow-10001"><p class="titleLoans">Private</p>'
         )
+
+
+def test_duplicate_product_ref_is_ambiguous_even_if_only_one_row_is_valid():
+    """A second row must not make the first product/ref appear authoritative."""
+    with pytest.raises(loans.LoanPageError, match="loans_page_duplicate_product_ref"):
+        loans.inspect_myloans_html(
+            _observed_row(product="10001", book="20002")
+            + _observed_row(product="10001", book="30003", acsm=False)
+        )
+
+
+def test_duplicate_product_ref_cannot_be_hidden_in_a_partial_row():
+    with pytest.raises(loans.LoanPageError, match="loans_page_duplicate_product_ref"):
+        loans.inspect_myloans_html(
+            _observed_row(product="10001", book="20002")
+            + _observed_row(product="10001", book="99999", due="invalid")
+        )
+
+
+def test_duplicate_product_ref_even_with_identical_content_is_unverified():
+    with pytest.raises(loans.LoanPageError, match="loans_page_duplicate_product_ref"):
+        loans.inspect_myloans_html(_observed_row() * 2)

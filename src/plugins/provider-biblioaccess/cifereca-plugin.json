@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.biblioaccess",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "name": "La Rochelle BiblioAccess — prêts en lecture seule",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.7,<2"
@@ -12,7 +12,7 @@
       "id": "provider.biblioaccess.la-rochelle",
       "type": "provider.library",
       "entrypoint": "cifereca_biblioaccess:PLUGIN",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "display_name": "La Rochelle — BiblioAccess",
       "description": "CAS/SSO HTTP et inventaire numérique partiel de prêts, sur consentement explicite par compte.",
       "priority": 85,

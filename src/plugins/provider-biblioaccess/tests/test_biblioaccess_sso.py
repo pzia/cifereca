@@ -968,3 +968,123 @@ def test_authenticated_sync_does_not_get_stale_experimental_js():
             "entry", "login", "preflight", "post", "cas", "initial_loans"]
     finally:
         session.close()
+
+
+def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage():
+    from cifereca.plugin_api import read_loan_inventory
+
+    class Diagnostics:
+        def __init__(self):
+            self.events = []
+        def add(self, category, operation, status, *, detail):
+            self.events.append((category, operation, status, detail))
+
+    session, http, calls = _synced_session()
+    diagnostics = Diagnostics()
+    session._diagnostics = diagnostics
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        observed = read_loan_inventory(session, account)
+        assert observed.status == "partial"
+        live_events = [
+            (status, detail) for _, _, status, detail in diagnostics.events
+            if detail.get("phase") == "loan_inventory"
+        ]
+        assert len(live_events) == 1
+        status, detail = live_events[0]
+        assert status == "observed"
+        assert detail["page_loan_row_count"] == 1
+        assert detail["page_loan_row_partial_count"] == 0
+        assert detail["completeness"] == "partial"
+        assert detail["connected"] is True
+        assert detail["session_revoked"] is False
+        assert detail["probe"] == "authenticated_sync"
+        assert "credential_id" not in detail
+        assert session.diagnostic_state()["probe_phase"] == "loan_inventory_observed"
+        for secret in ("SYNTHETIC-BOOK", "SYNTHETIC-USER", "SYNTHETIC-SECRET"):
+            assert secret not in repr(live_events)
+        assert calls.count("post") == 1
+    finally:
+        session.close()
+
+
+def test_expired_inventory_emits_closed_public_code_and_revokes_cookies():
+    from cifereca.plugin_api import read_loan_inventory
+
+    class Diagnostics:
+        def __init__(self):
+            self.events = []
+        def add(self, category, operation, status, *, detail):
+            self.events.append((status, detail))
+
+    session, http, calls = _synced_session(expired=True)
+    session._diagnostics = diag = Diagnostics()
+    account, = session.connect()
+    account.identity_id = "identity-a"
+    observed = read_loan_inventory(session, account)
+    assert observed.status == "failed"
+    assert not session.connected and http.closed
+    assert session.diagnostic_state()["probe_phase"] == "loan_inventory_failed"
+    errors = [d for status, d in diag.events
+              if status == "error" and d.get("phase") == "loan_inventory"]
+    assert len(errors) == 1
+    assert errors[0]["error_code"] == "biblioaccess_loan_inventory_unavailable"
+    assert errors[0]["session_revoked"] is True
+    assert errors[0]["connected"] is False
+    assert "PRIVATE-SYNTHETIC-SESSION-CLOSED" not in repr(diag.events)
+    assert calls.count("post") == 1
+    session.close()
+
+
+def test_known_cas_expiry_code_remains_classified_without_leaking_url():
+    from cifereca.plugin_api import read_loan_inventory
+    from biblioaccess_ajax_cas import AjaxCasError
+
+    class Diagnostics:
+        def __init__(self):
+            self.events = []
+        def add(self, _category, _operation, status, *, detail):
+            self.events.append((status, detail))
+
+    session, http, calls = _synced_session()
+    session._diagnostics = diag = Diagnostics()
+    account, = session.connect()
+    account.identity_id = "identity-a"
+    def expired():
+        calls.append("live_loans")
+        raise AjaxCasError("cas_authenticated_page_unverified")
+    http.read_authenticated_loans = expired
+    result = read_loan_inventory(session, account)
+    assert result.status == "failed"
+    assert session.connected is False and http.closed
+    failures = [d for status, d in diag.events
+                if status == "error" and d.get("phase") == "loan_inventory"]
+    assert len(failures) == 1
+    assert failures[0]["error_code"] == "cas_authenticated_page_unverified"
+    assert failures[0]["session_revoked"] is True
+    assert calls.count("post") == 1
+    session.close()
+
+
+def test_diagnostic_sink_failure_never_leaks_private_traceback(caplog):
+    import logging
+    from cifereca.plugin_api import read_loan_inventory
+
+    class BrokenDiagnostics:
+        def add(self, category, operation, status, *, detail):
+            raise RuntimeError("PRIVATE-SYNTHETIC-ACSM-TOKEN-NEVER-LOG")
+
+    session, http, calls = _synced_session()
+    session._diagnostics = BrokenDiagnostics()
+    try:
+        with caplog.at_level(logging.WARNING, logger="cifereca.plugin.biblioaccess"):
+            account, = session.connect()
+            account.identity_id = "identity-a"
+            snapshot = read_loan_inventory(session, account)
+        assert snapshot.status == "partial" and len(snapshot.loans) == 1
+        assert "biblioaccess_probe_diagnostic_sink_failed" in caplog.text
+        assert "PRIVATE-SYNTHETIC-ACSM-TOKEN-NEVER-LOG" not in caplog.text
+        assert calls.count("post") == 1
+    finally:
+        session.close()

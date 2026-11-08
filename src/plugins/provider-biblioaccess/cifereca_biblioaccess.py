@@ -204,6 +204,11 @@ class LaRochelleSession(ProviderSession):
             "phase": phase, "probe": "experimental_http",
             "connected": False, **facts,
         }
+        # Live inventory events have no need for a local account identifier.
+        # It may be user-configured private text. The session scope is
+        # verified in memory, not reconstructed from diagnostic payloads.
+        if phase == "loan_inventory":
+            detail.pop("credential_id", None)
         try:
             if self._diagnostics is not None:
                 self._diagnostics.add("API", "La Rochelle HTTP probe", status, detail=detail)
@@ -216,8 +221,9 @@ class LaRochelleSession(ProviderSession):
                     }, ensure_ascii=False),
                 )
         except Exception:
-            # Diagnostic failures are not authorization to proceed with login.
-            _LOG.exception("biblioaccess_probe_diagnostic_sink_failed")
+            # Diagnostic sink exceptions can contain signed links, credentials
+            # or raw upstream data. Never log exception text or traceback.
+            _LOG.warning("biblioaccess_probe_diagnostic_sink_failed")
 
     def _post_payload(self):
         """No default/derived AJAX fields: require full observed input."""
@@ -508,7 +514,7 @@ class LaRochelleSession(ProviderSession):
                         raw={"due_at_local": row.due_at_local,
                              "acsm_offer_present": row.acsm_offer_present},
                     ))
-                return LoanInventorySnapshot(
+                snapshot = LoanInventorySnapshot(
                     scope=LoanInventoryScope.for_account(account),
                     loans=tuple(loan_rows), status="partial",
                     branches=(LoanBranchCoverage(
@@ -518,7 +524,40 @@ class LaRochelleSession(ProviderSession):
                     ),),
                     reason_code="inventory_not_exhaustive",
                 )
-            except Exception:
+                self._last_probe_phase = "loan_inventory_observed"
+                # Count and coverage only. No borrower, book, title,
+                # response body, signed URL or cookie leaves this method.
+                self._event(
+                    "loan_inventory", "observed",
+                    probe="authenticated_sync", connected=True,
+                    page_loan_row_count=len(loan_rows),
+                    page_loan_row_partial_count=getattr(
+                        observation, "page_loan_row_partial_count", 0),
+                    completeness="partial", session_revoked=False,
+                )
+                return snapshot
+            except Exception as exc:
+                # The exact observed failure is useful for field diagnosis,
+                # but a provider/HTTP exception is never safe to log verbatim.
+                from biblioaccess_ajax_cas import AjaxCasError
+                allowed = frozenset({
+                    "cas_loans_unverified", "cas_loans_structure_unverified",
+                    "cas_authenticated_page_unverified",
+                    "cas_landing_required", "cas_client_closed",
+                    "cas_transport_unavailable",
+                    "biblioaccess_authenticated_page_unverified",
+                })
+                code = "biblioaccess_loan_inventory_unavailable"
+                if type(exc) in (AjaxCasError, ProviderCapabilityError):
+                    candidate = str(exc)
+                    if candidate in allowed:
+                        code = candidate
+                self._last_probe_phase = "loan_inventory_failed"
+                self._event(
+                    "loan_inventory", "error",
+                    probe="authenticated_sync", connected=False,
+                    error_code=code, session_revoked=True,
+                )
                 # An exception or expiry voids the account and cookie jar.
                 # Never silently reuse stale loans or fall back to another
                 # identity's source. The next reconnect makes a new client.

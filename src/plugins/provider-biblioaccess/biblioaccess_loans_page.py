@@ -206,6 +206,12 @@ class _ObservedRows(HTMLParser):
         self.row = None
         self.row_depth = 0
         self.download_depth = 0
+        # A repeated product reference could contain different notice,
+        # deadline or entitlement data. Never stage the first occurrence
+        # and silently discard the conflicting second one: the entire
+        # snapshot is structurally ambiguous and cannot publish loans.
+        if row["ref"] in self._seen_refs:
+            raise LoanPageError("loans_page_duplicate_product_ref")
         titles, dates = row["titles"], row["dates"]
         valid_date = False
         if len(dates) == 1 and re.fullmatch(
@@ -216,7 +222,7 @@ class _ObservedRows(HTMLParser):
                 valid_date = 2000 <= date.year <= 2100
             except ValueError:
                 pass
-        if (not row["ambiguous"] and row["ref"] not in self._seen_refs
+        if (not row["ambiguous"]
                 and len(titles) == 1 and bool(titles[0])
                 and len(row["book_ids"]) == 1 and valid_date):
             self.rows.append(ObservedLoanRow(

@@ -3,7 +3,7 @@
 ## État actuel — synchronisation positive des prêts (opt-in)
 
 Suite à la double recette HTTP AJAX/CAS réelle du 08/11/2026,
-la version **0.2.0** peut établir une session **HTTPS directe**, sans
+la branche **0.2.x** peut établir une session **HTTPS directe**, sans
 navigateur ni cookie importé, et relire les prêts actifs de MyLoans.
 
 **Consentement nécessaire par compte :**
@@ -40,6 +40,30 @@ Le cookie jar est conservé en RAM par la session et détruit sur
 authentifiée ou expirée **invalide la session** : aucune reconnexion
 automatique, aucun rejeu de POST en cours de lecture. Les comptes de
 credentials distincts ont des clients et des états séparés.
+
+### Correctif 0.2.1 — diagnostics et cohérence des prêts
+
+Version corrective du bundle `provider-biblioaccess` diffusée après
+la validation de la session `authenticated_sync=on` en 0.2.0.
+Aucun changement de contrat ni nouvelle capacité demandée.
+
+### Diagnostic des relectures de prêts et ambiguïtés
+
+La lecture persistante MyLoans écrit un événement `loan_inventory`
+expurgé : nombre de lignes reconnues, nombre de lignes partielles,
+couverture `partial` et état de conservation/révocation de la session.
+Il ne contient **ni titre, ni date exacte, ni identifiant de livre ou de
+lecteur, ni URL signée, ni cookie**. En cas d'échec, le code d'erreur
+appartient à une liste fermée ; les détails d'exceptions et les corps
+HTTP ne sont jamais reproduits.
+
+Deux lignes portant la **même référence produit** rendent désormais
+toute la page MyLoans ambiguë, même si les titres et notices sont
+identiques : la session de synchronisation est révoquée et aucune
+nouvelle ligne n'est admise. Deux produits différents pointant vers
+une même notice restent autorisés (les prêts sont distincts).
+Une réponse vide continue à donner une couverture partielle et ne
+prouve jamais le retour ou l'expiration d'un prêt.
 
 **Toujours non fournis :** emprunt, retour, renouvellement, lecture
 du contenu ACSM, téléchargement, DRM et inventaire exhaustif.

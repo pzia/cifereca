@@ -719,3 +719,34 @@ def test_authenticated_session_never_follows_expiry_redirect():
         assert requests == [("GET", "/1409/Catalog/MyLoans")]
     finally:
         client.close()
+
+
+def test_duplicate_product_reference_revokes_fresh_myloans_observation():
+    """No first-wins loan after a repeated product row in private MyLoans."""
+    requests = []
+    def row(ref, book):
+        return (
+            '<div class="row JSProductRow-' + ref + '">'
+            '<a href="/1409/Catalog/Book/' + book + '/example">notice</a>'
+            '<p class="titleLoans">SYNTHETIC PRIVATE TITLE</p>'
+            '<span class="jsDateEnd">08/11/2026 12:30:00</span></div>'
+        )
+    body = (
+        '<form id="logoutForm" method="post" '
+        'action="/1409/Account/LogOff"></form>'
+        + row("10001", "20002") + row("10001", "30003")
+    )
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        assert request.method == "GET"
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+    client = client_for(handler)
+    client._ajax_succeeded = True
+    client._cas_landed = True
+    client._loans_attempted = True
+    try:
+        with pytest.raises(cas.AjaxCasError, match="cas_loans_structure_unverified"):
+            client.read_authenticated_loans()
+        assert requests == [("GET", "/1409/Catalog/MyLoans")]
+    finally:
+        client.close()
