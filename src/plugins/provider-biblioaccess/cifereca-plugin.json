@@ -3,7 +3,7 @@
   "package": {
     "id": "org.cifereca.provider.biblioaccess",
     "version": "0.1.0",
-    "name": "BiblioAccess (qualification)",
+    "name": "BiblioAccess (recette HTTP expérimentale)",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.1,<2"
   },
@@ -14,7 +14,7 @@
       "entrypoint": "cifereca_biblioaccess:PLUGIN",
       "version": "0.1.0",
       "display_name": "La Rochelle — BiblioAccess",
-      "description": "Tenant 1409 : SSO institutionnel en qualification, aucune connexion automatisée.",
+      "description": "Compte La Rochelle configurable : sonde SSO HTTP GET expérimentale, sans authentification ni capacités de prêt.",
       "priority": 85,
       "enabled_by_default": false,
       "config_schema": {
@@ -29,7 +29,7 @@
       "requires_brokers": [],
       "requires_contracts": [],
       "system_requires": [],
-      "help_text": "Prototype désactivé : aucune capacité de recherche, prêt, téléchargement ou connexion n'est publiée. Le SSO CAS observé n'autorise pas l'import de session navigateur. Aucun secret ni ticket CAS n'est stocké."
+      "help_text": "Configurer le compte La Rochelle et cocher l'opt-in en saisissant on dans l'option Recette HTTP expérimentale. La connexion teste seulement GET entrée 1409 et GET login institutionnel, puis refuse volontairement le statut connecté. Le journal canonique contient les phases et noms de champs/scripts observés ; l'export brut après confirmation est nécessaire pour analyse. Aucun POST, prêt ni téléchargement n'est lancé. Sans opt-in, aucun réseau."
     }
   ]
 }

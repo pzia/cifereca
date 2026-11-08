@@ -1,6 +1,6 @@
 # BiblioAccess — La Rochelle (tenant 1409)
 
-Issue #3691. Prototype **désactivé par défaut**, sans réseau ni authentification automatique.
+Issue #3691. Provider **désactivé par défaut**. Le compte peut être configuré ; les GET de recette réseau ne sont déclenchés qu'après un opt-in explicite.
 
 ## Faits établis et limites
 
@@ -10,8 +10,9 @@ CAS-like à BiblioAccess et `/1409/Catalog/MyLoans` (200). Les corps
 d'authentification sont masqués. Un HTTP 200 n'atteste ni identité vérifiée,
 ni API officielle, ni permission de télécharger ou d'emprunter.
 
-Le module contient un classificateur **hors ligne** de transitions synthétiques
-et une façade `ProviderSession` qui échoue explicitement à `connect()`.
+Le module contient un classificateur **hors ligne** des transitions synthétiques.
+La façade `ProviderSession` permet une recette HTTP de **lecture seule**, mais
+ne confirme jamais une connexion ni un compte authentifié.
 `interactive_authentication=True` empêche le démarrage automatique ; ce drapeau n'autorise aucun navigateur interactif dans le plugin. Le fournisseur utilise exclusivement les primitives HTTP.
 
 ### Composants hors réseau ajoutés
@@ -35,8 +36,8 @@ expurgées, **ni** l'authentification, **ni** un runtime ADEPT.
 
 ### Portée effective
 
-- `catalog.search/detail` : non publiés ; parsing HTTP/HTML réel et
-  pagination encore à implémenter/tester avec fixtures épurées.
+- `catalog.search/detail` : composants HTTPX de qualification disponibles, mais
+  capacités non publiées faute de recette réelle et de validation du contrat HTML.
 - `sync.loans` : non publié ; inventaire de prêts complet et scoping d'identité
   restent à implémenter.
 - `acquisition.download` : non publié ; lien ACSM et contenu XML sont
@@ -227,3 +228,45 @@ plutôt que de reconstruire `/Book/{id}`, route susceptible de rediriger.
 Les liens étrangers, les query signées et les tenants différents restent
 rejetés ; aucune redirection n'est suivie. Une nouvelle recherche remplace
 l'ensemble des liens admissibles ; aucun droit ni acquisition n'en est déduit.
+
+
+### Recette sur compte réel dans Cifereca — mode opt-in GET uniquement
+
+Le descripteur est `state=ready` **pour la configuration du compte** (identifiant
+et mot de passe via les champs de credential publics), mais le package
+reste **désactivé par défaut** et n'annonce **aucune capacité métier**.
+`interactive_authentication=True` empêche un balayage automatique de
+connexion ; aucune bibliothèque n'est connectée par ce descripteur.
+
+Dans les paramètres Cifereca, activer le plugin
+`provider.biblioaccess.la-rochelle` puis créer un compte avec les
+identifiants usuels. Pour autoriser la recette, renseigner
+**exactement `on`** dans l'option de compte « Recette HTTP expérimentale ».
+Une demande de connexion manuelle provoque alors, **une seule fois par
+session** :
+
+1. GET `https://www.biblioaccess.com/1409/Account/Login` sans suivre le
+   302 et vérification de la destination IdP et du tenant.
+2. GET de l'URL HTTPS de login institutionnel effectivement observée,
+   `service` vérifié, puis inspection bornée du HTML (noms d'inputs,
+   scripts et références lexicales de paramètres AJAX).
+3. Publication d'événements `API / La Rochelle HTTP probe` dans le journal
+   canonique : phase, état HTTP et détails structuraux constatés.
+4. **Échec explicite normal** :
+   `biblioaccess_probe_completed_login_not_attempted`.
+
+Il n'y a **aucun POST**, aucune tentative de mot de passe, aucun calcul
+`_dc`, ni vérification/rejeu de `captchaCheckValue`. Le résultat
+attendu est `connected=False`, comptes vides, et un diagnostic GET réel
+exportable via l'outil de journal brut déjà présent dans Cifereca.
+Le mot de passe est configuré pour une future V1 mais **n'est pas envoyé**
+dans ce mode GET. Sans option `on`, `connect()` refuse **sans réseau**
+avec `biblioaccess_probe_opt_in_required`.
+
+L'export canonique brut peut contenir des credentials ou cookies issus
+d'autres opérations : utiliser le contrôle et la confirmation d'export
+existants avant partage. Aucun envoi automatique ni nouveau collecteur
+HTTP/auth n'est ajouté au plugin. La recette peut confirmer les
+redirections et la forme du login, **pas** les identifiants du compte ou
+la validité d'un emprunt. Ne pas interpréter l'échec de `connect()`
+comme un défaut de la recette si les GET ont produit les observations.
