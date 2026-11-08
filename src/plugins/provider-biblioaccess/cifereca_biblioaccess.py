@@ -64,8 +64,8 @@ def classify_sso_transition(url: str, status: int) -> str:
 DESCRIPTOR = ProviderDescriptor(
     id=PROVIDER_ID,
     display_name="Médiathèques de La Rochelle",
-    description="Compte lecteur La Rochelle : identification et suivi des prêts numériques.",
-    # Live account and positive-only digital loan inventory; no acquisition.
+    description="Compte lecteur : synchronisation des prêts et téléchargement ADEPT autorisé.",
+    # Live account, positive loans and opt-in automatic ACSM acquisition.
     state="ready",
     capabilities=ProviderCapabilities(
         authentication=True, multiple_credentials=True, loans=True,
@@ -82,10 +82,11 @@ DESCRIPTOR = ProviderDescriptor(
     account_options=(
         AccountOptionField(
             "authenticated_sync", "Synchronisation des prêts (on/off)", default="off",
-            help_text="on : autorise les connexions SSO et lectures de prêts "
-                      "pour CE compte enregistré. off : désactive toute "
-                      "connexion automatique. Aucun emprunt ni téléchargement "
-                      "ACSM. Les réglages de diagnostic SSO ne sont pas requis.",
+            help_text="on : autorise la connexion SSO, la synchronisation de "
+                      "vos prêts numériques et l'acquisition automatique ACSM "
+                      "des prêts disponibles via votre profil Kobo-Adept. "
+                      "off : aucun SSO ni téléchargement automatique. "
+                      "Vous pouvez retélécharger un prêt au besoin.",
         ),
     ),
     homepage="https://www.biblioaccess.com/1409/",
@@ -95,7 +96,7 @@ DESCRIPTOR = ProviderDescriptor(
     notes=(
         "Prêts numériques positifs, inventaire partiel, sans clôture par absence.",
         "authenticated_sync=on requis pour le SSO HTTP en arrière-plan.",
-        "Aucune acquisition, mutation ou livraison ACSM automatique.",
+        "Téléchargement ACSM des prêts actifs ; fulfillment par Kobo-Adept Core.",
     ),
 )
 
@@ -649,8 +650,8 @@ class LaRochellePlugin(ProviderPlugin):
         self, *, credential_id: str, label: str, credentials: dict[str, Any],
         options: dict[str, Any], config: Any, storage: Any, diagnostics: Any,
     ) -> ProviderSession:
-        # Account configuration is retained in the per-credential session;
-        # authentication remains disabled pending a qualified AJAX flow.
+        # Credentials are isolated per account. The exact persisted opt-in
+        # decides whether HTTP SSO, loan sync and acquisition are available.
         return LaRochelleSession(
             credential_id=credential_id, label=label,
             credentials=credentials, options=options, diagnostics=diagnostics,
