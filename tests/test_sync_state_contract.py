@@ -170,3 +170,24 @@ def test_dashboard_restart_does_not_reuse_previous_launch_errors(tmp_path: Path)
         assert second.storage.latest_sync_run("alex")["errors"] == 2
     finally:
         second.close()
+
+
+def test_sync_runs_same_second_keep_distinct_attempts_and_latest_is_newest(tmp_path: Path):
+    storage = Storage(tmp_path / "sync-same-second.sqlite3")
+    try:
+        old = storage.sync_run_put({
+            "sync_run_id": "sync:one", "identity_id": "alice",
+            "scope": "opening", "status": "partial", "started_at": 90,
+            "errors": 2,
+        })
+        current = storage.sync_run_put({
+            "sync_run_id": "sync:two", "identity_id": "alice",
+            "scope": "opening", "status": "running", "started_at": 90,
+        })
+        assert old != current
+        assert [r["sync_run_id"] for r in storage.sync_runs(
+            identity_id="alice", scope="opening", limit=2,
+        )] == [current, old]
+        assert storage.latest_sync_run("alice")["sync_run_id"] == current
+    finally:
+        storage.close()
