@@ -192,3 +192,38 @@ def test_actual_bnf_unavailable_book_button_never_posts_and_releases_unsent_clai
     finally:
         session.close()
         service.close()
+
+
+def test_actual_bnf_mutating_confirmation_get_never_triggers_followup_post(
+    tmp_path,
+):
+    from test_p0_2055_borrow_explicit_execution import MEDIA_DETAIL
+
+    service, session, account, item, transport, row, preview = setup(
+        tmp_path, media=True, detail_html=MEDIA_DETAIL,
+        media_get_mutates=True,
+    )
+    try:
+        def execute():
+            return service.execute_cross_profile_borrow(
+                captured_preview=preview,
+                selected_option_id=preview.options[0].option_id,
+                expected_edition_id="edition-1", observations=(row,),
+                confirmed=True, now=1100,
+            )
+        result = execute()
+        assert result["status"] == "verification_unavailable"
+        assert result["provider_verified"] is False
+        assert result["retry_borrow"] is False
+        assert result["transfer"] == "blocked"
+        assert transport["media_get_count"] == 1
+        assert transport["post_count"] == 0
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item),
+        )["status"] == "verification_unavailable"
+        assert execute()["status"] == "blocked"
+        assert transport["media_get_count"] == 1
+        assert transport["post_count"] == 0
+    finally:
+        session.close()
+        service.close()
