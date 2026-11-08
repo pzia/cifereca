@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import traceback
 from time import monotonic
 from threading import Event
 from types import SimpleNamespace
@@ -170,6 +171,7 @@ def main() -> int:
         "steps": [], "checks": {"query": True, "rows": True, "count": True,
                                "selection": True, "scroll": True, "search_requests": True},
     }
+    result["p1_3687_phase"] = "setup"
     capture = None
     window = None
     device = None
@@ -323,8 +325,29 @@ def main() -> int:
     def later(ms, callback):
         def run():
             try:
+                if args.width == 1024:
+                    allowed = {
+                        "start_search": "start", "focus_search_entry": "focus",
+                        "type_search": "type", "wait_results": "results",
+                        "setup_scroll": "scroll", "set_baseline": "baseline",
+                        "begin_delayed_search": "post_filters",
+                    }
+                    result["p1_3687_phase"] = allowed.get(
+                        getattr(callback, "__name__", ""), "continuation",
+                    )
                 callback()
             except Exception as exc:
+                if args.width == 1024:
+                    try:
+                        frames = [
+                            frame.lineno for frame in traceback.extract_tb(exc.__traceback__)
+                            if Path(frame.filename).name == "search_filter_probe.py"
+                            and 1 <= frame.lineno <= 1100
+                        ]
+                        if frames:
+                            result["p1_3687_probe_line"] = frames[-1]
+                    except Exception:
+                        pass
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, run)
@@ -333,12 +356,17 @@ def main() -> int:
         nonlocal capture
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
         if args.width == 1024:
+            result["p1_3687_phase"] = "geometry"
             # An actual 1024x768 Xvfb screen and allocated GTK window, not
             # a requested window size rendered on a larger display.
+            allocated_width, allocated_height = window.get_width(), window.get_height()
+            result["search_1024_geometry"] = {
+                "display_width": image.width, "display_height": image.height,
+                "window_width": allocated_width, "window_height": allocated_height,
+            }
             assert image.size == (1024, 768), (
                 "Recette Search 1024: dimensions physiques X11 non conformes"
             )
-            allocated_width, allocated_height = window.get_width(), window.get_height()
             assert 924 <= allocated_width <= 1024, (
                 "Recette Search 1024: fenêtre réelle hors budget horizontal"
             )
@@ -346,10 +374,6 @@ def main() -> int:
                 "Recette Search 1024: fenêtre réelle hors budget vertical"
             )
             result["checks"]["P1_3687_search_real_1024_geometry"] = True
-            result["search_1024_geometry"] = {
-                "display_width": image.width, "display_height": image.height,
-                "window_width": allocated_width, "window_height": allocated_height,
-            }
         path = output / f"{stage}.png"
         image.save(path)
         capture = path
@@ -462,6 +486,8 @@ def main() -> int:
         next_filter(0)
 
     def next_filter(index: int):
+        if args.width == 1024:
+            result["p1_3687_phase"] = "filter_" + str(min(index, 5))
         if index == len(actions):
             begin_delayed_search()
             return
