@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import os
+import stat
 from pathlib import Path
 import re
 from typing import Any
@@ -40,6 +42,43 @@ def _created_timestamp(value: Any) -> float | None:
         ).timestamp()
     except (OverflowError, ValueError):
         return None
+
+
+
+def _read_transaction_for_inspection(folder: Path) -> dict[str, Any]:
+    """Anchor each directory/receipt to a NOFOLLOW descriptor before reading.
+
+    The normal transactional reader is for trusted updater writes. An
+    inventory must not follow a journal symlink swapped after its initial
+    pathname check; all openat calls are tied to one checked directory tree.
+    """
+    dir_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                 | getattr(os, "O_NOFOLLOW", 0))
+    parent_fd = os.open(folder.parent, dir_flags)
+    try:
+        folder_fd = os.open(folder.name, dir_flags, dir_fd=parent_fd)
+        try:
+            file_fd = os.open(
+                "transaction.json",
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=folder_fd,
+            )
+            with os.fdopen(file_fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or not 0 < info.st_size <= 32 * 1024 * 1024):
+                    raise ValueError("unsafe_journal")
+                raw = stream.read(32 * 1024 * 1024 + 1)
+                if len(raw) > 32 * 1024 * 1024:
+                    raise ValueError("oversized_journal")
+        finally:
+            os.close(folder_fd)
+    finally:
+        os.close(parent_fd)
+    value = json.loads(raw.decode("utf-8"))
+    if type(value) is not dict or value.get("schema") != updater.TRANSACTION_SCHEMA:
+        raise ValueError("unqualified_journal")
+    return value
 
 
 def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any]:
@@ -125,11 +164,8 @@ def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any
                     blockers.add("unsafe_transaction_journal")
                     continue
                 try:
-                    if not journal.is_file() or journal.stat().st_size > 32 * 1024 * 1024:
-                        blockers.add("transaction_journal_unqualified")
-                        continue
-                    tx = updater._read_transaction(folder)
-                except (updater.UpdateError, OSError):
+                    tx = _read_transaction_for_inspection(folder)
+                except (OSError, ValueError, UnicodeError):
                     blockers.add("transaction_unreadable")
                     continue
                 if tx.get("id") != folder.name:
