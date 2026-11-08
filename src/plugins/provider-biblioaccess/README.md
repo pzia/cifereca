@@ -55,3 +55,23 @@ authentifiée. Ne pas solliciter une nouvelle capture d'identifiants.
 Les secrets, ACSM réel et captures privées ne sont jamais dans le dépôt.
 Le tenant 1717 (Place des Arts, #2056) reste distinct ; un moteur partagé
 sera extrait seulement lors d'une implémentation prouvée pour les deux.
+
+## SSO navigateur : contrat d'état expérimental (#3691)
+
+`biblioaccess_sso_lifecycle.py` est un garde **hors réseau** du futur parcours
+Chromium visible : opt-in individuel, propriétaire exact
+`identity_id / credential_id / provider_id / tenant_id=1409`, jeton de
+corrélation local non persistant, **contexte navigateur épinglé par identité
+d'objet**, expiration (15 minutes), annulation, fermeture et rejet des
+callbacks tardifs/issus d'un autre compte.
+
+L'état `browser_confirmed` ne signifie **pas** `ProviderSession.connected`.
+Le paramètre `page_is_authenticated` doit provenir d'un vérificateur indépendant
+sur la session vivante, **jamais** d'un simple HTTP 200, de la présence d'un cookie,
+d'un titre HTML ou d'une URL de retour CAS. Ce vérificateur et l'adaptateur
+Playwright ne sont **pas** encore livrés. Aucun dialogue IdP n'est rejoué.
+Le navigateur doit rester le seul propriétaire de ses cookies ; aucune
+réutilisation du coffre ou des ZIP Browser Recorder.
+
+L'approche permet un login manuel chez le fournisseur, mais les conditions
+d'utilisation et un parcours de recette consenti doivent encore être confirmés.
