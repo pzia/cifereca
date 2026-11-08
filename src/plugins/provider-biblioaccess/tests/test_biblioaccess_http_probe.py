@@ -150,3 +150,43 @@ def test_reject_forged_form_even_when_fields_match():
                                explicit_consent=True)
     finally:
         client.close()
+
+
+@pytest.mark.parametrize(("location", "ok"), [
+    ("https://mediatheques.agglo-larochelle.fr/login?service=SYNTHETIC", True),
+    ("https://mediatheques.agglo-larochelle.fr/cas/login?service=SYNTHETIC", True),
+    ("https://evil.example/login", False),
+    ("https://mediatheques.agglo-larochelle.fr/logon", False),
+    ("https://www.biblioaccess.com/1717/Account/Login", False),
+])
+def test_cas_entry_redirect_allowlist_no_follow(location, ok):
+    seen = []
+    def handler(request):
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={"Location": location})
+    client = mock(handler)
+    try:
+        if ok:
+            observation = client.inspect_cas_entry()
+            assert observation.status == 302
+            assert not observation.authentication_verified
+            assert observation.route == "institutional_redirect_unverified"
+            assert "SYNTHETIC" not in repr(observation)
+        else:
+            with pytest.raises(sso.SsoProtocolError, match="entry_redirect_refused"):
+                client.inspect_cas_entry()
+        assert len(seen) == 1
+        assert seen[0].endswith("/1409/Account/Login")
+    finally:
+        client.close()
+
+
+def test_cas_entry_200_never_proves_login():
+    client = mock(lambda _: httpx.Response(200, text="<html>Connected?</html>"))
+    try:
+        result = client.inspect_cas_entry()
+        assert result.status == 200
+        assert result.route == "entry_unverified"
+        assert not result.authentication_verified
+    finally:
+        client.close()
