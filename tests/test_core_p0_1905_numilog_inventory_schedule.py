@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
-from cifereca.core.source_refresh_policy import numilog_inventory_source_eligible
+from cifereca.core.source_refresh_policy import inventory_source_eligible
 from cifereca.models import Account
 from tests.test_core_p0_1346_inventory_refresh_broker import _rig
 
@@ -140,7 +140,7 @@ def test_numilog_inventory_scheduler_matches_core_source_switch(
         )
         assert service.sync_source_enabled(account) is expected
         assert broker._enabled(sid) is expected
-        assert numilog_inventory_source_eligible(service, account) is expected
+        assert inventory_source_eligible(service, account) is expected
         if expected:
             broker.set_inventory_refresh_schedule(sid, "on_start")
             assert broker.synchronize_scheduled_inventory("alice", "startup").facts["attempted"] == 1
@@ -158,7 +158,7 @@ def test_numilog_manual_is_default_and_not_a_backup_permission(tmp_path):
     try:
         broker = SynchronizationBrokerImpl(service)
         sid = broker._source_id(account)
-        assert numilog_inventory_source_eligible(service, account)
+        assert inventory_source_eligible(service, account)
         assert broker.inventory_refresh_schedule(sid) == {
             "mode": "manual", "interval_minutes": 60,
         }
@@ -248,7 +248,7 @@ def test_numilog_revalidation_refuses_stale_or_ambiguous_private_account(tmp_pat
             })
         else:
             broker.set_enabled(sid, False)
-        assert not numilog_inventory_source_eligible(service, account)
+        assert not inventory_source_eligible(service, account)
         assert broker.synchronize_scheduled_inventory("alice", "startup").facts["attempted"] == 0
         with pytest.raises(ValueError):
             broker.set_inventory_refresh_schedule(sid, "on_start")
