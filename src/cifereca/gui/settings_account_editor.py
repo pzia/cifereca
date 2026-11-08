@@ -187,6 +187,19 @@ def build_provider_account_editor(
         probe_status = probe_row
     delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette source de la configuration")
     delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
+    # The preview values are the baseline for the explicit connection test.
+    # Compare *what GTK actually rendered*, not raw storage: absent legacy
+    # options may display declared defaults without being modified. Never
+    # store this baseline in diagnostics or any persistent configuration.
+    probe_rendered_baseline = {
+        "enabled": enabled.get_active(),
+        "identity": identity_row.get_text(),
+        "label": label_row.get_text(),
+        "fields": {key: widget.get_text() for key, widget in fields.items()},
+        "option_fields": {
+            key: widget.get_text() for key, widget in option_fields.items()
+        },
+    }
     editor = {
         "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
         "label": label_row, "identity": identity_row, "fields": fields,
@@ -195,6 +208,7 @@ def build_provider_account_editor(
         "original_options": options, "original_credentials": credentials,
         "original_account": dict(data),
         "invalid_saved_snapshot": invalid_saved_snapshot,
+        "probe_rendered_baseline": probe_rendered_baseline,
         "deleted": False,
         "explicit_probe_button": probe_button,
         "explicit_probe_status": probe_status,
