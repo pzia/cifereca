@@ -38,7 +38,8 @@ def test_post_get_failure_keeps_acquiring_and_prevents_second_get(
         row = service.storage.backup_get("kobo", "vault-1", "book-1")
         assert row["status"] == "acquiring"
         assert row["sha256"] is None
-        assert not service.storage.origin_links()
+        with service.storage._lock, service.storage._connect() as db:
+            assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
         second = service.sync_kobo_backup()
         assert second["attempted"] == second["downloaded"] == 0
         assert second["reconcile_skipped"] >= 1
