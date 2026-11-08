@@ -660,40 +660,13 @@ class Storage:
                 rows = db.execute("SELECT " + ",".join(keys) + " FROM backup_items").fetchall()
                 for values in rows:
                     row = dict(zip(keys, values))
-                    # #3196 W5: v2->v3 is a historical import, not a
-                    # refreshed Kobo rights observation. Archived editions
-                    # and *never-attempted, purely passive* pending records
-                    # must not mint an active entitlement, generic receipt,
-                    # Artifact, Placement or catalogue entry. Retain every
-                    # original backup_items row untouched for supervised
-                    # migration/recovery; only skip its synthetic v3 mirror.
-                    # A pending record with any attempt/byte/strategy/error
-                    # clue stays on the compatibility path until W2/W4
-                    # migration can preserve interrupted delivery semantics.
-                    passive_kobo = (
-                        row["provider_id"] == "kobo"
-                        and (
-                            row["status"] == "skipped_archived"
-                            or (
-                                row["status"] in {"pending", "queued"}
-                                and row["attempt_count"] == 0
-                                and row["last_attempt_at"] is None
-                                and not row["local_path"]
-                                and not row["sha256"]
-                                and row["size"] is None
-                                and not row["error"]
-                                and not row["attention_code"]
-                                and not row["acquisition_strategy"]
-                                and not row["executor"]
-                                and not row["job_id"]
-                                and not row["adept_profile"]
-                                and row["entitlement_type"] == "owned"
-                                and not row["loan_id"]
-                                and not row["expires_at"]
-                            )
-                        )
-                    )
-                    if passive_kobo:
+                    # #3196 W5 cutover: a Kobo v0.7 checkpoint is an
+                    # archive, not a provider-attested SourceReference or
+                    # proof of canonical A/B delivery. The historical
+                    # SQLite import must never synthesize a generic right,
+                    # acquisition, Artifact, Placement or catalogue row.
+                    # Other providers retain their own legacy migrations.
+                    if row["provider_id"] == "kobo":
                         continue
                     cls._mirror_backup_row(db, row, now=now, migration=True)
                 cls._write_schema_version(db, 3)

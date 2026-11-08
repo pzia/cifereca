@@ -131,8 +131,8 @@ def test_v2_database_migrates_forward_without_losing_backup_rows():
         storage = Storage(db_path)
         assert storage.schema_version() == 14
         assert storage.backup_get("kobo", "vault", "book")["title"] == "Legacy Book"
-        assert storage.acquisitions(provider_id="kobo")[0]["status"] == "complete"
-        assert storage.entitlements(provider_id="kobo")[0]["item_id"] == "book"
+        assert storage.acquisitions(provider_id="kobo") == []
+        assert storage.entitlements(provider_id="kobo") == []
 
 
 def _write_epub(path: Path, marker: bytes = b"x") -> None:
@@ -213,7 +213,7 @@ def test_v3_migration_rolls_back_atomically_when_data_projection_fails():
           PRIMARY KEY(provider_id,credential_id,item_id)
         );
         INSERT INTO backup_items(provider_id,credential_id,item_id,title,status,updated_at,entitlement_type)
-        VALUES('kobo','vault','book','Legacy Book','complete',1700000000,'owned');
+        VALUES('seller','vault','book','Legacy Book','complete',1700000000,'owned');
         """)
         db.commit(); db.close()
 
