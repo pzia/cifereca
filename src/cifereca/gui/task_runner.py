@@ -528,12 +528,7 @@ class TaskRunner:
                 feedback_error = None if business_status == "success" else (
                     "Une autre opération est déjà en cours"
                     if busy_lock_attested else
-                    "Demande d’emprunt envoyée ; confirmation indisponible. "
-                    "Ne réempruntez pas : actualisez vos prêts ultérieurement."
-                    if (trace_kind == "borrow" and business_status == "pending"
-                        and kind_outcome == "ok" and type(payload) is dict
-                        and payload.get("reason_code") == "borrow_result_unverified")
-                    else "Emprunt non confirmé — vérification nécessaire"
+                    "Emprunt non confirmé — vérification nécessaire"
                     if trace_kind == "borrow" and business_status == "pending"
                     else "Emprunt bloqué — aucune confirmation"
                     if trace_kind == "borrow" and business_status == "blocked"
@@ -550,6 +545,16 @@ class TaskRunner:
                     else payload.user_message if isinstance(payload, UserFacingError)
                     else "Traitement indisponible"
                 )
+                # Preserve main's explicit pending-borrow instruction,
+                # independent of the background lock-contention feedback.
+                if (not busy_lock_attested
+                        and trace_kind == "borrow" and business_status == "pending"
+                        and kind_outcome == "ok" and type(payload) is dict
+                        and payload.get("reason_code") == "borrow_result_unverified"):
+                    feedback_error = (
+                        "Demande d’emprunt envoyée ; confirmation indisponible. "
+                        "Ne réempruntez pas : actualisez vos prêts ultérieurement."
+                    )
                 finish_args = (
                     task_id, remaining, label,
                     business_status == "success", feedback_error,
