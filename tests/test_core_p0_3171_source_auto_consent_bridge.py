@@ -252,3 +252,7 @@ def test_bnf_legacy_auto_prevents_parallel_canonical_dispatch(monkeypatch):
         admitted_epoch=1, sync_lease=None, cancelled_for_rights=lambda: False,
     )
     assert result is None
+
+
+def test_provider_kind_membership_facade_is_retired():
+    assert not hasattr(bridge, "configured_kind")
