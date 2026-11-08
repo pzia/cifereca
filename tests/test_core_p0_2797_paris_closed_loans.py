@@ -117,7 +117,7 @@ def test_future_provider_closed_loan_is_visible_and_read_only(tmp_path):
             "item_id,entitlement_type,state,loan_id,expires_at"
             ") VALUES(?,?,?,?,?,?,?,?,?,?)",
             ("right-future", "reader", "fixture-lender", "fixture-cred",
-             "fixture-account", "edition-1", "loan", "returned", "2024-01-01"),
+             "fixture-account", "edition-1", "loan", "returned", "loan-1", "2024-01-01"),
         )
         db.execute(
             "INSERT INTO catalog_entries("
