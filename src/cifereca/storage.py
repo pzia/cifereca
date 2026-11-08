@@ -2099,8 +2099,20 @@ class Storage:
             # Other providers, and Kobo editions with no typed source,
             # retain the historical writer until their recovery is migrated.
             was_complete_kobo_archive = False
+            completed_archive_key = None
             if item.get("provider_id") == "kobo":
                 db.execute("BEGIN IMMEDIATE")
+                # The v0.7 row can move complete -> acquiring -> error.
+                # A single previous-status snapshot loses the historical
+                # complete transition after the first retry. Persist a
+                # monotone, private, per-legacy-PK archive marker instead.
+                completed_archive_key = (
+                    "core.kobo.completed-legacy-archive.v1."
+                    + hashlib.sha256(json.dumps([
+                        str(item.get("credential_id") or ""),
+                        str(item.get("item_id") or ""),
+                    ], ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
+                )
                 if db.execute(
                     "SELECT 1 FROM source_references WHERE provider_id='kobo' "
                     "AND credential_id=? AND edition_id=? LIMIT 1",
@@ -2120,7 +2132,11 @@ class Storage:
                      str(item.get("item_id") or "")),
                 ).fetchone()
                 was_complete_kobo_archive = bool(
-                    former and former[0] in {"complete", "ok"}
+                    (former and former[0] in {"complete", "ok"})
+                    or db.execute(
+                        "SELECT 1 FROM metadata WHERE key=? LIMIT 1",
+                        (completed_archive_key,),
+                    ).fetchone()
                 )
             # The v0.7 checkpoint remains writable for legacy recovery,
             # but neither passive inventory nor active delivery may mirror
@@ -2164,6 +2180,17 @@ class Storage:
             )
             if backup_cursor.rowcount != 1:
                 raise ValueError("backup_projection_owner_conflict")
+            if completed_archive_key is not None and (
+                was_complete_kobo_archive
+                or str(item.get("status") or "pending") in {"complete", "ok"}
+            ):
+                # Commit atomically with the archive update and all owner
+                # checks below. Once complete, no later status may resurrect
+                # W1's positive projection; never clear this marker on retry.
+                db.execute(
+                    "INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)",
+                    (completed_archive_key, "archive_only_after_complete"),
+                )
             # Keep the 0.7 compatibility projection and the generic 0.8 ledger
             # in the same SQLite transaction. This makes Kobo immediately visible
             # to the provider-neutral acquisition model without duplicating sync I/O.
@@ -2194,19 +2221,21 @@ class Storage:
             # with omitted owner/account must not demote an earlier exact
             # owner in the backup projection.
             merged = dict(zip(keys, persisted))
-            # A previously completed v0.7 archive can receive a newer title,
-            # cover or updated_at, but that is not a newly completed delivery.
-            # Do not replay the W1 mirror or refresh canonical rights,
-            # artifacts, placements or ledger from this archival state.
-            # Keep the exact-owner collision checks before returning.
-            if (item.get("provider_id") == "kobo"
-                    and was_complete_kobo_archive
-                    and merged.get("status") in {"complete", "ok"}):
+            # Once a Kobo v0.7 archive was complete, *any* subsequent
+            # status transition is only historical recovery metadata. In
+            # particular, complete -> acquiring/error/reconcile_required
+            # cannot republish or demote canonical rights/receipts on the
+            # authority of this old row. Fresh canonical A/B independently
+            # owns any new delivery; preserve the 0.7 row for rollback.
+            # Keep every exact-owner/canonical-checkpoint refusal even when
+            # publication is suppressed.
+            if item.get("provider_id") == "kobo" and was_complete_kobo_archive:
                 self._check_kobo_legacy_canonical_owner(db, merged)
                 # Do not bypass the canonical checkpoint validation embedded
                 # in the W1 mirror (malformed/duplicate JSON, inconsistent
                 # CompletedDelivery status, cross-credential stage). Run its
-                # read-only half; skip only the downstream positive SQL.
+                # read-only half for every post-complete status, skipping
+                # only the downstream positive SQL.
                 self._mirror_backup_row(
                     db, merged, now=now, migration=False, archive_only=True,
                 )
