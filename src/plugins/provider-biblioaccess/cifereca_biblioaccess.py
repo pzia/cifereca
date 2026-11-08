@@ -63,9 +63,8 @@ def classify_sso_transition(url: str, status: int) -> str:
 DESCRIPTOR = ProviderDescriptor(
     id=PROVIDER_ID,
     display_name="La Rochelle — BiblioAccess",
-    description="Tenant 1409, SSO institutionnel CAS-like, intégration en qualification.",
-    # Ready for account configuration and an explicit diagnostic GET only.
-    # No login, catalog, loans or acquisition capabilities are published.
+    description="Compte lecteur La Rochelle : identification et suivi des prêts numériques.",
+    # Live account and positive-only digital loan inventory; no acquisition.
     state="ready",
     capabilities=ProviderCapabilities(
         authentication=True, multiple_credentials=True, loans=True,
@@ -74,42 +73,21 @@ DESCRIPTOR = ProviderDescriptor(
         CredentialField("username", "Identifiant La Rochelle", required=True),
         CredentialField("password", "Mot de passe La Rochelle", secret=True, required=True),
     ),
+    # Only normal account controls belong in Settings. Previously saved
+    # experimental_http_probe, AJAX and JS options remain in per-account
+    # configuration and are recognized by the diagnostic implementation, but
+    # are intentionally not re-declared as editable production account fields.
     account_options=(
         AccountOptionField(
-            "authenticated_sync", "Synchroniser mes prêts La Rochelle", default="off",
-            help_text="off = aucune authentification automatique. on = consentement "
-                      "explicite par compte : authentification HTTP SSO lors des "
-                      "reconnexions/synchronisations, lecture de MyLoans uniquement. "
-                      "Inventaire partiel : aucune clôture par absence et aucun ACSM "
-                      "téléchargé ou emprunt lancé."),
-        AccountOptionField(
-            "experimental_http_probe", "Recette HTTP expérimentale", default="off",
-            help_text="off = aucun réseau, on = GET seuls ; auto-post = premier POST AJAX "
-                      "avec paramètres frais de la page HTML et consentement explicite ; "
-                      "post = recette historique avec paramètres fournis. "
-                      "Aucune connexion Core ni synchronisation de prêt."),
-        AccountOptionField(
-            "experimental_login_script_path", "SSO : chemin JS à inspecter (GET)",
-            help_text="Facultatif, chemin exact déjà observé dans le HTML /login "
-                      "(ex. /scripts/logon.js). Lors du test explicite du compte, "
-                      "un seul GET, sans exécuter JS ni enregistrer son contenu. "
-                      "Ne renseignez pas d'URL complète ni de query."),
-        AccountOptionField(
-            "experimental_catalogue_query", "Catalogue : recherche de recette",
-            help_text="Optionnel : mot-clé saisi volontairement pour rechercher "
-                      "une page du catalogue 1409 et lire une fiche. Aucun prêt "
-                      "ni droit utilisateur inféré.",
+            "authenticated_sync", "Synchronisation des prêts (on/off)", default="off",
+            help_text="on : autorise les connexions SSO et lectures de prêts "
+                      "pour CE compte enregistré. off : désactive toute "
+                      "connexion automatique. Aucun emprunt ni téléchargement "
+                      "ACSM. Les réglages de diagnostic SSO ne sont pas requis.",
         ),
-        AccountOptionField("ajax_change_user", "POST AJAX : changeUser (valeur observée)"),
-        AccountOptionField("ajax_provider", "POST AJAX : provider (valeur observée)"),
-        AccountOptionField("ajax_dc", "POST AJAX : _dc (valeur fraîche)", secret=True),
-        AccountOptionField("ajax_remember_me", "POST AJAX : rememberMe (valeur observée)"),
-        AccountOptionField("ajax_captcha", "POST AJAX : captcha (valeur observée)", secret=True),
-        AccountOptionField("ajax_captcha_check_value", "POST AJAX : captchaCheckValue (valeur fraîche)", secret=True),
     ),
     homepage="https://www.biblioaccess.com/1409/",
-    # Suppress the automatic startup sweep until direct HTTP CAS is qualified.
-    # This flag does not authorize an interactive browser in the provider.
+    # Interactive sources require exact per-account authenticated_sync consent.
     interactive_authentication=True,
     background_authentication_option_key="authenticated_sync",
     notes=(
@@ -182,7 +160,7 @@ def _observed_logon_script(paths: tuple[str, ...]) -> str:
 
 
 class LaRochelleSession(ProviderSession):
-    """Opt-in network diagnostic, deliberately not an authenticated session."""
+    """Per-credential HTTP CAS session with read-only loan sync or explicit test."""
 
     def __init__(self, *, diagnostics=None, client_factory=None, **kwargs: Any) -> None:
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
