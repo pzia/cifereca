@@ -44,13 +44,29 @@ expurgées, **ni** l'authentification, **ni** un runtime ADEPT.
   attestés, mais livraison, contrôle de session et broker ADEPT non branchés.
 - Prêt, retour, renouvellement, choix DRM : mutations non attestées et interdites.
 
-### Condition de déblocage
+### Qualification HTTP du SSO (V1)
 
-Identifier et implémenter **un transport de session autorisé et supporté**
-entre le navigateur institutionnel et le Core, sans import implicite de
-cookies ni réemploi de ticket CAS. Si ce transport n'existe pas, maintenir
-la connexion manuelle hors de Cifereca et ne pas annoncer une capacité
-authentifiée. Ne pas solliciter une nouvelle capture d'identifiants.
+**Règle du dépôt : aucun navigateur interactif dans un plugin provider.**
+Browser Recorder est une exception technique explicite et indépendante.
+
+`biblioaccess_http_sso.py` qualifie **hors réseau** la forme du futur client
+HTTP : routes institutionnelles `GET /login`, `POST /logon`,
+`GET /cas/login`, retour tenant 1409, classification conservatrice des
+statuts et origines. Il inspecte les formulaires HTML sans lire ni retenir
+la valeur des champs (noms/types uniquement), et produit un diagnostic de
+réponse POST portant sur statut/type/taille, **sans contenu ni clés JSON**.
+Les champs de formulaire synthétiques sont des exemples et ne prouvent
+pas le vrai schéma de `/logon`.
+
+L'étape suivante est l'**instrumentation métier explicite dans la V1**
+(ou une recapture ciblée si le POST reste ambigu), puis le client `HTTPX`
+utilisant la surface publique `HTTPX_TRANSPORT`. Ni POST authentifié,
+ni client HTTP live, ni activation de `connect()` ne sont prétendus ici.
+Aucun Playwright, Chromium, profil ni cookie de navigateur.
+
+Les redirections CAS et une page de prêts HTTP 200 ne constituent pas une
+preuve de session valide ou de propriété. Déterminer la preuve métier
+positive et les garde-fous d'identité avant publication des capacités.
 
 Les secrets, ACSM réel et captures privées ne sont jamais dans le dépôt.
 Le tenant 1717 (Place des Arts, #2056) reste distinct ; un moteur partagé
