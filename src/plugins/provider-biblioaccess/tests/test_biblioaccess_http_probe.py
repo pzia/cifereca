@@ -190,3 +190,31 @@ def test_cas_entry_200_never_proves_login():
         assert not result.authentication_verified
     finally:
         client.close()
+
+
+def test_structurally_equal_but_forged_form_cannot_submit():
+    seen = []
+    def handler(request):
+        seen.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(
+                200, headers={"content-type": "text/html"},
+                text='<form method="POST" action="/logon">'
+                     '<input name="login"><input type="password" name="password">'
+                     '</form>')
+        pytest.fail("No POST for a fabricated form")
+    client = mock(handler)
+    try:
+        original = client.inspect_login()[0]
+        forged = sso.FormShape(
+            original.method, original.action_origin, original.action_path,
+            original.field_names, original.password_field_present)
+        assert forged == original
+        assert forged is not original
+        with pytest.raises(sso.SsoProtocolError, match="schema_unqualified"):
+            client.submit_once(
+                shape=forged, fields={"login": "x", "password": "y"},
+                explicit_consent=True)
+        assert seen == ["GET"]
+    finally:
+        client.close()
