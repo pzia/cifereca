@@ -383,3 +383,16 @@ encodage invalide, HTML invalide et erreur de transport interdisent le POST
 `/logon.svc/logon` sur cette instance. Aucune seconde tentative implicite
 n'est autorisée. L'absence de cette preuve technique ne déclenche aucun
 contournement de challenge ni activation de `connect()`.
+
+
+### Qualification conservatrice de la réponse AJAX institutionnelle
+
+Un `success=true` JSON HTTP 200 n'est classé `success_reported`
+que si le champ `errors` est **absent ou une liste vide**. Un champ
+`errors` non vide, `null`, mal typé ou contradictoire avec `success=true`
+donne `unknown` : la continuation CAS ne sera **pas** demandée.
+Un JSON ambigu avec clés dupliquées (y compris dans un objet imbriqué)
+ou nombres non standards `NaN`/`Infinity` est refusé. Les valeurs
+et messages d'erreur du service ne sont ni exposés dans l'observation ni
+interprétés comme preuve d'identité. La reprise impose une nouvelle
+session et une décision explicite : jamais de second POST automatique.
