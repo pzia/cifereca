@@ -7,6 +7,7 @@ importable without PyGObject and to preserve the optional widget service.
 from __future__ import annotations
 
 from .store_usage_labels import store_search_source_label
+from ..core.provider_identifier import valid_provider_identifier
 
 
 def _provider_choices(window, *, library=False):
@@ -56,9 +57,7 @@ def _origin_ids_for_library_snapshot(entries, identity_id):
         if type(origins) not in (list, tuple) or len(origins) > 32:
             continue
         for provider in origins:
-            if (type(provider) is str and 1 <= len(provider) <= 64
-                    and all(char.isascii() and (char.isalnum() or char in "._-")
-                            for char in provider)):
+            if valid_provider_identifier(provider):
                 ids.add(provider)
     return tuple(sorted(ids))
 
