@@ -678,3 +678,62 @@ def test_held_lender_choice_revoked_after_positive_fact_refresh(harness):
     assert _click(service, next_preview, next_preview.options[0].option_id,
                   refreshed).status == "current"
     assert session.calls == 0
+
+
+def test_held_lender_click_revokes_if_another_menu_option_is_replaced(harness):
+    service, account, session = harness
+    first = _candidate(collection="branch-1")
+    before_other = _candidate(collection="branch-2")
+    after_other = _candidate(collection="branch-3")
+    original = _preview(service, first, before_other)
+    assert original.status == "choose"
+    chosen = next(
+        option for option in original.options
+        if option._source_coordinates[6] == "branch-1"
+    )
+    fresh = _preview(service, first, after_other)
+    assert fresh.status == "choose"
+    assert chosen.option_id in [option.option_id for option in fresh.options]
+    # The clicked lender is still eligible, but the menu is no longer the
+    # one for which the requester made their explicit selection.
+    result = _click(
+        service, original, chosen.option_id, first, after_other,
+    )
+    assert result.status == "revoked"
+    assert result.reason_code == "selection_stale"
+    assert result.executable is False
+    assert session.calls == 0
+
+
+def test_held_lender_click_revokes_if_unrelated_option_becomes_unavailable(harness):
+    service, account, session = harness
+    first = _candidate(collection="branch-1")
+    second = _candidate(collection="branch-2")
+    original = _preview(service, first, second)
+    chosen = next(
+        option for option in original.options
+        if option._source_coordinates[6] == "branch-1"
+    )
+    denied = replace(
+        second,
+        edition_evidence=replace(second.edition_evidence, item_offer="unavailable"),
+    )
+    assert _preview(service, first, denied).status == "external"
+    assert _click(service, original, chosen.option_id, first, denied).status == "revoked"
+    assert session.calls == 0
+
+
+def test_held_lender_click_revokes_if_unrelated_observation_is_newly_rejected(harness):
+    service, account, session = harness
+    first = _candidate(collection="branch-1")
+    original = _preview(service, first)
+    extra = replace(
+        _candidate(collection="branch-2"),
+        evidence=None,
+    )
+    fresh = _preview(service, first, extra)
+    assert fresh.options == original.options
+    assert fresh.rejected_count != original.rejected_count
+    assert _click(service, original, original.options[0].option_id,
+                  first, extra).status == "revoked"
+    assert session.calls == 0
