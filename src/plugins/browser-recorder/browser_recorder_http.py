@@ -314,6 +314,41 @@ _AUTH_SCHEMA_REASONS = frozenset((
 ))
 
 
+
+def _valid_auth_schema(value: object, *, direction: str) -> bool:
+    if value is None:
+        return True
+    if type(value) is not dict or type(value.get("version")) is not int or value["version"] != 1:
+        return False
+    if direction == "request":
+        if set(value) != {"version", "query_names", "form_names"}:
+            return False
+        groups = (value["query_names"], value["form_names"])
+        return all(
+            type(group) is list and len(group) <= _AUTH_SCHEMA_FIELDS
+            and group == sorted(set(group))
+            and all(type(name) is str and _SAFE_QUERY_NAME.fullmatch(name)
+                    for name in group)
+            for group in groups
+        ) and bool(value["form_names"])
+    if direction == "response":
+        if set(value) != {"version", "keys"}:
+            return False
+        rows = value["keys"]
+        return (
+            type(rows) is list and 0 < len(rows) <= _AUTH_SCHEMA_FIELDS
+            and all(type(row) is list and len(row) == 2
+                    and type(row[0]) is str
+                    and _SAFE_QUERY_NAME.fullmatch(row[0]) is not None
+                    and type(row[1]) is str
+                    and row[1] in {"null", "boolean", "string", "number", "array", "object"}
+                    for row in rows)
+            and rows == sorted(rows, key=lambda row: row[0])
+            and len({row[0] for row in rows}) == len(rows)
+        )
+    return False
+
+
 def _auth_query_names(url: str) -> tuple[str, ...] | None:
     try:
         query = urlsplit(url).query
@@ -385,7 +420,8 @@ def _auth_response_structure(resp, req, *, max_bytes: int) -> dict | None:
                     raise ValueError("duplicate_field")
                 result[key] = value
             return result
-        data = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=pairs)
+        data = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=pairs,
+                          parse_constant=lambda _value: (_ for _ in ()).throw(ValueError("invalid_json_constant")))
         if type(data) is not dict or not 0 < len(data) <= _AUTH_SCHEMA_FIELDS:
             return None
         kinds = []
