@@ -59,8 +59,8 @@ def test_library_rows_preserve_multi_source_and_kobo_device_labels():
     ]
     rows, objects, calls = _project(entries)
     assert rows[0][4] == "2 sources"
-    assert rows[0][3] == "À synchroniser · Kobo 1/2"
-    assert rows[1][3] == "À synchroniser · Kobo à synchroniser"
+    assert rows[0][3] == "À synchroniser · Appareil 1/2"
+    assert rows[1][3] == "À synchroniser · Appareil à synchroniser"
     assert rows[2][3] == ""
     assert [row[0] for row in rows] == ["library:0", "library:1", "library:2"]
     assert sum(name == "backup" for name, _value in calls) == 2
