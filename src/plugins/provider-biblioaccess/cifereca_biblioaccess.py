@@ -62,7 +62,7 @@ def classify_sso_transition(url: str, status: int) -> str:
 
 DESCRIPTOR = ProviderDescriptor(
     id=PROVIDER_ID,
-    display_name="La Rochelle — BiblioAccess",
+    display_name="Médiathèques de La Rochelle",
     description="Compte lecteur La Rochelle : identification et suivi des prêts numériques.",
     # Live account and positive-only digital loan inventory; no acquisition.
     state="ready",
@@ -70,8 +70,8 @@ DESCRIPTOR = ProviderDescriptor(
         authentication=True, multiple_credentials=True, loans=True,
     ),
     credential_fields=(
-        CredentialField("username", "Identifiant La Rochelle", required=True),
-        CredentialField("password", "Mot de passe La Rochelle", secret=True, required=True),
+        CredentialField("username", "Identifiant de bibliothèque", required=True),
+        CredentialField("password", "Mot de passe", secret=True, required=True),
     ),
     # Only normal account controls belong in Settings. Previously saved
     # experimental_http_probe, AJAX and JS options remain in per-account
