@@ -78,7 +78,7 @@ class GroupedEvidence:
 
 # Public/redacted group keys must be stable structural provider identifiers,
 # never arbitrary upstream text, account names, paths or diagnostic payloads.
-_PROVIDER_ID = re.compile(r"[a-z][a-z0-9]*(?:[-.][a-z0-9]+)*\\Z")
+_PROVIDER_ID = re.compile(r"[a-z][a-z0-9]*(?:[-.][a-z0-9]+)*\Z")
 _RESERVED_PROVIDER_GROUPS = frozenset({"all", "other", "unattributed"})
 
 
