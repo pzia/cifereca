@@ -97,6 +97,8 @@ def test_identity_rotation_during_snapshot_revokes_notice_entirely():
     "http://private.invalid",
     "message\\nPRIVATE_TOKEN",
     "X" * 241,
+    "message" + chr(10) + "PRIVATE_TOKEN",
+    chr(0x202e) + "Spoof",
     "\\u202eSpoof",
 ])
 def test_plugin_text_is_bounded_and_cannot_publish_hostile_payload(hostile):
