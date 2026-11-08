@@ -126,7 +126,7 @@ def test_unfinished_compatibility_checkpoint_preserves_existing_writer(storage):
     assert json.loads(before[8]) == {"legacy_status": "complete"}
     storage.backup_put(_backup(status="acquiring"))
     after = _ledger(storage)
-    assert after[6] == "acquiring"
+    assert after == before  # legacy status is archive-only after complete
     assert json.loads(after[8]) == {"legacy_status": "complete"}
     assert storage.backup_get(
         "kobo", "synthetic-vault", "synthetic-book"
@@ -203,7 +203,7 @@ def test_other_borrower_canonical_stage_does_not_suppress_legacy_scope(storage):
             "SELECT account_id,identity_id,status FROM acquisition_ledger "
             "ORDER BY acquisition_id"
         ).fetchall()
-    assert ("borrower", "A", "acquiring") in statuses
+    assert ("borrower", "A", "complete") in statuses
     assert ("another-borrower", "B", "complete") in statuses
 
 
@@ -267,7 +267,7 @@ def test_other_versioned_schema_does_not_suppress_legacy_recovery(storage):
     # A structurally valid non-canonical schema remains a compatibility row.
     _promote_synthetic_receipt(storage, '{"schema":"legacy.v0.7"}')
     storage.backup_put(_backup(status="acquiring"))
-    assert _ledger(storage)[6] == "acquiring"
+    assert _ledger(storage)[6] == "complete"
     assert storage.backup_get(
         "kobo", "synthetic-vault", "synthetic-book"
     )["status"] == "acquiring"
