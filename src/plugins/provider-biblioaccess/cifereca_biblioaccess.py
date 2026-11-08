@@ -122,6 +122,7 @@ _HTTP_PROBE_CODES = frozenset((
     "cas_ticket_unverified", "cas_ticket_refused",
     "cas_landing_unverified", "cas_loans_already_attempted",
     "cas_landing_required", "cas_loans_unverified",
+    "cas_loans_structure_unverified",
     "ajax_logon_consent_required", "ajax_logon_shape_mismatch",
     "ajax_logon_credentials_missing", "ajax_logon_challenge_missing",
     "ajax_logon_response_invalid", "ajax_logon_response_type",
@@ -340,7 +341,10 @@ class LaRochelleSession(ProviderSession):
                         self._last_probe_phase = loans.phase
                         self._event("loans_page", "observed",
                                     response_status=loans.status, observation=loans.phase,
-                                    identity_verified=False, loans_verified=False)
+                                    identity_verified=False, loans_verified=False,
+                                    inventory_verified=False,
+                                    page_book_link_count=getattr(loans, "page_book_link_count", 0),
+                                    page_book_unique_count=getattr(loans, "page_book_unique_count", 0))
             except Exception as exc:
                 # The provider remains disconnected even if the login HTML
                 # cannot be parsed; preserve the exact technical step/code.

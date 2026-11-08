@@ -477,3 +477,24 @@ différentes, ce chemin est **exclu** de l'inspection facultative pour
 éviter toute sélection ambiguë. Aucun GET supplémentaire n'est lancé
 pour résoudre cette ambiguïté. Ces garanties ne prouvent pas la
 provenance des champs dynamiques ni un résultat d'authentification.
+
+
+### Préparation de l'inventaire MyLoans après CAS
+
+La dernière étape HTTP `GET /1409/Catalog/MyLoans` ne perd plus
+systématiquement son corps HTML : le composant hors réseau
+`biblioaccess_loans_page.py` extrait un **ensemble candidat** de liens
+bibliographiques HTTPS strictement limités à
+`/1409/Catalog/Book/{id}[/slug]` (maximum 128 identifiants).
+Il conserve les URL de notices validées et leurs identifiants **uniquement
+dans l'observation éphémère** du client, et expose deux compteurs de
+diagnostic : `page_book_link_count` et `page_book_unique_count`.
+
+Ce n'est PAS un parseur de prêts : le HTML pourrait être une page publique,
+une liste de recommandations ou contenir des liens hors inventaire. Les
+dates de retour, identifiants de prêt, états et droits nécessitent une
+structure de page réelle, un rattachement d'identité et une recette positive
+encore absents. Même zéro lien candidat signifie `completeness=unknown`,
+jamais « aucun prêt ». Aucun `Account`, `Loan`, `sync.loans` ou
+acquisition n'est produit. Cette étape constitue le point de raccordement
+de la future normalisation quand le HTML authentifié aura été qualifié.

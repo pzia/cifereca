@@ -7,7 +7,7 @@ Core authentication or a library right. No networking at import time.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
 from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
@@ -42,6 +42,12 @@ class CasHttpObservation:
     connected: bool = False
     identity_verified: bool = False
     loans_verified: bool = False
+    page_book_link_count: int = 0
+    page_book_unique_count: int = 0
+    inventory_verified: bool = False
+    _candidate_book_urls: tuple[tuple[str, str], ...] = field(
+        default=(), repr=False, compare=False,
+    )
 
 
 def _url(url: str):
@@ -279,8 +285,21 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 media = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise AjaxCasError("cas_loans_unverified")
-                _bounded(response)
-                return CasHttpObservation("loans_html_unverified", 200)
+                body = _bounded(response)
+                from biblioaccess_loans_page import (
+                    inspect_myloans_html, LoanPageError,
+                )
+                try:
+                    candidates = inspect_myloans_html(
+                        body.decode("utf-8", errors="strict"))
+                except LoanPageError:
+                    raise AjaxCasError("cas_loans_structure_unverified") from None
+                return CasHttpObservation(
+                    "loans_html_unverified", 200,
+                    page_book_link_count=candidates.page_book_link_count,
+                    page_book_unique_count=candidates.page_book_unique_count,
+                    _candidate_book_urls=candidates._book_urls,
+                )
         except (httpx.HTTPError, UnicodeError):
             raise AjaxCasError("cas_transport_unavailable") from None
 
