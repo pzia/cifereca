@@ -6,4 +6,4 @@ def test_dead_numilog_generation_transaction_facade_stays_retired():
     assert not hasattr(bridge, "numilog_generation_in_transaction")
     assert callable(bridge.consent_generation_in_transaction)
     assert callable(bridge.consent_generation)
-    assert callable(bridge.numilog_generation)
+    assert not hasattr(bridge, "numilog_generation")
