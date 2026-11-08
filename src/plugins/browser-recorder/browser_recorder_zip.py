@@ -25,7 +25,7 @@ from browser_recorder import RecorderError, SAFE_SEGMENTS, site_origin
 from browser_recorder_review import _SECRETS, _IDS, _JWT, _variants
 from browser_recorder_devkit import core_contract_kit
 from browser_recorder_download import _open_parent_without_symlinks
-from browser_recorder_http import _BODY_REASONS, _valid_auth_schema, _AUTH_SCHEMA_REASONS, _auth_flow
+from browser_recorder_http import _BODY_REASONS, _valid_auth_schema, _AUTH_SCHEMA_REASONS, _auth_flow, _url_origin
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
 MAX_EXCHANGES = 240
@@ -743,14 +743,19 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             state = record.get("state") if type(record) is dict else None
             schema = record.get("schema") if type(record) is dict else None
             if (outgoing["metadata_only"] is True
+                    or _url_origin(entry["url"]) not in allowed_origins
+                    or not str(entry["url"]).startswith("https://")
                     or not _auth_flow(entry["url"])
                     or state not in _AUTH_SCHEMA_REASONS
                     or state != "schema_captured"
                     or not _valid_auth_schema(schema, direction=direction)
                     or schema is None):
                 projected_auth[direction] = {
-                    "state": state if state in _AUTH_SCHEMA_REASONS
-                    else "auth_schema_unavailable", "schema": None,
+                    "state": ("metadata_only" if outgoing["metadata_only"] is True
+                              else state if state in _AUTH_SCHEMA_REASONS
+                              and state != "schema_captured"
+                              else "auth_schema_unavailable"),
+                    "schema": None,
                 }
                 continue
             if direction == "request":
