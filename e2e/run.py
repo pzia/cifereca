@@ -683,7 +683,11 @@ def main() -> int:
                         "shell_header", "header_controls", "identity_dropdown",
                         "account_dropdown", "statistics_button", "sidebar",
                         "view_stack", "search_page", "search_controls",
-                        "search_detail",
+                        "search_page_header", "search_page_actions",
+                        "search_toolbar", "search_primary",
+                        "search_filter_scroller", "search_paned",
+                        "search_list_stack", "search_list_scroll",
+                        "search_listview", "search_detail",
                     })
                     if (type(widths) is dict and set(widths) == width_keys
                             and all(type(widths[k]) in (tuple, list)
