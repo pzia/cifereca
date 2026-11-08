@@ -84,7 +84,10 @@ class BiblioAccessHTTPQualification:
                     from urllib.parse import urljoin
                     target = urljoin(BIBLIO_ORIGIN + ACCOUNT_PATH,
                                      response.headers.get("location", ""))
-                    p = _url(target)
+                    try:
+                        p = _url(target)
+                    except SsoProtocolError:
+                        raise SsoProtocolError("sso_entry_redirect_refused") from None
                     if (p.hostname != "mediatheques.agglo-larochelle.fr"
                             or p.path not in ("/login", "/cas/login")):
                         raise SsoProtocolError("sso_entry_redirect_refused")
