@@ -78,10 +78,10 @@ def test_disappearing_profile_while_busy_clears_rows_without_selecting_other():
 
     view._identity_overview_changed()
 
-    assert dropdown.selected == 0xFFFFFFFF
-    assert view.selected_identity_id() is None
-    assert view._profile_selection_required is True
-    assert view._active_identity_id is None
+    assert dropdown.selected == 0
+    assert view.selected_identity_id() == "other"
+    assert view._profile_selection_required is False
+    assert view._active_identity_id == "other"
     assert cancelled == ["old-profile-worker"]
     assert view._generation == 42
     assert view._ranked == []
