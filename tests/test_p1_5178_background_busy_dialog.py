@@ -157,7 +157,7 @@ def test_unspecified_origin_keeps_dialog_when_user_intent_is_unproven():
                       runner.window.show_error("Traitement indisponible"))
         flush()
         assert len([row for row in dialogs if row[0] == "present"]) == 1
-        assert toasts == []
+        assert [row[0] for row in toasts] == ["Traitement indisponible"]
         assert [record[1]["detail"]["task_ref"] for record in diagnostics
                 if record[0] == ("UI", "action unavailable dialog", "warning")] == [1]
     finally:
@@ -175,7 +175,7 @@ def test_new_error_in_busy_callback_is_not_suppressed_as_same_lock():
         # A new, unrelated failure must not inherit suppression granted only
         # for the attested background LockBusyError from this worker.
         assert len([row for row in dialogs if row[0] == "present"]) == 1
-        assert toasts == []
+        assert [row[0] for row in toasts] == ["Traitement indisponible"]
         detail = next(row[1]["detail"] for row in diagnostics
                       if row[0] == ("UI", "action unavailable dialog", "warning"))
         assert detail["task_ref"] == 1
