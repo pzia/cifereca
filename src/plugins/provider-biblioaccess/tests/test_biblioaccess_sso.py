@@ -932,9 +932,10 @@ def test_loan_binding_rejects_other_credential_and_different_account_object():
         b, = two.connect()
         a.identity_id = "identity-one"
         b.identity_id = "identity-two"
-        assert not one.loan_inventory_snapshot(replace(a)).loans
-    except mod.ProviderCapabilityError:
-        pass
+        with pytest.raises(mod.ProviderCapabilityError, match="loan_account_unbound"):
+            one.loan_inventory_snapshot(replace(a))
+        with pytest.raises(mod.ProviderCapabilityError, match="loan_account_unbound"):
+            one.loan_inventory_snapshot(b)
     finally:
         # Validation failure may disconnect one, but never the other.
         assert two.connected is True and b.credential_id == "cred-two"
