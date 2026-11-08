@@ -8,6 +8,7 @@ from .source_context import source_context_epoch
 from .source_sync_consent import configured as source_consent_configured
 
 from contextvars import ContextVar
+from uuid import uuid4
 
 import time
 import hashlib
@@ -974,6 +975,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         )
     for identity in self.identities:
         run_id = self.storage.sync_run_put({
+            # A UUID per actual cycle preserves history across consecutive
+            # runs in the same second; the stable fallback remains for other
+            # older callers of Storage.sync_run_put.
+            "sync_run_id": "sync:" + uuid4().hex,
             "identity_id": identity.identity_id, "scope": "opening", "status": "running", "started_at": started,
             "detail": {"label": identity.label},
         })
