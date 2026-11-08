@@ -10,7 +10,7 @@ import ast
 import json
 from pathlib import Path
 
-DEFAULT_PROVIDERS = ("kobo", "bnf", "numilog")
+DEFAULT_PROVIDERS = ("kobo", "bnf", "bnf-pret", "bnf-catalogue", "numilog")
 
 
 def _provider_literal(node: ast.AST, providers: set[str]) -> str | None:
@@ -25,6 +25,8 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     """Report imports of implementations and comparisons to concrete provider IDs."""
     tree = ast.parse(content)
     names = set(providers)
+    # Import names are Python identifiers; provider IDs may contain hyphens.
+    import_names = {name for name in names if name.isidentifier()}
     imports: list[dict[str, object]] = []
     dispatches: list[dict[str, object]] = []
     for node in ast.walk(tree):
@@ -37,7 +39,7 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             stem_parts = stem.casefold().lstrip(".").split(".")
             is_provider_module = any(
                 part == provider or part.startswith(provider + "_")
-                for part in stem_parts for provider in names
+                for part in stem_parts for provider in import_names
             )
             modules = [stem] if is_provider_module else [
                 stem + "." + alias.name for alias in node.names
@@ -46,7 +48,7 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             modules = []
         for module in modules:
             parts = module.casefold().lstrip(".").split(".")
-            matched = sorted({provider for part in parts for provider in names
+            matched = sorted({provider for part in parts for provider in import_names
                               if part == provider or part.startswith(provider + "_")})
             if matched:
                 imports.append({"line": node.lineno, "module": module, "providers": matched})
