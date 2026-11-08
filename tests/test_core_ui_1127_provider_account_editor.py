@@ -495,7 +495,7 @@ def test_interactive_provider_has_explicit_probe_button_only():
               "enabled": True, "credentials": {"card": "x"}},
     )
     assert editor["explicit_probe_button"] is not None
-    assert editor["explicit_probe_status"].title == "Recette HTTP de ce compte"
+    assert editor["explicit_probe_status"].title == "Vérifier la connexion au compte"
     assert delete in container.children[0].children[-1].suffixes
 
     normal, _, _, _ = _render("ordinary-provider")
