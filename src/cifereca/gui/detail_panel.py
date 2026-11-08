@@ -1004,9 +1004,21 @@ class DetailPanel(Gtk.Box):
                           and result_row(item)["state"] != "remote_owned"))
             else self.window.service.can_direct_download(item)
         )
+        # A spent, uncertain loan may no longer be advertised as
+        # "Empruntable" on the public catalogue. The previously submitted
+        # request still needs a read-only follow-up after restart.
+        followup_reader = getattr(
+            self.window.service, "paris_borrow_followup_available", None,
+        )
+        try:
+            pending_followup = (
+                callable(followup_reader) and followup_reader(item) is True
+            )
+        except Exception:
+            pending_followup = False
         if direct_download:
             self._direct_download_action(item)
-        elif search_detail_borrow_action_candidate(item, availability):
+        elif search_detail_borrow_action_candidate(item, availability) or pending_followup:
             # Commercial store inventory/catalogues never become loan sources,
             # even if a generic availability label is malformed.
             action = Adw.PreferencesGroup()
@@ -1061,14 +1073,7 @@ class DetailPanel(Gtk.Box):
                     # P1 #5136: a spent uncertain loan claim is NOT an
                     # invitation to repeat Emprunter. Only an exact local
                     # pending claim may expose a later read-only GET action.
-                    available = getattr(
-                        self.window.service, "paris_borrow_followup_available", None,
-                    )
-                    try:
-                        followup = callable(available) and available(item) is True
-                    except Exception:
-                        followup = False
-                    if followup:
+                    if pending_followup:
                         explanation = (
                             "Demande de prêt Paris déjà envoyée ; confirmation "
                             "indisponible. Ne réempruntez pas. "
