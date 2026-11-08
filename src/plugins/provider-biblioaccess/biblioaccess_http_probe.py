@@ -14,7 +14,7 @@ from cifereca.plugin_api import HTTPX_TRANSPORT
 
 from biblioaccess_http_sso import (
     ORIGIN, LOGON_PATH, FormShape, SsoProtocolError,
-    BIBLIO_ORIGIN, ACCOUNT_PATH, _url,
+    BIBLIO_ORIGIN, ACCOUNT_PATH, LOANS_PATH, _url,
     inspect_login_form_actions, logon_response_shape, _logon_target,
 )
 
@@ -66,6 +66,8 @@ class BiblioAccessHTTPQualification:
         self._cas_service = None
         self._cas_attempted = False
         self._logon_status = None
+        self._cas_landing_seen = False
+        self._loans_attempted = False
 
     def close(self):
         if not self._closed:
@@ -237,7 +239,38 @@ class BiblioAccessHTTPQualification:
                                   headers={"Accept": "text/html"}) as landing:
                 if landing.status_code != 200:
                     raise SsoProtocolError("sso_cas_landing_unverified")
+                self._cas_landing_seen = True
                 return CasEntryObservation(
                     status=200, route="cas_landing_unverified")
         except (httpx.HTTPError, UnicodeError):
             raise SsoProtocolError("sso_cas_transport_unavailable") from None
+
+    def inspect_loans_once(self) -> CasEntryObservation:
+        """Read one bounded tenant-1409 loans page after the same CAS chain.
+
+        No data is returned or persisted; status 200 is not a claim that the
+        page belongs to a verified account. No action other than HTTPS GET.
+        """
+        if self._closed:
+            raise SsoProtocolError("sso_transport_closed")
+        with self._post_lock:
+            if self._loans_attempted:
+                raise SsoProtocolError("sso_loans_already_attempted")
+            if not self._cas_landing_seen:
+                raise SsoProtocolError("sso_loans_session_unverified")
+            self._loans_attempted = True
+        try:
+            with self.http.stream(
+                "GET", BIBLIO_ORIGIN + LOANS_PATH,
+                headers={"Accept": "text/html"},
+                follow_redirects=False,
+            ) as response:
+                if response.status_code != 200:
+                    raise SsoProtocolError("sso_loans_session_unverified")
+                media = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if media not in ("text/html", "application/xhtml+xml"):
+                    raise SsoProtocolError("sso_loans_unexpected_content")
+                _bounded_body(response, 256000)
+                return CasEntryObservation(status=200, route="loans_html_unverified")
+        except (httpx.HTTPError, UnicodeError):
+            raise SsoProtocolError("sso_loans_transport_unavailable") from None
