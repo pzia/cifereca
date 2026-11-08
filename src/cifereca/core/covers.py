@@ -41,14 +41,29 @@ _TIER_PRIORITY = {'embedded': 300, 'origin': 200, 'catalog': 100}
 
 
 def _safe_cover_url(value: object) -> str:
-    url = str(value or '').strip()
-    if not url:
+    # URLs supplied by a catalogue or plugin must not inject credentials into
+    # the Core/UI read model. A malformed IPv6 authority must be an omitted
+    # candidate, not an exception that blocks other independent covers.
+    if type(value) is not str or len(value) > 4096:
         return ''
-    parts = urlsplit(url)
-    if parts.scheme in {'http', 'https'} and parts.netloc:
-        return url
-    if parts.scheme == 'file' and parts.path:
-        return url
+    url = value.strip()
+    if not url or any(ord(char) < 32 or ord(char) == 127 or char == '\\'
+                      for char in url):
+        return ''
+    try:
+        parts = urlsplit(url)
+        if parts.scheme in {'http', 'https'}:
+            if (not parts.hostname or parts.username is not None
+                    or parts.password is not None):
+                return ''
+            # Accessing port validates malformed network authorities.
+            _ = parts.port
+            return url
+        if parts.scheme == 'file' and parts.netloc in {'', 'localhost'}:
+            if parts.path.startswith('/') and not parts.query and not parts.fragment:
+                return url
+    except ValueError:
+        return ''
     return ''
 
 
