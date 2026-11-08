@@ -10,7 +10,7 @@ from cifereca.gui.library_rows import project_library_rows
 def _render(row):
     rows, _ = project_library_rows(
         [row], row_factory=lambda *args: args,
-        provider_display_name=lambda provider: provider,
+        provider_display_name=lambda provider: {'kobo': 'Kobo'}.get(provider, provider),
         availability_label=lambda item: "Local" if item.get("local") else "Connu",
         backup_status_label=lambda status: status,
         format_date=lambda due: due,
@@ -162,3 +162,25 @@ def test_unrelated_row_does_not_claim_recipient_kobo_purchase():
         _received(item_id=None, possessions=[_b_attested_right()]),
     ):
         assert "Achat Kobo indépendant" not in _render(row)
+
+
+
+def test_other_provider_independent_owned_right_is_projected_without_kobo_dispatch():
+    right = _b_attested_right(provider_id="synthetic-store")
+    row = _received(
+        provider_id="synthetic-store", item_id="book-1",
+        possessions=[right],
+    )
+    subtitle = _render(row)
+    assert "Fichier reçu de alice · aucun droit transmis" in subtitle
+    assert "Achat synthetic-store indépendant pour bob" in subtitle
+    assert "Achat Kobo" not in subtitle
+    assert "Lié" not in subtitle
+
+    # A same-product right belonging to a different provider is not evidence
+    # of this row's own independently purchased edition.
+    mismatched = _received(
+        provider_id="synthetic-store", item_id="book-1",
+        possessions=[_b_attested_right(provider_id="kobo")],
+    )
+    assert "Achat synthetic-store" not in _render(mismatched)
