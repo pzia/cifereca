@@ -227,12 +227,10 @@ def test_active_legacy_restart_after_completion_keeps_forward_updates(tmp_path):
             "updated_at": 1900000002,
         })
         receipt = storage.acquisitions(provider_id="kobo")[0]
-        assert receipt["status"] == "acquiring"
-        assert receipt["strategy"] == "explicit_new_attempt"
-        assert receipt["executor"] == "kobo_adapter"
-        assert receipt["attempt_count"] == 3
-        assert receipt["last_attempt_at"] == 1900000001
-        assert receipt["updated_at"] == 1900000002
+        # A new legacy attempt is a 0.7 checkpoint, not fresh B evidence.
+        assert receipt["status"] == "complete"
+        assert storage.backup_list("kobo")[0]["status"] == "acquiring"
+        assert storage.backup_list("kobo")[0]["attempt_count"] == 3
     finally:
         storage.close()
 
@@ -259,9 +257,11 @@ def test_active_retry_after_completed_kobo_receipt_is_not_intercepted(tmp_path):
         row = {**_row(), "status": "complete"}
         storage.backup_put(row)
         storage.backup_put({**row, "status": "acquiring"})
-        assert storage.acquisitions(provider_id="kobo")[0]["status"] == "acquiring"
+        assert storage.acquisitions(provider_id="kobo")[0]["status"] == "complete"
+        assert storage.backup_list("kobo")[0]["status"] == "acquiring"
         storage.backup_put({**row, "status": "attention_required"})
-        assert storage.acquisitions(provider_id="kobo")[0]["status"] == "attention_required"
+        assert storage.acquisitions(provider_id="kobo")[0]["status"] == "complete"
+        assert storage.backup_list("kobo")[0]["status"] == "attention_required"
     finally:
         storage.close()
 
