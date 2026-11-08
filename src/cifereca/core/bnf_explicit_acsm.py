@@ -6,65 +6,21 @@ positively observed in the exact connected provider session can be fetched.
 """
 from __future__ import annotations
 from pathlib import Path
-from xml.etree import ElementTree
 
 from ..models import Loan
 from ..plugin_api import ProviderConfigurationError
 from .diagnostic_bnf_loan_action import BnfLoanActionError, provider_reason
 from .loan_action_scope import capture_loan_action_scope
 
-_MAX_BYTES = 2 * 1024 * 1024
+from .loan_acsm_token_validation import (
+    MAX_LOAN_TOKEN_BYTES as _MAX_BYTES,
+    valid_loan_acsm_token as _valid_loan_token,
+    discard_untrusted_staged_acsm as _discard_invalid_candidate,
+)
 
 
 def _refuse(code: str):
     raise BnfLoanActionError(code) from None
-
-
-def _valid_loan_token(path: Path, inspect_artifact) -> bool:
-    """Independent Core admission: a valid XML file alone is not a loan ACSM.
-
-    The provider already checks its HTTP response. Recheck the persisted
-    candidate here so another plugin implementation or damaged staging cannot
-    pass a purchase, an entity-bearing XML, or a false file suffix to ADEPT.
-    No token body or attributes leave this local function.
-    """
-    inspection = inspect_artifact(path)
-    if inspection.valid is not True or inspection.media_format != "acsm":
-        return False
-    with path.open("rb") as handle:
-        content = handle.read(_MAX_BYTES + 1)
-    if not 0 < len(content) <= _MAX_BYTES:
-        return False
-    upper = content.upper()
-    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
-        return False
-    try:
-        root = ElementTree.fromstring(content)
-    except (ElementTree.ParseError, ValueError, TypeError):
-        return False
-    return (
-        root.tag == "{http://ns.adobe.com/adept}fulfillmentToken"
-        and root.attrib.get("fulfillmentType") == "loan"
-    )
-
-
-def _discard_invalid_candidate(path: object, destination: Path) -> None:
-    """Delete only an untrusted ACSM inside our exact staging directory.
-
-    The provider return value is not trusted: never unlink an arbitrary path
-    or follow a symlink when rejecting a candidate.
-    """
-    if not isinstance(path, Path):
-        return
-    try:
-        if path.suffix.casefold() != ".acsm":
-            return
-        if (not destination.is_symlink() and not path.is_symlink()
-                and path.parent.resolve() == destination.resolve()
-                and path.is_file()):
-            path.unlink(missing_ok=True)
-    except (OSError, ValueError):
-        pass
 
 
 def stage_bnf_loan_acsm(
