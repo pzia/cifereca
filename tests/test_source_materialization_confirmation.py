@@ -170,6 +170,39 @@ def test_prepare_then_confirm_is_exactly_one_account_and_replay_cannot_download(
     assert again.facts["status"] == "blocked"  # 0.7 bytes, not canonical B
 
 
+def test_completed_07_receipts_are_negative_fences_but_not_global_download_veto(case):
+    """P0 D2: preserve unrelated W2 downloads without invented B presence."""
+    first = case.broker.materialize_source(case.source, _prepare(case))
+    assert first.ok and first.changed == 2
+    already = tuple(case.downloaded)
+    assert len(already) == 2
+
+    # These two prior downloads survive only as legacy 0.7 archives; they
+    # must never count as verified B in a later private confirmation.
+    case.target._manifest.append({
+        "product_id": "PRIVATE-third-book", "revision_id": "r3",
+        "title": "Third Book", "format": "EPUB",
+    })
+    prepared = case.broker.prepare_local_materialization(case.source)
+    assert prepared.ok, prepared
+    assert prepared.facts["counts"]["needs_reconciliation"] == 2
+    assert prepared.facts["counts"]["already_local_verified"] == 0
+    assert prepared.facts["counts"]["already_local_linked"] == 0
+    assert prepared.facts["counts"]["potentially_missing"] == 1
+
+    resumed = case.broker.materialize_source(
+        case.source, prepared.facts["confirmation_token"],
+    )
+    assert not resumed.ok and resumed.changed == 1, resumed
+    assert resumed.facts["status"] == "blocked"
+    assert len(case.downloaded) == 3
+    assert tuple(case.downloaded[:2]) == already
+    assert all(path.is_file() for path in case.downloaded)
+    for edition in ("PRIVATE-book-1", "PRIVATE-book-2"):
+        row = case.service.storage.backup_get("kobo", "vault-2", edition)
+        assert row["status"] == "complete" and Path(row["local_path"]).is_file()
+
+
 @pytest.mark.parametrize("change", ["add", "revision", "remove", "owned", "duplicate"])
 def test_changed_manifest_is_rejected_before_any_business_write(case, change):
     token = _prepare(case)
