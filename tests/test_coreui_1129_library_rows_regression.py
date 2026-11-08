@@ -42,8 +42,8 @@ def test_device_presence_and_pending_keep_have_distinct_labels():
         {"device_statuses": [{"observed_state": "present"}, {"desired_state": "keep"}]},
         {"device_statuses": [{"observed_state": "missing", "desired_state": "keep"}]},
     ])
-    assert rows[0][3] == "Kobo 1/2"
-    assert rows[1][3] == "Kobo à synchroniser"
+    assert rows[0][3] == "Appareil 1/2"
+    assert rows[1][3] == "Appareil à synchroniser"
 
 
 def test_duplicate_key_preserves_both_rows_and_last_lookup_mapping():
