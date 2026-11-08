@@ -227,7 +227,7 @@ def test_foreign_catalogue_keeps_safe_public_cover_without_entitlements(
         assert len(rows) == 1
         shared = rows[0]
         assert shared.thumbnail_url == public_cover
-        assert shared.metadata == {"catalogue_access": "shared_read_only"}
+        assert shared.metadata == {"catalogue_access": "shared_read_only", "language": "fr"}
         assert shared.owned is False and shared.downloadable is False
         assert shared.download_url is None and shared.friendly_url is None
         assert "PRIVATE" not in repr(asdict(shared))
