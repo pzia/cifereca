@@ -328,9 +328,13 @@ def compute_recommendations(
         )
 
     if not books or not queries or not providers:
-        trace_performance()
+        # The saved preference revision can change during provider discovery,
+        # including when no provider is returned. Never mark that run fresh.
+        revoked = cancelled_or_revoked()
+        trace_performance(cancelled=revoked)
         return RecommendationResult(
-            len(books), queries, (), providers, profile_books=tuple(books)
+            len(books), queries, (), providers,
+            cancelled=revoked, profile_books=tuple(books),
         )
 
     batches: list[list[Any]] = []
