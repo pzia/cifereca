@@ -49,7 +49,7 @@ def test_aggregate_is_private_read_only_and_marks_candidates_unverified(tmp_path
     assert by_store["release"]["candidates_unverified"] == 3
     assert by_store["version"]["observed"] == 5
     assert by_store["version"]["candidates_unverified"] == 3
-    assert "updater_backups" in report["pending_stores"]
+    assert "backups:updater_state_not_supplied" in report["blockers"]
     assert str(runtime) not in json.dumps(report)
     assert "org.fake" not in json.dumps(report)
     assert files == sorted((str(p), p.stat().st_mtime_ns) for root in (runtime, packages)
