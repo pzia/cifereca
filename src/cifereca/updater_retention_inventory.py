@@ -6,6 +6,7 @@ projection. Under-qualified stores remain out of GC eligibility, not a permit.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 from hashlib import sha256
 import json
 import os
@@ -81,6 +82,64 @@ def _read_transaction_for_inspection(folder: Path) -> dict[str, Any]:
     return value
 
 
+_MAX_RELEASE_RECEIPT_BYTES = 64 * 1024
+
+
+def _release_receipt_proof(releases: Path, entry: str) -> tuple[bool, float | None]:
+    """Validate a Core install receipt using anchored, bounded NOFOLLOW reads.
+
+    A pathname check alone can be raced between is_file() and read_text().
+    The receipt is a *necessary* provenance witness, not sufficient ownership
+    evidence for a future destructive garbage collector.
+    """
+    directory_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                       | getattr(os, "O_NOFOLLOW", 0))
+    parent_fd = os.open(releases, directory_flags)
+    try:
+        release_fd = os.open(entry, directory_flags, dir_fd=parent_fd)
+        try:
+            directory_info = os.fstat(release_fd)
+            receipt_fd = os.open(
+                ".cifereca-install.json",
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=release_fd,
+            )
+            try:
+                info = os.fstat(receipt_fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or not 0 < info.st_size <= _MAX_RELEASE_RECEIPT_BYTES):
+                    return False, None
+                with os.fdopen(receipt_fd, "rb", closefd=False) as stream:
+                    raw = stream.read(_MAX_RELEASE_RECEIPT_BYTES + 1)
+                if len(raw) != info.st_size:
+                    return False, None
+            finally:
+                os.close(receipt_fd)
+        finally:
+            os.close(release_fd)
+    finally:
+        os.close(parent_fd)
+    value = json.loads(raw.decode("utf-8"))
+    if (type(value) is not dict or type(value.get("version")) is not str
+            or not value["version"].strip()):
+        return False, None
+    stamp = value.get("installed_at")
+    if stamp is None:
+        # Legacy installed releases predate installed_at. Directory mtime is
+        # a conservative fallback, not a provenance proof by itself.
+        timestamp = directory_info.st_mtime
+    else:
+        if type(stamp) is not str or not 15 <= len(stamp) <= 80:
+            return False, None
+        parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return False, None
+        timestamp = parsed.timestamp()
+    if not math.isfinite(timestamp):
+        return False, None
+    return True, timestamp
+
+
 def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any]:
     """Return a bounded read-only projection; **never** an apply plan.
 
@@ -120,15 +179,17 @@ def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any
                     continue
                 release_id = _name_id("release", item.name)
                 observed[item.name] = release_id
-                meta = item / ".cifereca-install.json"
-                owned = meta.is_file() and not meta.is_symlink()
+                try:
+                    owned, installed_at = _release_receipt_proof(releases, item.name)
+                except (OSError, ValueError, UnicodeError, OverflowError):
+                    owned, installed_at = False, None
                 if not owned:
                     blockers.add("release_ownership_unqualified")
                 # No nested recursive traversal, file hashing or plugin call.
                 objects.append(RetentionObject(
                     object_id=release_id, store="core_releases",
                     unit="core", generation=release_id,
-                    installed_at=updater._release_installed_at(item),
+                    installed_at=installed_at,
                     owned_by_updater=owned,
                 ))
 
