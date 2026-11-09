@@ -172,14 +172,27 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     tables: list[dict[str, object]] = []
     calls: list[dict[str, object]] = []
     for node in ast.walk(tree):
-        # A provider-keyed callable lookup is an executable decision even
-        # without an explicit if/match or a locally declared dispatch table.
-        # A plain metadata lookup is NOT counted: only a direct call counts.
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Subscript)):
-            matched = sorted(_literal_providers(
-                node.func.slice, names, constants))
+        # Only immediately invoked keyed lookups can prove executable
+        # dispatch. Metadata reads and uninvoked .get calls stay neutral.
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Subscript):
+                matched = _literal_providers(fn.slice, names, constants)
+            elif (isinstance(fn, ast.Call)
+                  and isinstance(fn.func, ast.Attribute)
+                  and fn.func.attr == "get"
+                  and fn.args):
+                # The source object must be an explicit mapping attribute or
+                # name; don't infer arbitrary calls returning callables.
+                receiver = fn.func.value
+                matched = (_literal_providers(fn.args[0], names, constants)
+                           if isinstance(receiver, (ast.Name, ast.Attribute,
+                                                    ast.Subscript))
+                           else set())
+            else:
+                matched = set()
             if matched:
-                calls.append({"line": node.lineno, "providers": matched})
+                calls.append({"line": node.lineno, "providers": sorted(matched)})
         if isinstance(node, ast.Dict):
             matched = _dispatch_table_literal(
                 node, providers=names, functions=functions,

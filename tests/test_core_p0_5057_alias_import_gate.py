@@ -212,3 +212,51 @@ handlers[ACTIVE_PROVIDER]()
     assert result["dispatch_calls"] == [
         {"line": 3, "providers": ["provider-kobo"]},
     ]
+
+
+def test_immediately_invoked_provider_mapping_get_is_executable_dispatch():
+    source = '''
+def run(actions, adapter):
+    return actions.get("kobo")() + adapter.handlers.get("bnf-pret", fallback)()
+'''
+    result = inspect_source(source)
+    assert result["dispatch_calls"] == [
+        {"line": 3, "providers": ["kobo"]},
+        {"line": 3, "providers": ["bnf-pret"]},
+    ]
+    assert added_signals("pass\n", source) == {
+        ("dispatch_calls", "kobo"): 1,
+        ("dispatch_calls", "bnf-pret"): 1,
+    }
+
+
+def test_provider_mapping_get_without_invocation_is_metadata_not_dispatch():
+    source = '''
+LABELS.get("kobo")
+title = labels.get("numilog", "Unknown")
+lookup = table.get("bnf-pret")
+arbitrary_factory().get("kobo")()
+'''
+    assert inspect_source(source)["dispatch_calls"] == []
+
+
+def test_provider_mapping_get_unknown_or_shadowed_key_is_not_assumed():
+    source = '''
+PROVIDER = "provider-kobo"
+def factory(PROVIDER):
+    return handlers.get(PROVIDER)()
+def other(handlers):
+    return handlers.get(dynamic_provider())()
+'''
+    assert inspect_source(source)["dispatch_calls"] == []
+
+
+def test_provider_mapping_get_immutable_constant_is_detected():
+    source = '''
+PROVIDER = "provider-kobo"
+def route(handlers):
+    return handlers.get(PROVIDER)()
+'''
+    assert inspect_source(source)["dispatch_calls"] == [
+        {"line": 4, "providers": ["provider-kobo"]},
+    ]
