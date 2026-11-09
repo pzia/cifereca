@@ -2116,6 +2116,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Plan ou purge supervisée des seules transactions terminées expirées")
     p.add_argument("--maintenance-dev-backups", action="store_true",
                    help="Plan ou purge supervisée des sauvegardes DevUpdater certifiées")
+    p.add_argument("--maintenance-core-backups", action="store_true",
+                   help="Plan ou purge supervisée des sauvegardes Core avant activation")
     p.add_argument("--maintenance-plugins", action="store_true",
                    help="Plan ou purge supervisée des versions historiques plugins")
     p.add_argument("--apply", action="store_true",
@@ -2132,7 +2134,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.maintenance_dev_backups:
+        if a.maintenance_core_backups:
+            if (a.maintenance_core_backups or a.maintenance_transactions
+                    or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.archive
+                    or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-core-backups incompatible avec ces options")
+            from .updater_core_backup_maintenance import core_backup_maintenance
+            result = core_backup_maintenance(
+                install_root(), state_dir(create=False) / "update-backups",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_dev_backups:
             if (a.maintenance_transactions or a.maintenance_plugins
                     or a.archive or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
@@ -2145,7 +2161,8 @@ def main(argv: list[str] | None = None) -> int:
                 apply=a.apply, acknowledge=a.acknowledge,
             )
         elif a.maintenance_plugins:
-            if (a.maintenance_dev_backups or a.maintenance_transactions
+            if (a.maintenance_core_backups or a.maintenance_dev_backups
+                    or a.maintenance_transactions
                     or a.archive or a.github is not None
                     or a.rollback or a.status or a.recovery_inspect
                     or a.recovery_reconcile is not None or a.retention_inspect
@@ -2162,6 +2179,7 @@ def main(argv: list[str] | None = None) -> int:
                     or a.recovery_inspect or a.recovery_reconcile is not None
                     or a.retention_inspect or a.retention_plan or a.dry_run
                     or a.maintenance_plugins or a.maintenance_dev_backups
+                    or a.maintenance_core_backups
                     or a.to or a.python
                     or (a.acknowledge and not a.apply)):
                 p.error("--maintenance-transactions incompatible avec ces options")
