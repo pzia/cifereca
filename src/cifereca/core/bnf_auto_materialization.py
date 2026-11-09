@@ -378,7 +378,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             control.check_cancelled()
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        from .bnf_import_provenance import observed_loan, remember_import
+        from .observed_loan_scope import observed_loan
+        from .observed_import_provenance import remember_observed_import
         display_scope = observed_loan(loan)
         handed_to_adept = True
         result = service.import_acsm(candidate, identity_id=account.identity_id,
@@ -409,7 +410,10 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                 result['acquisition_id'], 'complete', metadata={'bnf_auto_ref': ref})
             if not current():
                 return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-            remember_import(service, result, display_scope)
+            remember_observed_import(
+                service, result, display_scope, provider_id='bnf-pret',
+                provenance_field='bnf_observed_loan',
+            )
         return ({'status': result.get('status', 'attention_required')}
                 if current() else
                 {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'})
