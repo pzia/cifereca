@@ -7,9 +7,11 @@ from __future__ import annotations
 import ast
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 from cifereca.gui.query_model import result_row
+from cifereca.core.search_owned_evidence import SearchOwnedEvidence
 from tests.test_search_results_view import _book, _host
 
 
@@ -18,10 +20,23 @@ def _private_numilog():
         _book("numilog"),
         scenario="NUMILOG_LIBRARY",
         source_collection="library",
-        source_credential="personal-credential",
+        source_credential="personal-credential", source_account_id="account-A",
         owned=True,
         downloadable=True,
     )
+
+
+def _proof():
+    return SearchOwnedEvidence(
+        "alice", frozenset({("numilog", "personal-credential", "account-A", "same", "")}),
+    )
+
+
+def _right():
+    return dict(identity_id="alice", provider_id="numilog",
+                credential_id="personal-credential", account_id="account-A",
+                item_id="same", revision_id=None, state="active",
+                entitlement_type="owned")
 
 
 def _public_numilog():
@@ -40,7 +55,9 @@ def test_remote_catalogue_cannot_be_promoted_to_owned_by_search_flags():
     assert result_row(public)["state"] == "remote_catalog"
     assert result_row(replace(_book("kobo"), owned=True))["state"] == "remote_catalog"
     assert result_row(replace(_book("paris"), owned=True))["state"] == "remote_catalog"
-    assert result_row(_private_numilog())["state"] == "remote_owned"
+    assert result_row(_private_numilog())["state"] == "remote_catalog"
+    assert result_row(_private_numilog(), purchase_evidence=_proof(),
+                      identity_id="alice")["state"] == "remote_owned"
 
 
 def test_private_numilog_requires_full_scope_and_origin_before_claiming_owned():
@@ -48,16 +65,18 @@ def test_private_numilog_requires_full_scope_and_origin_before_claiming_owned():
     variants = (
         replace(private, owned=1),
         replace(private, owned=False),
-        replace(private, scenario="NUMILOG_PUBLIC"),
         replace(private, source_collection="public_catalog"),
-        replace(private, source_collection=None),
         replace(private, source_credential=""),
         replace(private, source_credential="__public__"),
         replace(private, metadata={"search_provenance": "known_catalog_stale"}),
         replace(private, source_provider="numilog-catalog"),
     )
     for variant in variants:
-        assert result_row(variant)["state"] == "remote_catalog", repr(variant)
+        assert result_row(variant, purchase_evidence=_proof(),
+                          identity_id="alice")["state"] == "remote_catalog", repr(variant)
+    # Neither supplier scenario nor collection vocabulary creates the right.
+    assert result_row(replace(private, scenario="NUMILOG_PUBLIC"),
+                      purchase_evidence=_proof(), identity_id="alice")["state"] == "remote_owned"
 
 
 def test_anonymous_numilog_search_shows_notice_not_purchase_or_download():
@@ -79,6 +98,7 @@ def test_anonymous_numilog_search_shows_notice_not_purchase_or_download():
 def test_private_numilog_inventory_does_not_imply_local_epub():
     host = _host()
     host._remote_search_results = [_private_numilog()]
+    host.service.storage = NS(entitlements=Mock(return_value=[_right()]))
     host.service.can_direct_download = Mock(return_value=False)
     host._populate_search(host._remote_search_results, announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
@@ -112,7 +132,9 @@ def test_detail_usage_is_read_only_and_matches_search_projection():
     exec(compile(isolated, str(owner), "exec"), scope)
     usage = scope["_commercial_search_usage"]
     assert "aucun achat attesté" in usage(_public_numilog())
-    assert "Mes achats Numilog" in usage(_private_numilog())
+    assert "Mes achats Numilog" in usage(
+        _private_numilog(), NS(current_identity=NS(identity_id="alice")),
+        purchase_evidence=_proof())
     assert "aucun droit d'achat attesté" in usage(
         replace(_private_numilog(), source_collection="catalog")
     )
