@@ -228,3 +228,68 @@ def test_malformed_transaction_revokes_entire_edge_retention_qualification(tmp_p
     assert report["retention_edges_qualified"] is False
     assert report["retained_transaction_plugin_edges"] is None
     assert report["safe_to_apply"] is False
+
+
+def test_plugin_only_candidate_conflict_with_retained_rollback_is_reported(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    plan = _plan("1.2.0", "1.2.1", "0.9.0")
+    for item in plan["objects"]:
+        item["decision"] = "candidate"
+    report = inspect_transaction_plugin_references(
+        root, plan, core_transaction_plan=_core_decisions((TX, "retain")),
+    )
+    assert report["retained_transaction_plugin_edges"] == 2
+    assert report["retained_plugin_candidate_conflicts"] == 2
+    assert report["safe_to_apply"] is False
+
+
+def test_retained_plugin_version_does_not_count_as_candidate_conflict(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    plan = _plan("1.2.0", "1.2.1")
+    plan["objects"][0]["decision"] = "retain"
+    plan["objects"][1]["decision"] = "candidate"
+    report = inspect_transaction_plugin_references(
+        root, plan, core_transaction_plan=_core_decisions((TX, "retain")),
+    )
+    assert report["retained_plugin_candidate_conflicts"] == 1
+    assert report["safe_to_apply"] is False
+
+
+def test_incomplete_plugin_decisions_do_not_invent_zero_conflicts(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    report = inspect_transaction_plugin_references(
+        root, _plan("1.2.0", "1.2.1"),
+        core_transaction_plan=_core_decisions((TX, "retain")),
+    )
+    assert report["retained_plugin_candidate_conflicts"] is None
+    assert report["retention_edges_qualified"] is True
+    assert report["safe_to_apply"] is False
+
+
+def test_invalid_journal_disables_candidate_conflict_projection(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root, packages={"../../private": {}})
+    plan = _plan("1.2.0", "1.2.1")
+    for item in plan["objects"]:
+        item["decision"] = "candidate"
+    report = inspect_transaction_plugin_references(
+        root, plan, core_transaction_plan=_core_decisions((TX, "retain")),
+    )
+    assert report["retained_plugin_candidate_conflicts"] is None
+    assert report["safe_to_apply"] is False
+
+
+def test_unresolved_installed_version_cannot_report_zero_candidate_conflicts(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    plan = _plan("1.2.1")
+    plan["objects"][0]["decision"] = "retain"
+    report = inspect_transaction_plugin_references(
+        root, plan, core_transaction_plan=_core_decisions((TX, "retain")),
+    )
+    assert report["unresolved_retained_edges"] == 1
+    assert report["retained_plugin_candidate_conflicts"] is None
+    assert report["safe_to_apply"] is False

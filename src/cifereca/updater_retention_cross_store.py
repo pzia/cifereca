@@ -154,24 +154,32 @@ def inspect_transaction_plugin_references(
             complete = False
             blockers.add("transaction_plugin_reference_unqualified")
     known_ids: set[str] = set()
+    plugin_candidate_ids: set[str] = set()
+    plugin_plan_qualified = True
     if type(plugin_version_plan) is not dict or type(plugin_version_plan.get("objects")) is not list:
         complete = False
+        plugin_plan_qualified = False
         blockers.add("plugin_version_inventory_unavailable")
     else:
         observed = plugin_version_plan["objects"]
         if len(observed) > _MAX_PACKAGES * _MAX_VERSIONS:
             complete = False
+            plugin_plan_qualified = False
             blockers.add("plugin_reference_inventory_too_large")
         else:
             for item in observed:
                 value = item.get("object_id") if type(item) is dict else None
                 reasons = item.get("reasons") if type(item) is dict else None
+                decision = item.get("decision") if type(item) is dict else None
+                if decision not in ("retain", "candidate"):
+                    plugin_plan_qualified = False
                 if (type(value) is not str
                         or re.fullmatch(r"plugin_version:[a-f0-9]{64}", value) is None
                         or type(reasons) is not list
                         or any(type(reason) is not str for reason in reasons)
                         or value in known_ids):
                     complete = False
+                    plugin_plan_qualified = False
                     blockers.add("plugin_reference_identity_unqualified")
                     continue
                 # A hash name alone does not prove an updater-owned version.
@@ -181,8 +189,11 @@ def inspect_transaction_plugin_references(
                     "unowned", "unknown_timestamp", "future_timestamp",
                 )):
                     blockers.add("plugin_reference_ownership_unqualified")
+                    plugin_plan_qualified = False
                     continue
                 known_ids.add(value)
+                if decision == "candidate":
+                    plugin_candidate_ids.add(value)
     if classified and len(decisions) != transactions_seen:
         classified = False
         blockers.add("core_transaction_retention_unqualified")
@@ -191,6 +202,7 @@ def inspect_transaction_plugin_references(
         candidate_refs.clear()
     missing = refs - known_ids
     if missing:
+        plugin_plan_qualified = False
         blockers.add("transaction_plugin_version_missing")
     return {
         "schema": "cifereca.updater.cross-store-plugin-references/1",
@@ -205,5 +217,10 @@ def inspect_transaction_plugin_references(
         "resolved_retained_edges": len(retained_refs & known_ids) if classified and complete else None,
         "unresolved_retained_edges": len(retained_refs - known_ids) if classified and complete else None,
         "candidate_transaction_plugin_edges": len(candidate_refs) if classified and complete else None,
+        # Separate plugin-only candidates may still be required for rollback.
+        "retained_plugin_candidate_conflicts": (
+            len(retained_refs & plugin_candidate_ids)
+            if classified and complete and plugin_plan_qualified else None
+        ),
         "blockers": sorted(blockers),
     }
