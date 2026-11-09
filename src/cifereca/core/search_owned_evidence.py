@@ -88,6 +88,14 @@ def search_result_has_verified_purchase(
     )
     if not all(_coordinate(value) for value in keys):
         return False
+    # Negative guards only: a public/commercial notice cannot borrow a
+    # private right merely by echoing exact coordinates. These legacy labels
+    # never provide positive authority; the canonical ledger does.
+    if (item.source_credential == "__public__"
+            or item.source_collection in {
+                "catalog", "public_catalog", "commercial_catalog",
+            }):
+        return False
     revision = item.revision_id
     if revision is not None and not _coordinate(revision):
         return False
