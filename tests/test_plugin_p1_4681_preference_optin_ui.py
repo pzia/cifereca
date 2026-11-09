@@ -18,7 +18,7 @@ def test_saved_preference_optin_starts_off_and_reuses_core_contract_only():
 def test_profile_and_reference_changes_revoke_optin_without_implied_click():
     assert 'def _clear_preference_optin(self)' in SOURCE
     assert 'self._resetting_preference_optin = True' in SOURCE
-    assert 'if not self._resetting_preference_optin:' in SOURCE
+    assert 'if not getattr(self, "_resetting_preference_optin", False):' in SOURCE
     assert 'if profile_changed:' in SOURCE
     assert 'self._clear_preference_optin()' in SOURCE
     assert 'optin.set_sensitive(reference is None)' in SOURCE
