@@ -103,27 +103,29 @@ def synchronize_usb_reader(
             if type(consent) is not UsbRemovalConsent:
                 pending += 1
                 continue
+            def removal_profile() -> tuple[str, int]:
+                profile = current_profile()
+                return profile[0], profile[2]
+
             result = execute_usb_removal(
                 storage=storage, copy_journal=journal, removal_journal=journal,
                 lock_root=lock_root, mountpoint=mountpoint, consent=consent,
-                current_profile=lambda: (
-                    current_profile()[0], current_profile()[2],
-                ),
+                current_profile=removal_profile,
             )
             if result.status == "removed":
                 removed += 1
             else:
                 failed += 1
 
-    observed = False
-    if copied or removed:
-        verification = record_verified_usb_observation(
-            storage=storage, identity_id=identity_id, device_id=device_id,
-            mountpoint=mountpoint,
-        )
-        observed = verification.status == "recorded"
-        if not observed:
-            failed += 1  # Never equate a file operation with observed presence.
+    # Even an all-noop delta updates the canonical observed timestamp after
+    # a successful physical scan; a copy receipt alone is not presence.
+    verification = record_verified_usb_observation(
+        storage=storage, identity_id=identity_id, device_id=device_id,
+        mountpoint=mountpoint,
+    )
+    observed = verification.status == "recorded"
+    if not observed:
+        failed += 1
     return UsbSyncResult(
         "partial" if failed else "pending" if pending else "completed",
         copied=copied, removed=removed, pending=pending,
