@@ -1232,7 +1232,7 @@ class UxRecommendationsView:
                 self._resetting_preference_optin = False
 
     def _preference_optin_changed(self, *_args) -> None:
-        if not self._resetting_preference_optin:
+        if not getattr(self, "_resetting_preference_optin", False):
             # The explicit click invalidates the previous ranking. No saved
             # preference is used merely by displaying or filtering the view.
             self.refresh()
@@ -1251,7 +1251,9 @@ class UxRecommendationsView:
         self._reference_book = reference
         self.plugin._pending_reference = reference
         self._clear_preference_optin()
-        self._preference_optin.set_sensitive(reference is None)
+        optin = getattr(self, "_preference_optin", None)
+        if optin is not None:
+            optin.set_sensitive(reference is None)
         self.refresh()
 
     def set_reference_book(self, book, *, refresh: bool = True) -> None:
@@ -1261,7 +1263,9 @@ class UxRecommendationsView:
         self._reference_book = book
         self.plugin._pending_reference = book
         self._clear_preference_optin()
-        self._preference_optin.set_sensitive(False)
+        optin = getattr(self, "_preference_optin", None)
+        if optin is not None:
+            optin.set_sensitive(False)
         self._reload_reference_books(self._reference_books)
         if refresh:
             self.refresh()
@@ -1677,7 +1681,8 @@ class UxRecommendationsView:
         exclude_owned = bool(self._exclude_owned.get_active())
         use_preferences = (
             reference is None
-            and bool(self._preference_optin.get_active())
+            and bool(getattr(self, "_preference_optin", None)
+                     and self._preference_optin.get_active())
             and self.selected_identity_id() == identity_id
         )
 
