@@ -107,6 +107,7 @@ def test_six_positive_purchases_produce_six_staged_epub_without_legacy_publicati
                 kind="purchase", branch="meslivres",
                 delivery_offer_id=exact.delivery_offer_id,
                 target_dir=staging, explicit_user_action=True,
+                admission_current=lambda: True,
             )
             assert delivered.parent == staging
             assert zipfile.is_zipfile(delivered)
