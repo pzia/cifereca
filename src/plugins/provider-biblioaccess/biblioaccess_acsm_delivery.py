@@ -104,19 +104,20 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
             raise ACSMDeliveryError("biblioaccess_acsm_structure_invalid")
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                mode="wb", dir=target_dir, prefix="biblioaccess-",
-                suffix=".part", delete=False,
-            ) as tmp:
-                tmp_path = Path(tmp.name)
-                tmp.write(data)
-            destination = tmp_path.with_suffix(".acsm")
+            tmp_path = None
             try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=target_dir, prefix="biblioaccess-",
+                    suffix=".part", delete=False,
+                ) as tmp:
+                    tmp_path = Path(tmp.name)
+                    tmp.write(data)
+                destination = tmp_path.with_suffix(".acsm")
                 os.replace(tmp_path, destination)
-            except BaseException:
-                tmp_path.unlink(missing_ok=True)
-                raise
-            return destination
+                return destination
+            finally:
+                if tmp_path is not None:
+                    tmp_path.unlink(missing_ok=True)
         except OSError:
             raise ACSMDeliveryError("biblioaccess_acsm_stage_unavailable") from None
     finally:
