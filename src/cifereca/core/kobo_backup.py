@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from .source_context import source_context_epoch
 from .canonical_delivery_abi import has_complete_delivery_abi
-from .source_reference_guard import has_typed_source
 
 import time
 import os
@@ -15,7 +14,7 @@ import hashlib
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Any, NamedTuple, Callable
+from typing import Any, Callable
 from ..acquisition import Acquisition
 from ..kobo import KoboAdeptError
 from ..kobo.executor import execute_kobo_acquisition
@@ -27,150 +26,6 @@ from ..paths import acquisition_lock_file
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
 from ..plugin_api import UserFacingError, ProviderError
-
-
-class _KoboLegacySessionChanged(ProviderConfigurationError):
-    """The issuing Kobo session/borrower changed during a legacy batch."""
-
-
-
-def _kobo_legacy_cas_unset(storage, identity_id, credential_id, account_id):
-    """A configured whole-source CAS policy retires the parallel W2 grant.
-
-    This is an exact, read-only SourceKey check; never use a 0.7 status,
-    selected GUI account or a legacy on-start preference as its substitute.
-    Unreadable consent fails closed, even if the provider ABI is partial.
-    """
-    from ..plugin_api.provider_rights_observation import ProviderRightsScope
-    from .source_sync_consent import read_policy
-
-    try:
-        scope = ProviderRightsScope(identity_id, "kobo", credential_id, account_id)
-        return read_policy(storage, scope).mode == "unset"
-    except Exception:
-        return False
-
-
-def _kobo_legacy_session_cas_unset(
-    service, session, *, identity_id=None, allow_unbound=False,
-):
-    """Re-observe the exact borrower on both sides of an opaque W2 GET."""
-    try:
-        credential = session.credential_id
-        owner = (identity_id if identity_id is not None else
-                 service.storage.identity_for_connection("kobo", credential))
-        accounts = tuple(session.accounts)
-        if len(accounts) != 1:
-            return allow_unbound
-        account = accounts[0]
-        if (getattr(account, "provider_id", None) != "kobo"
-                or getattr(account, "credential_id", None) != credential
-                or getattr(account, "identity_id", None) not in {owner, "default"}):
-            # For the initial preflight only, leave the classification of
-            # an already-invalid session to the existing source-binding
-            # refusal path (which yields an aborted summary, not a new
-            # public exception). No live GET is permitted by that path.
-            return allow_unbound
-        return _kobo_legacy_cas_unset(
-            service.storage, owner, credential, account.unique_id,
-        )
-    except Exception:
-        return False
-
-
-def _guarded_kobo_legacy_put(self, item, source_current):
-    # The legacy checkpoint must never advance against a detached/rebound
-    # provider session. A persisted acquiring row is deliberately left for
-    # explicit recovery when the scope changes after a content GET.
-    if source_current is not None and not source_current():
-        raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
-    # A typed Core SourceReference may have been published since the
-    # manifest's per-item admission check (e.g. another Core process).
-    # Recheck even for an internal/compatibility writer without a session
-    # callback: absence of source_current is not proof of legacy authority.
-    # The 0.7 checkpoint has no account/branch and must not update a
-    # canonical source's parallel historical status or local locator.
-    if has_typed_source(
-                self.storage, "kobo", item.get("credential_id"), item.get("item_id"),
-    ):
-        raise _KoboLegacySessionChanged("kobo_canonical_source_delivery_active")
-    # This is also reached by internal recovery writers with no session
-    # callback. Once a whole-source CAS policy exists, no stale 0.7 writer
-    # may advance that exact borrower, even if its provider ABI is partial.
-    if all(type(item.get(key)) is str for key in (
-        "identity_id", "credential_id", "account_id",
-    )) and not _kobo_legacy_cas_unset(
-        self.storage, item["identity_id"], item["credential_id"],
-        item["account_id"],
-    ):
-        raise _KoboLegacySessionChanged("kobo_legacy_canonical_consent_configured")
-    if source_current is not None and not source_current():
-        raise _KoboLegacySessionChanged("kobo_legacy_session_changed")
-    self.storage.backup_put(item)
-
-
-def _require_kobo_legacy_normalized_scope(
-    item: Any, *, credential_id: str, product_id: str,
-    revision_id: str | None,
-) -> None:
-    """Reject a provider-normalized source switch before an opaque W2 GET.
-
-    The live manifest selected a single Kobo purchase. A normalizer must
-    not turn it into another product, account credential or revision (or a
-    non-downloadable/non-owned offer) after the manifest's initial guard.
-    """
-    if (
-        getattr(item, "source_provider", None) != "kobo"
-        or getattr(item, "source_credential", None) != credential_id
-        or getattr(item, "record_id", None) != product_id
-        or getattr(item, "revision_id", None) != revision_id
-        or getattr(item, "owned", None) is False
-        or getattr(item, "downloadable", None) is False
-    ):
-        raise _KoboLegacySessionChanged("kobo_legacy_normalized_scope_mismatch")
-
-
-def _require_kobo_legacy_delivery_scope(
-    result: Any, *, credential_id: str, account_id: str | None,
-    product_id: str, revision_id: str | None,
-) -> None:
-    """A completed 0.7 GET must not be recorded for another borrower/book.
-
-    The old executor may omit a returned account ID; the live pinned session
-    remains the borrower. Explicit contradictory coordinates, including the
-    empty primary Kobo account, must instead abort *without* completing the
-    acquiring checkpoint. Never normalize or coerce a foreign source.
-    """
-    expected = (
-        ("provider_id", "kobo"),
-        ("credential_id", credential_id),
-        ("item_id", product_id),
-    )
-    for field, value in expected:
-        observed = getattr(result, field, None)
-        if observed is not None and (type(observed) is not str or observed != value):
-            raise _KoboLegacySessionChanged("kobo_legacy_delivery_scope_mismatch")
-    borrower = getattr(result, "account_id", None)
-    if borrower is not None and (
-        type(borrower) is not str or borrower != account_id
-    ):
-        raise _KoboLegacySessionChanged("kobo_legacy_delivery_scope_mismatch")
-    # W2 handles purchases only; a loan result cannot be relabeled 'owned'.
-    if getattr(result, "loan_id", None) is not None:
-        raise _KoboLegacySessionChanged("kobo_legacy_delivery_scope_mismatch")
-    metadata = getattr(result, "metadata", None)
-    if type(metadata) is dict and metadata.get("revision_id") is not None:
-        if (type(metadata["revision_id"]) is not str
-                or metadata["revision_id"] != revision_id):
-            raise _KoboLegacySessionChanged("kobo_legacy_delivery_scope_mismatch")
-
-
-class _ManifestItem(NamedTuple):
-    revision_id: str | None
-    title: str
-    account_id: str | None
-    current: dict[str, Any] | None
-    base_record: dict[str, Any]
 
 
 def _observed_backup_artifact(path: Path) -> dict[str, Any]:
