@@ -1703,35 +1703,31 @@ class LibraryService:
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
-        if (item.source_provider == "numilog"
-                and item.source_credential == "__public__"
-                and item.scenario == "NUMILOG_PUBLIC"
-                and item.source_collection == "public_catalog"):
-            # The public listing is already descriptive and has no borrower
-            # session. Never re-route a public record to B's MesLivres.
+        # Catalogue-only projections do not attest borrower rights. The
+        # source's public sentinel or an explicitly read-only projection
+        # precludes a private holdings GET, regardless of provider name.
+        # Never promote these rows to a purchase/loan or resolve a private URL.
+        public_catalogue = (
+            item.source_credential == "__public__"
+            and item.source_collection == "public_catalog"
+        )
+        shared_catalogue = (
+            type(item.metadata) is dict
+            and item.metadata.get("catalogue_access") == "shared_read_only"
+        )
+        if public_catalogue or shared_catalogue:
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
                 type=item.type, year=item.published_at,
                 thumbnail_url=item.thumbnail_url,
                 availability_status="unknown",
-                availability_label="Catalogue public · achat non attesté",
-                holdings=[], source_provider="numilog",
-                source_credential="__public__",
-            )
-        if (item.source_provider == "kobo"
-                and type(item.metadata) is dict
-                and item.metadata.get("catalogue_access") == "shared_read_only"):
-            # Public-only Kobo discovery does not license a foreign-account
-            # holdings or delivery GET, even when the same session is online.
-            return ItemDetail(
-                record_id=item.record_id, docbase=item.docbase,
-                title=item.title, author=item.author,
-                type=item.type, year=item.published_at,
-                thumbnail_url=item.thumbnail_url,
-                availability_status="unknown",
-                availability_label="Catalogue Kobo partagé · droits non consultés",
-                holdings=[], source_provider="kobo",
+                availability_label=(
+                    "Catalogue public · achat non attesté"
+                    if public_catalogue else
+                    "Catalogue partagé · droits non consultés"
+                ),
+                holdings=[], source_provider=item.source_provider,
                 source_credential=item.source_credential,
             )
         # An authenticated Paris catalogue may be browsed from another local
