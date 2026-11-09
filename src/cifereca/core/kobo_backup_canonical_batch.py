@@ -105,6 +105,10 @@ def run_global_kobo_with_canonical_sources(
     rows = []
     for index, (credential, session, modern) in enumerate(batch, start=1):
         try:
+            # Retired W2: reject a partial ABI before per-account dispatch.
+            # An unrelated complete-ABI account may still be processed.
+            if not modern:
+                raise ProviderConfigurationError("kobo_legacy_w2_retired_use_canonical_provider")
             if (service._sessions.get(service._session_key(
                     "kobo", credential,
                 )) is not session or session.connected is not True
