@@ -226,3 +226,24 @@ def test_provider_lookup_call_moved_across_lines_is_not_a_new_signal():
     before = 'handlers["kobo"]()\n'
     after = '\n' + before
     assert added_signals(before, after) == {}
+
+
+def test_git_gate_blocks_provider_get_dispatch_but_not_noninvoked_get(tmp_path):
+    root = tmp_path / "repo"
+    base = _repo(root)
+    head = _commit(root, "src/cifereca/core/example.py",
+                   'label = translations.get("kobo")\n'
+                   'result = actions.get("numilog")()\n')
+    report = gate(root, base, head)
+    assert report["pass"] is False
+    assert report["violations"] == {
+        "src/cifereca/core/example.py": {"dispatch_calls:numilog": 1},
+    }
+
+
+def test_git_gate_accepts_mapping_get_for_metadata_only(tmp_path):
+    root = tmp_path / "repo"
+    base = _repo(root)
+    head = _commit(root, "src/cifereca/core/example.py",
+                   'title = labels.get("kobo")\n')
+    assert gate(root, base, head)["pass"] is True
