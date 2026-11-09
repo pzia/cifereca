@@ -88,9 +88,6 @@ def test_exact_canonical_ownership_works_for_multiple_unrelated_providers():
     {"revision_id": None},
     {"owned": True, "source_collection": "public_catalog"},
     {"owned": True, "source_collection": "catalog"},
-    {"owned": False},
-    {"owned": None},
-    {"owned": 1},
     {"metadata": {"search_provenance": "known_catalog_stale"}},
 ])
 def test_foreign_or_stale_source_cannot_reuse_private_evidence(change):
@@ -99,6 +96,18 @@ def test_foreign_or_stale_source_cannot_reuse_private_evidence(change):
     item = replace(_item(), **change)
     assert result_row(item, purchase_evidence=proof,
                       identity_id=IDENTITY)["state"] == "remote_catalog"
+
+
+
+@pytest.mark.parametrize("supplier_owned", [False, None, 1, True])
+def test_provider_owned_hint_cannot_veto_an_exact_canonical_owned_right(supplier_owned):
+    item = replace(_item(), owned=supplier_owned)
+    proof = snapshot_search_owned_evidence(_service([_entitlement()]))
+    result = result_row(item, purchase_evidence=proof, identity_id=IDENTITY)
+    assert result["state"] == "remote_owned"
+    assert result["owned"] is True
+
+
 
 
 def test_cross_identity_or_changed_ledger_revokes_the_verdict():
