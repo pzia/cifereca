@@ -87,15 +87,16 @@ def cleanup_after_commit(*, previous_path, final_path, repair_mode: bool,
     paths, title, loan identifiers, or exceptions in diagnostics.
     """
     if (repair_mode is not True
-            or type(previous_path) is not Path
-            or type(final_path) is not Path
+            or not isinstance(previous_path, Path)
+            or not isinstance(final_path, Path)
             or previous_path.is_symlink()
             or final_path.is_symlink()):
         return False
     try:
         if (not previous_path.is_file()
                 or not final_path.is_file()
-                or previous_path.resolve() == final_path.resolve()):
+                or previous_path.resolve() == final_path.resolve()
+                or previous_path.parent.resolve() != final_path.parent.resolve()):
             return False
         previous_path.unlink()
     except OSError:
