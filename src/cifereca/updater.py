@@ -503,7 +503,7 @@ def _release_installed_at(release: Path) -> float | None:
         return None
 
 
-def _gc(root: Path, keep: int) -> dict[str, int]:
+def _gc(root: Path, keep: int, *, approved_release_names: frozenset[str] | None = None) -> dict[str, int]:
     """Post-commit cleanup: retain last 24 h AND >=2 restorable generations.
 
     Core symlink targets and any incomplete transaction are fail-closed.
@@ -638,6 +638,9 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
     from .updater_retention_inventory import _release_receipt_proof
     for release in releases:
         if release.resolve() in protected:
+            continue
+        if approved_release_names is not None and release.name not in approved_release_names:
+            protected.add(release.resolve())
             continue
         # The common inventory's owned_by_updater proof is mandatory for
         # physical GC too. An old mtime or a similarly named directory is
@@ -1756,6 +1759,13 @@ def install_source(
                 row["after"] = _package_identity(package_id)
             step("transaction_finalize", _save_transaction, transaction_path, transaction, "applied")
             cleanup_result = step("cleanup", _gc, root, keep)
+            from .updater_postcommit_retention import postcommit_updater_retention
+            cleanup_result["other_stores"] = postcommit_updater_retention(
+                root,
+                _plugin_packages_root(),
+                state_dir(create=False) / "dev-updates",
+                state_dir(create=False) / "update-backups",
+            )
     except (Exception, KeyboardInterrupt) as update_exc:
         # Ctrl-C after Core activation must attempt the same safe transactional
         # restore as ordinary failures; never leave a success-looking state.
@@ -2114,8 +2124,20 @@ def main(argv: list[str] | None = None) -> int:
                    help="Plan synthétique de maintenance read-only ; aucune suppression autorisée")
     p.add_argument("--maintenance-transactions", action="store_true",
                    help="Plan ou purge supervisée des seules transactions terminées expirées")
+    p.add_argument("--maintenance-dev-backups", action="store_true",
+                   help="Plan ou purge supervisée des sauvegardes DevUpdater certifiées")
+    p.add_argument("--maintenance-core-backups", action="store_true",
+                   help="Plan ou purge supervisée des sauvegardes Core avant activation")
+    p.add_argument("--maintenance-staging", action="store_true",
+                   help="Plan ou purge des scratchs persistants abandonnés attestés")
+    p.add_argument("--maintenance-core-releases", action="store_true",
+                   help="Plan ou GC autonome supervisé des releases Core")
+    p.add_argument("--maintenance-all", action="store_true",
+                   help="Plan puis maintenance coordonnée de tous les historiques Updater")
+    p.add_argument("--maintenance-plugins", action="store_true",
+                   help="Plan ou purge supervisée des versions historiques plugins")
     p.add_argument("--apply", action="store_true",
-                   help="Appliquer --maintenance-transactions avec --acknowledge SHA256")
+                   help="Appliquer la maintenance supervisée avec --acknowledge SHA256")
     p.add_argument("--recovery-reconcile", metavar="TRANSACTION_ID",
                    help="Plan de réconciliation ciblée (lecture seule sauf --acknowledge)")
     p.add_argument("--acknowledge", metavar="SHA256",
@@ -2128,11 +2150,100 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.maintenance_transactions:
-            if (a.archive or a.github is not None or a.rollback or a.status
+        if a.maintenance_all:
+            if (a.maintenance_core_releases or a.maintenance_staging
+                    or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.maintenance_core_backups
+                    or a.archive or a.github is not None or a.rollback
+                    or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-all incompatible avec ces options")
+            from .updater_maintenance_all import maintenance_all
+            result = maintenance_all(
+                install_root(), _plugin_packages_root(),
+                state_dir(create=False) / "dev-updates",
+                state_dir(create=False) / "update-backups",
+                keep=a.keep, apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_core_releases:
+            if (a.maintenance_all or a.maintenance_staging or a.maintenance_transactions
+                    or a.maintenance_plugins or a.maintenance_dev_backups
+                    or a.maintenance_core_backups or a.archive
+                    or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
                     or a.retention_inspect or a.retention_plan or a.dry_run
                     or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-core-releases incompatible avec ces options")
+            from .updater_core_release_maintenance import core_release_maintenance
+            result = core_release_maintenance(
+                install_root(), keep=a.keep, apply=a.apply,
+                acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_staging:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.maintenance_core_backups
+                    or a.archive or a.github is not None or a.rollback
+                    or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-staging incompatible avec ces options")
+            from .updater_staging_maintenance import staging_maintenance
+            result = staging_maintenance(
+                install_root(), _plugin_packages_root(),
+                state_dir(create=False) / "update-backups",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_core_backups:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.archive
+                    or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-core-backups incompatible avec ces options")
+            from .updater_core_backup_maintenance import core_backup_maintenance
+            result = core_backup_maintenance(
+                install_root(), state_dir(create=False) / "update-backups",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_dev_backups:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_transactions
+                    or a.maintenance_plugins
+                    or a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-dev-backups incompatible avec ces options")
+            from .updater_dev_backup_maintenance import dev_backup_maintenance
+            result = dev_backup_maintenance(
+                install_root(), state_dir(create=False) / "dev-updates",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_plugins:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_dev_backups
+                    or a.maintenance_transactions
+                    or a.archive or a.github is not None
+                    or a.rollback or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-plugins incompatible avec ces options")
+            from .updater_plugin_maintenance import plugin_history_maintenance
+            result = plugin_history_maintenance(
+                install_root(), _plugin_packages_root(), apply=a.apply,
+                acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_transactions:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.maintenance_plugins or a.maintenance_dev_backups
+                    or a.maintenance_core_backups
+                    or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
                 p.error("--maintenance-transactions incompatible avec ces options")
             from .updater_transaction_maintenance import transaction_maintenance
             result = transaction_maintenance(install_root(), apply=a.apply,

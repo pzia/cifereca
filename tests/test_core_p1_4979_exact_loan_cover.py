@@ -254,3 +254,149 @@ def test_bounded_local_library_preserves_exact_cover_and_ambiguous_result(monkey
                   tier="origin", artifact="art-b", placement="place-b")
     assert mod.loan_local_cover(current, (a,)).status == "selected"
     assert mod.loan_local_cover(current, (a, b)).status == "ambiguous"
+
+
+def test_gtk_loan_cover_snapshot_is_bounded_before_materialization(monkeypatch):
+    from cifereca.core import loan_cover_fallback as mod
+
+    current = loan()
+    monkeypatch.setattr(mod, "_MAX_LOAN_COVER_ROWS", 2)
+    inspected = []
+    def lazy():
+        for index in range(50):
+            inspected.append(index)
+            yield local_row(current)
+    assert mod.materialized_loan_cover_rows(lazy()) == ()
+    assert inspected == [0, 1, 2]
+    assert len(mod.materialized_loan_cover_rows(iter((local_row(current),)))) == 1
+
+
+def test_gtk_loan_cover_snapshot_drops_partial_failure():
+    from cifereca.core.loan_cover_fallback import materialized_loan_cover_rows
+
+    current = loan()
+    def partial():
+        yield local_row(current)
+        raise RuntimeError("private supplier path")
+    assert materialized_loan_cover_rows(partial()) == ()
+
+
+def test_gtk_loan_worker_uses_bounded_local_snapshot():
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/loans_controller.py").read_text(encoding="utf-8")
+    assert "materialized_loan_cover_rows(" in source
+    assert "cover_rows = tuple(" not in source
+
+
+def remote_row(current, *, url="https://public.example/cover.jpg",
+               entitlement_id="entitlement-1", tier="origin"):
+    from cifereca.core.loan_cover_fallback import attested_remote_loan_cover_proof
+    entitlement = {
+        "identity_id": current.identity_id,
+        "provider_id": current.source_provider,
+        "credential_id": current.source_credential,
+        "account_id": current.source_account_id,
+        "item_id": current.record_id,
+        "loan_id": current.id,
+        "entitlement_id": entitlement_id,
+        "entitlement_type": "loan",
+    }
+    row = {
+        "local": False, "identity_id": current.identity_id,
+        "provider_id": current.source_provider,
+        "item_id": current.record_id,
+        "loan_id": current.id, "entitlement_id": entitlement_id,
+        "entitlement_type": "loan",
+        "thumbnail_url": url,
+        "metadata": {"cover_resolution": {"status": "selected", "url": url,
+                                           "tier": tier}},
+    }
+    proof = attested_remote_loan_cover_proof(
+        current, entitlement, row, identity_id=current.identity_id,
+        provider_id=current.source_provider, item_id=current.record_id,
+    )
+    assert proof is not None
+    row["_exact_loan_cover_proofs"] = [proof]
+    return row, entitlement
+
+
+def test_remote_exact_loan_cover_without_local_placement_is_available_to_gtk():
+    current = loan()
+    row, entitlement = remote_row(current)
+    assert "artifact_id" not in row
+    assert "placement_id" not in row
+    original = deepcopy(current)
+    result = loan_local_cover(current, (row,))
+    assert result.status == "selected"
+    assert result.url == row["thumbnail_url"]
+    assert result.tier == "origin"
+    assert current == original
+
+
+def test_remote_loan_cover_refuses_different_borrower_credential_edition_and_loan():
+    current = loan()
+    row, entitlement = remote_row(current)
+    for changed in (
+        loan(identity="bob"), loan(credential="card-b"),
+        loan(account="borrower-b"), loan(record="edition-2"),
+        loan(identifier="loan-2"),
+    ):
+        assert loan_local_cover(changed, (row,)).status == "missing"
+    for key, value in (
+        ("identity_id", "bob"),
+        ("provider_id", "paris"),
+        ("item_id", "other-edition"),
+        ("loan_id", "other-loan"),
+        ("entitlement_id", "other-entitlement"),
+        ("thumbnail_url", "https://unrelated.example/cover.jpg"),
+    ):
+        forged = deepcopy(row)
+        forged[key] = value
+        assert loan_local_cover(current, (forged,)).status == "missing", key
+
+
+def test_remote_proof_requires_exact_canonical_entitlement_and_selected_cover():
+    from cifereca.core.loan_cover_fallback import attested_remote_loan_cover_proof
+    current = loan()
+    row, entitlement = remote_row(current)
+    scope = dict(identity_id=current.identity_id,
+                 provider_id=current.source_provider, item_id=current.record_id)
+    for key, value in (
+        ("loan_id", "other-loan"), ("account_id", "other-account"),
+        ("credential_id", "other-card"), ("entitlement_id", ""),
+        ("provider_id", "other-provider"), ("item_id", "other-book"),
+        ("identity_id", "other-profile"), ("entitlement_type", "owned"),
+    ):
+        altered = dict(entitlement)
+        altered[key] = value
+        assert attested_remote_loan_cover_proof(current, altered, row, **scope) is None
+    for key, value in (
+        ("local", True), ("loan_id", "loan-elsewhere"),
+        ("entitlement_id", "entitlement-elsewhere"),
+        ("thumbnail_url", "https://other.example/cover.jpg"),
+    ):
+        altered = deepcopy(row)
+        altered[key] = value
+        assert attested_remote_loan_cover_proof(current, entitlement, altered, **scope) is None
+    for status, tier in (("missing", "origin"), ("ambiguous", "catalog"),
+                         ("selected", "embedded")):
+        altered = deepcopy(row)
+        altered["metadata"]["cover_resolution"].update(status=status, tier=tier)
+        assert attested_remote_loan_cover_proof(current, entitlement, altered, **scope) is None
+
+
+def test_remote_cover_ambiguity_keeps_neutral_placeholder():
+    current = loan()
+    first, _ = remote_row(current, url="https://covers.example/a.jpg",
+                          entitlement_id="entitlement-a")
+    second, _ = remote_row(current, url="https://covers.example/b.jpg",
+                           entitlement_id="entitlement-b")
+    result = loan_local_cover(current, (first, second))
+    assert result.status == "ambiguous" and not result.url
+
+
+def test_remote_cover_projection_requires_exact_entitlement_helper():
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/core/library_projection.py").read_text(encoding="utf-8")
+    assert "attested_remote_loan_cover_proof(" in source
+    assert 'if entitlement_type == "loan" and loan is not None:' in source

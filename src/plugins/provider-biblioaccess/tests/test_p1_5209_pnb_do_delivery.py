@@ -268,3 +268,57 @@ def test_pnb_supplier_403_propagates_closed_reason_without_private_url(
         assert "SYNTHETIC-PRIVATE" not in caplog.text
     finally:
         session.close()
+
+
+def test_failed_acsm_stage_write_does_not_leave_partial_file(tmp_path, monkeypatch):
+    """A local IO failure cannot leave an ACSM-looking or .part artifact."""
+    import biblioaccess_acsm_delivery as module
+
+    original = module.tempfile.NamedTemporaryFile
+
+    class FailAfterPartialWrite:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def __enter__(self):
+            self.inner.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.inner.__exit__(*args)
+
+        @property
+        def name(self):
+            return self.inner.name
+
+        def write(self, payload):
+            self.inner.write(payload[:8])
+            raise OSError("synthetic disk full /private/volume")
+
+    def partial_write(*args, **kwargs):
+        return FailAfterPartialWrite(original(*args, **kwargs))
+
+    monkeypatch.setattr(module.tempfile, "NamedTemporaryFile", partial_write)
+    with pytest.raises(delivery.ACSMDeliveryError, match="acsm_stage_unavailable"):
+        delivery.stage_loan_acsm(
+            PNB, tmp_path, transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, content=ACSM),
+            ),
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_failed_acsm_stage_rename_does_not_leave_partial_file(tmp_path, monkeypatch):
+    import biblioaccess_acsm_delivery as module
+
+    def fail_rename(_src, _dst):
+        raise OSError("synthetic rename denied /private/volume")
+
+    monkeypatch.setattr(module.os, "replace", fail_rename)
+    with pytest.raises(delivery.ACSMDeliveryError, match="acsm_stage_unavailable"):
+        delivery.stage_loan_acsm(
+            PNB, tmp_path, transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, content=ACSM),
+            ),
+        )
+    assert list(tmp_path.iterdir()) == []

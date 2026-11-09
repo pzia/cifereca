@@ -7,7 +7,14 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.core import manual_import_display_admission as admission
-from cifereca.core.bnf_import_provenance import remember_import
+from cifereca.core.observed_import_provenance import remember_observed_import
+
+
+def remember_import(service, result, scope):
+    return remember_observed_import(
+        service, result, scope, provider_id='bnf-pret',
+        provenance_field='bnf_observed_loan',
+    )
 
 
 @pytest.fixture()

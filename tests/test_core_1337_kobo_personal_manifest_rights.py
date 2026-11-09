@@ -196,10 +196,7 @@ def test_explicit_kobo_account_sync_materializes_right_without_download(tmp_path
             "account_id": account.unique_id,
         })
         service._sessions[service._session_key("kobo", account.credential_id)] = session
-        monkeypatch.setattr(service, "_acquire_personal_library_item",
-                            lambda *_args, **_kw: (_ for _ in ()).throw(
-                                AssertionError("No acquisition from account sync")
-                            ))
+        assert not hasattr(service, "_acquire_personal_library_item")
         result = service._synchronize_account_source_impl(account)
         assert result["owned_rights"] == 1
         assert calls == ["library"]

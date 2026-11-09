@@ -288,8 +288,10 @@ class LibraryService:
 
     def can_borrow_bnf(self, item: SearchResult) -> bool:
         """Inert BnF action visibility, never a borrower permission."""
-        from .core.manual_bnf_borrow import manual_bnf_borrow_available
-        return manual_bnf_borrow_available(self, item)
+        from .core.manual_library_borrow import manual_borrow_available
+        return manual_borrow_available(
+            self, item, provider_id="bnf-pret", docbase="BNF_PRET",
+        )
 
     def bnf_borrow_claim_observation(
         self, item: SearchResult, *, expected_identity_id: str,
@@ -300,11 +302,11 @@ class LibraryService:
         checkpoint does not enable a POST; a consumed checkpoint is never
         cleared. No provider call, session refresh or account fallback.
         """
-        from .core.bnf_borrow_claim_observation import (
-            BnfBorrowClaimObservation, observe_bnf_borrow_claim,
+        from .core.borrow_claim_observation import (
+            BorrowClaimObservation, observe_borrow_claim,
         )
 
-        unavailable = BnfBorrowClaimObservation(
+        unavailable = BorrowClaimObservation(
             "scope_unverified", None, False,
         )
         if (type(item) is not SearchResult
@@ -326,9 +328,10 @@ class LibraryService:
         ]
         if len(accounts) != 1:
             return unavailable
-        return observe_bnf_borrow_claim(
+        return observe_borrow_claim(
             storage=self.storage, account=accounts[0], item=item,
             expected_identity_id=expected_identity_id,
+            provider_id="bnf-pret", docbase="BNF_PRET",
         )
 
     def borrow_bnf_manual(
@@ -338,9 +341,10 @@ class LibraryService:
         expected_account: Account | None = None,
     ) -> dict[str, object]:
         """Core-owned explicit BnF action; never use the legacy borrow()."""
-        from .core.manual_bnf_borrow import manual_bnf_borrow
-        return manual_bnf_borrow(
-            self, item, expected_identity_id=expected_identity_id,
+        from .core.manual_library_borrow import manual_borrow
+        return manual_borrow(
+            self, item, provider_id="bnf-pret", docbase="BNF_PRET",
+            expected_identity_id=expected_identity_id,
             confirmed=confirmed, site_checked=site_checked,
             expected_context_epoch=expected_context_epoch,
             expected_account=expected_account,
@@ -533,13 +537,17 @@ class LibraryService:
                 raise
             except Exception:
                 raise BnfLoanActionError('bnf_loan_scope_unproven') from None
-            from .core.bnf_import_provenance import observed_loan, remember_import
+            from .core.observed_loan_scope import observed_loan
+            from .core.observed_import_provenance import remember_observed_import
             display_scope = observed_loan(loan)
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
                                       provider_id='manual', title=title,
                                       placement_provider_id='bnf-pret')
-            remember_import(self, result, display_scope)
+            remember_observed_import(
+                self, result, display_scope, provider_id='bnf-pret',
+                provenance_field='bnf_observed_loan',
+            )
         except BnfLoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
@@ -1654,17 +1662,6 @@ class LibraryService:
                 )
         return result
 
-    def _acquire_personal_library_item(self, session, row, identity_id: str) -> dict[str, Any]:
-        """Deprecated fail-closed backup shim; never called by mirroring.
-
-        The old method passed Numilog SearchResult dictionaries to the
-        unsupported ProviderSession.download_library_item contract, then
-        swallowed errors as if opening acquisition had succeeded. A per-book
-        user action must instead use the existing direct acquisition broker,
-        which validates the provider, account and ACSM/ADEPT path.
-        """
-        return {"status": "blocked", "reason": "explicit_acquisition_required"}
-
     def recent_acquisitions(self, *, identity_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """Return recent local materializations, newest first.
 
@@ -1703,35 +1700,31 @@ class LibraryService:
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
-        if (item.source_provider == "numilog"
-                and item.source_credential == "__public__"
-                and item.scenario == "NUMILOG_PUBLIC"
-                and item.source_collection == "public_catalog"):
-            # The public listing is already descriptive and has no borrower
-            # session. Never re-route a public record to B's MesLivres.
+        # Catalogue-only projections do not attest borrower rights. The
+        # source's public sentinel or an explicitly read-only projection
+        # precludes a private holdings GET, regardless of provider name.
+        # Never promote these rows to a purchase/loan or resolve a private URL.
+        public_catalogue = (
+            item.source_credential == "__public__"
+            and item.source_collection == "public_catalog"
+        )
+        shared_catalogue = (
+            type(item.metadata) is dict
+            and item.metadata.get("catalogue_access") == "shared_read_only"
+        )
+        if public_catalogue or shared_catalogue:
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
                 type=item.type, year=item.published_at,
                 thumbnail_url=item.thumbnail_url,
                 availability_status="unknown",
-                availability_label="Catalogue public · achat non attesté",
-                holdings=[], source_provider="numilog",
-                source_credential="__public__",
-            )
-        if (item.source_provider == "kobo"
-                and type(item.metadata) is dict
-                and item.metadata.get("catalogue_access") == "shared_read_only"):
-            # Public-only Kobo discovery does not license a foreign-account
-            # holdings or delivery GET, even when the same session is online.
-            return ItemDetail(
-                record_id=item.record_id, docbase=item.docbase,
-                title=item.title, author=item.author,
-                type=item.type, year=item.published_at,
-                thumbnail_url=item.thumbnail_url,
-                availability_status="unknown",
-                availability_label="Catalogue Kobo partagé · droits non consultés",
-                holdings=[], source_provider="kobo",
+                availability_label=(
+                    "Catalogue public · achat non attesté"
+                    if public_catalogue else
+                    "Catalogue partagé · droits non consultés"
+                ),
+                holdings=[], source_provider=item.source_provider,
                 source_credential=item.source_credential,
             )
         # An authenticated Paris catalogue may be browsed from another local
@@ -2718,20 +2711,6 @@ class LibraryService:
             return KoboOfferAdapter.delegated_candidate(payload, preferred_format)
         except KoboAcquisitionSelectionError as exc:
             raise ProviderConfigurationError(str(exc)) from exc
-
-    @staticmethod
-    def _kobo_canonical_drm(value: Any) -> str:
-        raw = str(value or "").strip()
-        key = re.sub(r"[^a-z0-9]", "", raw.lower())
-        if key in {"signednodrm", "nodrm", "none"}:
-            return "SignedNoDrm"
-        if key in {"kdrm", "kobo"}:
-            return "KDRM"
-        if key in {"adobedrm", "adept", "adobeadept"}:
-            return "AdobeDrm"
-        if key == "kobokdrm":
-            return "KDRM"
-        return raw or "unknown"
 
     @staticmethod
     def _kobo_url_format(candidate: dict[str, Any]) -> str | None:

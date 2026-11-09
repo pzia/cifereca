@@ -26,6 +26,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728",
         "task-busy-settings-1366", "capture-session-gtk-1366", "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366",
+        "modern-light-1366", "modern-light-1600",
     ]
 
 
@@ -803,3 +804,13 @@ def test_p1_774_search_1024_diagnostic_minimum_widths_are_whitelisted():
     assert 'set(widths) == width_keys' in runner
     assert 'all(type(v) is int and 0 <= v <= 4096' in runner
     assert 'P1_3687_WIDTH_' in runner
+
+
+def test_modern_light_real_gtk_scenarios_remain_targetable():
+    runner = _module()
+    probe = (ROOT / "e2e/modern_light_theme_probe.py").read_text(encoding="utf-8")
+    assert "MainWindow" in probe
+    for width in (1366, 1600):
+        scenario = runner.SCENARIOS[f"modern-light-{width}"]
+        assert scenario["width"] == width
+        assert scenario["runner"] == "gtk-modern-light"

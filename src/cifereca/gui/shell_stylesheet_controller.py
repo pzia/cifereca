@@ -6,7 +6,7 @@ All selectors, colors, breakpoints and precedence remain verbatim.
 from __future__ import annotations
 
 
-def install_css(window, *, Gtk, Gdk) -> None:
+def install_css(window, *, Gtk, Gdk, Adw=None) -> None:
     if getattr(window, '_closed', False):
         return
     css = b"""
@@ -69,4 +69,7 @@ def install_css(window, *, Gtk, Gdk) -> None:
     display = Gdk.Display.get_default()
     if display:
         Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    if Adw is not None:
+        from .modern_light_theme import install_modern_light
+        install_modern_light(window, Gtk=Gtk, Gdk=Gdk, Adw=Adw)
 

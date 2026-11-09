@@ -72,3 +72,45 @@ def test_strong_checksum_validated_isbn_remains_independently_applicable():
         "isbn:9780306406157",
     }
     assert is_already_present(build_profile([one]), another)
+
+
+def test_credentials_in_identifier_map_never_become_public_ranking_keys():
+    private = {
+        "title": "Titre neutre", "author": "Auteure",
+        "identifiers": {
+            "access_token": "PRIVATE_ACCESS_TOKEN",
+            "refresh_token": "PRIVATE_REFRESH_TOKEN",
+            "account_id": "PRIVATE_ACCOUNT_ID",
+            "session_id": "PRIVATE_SESSION_ID",
+            "password": "PRIVATE_PASSWORD",
+            "custom_key": "PRIVATE_PROVIDER_SECRET",
+        },
+    }
+    assert identifier_values(private) == set()
+    key = candidate_key(private)
+    assert key.startswith("ta:")
+    assert "PRIVATE_" not in key
+    assert not is_already_present(build_profile([private]), {
+        "title": "Autre", "identifiers": {"access_token": "PRIVATE_ACCESS_TOKEN"},
+    })
+
+
+def test_public_schemes_remain_namespaced_but_private_value_shapes_are_refused():
+    known = {
+        "identifiers": {
+            "doi": "10.1000/xyz", "ark": "ark:/12345/book",
+            "oclc": "123456", "lccn": "2020123456",
+        },
+    }
+    assert identifier_values(known) == {
+        "doi:10.1000/xyz", "ark:ark:/12345/book",
+        "oclc:123456", "lccn:2020123456",
+    }
+    for malformed in (
+        "user:secret@private.example",
+        "https://example.org/book?token=secret",
+        "prefix\\u202esecret",
+        "a" * 257,
+    ):
+        forged = {"identifiers": {"doi": malformed}}
+        assert identifier_values(forged) == set()

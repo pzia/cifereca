@@ -50,6 +50,10 @@ class ProviderCapabilities:
     # Display-only availability of a separate loan fulfillment phase.
     # Never implies consent, ADEPT readiness or permission to GET.
     loan_auto_materialization: bool = False
+    # Display-only source phase; does not grant a GET or override consent.
+    local_materialization: bool = False
+    # Read-only legacy phase receipt, never an acquisition permission.
+    legacy_materialization_checkpoint: bool = False
 
     def names(self) -> list[str]:
         return [name for name, value in self.__dict__.items() if value]

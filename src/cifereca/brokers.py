@@ -371,6 +371,7 @@ class SynchronizationBrokerImpl:
 
     def _phase_states(
         self, account: Any, state: dict[str, Any], sync_caps: tuple[str, ...],
+        *, legacy_checkpoint: bool = False,
     ) -> tuple[SyncPhaseState, ...]:
         """Safe, read-only projection: no remote call, migration or acquisition."""
         raw_status = state.get("status")
@@ -399,17 +400,29 @@ class SynchronizationBrokerImpl:
         else:
             identity = str(getattr(account, "identity_id", "") or "")
             credential = str(getattr(account, "credential_id", "") or "")
-            # A checkpoint is credible only for its currently owning identity.
+            # The exact provider/account binding is Core-owned. A provider
+            # with this phase must not read a different provider's old 0.7
+            # checkpoint merely because credentials happen to coincide.
+            provider_id = getattr(account, "provider_id", None)
             try:
-                bound = self.service.storage.identity_for_connection("kobo", credential)
+                bound = (
+                    self.service.storage.identity_for_connection(
+                        provider_id, credential,
+                    ) if type(provider_id) is str and provider_id
+                    and credential else None
+                )
             except (AttributeError, TypeError, ValueError, KeyError):
                 bound = None
             binding_valid = bool(identity and credential and bound == identity)
             if not binding_valid:
                 materialization = SyncPhaseState("materialize", "unknown")
             else:
-                from .core.kobo_backup import _kobo_checkpoint_for
-                row = _kobo_checkpoint_for(self.service, identity, credential)
+                # Legacy W2 checkpoint only; future providers use the exact
+                # generic explicit phase receipt below, never backup_items.
+                row = None
+                if legacy_checkpoint:
+                    from .core.kobo_backup import _kobo_checkpoint_for
+                    row = _kobo_checkpoint_for(self.service, identity, credential)
                 if row is None:
                     materialization = SyncPhaseState("materialize")
                 else:
@@ -494,17 +507,19 @@ class SynchronizationBrokerImpl:
             declared_sync_caps.append("remote_inventory")
         if source_caps & {"loans", "personal_library"}:
             declared_sync_caps.append("entitlements")
-        # The service owns this session. Kobo's explicit backup capability
-        # alone licenses declaring the *availability* of an opt-in local
-        # materialization phase; this metadata read never executes it.
+        # Only an explicit provider-declared phase may be displayed.
+        # This is a static metadata read, not acquisition authorization.
         provider_id = account_ref.provider_id
         credential_id = str(getattr(account, "credential_id", "") or "")
         session = getattr(self.service, "_sessions", {}).get(
             self.service._session_key(provider_id, credential_id)
         )
         if (
-            provider_id == "kobo" and session is not None
-            and bool(getattr(getattr(session, "capabilities", None), "backup", False))
+            session is not None
+            and type(getattr(getattr(session, "capabilities", None),
+                             "local_materialization", None)) is bool
+            and getattr(session.capabilities, "local_materialization") is True
+            and getattr(session.capabilities, "backup", False) is True
         ):
             declared_sync_caps.append("local_materialization")
         # Provider-declared loan→ACSM→ADEPT is distinct from generic
@@ -562,7 +577,13 @@ class SynchronizationBrokerImpl:
             status=str(state.get("status") or "idle"),
             error=str(state.get("error") or ""),
             sync_capabilities=tuple(declared_sync_caps),
-            phase_states=self._phase_states(account, state, tuple(declared_sync_caps)),
+            phase_states=self._phase_states(
+                account, state, tuple(declared_sync_caps),
+                legacy_checkpoint=(
+                    getattr(getattr(session, "capabilities", None),
+                            "legacy_materialization_checkpoint", False) is True
+                ),
+            ),
             last_cycle=receipt,
         )
 

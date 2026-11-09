@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from .source_context import source_context_epoch
-from .legacy_source_account_id import ambiguous_legacy_source_account_id
 
 import hashlib
 import logging
@@ -26,39 +25,11 @@ def policy_key(account: Account) -> str:
 
 
 def binding_ready(service, account: Account) -> bool:
-    try:
-        if (type(account) is not Account or account.provider_id != 'bnf-pret'
-                or ambiguous_legacy_source_account_id(
-                    'bnf-pret', account.credential_id, account.unique_id
-                )
-                or not service.sync_source_enabled(account)
-                or service.identity_by_id(account.identity_id) is None
-                or service.storage.identity_for_connection(
-                    'bnf-pret', account.credential_id) != account.identity_id):
-            return False
-        # The SQLite provider_accounts registry is the durable account
-        # identity for this credential. A connected Python session may stay
-        # alive after the borrower was removed/rebound in SQLite; do not
-        # issue a private ACSM GET in that state.
-        matches = service.storage.provider_accounts(
-            identity_id=account.identity_id,
-        )
-        if sum(
-            row.get('provider_id') == 'bnf-pret'
-            and row.get('credential_id') == account.credential_id
-            and row.get('account_id') == account.unique_id
-            for row in matches
-        ) != 1:
-            return False
-        session = service._sessions.get(service._session_key('bnf-pret', account.credential_id))
-        return (getattr(session, 'connected', None) is True
-                and sum(row is account for row in getattr(session, 'accounts', ())) == 1
-                and sum(row is account for row in service.accounts) == 1
-                and sum(type(row) is Account and row.provider_id == 'bnf-pret'
-                        and row.credential_id == account.credential_id
-                        for row in service.accounts) == 1)
-    except Exception:
-        return False
+    """BnF auto materialization uses the same exact Core account fence."""
+    from .source_account_binding import source_account_binding_ready
+    return source_account_binding_ready(
+        service, account, expected_provider_id="bnf-pret",
+    )
 
 
 def enabled(service, account: Account) -> bool:
@@ -333,10 +304,40 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         directory = service._acquisition_work_dir(account.identity_id, 'bnf-pret', loan.id)
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        # The opt-in is a durable affirmative action. The provider itself
-        # re-reads the exact account/loan and rejects missing signed actions.
-        candidate, url = session.download_digital(
-            loan, account, directory, explicit_user_action=True)
+        # The persisted opt-in is the ONLY positive Core authority. The
+        # provider owns the private offer/GET; no v1 download_digital fallback.
+        offer_snapshot = getattr(
+            session, "rights_selected_delivery_offer_snapshot", None,
+        )
+        selected_candidate = getattr(
+            session, "rights_selected_delivery_candidate", None,
+        )
+        if not callable(offer_snapshot) or not callable(selected_candidate):
+            return {'status': 'attention_required',
+                    'code': 'bnf_auto_acquisition_failed'}
+        observed = offer_snapshot(
+            account, edition_id=loan.record_id, right_id=loan.id,
+            kind='loan', branch='bnf_html', explicit_user_action=True,
+        )
+        right = observed.exact(loan.record_id, loan.id, 'loan')
+        if (observed.branch != 'bnf_html'
+                or observed.scope.identity_id != account.identity_id
+                or observed.scope.provider_id != loan.source_provider
+                or observed.scope.credential_id != account.credential_id
+                or observed.scope.account_id != account.unique_id
+                or right is None or right.provider_attested is not True
+                or right.delivery_attested is not True
+                or type(right.delivery_offer_id) is not str
+                or not right.delivery_offer_id or not current()):
+            return {'status': 'attention_required',
+                    'code': 'bnf_loan_scope_unproven'}
+        candidate, url = selected_candidate(
+            account, edition_id=loan.record_id, right_id=loan.id,
+            kind='loan', branch=observed.branch,
+            delivery_offer_id=right.delivery_offer_id,
+            target_dir=directory, explicit_user_action=True,
+            admission_current=current,
+        )
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         if (not isinstance(candidate, Path) or type(url) is not str or url
@@ -348,7 +349,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             control.check_cancelled()
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        from .bnf_import_provenance import observed_loan, remember_import
+        from .observed_loan_scope import observed_loan
+        from .observed_import_provenance import remember_observed_import
         display_scope = observed_loan(loan)
         handed_to_adept = True
         result = service.import_acsm(candidate, identity_id=account.identity_id,
@@ -379,7 +381,10 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                 result['acquisition_id'], 'complete', metadata={'bnf_auto_ref': ref})
             if not current():
                 return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-            remember_import(service, result, display_scope)
+            remember_observed_import(
+                service, result, display_scope, provider_id='bnf-pret',
+                provenance_field='bnf_observed_loan',
+            )
         return ({'status': result.get('status', 'attention_required')}
                 if current() else
                 {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'})
