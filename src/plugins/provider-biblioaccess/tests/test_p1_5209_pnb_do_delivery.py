@@ -108,6 +108,8 @@ def test_three_pnb_gets_can_return_direct_or_redirected_adobe_acsm(tmp_path):
     (httpx.Response(403, content=b"PRIVATE"), "acsm_denied"),
     (httpx.Response(404), "acsm_missing"),
     (httpx.Response(200, content=b"<html>login</html>"), "structure_invalid"),
+    (httpx.Response(200, headers={"content-type": "text/html"},
+                    content=ACSM), "content_type_invalid"),
     (httpx.Response(302), "acsm_redirect"),
     (httpx.Response(302, headers={"location":
         "http://pnb-dilicom.centprod.com/next"}), "redirect_refused"),
