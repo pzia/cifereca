@@ -75,8 +75,10 @@ def test_seven_recent_transactions_all_retained(tmp_path):
     assert not (root / "transaction-gc").exists()
 
 
-def test_missing_or_wrong_acknowledgement_does_not_mutate(tmp_path):
+def test_missing_or_wrong_acknowledgement_does_not_mutate(tmp_path, monkeypatch):
     root = _runtime(tmp_path)
+    monkeypatch.setattr(updater, "_trusted_package_lease",
+                        lambda: __import__("contextlib").nullcontext())
     paths = [_transaction(root, n, 3 * 86400 + n * 60) for n in range(7)]
     with pytest.raises(ValueError, match="acknowledgement"):
         transaction_maintenance(root, apply=True, now=NOW)
