@@ -24,7 +24,8 @@ from ..plugin_api import SyncResult
 from . import kobo_backup
 from .canonical_delivery_abi import has_complete_delivery_abi
 from .kobo_local_audit import _read_hash_within
-from .kobo_local_reconciliation import _roots, _within
+from ..library_files import safe_library_component
+from pathlib import Path
 
 _LOG = logging.getLogger("cifereca.sync")
 _TTL = 600
@@ -42,6 +43,29 @@ class _Rejected(ValueError):
 def _require(condition, reason):
     if not condition:
         raise _Rejected(reason)
+
+
+def _roots(service, identity):
+    _require(type(identity) is str and 0 < len(identity) <= 1024
+             and not any(char in identity for char in ("\0", "\n", "\r")), "unknown_identity")
+    profile = service.identity_by_id(identity)
+    _require(profile is not None, "unknown_identity")
+    library, target = kobo_backup._kobo_preview_paths(service, identity)
+    folder = safe_library_component(profile.directory_name or identity, "default")
+    _require(not any(other.identity_id != identity
+                     and safe_library_component(other.directory_name or other.identity_id, "default") == folder
+                     for other in getattr(service, "identities", ())), "ambiguous_identity_directory")
+    return (target, library / folder)
+
+
+def _within(path, roots):
+    if type(path) is not str or not path or "\0" in path:
+        return False
+    value = Path(path)
+    if not value.is_absolute() or ".." in value.parts:
+        return False
+    value = Path(os.path.abspath(value))
+    return any(value != root and value.is_relative_to(root) for root in roots)
 
 
 def _digest(value):
