@@ -42,8 +42,8 @@ class UsbRemovalExecution:
 
 
 def execute_usb_removal(
-    *, storage: object, copy_journal: UsbCopyJournal,
-    removal_journal: UsbRemovalJournal, lock_root: Path, mountpoint: Path,
+    *, storage: object, copy_journal: UsbCopyJournal | None = None,
+    removal_journal: UsbRemovalJournal | None = None, lock_root: Path, mountpoint: Path,
     consent: UsbRemovalConsent,
     current_profile: Callable[[], tuple[str, int]],
 ) -> UsbRemovalExecution:
@@ -59,6 +59,12 @@ def execute_usb_removal(
             or not callable(current_profile)
             or not _sha(consent.sha256)):
         return UsbRemovalExecution("blocked", "usb_removal_request_invalid")
+
+    if copy_journal is None or removal_journal is None:
+        from .device_usb_operation_journal import SqliteUsbOperationJournal
+        durable = SqliteUsbOperationJournal(storage)
+        copy_journal = copy_journal if copy_journal is not None else durable
+        removal_journal = removal_journal if removal_journal is not None else durable
 
     lock_name = __import__("hashlib").sha256(
         consent.usb_fingerprint.encode("utf-8")
