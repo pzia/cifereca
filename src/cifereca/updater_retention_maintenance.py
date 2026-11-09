@@ -37,8 +37,10 @@ def retention_maintenance_plan(inventory: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("retention_inventory_incomplete")
     plans = inventory["plans"]
     # A new/missing namespace does not silently disappear from the preview.
-    if set(plans) - set(_STORES):
-        raise ValueError("retention_unknown_store")
+    if (set(plans) - set(_STORES)
+            or not {"core_transactions", "plugin_versions",
+                    "known_persistent_staging"}.issubset(plans)):
+        raise ValueError("retention_unknown_or_missing_store")
     for values in (inventory["blockers"], inventory["pending_stores"]):
         if any(type(value) is not str or _PUBLIC_CODE.fullmatch(value) is None
                for value in values):
