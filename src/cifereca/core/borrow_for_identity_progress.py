@@ -43,6 +43,7 @@ def observed_cross_profile_borrow_progress(
         a, item = borrowing_account, exact_notice
         reader_epoch = getattr(service, "_account_context_epoch", None)
         source_epoch = getattr(service, "_source_context_epoch", None)
+        reader_context = service.current_identity
         if (type(reader_epoch) is not int or type(source_epoch) is not int
                 or type(requesting_identity_id) is not str
                 or not requesting_identity_id
@@ -50,8 +51,9 @@ def observed_cross_profile_borrow_progress(
                 or type(item) is not SearchResult
                 or not a.identity_id
                 or requesting_identity_id == a.identity_id
-                or getattr(service.current_identity, "identity_id", None)
+                or getattr(reader_context, "identity_id", None)
                    != requesting_identity_id
+                or service.current_identity is not reader_context
                 or item.medium != "digital"
                 or item.source_provider != a.provider_id
                 or item.source_credential != a.credential_id
@@ -75,6 +77,7 @@ def observed_cross_profile_borrow_progress(
                         a.provider_id, a.credential_id,
                     ) != a.identity_id
                     or service.identity_by_id(a.identity_id) is None
+                    or service.current_identity is not reader_context
                     or getattr(service.current_identity, "identity_id", None)
                        != requesting_identity_id
                     or sum(row is a for row in service.accounts) != 1):
@@ -97,6 +100,7 @@ def observed_cross_profile_borrow_progress(
                 len(exact) == 1 and exact[0].get("enabled") is True
                 and getattr(service, "_account_context_epoch", None) == reader_epoch
                 and getattr(service, "_source_context_epoch", None) == source_epoch
+                and service.current_identity is reader_context
                 and getattr(service.current_identity, "identity_id", None)
                     == requesting_identity_id
             )
