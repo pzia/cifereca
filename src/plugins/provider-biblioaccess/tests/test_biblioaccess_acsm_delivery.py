@@ -73,3 +73,89 @@ def test_oversized_xml_rejected_before_creating_artifact(tmp_path):
             URL, tmp_path, transport=httpx.MockTransport(
                 lambda _: httpx.Response(200, content=b"x" * 128001)))
     assert list(tmp_path.iterdir()) == []
+
+
+PNB_URL = "https://pnb-dilicom.centprod.com/fulfillment/synthetic/do"
+
+
+def test_pnb_do_stages_valid_acsm_without_extension(tmp_path):
+    requests = []
+    def handler(request):
+        requests.append((request.method, request.url.host, request.url.path))
+        return httpx.Response(200, content=ACSM,
+                              headers={"content-type": "application/octet-stream"})
+    result = delivery.stage_loan_acsm(
+        PNB_URL, tmp_path, transport=httpx.MockTransport(handler))
+    assert result.read_bytes() == ACSM
+    assert requests == [("GET", "pnb-dilicom.centprod.com",
+                         "/fulfillment/synthetic/do")]
+
+
+def test_pnb_same_origin_redirect_stages_acsm(tmp_path):
+    paths = []
+    def handler(request):
+        paths.append(request.url.path)
+        if request.url.path.endswith("/do"):
+            return httpx.Response(302, headers={"location": "/signed/short-lived"})
+        return httpx.Response(200, content=ACSM)
+    result = delivery.stage_loan_acsm(
+        PNB_URL, tmp_path, transport=httpx.MockTransport(handler))
+    assert result.read_bytes() == ACSM
+    assert paths == ["/fulfillment/synthetic/do", "/signed/short-lived"]
+
+
+@pytest.mark.parametrize("status,body", [
+    (403, ACSM), (404, ACSM), (200, b"<html>login</html>"),
+    (200, b"invalid payload"),
+])
+def test_pnb_failed_or_non_acsm_never_stages(status, body, tmp_path):
+    with pytest.raises(delivery.ACSMDeliveryError):
+        delivery.stage_loan_acsm(
+            PNB_URL, tmp_path,
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(status, content=body)))
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("location", [
+    "https://evil.example/steal", "//evil.example/steal",
+    "http://pnb-dilicom.centprod.com/insecure",
+    "https://username:password@pnb-dilicom.centprod.com/secret",
+    "https://pnb-dilicom.centprod.com:444/odd",
+])
+def test_pnb_cross_origin_or_unsafe_redirect_never_followed(location, tmp_path):
+    observed = []
+    def handler(request):
+        observed.append(request.url.path)
+        return httpx.Response(302, headers={"location": location})
+    with pytest.raises(delivery.ACSMDeliveryError, match="acsm_redirect"):
+        delivery.stage_loan_acsm(
+            PNB_URL, tmp_path, transport=httpx.MockTransport(handler))
+    assert observed == ["/fulfillment/synthetic/do"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_pnb_redirect_loop_is_bounded(tmp_path):
+    observed = []
+    def handler(request):
+        observed.append(request.url.path)
+        return httpx.Response(302, headers={"location": "/again"})
+    with pytest.raises(delivery.ACSMDeliveryError, match="acsm_redirect"):
+        delivery.stage_loan_acsm(
+            PNB_URL, tmp_path, transport=httpx.MockTransport(handler))
+    assert len(observed) == 3
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("url", [
+    "https://pnb-dilicom.centprod.com.evil.example/a/do",
+    "http://pnb-dilicom.centprod.com/a/do",
+    "https://pnb-dilicom.centprod.com/a/do#fragment",
+    "https://pnb-dilicom.centprod.com/a/not-do",
+    "https://pnb-dilicom.centprod.com/a/../do",
+])
+def test_pnb_untrusted_actions_never_reach_transport(url, tmp_path):
+    with pytest.raises(delivery.ACSMDeliveryError, match="url_invalid"):
+        delivery.stage_loan_acsm(
+            url, tmp_path, transport=httpx.MockTransport(
+                lambda _: pytest.fail("unexpected GET")))
