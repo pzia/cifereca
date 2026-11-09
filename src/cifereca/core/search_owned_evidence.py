@@ -22,6 +22,7 @@ class SearchOwnedEvidence:
     rights: frozenset[tuple[str, str, str, str, str]]
     account_context_epoch: int | None = None
     source_context_epoch: int | None = None
+    schema_version: int = 1
 
 
 def _coordinate(value: object, *, allow_empty: bool = False) -> bool:
@@ -89,6 +90,7 @@ def search_result_has_verified_purchase(
     if (type(item) is not SearchResult or type(evidence) is not SearchOwnedEvidence
             or not _coordinate(current_identity_id)
             or evidence.identity_id != current_identity_id
+            or type(evidence.schema_version) is not int or evidence.schema_version != 1
             or (evidence.account_context_epoch is not None
                 and evidence.account_context_epoch != current_account_epoch)
             or (evidence.source_context_epoch is not None
