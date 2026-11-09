@@ -1004,6 +1004,23 @@ class DetailPanel(Gtk.Box):
                           and result_row(item)["state"] != "remote_owned"))
             else self.window.service.can_direct_download(item)
         )
+        # A spent, uncertain loan may no longer be advertised as
+        # "Empruntable" on the public catalogue. The previously submitted
+        # request still needs a read-only follow-up after restart.
+        followup_reader = getattr(
+            self.window.service, "paris_borrow_followup_available", None,
+        )
+        try:
+            pending_followup = (
+                callable(followup_reader) and followup_reader(item) is True
+            )
+        except Exception:
+            pending_followup = False
+        if pending_followup:
+            # Preserve the existing borrow-candidate renderer/contract while
+            # making a spent claim visible even when catalogue availability
+            # changed. This is a local variable used by the action gate only.
+            availability = "Empruntable"
         if direct_download:
             self._direct_download_action(item)
         elif search_detail_borrow_action_candidate(item, availability):
@@ -1058,6 +1075,25 @@ class DetailPanel(Gtk.Box):
                     except Exception:
                         diagnostic = None
                     explanation = paris_borrow_status_message(diagnostic)
+                    # P1 #5136: a spent uncertain loan claim is NOT an
+                    # invitation to repeat Emprunter. Only an exact local
+                    # pending claim may expose a later read-only GET action.
+                    if pending_followup:
+                        explanation = (
+                            "Demande de prêt Paris déjà envoyée ; confirmation "
+                            "indisponible. Ne réempruntez pas. "
+                            "La vérification ci-dessous ne soumet aucun prêt."
+                        )
+                        verify = self.window.action_button(
+                            "Vérifier le prêt sans réemprunter",
+                            "view-refresh-symbolic",
+                        )
+                        verify.set_name("cifereca-paris-borrow-followup")
+                        verify.connect(
+                            "clicked",
+                            lambda _b: self.window.borrow_search_item(item, verify),
+                        )
+                        self._actions([verify])
                 row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)

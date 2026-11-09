@@ -1689,17 +1689,40 @@ class MainWindow(Adw.ApplicationWindow):
         # #2055: the historic session.borrow() path must NEVER be used for
         # BnF. Source-specific consent and a durable Core claim are required.
         if getattr(item, "source_provider", None) == "bnf-pret":
+            if (control is not None
+                    and callable(getattr(control, "get_name", None))
+                    and control.get_name() == "cifereca-paris-borrow-followup"):
+                return
             from .bnf_borrow_controller import present_bnf_borrow
             present_bnf_borrow(
                 self, item, control, Adw=Adw, TaskPriority=TaskPriority,
             )
             return
+        # Preserve the required initial BnF guard above and the stable
+        # MainWindow method signature. A forged widget name can only request
+        # read-only verification, never authorize a provider borrow.
+        verification_only = (
+            control is not None
+            and callable(getattr(control, "get_name", None))
+            and control.get_name() == "cifereca-paris-borrow-followup"
+        )
         if getattr(item, "source_provider", None) == "paris":
-            from .bnf_borrow_controller import present_paris_borrow
-            present_paris_borrow(
-                self, item, control, Adw=Adw, TaskPriority=TaskPriority, account=account,
+            # One established provider routing import; the read-only branch
+            # is segregated from the one permitted mutating borrower call.
+            from .bnf_borrow_controller import (
+                present_paris_borrow, present_paris_borrow_verification,
             )
+            if verification_only:
+                present_paris_borrow_verification(
+                    self, item, control, TaskPriority=TaskPriority,
+                )
+            else:
+                present_paris_borrow(
+                    self, item, control, Adw=Adw, TaskPriority=TaskPriority, account=account,
+                )
             return
+        if verification_only:
+            return  # Never transform a follow-up click into another provider borrow.
         try:
             session, accounts = self._eligible_borrow_accounts(item)
         except Exception as exc:
