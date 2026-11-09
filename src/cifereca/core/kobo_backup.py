@@ -1933,6 +1933,13 @@ def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | 
     states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
     existing reconciliation safeguards still prevent duplicate redownloads.
     """
+    # P0 #4858: W2 is retired as an execution authority. A legacy 0.7
+    # manifest/checkpoint cannot authorize a GET, a retry or a successful B.
+    # Source delivery must use the canonical provider ABI; missing or partial
+    # ABI is an explicit refusal, never a fallback to the Kobo executor.
+    # Keep the historical readers available for diagnostic-only inspection.
+    raise ProviderConfigurationError("kobo_legacy_w2_retired_use_canonical_provider")
+
     # The confirmed broker path already refreshed/validated this exact manifest
     # under the acquisition lock. Never broaden it with another provider read,
     # a global catalogue scan, remnant recovery or authoritative pruning.
