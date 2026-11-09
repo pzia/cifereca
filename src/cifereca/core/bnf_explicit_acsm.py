@@ -11,6 +11,7 @@ from ..models import Loan
 from ..plugin_api import ProviderConfigurationError, ProviderError
 from .diagnostic_bnf_loan_action import BnfLoanActionError, provider_reason
 from .loan_action_scope import capture_loan_action_scope
+from .selected_offer_scope import selected_offer_scope_matches
 
 from .loan_acsm_token_validation import (
     MAX_LOAN_TOKEN_BYTES as _MAX_BYTES,
@@ -109,13 +110,13 @@ def stage_bnf_loan_acsm(
                     account, edition_id=loan.record_id, right_id=loan.id,
                     kind="loan", branch="bnf_html", explicit_user_action=True,
                 )
-                scope = selected.scope
                 right = selected.exact(loan.record_id, loan.id, "loan")
-                if (scope.identity_id != expected_identity_id
-                        or scope.provider_id != loan.source_provider
-                        or scope.credential_id != loan.source_credential
-                        or scope.account_id != loan.source_account_id
-                        or selected.branch != "bnf_html"
+                if (not selected_offer_scope_matches(
+                        selected, identity_id=expected_identity_id,
+                        provider_id=loan.source_provider,
+                        credential_id=loan.source_credential,
+                        account_id=loan.source_account_id, branch="bnf_html",
+                    )
                         or right is None
                         or right.provider_attested is not True
                         or right.delivery_attested is not True
