@@ -78,6 +78,8 @@ class PluginDescriptor:
     requires_services: tuple[str, ...] = ()
     requires_brokers: tuple[str, ...] = ()
     requires_contracts: tuple[ContractRequirement, ...] = ()
+    # Optional versioned manifest contribution: read-only GUI text, no permissions.
+    ui_usage_hint: str = ""
 
 
 @dataclass(frozen=True, slots=True)

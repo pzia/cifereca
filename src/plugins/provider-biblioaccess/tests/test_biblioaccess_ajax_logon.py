@@ -174,3 +174,28 @@ def test_ajax_reported_success_without_errors_key_remains_unverified():
     assert not observation.cas_completed
     assert not observation.identity_verified
     assert "SYNTHETIC-OPAQUE" not in repr(observation)
+
+
+@pytest.mark.parametrize(("payload", "count", "message"), [
+    (b'{"success":false,"errors":["SYNTHETIC-A","SYNTHETIC-B"],"message":"OPAQUE"}', 2, True),
+    (b'{"success":false,"errors":[],"message":null}', 0, False),
+    (b'{"success":true,"errors":{"secret":"SYNTHETIC"}}', None, False),
+    (b'{"success":false,"message":"OPAQUE"}', 0, True),
+])
+def test_ajax_json_structural_diagnostic_never_exposes_values(payload, count, message):
+    observed = mod.inspect_ajax_response(
+        status=200, mime="application/json", data=payload)
+    assert observed.error_count == count
+    assert observed.message_present is message
+    assert "OPAQUE" not in repr(observed)
+    assert "SYNTHETIC-A" not in repr(observed)
+    assert not observed.core_connected and not observed.identity_verified
+
+
+def test_json_reported_error_count_is_bounded():
+    import json
+    payload = json.dumps({"success": False, "errors": ["SYNTHETIC"] * 120}).encode()
+    observed = mod.inspect_ajax_response(
+        status=200, mime="application/json", data=payload)
+    assert observed.error_count == 99
+    assert "SYNTHETIC" not in repr(observed)

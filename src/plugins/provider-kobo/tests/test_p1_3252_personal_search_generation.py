@@ -2,10 +2,11 @@
 
 Synthetic catalogue rows only; no real HTTP, acquisitions, files or Core work.
 """
+from dataclasses import replace
 from types import SimpleNamespace as NS
 
 import pytest
-from cifereca.plugin_api import Account, ProviderError
+from cifereca.plugin_api import Account, ProviderError, SearchResult
 from tests.test_p1_3252_inflight_personal_manifest import FakeVault, _session
 
 
@@ -14,6 +15,17 @@ def _row(*, private=True):
         title="Synthetic Kobo", metadata={"account_id": "alice"} if private else {},
         source_collection="library" if private else "catalog",
         owned=private, downloadable=False, thumbnail_url=None,
+    )
+
+
+def _typed_book(session, record_id):
+    # This plugin's tests are installed independently of Core's tests package.
+    return SearchResult(
+        id=f"kobo:{record_id}", record_id=record_id, docbase="KOBO",
+        medium="digital", title="Synthetic Kobo", author=None, type="ebook",
+        format="epub", publisher=None, published_at=None, description=None,
+        thumbnail_url=None, friendly_url=None, scenario="KOBO",
+        source_provider="kobo", source_credential=session.credential_id,
     )
 
 
@@ -88,6 +100,41 @@ def test_stable_personal_search_returns_only_same_account_book():
         assert results[0].owned is True
         assert results[1].source_collection == "catalog"
         assert calls == [{"field": "all", "limit": 50, "page": 0}]
+    finally:
+        session.close()
+
+
+def test_typed_personal_kobo_search_receives_exact_account_without_public_leak():
+    session = _session(FakeVault([]))
+    owned = replace(
+        _typed_book(session, "purchase-17"), source_collection="library",
+        owned=True, metadata={"account_id": "alice"},
+    )
+    public = replace(
+        _typed_book(session, "catalog-42"), source_collection="catalog",
+        owned=False, metadata={},
+    )
+    _catalog(session, lambda *_a, **_kw: [owned, public])
+    try:
+        rows = session.search("synthetic", scope="all")
+        assert len(rows) == 2
+        assert rows[0].source_account_id == "alice"
+        assert rows[0] is not owned  # source row is never mutated
+        assert rows[1].source_account_id is None
+        assert rows[1] is public
+    finally:
+        session.close()
+
+
+def test_typed_kobo_row_claiming_foreign_account_is_not_relabelled_as_owned():
+    session = _session(FakeVault([]))
+    tampered = replace(
+        _typed_book(session, "purchase-42"), source_collection="library", owned=True,
+        source_account_id="bob", metadata={},
+    )
+    _catalog(session, lambda *_a, **_kw: [tampered])
+    try:
+        assert session.search("synthetic", scope="all") == []
     finally:
         session.close()
 

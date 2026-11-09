@@ -195,4 +195,131 @@ def present_paris_borrow(window, item, control, *, Adw, TaskPriority, account=No
     )
 
 
-__all__ = ["present_bnf_borrow", "present_paris_borrow"]
+def present_paris_borrow_verification(window, item, control, *, TaskPriority):
+    """Explicit read-only follow-up: no borrow dispatch or claim mutation.
+
+    The controller never sees or displays the persisted operation_id. It
+    preserves the same exact notice/account/UI generation constraints as the
+    original borrower action, including across queued GTK callbacks.
+    """
+    if (getattr(window, "_closed", False)
+            or type(item) is not SearchResult
+            or item.docbase != "DILICOM"
+            or item.medium != "digital"
+            or not window.service.paris_borrow_followup_available(item)
+            or getattr(window, "_manual_borrow_pending", None) is not None
+            or getattr(window, "_paris_borrow_followup_pending", None) is not None):
+        return
+    try:
+        session, candidates = window._eligible_borrow_accounts(item)
+        if len(candidates) != 1:
+            return
+        account = candidates[0]
+        if (type(account) is not Account or account.is_primary is not True
+                or account.unique_id != ""
+                or sum(a is account for a in window.service.accounts) != 1):
+            return
+    except Exception:
+        return
+    identity_id = account.identity_id
+    identity_gen = getattr(window, "_identity_context_generation", None)
+    account_gen = getattr(window, "_account_context_generation", None)
+    core_epoch = getattr(window.service, "_account_context_epoch", None)
+    selection = getattr(window, "_selected_search_id", None)
+    detail_gen = getattr(window, "_search_detail_request_generation", None)
+    source_epoch = getattr(session, "_epoch", None)
+    original_scope = (
+        item.id, item.record_id, item.docbase, item.medium,
+        item.source_provider, item.source_credential,
+        item.source_collection, item.title,
+    )
+    account_scope = (
+        account.identity_id, account.provider_id, account.credential_id,
+        account.unique_id, account.is_primary,
+    )
+    if type(core_epoch) is not int or not identity_id:
+        return
+    selected = copy(item)
+
+    def current() -> bool:
+        try:
+            return (
+                not getattr(window, "_closed", False)
+                and window._identity_context_generation == identity_gen
+                and window._account_context_generation == account_gen
+                and window.service._account_context_epoch == core_epoch
+                and window._selected_search_id == selection
+                and window._search_detail_request_generation == detail_gen
+                and getattr(window.service.current_identity, "identity_id", None) == identity_id
+                and session.connected is True
+                and getattr(session, "_epoch", None) == source_epoch
+                and window.service._session_for_source(
+                    "paris", account.credential_id,
+                ) is session
+                and sum(a is account for a in window.service.accounts) == 1
+                and (account.identity_id, account.provider_id,
+                     account.credential_id, account.unique_id,
+                     account.is_primary) == account_scope
+                and (item.id, item.record_id, item.docbase, item.medium,
+                     item.source_provider, item.source_credential,
+                     item.source_collection, item.title) == original_scope
+                and window.service.paris_borrow_followup_available(selected)
+            )
+        except Exception:
+            return False
+
+    if not current():
+        return
+    token = object()
+    window._paris_borrow_followup_pending = token
+
+    def release():
+        if getattr(window, "_paris_borrow_followup_pending", None) is token:
+            window._paris_borrow_followup_pending = None
+
+    def work():
+        if not current():
+            return {"status": "blocked", "retry_borrow": False, "mutated": False}
+        return window.service.verify_paris_borrow_followup(selected)
+
+    def done(result):
+        release()
+        if not current():
+            return
+        if (type(result) is dict and result.get("status") == "observed_current_loan"
+                and result.get("retry_borrow") is False
+                and result.get("mutated") is False):
+            window._activity_result(
+                "Prêt Paris désormais observé ; demande initiale non rejouée"
+            )
+            window.refresh_loans(True)
+        else:
+            window.show_error(
+                "Le prêt Paris n’est pas encore confirmé par une observation "
+                "complète de ce compte. Ne réempruntez pas : actualisez "
+                "ultérieurement vos prêts.",
+                "Vérification de prêt Paris",
+            )
+
+    def failed(_error):
+        release()
+        if current():
+            window.show_error(
+                "La vérification du prêt Paris est indisponible. "
+                "Aucune nouvelle demande n’a été envoyée ; ne réempruntez pas.",
+                "Vérification de prêt Paris",
+            )
+
+    try:
+        window.runner.submit(
+            "Vérification du prêt Paris…", work, done, failed,
+            control=control, priority=TaskPriority.USER_ACTION,
+            kind="borrow-verification", origin="user",
+        )
+    except Exception:
+        release()
+        raise
+
+
+__all__ = ["present_bnf_borrow", "present_paris_borrow",
+           "present_paris_borrow_verification"]

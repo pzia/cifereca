@@ -106,7 +106,11 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
         ))
         add_css(name, "flat", "book-title"); head.append(name)
         sync = card.get("sync") or {}
-        badge = Gtk.Label(label=window._sync_status_label(sync.get("status"))); add_css(badge, "badge"); head.append(badge)
+        # A missing run is not evidence that this profile has never synced.
+        # It can mean the current startup has not refreshed its old history.
+        sync_label = (window._sync_status_label(sync.get("status"))
+                      if sync else "Non actualisée")
+        badge = Gtk.Label(label=sync_label); add_css(badge, "badge"); head.append(badge)
         box.append(head)
         stats=card.get('statistics') or {}
         if stats:

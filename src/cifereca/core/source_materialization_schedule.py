@@ -7,6 +7,8 @@ No provider, file or ADEPT request is made when evaluating the policy.
 from __future__ import annotations
 
 from typing import Any
+
+from .legacy_source_account_id import ambiguous_legacy_source_account_id
 import time
 
 _PREFIX = "sync.source.materialization.on_start."
@@ -50,10 +52,7 @@ def _configured_binding(service: Any, account: Any) -> bool:
             # aliases the primary's saved on_start ON bit after account swap.
             or (upstream_id == ""
                 and getattr(account, "is_primary", None) is not True)
-            or (upstream_id and (
-                upstream_id != upstream_id.strip()
-                or upstream_id == f"kobo:{credential}:primary"
-            ))):
+            or ambiguous_legacy_source_account_id("kobo", credential, upstream_id)):
         return False
     # Kobo acquisition is credential-scoped. Two account records sharing the
     # credential cannot safely be materialized as one identity/account.

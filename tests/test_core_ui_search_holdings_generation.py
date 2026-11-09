@@ -34,7 +34,7 @@ def _host():
               *methods], type_ignores=[],
     ))
     from cifereca.gui.search_detail_context import detail_callback_is_current
-    env = {"result_row": lambda item: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1, METADATA=3), "detail_callback_is_current": detail_callback_is_current}
+    env = {"result_row": lambda item, **_kwargs: {"item_id": item.id}, "TaskPriority": NS(USER_ACTION=1, METADATA=3), "detail_callback_is_current": detail_callback_is_current}
     exec(compile(compiled, str(MAIN), "exec"), env)
 
     class Runner:

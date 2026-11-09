@@ -1,4 +1,6 @@
 """#4552: Core checks plugin output *without executing* plugin code."""
+from dataclasses import replace
+
 import pytest
 
 from cifereca.core.notice_consolidation_inputs import admit_descriptive_facts
@@ -152,3 +154,29 @@ def test_reference_order_is_normalized_without_promoting_other_source():
     expected = tuple(sorted(refs))
     assert validate(result(refs=refs), admitted=admitted).source_evidence_keys == expected
     assert validate(result(refs=refs[::-1]), admitted=admitted).source_evidence_keys == expected
+
+
+def test_forged_exact_bucket_cannot_attest_a_foreign_edition():
+    admitted = context(with_related=False)
+    foreign = replace(admitted.exact[0], edition_id="isbn:foreign-edition")
+    forged = replace(admitted, exact=(foreign,))
+    # The result references the forged DTO's key: membership alone used to
+    # accept it even though the fact is not exact for the target edition.
+    proposed = result(refs=((foreign.source_id, foreign.edition_id, foreign.evidence_id),))
+    with pytest.raises(ValueError, match="invalid_lineage_fact"):
+        validate(proposed, admitted=forged)
+
+
+def test_forged_inherited_bucket_without_strong_proof_is_rejected():
+    admitted = context(with_exact=False)
+    forged_fact = replace(admitted.inherited[0], relation_proof_id=None)
+    forged = replace(admitted, inherited=(forged_fact,))
+    with pytest.raises(ValueError, match="invalid_lineage_fact"):
+        validate(result(refs=(LINKED,), inherited=True), admitted=forged)
+
+
+def test_empty_output_does_not_bypass_invalid_admitted_lineage():
+    admitted = context(with_related=False)
+    forged = replace(admitted, exact=(replace(admitted.exact[0], inherited=True),))
+    with pytest.raises(ValueError, match="invalid_lineage_fact"):
+        validate(None, admitted=forged)

@@ -15,7 +15,7 @@ from gi.repository import Gtk, Adw
 
 from ..models import Loan
 from ..core.loan_source_identity import loan_source_key, unambiguous_loan_rows
-from ..core.loan_cover_fallback import loan_local_cover
+from ..core.loan_cover_fallback import loan_local_cover, materialized_loan_cover_rows
 from .book_widgets import BookListItem
 from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_due_presentation, loan_medium_counts, loan_row_metadata
 from .master_detail import MasterDetailPage
@@ -209,7 +209,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         if any(type(loan) is Loan and loan.identity_id == identity_id
                and not loan.thumbnail_url for loan in rows):
             try:
-                cover_rows = tuple(
+                cover_rows = materialized_loan_cover_rows(
                     self.service.library_entries(identity_id=identity_id, scan=False)
                 )
             except (OSError, RuntimeError, ValueError):

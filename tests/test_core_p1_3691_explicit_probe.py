@@ -92,3 +92,54 @@ def test_disabled_account_not_queried():
             service, identity_id="alice", provider_id="synthetic",
             credential_id="credential", user_consent=True)
     plugin.create_session.assert_not_called()
+
+
+def test_one_click_can_test_an_off_account_without_enabling_background_sync():
+    """One-shot consent is not a write to the persisted source options."""
+    service, plugin, session = rig()
+    plugin.descriptor.background_authentication_option_key = "authenticated_sync"
+    plugin.descriptor.account_options = (SimpleNamespace(key="authenticated_sync"),)
+    persisted = {
+        "id": "credential", "provider": "synthetic", "identity_id": "alice",
+        "enabled": True, "credentials": {
+            "username": "PRIVATE-USER", "password": "PRIVATE-PASS",
+        },
+        "options": {"authenticated_sync": "off", "experimental_http_probe": "off"},
+    }
+    service.config.provider_accounts = lambda enabled_only=False: [persisted]
+
+    def connected_once():
+        session.connected = True
+        session.accounts = [
+            SimpleNamespace(provider_id="synthetic", credential_id="credential")
+        ]
+        return session.accounts
+    session.connect.side_effect = connected_once
+
+    result = run_explicit_provider_probe(
+        service, identity_id="alice", provider_id="synthetic",
+        credential_id="credential", user_consent=True,
+    )
+    assert result.status == "connected_ephemeral"
+    assert result.connected is True
+    assert result.reason == "provider_connection_test_succeeded_ephemeral"
+    assert plugin.create_session.call_args.kwargs["options"]["authenticated_sync"] == "on"
+    assert persisted["options"]["authenticated_sync"] == "off"
+    assert persisted["options"]["experimental_http_probe"] == "off"
+    assert service._sessions == {}
+    session.close.assert_called_once()
+    assert "PRIVATE" not in repr(result)
+
+
+def test_declared_background_key_missing_never_invents_one_shot_consent():
+    service, plugin, session = rig()
+    plugin.descriptor.background_authentication_option_key = "not_declared"
+    plugin.descriptor.account_options = (SimpleNamespace(key="something_else"),)
+    run_explicit_provider_probe(
+        service, identity_id="alice", provider_id="synthetic",
+        credential_id="credential", user_consent=True,
+    )
+    passed = plugin.create_session.call_args.kwargs["options"]
+    assert "not_declared" not in passed
+    assert passed == {"experimental_http_probe": "on"}
+    session.close.assert_called_once()

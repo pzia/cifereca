@@ -76,7 +76,7 @@ def walk(widget):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--width", required=True, type=int, choices=(960, 1280, 1300, 1366, 1600))
+    parser.add_argument("--width", required=True, type=int, choices=(960, 1280, 1300, 1366, 1600, 1700))
     parser.add_argument("--geometry-1300", action="store_true", help="UX #611: measure native X11 position, shell and both split views at exact 1300×768")
     parser.add_argument("--component-contracts", action="store_true", help="P0 #1124/#1125: real widget lifecycle, summaries, overflow and stable selection")
     parser.add_argument("--short-component-actions", action="store_true", help="Reproduce the pre-existing boundary overflow case with eight shorter labels")
@@ -648,9 +648,15 @@ def main():
         access = [node for node in walk(panel("library").content)
                   if isinstance(node, Adw.PreferencesGroup) and node.get_title() == "Bibliothèques et accès"]
         assert len(access) == 1
-        facts = [node.get_subtitle() for node in walk(access[0]) if isinstance(node, Adw.ActionRow)]
-        assert any("Achat possédé en ligne" in value for value in facts)
-        assert not any("Fichier local :" in value for value in facts)
+        facts = [(node.get_title(), node.get_subtitle())
+                 for node in walk(access[0]) if isinstance(node, Adw.ActionRow)]
+        # #4682: entitlement kind is a typed row heading, not a raw
+        # paragraph in the subtitle. Preserve the exact positive/right
+        # and no-local-file checks after rendering separate profile cards.
+        assert any(kind.strip() == "Achat possédé en ligne" and bool(value.strip())
+                   for kind, value in facts)
+        assert not any(kind.strip() == "Fichier local"
+                       or "Fichier local :" in value for kind, value in facts)
         buttons = [node for node in walk(panel("library"))
                    if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_id", "") == ("resume-index-numilog" if owned_action["resume"] else "download-owned-" + owned_action["provider"])]
         assert len(buttons) == 1, "Action individuelle du livre possédé absente"

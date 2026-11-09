@@ -665,3 +665,18 @@ def test_p0_no_loan_statement_requires_canonical_capability_evidence():
     for node, (_row, should_say_none) in zip(window.dashboard_cards.children, cases):
         labels = _descendant_labels(node)
         assert any("aucune source de prêt configurée" in label for label in labels) is should_say_none
+
+
+def test_dashboard_unknown_current_sync_is_not_historic_failure_or_never_synced():
+    cards = [_card("alice", sync=None), _card("bob", sync={
+        "status": "partial", "errors": 2, "attention_required": 0,
+    })]
+    window, _events, _diagnostics, _styles, render = _window(cards)
+    render()
+    alice, bob = window.dashboard_cards.children
+    alice_labels = _descendant_labels(alice)
+    bob_labels = _descendant_labels(bob)
+    assert "Non actualisée" in alice_labels
+    assert "À actualiser" in bob_labels
+    assert not any("Erreurs : 2" in label for label in alice_labels)
+    assert "Nouvelles acquisitions : 0 · Actions : 0 · Erreurs : 2" in bob_labels

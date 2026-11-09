@@ -19,7 +19,8 @@ from biblioaccess_observations import (
     _parts, classify_search_response, extract_catalogue_links, search_summary_url,
 )
 
-MAX_PAGES = 3
+MAX_PAGES = 3  # Legacy bounded multi-page diagnostic.
+MAX_PAGE_INDEX = 100  # Public UI page requests, zero-indexed.
 
 
 class CatalogueHTTPError(ValueError):
@@ -35,6 +36,7 @@ class CatalogueSearchObservation:
     authenticated: bool = False
     entitlements_verified: bool = False
     book_urls: tuple[tuple[str, str], ...] = ()
+    book_titles: tuple[tuple[str, str], ...] = ()
 
 
 def _checked_search_url(url: str, query: str, *, page: int | None = None) -> None:
@@ -114,7 +116,32 @@ class BiblioAccessCatalogueHTTP:
             self._last_book_urls = dict(result.book_urls)
             return result
 
-    def _search_locked(self, summary, query, max_pages):
+    def search_page(self, query: str, *, page: int = 0) -> CatalogueSearchObservation:
+        """Read the requested zero-indexed page using upstream next-links.
+
+        Keep each page's IDs separate. The upstream navigation is a linked
+        pager, so reaching page N may require N preceding GETs; no title
+        pages or results are invented if the chain ends early.
+        """
+        if type(page) is not int or not 0 <= page <= MAX_PAGE_INDEX:
+            raise CatalogueHTTPError("catalogue_page_limit")
+        try:
+            summary = search_summary_url(query)
+        except ValueError:
+            raise CatalogueHTTPError("catalogue_invalid_query") from None
+        normalized_query = parse_qs(urlsplit(summary).query)["query"][0]
+        with self._lock:
+            if self._closed:
+                raise CatalogueHTTPError("catalogue_client_closed")
+            self._last_search_ids = frozenset()
+            self._last_book_urls = {}
+            result = self._search_locked(
+                summary, normalized_query, page + 1, target_page=page)
+            self._last_search_ids = frozenset(result.book_ids)
+            self._last_book_urls = dict(result.book_urls)
+            return result
+
+    def _search_locked(self, summary, query, max_pages, *, target_page=None):
         try:
             with self.http.stream(
                 "GET", summary, follow_redirects=False,
@@ -137,6 +164,7 @@ class BiblioAccessCatalogueHTTP:
             _checked_search_url(target, query)
             seen = set()
             book_urls = {}
+            book_titles = {}
             page_count = 0
             expected_page = None
             while page_count < max_pages:
@@ -154,21 +182,29 @@ class BiblioAccessCatalogueHTTP:
                         }.get(page.status_code, "catalogue_page_unavailable"))
                     html = _read_html(page)
                 links = extract_catalogue_links(target, html)
-                seen.update(links.book_ids)
-                for ident, detail_url in links.book_urls:
-                    book_urls.setdefault(ident, detail_url)
+                if target_page is None or page_count == target_page:
+                    seen.update(links.book_ids)
+                    for ident, detail_url in links.book_urls:
+                        book_urls.setdefault(ident, detail_url)
+                    for ident, title in links.book_titles:
+                        book_titles.setdefault(ident, title)
                 page_count += 1
                 if links.next_page_url is None:
                     return CatalogueSearchObservation(
-                        tuple(sorted(seen)), page_count, "page_read_unverified",
-                        book_urls=tuple(sorted(book_urls.items())))
+                        tuple(sorted(seen)), page_count,
+                        ("page_out_of_range_unverified"
+                         if target_page is not None and page_count <= target_page
+                         else "page_read_unverified"),
+                        book_urls=tuple(sorted(book_urls.items())),
+                        book_titles=tuple(sorted(book_titles.items())))
                 current = parse_qs(urlsplit(target).query)
                 expected_page = int(current.get("pageindex", ["0"])[0]) + 1
                 _checked_search_url(links.next_page_url, query, page=expected_page)
                 target = links.next_page_url
             return CatalogueSearchObservation(
                 tuple(sorted(seen)), page_count, "page_budget_exhausted",
-                book_urls=tuple(sorted(book_urls.items())))
+                book_urls=tuple(sorted(book_urls.items())),
+                book_titles=tuple(sorted(book_titles.items())))
         except httpx.HTTPError:
             raise CatalogueHTTPError("catalogue_transport_unavailable") from None
 

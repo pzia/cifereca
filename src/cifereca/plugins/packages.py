@@ -9,18 +9,30 @@ import stat
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Iterable
 
 from packaging.version import Version
 
 from cifereca.paths import data_dir
+from cifereca.core.plugin_package_mutation_lock import package_mutation_lease
 
 from .errors import PackageInstallError
 from .manifest import MANIFEST_FILENAME, PluginPackageManifest, load_manifest
 
 MAX_FILES = 5000
 MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+
+
+def _synchronized_package_write(operation):
+    """Package-root-specific write lease, including activation pointers."""
+    @wraps(operation)
+    def wrapped(self, *args, **kwargs):
+        store = self.store if hasattr(self, "store") else self
+        with package_mutation_lease(store.root):
+            return operation(self, *args, **kwargs)
+    return wrapped
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +101,7 @@ class PackageStore:
             return active
         return None
 
+    @_synchronized_package_write
     def set_active(self, package_id: str, version: str) -> None:
         target = self.version_root(package_id, version)
         if not target.is_dir():
@@ -101,6 +114,7 @@ class PackageStore:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         tmp.replace(path)
 
+    @_synchronized_package_write
     def rollback(self, package_id: str) -> str:
         pointer = self.pointer(package_id)
         previous = pointer.get("previous")
@@ -207,6 +221,7 @@ class PackageInstaller:
         from .manifest import parse_manifest
         return parse_manifest(value)
 
+    @_synchronized_package_write
     def install(self, archive: Path, *, activate: bool = True, replace: bool = False) -> InstalledPackage:
         archive = Path(archive)
         manifest = self.inspect(archive)
@@ -267,6 +282,7 @@ class PackageInstaller:
             self.store.set_active(package_id, version)
         return self.store.load(package_id, version)
 
+    @_synchronized_package_write
     def uninstall_version(self, package_id: str, version: str) -> None:
         target = self.store.version_root(package_id, version)
         if not target.exists():

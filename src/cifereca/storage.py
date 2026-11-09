@@ -3794,7 +3794,10 @@ class Storage:
         sql = "SELECT " + ",".join(cols) + " FROM sync_runs"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY started_at DESC LIMIT ?"
+        # Preserve the most recently inserted run when two executions share
+        # one-second timestamps. Without this tie breaker an old baseline
+        # can hide a fresh running/partial opening run indefinitely.
+        sql += " ORDER BY started_at DESC, rowid DESC LIMIT ?"
         args.append(max(1, int(limit)))
         with self._lock, self._connect() as db:
             rows = db.execute(sql, tuple(args)).fetchall()
@@ -4802,12 +4805,29 @@ class Storage:
             row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(row)
         return out
 
-    def acquisition_bind_bnf_display_loan(self, acquisition_id: str, *, path: str,
-                                          artifact_id: str, scope: dict[str, str]) -> bool:
-        """Atomically retain one manual import's observed borrower, not a right."""
-        from .core.bnf_import_provenance import scope_key
+    def acquisition_bind_observed_display_loan(
+        self, acquisition_id: str, *, path: str, artifact_id: str,
+        scope: dict[str, str], placement_provider_id: str,
+        provenance_field: str,
+    ) -> bool:
+        """Core-owned CAS: link a manual import to a *display-only* loan.
+
+        A matching indexed placement is not proof of an upstream entitlement,
+        a license, a provider receipt or authorization to download.
+        """
+        from .core.observed_loan_scope import scope_key
+        from .core.provider_identifier import valid_provider_identifier
+        import re
         key = scope_key(scope)
-        if key is None:
+        if (key is None
+                or type(acquisition_id) is not str or not acquisition_id
+                or type(path) is not str or not path or "\0" in path
+                or type(artifact_id) is not str
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_id) is None
+                or not valid_provider_identifier(placement_provider_id)
+                or type(provenance_field) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_]{0,60}_observed_loan",
+                                provenance_field) is None):
             return False
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -4820,19 +4840,34 @@ class Storage:
             if row is None:
                 return False
             metadata = self._json_load(row[0])
-            if metadata.get('path') != path or metadata.get('bnf_observed_loan', scope) != scope:
+            if (type(metadata) is not dict
+                    or metadata.get('path') != path
+                    or metadata.get(provenance_field, scope) != scope):
                 return False
             placement = db.execute(
                 "SELECT 1 FROM placements WHERE path=? AND artifact_id=? AND identity_id=? "
-                "AND provider_id='bnf-pret' AND state='present'",
-                (path, artifact_id, key[0]),
+                "AND provider_id=? AND state='present'",
+                (path, artifact_id, key[0], placement_provider_id),
             ).fetchone()
             if placement is None:
                 return False
-            metadata['bnf_observed_loan'] = dict(scope)
-            db.execute("UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
-                       (self._json_dump(metadata), acquisition_id))
+            metadata[provenance_field] = dict(scope)
+            db.execute(
+                "UPDATE acquisition_ledger SET metadata_json=? WHERE acquisition_id=?",
+                (self._json_dump(metadata), acquisition_id),
+            )
             return True
+
+    def acquisition_bind_bnf_display_loan(
+        self, acquisition_id: str, *, path: str,
+        artifact_id: str, scope: dict[str, str],
+    ) -> bool:
+        """Legacy BnF compatibility facade; no provider-specific SQL."""
+        return self.acquisition_bind_observed_display_loan(
+            acquisition_id, path=path, artifact_id=artifact_id, scope=scope,
+            placement_provider_id='bnf-pret',
+            provenance_field='bnf_observed_loan',
+        )
 
     def acquisition_update_state(
         self,

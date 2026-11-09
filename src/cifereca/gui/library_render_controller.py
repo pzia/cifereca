@@ -155,8 +155,14 @@ def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_cou
     if items is None:
         items = list(window._recent_entries_cache)
     window._recent_entries_cache = list(items)
+    # Headless timing/GC probes have no service. Real windows still inject
+    # the provider descriptor; no synthetic service or provider I/O is needed.
+    provider_display_name = getattr(
+        getattr(window, "service", None), "provider_display_name", None,
+    )
     rows, window._recent_objects = project_recent_rows(
         items, row_factory=BookListItem,
+        provider_display_name=provider_display_name,
     )
     if phase is not None:
         phase("row_projection")
