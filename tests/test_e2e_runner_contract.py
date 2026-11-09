@@ -21,7 +21,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     runner = _module()
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
     assert [name for name, _ in runner.select(None, "core")] == [
-        "search-filter-p0", "search-filter-1024", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600",
+        "search-filter-p0", "search-filter-1024", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728",
@@ -150,14 +150,14 @@ def test_1358_maintenance_safety_uses_real_GTK_XTEST_without_destructive_IO():
 
 def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
     runner = _module()
-    for width in (960, 1280, 1366, 1600):
+    for width in (960, 1280, 1366, 1600, 1700):
         scenario = runner.SCENARIOS[f"book-detail-{width}"]
         assert scenario["plugin"] == "core"
         assert scenario["fixture"] == "search-filters"
         assert scenario["runner"] == "gtk-detail"
         assert scenario["width"] == width
-    assert [n for n, _ in runner.select(None, "core")][:7] == [
-        "search-filter-p0", "search-filter-1024", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600",
+    assert [n for n, _ in runner.select(None, "core")][:8] == [
+        "search-filter-p0", "search-filter-1024", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700",
     ]
     source = (ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8")
     for marker in (
