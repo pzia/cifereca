@@ -59,6 +59,7 @@ def _version_refs(tx: dict[str, Any]) -> set[str]:
 
 def inspect_transaction_plugin_references(
     runtime_root: Path, plugin_version_plan: dict[str, Any] | None,
+    *, core_transaction_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Observe a bounded reference edge subset; **always** no-apply.
 
@@ -71,7 +72,31 @@ def inspect_transaction_plugin_references(
     folder = root / "transactions"
     blockers: set[str] = {"cross_store_other_edges_unqualified"}
     refs: set[str] = set()
+    retained_refs: set[str] = set()
+    candidate_refs: set[str] = set()
     transactions_seen = 0
+    # Only the Core retention plan can classify retained transactions.
+    decisions: dict[str, str] = {}
+    classified = core_transaction_plan is not None
+    if classified:
+        rows = core_transaction_plan.get("objects") if type(core_transaction_plan) is dict else None
+        if type(rows) is not list or len(rows) > _MAX_TX * 4:
+            classified = False
+        else:
+            for row in rows:
+                if type(row) is not dict:
+                    classified = False
+                    break
+                key, decision = row.get("object_id"), row.get("decision")
+                if type(key) is not str or not re.fullmatch(r"transaction:[a-f0-9]{64}", key):
+                    continue
+                if decision not in ("retain", "candidate") or key in decisions:
+                    classified = False
+                    break
+                decisions[key] = decision
+        if not classified:
+            blockers.add("core_transaction_retention_unqualified")
+
     if (any(node.is_symlink() for node in (root, *root.parents))
             or folder.is_symlink()
             or (root.exists() and not root.is_dir())
@@ -105,7 +130,17 @@ def inspect_transaction_plugin_references(
             tx = _read_transaction_for_inspection(entry)
             if tx.get("id") != entry.name:
                 raise ValueError("transaction_id_mismatch")
-            refs.update(_version_refs(tx))
+            tx_refs = _version_refs(tx)
+            refs.update(tx_refs)
+            transaction_key = "transaction:" + sha256(entry.name.encode("utf-8")).hexdigest()
+            decision = decisions.get(transaction_key) if classified else None
+            if classified and decision is None:
+                classified = False
+                blockers.add("core_transaction_retention_unqualified")
+            elif decision == "retain":
+                retained_refs.update(tx_refs)
+            elif decision == "candidate":
+                candidate_refs.update(tx_refs)
             transactions_seen += 1
         except (OSError, UnicodeError, ValueError, TypeError):
             complete = False
@@ -140,6 +175,12 @@ def inspect_transaction_plugin_references(
                     blockers.add("plugin_reference_ownership_unqualified")
                     continue
                 known_ids.add(value)
+    if classified and len(decisions) != transactions_seen:
+        classified = False
+        blockers.add("core_transaction_retention_unqualified")
+    if not classified:
+        retained_refs.clear()
+        candidate_refs.clear()
     missing = refs - known_ids
     if missing:
         blockers.add("transaction_plugin_version_missing")
@@ -151,5 +192,10 @@ def inspect_transaction_plugin_references(
         "plugin_version_edges": len(refs),
         "resolved_edges": len(refs & known_ids),
         "unresolved_edges": len(missing),
+        "retention_edges_qualified": classified and complete,
+        "retained_transaction_plugin_edges": len(retained_refs) if classified and complete else None,
+        "resolved_retained_edges": len(retained_refs & known_ids) if classified and complete else None,
+        "unresolved_retained_edges": len(retained_refs - known_ids) if classified and complete else None,
+        "candidate_transaction_plugin_edges": len(candidate_refs) if classified and complete else None,
         "blockers": sorted(blockers),
     }
