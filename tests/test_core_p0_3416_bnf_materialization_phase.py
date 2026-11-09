@@ -115,6 +115,6 @@ def test_loan_phase_flag_is_append_only_and_default_false():
     from dataclasses import fields
     from cifereca.providers import ProviderCapabilities
     names = [field.name for field in fields(ProviderCapabilities)]
-    assert names[-2:] == ["loan_auto_materialization", "local_materialization"]
+    assert names[-3:] == ["loan_auto_materialization", "local_materialization", "legacy_materialization_checkpoint"]
     assert ProviderCapabilities().loan_auto_materialization is False
     assert ProviderCapabilities().local_materialization is False
