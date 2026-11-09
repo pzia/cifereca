@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-def _commercial_search_usage(item: SearchResult, service=None) -> str:
+def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evidence=None) -> str:
     """Read-only commercial scope; a public notice never proves ownership.
 
     For Kobo, consult only Core's persisted, identity-scoped entitlement
@@ -40,7 +40,12 @@ def _commercial_search_usage(item: SearchResult, service=None) -> str:
     if item.source_provider == "numilog-catalog":
         return "Catalogue commercial public · aucun achat attesté"
     if item.source_provider == "numilog":
-        if result_row(item)["state"] == "remote_owned":
+        if result_row(
+            item, purchase_evidence=purchase_evidence,
+            identity_id=getattr(getattr(service, "current_identity", None), "identity_id", None),
+            account_context_epoch=getattr(service, "_account_context_epoch", None),
+            source_context_epoch=getattr(service, "_source_context_epoch", None),
+        )["state"] == "remote_owned":
             return "Mes achats Numilog · fichier local non présumé"
         return "Notice Numilog · aucun droit d'achat attesté"
     if item.source_provider != "kobo":
@@ -93,11 +98,11 @@ class DetailPanel(Gtk.Box):
         self.body_scroll.set_min_content_width(240)
         self.body_scroll.set_vexpand(True); self.body_scroll.set_hexpand(True)
         self.append(self.body_scroll)
-        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        self.content.set_margin_top(20)
-        self.content.set_margin_bottom(20)
-        self.content.set_margin_start(20)
-        self.content.set_margin_end(20)
+        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.content.set_margin_top(14)
+        self.content.set_margin_bottom(14)
+        self.content.set_margin_start(16)
+        self.content.set_margin_end(16)
         self.body_scroll.set_child(self.content)
         self.empty("Sélectionnez un livre", "Les détails et actions apparaîtront ici.")
 
@@ -196,8 +201,8 @@ class DetailPanel(Gtk.Box):
                 header.set_orientation(orientation)
             if essential_grid is not None and len(essential) > 1:
                 # Budget for the full cover even if its placeholder is smaller.
-                text_width = width - 120 if side_by_side else width
-                columns = 2 if text_width >= 370 else 1
+                text_width = width - 128 if side_by_side else width
+                columns = 3 if text_width >= 690 else 2 if text_width >= 400 else 1
                 if essential_grid.get_min_children_per_line() != columns:
                     essential_grid.set_min_children_per_line(columns)
 
@@ -237,6 +242,39 @@ class DetailPanel(Gtk.Box):
         widget.connect("unmap", unmapped)
 
     def _group(self, title: str, rows: list[tuple[str, str]], *, fields=(), parent=None):
+        if title == "Bibliothèques et accès":
+            # #4682 / mockup #566: the projection already groups exact
+            # placements, source references and rights by profile. Present
+            # each attested line separately, not as one raw paragraph.
+            group = Adw.PreferencesGroup()
+            group.set_title(title)
+            for profile, description in rows:
+                if not description:
+                    continue
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                card.add_css_class("detail-profile-card")
+                heading = Gtk.Label(label=str(profile), xalign=0)
+                heading.add_css_class("heading")
+                card.append(heading)
+                for line in str(description).splitlines():
+                    if not line.strip():
+                        continue
+                    kind, marker, value = line.partition(": ")
+                    record = Adw.ActionRow()
+                    record.set_use_markup(False)
+                    record.set_title(kind.strip() if marker else "Information")
+                    compact = value if marker else line
+                    record.set_subtitle(compact)
+                    record.set_subtitle_lines(1)
+                    record.set_tooltip_text(line)
+                    record.add_css_class("detail-access-line")
+                    card.append(record)
+                group.add(card)
+            if parent is None:
+                self._append_content(group)
+            else:
+                parent.append(group)
+            return
         if title == "Détail":
             # Explicit and local-only. Per-element actions; no network on display.
             group = Adw.PreferencesGroup()
@@ -301,8 +339,11 @@ class DetailPanel(Gtk.Box):
         grid = None
         if title in {"Essentiel","Notice","Catalogue","Notice EPUB","Bibliothèque","Catalogue connu","Récupération","Historique","Prêt","Réservation"}:
             grid = Gtk.FlowBox(); grid.set_selection_mode(Gtk.SelectionMode.NONE)
-            grid.set_min_children_per_line(1); grid.set_max_children_per_line(2)
-            grid.set_homogeneous(True); grid.set_column_spacing(8); grid.set_row_spacing(4)
+            grid.set_min_children_per_line(1)
+            grid.set_max_children_per_line(3 if title == "Essentiel" else 2)
+            grid.set_homogeneous(True); grid.set_column_spacing(6); grid.set_row_spacing(2)
+            if title == "Essentiel":
+                grid.add_css_class("detail-compact-fields")
             group.add(grid)
         for index, (label, value) in enumerate(rows):
             row = Adw.ActionRow()
@@ -319,7 +360,10 @@ class DetailPanel(Gtk.Box):
             row.set_subtitle_lines(detail_subtitle_lines(title, display_value) if grid is not None else 0)
             row.set_tooltip_text(label+' : '+tooltip_value)
             if grid is not None:
-                row.set_size_request(160, -1); grid.insert(row, -1)
+                row.set_size_request(185 if title == "Essentiel" else 160, -1)
+                if title == "Essentiel":
+                    row.add_css_class("detail-compact-value")
+                grid.insert(row, -1)
             else:
                 group.add(row)
         if parent is None:
@@ -667,7 +711,11 @@ class DetailPanel(Gtk.Box):
         # merely because a mocked/legacy provider reports direct_download.
         if (item.source_provider == "numilog-catalog"
                 or (item.source_provider == "numilog"
-                    and result_row(item)["state"] != "remote_owned")):
+                    and result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))["state"] != "remote_owned")):
             return
         if not self.window.service.can_direct_download(item):
             return
@@ -824,7 +872,10 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
-        usage = _commercial_search_usage(item, self.window.service)
+        usage = _commercial_search_usage(
+            item, self.window.service,
+            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+        )
         freshness_rows = [
             ("Recherche en ligne", "Indisponible"),
         ] if stale_known else []
@@ -971,7 +1022,10 @@ class DetailPanel(Gtk.Box):
         paris_catalogue_candidate, visible_availability = (
             paris_catalogue_availability(item, availability)
         )
-        usage = _commercial_search_usage(item, self.window.service)
+        usage = _commercial_search_usage(
+            item, self.window.service,
+            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+        )
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
@@ -995,15 +1049,40 @@ class DetailPanel(Gtk.Box):
                     ("Support", medium if fmt else ""),
                 ]),
             ],
-            links=document_links(result_row(item)),
+            links=document_links(result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
             metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
         direct_download = (
             False if (item.source_provider == "numilog-catalog"
                       or (item.source_provider == "numilog"
-                          and result_row(item)["state"] != "remote_owned"))
+                          and result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))["state"] != "remote_owned"))
             else self.window.service.can_direct_download(item)
         )
+        # A spent, uncertain loan may no longer be advertised as
+        # "Empruntable" on the public catalogue. The previously submitted
+        # request still needs a read-only follow-up after restart.
+        followup_reader = getattr(
+            self.window.service, "paris_borrow_followup_available", None,
+        )
+        try:
+            pending_followup = (
+                callable(followup_reader) and followup_reader(item) is True
+            )
+        except Exception:
+            pending_followup = False
+        if pending_followup:
+            # Preserve the existing borrow-candidate renderer/contract while
+            # making a spent claim visible even when catalogue availability
+            # changed. This is a local variable used by the action gate only.
+            availability = "Empruntable"
         if direct_download:
             self._direct_download_action(item)
         elif search_detail_borrow_action_candidate(item, availability):
@@ -1058,6 +1137,25 @@ class DetailPanel(Gtk.Box):
                     except Exception:
                         diagnostic = None
                     explanation = paris_borrow_status_message(diagnostic)
+                    # P1 #5136: a spent uncertain loan claim is NOT an
+                    # invitation to repeat Emprunter. Only an exact local
+                    # pending claim may expose a later read-only GET action.
+                    if pending_followup:
+                        explanation = (
+                            "Demande de prêt Paris déjà envoyée ; confirmation "
+                            "indisponible. Ne réempruntez pas. "
+                            "La vérification ci-dessous ne soumet aucun prêt."
+                        )
+                        verify = self.window.action_button(
+                            "Vérifier le prêt sans réemprunter",
+                            "view-refresh-symbolic",
+                        )
+                        verify.set_name("cifereca-paris-borrow-followup")
+                        verify.connect(
+                            "clicked",
+                            lambda _b: self.window.borrow_search_item(item, verify),
+                        )
+                        self._actions([verify])
                 row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)
@@ -1135,16 +1233,79 @@ class DetailPanel(Gtk.Box):
                        for option in preview.options)):
             return False
 
+        try:
+            service = self.window.service
+            requester = service.current_identity
+        except Exception:
+            return False
+
         def current() -> bool:
             try:
-                service = self.window.service
                 rendered = self._rendered_search_detail
                 return bool(
                     type(rendered) is tuple and len(rendered) == 2
                     and rendered[0] is expected_item
-                    and service.current_identity is not None
-                    and service.current_identity.identity_id ==
+                    and service.current_identity is requester
+                    and getattr(requester, "identity_id", None) ==
                         preview.requesting_identity_id
+                    and service._account_context_epoch == expected_context_epoch
+                    and service._source_context_epoch == expected_source_epoch
+                )
+            except Exception:
+                return False
+
+        if not current():
+            return False
+        group = Adw.PreferencesGroup()
+        group.set_title(section.title)
+        for field in section.fields:
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_title(field.label)
+            row.set_subtitle(str(field.value))
+            group.add(row)
+        if not current():
+            return False
+        self._append_content(group)
+        return True
+
+    def show_cross_profile_borrow_progress_detail(
+        self, progress, *, expected_item: SearchResult,
+        requesting_identity_id: str, expected_context_epoch: int,
+        expected_source_epoch: int,
+    ) -> bool:
+        """#4988: show read-only loan/delivery/transfer status for one detail.
+
+        Never fetch a lender's receipt or create buttons here. The caller
+        separately obtains a privacy-scoped Core progress DTO; this renderer
+        rejects stale Search panes and ABA context/source replacements.
+        """
+        from ..core.borrow_for_identity_detail import (
+            cross_profile_borrow_progress_detail_section,
+        )
+        section = cross_profile_borrow_progress_detail_section(progress)
+        if (section is None
+                or type(expected_item) is not SearchResult
+                or type(requesting_identity_id) is not str
+                or not requesting_identity_id
+                or type(expected_context_epoch) is not int
+                or type(expected_source_epoch) is not int
+                or expected_context_epoch < 0 or expected_source_epoch < 0):
+            return False
+        try:
+            service = self.window.service
+            identity = service.current_identity
+        except Exception:
+            return False
+
+        def current() -> bool:
+            try:
+                rendered = self._rendered_search_detail
+                return bool(
+                    type(rendered) is tuple and len(rendered) == 2
+                    and rendered[0] is expected_item
+                    and service.current_identity is identity
+                    and identity.identity_id == requesting_identity_id
                     and service._account_context_epoch == expected_context_epoch
                     and service._source_context_epoch == expected_source_epoch
                 )

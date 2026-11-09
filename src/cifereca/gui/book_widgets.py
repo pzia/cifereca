@@ -283,6 +283,7 @@ class BookListCell(Gtk.Box):
         self.cover_loader = window.covers
         self._meta_request = None
         self._bound_key: str | None = None
+        self._bind_epoch = 0
         self.set_margin_top(8)
         self.set_margin_bottom(8)
         self.set_margin_start(8)
@@ -364,6 +365,10 @@ class BookListCell(Gtk.Box):
             callback(button)
 
     def bind(self, item: BookListItem) -> None:
+        # Each materialization is a new selection, even for an ABA key.
+        # A completed older metadata lookup must not decorate a later cell.
+        self._bind_epoch += 1
+        binding_epoch = self._bind_epoch
         self._bound_key = item.key
         child = self.facet_box.get_first_child()
         while child:
@@ -438,7 +443,7 @@ class BookListCell(Gtk.Box):
             bound_key = item.key
 
             def resolved(url: str | None) -> None:
-                if self._bound_key != bound_key:
+                if self._bound_key != bound_key or self._bind_epoch != binding_epoch:
                     return
                 self.cover.bind_url(self.cover_loader, url or item.default_thumbnail_url, priority=10)
 
@@ -455,6 +460,7 @@ class BookListCell(Gtk.Box):
             self.cover.bind_url(self.cover_loader, item.default_thumbnail_url, priority=10)
 
     def unbind(self) -> None:
+        self._bind_epoch += 1
         self._bound_key = None
         if self._meta_request is not None:
             try:

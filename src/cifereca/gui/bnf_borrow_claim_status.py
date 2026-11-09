@@ -5,7 +5,7 @@ Unknown or malformed observations never expose arbitrary storage text.
 """
 from __future__ import annotations
 
-from ..core.bnf_borrow_claim_observation import BnfBorrowClaimObservation
+from ..core.borrow_claim_observation import BorrowClaimObservation
 
 
 _MESSAGES = {
@@ -42,7 +42,7 @@ def bnf_borrow_claim_message(observation: object) -> str | None:
     An absent claim is not permission to borrow; unavailable scopes fall back
     to the existing generic action message, not to a positive capability.
     """
-    if type(observation) is not BnfBorrowClaimObservation:
+    if type(observation) is not BorrowClaimObservation:
         return None
     if observation.retry_authorized is not False:
         return None

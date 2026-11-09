@@ -1,7 +1,7 @@
 """#4987 integrated UI->Core consent->durable lender claim, no real HTTP/GI.
 
-This is intentionally on a validation-only stacked branch (#5154 + #5158).
-It must not enable the standalone UI in the production search flow.
+The Core and opt-in GUI contracts are integrated on main. This offline
+composition test never enables a lending button in the Search default flow.
 """
 from __future__ import annotations
 

@@ -114,3 +114,19 @@ def test_multibyte_catalogue_name_fits_with_collision_suffix(tmp_path):
 
 def test_history_is_not_reclassified_by_directory_mapping():
     assert directory_for_storage_class("transfer") == "Acquisitions"
+
+
+@pytest.mark.parametrize("marker", ["\u202e", "\u202d", "\u2066", "\u2069", "\u200b"])
+def test_bidi_and_invisible_format_controls_cannot_spoof_readable_name(marker):
+    deceptive_title = "Titre" + marker + "pdf.exe"
+    name = transfer_readable_filename(
+        Path("book.epub"), title=deceptive_title, author="Auteur",
+    )
+    assert marker not in name
+    assert name == "Auteur - Titre pdf.exe.epub"
+    assert Path(name).name == name
+
+
+def test_invisible_controls_in_source_fallback_name_are_sanitized():
+    name = transfer_readable_filename(Path("Book\u202eexe.epub"))
+    assert name == "Book exe.epub"

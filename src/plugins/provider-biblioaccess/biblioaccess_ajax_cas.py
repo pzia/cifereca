@@ -44,7 +44,11 @@ class CasHttpObservation:
     loans_verified: bool = False
     page_book_link_count: int = 0
     page_book_unique_count: int = 0
+    page_loan_row_count: int = 0
+    page_loan_row_partial_count: int = 0
+    logout_form_observed: bool = False
     inventory_verified: bool = False
+    _loan_rows: tuple[object, ...] = field(default=(), repr=False, compare=False)
     _candidate_book_urls: tuple[tuple[str, str], ...] = field(
         default=(), repr=False, compare=False,
     )
@@ -308,9 +312,29 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 raise AjaxCasError("cas_loans_already_attempted")
             if self._closed:
                 raise AjaxCasError("cas_client_closed")
+            # The one-shot diagnostic has historically required only the
+            # CAS landing; authenticated repeated reads enforce AJAX proof.
             if not self._cas_landed:
                 raise AjaxCasError("cas_landing_required")
             self._loans_attempted = True
+        return self._read_loans_html()
+
+    def read_authenticated_loans(self) -> CasHttpObservation:
+        """Fresh same-session read after a complete initial CAS+MyLoans flow.
+
+        Must not replay the POST, re-import cookies or follow an SSO redirect.
+        A 200 public/login page without the observed logout form is refused.
+        """
+        with self._cas_lock:
+            if (self._closed or not self._ajax_succeeded
+                    or not self._cas_landed or not self._loans_attempted):
+                raise AjaxCasError("cas_landing_required")
+        observation = self._read_loans_html()
+        if not observation.logout_form_observed:
+            raise AjaxCasError("cas_authenticated_page_unverified")
+        return observation
+
+    def _read_loans_html(self) -> CasHttpObservation:
         try:
             with self.http.stream("GET", LOANS, follow_redirects=False,
                                   headers={"Accept": "text/html"}) as response:
@@ -332,6 +356,10 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                     "loans_html_unverified", 200,
                     page_book_link_count=candidates.page_book_link_count,
                     page_book_unique_count=candidates.page_book_unique_count,
+                    page_loan_row_count=candidates.page_loan_row_count,
+                    page_loan_row_partial_count=candidates.page_loan_row_partial_count,
+                    logout_form_observed=candidates.logout_form_observed,
+                    _loan_rows=candidates._loan_rows,
                     _candidate_book_urls=candidates._book_urls,
                 )
         except (httpx.HTTPError, UnicodeError):

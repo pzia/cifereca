@@ -155,6 +155,9 @@ class LibraryService:
         self.config = config
         self.storage = storage
         self.diagnostics = diagnostics
+        # Runtime-only boundary: an old opening run is history, not a
+        # current-startup incident. Set before any initialization work.
+        self._dashboard_launch_at = int(time.time())
         # Final 0.9.2 core: concrete providers are supplied exclusively by
         # Plugin API packages. The core registry starts empty and is populated
         # when the PluginManager is attached.
@@ -172,6 +175,16 @@ class LibraryService:
         self._source_context_epoch = 0
         recovered = self._recover_identity_directory_migration()
         self._sync_identity_configuration()
+        # Baseline by identity and run ID avoids same-second restart ambiguity.
+        # A persisted run present at launch remains historic even if its
+        # started_at equals the first run of this process.
+        self._dashboard_initial_run_ids = {
+            identity.identity_id: (
+                (row or {}).get("sync_run_id")
+                if (row := self.storage.latest_sync_run(identity.identity_id)) else None
+            )
+            for identity in self.identities
+        }
         if recovered:
             self.catalog_scan()
             self._identity_directory_engine().finish()
@@ -275,8 +288,10 @@ class LibraryService:
 
     def can_borrow_bnf(self, item: SearchResult) -> bool:
         """Inert BnF action visibility, never a borrower permission."""
-        from .core.manual_bnf_borrow import manual_bnf_borrow_available
-        return manual_bnf_borrow_available(self, item)
+        from .core.manual_library_borrow import manual_borrow_available
+        return manual_borrow_available(
+            self, item, provider_id="bnf-pret", docbase="BNF_PRET",
+        )
 
     def bnf_borrow_claim_observation(
         self, item: SearchResult, *, expected_identity_id: str,
@@ -287,11 +302,11 @@ class LibraryService:
         checkpoint does not enable a POST; a consumed checkpoint is never
         cleared. No provider call, session refresh or account fallback.
         """
-        from .core.bnf_borrow_claim_observation import (
-            BnfBorrowClaimObservation, observe_bnf_borrow_claim,
+        from .core.borrow_claim_observation import (
+            BorrowClaimObservation, observe_borrow_claim,
         )
 
-        unavailable = BnfBorrowClaimObservation(
+        unavailable = BorrowClaimObservation(
             "scope_unverified", None, False,
         )
         if (type(item) is not SearchResult
@@ -313,9 +328,10 @@ class LibraryService:
         ]
         if len(accounts) != 1:
             return unavailable
-        return observe_bnf_borrow_claim(
+        return observe_borrow_claim(
             storage=self.storage, account=accounts[0], item=item,
             expected_identity_id=expected_identity_id,
+            provider_id="bnf-pret", docbase="BNF_PRET",
         )
 
     def borrow_bnf_manual(
@@ -325,9 +341,10 @@ class LibraryService:
         expected_account: Account | None = None,
     ) -> dict[str, object]:
         """Core-owned explicit BnF action; never use the legacy borrow()."""
-        from .core.manual_bnf_borrow import manual_bnf_borrow
-        return manual_bnf_borrow(
-            self, item, expected_identity_id=expected_identity_id,
+        from .core.manual_library_borrow import manual_borrow
+        return manual_borrow(
+            self, item, provider_id="bnf-pret", docbase="BNF_PRET",
+            expected_identity_id=expected_identity_id,
             confirmed=confirmed, site_checked=site_checked,
             expected_context_epoch=expected_context_epoch,
             expected_account=expected_account,
@@ -387,6 +404,26 @@ class LibraryService:
             observations=observations, now=now,
         )
 
+    def prepare_cross_profile_lender_action_plan(
+        self, *, captured_preview, selected_option_id: str,
+        expected_edition_id: str, observations: object,
+        now: int | None = None,
+    ):
+        """#4987: prepare an exact *inert* lender plan for a later consent.
+
+        The plan cannot borrow, transfer, switch identities or authorize a
+        copy. Never treat its status as sufficient authority for a POST.
+        """
+        from .core.borrow_for_identity_action_plan import (
+            prepare_cross_profile_lender_action_plan,
+        )
+        return prepare_cross_profile_lender_action_plan(
+            self, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id,
+            observations=observations, now=now,
+        )
+
     def execute_cross_profile_borrow(
         self, *, captured_preview, selected_option_id: str,
         expected_edition_id: str, observations: object,
@@ -417,6 +454,20 @@ class LibraryService:
         from .core.manual_paris_borrow import manual_paris_borrow_diagnostic
         return manual_paris_borrow_diagnostic(self, item)
 
+    def paris_borrow_followup_available(self, item: SearchResult) -> bool:
+        """Read-only, exact-account pending loan check availability."""
+        from .core.borrow_later_verification import borrow_followup_available
+        return borrow_followup_available(
+            self, item, readiness=self.paris_borrow_diagnostic,
+        )
+
+    def verify_paris_borrow_followup(self, item: SearchResult) -> dict[str, object]:
+        """Read-only verification of a spent Paris claim, without a second POST."""
+        from .core.borrow_later_verification import verify_pending_borrow_followup
+        return verify_pending_borrow_followup(
+            self, item, readiness=self.paris_borrow_diagnostic,
+        )
+
     def borrow_paris_manual(
         self, item: SearchResult, *, expected_identity_id: str,
         confirmed: bool = False, expected_context_epoch: int | None = None,
@@ -428,6 +479,26 @@ class LibraryService:
             self, item, expected_identity_id=expected_identity_id,
             confirmed=confirmed, expected_context_epoch=expected_context_epoch,
             expected_account=expected_account,
+        )
+
+    def verify_borrow_without_submission(
+        self, item: SearchResult, *, expected_identity_id: str,
+        expected_account: Account, expected_operation_id: str,
+        expected_provider_id: str, expected_docbase: str,
+    ) -> dict[str, object]:
+        """Read-only follow-up of one uncertain provider manual borrow claim.
+
+        Does not submit, import or confirm an entitlement; never frees claim.
+        """
+        from .core.borrow_later_verification import (
+            verify_borrow_without_submission,
+        )
+        return verify_borrow_without_submission(
+            self, item, expected_identity_id=expected_identity_id,
+            expected_account=expected_account,
+            expected_operation_id=expected_operation_id,
+            expected_provider_id=expected_provider_id,
+            expected_docbase=expected_docbase,
         )
 
     def stage_bnf_loan_acsm(
@@ -502,13 +573,17 @@ class LibraryService:
                 raise
             except Exception:
                 raise BnfLoanActionError('bnf_loan_scope_unproven') from None
-            from .core.bnf_import_provenance import observed_loan, remember_import
+            from .core.observed_loan_scope import observed_loan
+            from .core.observed_import_provenance import remember_observed_import
             display_scope = observed_loan(loan)
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
                                       provider_id='manual', title=title,
                                       placement_provider_id='bnf-pret')
-            remember_import(self, result, display_scope)
+            remember_observed_import(
+                self, result, display_scope, provider_id='bnf-pret',
+                provenance_field='bnf_observed_loan',
+            )
         except BnfLoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
@@ -1623,17 +1698,6 @@ class LibraryService:
                 )
         return result
 
-    def _acquire_personal_library_item(self, session, row, identity_id: str) -> dict[str, Any]:
-        """Deprecated fail-closed backup shim; never called by mirroring.
-
-        The old method passed Numilog SearchResult dictionaries to the
-        unsupported ProviderSession.download_library_item contract, then
-        swallowed errors as if opening acquisition had succeeded. A per-book
-        user action must instead use the existing direct acquisition broker,
-        which validates the provider, account and ACSM/ADEPT path.
-        """
-        return {"status": "blocked", "reason": "explicit_acquisition_required"}
-
     def recent_acquisitions(self, *, identity_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """Return recent local materializations, newest first.
 
@@ -1672,35 +1736,31 @@ class LibraryService:
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
-        if (item.source_provider == "numilog"
-                and item.source_credential == "__public__"
-                and item.scenario == "NUMILOG_PUBLIC"
-                and item.source_collection == "public_catalog"):
-            # The public listing is already descriptive and has no borrower
-            # session. Never re-route a public record to B's MesLivres.
+        # Catalogue-only projections do not attest borrower rights. The
+        # source's public sentinel or an explicitly read-only projection
+        # precludes a private holdings GET, regardless of provider name.
+        # Never promote these rows to a purchase/loan or resolve a private URL.
+        public_catalogue = (
+            item.source_credential == "__public__"
+            and item.source_collection == "public_catalog"
+        )
+        shared_catalogue = (
+            type(item.metadata) is dict
+            and item.metadata.get("catalogue_access") == "shared_read_only"
+        )
+        if public_catalogue or shared_catalogue:
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
                 type=item.type, year=item.published_at,
                 thumbnail_url=item.thumbnail_url,
                 availability_status="unknown",
-                availability_label="Catalogue public · achat non attesté",
-                holdings=[], source_provider="numilog",
-                source_credential="__public__",
-            )
-        if (item.source_provider == "kobo"
-                and type(item.metadata) is dict
-                and item.metadata.get("catalogue_access") == "shared_read_only"):
-            # Public-only Kobo discovery does not license a foreign-account
-            # holdings or delivery GET, even when the same session is online.
-            return ItemDetail(
-                record_id=item.record_id, docbase=item.docbase,
-                title=item.title, author=item.author,
-                type=item.type, year=item.published_at,
-                thumbnail_url=item.thumbnail_url,
-                availability_status="unknown",
-                availability_label="Catalogue Kobo partagé · droits non consultés",
-                holdings=[], source_provider="kobo",
+                availability_label=(
+                    "Catalogue public · achat non attesté"
+                    if public_catalogue else
+                    "Catalogue partagé · droits non consultés"
+                ),
+                holdings=[], source_provider=item.source_provider,
                 source_credential=item.source_credential,
             )
         # An authenticated Paris catalogue may be browsed from another local
@@ -2687,20 +2747,6 @@ class LibraryService:
             return KoboOfferAdapter.delegated_candidate(payload, preferred_format)
         except KoboAcquisitionSelectionError as exc:
             raise ProviderConfigurationError(str(exc)) from exc
-
-    @staticmethod
-    def _kobo_canonical_drm(value: Any) -> str:
-        raw = str(value or "").strip()
-        key = re.sub(r"[^a-z0-9]", "", raw.lower())
-        if key in {"signednodrm", "nodrm", "none"}:
-            return "SignedNoDrm"
-        if key in {"kdrm", "kobo"}:
-            return "KDRM"
-        if key in {"adobedrm", "adept", "adobeadept"}:
-            return "AdobeDrm"
-        if key == "kobokdrm":
-            return "KDRM"
-        return raw or "unknown"
 
     @staticmethod
     def _kobo_url_format(candidate: dict[str, Any]) -> str | None:
@@ -3819,6 +3865,14 @@ class LibraryService:
                 )
             )
             if acquisition.kind == "acsm":
+                # The repaired previous artifact is still needed when
+                # indexing or the completed SQLite ledger write fails.
+                # Cleanup is noncritical and runs only after both succeed.
+                adept_artifact_publication.cleanup_after_commit(
+                    previous_path=previous_path, final_path=final_path,
+                    repair_mode=repair_mode, Path=Path, loan=loan,
+                    identity_id=identity.identity_id, _TRACE_LOG=_TRACE_LOG,
+                )
                 self._cleanup_acsm_after_success(retained_acsm, loan_id=loan.id)
                 retained_acsm = None
             if acquisition.kind == "acsm":

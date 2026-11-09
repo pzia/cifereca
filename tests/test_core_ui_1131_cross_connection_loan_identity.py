@@ -301,3 +301,72 @@ def test_gtk_population_keeps_only_safe_source_keys_without_importing_gtk():
     assert host.service.last_loans == [sibling]
     assert host.loan_objects == {loan_source_key(sibling): sibling}
     assert events == ["render", "kobo"]
+
+
+def test_library_loan_lookup_rejects_forged_nonloan_objects_and_fake_scalar_ids():
+    from types import SimpleNamespace
+
+    exact = _loan()
+    forged = SimpleNamespace(id=exact.id, source_provider=exact.source_provider,
+                             source_credential=exact.source_credential,
+                             source_account_id=exact.source_account_id)
+    item = {"loan_id": exact.id}
+    assert unique_library_loan([forged], item) is None
+    assert unique_library_loan([forged, exact], item) is exact
+    for bad in (True, 123, ["same-paris-loan"], object(), ""):
+        assert unique_library_loan([exact], {"loan_id": bad}) is None
+    assert unique_library_loan([exact], None) is None
+
+
+def test_library_loan_lookup_does_not_coerce_private_scope_values():
+    exact = _loan()
+    for scope in ("provider_id", "identity_id", "item_id", "source_credential"):
+        for wrong in (True, 12, object(), ["paris"]):
+            assert unique_library_loan(
+                [exact], {"loan_id": exact.id, scope: wrong},
+            ) is None
+    assert unique_library_loan([exact], {
+        "loan_id": exact.id, "provider_id": "paris",
+        "identity_id": "alice", "item_id": "book-123",
+        "source_credential": "paris-a",
+    }) is exact
+
+
+def test_loan_lookup_refuses_partial_or_oversized_inventory_without_action():
+    exact = _loan()
+
+    def interrupted():
+        yield exact
+        raise RuntimeError("/private/other-account")
+
+    assert unique_library_loan(interrupted(), {"loan_id": exact.id}) is None
+    seen = []
+
+    def oversized():
+        for index in range(10002):
+            seen.append(index)
+            yield exact if index == 0 else _loan(credential=f"card-{index}")
+
+    assert unique_library_loan(oversized(), {"loan_id": exact.id}) is None
+    assert len(seen) == 10001
+    assert unique_library_loan([exact], {"loan_id": exact.id}) is exact
+
+
+def test_actionable_loan_rows_are_never_published_from_partial_inventory():
+    exact = _loan()
+
+    def interrupted():
+        yield exact
+        raise RuntimeError("/private/lender/credential")
+
+    assert unambiguous_loan_rows(interrupted()) == ()
+    seen = []
+
+    def excessive():
+        for index in range(10002):
+            seen.append(index)
+            yield exact if index == 0 else _loan(credential=f"other-{index}")
+
+    assert unambiguous_loan_rows(excessive()) == ()
+    assert len(seen) == 10001
+    assert unambiguous_loan_rows([exact, replace(exact)]) == (exact,)

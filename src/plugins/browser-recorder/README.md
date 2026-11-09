@@ -902,3 +902,36 @@ le ZIP privé et les rapports de revue.
 `completed` signifie seulement **fin de la session de navigation** et
 **ne garantit pas la disponibilité de tous les corps**. Ce correctif ne
 récupère pas les corps devenus indisponibles et ne change pas le consentement.
+
+
+## Schéma SSO sans valeurs (#5097)
+
+Lorsqu'une origine **HTTPS** a été explicitement autorisée en capture
+**normale**, Browser Recorder peut observer la structure d'un POST
+`application/x-www-form-urlencoded` : **noms uniquement** des paramètres
+de query et des champs. Une réponse JSON bornée peut fournir ses **clés et
+types de premier niveau** (`string`, `number`, `boolean`, `null`,
+`object`, `array`) ; les valeurs, objets internes, messages, identifiants,
+tickets CAS et contenus CAPTCHA ne sont jamais conservés dans ces schémas.
+
+Le corps d'authentification reste **absent** (`auth_redacted`).
+L'inspection structurelle n'est effectuée que si les mesures réseau et
+l'enveloppe sont vérifiées **avant lecture** : pour les POST, un
+`Content-Length` valide doit correspondre à la taille Chromium ; aucun
+contenu comprimé, inconnu ou supérieur à 8 Kio n'est inspecté.
+Le nombre de clés est plafonné à 32, seules des clés de forme simple sont
+admises. Les pages HTML et objets téléchargés restent exclus, sans rejeu.
+
+Dans une capture `metadata_only` ou hors origine autorisée, aucun schéma
+n'est produit. Les codes `schema_captured`, `auth_schema_unavailable`,
+`auth_schema_unsupported` et `not_applicable` distinguent les cas.
+L'affichage de revue privée présente le schéma brut **sans valeurs** ;
+le ZIP revu retire en plus les noms suspects/dynamiques. Le ZIP privé
+conserve la projection structurelle sous chiffrement, jamais les corps
+d'authentification. Les archives v1 antérieures sans champs optionnels de
+schéma restent lisibles sans réécriture.
+
+**Attention :** un schéma observé ne prouve ni l'authentification réussie,
+ni la permission d'automatiser un SSO, ni la résolution d'un CAPTCHA.
+Le Browser Recorder ne reconstitue pas les paramètres dynamiques perdus,
+n'extrait pas les secrets et ne propose pas de contournement DRM.

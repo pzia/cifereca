@@ -3,7 +3,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.core.bnf_import_provenance import display_links as bnf_display_links
+from cifereca.core.observed_import_provenance import observed_import_links
 from cifereca.core.local_import_display_links import observed_import_display_links
 
 
@@ -16,7 +16,7 @@ KEY = ("alice", "card-a", "borrower-a", "loan-a", "edition-a")
 
 def view(rows, placements=None, keys=None, *, provider="future-lender",
          field="observed_loan"):
-    from cifereca.core.bnf_import_provenance import scope_key
+    from cifereca.core.observed_loan_scope import scope_key
     db = NS(acquisitions=lambda **args: (
         rows if args == {"provider_id": "manual", "status": "complete"} else []
     ))
@@ -54,7 +54,10 @@ def test_bnf_compatibility_uses_same_generic_projection():
     }]
     keys = {("place-1", "sha256:abc"): "local-1"}
     db = NS(acquisitions=lambda **kwargs: [row_bnf])
-    assert bnf_display_links(db, placements, keys) == {KEY: "local-1"}
+    assert observed_import_links(
+        db, placements, keys, provider_id='bnf-pret',
+        provenance_field='bnf_observed_loan',
+    ) == {KEY: "local-1"}
     assert view([row_bnf], placements, keys, provider="bnf-pret") == {}
 
 

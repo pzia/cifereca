@@ -101,6 +101,9 @@ class CatalogueLinks:
     next_page_url: str | None
     completeness: str = "partial"
     book_urls: tuple[tuple[str, str], ...] = ()
+    # Short text attached to same-tenant Book anchors on the search page.
+    # Not an authoritative notice; detail parsing remains separate.
+    book_titles: tuple[tuple[str, str], ...] = ()
 
 
 class _Links(HTMLParser):
@@ -113,6 +116,9 @@ class _Links(HTMLParser):
         self.current_page = int(page[0]) if (len(page) == 1 and re.fullmatch(r"[0-9]{1,5}", page[0])) else -1
         self.book_ids = []
         self.book_urls = {}
+        self.book_titles = {}
+        self._book_anchor_id = None
+        self._book_anchor_text = []
         self.next_page_url = None
         self._candidate = None
         self._anchor_text = []
@@ -120,6 +126,8 @@ class _Links(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag != "a":
             return
+        self._book_anchor_id = None
+        self._book_anchor_text = []
         values = dict(attrs)
         href = values.get("href")
         if not isinstance(href, str) or not href.strip():
@@ -133,6 +141,8 @@ class _Links(HTMLParser):
             # slug can be required for the actual book GET; never reconstruct
             # an unrelated/cross-tenant link from an opaque book identifier.
             self.book_urls[ident] = link
+        if ident:
+            self._book_anchor_id = ident
         parts = _parts(link)
         self._candidate = None
         if parts and parts.path == _SEARCH_PATH:
@@ -154,10 +164,18 @@ class _Links(HTMLParser):
                     self.next_page_url = link
 
     def handle_data(self, data):
+        if self._book_anchor_id is not None:
+            self._book_anchor_text.append(data[:200])
         if self._candidate is not None:
             self._anchor_text.append(data[:100])
 
     def handle_endtag(self, tag):
+        if tag == "a" and self._book_anchor_id is not None:
+            title = " ".join("".join(self._book_anchor_text).split())
+            if title and len(title) <= 256 and self._book_anchor_id not in self.book_titles:
+                self.book_titles[self._book_anchor_id] = title
+            self._book_anchor_id = None
+            self._book_anchor_text = []
         if tag == "a" and self._candidate is not None:
             label = " ".join(self._anchor_text).strip().casefold()
             if label.startswith(("suiv", "next")):
@@ -177,7 +195,8 @@ def extract_catalogue_links(page_url: str, html: str) -> CatalogueLinks:
     parser.feed(html)
     parser.close()
     return CatalogueLinks(tuple(parser.book_ids), parser.next_page_url,
-                          book_urls=tuple(parser.book_urls.items()))
+                          book_urls=tuple(parser.book_urls.items()),
+                          book_titles=tuple(parser.book_titles.items()))
 
 
 @dataclass(frozen=True)

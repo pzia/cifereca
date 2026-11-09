@@ -4,7 +4,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.core import observed_loan_scope as generic
-from cifereca.core import bnf_import_provenance as bnf
+from cifereca.core import observed_import_provenance as imported
 
 
 def _loan(**changes):
@@ -32,13 +32,8 @@ def test_provider_neutral_observation_never_deduces_provenance_or_right():
     ))
 
 
-def test_bnf_existing_public_functions_remain_identical():
-    assert bnf.FIELDS is generic.FIELDS
-    assert bnf.observed_loan is generic.observed_loan
-    assert bnf.scope_key is generic.scope_key
-    assert bnf.scope_key(bnf.observed_loan(_loan())) == generic.scope_key(
-        generic.observed_loan(_loan())
-    )
+def test_observed_import_uses_the_neutral_scope_contract():
+    assert imported.scope_key is generic.scope_key
 
 
 @pytest.mark.parametrize(("field", "bad"), [

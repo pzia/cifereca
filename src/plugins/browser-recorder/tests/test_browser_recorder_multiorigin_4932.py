@@ -177,7 +177,12 @@ def test_authentication_structures_omit_bodies_and_never_store_ticket_values():
         assert second.response_body == '{"ok":true}'
         assert third.response_body is None
         assert third.response_body_reason == "auth_redacted"
-        assert token_response.body_reads == 0
+        # #5097: the explicitly consented HTTPS JSON response is inspected
+        # transiently for key/type only; the authentication body stays absent.
+        assert token_response.body_reads == 1
+        assert third.auth_response_schema == {
+            "version": 1, "keys": [["access_token", "string"]],
+        }
         text = _record(trace, ID, "completed").decode("utf-8")
         for secret in (*synthetic, "NEVER_PERSIST", "NO_STORAGE"):
             assert secret not in text

@@ -3794,7 +3794,10 @@ class Storage:
         sql = "SELECT " + ",".join(cols) + " FROM sync_runs"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY started_at DESC LIMIT ?"
+        # Preserve the most recently inserted run when two executions share
+        # one-second timestamps. Without this tie breaker an old baseline
+        # can hide a fresh running/partial opening run indefinitely.
+        sql += " ORDER BY started_at DESC, rowid DESC LIMIT ?"
         args.append(max(1, int(limit)))
         with self._lock, self._connect() as db:
             rows = db.execute(sql, tuple(args)).fetchall()

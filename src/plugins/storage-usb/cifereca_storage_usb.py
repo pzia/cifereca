@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import stat
 from typing import Callable
+from unicodedata import normalize
 
 
 _CHUNK_SIZE = 1024 * 1024
@@ -84,7 +85,7 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
             or type(relative_paths) is not tuple or len(relative_paths) > _MAX_OBSERVED):
         raise ValueError("usb_observation_request_invalid")
     selected = tuple((path, _parts(path)) for path in relative_paths)
-    casefolded = [path.casefold() for path, _ in selected]
+    casefolded = [normalize("NFC", path).casefold() for path, _ in selected]
     if len(set(casefolded)) != len(casefolded):
         raise ValueError("usb_observation_paths_collide")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC

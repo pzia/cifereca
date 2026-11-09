@@ -420,8 +420,10 @@ def revalidate_live_borrow_lender_selection(
             service, expected_edition_id=expected_edition_id,
             observations=observations, now=now,
         )
-        # Held consent belongs to the entire 0/1/N menu, including rejected
-        # sibling offers. Never reuse an unchanged clicked row in a changed menu.
+        # A held menu is one consent context, not merely the clicked row.
+        # If any other lender/collection is added, removed or rebound, the
+        # exact selection snapshot is stale even when its clicked row is
+        # unchanged. Never silently reuse an old choice under a new menu.
         if fresh != captured_preview:
             return stale
         matching = [

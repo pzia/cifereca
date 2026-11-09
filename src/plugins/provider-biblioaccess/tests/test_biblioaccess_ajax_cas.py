@@ -646,3 +646,107 @@ def test_fresh_auto_post_success_follows_cas_and_reads_myloans_same_cookie_jar()
             assert secret not in repr(ajax_result) + repr(landing) + repr(books)
     finally:
         client.close()
+
+
+def test_persisted_cas_session_reads_fresh_myloans_without_new_credential_post():
+    requests = []
+    html = (
+        '<form id="logoutForm" method="post" action="/1409/Account/LogOff"></form>'
+        '<div class="row JSProductRow-10001">'
+        '<a href="/1409/Catalog/Book/20002/a-book">book</a>'
+        '<p class="titleLoans">SYNTHETIC-BOOK</p>'
+        '<span class="jsDateEnd">08/11/2026 12:30:00</span></div>'
+    )
+    def handler(request):
+        requests.append((request.method, request.url.path,
+                         request.headers.get("cookie", "")))
+        assert request.method == "GET"
+        assert request.url.path == "/1409/Catalog/MyLoans"
+        assert "synthetic_library=SESSION" in request.headers.get("cookie", "")
+        return httpx.Response(
+            200, headers={"content-type": "text/html"}, text=html)
+    client = client_for(handler)
+    client.http.cookies.set(
+        "synthetic_library", "SESSION", domain="www.biblioaccess.com", path="/1409")
+    client._ajax_succeeded = True
+    client._cas_landed = True
+    client._loans_attempted = True  # initial POST + CAS + MyLoans completed
+    try:
+        a = client.read_authenticated_loans()
+        b = client.read_authenticated_loans()
+        assert a.page_loan_row_count == b.page_loan_row_count == 1
+        assert a.logout_form_observed and b.logout_form_observed
+        assert not a.identity_verified and not a.inventory_verified
+        assert [method for method, _, _ in requests] == ["GET", "GET"]
+        assert "SESSION" not in repr(a) + repr(b)
+        assert "SYNTHETIC-BOOK" not in repr(a) + repr(b)
+    finally:
+        client.close()
+
+
+def test_authenticated_session_refuses_login_page_downgrade_even_on_http_200():
+    requests = []
+    def handler(request):
+        requests.append(request.method)
+        return httpx.Response(
+            200, headers={"content-type": "text/html"},
+            text='<html><a href="/1409/Catalog/Book/123/teaser">public</a></html>')
+    client = client_for(handler)
+    client._ajax_succeeded = True
+    client._cas_landed = True
+    client._loans_attempted = True
+    try:
+        with pytest.raises(cas.AjaxCasError, match="cas_authenticated_page_unverified"):
+            client.read_authenticated_loans()
+        assert requests == ["GET"]
+    finally:
+        client.close()
+
+
+def test_authenticated_session_never_follows_expiry_redirect():
+    requests = []
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        return httpx.Response(
+            302, headers={"location": "https://mediatheques.agglo-larochelle.fr/login"})
+    client = client_for(handler)
+    client._ajax_succeeded = True
+    client._cas_landed = True
+    client._loans_attempted = True
+    try:
+        with pytest.raises(cas.AjaxCasError, match="cas_loans_unverified"):
+            client.read_authenticated_loans()
+        assert requests == [("GET", "/1409/Catalog/MyLoans")]
+    finally:
+        client.close()
+
+
+def test_duplicate_product_reference_revokes_fresh_myloans_observation():
+    """No first-wins loan after a repeated product row in private MyLoans."""
+    requests = []
+    def row(ref, book):
+        return (
+            '<div class="row JSProductRow-' + ref + '">'
+            '<a href="/1409/Catalog/Book/' + book + '/example">notice</a>'
+            '<p class="titleLoans">SYNTHETIC PRIVATE TITLE</p>'
+            '<span class="jsDateEnd">08/11/2026 12:30:00</span></div>'
+        )
+    body = (
+        '<form id="logoutForm" method="post" '
+        'action="/1409/Account/LogOff"></form>'
+        + row("10001", "20002") + row("10001", "30003")
+    )
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        assert request.method == "GET"
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=body)
+    client = client_for(handler)
+    client._ajax_succeeded = True
+    client._cas_landed = True
+    client._loans_attempted = True
+    try:
+        with pytest.raises(cas.AjaxCasError, match="cas_loans_structure_unverified"):
+            client.read_authenticated_loans()
+        assert requests == [("GET", "/1409/Catalog/MyLoans")]
+    finally:
+        client.close()

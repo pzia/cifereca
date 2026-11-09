@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 from cifereca.models import Loan
+from cifereca.core.loan_cover_fallback import materialized_loan_cover_rows
 
 PATH = Path(__file__).resolve().parents[1] / "src/cifereca/gui/loans_controller.py"
 
@@ -16,6 +17,7 @@ def refresh_method():
                     and n.name == "refresh_loans")
     namespace = {
         "Loan": Loan,
+        "materialized_loan_cover_rows": materialized_loan_cover_rows,
         "Gtk": NS(Widget=type("Widget", (), {})),
         "TaskPriority": NS(USER_ACTION="user", ACTIVE_LOAN="loan"),
     }

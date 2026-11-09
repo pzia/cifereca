@@ -534,6 +534,57 @@ def sync_source_cycle_pulse(source: object) -> str:
     return "Dernier cycle ciblé : " + " · ".join(displayed[:3])
 
 
+def _historical_local_phase_after_canonical_success(source: object, row: object) -> bool:
+    """Do not promote an older source-scoped local checkpoint to a live alert.
+
+    A completed newer A→B receipt is not proof that the old materialization
+    phase succeeded. It only proves that the phase observation predates the
+    most recent canonical cycle. Missing or malformed proof stays actionable.
+    """
+    from ..plugin_api import SyncSourceCycleReceipt
+    from ..core.diagnostic_source_sync import CANONICAL_EXECUTION_STATUSES
+
+    local_status = getattr(row, "status", None)
+    source_status = getattr(source, "status", None)
+    if (getattr(row, "phase", None) != "materialize"
+            or type(local_status) is not str
+            or local_status not in {
+                "partial", "attention_required", "failed", "interrupted",
+            }
+            or type(source_status) is not str
+            or source_status not in {"ok", "success"}
+            or getattr(source, "enabled", None) is not True):
+        return False
+    receipt = getattr(source, "last_cycle", None)
+    if (type(receipt) is not SyncSourceCycleReceipt
+            or receipt.status != "success"
+            or type(receipt.canonical_execution) is not tuple):
+        return False
+    counts = receipt.canonical_execution
+    if (len(counts) != len(CANONICAL_EXECUTION_STATUSES)
+            or any(type(p) is not tuple or len(p) != 2
+                   or type(p[0]) is not str or type(p[1]) is not int
+                   or not 0 <= p[1] <= 1_000_000 for p in counts)):
+        return False
+    values = dict(counts)
+    if (len(values) != len(CANONICAL_EXECUTION_STATUSES)
+            or set(values) != set(CANONICAL_EXECUTION_STATUSES)
+            or any(values[key] for key in ("pending", "blocked", "failed", "cancelled"))):
+        return False
+    try:
+        previous = datetime.fromisoformat(
+            getattr(row, "last_attempt", "").replace("Z", "+00:00")
+        )
+        current = datetime.fromisoformat(
+            receipt.attempted_at.replace("Z", "+00:00")
+        )
+        return (previous.utcoffset() is not None
+                and current.utcoffset() is not None
+                and previous < current)
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return False
+
+
 def sync_source_phase_summary(source: object) -> str:
     """Present only Core-enumerated phase states, never provider diagnostics.
 
@@ -582,6 +633,8 @@ def sync_source_phase_summary(source: object) -> str:
             status = "Téléchargement distinct de cette synchronisation"
         attempt = _timestamp_label(getattr(row, "last_attempt", ""))
         success = _timestamp_label(getattr(row, "last_success", ""))
+        if _historical_local_phase_after_canonical_success(source, row):
+            status += " (historique, antérieur au dernier cycle canonique)"
         detail = heading + " : " + status
         if attempt:
             detail += " · dernier essai " + attempt
@@ -794,6 +847,8 @@ def sync_source_attention(source: object) -> tuple[str, str] | None:
                 raw = getattr(row, "status", None)
                 issue = words.get(raw) if type(raw) is str else None
                 if issue:
+                    if _historical_local_phase_after_canonical_success(source, row):
+                        continue  # Past checkpoint remains visible in phase history.
                     # Post-placement reconciliation/deduplication is maintenance,
                     # not an authority to deny a positively delivered artifact.
                     if phase == "reconcile" and issue[0] == "error":

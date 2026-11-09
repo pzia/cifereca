@@ -201,3 +201,24 @@ def test_task_trace_business_code_is_closed_and_source_sync_only(caplog):
         assert "SECRET_VALUE" not in " ".join(terminals)
     finally:
         runner.close()
+
+
+@pytest.mark.parametrize(("result", "expected"), [
+    ({"status": "verification_unavailable", "reason_code": "borrow_result_unverified"},
+     "Demande d’emprunt envoyée ; confirmation indisponible. Ne réempruntez pas : actualisez vos prêts ultérieurement."),
+    ({"status": "verification_unavailable", "reason_code": "borrow_checkpoint_unavailable"},
+     "Emprunt non confirmé — vérification nécessaire"),
+    ({"status": "blocked", "reason_code": "borrow_not_submitted"},
+     "Emprunt bloqué — aucune confirmation"),
+])
+def test_uncertain_borrow_receipt_does_not_invite_a_second_mutation(result, expected):
+    runner, displayed, flush, _logger = _runner()
+    try:
+        runner.submit("Emprunt", lambda: result, kind="borrow", origin="user")
+        flush()
+        finish = [args for name, args in displayed if name == "finished"]
+        assert len(finish) == 1
+        assert finish[0][3] is False
+        assert finish[0][4] == expected
+    finally:
+        runner.close()
