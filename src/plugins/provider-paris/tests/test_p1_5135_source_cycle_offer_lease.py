@@ -114,7 +114,7 @@ def test_cycle_lease_fails_closed_on_cross_scope_or_rebind(
                 session._epoch = getattr(session, "_epoch", 0) + 1
             edition = "wrong-edition" if change == "edition" else "edition-1"
             right = "wrong-right" if change == "right" else "loan-1"
-            with pytest.raises((ProviderCapabilityError, Exception)):
+            with pytest.raises(ProviderCapabilityError):
                 session.rights_selected_delivery_offer_snapshot(
                     account, edition_id=edition, right_id=right,
                     kind="loan", branch="dilicom", explicit_user_action=True,
