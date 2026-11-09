@@ -155,6 +155,8 @@ def _finish_interrupted(packages: Path, quarantine: Path) -> None:
             record = json.loads(raw)
         except (ValueError, UnicodeError):
             raise ValueError("plugin_gc_audit_invalid") from None
+        if type(record) is not dict:
+            raise ValueError("plugin_gc_audit_invalid")
         name, parent, proof = (
             record.get("source_name"), record.get("source_parent"),
             record.get("object_id"),
