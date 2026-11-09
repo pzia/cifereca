@@ -194,6 +194,7 @@ def inspect_transaction_plugin_references(
         candidate_refs.clear()
     missing = refs - known_ids
     if missing:
+        plugin_plan_qualified = False
         blockers.add("transaction_plugin_version_missing")
     return {
         "schema": "cifereca.updater.cross-store-plugin-references/1",
