@@ -10,12 +10,22 @@ mod = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mod)
 
 class SelectionTests(unittest.TestCase):
+    def test_modern_light_scenarios_follow_scoped_css_and_real_probe(self):
+        self.assertEqual(mod.THEME, ("modern-light-1366", "modern-light-1600"))
+        for path in ("src/cifereca/gui/modern_light_theme.py",
+                     "src/cifereca/gui/shell_stylesheet_controller.py",
+                     "e2e/modern_light_theme_probe.py"):
+            self.assertEqual(mod.select([path]), mod.THEME, path)
+        self.assertTrue(set(mod.THEME).issubset(set(mod.MAINWINDOW)))
+        self.assertEqual(mod.select(["e2e/constellations_detail_probe.py"]),
+                         mod.CONSTELLATIONS_GTK + mod.THEME)
+
     def test_exact_runner_scenarios(self):
         spec = importlib.util.spec_from_file_location("runner", ROOT / "e2e/run.py")
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 39)
+        self.assertEqual(len(mod.ALL), 41)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["height"], 768)
