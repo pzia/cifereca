@@ -76,8 +76,9 @@ def test_bnf_loan_phase_is_explicit_default_deny_not_brand_inferred(
     from dataclasses import replace
     service, session, account, _loan, _state, downloaded = connected_core
     # An otherwise valid BnF session with no ABI opt-in advertises no phase.
-    session.capabilities = replace(
-        session.capabilities, loan_auto_materialization=False)
+    session.descriptor = replace(
+        session.descriptor, capabilities=replace(
+            session.capabilities, loan_auto_materialization=False))
     source, = SynchronizationBrokerImpl(service).sources(account.identity_id)
     assert "loan_auto_materialization" not in source.sync_capabilities
     assert downloaded == []
