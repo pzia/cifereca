@@ -56,8 +56,10 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
 
     if repair_mode:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists() and destination.resolve() != produced_path.resolve():
-            destination.unlink()
+        # os.replace is atomic on the destination filesystem. Do NOT unlink
+        # the existing valid publication first: if the rename fails (quota,
+        # permissions, power loss), the previously indexed artifact must
+        # remain readable for safe replay/rollback.
         produced_path.replace(destination)
         final_path = destination
         if previous_path is not None and previous_path.exists() and previous_path.resolve() != destination.resolve():
@@ -66,7 +68,9 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
     else:
         if produced_path.resolve() != destination.resolve():
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.unlink(missing_ok=True)
+            # Replacing the existing file is already atomic. Unlink-first
+            # creates an avoidable window where an earlier valid loan is lost
+            # if publication fails before the SQLite receipt is committed.
             produced_path.replace(destination)
         final_path = destination
     return final_path, artifact_drm, artifact_format, artifact_protected, hook_info
