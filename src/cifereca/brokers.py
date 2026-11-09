@@ -34,6 +34,20 @@ _SYNC_PUBLIC_STATUSES = frozenset({
 })
 
 
+def _loan_materialization_phase_declared(session: Any, source_caps: set[str]) -> bool:
+    """Provider-neutral UI capability, never an acquisition authorization.
+
+    A real, callable session method must accompany an explicit, opt-in
+    descriptor flag; either absent/partial component fails closed.
+    """
+    return (
+        session is not None and "loans" in source_caps
+        and getattr(getattr(session, "capabilities", None),
+                    "loan_auto_materialization", None) is True
+        and callable(getattr_static(session, "download_digital", None))
+    )
+
+
 def _account_id(account: Any) -> str:
     unique = str(getattr(account, "unique_id", "") or "").strip()
     if unique:
@@ -493,15 +507,11 @@ class SynchronizationBrokerImpl:
             and bool(getattr(getattr(session, "capabilities", None), "backup", False))
         ):
             declared_sync_caps.append("local_materialization")
-        # The opt-in BnF loan→ACSM→ADEPT path is distinct from the generic
-        # Kobo materialization broker. Advertise only that this pathway exists,
+        # Provider-declared loan→ACSM→ADEPT is distinct from generic
+        # local materialization. Advertise only that this pathway exists,
         # never that consent, the ADEPT runtime or a successful delivery does.
         # Static inspection cannot invoke a provider getter or network call.
-        if (
-            provider_id == "bnf-pret" and "loans" in source_caps
-            and session is not None
-            and callable(getattr_static(session, "download_digital", None))
-        ):
+        if _loan_materialization_phase_declared(session, source_caps):
             declared_sync_caps.append("loan_auto_materialization")
         # Scheduled inventory is a provider-neutral declared capability.
         # It remains explicit opt-in and never grants content acquisition.
