@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from cifereca.core.borrow_action_scope import borrow_claim_key
-from cifereca.core.bnf_borrow_claim_observation import BnfBorrowClaimObservation
+from cifereca.core.borrow_claim_observation import BorrowClaimObservation
 from cifereca.gui.bnf_borrow_claim_status import bnf_borrow_claim_message
 from tests.test_core_p0_2055_manual_dispatch import setup
 
@@ -110,19 +110,19 @@ def test_ui_messages_require_a_closed_consistent_claim():
     assert bnf_borrow_claim_message(None) is None
     for state in ("secret", "no_checkpoint", "read_unavailable", "scope_unverified"):
         assert bnf_borrow_claim_message(
-            BnfBorrowClaimObservation(state, None, False),
+            BorrowClaimObservation(state, None, False),
         ) is None
     assert bnf_borrow_claim_message(
-        BnfBorrowClaimObservation("confirmed", True, False),
+        BorrowClaimObservation("confirmed", True, False),
     ) is None
     assert bnf_borrow_claim_message(
-        BnfBorrowClaimObservation("confirmed", True, True, retry_authorized=True),
+        BorrowClaimObservation("confirmed", True, True, retry_authorized=True),
     ) is None
     assert bnf_borrow_claim_message(
-        BnfBorrowClaimObservation("request_sent", False, False),
+        BorrowClaimObservation("request_sent", False, False),
     ) is None
     assert bnf_borrow_claim_message(
-        BnfBorrowClaimObservation("opaque_consumed", True, False),
+        BorrowClaimObservation("opaque_consumed", True, False),
     ).startswith("Une tentative antérieure")
 
 
