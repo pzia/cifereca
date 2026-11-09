@@ -2135,8 +2135,7 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     try:
         if a.maintenance_core_backups:
-            if (a.maintenance_core_backups or a.maintenance_transactions
-                    or a.maintenance_plugins
+            if (a.maintenance_transactions or a.maintenance_plugins
                     or a.maintenance_dev_backups or a.archive
                     or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
@@ -2149,7 +2148,8 @@ def main(argv: list[str] | None = None) -> int:
                 apply=a.apply, acknowledge=a.acknowledge,
             )
         elif a.maintenance_dev_backups:
-            if (a.maintenance_transactions or a.maintenance_plugins
+            if (a.maintenance_core_backups or a.maintenance_transactions
+                    or a.maintenance_plugins
                     or a.archive or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
                     or a.retention_inspect or a.retention_plan or a.dry_run
