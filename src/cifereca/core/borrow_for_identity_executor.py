@@ -207,7 +207,15 @@ def execute_cross_profile_borrow(
                 or loan.medium != "digital"
                 # Provider-native states may be numeric; do not invent an
                 # active state from HTTP success or accept explicit closure.
-                or loan.state in ("returned", "expired", "inactive")
+                # Some providers use numeric/unspecified states; preserve
+                # their existing admission, but never treat an explicit
+                # terminal, denied or pending textual state as an active loan.
+                or (type(loan.state) is str and
+                    loan.state.strip().casefold() in {
+                        "returned", "expired", "inactive", "cancelled",
+                        "canceled", "refused", "rejected", "failed",
+                        "pending", "unknown", "closed",
+                    })
                 or type(loan.id) is not str or not loan.id):
             raise ValueError("unverified_lender_loan")
         finished = service.storage.loan_borrow_finish(
