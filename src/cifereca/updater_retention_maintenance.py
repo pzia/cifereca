@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import re
 from typing import Any
 
 _SCHEMA = "cifereca.updater.maintenance-plan/1"
@@ -15,6 +16,8 @@ _STORES = (
     "core_transactions", "plugin_versions", "known_persistent_staging",
     "updater_backups", "core_preactivation_backups",
 )
+_PUBLIC_CODE = re.compile(r"[a-z][a-z0-9_]{0,79}\\Z")
+_PENDING = frozenset((*_STORES, "persistent_staging", "cross_store_reference_proofs"))
 
 
 def retention_maintenance_plan(inventory: dict[str, Any]) -> dict[str, Any]:
@@ -37,9 +40,11 @@ def retention_maintenance_plan(inventory: dict[str, Any]) -> dict[str, Any]:
     if set(plans) - set(_STORES):
         raise ValueError("retention_unknown_store")
     for values in (inventory["blockers"], inventory["pending_stores"]):
-        if any(type(value) is not str or not value or len(value) > 128
+        if any(type(value) is not str or _PUBLIC_CODE.fullmatch(value) is None
                for value in values):
             raise ValueError("retention_invalid_blocker")
+    if not set(inventory["pending_stores"]).issubset(_PENDING):
+        raise ValueError("retention_unknown_pending_store")
     statistics: dict[str, dict[str, int | bool]] = {}
     for name in _STORES:
         report = plans.get(name)
@@ -59,10 +64,26 @@ def retention_maintenance_plan(inventory: dict[str, Any]) -> dict[str, Any]:
                 or type(report.get("objects")) is not list
                 or len(report["objects"]) != report["total"]):
             raise ValueError("retention_plan_invalid")
-        candidate_rows = sum(
-            type(row) is dict and row.get("decision") == "candidate"
-            for row in report["objects"]
-        )
+        seen: set[str] = set()
+        candidate_rows = 0
+        for row in report["objects"]:
+            if (type(row) is not dict
+                    or type(row.get("object_id")) is not str
+                    or not row["object_id"]
+                    or row["object_id"] in seen
+                    or row.get("decision") not in {"candidate", "retain"}
+                    or type(row.get("reasons")) is not list
+                    or any(type(reason) is not str
+                           or _PUBLIC_CODE.fullmatch(reason) is None
+                           for reason in row["reasons"])):
+                raise ValueError("retention_plan_invalid_row")
+            seen.add(row["object_id"])
+            if row["decision"] == "candidate":
+                if row["reasons"]:
+                    raise ValueError("retention_candidate_with_retention_reason")
+                candidate_rows += 1
+            elif not row["reasons"]:
+                raise ValueError("retention_retained_without_reason")
         if candidate_rows != report["candidates"]:
             raise ValueError("retention_candidate_count_mismatch")
         statistics[name] = {
