@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..models import Loan
-from ..plugin_api import ProviderConfigurationError
+from ..plugin_api import ProviderConfigurationError, ProviderError
 from .diagnostic_bnf_loan_action import BnfLoanActionError, provider_reason
 from .loan_action_scope import capture_loan_action_scope
 
@@ -64,10 +64,11 @@ def stage_bnf_loan_acsm(
                         or account.provider_id != "bnf-pret"
                         or account.credential_id != loan.source_credential
                         or account.unique_id != loan.source_account_id
-                        or session.connected is not True
-                        or session.provider_id != "bnf-pret"
-                        or session.credential_id != loan.source_credential
-                        or not any(a is account for a in session.accounts)):
+                        # The Core lease below checks the exact connected
+                        # session, credential and unique borrower from inert
+                        # session memory. Never invoke provider properties in
+                        # this preflight: even a getter may perform I/O.
+                        ):
                     _refuse("bnf_loan_scope_unproven")
             except Exception:
                 _refuse("bnf_loan_scope_unproven")
@@ -92,12 +93,62 @@ def stage_bnf_loan_acsm(
             # resulting candidate.
             if not lease.current(service):
                 _refuse("bnf_loan_scope_unproven")
+            # The provider owns the private loan/offer interpretation and
+            # signed GET. No legacy download_digital fallback is authorized.
+            offer_snapshot = getattr(
+                session, "rights_selected_delivery_offer_snapshot", None,
+            )
+            deliver_selected = getattr(
+                session, "rights_selected_delivery_candidate", None,
+            )
+            if not callable(offer_snapshot) or not callable(deliver_selected):
+                _refuse("bnf_loan_token_unavailable")
+            phase = "activity"
             try:
-                artifact, url = session.download_digital(
-                    loan, account, destination, explicit_user_action=True)
+                selected = offer_snapshot(
+                    account, edition_id=loan.record_id, right_id=loan.id,
+                    kind="loan", branch="bnf_html", explicit_user_action=True,
+                )
+                scope = selected.scope
+                right = selected.exact(loan.record_id, loan.id, "loan")
+                if (scope.identity_id != expected_identity_id
+                        or scope.provider_id != loan.source_provider
+                        or scope.credential_id != loan.source_credential
+                        or scope.account_id != loan.source_account_id
+                        or selected.branch != "bnf_html"
+                        or right is None
+                        or right.provider_attested is not True
+                        or right.delivery_attested is not True
+                        or type(right.delivery_offer_id) is not str
+                        or not right.delivery_offer_id
+                        or not lease.current(service)):
+                    _refuse("bnf_loan_scope_unproven")
+                phase = "candidate"
+                artifact, url = deliver_selected(
+                    account, edition_id=loan.record_id, right_id=loan.id,
+                    kind="loan", branch=selected.branch,
+                    delivery_offer_id=right.delivery_offer_id,
+                    target_dir=destination, explicit_user_action=True,
+                    admission_current=lambda: lease.current(service),
+                )
+            except BnfLoanActionError:
+                raise
             except Exception as exc:
-                # Do not surface supplier exception text: even a parser may
-                # accidentally include private URLs or SAML in that text.
+                # Distinguish private activity re-read from a signed token GET,
+                # retaining the previously published closed diagnostic codes.
+                # Never expose arbitrary provider exception text.
+                if phase == "activity":
+                    if (isinstance(exc, ProviderError)
+                            and exc.args == ("bnf_selected_offer_scope_changed",)):
+                        _refuse("bnf_loan_not_observed")
+                    reason = provider_reason(exc)
+                    if reason in {
+                        "bnf_auth_required", "bnf_access_denied",
+                        "bnf_rate_limited", "bnf_http_unavailable",
+                        "bnf_transport_unavailable", "bnf_operation_timeout",
+                    }:
+                        _refuse("bnf_activity_" + reason[4:])
+                    _refuse("bnf_activity_unavailable")
                 _refuse(provider_reason(exc))
             observe_phase('artifact_validation')
             # Network I/O can switch the Core epoch even if the selected

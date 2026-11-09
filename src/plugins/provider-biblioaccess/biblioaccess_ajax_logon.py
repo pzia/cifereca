@@ -36,6 +36,8 @@ class AjaxLogonObservation:
     cas_completed: bool = False
     identity_verified: bool = False
     core_connected: bool = False
+    error_count: int | None = None
+    message_present: bool = False
 
 
 def _validate_params(query: dict[str, str], fields: dict[str, str]) -> None:
@@ -94,7 +96,12 @@ def inspect_ajax_response(*, status: int, mime: str, data: bytes) -> AjaxLogonOb
         outcome = "unknown"
     else:
         outcome = "failure_reported"
-    return AjaxLogonObservation(status=status, media_type=media, outcome=outcome)
+    return AjaxLogonObservation(
+        status=status, media_type=media, outcome=outcome,
+        error_count=min(len(errors), 99) if type(errors) is list else None,
+        message_present=(type(document.get("message")) is str
+                         and bool(document["message"])),
+    )
 
 
 class ObservedAjaxLogonClient:

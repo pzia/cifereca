@@ -5,6 +5,34 @@ from .settings_model import SettingsCommitController
 from .settings_draft import build_settings_draft, SettingsValidationError
 
 
+def _refresh_saved_account_test_buttons(config, editors) -> None:
+    """After Save, enable account tests only for unique persisted ON sources.
+
+    This performs no auth/network I/O and does not trust the current GTK
+    draft. The click handler performs a fresh scoped read again.
+    """
+    accounts = config.provider_accounts()
+    if type(accounts) is not list:
+        return
+    for editor in editors:
+        button = editor.get("explicit_probe_button")
+        if button is None:
+            continue
+        matches = [
+            row for row in accounts if type(row) is dict
+            and row.get("provider") == editor.get("provider")
+            and row.get("id") == editor.get("id")
+        ]
+        button.set_sensitive(
+            not editor.get("deleted")
+            and editor.get("invalid_saved_snapshot") is not True
+            and len(matches) == 1
+            and matches[0].get("enabled", True) is True
+            and type(matches[0].get("identity_id")) is str
+            and bool(matches[0]["identity_id"])
+        )
+
+
 def bind_settings_commit(self, *, page_lifetime, settings_state,
                          identity_editors, account_editors, descriptors, public_ids,
                          download_settings, application_ui, sync_settings,
@@ -150,6 +178,13 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             # unrelated Settings must never touch the retired global Kobo timer
             # or use a historical global bit as a scheduling authority.
             refresh_text()
+            # Create/enable an interactive account without remounting the
+            # entire Settings page. Test admission revalidates the saved row.
+            try:
+                _refresh_saved_account_test_buttons(self.config, account_editors)
+            except Exception:
+                # A diagnostic control must not abort a completed Save.
+                pass
             settings_state.commit(staged_settings_revisions)
             track_all_settings_widgets()
             update_settings_actions()

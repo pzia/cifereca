@@ -62,6 +62,50 @@ def _safe_kobo_sync_receipt(summary: dict[str, Any]) -> dict[str, Any]:
     return {"redacted": True, **_safe_kobo_backup_diagnostic_detail(summary)}
 
 
+def _kobo_legacy_report_view(
+    safe_report: dict[str, Any], *, observed_at: int | None = None,
+) -> dict[str, Any]:
+    """CLI-only projection: legacy checkpoint ages are not current Core errors.
+
+    Input MUST already be redacted by safe_kobo_backup_report. Keep the
+    historical counts unchanged and never join legacy IDs to a Core cycle.
+    """
+    import time
+
+    if type(safe_report) is not dict or safe_report.get("redacted") is not True:
+        raise ValueError("unsafe Kobo diagnostic input")
+    as_of = int(time.time()) if observed_at is None else observed_at
+    valid_clock = type(as_of) is int and 946_684_800 <= as_of <= 4_102_444_800
+    freshness: list[dict[str, Any]] = []
+    sources = safe_report.get("sources")
+    if type(sources) is list:
+        for source in sources[:25]:
+            if type(source) is not dict:
+                continue
+            index, last = source.get("source_index"), source.get("updated_at")
+            if type(index) is not int or not 1 <= index <= 25:
+                continue
+            age_known = (
+                valid_clock and type(last) is int
+                and 946_684_800 <= last <= as_of
+                and as_of - last <= 1_000_000_000
+            )
+            row: dict[str, Any] = {
+                "source_index": index, "age_known": bool(age_known),
+            }
+            if age_known:
+                row["age_seconds"] = as_of - last
+            freshness.append(row)
+    return {
+        **safe_report,
+        "status_authority": "historical_legacy_backup",
+        "current_canonical_cycle": {
+            "status": "not_evaluated", "same_source_proof": "unavailable",
+        },
+        "legacy_checkpoint_freshness": freshness,
+    }
+
+
 def _export_parent_is_safe(destination: Path) -> bool:
     """Check known output-path blockers before Core or provider I/O.
 
@@ -1130,7 +1174,9 @@ def main(argv: list[str] | None = None) -> int:
             # Never emit raw provider errors, book titles, product IDs,
             # local file paths or credential identifiers into a JSON report
             # users may copy into an issue or support ticket.
-            result = safe_kobo_backup_report(service.kobo_backup_diagnostic())
+            result = _kobo_legacy_report_view(
+                safe_kobo_backup_report(service.kobo_backup_diagnostic()),
+            )
         elif a.cmd == "kobo-audit":
             from .core.kobo_local_audit import kobo_local_reconciliation_audit
 

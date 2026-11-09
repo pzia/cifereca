@@ -170,8 +170,10 @@ def run_gate(source: Path) -> None:
         # boundary. Parent rollback must restore both Core and the complete
         # plugin store, including the original inactive activation pointer.
         real_child = updater.run_plugin_child
-        def simulated_failed_smoke(command, *, timeout, on_line):
-            completed = real_child(command, timeout=timeout, on_line=on_line)
+        def simulated_failed_smoke(command, *, timeout, on_line, **child_options):
+            completed = real_child(
+                command, timeout=timeout, on_line=on_line, **child_options,
+            )
             check(completed.returncode == 0, "real plugin smoke already failed")
             return subprocess.CompletedProcess(
                 command, 1, json.dumps({

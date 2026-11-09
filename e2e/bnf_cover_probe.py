@@ -440,6 +440,89 @@ def main() -> int:
         report["checks"]["no_external_bnf_provider_io"] = True
         report["checks"]["missing_loan_cover_no_image_get"] = True
         report["checks"]["no_credential_or_token_network"] = True
+        # #4979: repeat the same exact BnF loan with its provider thumbnail
+        # absent, but a catalogue cover attested on the remote entitlement.
+        # Verify that the *actual* GTK loan list and detail use the same
+        # image without joining on title/ISBN or adding another HTTP GET.
+        later(150, begin_remote_loan_cover)
+
+    def begin_remote_loan_cover():
+        from copy import copy
+        from cifereca.core.loan_cover_fallback import attested_remote_loan_cover_proof
+        window = app_window[0]
+        original = next(loan for loan in window.service.last_loans
+                        if loan.record_id == RESOURCES[0])
+        without_thumbnail = copy(original)
+        without_thumbnail.thumbnail_url = None
+        entitlement = {
+            "identity_id": original.identity_id,
+            "provider_id": original.source_provider,
+            "credential_id": original.source_credential,
+            "account_id": original.source_account_id,
+            "item_id": original.record_id,
+            "loan_id": original.id,
+            "entitlement_id": "synthetic-remote-bnf-entitlement",
+            "entitlement_type": "loan",
+        }
+        row = {
+            "local": False,
+            "identity_id": original.identity_id,
+            "provider_id": original.source_provider,
+            "item_id": original.record_id,
+            "loan_id": original.id,
+            "entitlement_id": entitlement["entitlement_id"],
+            "entitlement_type": "loan",
+            "thumbnail_url": COVERS[0],
+            "metadata": {
+                "cover_resolution": {"status": "selected", "tier": "origin",
+                                     "url": COVERS[0]},
+            },
+        }
+        proof = attested_remote_loan_cover_proof(
+            without_thumbnail, entitlement, row,
+            identity_id=original.identity_id,
+            provider_id=original.source_provider,
+            item_id=original.record_id,
+        )
+        assert proof is not None
+        row["_exact_loan_cover_proofs"] = [proof]
+        window._loan_cover_projection = (
+            getattr(window.service, "_account_context_epoch", None),
+            original.identity_id,
+            (row,),
+        )
+        window._populate_loans([
+            without_thumbnail if x is original else x
+            for x in window.service.last_loans
+        ])
+        assert not without_thumbnail.thumbnail_url
+        await_condition(
+            "remote_loan_image_without_source_thumbnail",
+            lambda: window.loan_page.store.get_n_items() == 3
+            and bool(visible_loan(COVERS[0])),
+            select_remote_loan,
+        )
+
+    def select_remote_loan():
+        window = app_window[0]
+        rows = [window.loan_page.store.get_item(i)
+                for i in range(window.loan_page.store.get_n_items())]
+        index = next(i for i, row in enumerate(rows)
+                     if row.thumbnail_url == COVERS[0])
+        window.loan_page.selection.set_selected(index)
+        await_condition(
+            "remote_loan_detail_cover",
+            lambda: bool(selected_loan_cover())
+            and selected_loan_cover()[0].get_mapped()
+            and selected_loan_cover()[0]._url == COVERS[0]
+            and selected_loan_cover()[0].picture.get_paintable() is not None,
+            finish_remote_loan,
+        )
+
+    def finish_remote_loan():
+        capture("08-bnf-exact-remote-loan-cover")
+        report["checks"]["remote_entitlement_exact_loan_cover_in_gtk"] = True
+        assert len(image_gets) == 2
         report["status"] = "PASS"
         result[0] = 0
         save()

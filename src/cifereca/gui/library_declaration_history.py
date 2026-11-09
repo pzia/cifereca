@@ -8,11 +8,26 @@ from __future__ import annotations
 from ..task_queue import TaskPriority
 
 
-_SOURCE_LABELS = {
-    'numilog': 'Numilog',
-    'kobo': 'Kobo',
-    'paris': 'Bibliothèques de Paris',
-}
+def _source_label(window, provider_id):
+    """Private visual attribution only, never an entitlement or route."""
+    if type(provider_id) is not str or not provider_id or len(provider_id) > 128:
+        return 'Source non identifiée'
+    if any(not ch.isprintable() for ch in provider_id):
+        return 'Source non identifiée'
+    service = getattr(window, 'service', None)
+    resolver = getattr(service, 'provider_display_name', None)
+    if not callable(resolver):
+        return 'Source non identifiée'
+    try:
+        label = resolver(provider_id)
+    except Exception:
+        return 'Source non identifiée'
+    if (type(label) is not str or not 0 < len(label) <= 80
+            or label != label.strip()
+            or any(not ch.isprintable() for ch in label)):
+        return 'Source non identifiée'
+    return label
+
 _REVIEW_LABELS = {
     'recorded_unverified_file': 'Déclaré · fichier et droit non revérifiés',
     'source_or_right_changed': 'À examiner · droit ou compte modifié',
@@ -114,7 +129,7 @@ class PrivateDeclarationHistory:
         if item is None:
             return
         self.withdraw_button.set_sensitive(item.state == 'active')
-        source = _SOURCE_LABELS.get(item.provider_id, 'Source non identifiée')
+        source = _source_label(self.window, item.provider_id)
         state = _REVIEW_LABELS.get(item.review, 'État non vérifié')
         self.detail.set_text(
             'Origine : déclaration personnelle (non attestée)\n'
@@ -155,7 +170,7 @@ class PrivateDeclarationHistory:
         for item in page.rows:
             row = self.Gtk.ListBoxRow()
             row._local_declaration = item
-            source = _SOURCE_LABELS.get(item.provider_id, 'Source non identifiée')
+            source = _source_label(self.window, item.provider_id)
             state = _REVIEW_LABELS.get(item.review, 'À examiner')
             label = self.Gtk.Label(
                 label=source + ' · ' + item.item_id + ' · ' + state,
@@ -226,7 +241,7 @@ class PrivateDeclarationHistory:
         relation_id = item.relation_id
         if not self._current(relation_id, generation):
             return
-        source = _SOURCE_LABELS.get(item.provider_id, 'Source non identifiée')
+        source = _source_label(self.window, item.provider_id)
         # The user explicitly opted into this *private* dialog. Never use
         # markup, diagnostics or a serialized action token for these fields.
         body = (

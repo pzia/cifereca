@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+from functools import wraps
+import threading
 import hashlib
 import io
 import json
@@ -20,6 +23,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import quote
 
+from .core.plugin_package_mutation_lock import package_mutation_lease, PackageMutationLeaseError
 from .install_paths import ArchiveNotFoundError, resolve_archive
 from .paths import config_dir, data_dir, database_file, state_dir
 from .update_progress import (step, update_phase, update_operation, skip_update_phase,
@@ -65,6 +69,92 @@ class ReleasePluginSmokeError(UpdateError):
         self.reason_code = reason_code
         self.smoke_counts = dict(smoke_counts)
         self.failed_contributions = [dict(row) for row in (failed_contributions or [])]
+
+
+
+_UPDATER_THREAD_LOCK = threading.RLock()
+_UPDATER_LOCK_DEPTH = threading.local()
+_UPDATER_INHERITED_LOCK_FD_ENV = "CIFERECA_UPDATER_INHERITED_LOCK_FD"
+
+
+@contextmanager
+def _exclusive_updater_lock(root: Path):
+    """Shared process + OS lease, held for the full mutating updater command.
+
+    Never unlink the lock file; all official installations/rollbacks and
+    reconciliation must lock the same persistent inode (P0 #5069).
+    """
+    with _UPDATER_THREAD_LOCK:
+        depth = getattr(_UPDATER_LOCK_DEPTH, "count", 0)
+        if depth:
+            _UPDATER_LOCK_DEPTH.count = depth + 1
+            try:
+                yield
+            finally:
+                _UPDATER_LOCK_DEPTH.count -= 1
+            return
+        # The Core updater activates plugins through a separate DevUpdater
+        # process. Pass its *same open file description*: unrelated processes
+        # still cannot acquire the kernel lock while Core is active.
+        inherited = os.environ.pop(_UPDATER_INHERITED_LOCK_FD_ENV, None)
+        owned = inherited is None
+        try:
+            import fcntl
+            root.mkdir(parents=True, exist_ok=True)
+            if owned:
+                fd = os.open(root / ".cifereca-updater.lock",
+                             os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            else:
+                if not inherited.isascii() or not inherited.isdecimal():
+                    raise UpdateError("Verrou updater délégué invalide")
+                fd = int(inherited)
+                if fd < 3:
+                    raise UpdateError("Verrou updater délégué invalide")
+                os.fstat(fd)
+        except (ImportError, OSError, OverflowError, ValueError):
+            raise UpdateError("Verrou updater indisponible") from None
+        try:
+            current = os.fstat(fd)
+            if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                    or current.st_uid != os.getuid()
+                    or current.st_mode & 0o077):
+                raise UpdateError("Verrou updater non sûr")
+            if not owned:
+                # An environment variable alone is never an authorization.
+                lock_path = root / ".cifereca-updater.lock"
+                if lock_path.is_symlink():
+                    raise UpdateError("Verrou updater délégué non sûr")
+                path_stat = lock_path.stat()
+                if (path_stat.st_dev, path_stat.st_ino) != (current.st_dev, current.st_ino):
+                    raise UpdateError("Verrou updater délégué non sûr")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                raise UpdateError("Une opération updater est déjà en cours") from None
+            _UPDATER_LOCK_DEPTH.count = 1
+            _UPDATER_LOCK_DEPTH.fd = fd
+            _UPDATER_LOCK_DEPTH.borrowed = not owned
+            try:
+                yield
+            finally:
+                _UPDATER_LOCK_DEPTH.count = 0
+                _UPDATER_LOCK_DEPTH.fd = None
+                _UPDATER_LOCK_DEPTH.borrowed = False
+                if owned:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _serial_updater_operation(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        # Read-only dry-runs retain the existing no-runtime-directory contract.
+        if kwargs.get("dry_run", False):
+            return func(*args, **kwargs)
+        with _exclusive_updater_lock(install_root()):
+            return func(*args, **kwargs)
+    return wrapped
 
 
 def _run_bounded_process(command: list[str], *, timeout: int, **kwargs: Any) -> subprocess.CompletedProcess:
@@ -413,7 +503,7 @@ def _release_installed_at(release: Path) -> float | None:
         return None
 
 
-def _gc(root: Path, keep: int) -> dict[str, int]:
+def _gc(root: Path, keep: int, *, approved_release_names: frozenset[str] | None = None) -> dict[str, int]:
     """Post-commit cleanup: retain last 24 h AND >=2 restorable generations.
 
     Core symlink targets and any incomplete transaction are fail-closed.
@@ -463,8 +553,57 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
                 }
             if transaction.get("state") not in {
                 "applied", "rolled_back", "update_failed_restored",
+                "reconciled_degraded",
             }:
                 raise UpdateError("Nettoyage refusé : état de transaction inconnu")
+
+    # The active release is not the only rollback root. A second (or
+    # younger-than-24h) committed transaction can still require an older
+    # before_previous release. Reuse the exact Core 24h + min2 retention
+    # closure before any physical release GC; never invent a separate TTL.
+    # Missing/contradictory transaction proofs defer the whole cleanup.
+    if transactions.is_dir():
+        from .updater_retention_inventory import (
+            _name_id, inspect_core_transaction_history,
+        )
+        inventory = inspect_core_transaction_history(root, now=now)
+        plan = inventory.get("plan")
+        blockers = set(inventory.get("blockers", ()))
+        critical = {
+            "unsafe_transactions_root", "unsafe_transaction_entry",
+            "unexpected_transaction_entry", "unsafe_transaction_journal",
+            "transaction_unreadable", "transaction_identity_mismatch",
+            "transaction_state_unknown", "transaction_proof_invalid",
+            "unresolved_transaction_reference", "missing_transaction_snapshot",
+            "unsafe_transaction_snapshot", "incomplete_reference_graph",
+            "transaction_inventory_too_large", "unsafe_runtime_root",
+            # The inventory is only a source of GC authority when every
+            # release-to-transaction proof and runtime pointer is qualified.
+            # A malformed pointer must never be downgraded to "not referenced".
+            "invalid_release_transaction_pointer", "unsafe_releases_root",
+            "unsafe_release_entry", "unexpected_release_entry",
+            "release_inventory_too_large", "invalid_core_pointer",
+            "unresolved_core_pointer",
+        }
+        if (type(plan) is not dict or type(plan.get("objects")) is not list
+                or critical & blockers):
+            return {
+                "retained": len(releases), "removed": 0,
+                "protected": len(protected), "deferred": 1,
+            }
+        by_id = {_name_id("release", release.name): release.resolve()
+                 for release in releases}
+        for row in plan["objects"]:
+            if (type(row) is not dict or type(row.get("reasons")) is not list):
+                raise UpdateError("Nettoyage refusé : plan de rétention invalide")
+            if not str(row.get("object_id", "")).startswith("release:"):
+                continue
+            if "referenced" not in row["reasons"]:
+                continue
+            target = by_id.get(row["object_id"])
+            if target is None:
+                raise UpdateError("Nettoyage refusé : release référencée absente")
+            protected.add(target)
 
     active = _symlink_target(root / "current")
     if active is not None and active.is_dir():
@@ -496,8 +635,22 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
             protected.add(release.resolve())
 
     removed = 0
+    from .updater_retention_inventory import _release_receipt_proof
     for release in releases:
         if release.resolve() in protected:
+            continue
+        if approved_release_names is not None and release.name not in approved_release_names:
+            protected.add(release.resolve())
+            continue
+        # The common inventory's owned_by_updater proof is mandatory for
+        # physical GC too. An old mtime or a similarly named directory is
+        # not permission to destroy a legacy/manual release.
+        try:
+            owned, _installed = _release_receipt_proof(releases_root, release.name)
+        except (OSError, ValueError, UnicodeError, OverflowError):
+            owned = False
+        if not owned:
+            protected.add(release.resolve())
             continue
         # A concurrent link change must never turn a purge candidate into
         # the active or previous runtime. New transactions defer cleanup.
@@ -512,6 +665,29 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
                         raise UpdateError("Nettoyage différé : transaction en cours")
         if release.is_symlink() or not release.is_dir():
             raise UpdateError("Nettoyage refusé : génération devenue non sûre")
+        # Revalidate the complete rollback graph at the start of the physical
+        # deletion sweep. A newly finalized transaction may have acquired a
+        # dependency since planning. Do this before the FIRST deletion: old
+        # candidate transaction journals currently outlive their releases,
+        # so later inventories can legitimately contain dangling old refs.
+        # The updater-level OS lock must serialize cooperative writers.
+        if transactions.is_dir() and removed == 0:
+            refreshed = inspect_core_transaction_history(root, now=time.time())
+            fresh_plan = refreshed.get("plan")
+            fresh_blockers = set(refreshed.get("blockers", ()))
+            if (type(fresh_plan) is not dict
+                    or type(fresh_plan.get("objects")) is not list
+                    or critical & fresh_blockers):
+                raise UpdateError("Nettoyage différé : graphe de rétention modifié")
+            release_id = _name_id("release", release.name)
+            matching = [
+                row for row in fresh_plan["objects"]
+                if type(row) is dict and row.get("object_id") == release_id
+            ]
+            if (len(matching) != 1
+                    or matching[0].get("decision") != "candidate"
+                    or matching[0].get("reasons") != []):
+                raise UpdateError("Nettoyage différé : release désormais protégée")
         # Do not ignore deletion errors: a partial cleanup must be diagnosed.
         shutil.rmtree(release)
         removed += 1
@@ -586,7 +762,26 @@ def _release_plugin_manifest(source: Path) -> dict[str, str]:
 
 
 def _plugin_packages_root() -> Path:
-    return data_dir() / "plugins" / "packages"
+    # Resolving the package store must not allocate XDG data during read-only
+    # recovery/retention inspection. Writers create their own directories.
+    return data_dir(create=False) / "plugins" / "packages"
+
+
+@contextmanager
+def _trusted_package_lease():
+    try:
+        with package_mutation_lease(_plugin_packages_root()):
+            yield
+    except PackageMutationLeaseError:
+        raise UpdateError("updater_package_mutation_lock_unavailable") from None
+
+
+def _serial_package_snapshot_operation(operation):
+    @wraps(operation)
+    def wrapped(*args, **kwargs):
+        with _trusted_package_lease():
+            return operation(*args, **kwargs)
+    return wrapped
 
 
 def _safe_package_id(package_id: str) -> str:
@@ -718,6 +913,7 @@ def _save_transaction(path: Path, transaction: dict[str, Any], state: str) -> No
     _write_json_atomic(path / "transaction.json", transaction)
 
 
+@_serial_package_snapshot_operation
 def _create_update_transaction(
     root: Path,
     release: Path,
@@ -767,6 +963,7 @@ def _create_update_transaction(
         raise UpdateError("Snapshot transactionnel des plugins impossible") from exc
 
 
+@_serial_package_snapshot_operation
 def _restore_transaction_packages(path: Path, transaction: dict[str, Any]) -> None:
     root = _plugin_packages_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -882,6 +1079,7 @@ def _verify_restored_transaction_state(root: Path, transaction: dict[str, Any]) 
             raise UpdateError("rollback_package_state_mismatch")
 
 
+@_serial_package_snapshot_operation
 def _complete_transaction_restore(root: Path, path: Path, transaction: dict[str, Any], state: str) -> None:
     """Idempotently complete a failed update or an interrupted voluntary rollback."""
     _save_transaction(path, transaction, state)
@@ -935,6 +1133,332 @@ def _recover_incomplete_transactions(root: Path) -> list[str]:
             _complete_transaction_restore(root, path, transaction, mode)
             recovered.append(str(transaction.get("id") or path.name))
     return recovered
+
+
+
+def recovery_inspect(root: Path | None = None) -> dict[str, Any]:
+    """Read-only, redacted diagnosis of blocking updater transactions (#5069).
+
+    This deliberately does not repair, clear, or reinterpret a rollback proof.
+    Public data contain only validated transaction IDs and closed reason codes;
+    never package IDs, stored absolute paths, or exception messages.
+    """
+    root = root if root is not None else install_root()
+    base = root / "transactions"
+    rows: list[dict[str, Any]] = []
+    incomplete_states = _UNFINISHED_TRANSACTION_STATES
+    final_states = {"applied", "rolled_back", "update_failed_restored",
+                    "reconciled_degraded", "abandoned_unrecoverable_previous"}
+
+    def diagnostic_id(name: str) -> str:
+        return name if re.fullmatch(r"\d{8}T\d{6}Z-[a-f0-9]{8,24}", name) else "invalid_id"
+
+    if base.is_symlink():
+        rows.append({"id": "invalid_id", "state": "unreadable",
+                     "reasons": ["unsafe_transaction_store"], "action": "manual_review"})
+    elif base.is_dir():
+        for directory in sorted(base.iterdir(), key=lambda item: item.name):
+            if not directory.is_dir() and not directory.is_symlink():
+                continue
+            identifier = diagnostic_id(directory.name)
+            if directory.is_symlink():
+                rows.append({"id": identifier, "state": "unreadable",
+                             "reasons": ["unsafe_transaction_directory"],
+                             "action": "manual_review"})
+                continue
+            try:
+                transaction = _read_transaction(directory)
+            except UpdateError:
+                rows.append({"id": identifier, "state": "unreadable",
+                             "reasons": ["transaction_unreadable"],
+                             "action": "manual_review"})
+                continue
+            state = transaction.get("state")
+            if state in final_states and transaction.get("id") == directory.name:
+                continue
+            reasons: set[str] = set()
+            if transaction.get("id") != directory.name or not isinstance(state, str):
+                reasons.add("transaction_identity_invalid")
+            if state not in incomplete_states:
+                reasons.add("transaction_state_invalid")
+            core = transaction.get("core")
+            packages = transaction.get("packages")
+            if type(core) is not dict or type(packages) is not dict:
+                reasons.add("transaction_evidence_invalid")
+            else:
+                releases_root = root / "releases"
+                for link, key in (("current", "before_current"),
+                                  ("previous", "before_previous")):
+                    expected_value = core.get(key)
+                    expected = _path_from_identity(expected_value)
+                    actual_link = root / link
+                    actual = _symlink_target(actual_link)
+                    missing = "before_current_missing" if link == "current" else "before_previous_missing"
+                    if expected_value is not None and (
+                            type(expected_value) is not dict
+                            or type(expected_value.get("path")) is not str
+                            or expected is None):
+                        reasons.add("transaction_evidence_invalid")
+                        continue
+                    if expected is not None:
+                        # No .resolve() on an arbitrary evidence path: do not
+                        # follow a symlink outside the updater-owned release store.
+                        if (not expected.is_absolute()
+                                or expected.parent != releases_root
+                                or expected.is_symlink()
+                                or releases_root.is_symlink()):
+                            reasons.add("unsafe_core_reference")
+                            continue
+                        if not expected.is_dir():
+                            reasons.add(missing)
+                            # Missing 'previous' is the known failure mode:
+                            # no pointer is better than a fabricated pointer.
+                            if actual is not None:
+                                reasons.add("core_link_mismatch")
+                            continue
+                    if (actual_link.exists() and not actual_link.is_symlink()
+                            or (expected is None) != (actual is None)
+                            or (expected is not None and actual != expected)):
+                        reasons.add("core_link_mismatch")
+                for package_id, row in packages.items():
+                    if (type(package_id) is not str or type(row) is not dict
+                            or type(row.get("before")) is not dict):
+                        reasons.add("transaction_evidence_invalid")
+                        continue
+                    try:
+                        _safe_package_id(package_id)
+                        before = row["before"]
+                        if before.get("exists"):
+                            backup = directory / "plugins" / package_id
+                            if backup.is_symlink() or not backup.is_dir():
+                                reasons.add("plugin_snapshot_missing")
+                            elif _package_identity_at(package_id, backup) != before:
+                                reasons.add("plugin_snapshot_mismatch")
+                        if _package_identity(package_id) != before:
+                            reasons.add("plugin_state_mismatch")
+                    except (OSError, UpdateError, ValueError, TypeError):
+                        reasons.add("plugin_evidence_unavailable")
+            if state == "restoration_incomplete" and not reasons:
+                # A stale generic 'verification' is not proof of safety.
+                reasons.add("unclassified_restoration_failure")
+            rows.append({
+                "id": identifier,
+                "state": state if state in incomplete_states else "unreadable",
+                "reasons": sorted(reasons),
+                "action": ("restore_missing_evidence" if reasons & {
+                    "before_current_missing", "before_previous_missing",
+                    "plugin_snapshot_missing"} else "manual_review"),
+            })
+    return {"ok": True, "read_only": True, "blocked": bool(rows),
+            "incomplete_transactions": rows}
+
+
+def _preflight_incomplete_recovery(root: Path) -> None:
+    """Stop permanent recovery failures before any checkout or source staging.
+
+    Recoverable interrupted operations still pass through the existing
+    transactional recover path. There is *no* implicit rollback bypass.
+    """
+    report = recovery_inspect(root)
+    irrecoverable = {
+        "before_current_missing", "before_previous_missing",
+        "plugin_snapshot_missing", "plugin_snapshot_mismatch",
+        "unsafe_core_reference", "unsafe_transaction_store",
+        "unsafe_transaction_directory", "transaction_unreadable",
+        "transaction_identity_invalid", "transaction_evidence_invalid",
+        "transaction_state_invalid",
+    }
+    for row in report["incomplete_transactions"]:
+        if (set(row["reasons"]) & irrecoverable
+                or row["state"] == "unreadable"):
+            # Even a transaction still labelled 'prepared' may contain a
+            # manually deleted before_current/before_previous or a corrupt
+            # snapshot. Never enter automatic restore with broken evidence.
+            code = next((reason for reason in row["reasons"] if reason in irrecoverable),
+                        "transaction_unreadable")
+            raise UpdateError(
+                "Restauration bloquante avant téléchargement: "
+                f"transaction={row['id']} reason={code}; "
+                "diagnostic: cifereca-update --recovery-inspect --json"
+            )
+
+
+def _previous_reconciliation_plan(root: Path, transaction_id: str) -> dict[str, Any]:
+    """Strict read-only witness for the *single* lost-before_previous case.
+
+    The hash is a one-shot operator acknowledgement, not a cryptographic
+    signature. It binds the exact journal bytes, Core pointer, and current
+    package proofs; it is rederived inside the updater mutation lock.
+    """
+    if not re.fullmatch(r"\d{8}T\d{6}Z-[a-f0-9]{8,24}", transaction_id):
+        raise UpdateError("reconciliation_transaction_id_invalid")
+    report = recovery_inspect(root)
+    rows = report["incomplete_transactions"]
+    if (len(rows) != 1 or rows[0]["id"] != transaction_id
+            or rows[0]["state"] != "restoration_incomplete"
+            or rows[0]["reasons"] != ["before_previous_missing"]):
+        raise UpdateError("reconciliation_evidence_not_unique")
+    folder = _transaction_path(root, transaction_id)
+    journal = folder / "transaction.json"
+    if folder.is_symlink() or journal.is_symlink():
+        raise UpdateError("reconciliation_unsafe_journal")
+    transaction = _read_transaction(folder)
+    if transaction.get("restoration_errors") != ["verification"]:
+        raise UpdateError("reconciliation_incompatible_failure")
+    core = transaction["core"]
+    before = _path_from_identity(core["before_current"])
+    lost = _path_from_identity(core["before_previous"])
+    # Only the lost *older* previous Core generation may be irrecoverable.
+    # The full original current identity must still be attestable.
+    if (before is None or lost is None
+            or before.parent != root / "releases"
+            or lost.parent != root / "releases"
+            or not before.is_dir() or before.is_symlink()
+            or lost.exists() or lost.is_symlink()
+            or _symlink_target(root / "current") != before
+            or (root / "previous").exists() or (root / "previous").is_symlink()
+            or _core_identity(before) != core["before_current"]):
+        raise UpdateError("reconciliation_core_evidence_mismatch")
+    # The inventory above attested current package identities AND saved
+    # snapshots. Bind the receipt to them without disclosing package names.
+    raw = journal.read_bytes()
+    proof = {
+        package_id: _package_identity(package_id)
+        for package_id in sorted(transaction["packages"])
+    }
+    token = hashlib.sha256(
+        b"cifereca.reconcile-lost-previous/1\0"
+        + raw + b"\0" + os.readlink(root / "current").encode("utf-8")
+        + b"\0" + json.dumps(proof, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return {
+        "ok": True, "read_only": True, "id": transaction_id,
+        "reason": "before_previous_missing",
+        "proposed_state": "reconciled_degraded",
+        "acknowledgement_sha256": token,
+        "requires_acknowledgement": True,
+    }
+
+
+def reconcile_lost_previous(
+    transaction_id: str, *, acknowledge: str | None = None,
+) -> dict[str, Any]:
+    """Supervised resolution only: never fabricate a rollback generation.
+
+    Planning is read-only. Apply takes an exclusive lock, rechecks all proof,
+    fsyncs a private archival journal and only then changes transaction
+    state to *degraded* (not restored). No plugin or user-state mutation.
+    """
+    root = install_root()
+    if acknowledge is None:
+        return _previous_reconciliation_plan(root, transaction_id)
+    if type(acknowledge) is not str or not re.fullmatch(r"[a-f0-9]{64}", acknowledge):
+        raise UpdateError("reconciliation_acknowledgement_invalid")
+    # Core lease first, package-store lease second: direct plugin writers
+    # cannot change package evidence between acknowledgement and audit commit.
+    try:
+        with _exclusive_updater_lock(root), package_mutation_lease(_plugin_packages_root()):
+            return _reconcile_lost_previous_under_locks(root, transaction_id, acknowledge)
+    except PackageMutationLeaseError:
+        raise UpdateError("reconciliation_plugin_package_lock_unavailable") from None
+
+
+def _reconcile_lost_previous_under_locks(
+    root: Path, transaction_id: str, acknowledge: str,
+) -> dict[str, Any]:
+    # Never expose a mutating helper callable outside the updater lease.
+    if not getattr(_UPDATER_LOCK_DEPTH, "count", 0):
+        raise UpdateError("reconciliation_updater_lease_required")
+    plan = _previous_reconciliation_plan(root, transaction_id)
+    if acknowledge != plan["acknowledgement_sha256"]:
+        raise UpdateError("reconciliation_evidence_changed")
+    folder = _transaction_path(root, transaction_id)
+    original = _read_transaction(folder)
+    private_audit = root / "reconciliation-audit"
+    if private_audit.is_symlink():
+        raise UpdateError("reconciliation_audit_store_unsafe")
+    private_audit.mkdir(mode=0o700, exist_ok=True)
+    if (not private_audit.is_dir() or private_audit.is_symlink()
+            or private_audit.stat().st_uid != os.getuid()
+            or private_audit.stat().st_mode & 0o077):
+        raise UpdateError("reconciliation_audit_store_unsafe")
+    audit = private_audit / (transaction_id + "-" + acknowledge[:16] + ".json")
+    receipt = {
+        "schema": "cifereca.updater.reconciliation-audit/1",
+        "transaction_id": transaction_id,
+        "reason": "before_previous_missing",
+        "result": "reconciled_degraded",
+        "acknowledgement_sha256": acknowledge,
+        "original_transaction": original,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    data = (json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2)
+            + "\n").encode("utf-8")
+    if audit.exists() or audit.is_symlink():
+        # Recovery from a crash *after* fsync(audit) but *before* saving
+        # the degraded journal is allowed only for the identical proof.
+        # A partial, foreign or replaced audit must not be rewritten.
+        if audit.is_symlink():
+            raise UpdateError("reconciliation_existing_audit_unsafe")
+        fd = -1
+        try:
+            fd = os.open(audit, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            existing_stat = os.fstat(fd)
+            if (not stat.S_ISREG(existing_stat.st_mode)
+                    or existing_stat.st_nlink != 1
+                    or existing_stat.st_uid != os.getuid()
+                    or existing_stat.st_mode & 0o077
+                    or existing_stat.st_size > 128 * 1024 * 1024):
+                raise UpdateError("reconciliation_existing_audit_unsafe")
+            with os.fdopen(fd, "rb") as stream:
+                fd = -1
+                saved = json.loads(stream.read().decode("utf-8"))
+        except (OSError, ValueError, UnicodeError):
+            raise UpdateError("reconciliation_existing_audit_unreadable") from None
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        if (type(saved) is not dict
+                or saved.get("schema") != receipt["schema"]
+                or saved.get("transaction_id") != transaction_id
+                or saved.get("reason") != receipt["reason"]
+                or saved.get("result") != receipt["result"]
+                or saved.get("acknowledgement_sha256") != acknowledge
+                or saved.get("original_transaction") != original):
+            raise UpdateError("reconciliation_existing_audit_mismatch")
+    else:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(audit, flags, 0o600)
+        except OSError:
+            raise UpdateError("reconciliation_audit_write_refused") from None
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError:
+            raise UpdateError("reconciliation_audit_write_failed") from None
+    directory_fd = os.open(private_audit, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    # Any drift between proof and journal commit must still fail closed;
+    # leaving the audit receipt without a state switch is recoverable.
+    refreshed = _previous_reconciliation_plan(root, transaction_id)
+    if refreshed["acknowledgement_sha256"] != acknowledge:
+        raise UpdateError("reconciliation_evidence_changed")
+    original["reconciliation"] = {
+        "schema": 1, "reason": "before_previous_missing",
+        "audit": audit.name, "acknowledgement_sha256": acknowledge,
+    }
+    _save_transaction(folder, original, "reconciled_degraded")
+    return {
+        "ok": True, "id": transaction_id, "state": "reconciled_degraded",
+        "reason": "before_previous_missing", "audit": audit.name,
+        "no_previous_release_restored": True,
+    }
 
 
 def _build_release_plugin_snapshot(release: Path, destination: Path) -> Path | None:
@@ -1079,10 +1603,17 @@ def _apply_release_plugin_snapshot(release: Path, snapshot: Path) -> dict[str, A
     command = _command_path(release, DEV_COMMAND)
     if not command.is_file():
         raise UpdateError("cifereca-update-dev absent du nouveau runtime")
+    # The direct child inherits a validated lease, never an unlocked gap.
+    lease_fd = getattr(_UPDATER_LOCK_DEPTH, "fd", None)
+    child_lease = ({
+        "pass_fds": (lease_fd,),
+        "extra_env": {_UPDATER_INHERITED_LOCK_FD_ENV: str(lease_fd)},
+    } if lease_fd is not None else {})
     try:
         proc = run_plugin_child(
             [str(command), str(snapshot), "--json"],
             timeout=RELEASE_PLUGIN_SNAPSHOT_TIMEOUT_SECONDS, on_line=child_progress_receiver(),
+            **child_lease,
         )
     except TimeoutError:
         raise TimeoutError("Délai dépassé pour un sous-processus de mise à jour") from None
@@ -1138,6 +1669,7 @@ def _restore_release_links(root: Path, old_current: Path | None, old_previous: P
         previous_link.unlink(missing_ok=True)
 
 
+@_serial_updater_operation
 def install_source(
     source: Path,
     *,
@@ -1147,6 +1679,8 @@ def install_source(
     provenance: dict[str, str] | None = None,
     backup_persistent: bool = False,
 ) -> dict[str, Any]:
+    if not dry_run:
+        _preflight_incomplete_recovery(install_root())
     source = source.resolve()
     _, version = step("metadata", _metadata, source)
     py = step("python_selection", select_python, python)
@@ -1225,6 +1759,13 @@ def install_source(
                 row["after"] = _package_identity(package_id)
             step("transaction_finalize", _save_transaction, transaction_path, transaction, "applied")
             cleanup_result = step("cleanup", _gc, root, keep)
+            from .updater_postcommit_retention import postcommit_updater_retention
+            cleanup_result["other_stores"] = postcommit_updater_retention(
+                root,
+                _plugin_packages_root(),
+                state_dir(create=False) / "dev-updates",
+                state_dir(create=False) / "update-backups",
+            )
     except (Exception, KeyboardInterrupt) as update_exc:
         # Ctrl-C after Core activation must attempt the same safe transactional
         # restore as ordinary failures; never leave a success-looking state.
@@ -1357,6 +1898,7 @@ def _prepare_github_wheelhouse(source: Path, python: str) -> None:
 
 
 
+@_serial_updater_operation
 def install_github(
     ref: str = "main",
     *,
@@ -1365,6 +1907,8 @@ def install_github(
     keep: int = MIN_RETAINED_RELEASES,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    if not dry_run:
+        _preflight_incomplete_recovery(install_root())
     with tempfile.TemporaryDirectory(prefix="cifereca-github-") as tmp:
         source = Path(tmp) / "source"
         sha = _github_checkout(repository, ref, source)
@@ -1385,6 +1929,7 @@ def install_github(
         return result
 
 
+@_serial_updater_operation
 def install_archive(
     archive: Path,
     *,
@@ -1392,6 +1937,8 @@ def install_archive(
     keep: int = MIN_RETAINED_RELEASES,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    if not dry_run:
+        _preflight_incomplete_recovery(install_root())
     try:
         archive = step("resolve_archive", resolve_archive, archive)
     except ArchiveNotFoundError as exc:
@@ -1462,8 +2009,10 @@ def status() -> dict[str, Any]:
     }
 
 
+@_serial_updater_operation
 def rollback(to: str | None = None) -> dict[str, Any]:
     root = install_root()
+    _preflight_incomplete_recovery(root)
     recovered = step("recover", _recover_incomplete_transactions, root)
     if recovered:
         return {
@@ -1567,6 +2116,32 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--status", action="store_true")
+    p.add_argument("--recovery-inspect", action="store_true",
+                   help="Diagnostic en lecture seule des transactions de reprise bloquées")
+    p.add_argument("--retention-inspect", action="store_true",
+                   help="Inventaire read-only de rétention Core/transactions/versions plugins ; jamais d'effacement")
+    p.add_argument("--retention-plan", action="store_true",
+                   help="Plan synthétique de maintenance read-only ; aucune suppression autorisée")
+    p.add_argument("--maintenance-transactions", action="store_true",
+                   help="Plan ou purge supervisée des seules transactions terminées expirées")
+    p.add_argument("--maintenance-dev-backups", action="store_true",
+                   help="Plan ou purge supervisée des sauvegardes DevUpdater certifiées")
+    p.add_argument("--maintenance-core-backups", action="store_true",
+                   help="Plan ou purge supervisée des sauvegardes Core avant activation")
+    p.add_argument("--maintenance-staging", action="store_true",
+                   help="Plan ou purge des scratchs persistants abandonnés attestés")
+    p.add_argument("--maintenance-core-releases", action="store_true",
+                   help="Plan ou GC autonome supervisé des releases Core")
+    p.add_argument("--maintenance-all", action="store_true",
+                   help="Plan puis maintenance coordonnée de tous les historiques Updater")
+    p.add_argument("--maintenance-plugins", action="store_true",
+                   help="Plan ou purge supervisée des versions historiques plugins")
+    p.add_argument("--apply", action="store_true",
+                   help="Appliquer la maintenance supervisée avec --acknowledge SHA256")
+    p.add_argument("--recovery-reconcile", metavar="TRANSACTION_ID",
+                   help="Plan de réconciliation ciblée (lecture seule sauf --acknowledge)")
+    p.add_argument("--acknowledge", metavar="SHA256",
+                   help="Validation explicite du plan exact --recovery-reconcile")
     p.add_argument("--rollback", action="store_true")
     p.add_argument("--to")
     p.add_argument("--keep", type=int, default=MIN_RETAINED_RELEASES,
@@ -1575,7 +2150,128 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.status:
+        if a.maintenance_all:
+            if (a.maintenance_core_releases or a.maintenance_staging
+                    or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.maintenance_core_backups
+                    or a.archive or a.github is not None or a.rollback
+                    or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-all incompatible avec ces options")
+            from .updater_maintenance_all import maintenance_all
+            result = maintenance_all(
+                install_root(), _plugin_packages_root(),
+                state_dir(create=False) / "dev-updates",
+                state_dir(create=False) / "update-backups",
+                keep=a.keep, apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_core_releases:
+            if (a.maintenance_all or a.maintenance_staging or a.maintenance_transactions
+                    or a.maintenance_plugins or a.maintenance_dev_backups
+                    or a.maintenance_core_backups or a.archive
+                    or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-core-releases incompatible avec ces options")
+            from .updater_core_release_maintenance import core_release_maintenance
+            result = core_release_maintenance(
+                install_root(), keep=a.keep, apply=a.apply,
+                acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_staging:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.maintenance_core_backups
+                    or a.archive or a.github is not None or a.rollback
+                    or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-staging incompatible avec ces options")
+            from .updater_staging_maintenance import staging_maintenance
+            result = staging_maintenance(
+                install_root(), _plugin_packages_root(),
+                state_dir(create=False) / "update-backups",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_core_backups:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.archive
+                    or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-core-backups incompatible avec ces options")
+            from .updater_core_backup_maintenance import core_backup_maintenance
+            result = core_backup_maintenance(
+                install_root(), state_dir(create=False) / "update-backups",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_dev_backups:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_transactions
+                    or a.maintenance_plugins
+                    or a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-dev-backups incompatible avec ces options")
+            from .updater_dev_backup_maintenance import dev_backup_maintenance
+            result = dev_backup_maintenance(
+                install_root(), state_dir(create=False) / "dev-updates",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_plugins:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_dev_backups
+                    or a.maintenance_transactions
+                    or a.archive or a.github is not None
+                    or a.rollback or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-plugins incompatible avec ces options")
+            from .updater_plugin_maintenance import plugin_history_maintenance
+            result = plugin_history_maintenance(
+                install_root(), _plugin_packages_root(), apply=a.apply,
+                acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_transactions:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.maintenance_plugins or a.maintenance_dev_backups
+                    or a.maintenance_core_backups
+                    or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-transactions incompatible avec ces options")
+            from .updater_transaction_maintenance import transaction_maintenance
+            result = transaction_maintenance(install_root(), apply=a.apply,
+                                             acknowledge=a.acknowledge)
+        elif a.retention_inspect or a.retention_plan:
+            if (a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.acknowledge is not None or a.dry_run or a.to or a.python
+                    or (a.retention_inspect and a.retention_plan)):
+                p.error("--retention-inspect/--retention-plan sont exclusifs et read-only")
+            from .updater_retention_plugins import inspect_updater_retention_readonly
+            result = inspect_updater_retention_readonly(
+                install_root(), _plugin_packages_root(), now=time.time(),
+                backups_root=state_dir(create=False) / "dev-updates",
+                core_backups_root=state_dir(create=False) / "update-backups",
+            )
+            if a.retention_plan:
+                from .updater_retention_maintenance import retention_maintenance_plan
+                result = retention_maintenance_plan(result)
+        elif a.apply:
+            p.error("--apply exige --maintenance-transactions")
+        elif a.recovery_inspect:
+            result = recovery_inspect()
+        elif a.recovery_reconcile is not None:
+            if a.archive or a.github is not None or a.rollback or a.status or a.dry_run:
+                p.error("--recovery-reconcile incompatible avec installation, status ou rollback")
+            result = reconcile_lost_previous(a.recovery_reconcile, acknowledge=a.acknowledge)
+        elif a.status:
             result = status()
         elif a.rollback:
             with update_operation("rollback", stream=sys.stderr):
@@ -1600,7 +2296,7 @@ def main(argv: list[str] | None = None) -> int:
         _print({"ok": False, "error": {"code": "update_error",
                "message": "Délai dépassé pour un sous-processus de mise à jour"}}, a.json)
         return 1
-    except UpdateError as exc:
+    except (UpdateError, ValueError) as exc:
         detail = {"code": "update_error", "message": str(exc)}
         if type(exc) is ReleasePluginSmokeError:
             detail["reason_code"] = exc.reason_code

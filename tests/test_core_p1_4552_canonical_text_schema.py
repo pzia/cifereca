@@ -74,6 +74,22 @@ def test_bad_declaration_anywhere_invalidates_registry(change):
         select_text_schema([SCHEMA, malformed], selection=SELECTED)
 
 
+
+
+def test_unselected_duplicate_text_schemas_invalidate_entire_registry():
+    unrelated = replace(SCHEMA, canonical_type="custom.other")
+    conflicting = replace(unrelated, max_bytes=32, allowed_values=("regular",))
+    for rows in (
+        [unrelated, unrelated, SCHEMA],
+        [SCHEMA, unrelated, conflicting],
+    ):
+        with pytest.raises(ValueError, match="ambiguous_canonical_text_schema"):
+            select_text_schema(rows, selection=SELECTED)
+    # A duplicate registry is invalid even if the selected type is absent.
+    absent = replace(SELECTED, canonical_type="custom.absent")
+    with pytest.raises(ValueError, match="ambiguous_canonical_text_schema"):
+        select_text_schema([unrelated, unrelated], selection=absent)
+
 def test_invalid_registry_length_or_shape_never_admits_a_plugin():
     with pytest.raises(ValueError, match="invalid_canonical_text_schema_registry"):
         select_text_schema([SCHEMA] * 129, selection=SELECTED)

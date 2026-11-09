@@ -307,10 +307,6 @@
     "kind": "method",
     "signature": "(self) -> 'dict[str, int]'"
   },
-  "_acquire_personal_library_item": {
-    "kind": "method",
-    "signature": "(self, session, row, identity_id: 'str') -> 'dict[str, Any]'"
-  },
   "recent_acquisitions": {
     "kind": "method",
     "signature": "(self, *, identity_id: 'str | None' = None, limit: 'int' = 100) -> 'list[dict[str, Any]]'"
@@ -542,10 +538,6 @@
   "_kobo_delegated_candidate": {
     "kind": "classmethod",
     "signature": "(cls, payload: 'dict[str, Any]', preferred_format: 'str' = 'epub') -> 'dict[str, Any]'"
-  },
-  "_kobo_canonical_drm": {
-    "kind": "staticmethod",
-    "signature": "(value: 'Any') -> 'str'"
   },
   "_kobo_url_format": {
     "kind": "staticmethod",

@@ -117,13 +117,14 @@ class CompactDashboardTests(unittest.TestCase):
 
     def test_sync_never_assumes_unknown_means_zero(self):
         self.assertEqual(mod.compact_sync_text({}),
-            'État : Jamais synchronisée · acquisitions : — · actions requises : — · erreurs : —')
+            'État : Non actualisée · acquisitions : — · actions requises : — · erreurs : —')
         self.assertEqual(
             mod.compact_sync_text({'status':'partial','new_acquisitions':0,
                                    'attention_required':2,'errors':1}),
             'État : Partielle · acquisitions : 0 · actions requises : 2 · erreurs : 1',
         )
         self.assertIn('erreurs : —',mod.compact_sync_text({'errors':None}))
+        self.assertIn('État : Non actualisée', mod.compact_sync_text({'status':'unknown'}))
         self.assertIn('erreurs : —',mod.compact_sync_text({'errors':False}))
 
     def test_attention_preserves_the_first_highest_priority_sync_action(self):

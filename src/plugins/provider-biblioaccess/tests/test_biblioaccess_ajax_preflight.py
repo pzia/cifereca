@@ -125,3 +125,45 @@ def test_static_login_script_path_remains_eligible():
     assert observation.same_origin_script_paths == ("/scripts/logon.js",)
     assert observation.field_names == ("checkValue", "rememberMe")
     assert "PRIVATE-CACHE" not in repr(observation)
+
+
+def test_script_query_is_private_and_bound_to_observed_source():
+    secret = "SYNTHETIC-OPAQUE-QUERY"
+    result = mod.inspect_login_preflight(
+        '<script src="/scripts/logon.js?v=' + secret + '"></script>')
+    assert result.same_origin_script_paths == ("/scripts/logon.js",)
+    assert result._script_request_urls == (
+        ("/scripts/logon.js",
+         mod.IDP + "/scripts/logon.js?v=" + secret),)
+    assert secret not in repr(result)
+
+
+def test_same_path_with_distinct_query_versions_is_ambiguous_and_omitted():
+    result = mod.inspect_login_preflight(
+        '<script src="/scripts/logon.js?v=SYNTHETIC-ONE"></script>'
+        '<script src="/scripts/logon.js?v=SYNTHETIC-TWO"></script>')
+    assert result.script_count == 2
+    assert result.same_origin_script_paths == ()
+    assert result._script_request_urls == ()
+    assert "SYNTHETIC" not in repr(result)
+
+
+
+def test_realistic_concatenated_ajax_endpoint_without_leading_slash():
+    """A PageSpeed JS literal may be relative to instanceWebDirectory."""
+    observed = mod.inspect_javascript_evidence(
+        "var url = master.instanceWebDirectory + "
+        "'logon.svc/logon?_dc=' + new Date().getTime(); "
+        "var captchaCheckValue = $('#logon-captcha-checkvalue').val();")
+    assert observed.ajax_endpoint_referenced
+    assert observed.identifier_names == ("_dc", "captcha", "captchaCheckValue")
+    assert not observed.value_provenance_verified
+
+
+@pytest.mark.parametrize("source", [
+    "formService.svc/generateCaptchaValue?length=6",
+    "'logon.svc/generateCaptchaValue'",
+    "'logon.svc/other'",
+])
+def test_unrelated_institutional_ajax_endpoint_not_reported_as_logon(source):
+    assert not mod.inspect_javascript_evidence(source).ajax_endpoint_referenced

@@ -94,12 +94,28 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         # The stale catalogue is read-only evidence. Merely selecting it must
         # not start a holdings/authentication request to a provider in outage.
         self.search_page.detail.show_search(item, loading=False)
-        self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
+        self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
         return
     self.search_page.detail.show_search(item, loading=True)
-    self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
-    self._add_local_book_actions(self.search_page.detail,result_row(item))
-    self._request_cached_book_details("search", item.id, result_row(item))
+    self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
+    self._add_local_book_actions(self.search_page.detail,result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
     selected_id = item.id
     context = self._search_detail_request_context()
     self.runner.submit(
@@ -142,9 +158,21 @@ def _apply_search_detail(
     if not self._search_detail_context_current(selected_id, context):
         return
     self.search_page.detail.show_item_detail(item, detail)
-    self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
-    self._add_local_book_actions(self.search_page.detail, result_row(item))
-    self._request_cached_book_details("search", item.id, result_row(item))
+    self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
+    self._add_local_book_actions(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
     # Keep unrelated provider callbacks (and AST-isolated host tests)
     # independent of the optional Numilog UI adapter.
     if getattr(item, "source_provider", None) in {"numilog", "numilog-catalog"}:
@@ -162,8 +190,16 @@ def _search_detail_error(
     if not self._search_detail_context_current(selected_id, context):
         return
     self.search_page.detail.show_search(item, loading=False)
-    self._add_local_book_actions(self.search_page.detail, result_row(item))
-    self._request_cached_book_details("search", item.id, result_row(item))
+    self._add_local_book_actions(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+               identity_id=getattr(getattr(getattr(self, "service", None),
+                                           "current_identity", None), "identity_id", None),
+               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
+               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
     # Provider exceptions can embed account IDs, private file paths or signed
     # URLs. Do not echo their arbitrary text into a user-visible GTK toast.
     self.toast("Disponibilités indisponibles. Réessayez ultérieurement.", 5)

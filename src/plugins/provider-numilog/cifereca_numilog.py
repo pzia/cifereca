@@ -28,7 +28,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 # A descendant of the Core logger shares its canonical journal handler.
 _LOG = logging.getLogger("cifereca.plugin.provider.numilog")
 
-VERSION = '0.1.90'
+VERSION = '0.1.91'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -547,7 +547,9 @@ class NumilogSession(ProviderSession):
         return SearchResult(id=key,record_id=key,docbase='NUMILOG',medium='digital',title=row['title'],
             author=None,type='Livre numérique',format=None,publisher=None,published_at=None,description=None,
             thumbnail_url=row['cover'],friendly_url=public_url,scenario='NUMILOG_LIBRARY',source_provider='numilog',
-            source_credential=self.credential_id,download_url=None,content_type='ebook',source_collection='library',
+            source_credential=self.credential_id,
+            source_account_id=(self._accounts[0].unique_id if len(self._accounts) == 1 else None),
+            download_url=None,content_type='ebook',source_collection='library',
             owned=True,downloadable=True,metadata={'format_unverified':True,**({'public_url_evidence':'numilog.library_title_link'} if public_url else {})})
 
     def _legacy_inventory_account_binding(self):

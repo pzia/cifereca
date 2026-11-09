@@ -265,7 +265,7 @@ def test_sync_source_declares_phase_capabilities_without_starting_acquisition(tm
             ),
         ]
         sessions = {
-            "kobo::vault-1": NS(capabilities=NS(personal_library=True, backup=True),
+            "kobo::vault-1": NS(capabilities=NS(personal_library=True, backup=True, local_materialization=True, legacy_materialization_checkpoint=True),
                                 connected=True),
             "kobo::vault-2": NS(capabilities=NS(personal_library=True, backup=False),
                                 connected=True),
