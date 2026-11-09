@@ -108,7 +108,7 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
         and source[:2] == ("active", "provider_response")
         and type(source[2]) is str and bool(source[2])
         and source[3:] == (
-            scope.identity_id, "kobo", scope.credential_id, scope.account_id,
+            scope.identity_id, scope.provider_id, scope.credential_id, scope.account_id,
             branch_id, edition_id, right_id, reference_kind,
         ),
         "canonical_relink_right_unverified",
@@ -224,7 +224,7 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
     )
     plan = {
         "schema": _SCHEMA,
-        "scope": [scope.identity_id, "kobo", scope.credential_id, scope.account_id,
+        "scope": [scope.identity_id, scope.provider_id, scope.credential_id, scope.account_id,
                   branch_id, edition_id, right_id, reference_kind],
         "placement_id": placement_id,
         "old_path": old_path, "new_path": str(new_path),
@@ -415,10 +415,10 @@ def relink_verified_canonical_kobo(
             source_now = db.execute(
                 "SELECT state,evidence_kind,evidence_ref FROM source_references "
                 "WHERE source_reference_id=? AND identity_id=? "
-                "AND provider_id='kobo' AND credential_id=? AND account_id=? "
+                "AND provider_id=? AND credential_id=? AND account_id=? "
                 "AND branch_id=? AND edition_id=? AND right_id=? "
                 "AND reference_kind=?",
-                (source_ref, identity_id, credential_id, account_id,
+                (source_ref, identity_id, scope.provider_id, credential_id, account_id,
                  branch_id, edition_id, right_id, reference_kind),
             ).fetchall()
             origin_now = db.execute(
