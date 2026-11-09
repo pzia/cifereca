@@ -272,3 +272,16 @@ def test_invalid_journal_disables_candidate_conflict_projection(tmp_path):
     )
     assert report["retained_plugin_candidate_conflicts"] is None
     assert report["safe_to_apply"] is False
+
+
+def test_unresolved_installed_version_cannot_report_zero_candidate_conflicts(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    plan = _plan("1.2.1")
+    plan["objects"][0]["decision"] = "retain"
+    report = inspect_transaction_plugin_references(
+        root, plan, core_transaction_plan=_core_decisions((TX, "retain")),
+    )
+    assert report["unresolved_retained_edges"] == 1
+    assert report["retained_plugin_candidate_conflicts"] is None
+    assert report["safe_to_apply"] is False
