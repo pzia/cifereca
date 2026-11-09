@@ -16,7 +16,7 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 
 @pytest.mark.parametrize("provider", ["synthetic-alpha", "synthetic-beta"])
 def test_canonical_relink_for_unrecognized_provider_is_exact(store, tmp_path, monkeypatch, provider):
-    from cifereca.core import kobo_canonical_relink as implementation
+    from cifereca.core import canonical_relink as implementation
     monkeypatch.setattr(
         implementation, "acquisition_lock_file",
         lambda: tmp_path / "relink.lock",
