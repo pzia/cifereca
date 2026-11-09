@@ -161,6 +161,20 @@ def _dispatch_table_literal(
     return sorted(matched)
 
 
+def _provider_method_name(name: str, providers: set[str]) -> list[str]:
+    """Named vendor operation call, never a substring inside another word.
+
+    Only complete identifier components are considered; strings and passive
+    attribute access cannot create executable-call coupling.
+    """
+    if type(name) is not str or not name.isidentifier():
+        return []
+    tokens = set(name.casefold().strip("_").split("_"))
+    # Dotted/hyphenated provider identifiers are data IDs, not Python tokens.
+    return sorted(tokens & {provider for provider in providers
+                            if provider.isidentifier() and "_" not in provider})
+
+
 def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
     """Inventory imports, provider comparisons and executable dispatch maps."""
     tree = ast.parse(content)
@@ -200,7 +214,14 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     dispatches: list[dict[str, object]] = []
     tables: list[dict[str, object]] = []
     calls: list[dict[str, object]] = []
+    method_calls: list[dict[str, object]] = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            # Examples: service.sync_kobo_backup(), service.bnf_borrow().
+            # Do not treat attribute reads or descriptor metadata as calls.
+            matched_methods = _provider_method_name(node.func.attr, names)
+            if matched_methods:
+                method_calls.append({"line": node.lineno, "providers": matched_methods})
         # Only immediately invoked keyed lookups can prove executable
         # dispatch. Metadata reads and uninvoked .get calls stay neutral.
         if isinstance(node, ast.Call):
@@ -287,7 +308,8 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     return {"imports": sorted(imports, key=lambda x: x["line"]),
             "comparisons": sorted(dispatches, key=lambda x: x["line"]),
             "dispatch_tables": sorted(tables, key=lambda x: x["line"]),
-            "dispatch_calls": sorted(calls, key=lambda x: x["line"])}
+            "dispatch_calls": sorted(calls, key=lambda x: x["line"]),
+            "provider_method_calls": sorted(method_calls, key=lambda x: x["line"])}
 
 
 def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, object]:
@@ -307,6 +329,7 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
                 continue
             if any(result[category] for category in (
                 "imports", "comparisons", "dispatch_tables", "dispatch_calls",
+                "provider_method_calls",
             )):
                 findings[relative] = result
     return {"metric": "core.provider.static-coupling/1",
@@ -316,6 +339,7 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
             "comparison_signals": sum(len(x["comparisons"]) for x in findings.values()),
             "dispatch_table_signals": sum(len(x["dispatch_tables"]) for x in findings.values()),
             "dispatch_call_signals": sum(len(x["dispatch_calls"]) for x in findings.values()),
+            "provider_method_call_signals": sum(len(x["provider_method_calls"]) for x in findings.values()),
             "findings": dict(sorted(findings.items())),
             "parse_errors": dict(sorted(parse_errors.items())),
             "limitation": "AST signals, not reachability proofs; indirect dynamic dispatch may remain."}
@@ -336,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
               f"{report['comparison_signals']} comparisons, "
               f"{report['dispatch_table_signals']} dispatch tables, "
               f"{report['dispatch_call_signals']} provider-keyed calls, "
+              f"{report['provider_method_call_signals']} provider method calls, "
               f"{len(report['parse_errors'])} parse errors")
     return 1 if report["parse_errors"] else 0
 
