@@ -2028,6 +2028,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Diagnostic en lecture seule des transactions de reprise bloquées")
     p.add_argument("--retention-inspect", action="store_true",
                    help="Inventaire read-only de rétention Core/transactions/versions plugins ; jamais d'effacement")
+    p.add_argument("--retention-plan", action="store_true",
+                   help="Plan synthétique de maintenance read-only ; aucune suppression autorisée")
     p.add_argument("--recovery-reconcile", metavar="TRANSACTION_ID",
                    help="Plan de réconciliation ciblée (lecture seule sauf --acknowledge)")
     p.add_argument("--acknowledge", metavar="SHA256",
@@ -2040,17 +2042,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.retention_inspect:
+        if a.retention_inspect or a.retention_plan:
             if (a.archive or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
-                    or a.acknowledge is not None or a.dry_run or a.to or a.python):
-                p.error("--retention-inspect est exclusif et strictement read-only")
+                    or a.acknowledge is not None or a.dry_run or a.to or a.python
+                    or (a.retention_inspect and a.retention_plan)):
+                p.error("--retention-inspect/--retention-plan sont exclusifs et read-only")
             from .updater_retention_plugins import inspect_updater_retention_readonly
             result = inspect_updater_retention_readonly(
                 install_root(), _plugin_packages_root(), now=time.time(),
                 backups_root=state_dir(create=False) / "dev-updates",
                 core_backups_root=state_dir(create=False) / "update-backups",
             )
+            if a.retention_plan:
+                from .updater_retention_maintenance import retention_maintenance_plan
+                result = retention_maintenance_plan(result)
         elif a.recovery_inspect:
             result = recovery_inspect()
         elif a.recovery_reconcile is not None:
