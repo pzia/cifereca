@@ -242,7 +242,7 @@ def test_untrusted_artifact_outside_stage_is_never_deleted(
     unrelated = tmp_path / "outside.acsm"
     unrelated.write_bytes(TOKEN)
 
-    def wrong_return(_loan, _account, target_dir, *, explicit_user_action):
+    def wrong_return(_loan, _account, target_dir, *, explicit_user_action, **kwargs):
         return unrelated, ""
 
     monkeypatch.setattr(session, "download_digital", wrong_return)
