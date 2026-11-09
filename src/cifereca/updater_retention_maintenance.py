@@ -68,6 +68,10 @@ def retention_maintenance_plan(inventory: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("retention_plan_invalid")
         seen: set[str] = set()
         candidate_rows = 0
+        reason_counts = {code: 0 for code in (
+            "within_24h", "minimum_generations", "pinned", "active",
+            "referenced", "retained_transaction_reference",
+        )}
         for row in report["objects"]:
             if (type(row) is not dict
                     or type(row.get("object_id")) is not str
@@ -80,6 +84,9 @@ def retention_maintenance_plan(inventory: dict[str, Any]) -> dict[str, Any]:
                            for reason in row["reasons"])):
                 raise ValueError("retention_plan_invalid_row")
             seen.add(row["object_id"])
+            for code in reason_counts:
+                if code in row["reasons"]:
+                    reason_counts[code] += 1
             if row["decision"] == "candidate":
                 if row["reasons"]:
                     raise ValueError("retention_candidate_with_retention_reason")
@@ -92,6 +99,7 @@ def retention_maintenance_plan(inventory: dict[str, Any]) -> dict[str, Any]:
             "known": True, "total": report["total"],
             "candidates": report["candidates"],
             "retained": report["total"] - report["candidates"],
+            "retention_reasons": reason_counts,
             "apply_allowed": False,
         }
     # Hash all original evidence, not just totals; a change in pins,
