@@ -98,11 +98,11 @@ class DetailPanel(Gtk.Box):
         self.body_scroll.set_min_content_width(240)
         self.body_scroll.set_vexpand(True); self.body_scroll.set_hexpand(True)
         self.append(self.body_scroll)
-        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        self.content.set_margin_top(20)
-        self.content.set_margin_bottom(20)
-        self.content.set_margin_start(20)
-        self.content.set_margin_end(20)
+        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.content.set_margin_top(14)
+        self.content.set_margin_bottom(14)
+        self.content.set_margin_start(16)
+        self.content.set_margin_end(16)
         self.body_scroll.set_child(self.content)
         self.empty("Sélectionnez un livre", "Les détails et actions apparaîtront ici.")
 
@@ -201,8 +201,8 @@ class DetailPanel(Gtk.Box):
                 header.set_orientation(orientation)
             if essential_grid is not None and len(essential) > 1:
                 # Budget for the full cover even if its placeholder is smaller.
-                text_width = width - 120 if side_by_side else width
-                columns = 2 if text_width >= 370 else 1
+                text_width = width - 128 if side_by_side else width
+                columns = 3 if text_width >= 690 else 2 if text_width >= 400 else 1
                 if essential_grid.get_min_children_per_line() != columns:
                     essential_grid.set_min_children_per_line(columns)
 
@@ -306,8 +306,11 @@ class DetailPanel(Gtk.Box):
         grid = None
         if title in {"Essentiel","Notice","Catalogue","Notice EPUB","Bibliothèque","Catalogue connu","Récupération","Historique","Prêt","Réservation"}:
             grid = Gtk.FlowBox(); grid.set_selection_mode(Gtk.SelectionMode.NONE)
-            grid.set_min_children_per_line(1); grid.set_max_children_per_line(2)
-            grid.set_homogeneous(True); grid.set_column_spacing(8); grid.set_row_spacing(4)
+            grid.set_min_children_per_line(1)
+            grid.set_max_children_per_line(3 if title == "Essentiel" else 2)
+            grid.set_homogeneous(True); grid.set_column_spacing(6); grid.set_row_spacing(2)
+            if title == "Essentiel":
+                grid.add_css_class("detail-compact-fields")
             group.add(grid)
         for index, (label, value) in enumerate(rows):
             row = Adw.ActionRow()
@@ -324,7 +327,10 @@ class DetailPanel(Gtk.Box):
             row.set_subtitle_lines(detail_subtitle_lines(title, display_value) if grid is not None else 0)
             row.set_tooltip_text(label+' : '+tooltip_value)
             if grid is not None:
-                row.set_size_request(160, -1); grid.insert(row, -1)
+                row.set_size_request(185 if title == "Essentiel" else 160, -1)
+                if title == "Essentiel":
+                    row.add_css_class("detail-compact-value")
+                grid.insert(row, -1)
             else:
                 group.add(row)
         if parent is None:
