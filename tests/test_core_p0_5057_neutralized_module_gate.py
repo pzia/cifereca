@@ -18,6 +18,8 @@ NEUTRALIZED = (
     "src/cifereca/gui/library_rows.py",
     "src/cifereca/core/library_evidence_scope.py",
     "src/cifereca/core/source_refresh_policy.py",
+    "src/cifereca/gui/source_inventory_timer.py",
+    "src/cifereca/gui/library_declaration_history.py",
 )
 
 
@@ -27,6 +29,8 @@ def test_no_direct_provider_imports_or_dispatch_in_neutralized_core(relative_pat
     result = inspect_source(source)
     assert result["imports"] == [], (relative_path, result["imports"])
     assert result["comparisons"] == [], (relative_path, result["comparisons"])
+    assert result["dispatch_tables"] == [], (relative_path, result["dispatch_tables"])
+    assert result["dispatch_calls"] == [], (relative_path, result["dispatch_calls"])
 
 
 def test_gate_detects_hard_coded_branch_and_relative_implementation_import():

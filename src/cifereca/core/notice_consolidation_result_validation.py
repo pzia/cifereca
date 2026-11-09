@@ -12,6 +12,7 @@ from typing import Any
 
 from .notice_consolidation_inputs import ConsolidationInputs, SourceFact
 from .notice_consolidator_selection import ExplicitSelection
+from .notice_consolidation_lineage import descriptive_lineage_key
 
 MAX_CANONICAL_BYTES = 2048
 MAX_REFERENCES = 128
@@ -52,6 +53,11 @@ def validate_descriptive_result(
             or selection.plugin_id != admitted.consolidator_id
             or selection.version != admitted.consolidator_version):
         raise ValueError("consolidator_context_mismatch")
+    # DTOs are public Python objects, not authenticated admissions. Reuse the
+    # bounded lineage validator before trusting any source evidence references.
+    # This rejects forged exact/linked buckets even if their keys match the
+    # plugin's proposed output. No cache or plugin execution is performed.
+    descriptive_lineage_key(selection=selection, admitted=admitted)
     if proposed is None:
         return None
     if type(proposed) is not dict or frozenset(proposed) != _RESULT_KEYS:

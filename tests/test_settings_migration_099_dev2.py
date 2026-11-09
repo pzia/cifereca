@@ -16,6 +16,48 @@ class Value:
     def get_active(self):return self.active
     def get_selected(self):return 0
 
+class TestSavedAccountProbeButtons(unittest.TestCase):
+    def test_newly_created_enabled_account_test_is_unlocked_only_after_save(self):
+        from cifereca.gui.settings_commit_actions import (
+            _refresh_saved_account_test_buttons,
+        )
+        button = Mock()
+        editor = {
+            "id": "la-rochelle-new", "provider": "biblioaccess.la-rochelle",
+            "deleted": False, "invalid_saved_snapshot": False,
+            "explicit_probe_button": button,
+        }
+        persisted = {
+            "id": "la-rochelle-new", "provider": "biblioaccess.la-rochelle",
+            "identity_id": "alice", "enabled": True,
+        }
+        _refresh_saved_account_test_buttons(
+            NS(provider_accounts=lambda: [persisted]), [editor])
+        button.set_sensitive.assert_called_once_with(True)
+
+    def test_duplicate_disabled_and_unbound_accounts_keep_test_locked(self):
+        from cifereca.gui.settings_commit_actions import (
+            _refresh_saved_account_test_buttons,
+        )
+        button = Mock()
+        editor = {
+            "id": "la-rochelle-new", "provider": "biblioaccess.la-rochelle",
+            "deleted": False, "invalid_saved_snapshot": False,
+            "explicit_probe_button": button,
+        }
+        row = {
+            "id": "la-rochelle-new", "provider": "biblioaccess.la-rochelle",
+            "identity_id": "alice", "enabled": True,
+        }
+        for rows in ([], [row, dict(row)],
+                     [{**row, "enabled": False}],
+                     [{**row, "identity_id": ""}]):
+            button.reset_mock()
+            _refresh_saved_account_test_buttons(
+                NS(provider_accounts=lambda rows=rows: rows), [editor])
+            button.set_sensitive.assert_called_once_with(False)
+
+
 class SaveSettings(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.config=Config(Path(self.tmp.name)/'config.json')

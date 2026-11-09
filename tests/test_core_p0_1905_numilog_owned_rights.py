@@ -29,10 +29,7 @@ def test_authenticated_numilog_inventory_persists_distinct_rights_offline(
     service = _service(tmp_path)
     try:
         account, _session, calls = _connect(service, number=3)
-        monkeypatch.setattr(
-            service, "_acquire_personal_library_item",
-            lambda *_a, **_kw: pytest.fail("implicit library backup forbidden"),
-        )
+        assert not hasattr(service, "_acquire_personal_library_item")
         first = service.mirror_personal_libraries()
         second = service.mirror_personal_libraries()
         assert first == second == {"numilog:numilog-private": 3}
@@ -221,10 +218,7 @@ def test_malformed_cross_source_rows_cannot_create_purchase_or_acquire(
                 public_catalog, unexpected_collection,
             ]
         )
-        monkeypatch.setattr(
-            service, "_acquire_personal_library_item",
-            lambda *_a, **_kw: pytest.fail("acquisition during inventory"),
-        )
+        assert not hasattr(service, "_acquire_personal_library_item")
         service.mirror_personal_libraries()
         assert calls == ["library"]
         assert service.storage.entitlements(provider_id="numilog") == []

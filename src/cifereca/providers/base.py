@@ -46,6 +46,14 @@ class ProviderCapabilities:
     backup: bool = False
     return_loan: bool = False
     renew_loan: bool = False
+    # Append-only flag: preserve positional construction ABI for older users.
+    # Display-only availability of a separate loan fulfillment phase.
+    # Never implies consent, ADEPT readiness or permission to GET.
+    loan_auto_materialization: bool = False
+    # Display-only source phase; does not grant a GET or override consent.
+    local_materialization: bool = False
+    # Read-only legacy phase receipt, never an acquisition permission.
+    legacy_materialization_checkpoint: bool = False
 
     def names(self) -> list[str]:
         return [name for name, value in self.__dict__.items() if value]
@@ -159,6 +167,14 @@ class ProviderDescriptor:
     account_note: tuple[str, str] | None = None
     # Append-only optional API extension: preserve historical positional args.
     borrower_scoped_options: tuple[BorrowerScopedOptionField, ...] = ()
+    # Optional per-credential opt-in for direct HTTP background authentication
+    # of an otherwise-interactive provider. The Core checks only the declared
+    # account option for an exact "on", never infers consent from a password.
+    # A provider MUST implement the connect/session lifecycle itself.
+    background_authentication_option_key: str | None = None
+    # Optional, strictly versioned presentational contribution. Never rights.
+    search_status_notice_schema: str = ""
+    search_status_notices: tuple[tuple[str, str], ...] = ()
 
 
 class ProviderSession(ABC):

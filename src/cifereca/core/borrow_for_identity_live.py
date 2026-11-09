@@ -420,11 +420,11 @@ def revalidate_live_borrow_lender_selection(
             service, expected_edition_id=expected_edition_id,
             observations=observations, now=now,
         )
-        if (fresh.requesting_identity_id != captured_preview.requesting_identity_id
-                or fresh.executable is not False
-                or fresh.status != captured_preview.status
-                or fresh.requires_explicit_choice !=
-                    captured_preview.requires_explicit_choice):
+        # A held menu is one consent context, not merely the clicked row.
+        # If any other lender/collection is added, removed or rebound, the
+        # exact selection snapshot is stale even when its clicked row is
+        # unchanged. Never silently reuse an old choice under a new menu.
+        if fresh != captured_preview:
             return stale
         matching = [
             option for option in fresh.options

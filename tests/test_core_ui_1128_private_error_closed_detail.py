@@ -15,7 +15,7 @@ def _method(name):
               if isinstance(item, ast.FunctionDef) and item.name == name)
     scope = {
         "TaskPriority": NS(USER_ACTION=10),
-        "result_row": lambda item: {"id": item.id},
+        "result_row": lambda item, **_kwargs: {"id": item.id},
     }
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[ast.ImportFrom(module="__future__",
