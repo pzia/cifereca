@@ -184,3 +184,61 @@ def test_duplicate_product_ref_cannot_be_hidden_in_a_partial_row():
 def test_duplicate_product_ref_even_with_identical_content_is_unverified():
     with pytest.raises(loans.LoanPageError, match="loans_page_duplicate_product_ref"):
         loans.inspect_myloans_html(_observed_row() * 2)
+
+
+def test_five_loans_two_numilog_three_pnb_have_positive_delivery_offers():
+    html = (
+        _observed_row(product="10001", book="20001")
+        + _observed_row(product="10002", book="20002")
+        + "".join(
+            _observed_row(product=str(10003 + n), book=str(20003 + n))
+            .replace(
+                "https://entrepot2r.numilog.com/fulfillment/URLLink.acsm"
+                "?token=PRIVATE-SYNTHETIC-ACSM",
+                "https://pnb-dilicom.centprod.com/synthetic/"
+                + str(n) + "/do?ticket=PRIVATE-SYNTHETIC-ACSM",
+            )
+            for n in range(3)
+        )
+    )
+    result = loans.inspect_myloans_html(html)
+    assert result.page_loan_row_count == 5
+    assert result.page_loan_row_partial_count == 0
+    assert all(row.acsm_offer_present for row in result._loan_rows)
+    assert [row.book_id for row in result._loan_rows] == [
+        "20001", "20002", "20003", "20004", "20005"]
+    assert "PRIVATE-SYNTHETIC-ACSM" not in repr(result)
+
+
+def test_pnb_offer_stays_bound_to_its_exact_row():
+    first = _observed_row(product="10001", book="20001", acsm=False)
+    second = _observed_row(product="10002", book="20002").replace(
+        "https://entrepot2r.numilog.com/fulfillment/URLLink.acsm"
+        "?token=PRIVATE-SYNTHETIC-ACSM",
+        "https://pnb-dilicom.centprod.com/private/opaque/do",
+    )
+    result = loans.inspect_myloans_html(first + second)
+    assert [row.acsm_offer_present for row in result._loan_rows] == [False, True]
+    assert result._loan_rows[0].acsm_url is None
+    assert result._loan_rows[1].acsm_url.endswith("/do")
+
+
+def test_duplicate_delivery_actions_do_not_select_arbitrary_offer():
+    original = _observed_row()
+    duplicated = original.replace(
+        "Télécharger</a></div>",
+        "Télécharger</a>"
+        '<a href="https://pnb-dilicom.centprod.com/other/do">'
+        "Autre offre</a></div>",
+    )
+    result = loans.inspect_myloans_html(duplicated)
+    assert result.page_loan_row_count == 0
+    assert result.page_loan_row_partial_count == 1
+
+
+def test_pnb_lookalike_host_not_a_delivery_offer():
+    html = _observed_row().replace(
+        "https://entrepot2r.numilog.com/fulfillment/URLLink.acsm"
+        "?token=PRIVATE-SYNTHETIC-ACSM",
+        "https://pnb-dilicom.centprod.com.attacker.example/other/do")
+    assert not loans.inspect_myloans_html(html)._loan_rows[0].acsm_offer_present
