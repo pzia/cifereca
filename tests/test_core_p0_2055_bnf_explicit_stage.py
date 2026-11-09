@@ -358,7 +358,7 @@ def test_selected_offer_abi_missing_fails_closed_before_signed_get(
 ):
     service, session, account, loan, state, downloaded = connected_core
     monkeypatch.setattr(session, "rights_selected_delivery_candidate", None)
-    with pytest.raises(ProviderConfigurationError, match="bnf_selected_delivery_abi_unavailable"):
+    with pytest.raises(ProviderConfigurationError, match="bnf_loan_token_unavailable"):
         service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id="default")
     assert downloaded == []
     assert service.storage.acquisitions() == []
