@@ -210,6 +210,10 @@ def inspect_updater_retention_readonly(
 
     core = inspect_core_transaction_history(runtime_root, now=now)
     plugins = inspect_plugin_version_history(packages_root, now=now)
+    from .updater_retention_cross_store import inspect_transaction_plugin_references
+    cross_store = inspect_transaction_plugin_references(
+        runtime_root, plugins.get("plan"),
+    )
     backups = None
     if backups_root is not None:
         from .updater_retention_backups import inspect_dev_updater_backups
@@ -224,6 +228,7 @@ def inspect_updater_retention_readonly(
     )
     coverage = set(core["coverage"]) | set(plugins["coverage"]) | set(staging["coverage"])
     blockers = set(core["blockers"]) | set(plugins["blockers"]) | set(staging["blockers"])
+    blockers.update(cross_store["blockers"])
     plans = {
         "core_transactions": core["plan"],
         "plugin_versions": plugins["plan"],
@@ -255,4 +260,5 @@ def inspect_updater_retention_readonly(
         "pending_stores": sorted(pending),
         "blockers": sorted(blockers | {"partial_store_coverage"}),
         "plans": plans,
+        "cross_store_reference_inspection": cross_store,
     }
