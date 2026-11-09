@@ -1734,6 +1734,11 @@ def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=Non
     same global lock is intentionally named for local acquisition rather
     than Kobo so the 0.8.x loan synchronizer can share it.
     """
+    # The public legacy entry must fail before acquiring a filesystem lock
+    # or evaluating caller-supplied callbacks, including for an unscoped batch.
+    # Canonical source synchronization is dispatched through plugin_api.
+    raise ProviderConfigurationError("kobo_legacy_w2_retired_use_canonical_provider")
+
     lock = lock_factory(lock_path())
     try:
         with lock:
