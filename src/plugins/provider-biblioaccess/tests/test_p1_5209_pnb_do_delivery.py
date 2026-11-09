@@ -157,3 +157,78 @@ def test_redirect_cycle_and_excessive_hops_refused_before_any_file(tmp_path):
             PNB, tmp_path, transport=httpx.MockTransport(cycle),
         )
     assert not list(tmp_path.iterdir())
+
+
+def test_live_session_revalidates_exact_pnb_offer_and_hands_acsm_to_core(
+    tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace as NS
+    from cifereca.plugin_api import read_loan_inventory
+    from tests.test_biblioaccess_sso import _synced_session
+    import biblioaccess_acsm_delivery
+
+    rows = [
+        NS(
+            product_ref=str(10000 + i), book_id=str(20000 + i),
+            title="SYNTHETIC-TITLE", due_at_local="09/11/2026 12:30:00",
+            acsm_offer_present=True,
+            acsm_url=NUMILOG if i < 3 else PNB,
+            delivery_kind="numilog_acsm" if i < 3 else "pnb_do",
+        )
+        for i in range(1, 6)
+    ]
+    session, http, calls = _synced_session(rows=rows)
+    staged_urls = []
+    def stage(url, folder):
+        staged_urls.append(url)
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / ("staged-" + str(len(staged_urls)) + ".acsm")
+        path.write_bytes(ACSM)
+        return path
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm", stage)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        snapshot = read_loan_inventory(session, account)
+        assert len(snapshot.loans) == 5 and snapshot.status == "partial"
+        assert all(loan.raw == {"acsm_offer_present": True}
+                   for loan in snapshot.loans)
+        # Existing two Numilog loans are already present locally; only
+        # their three missing PNB siblings are dispatched by this test.
+        for loan in snapshot.loans[2:]:
+            path, published_url = session.download_digital(
+                loan, account, tmp_path,
+            )
+            assert path.is_file() and path.read_bytes() == ACSM
+            assert published_url == ""
+        assert staged_urls == [PNB] * 3
+        assert calls.count("post") == 1  # No new loan/SSO POST.
+        assert calls.count("live_loans") == 4
+        assert http.closed is False and session.connected
+    finally:
+        session.close()
+
+
+def test_missing_pnb_offer_does_not_infer_permission_from_catalogue(
+    tmp_path, monkeypatch,
+):
+    from types import SimpleNamespace as NS
+    from tests.test_biblioaccess_sso import _synced_session
+
+    row = NS(
+        product_ref="10001", book_id="20001", title="SYNTHETIC",
+        due_at_local="09/11/2026 12:30:00",
+        acsm_offer_present=False, acsm_url=None, delivery_kind=None,
+    )
+    session, http, calls = _synced_session(rows=[row])
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = session.loans(account)
+        assert loan.raw == {}
+        with pytest.raises(Exception, match="acsm_offer_unavailable"):
+            session.download_digital(loan, account, tmp_path)
+        assert calls.count("post") == 1
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
