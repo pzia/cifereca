@@ -47,7 +47,7 @@ def _render_search_results(host):
         "BookListItem": lambda *args, **_kw: NS(
             key=args[0], title=args[1], metadata=args[3],
         ),
-        "result_row": lambda item: {"title": item.title},
+        "result_row": lambda item, **_kwargs: {"title": item.title},
         "file_format": lambda _value: "epub",
     }
     exec(compile(tree, str(source), "exec"), ns)

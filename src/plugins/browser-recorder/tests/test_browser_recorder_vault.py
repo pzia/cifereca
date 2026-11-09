@@ -370,3 +370,49 @@ def test_completed_vault_and_private_zip_contain_no_pending_response(tmp_path):
     finally:
         reopened.trace.destroy()
         trace.destroy()
+
+
+def test_v1_archive_without_auth_schema_fields_remains_readable():
+    from browser_recorder_vault import _record, _unrecord
+    sid = "a" * 32
+    trace = sample_trace()
+    data = json.loads(_record(trace, sid, "completed"))
+    for row in data["exchanges"]:
+        for key in (
+            "auth_request_schema", "auth_response_schema",
+            "auth_request_schema_state", "auth_response_schema_state",
+        ):
+            row.pop(key)
+    restored = _unrecord(json.dumps(data).encode(), sid)
+    try:
+        assert len(restored.trace.exchanges) == 3
+        assert all(row.auth_request_schema is None
+                   and row.auth_response_schema is None
+                   for row in restored.trace.exchanges)
+    finally:
+        restored.trace.destroy()
+        trace.destroy()
+
+
+def test_vault_refuses_auth_schema_containing_unchecked_values():
+    from browser_recorder_vault import _record
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/login", status=200,
+        request_body=None, response_body=None,
+        request_body_reason="auth_redacted",
+        auth_request_schema={
+            "version": 1, "query_names": [],
+            "form_names": ["password=PRIVATE_VALUE"],
+        },
+        auth_request_schema_state="schema_captured",
+    ))
+    try:
+        with pytest.raises(VaultError, match="vault_invalid"):
+            _record(trace, "b" * 32, "completed")
+        trace.exchanges[0].auth_request_schema = {
+            "version": 1, "query_names": [], "form_names": ["password"],
+        }
+        assert b"PRIVATE_VALUE" not in _record(trace, "b" * 32, "completed")
+    finally:
+        trace.destroy()

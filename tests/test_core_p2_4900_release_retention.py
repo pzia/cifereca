@@ -151,14 +151,16 @@ def test_invalid_metadata_is_protected_and_symlink_not_followed(tmp_path, clock)
     assert outside.exists() and (root / "releases" / "external").is_symlink()
 
 
-def test_legacy_missing_install_date_uses_directory_timestamp(tmp_path, clock):
+def test_legacy_missing_install_receipt_keeps_ownership_unqualified_release(tmp_path, clock):
     root = tmp_path / "runtime"
     a = _release(root, "active", 72 * 3600, metadata=False)
     b = _release(root, "previous", 96 * 3600, metadata=False)
     stale = _release(root, "very-old", 120 * 3600, metadata=False)
     _pointers(root, a, b)
+    # mtime can establish a minimum-retention ordering but can never prove
+    # that an arbitrary historical directory belongs to this updater.
     result = updater._gc(root, 2)
-    assert result["removed"] == 1 and not stale.exists()
+    assert result["removed"] == 0 and stale.exists()
     assert a.exists() and b.exists()
 
 

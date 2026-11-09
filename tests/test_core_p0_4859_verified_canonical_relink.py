@@ -24,7 +24,7 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 def _private_acquisition_lock(tmp_path, monkeypatch):
     # An isolated file lock prevents cross-worker CI contention while still
     # exercising the same real InterProcessLock acquisition/rollback path.
-    from cifereca.core import kobo_canonical_relink as canonical
+    from cifereca.core import canonical_relink as canonical
     monkeypatch.setattr(
         canonical, "acquisition_lock_file",
         lambda: tmp_path / "canonical-relink.lock",
@@ -317,7 +317,7 @@ def test_offline_profile_changed_during_sql_commit_rolls_back_B(
     published, tmp_path, monkeypatch,
 ):
     from cifereca.core import kobo_local_reconciliation as repair
-    from cifereca.core import kobo_canonical_relink as canonical
+    from cifereca.core import canonical_relink as canonical
 
     store, original, path, args, source, finished = published
     original.rename(path)

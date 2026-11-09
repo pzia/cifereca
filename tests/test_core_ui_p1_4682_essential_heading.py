@@ -26,7 +26,7 @@ def _method(name: str) -> str:
 def test_essential_section_heading_is_visually_hidden_only():
     group = _method("_group")
     assert "group.set_title('' if title == 'Essentiel' else title)" in group
-    assert "grid.set_max_children_per_line(2)" in group
+    assert "grid.set_max_children_per_line(3 if title == 'Essentiel' else 2)" in group
     assert "detail_subtitle_lines(title, display_value)" in group
     assert "self._add_metadata_actions(row, label, safe_value, field.kind)" in group
     assert "row.set_title(label)" in group
