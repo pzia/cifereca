@@ -142,3 +142,39 @@ def test_resume_after_crash_between_quarantine_rename_and_delete(tmp_path, monke
     assert result["removed"] == 4
     assert sum(path.is_dir() for path in paths) == 2
     assert not any(path.is_dir() for path in (root / "transaction-gc").iterdir())
+
+
+def test_old_release_pointer_preserves_journal_until_release_gc(tmp_path, monkeypatch):
+    root = _runtime(tmp_path)
+    monkeypatch.setattr(updater, "time", __import__("types").SimpleNamespace(
+        time=lambda: NOW, gmtime=__import__("time").gmtime,
+        strftime=__import__("time").strftime,
+    ))
+    monkeypatch.setattr(updater, "_trusted_package_lease",
+                        lambda: __import__("contextlib").nullcontext())
+    paths = [_transaction(root, n, 3 * 86400 + n * 60) for n in range(7)]
+    old_release = root / "releases" / "old"
+    old_release.mkdir()
+    (old_release / ".cifereca-install.json").write_text(json.dumps({
+        "version": "old",
+        "installed_at": datetime.fromtimestamp(
+            NOW - 5 * 86400, timezone.utc,
+        ).isoformat(),
+    }))
+    os.utime(old_release, (NOW - 5 * 86400, NOW - 5 * 86400))
+    (old_release / updater.TRANSACTION_FILE).write_text(
+        json.dumps({"schema": 1, "id": "tx-5"}),
+    )
+    plan = transaction_maintenance(root, now=NOW)
+    assert plan["candidate_transactions"] == 4
+    result = transaction_maintenance(
+        root, apply=True, acknowledge=plan["acknowledgement_sha256"], now=NOW,
+    )
+    assert result["removed"] == 4
+    assert paths[5].is_dir()
+    # Once the old release is physically gone, the journal is eligible.
+    old_release.joinpath(updater.TRANSACTION_FILE).unlink()
+    old_release.joinpath(".cifereca-install.json").unlink()
+    old_release.rmdir()
+    after = transaction_maintenance(root, now=NOW)
+    assert after["candidate_transactions"] == 1
