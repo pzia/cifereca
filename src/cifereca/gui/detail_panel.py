@@ -1233,16 +1233,79 @@ class DetailPanel(Gtk.Box):
                        for option in preview.options)):
             return False
 
+        try:
+            service = self.window.service
+            requester = service.current_identity
+        except Exception:
+            return False
+
         def current() -> bool:
             try:
-                service = self.window.service
                 rendered = self._rendered_search_detail
                 return bool(
                     type(rendered) is tuple and len(rendered) == 2
                     and rendered[0] is expected_item
-                    and service.current_identity is not None
-                    and service.current_identity.identity_id ==
+                    and service.current_identity is requester
+                    and getattr(requester, "identity_id", None) ==
                         preview.requesting_identity_id
+                    and service._account_context_epoch == expected_context_epoch
+                    and service._source_context_epoch == expected_source_epoch
+                )
+            except Exception:
+                return False
+
+        if not current():
+            return False
+        group = Adw.PreferencesGroup()
+        group.set_title(section.title)
+        for field in section.fields:
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_title(field.label)
+            row.set_subtitle(str(field.value))
+            group.add(row)
+        if not current():
+            return False
+        self._append_content(group)
+        return True
+
+    def show_cross_profile_borrow_progress_detail(
+        self, progress, *, expected_item: SearchResult,
+        requesting_identity_id: str, expected_context_epoch: int,
+        expected_source_epoch: int,
+    ) -> bool:
+        """#4988: show read-only loan/delivery/transfer status for one detail.
+
+        Never fetch a lender's receipt or create buttons here. The caller
+        separately obtains a privacy-scoped Core progress DTO; this renderer
+        rejects stale Search panes and ABA context/source replacements.
+        """
+        from ..core.borrow_for_identity_detail import (
+            cross_profile_borrow_progress_detail_section,
+        )
+        section = cross_profile_borrow_progress_detail_section(progress)
+        if (section is None
+                or type(expected_item) is not SearchResult
+                or type(requesting_identity_id) is not str
+                or not requesting_identity_id
+                or type(expected_context_epoch) is not int
+                or type(expected_source_epoch) is not int
+                or expected_context_epoch < 0 or expected_source_epoch < 0):
+            return False
+        try:
+            service = self.window.service
+            identity = service.current_identity
+        except Exception:
+            return False
+
+        def current() -> bool:
+            try:
+                rendered = self._rendered_search_detail
+                return bool(
+                    type(rendered) is tuple and len(rendered) == 2
+                    and rendered[0] is expected_item
+                    and service.current_identity is identity
+                    and identity.identity_id == requesting_identity_id
                     and service._account_context_epoch == expected_context_epoch
                     and service._source_context_epoch == expected_source_epoch
                 )
