@@ -140,6 +140,70 @@ def _release_receipt_proof(releases: Path, entry: str) -> tuple[bool, float | No
     return True, timestamp
 
 
+
+def _has_attested_abandoned_previous(root: Path, folder: Path, tx: dict[str, Any]) -> bool:
+    """Only an audited, explicitly degraded transaction can drop a lost prior link.
+
+    Never fabricate restoration evidence or load plugin backups. The original
+    journal must still agree with the immutable private audit proof.
+    """
+    if tx.get("state") != "reconciled_degraded":
+        return False
+    row = tx.get("reconciliation")
+    if (type(row) is not dict or row.get("schema") != 1
+            or row.get("reason") != "before_previous_missing"):
+        return False
+    ack, audit_name = row.get("acknowledgement_sha256"), row.get("audit")
+    if (type(ack) is not str or re.fullmatch(r"[a-f0-9]{64}", ack) is None
+            or type(audit_name) is not str
+            or audit_name != folder.name + "-" + ack[:16] + ".json"):
+        return False
+    audit_root = root / "reconciliation-audit"
+    if audit_root.is_symlink() or not audit_root.is_dir():
+        return False
+    try:
+        dir_info = audit_root.stat()
+        if dir_info.st_uid != os.getuid() or dir_info.st_mode & 0o077:
+            return False
+        directory_flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                           | getattr(os, "O_NOFOLLOW", 0))
+        dir_fd = os.open(audit_root, directory_flags)
+        try:
+            fd = os.open(audit_name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                         dir_fd=dir_fd)
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or info.st_uid != os.getuid() or info.st_mode & 0o077
+                        or not 0 < info.st_size <= 128 * 1024 * 1024):
+                    return False
+                with os.fdopen(fd, "rb", closefd=False) as stream:
+                    raw = stream.read(128 * 1024 * 1024 + 1)
+                if len(raw) != info.st_size:
+                    return False
+            finally:
+                os.close(fd)
+        finally:
+            os.close(dir_fd)
+        receipt = json.loads(raw.decode("utf-8"))
+        original = receipt.get("original_transaction") if type(receipt) is dict else None
+        return (
+            receipt.get("schema") == "cifereca.updater.reconciliation-audit/1"
+            and receipt.get("transaction_id") == folder.name
+            and receipt.get("reason") == "before_previous_missing"
+            and receipt.get("result") == "reconciled_degraded"
+            and receipt.get("acknowledgement_sha256") == ack
+            and type(original) is dict
+            and original.get("schema") == updater.TRANSACTION_SCHEMA
+            and original.get("id") == folder.name
+            and original.get("state") == "restoration_incomplete"
+            and original.get("core") == tx.get("core")
+            and original.get("packages") == tx.get("packages")
+        )
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return False
+
+
 def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any]:
     """Return a bounded read-only projection; **never** an apply plan.
 
@@ -249,8 +313,17 @@ def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any
                     target = updater._path_from_identity(value)
                     if (target is None or not target.is_absolute()
                             or target.parent != releases or target.name not in observed):
-                        # Do not silently orphan references to a missing
-                        # generation: fail closed when planner evaluates.
+                        if (key == "before_previous"
+                                and target is not None
+                                and target.is_absolute()
+                                and target.parent == releases
+                                and not target.exists()
+                                and _has_attested_abandoned_previous(root, folder, tx)):
+                            # An explicitly abandoned prior release is not a
+                            # restorable dependency. Its original journal and
+                            # acknowledgement remain available in private audit.
+                            continue
+                        # Ordinary missing references remain fail-closed.
                         references.add(_name_id("missing_core_proof", folder.name + ":" + key))
                         blockers.add("unresolved_transaction_reference")
                     else:
