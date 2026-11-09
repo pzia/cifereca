@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-for name in ("biblioaccess_observations", "biblioaccess_acsm_delivery"):
+for name in ("biblioaccess_observations", "biblioaccess_delivery_url", "biblioaccess_acsm_delivery"):
     spec = importlib.util.spec_from_file_location(name, ROOT / (name + ".py"))
     obj = importlib.util.module_from_spec(spec)
     sys.modules[name] = obj
