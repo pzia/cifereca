@@ -67,7 +67,7 @@ def stage_bnf_loan_acsm(
                         or session.connected is not True
                         or session.provider_id != "bnf-pret"
                         or session.credential_id != loan.source_credential
-                        or not any(a is account for a in session.accounts)):
+                        or sum(a is account for a in session.accounts) != 1):
                     _refuse("bnf_loan_scope_unproven")
             except Exception:
                 _refuse("bnf_loan_scope_unproven")

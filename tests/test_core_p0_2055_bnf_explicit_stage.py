@@ -115,6 +115,23 @@ def test_closed_source_denies_before_network(connected_core):
     assert not downloaded
 
 
+def test_duplicate_live_borrower_object_refuses_before_selected_offer_or_get(connected_core):
+    """A session with two references to the same account is not a unique binding."""
+    service, session, account, loan, state, downloaded = connected_core
+    previous = list(session._accounts)
+    try:
+        session._accounts = [account, account]
+        with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
+            service.stage_bnf_loan_acsm(
+                loan, confirmed=True, expected_identity_id="default",
+            )
+        assert not downloaded
+        assert not service.storage.acquisitions()
+        assert not service.storage.placements()
+    finally:
+        session._accounts = previous
+
+
 def test_identity_switch_before_confirmation_refuses_without_network(connected_core):
     service, session, account, loan, state, downloaded = connected_core
     service.current_identity = service.identity_by_id("alex")
