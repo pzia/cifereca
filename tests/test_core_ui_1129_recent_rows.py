@@ -75,7 +75,7 @@ def test_recent_names_come_from_provider_descriptors_not_brands():
 
 
 def test_recent_untrusted_descriptor_labels_fail_closed_without_leaking_secrets():
-    for hostile in (None, "", 17, "\\nPRIVATE", "x" * 81, " space "):
+    for hostile in (None, "", 17, "\nPRIVATE", "x" * 81, " space "):
         rows, _ = project_recent_rows(
             [{"provider_id": "new-provider"}], row_factory=_row,
             provider_display_name=lambda _: hostile)
