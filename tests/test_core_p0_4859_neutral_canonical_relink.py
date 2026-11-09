@@ -58,3 +58,14 @@ def test_canonical_relink_for_unrecognized_provider_is_exact(store, tmp_path, mo
             for name in before
         }
     assert before == after
+    with store._lock, store._connect() as db:
+        generic_keys = db.execute(
+            "SELECT key FROM metadata WHERE key LIKE "
+            "'core.canonical-placement-relink.%'"
+        ).fetchall()
+        legacy_keys = db.execute(
+            "SELECT key FROM metadata WHERE key LIKE "
+            "'core.kobo.canonical-placement-relink.%'"
+        ).fetchall()
+    assert len(generic_keys) == 1
+    assert legacy_keys == []
