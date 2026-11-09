@@ -213,8 +213,8 @@ def test_git_gate_blocks_executable_provider_lookup_not_metadata(tmp_path):
     root = tmp_path / "repo"
     base = _repo(root)
     head = _commit(root, "src/cifereca/core/example.py",
-                   'title = LABELS["kobo"]\\n'
-                   'handlers["bnf-pret"]()\\n')
+                   'title = LABELS["kobo"]\n'
+                   'handlers["bnf-pret"]()\n')
     result = gate(root, base, head)
     assert result["pass"] is False
     assert result["violations"] == {
@@ -223,6 +223,6 @@ def test_git_gate_blocks_executable_provider_lookup_not_metadata(tmp_path):
 
 
 def test_provider_lookup_call_moved_across_lines_is_not_a_new_signal():
-    before = 'handlers["kobo"]()\\n'
-    after = '\\n' + before
+    before = 'handlers["kobo"]()\n'
+    after = '\n' + before
     assert added_signals(before, after) == {}
