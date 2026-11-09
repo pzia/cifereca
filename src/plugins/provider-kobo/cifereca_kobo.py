@@ -225,6 +225,7 @@ DESCRIPTOR = ProviderDescriptor(
         personal_library=True,
         backup=True,
         local_materialization=True,
+        legacy_materialization_checkpoint=True,
     ),
     search_capabilities=ProviderSearchCapabilities(
         # Vault accepts arbitrary 'field' as a query parameter, but the
