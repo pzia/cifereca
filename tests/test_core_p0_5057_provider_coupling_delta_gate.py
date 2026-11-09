@@ -120,8 +120,8 @@ def test_new_callable_provider_routing_table_rejected_by_committed_git_gate(tmp_
     base = _repo(root)
     head = _commit(
         root, "src/cifereca/core/example.py",
-        "def kobo_action(): return 1\\n"
-        "HANDLERS = {'kobo': kobo_action}\\n",
+        "def kobo_action(): return 1\n"
+        "HANDLERS = {'kobo': kobo_action}\n",
     )
     result = gate(root, base, head)
     assert result["pass"] is False
@@ -135,7 +135,7 @@ def test_non_callable_provider_labels_do_not_trigger_new_gate(tmp_path):
     base = _repo(root)
     head = _commit(
         root, "src/cifereca/core/example.py",
-        "DISPLAY_LABELS = {'kobo': 'Kobo', 'numilog': 'Numilog'}\\n",
+        "DISPLAY_LABELS = {'kobo': 'Kobo', 'numilog': 'Numilog'}\n",
     )
     result = gate(root, base, head)
     assert result["pass"] is True
