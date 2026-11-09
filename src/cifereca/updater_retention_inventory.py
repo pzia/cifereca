@@ -263,7 +263,10 @@ def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any
                     snapshot_id = _name_id("snapshot", folder.name)
                     objects.append(RetentionObject(
                         object_id=snapshot_id, store="transaction_snapshots",
-                        unit="transaction", generation=snapshot_id,
+                        # Snapshot generations belong to ONE updater history.
+                        # A per-transaction unit would always retain its
+                        # single generation (min=2) and leak snapshots forever.
+                        unit="updater", generation=snapshot_id,
                         installed_at=_created_timestamp(tx.get("created_at")),
                         owned_by_updater=True,
                     ))
