@@ -228,3 +228,14 @@ def test_automatic_bnf_loan_never_gets_when_sql_account_disappears(
     assert service.storage.metadata_get(
         "sync.source.bnf_auto." + sid,
     ) == "1"  # historical ON stays auditable, never silently transferred
+
+def test_auto_bnf_missing_selected_abi_refuses_without_get(connected_core, monkeypatch):
+    service, session, account, loan, _state, downloaded = connected_core
+    broker = SynchronizationBrokerImpl(service)
+    assert broker.set_bnf_auto_download(broker._source_id(account), True)
+    monkeypatch.setattr(session, "rights_selected_delivery_candidate", None)
+    result = materialize(service, account, loan)
+    assert result == {"status": "attention_required",
+                      "code": "bnf_auto_acquisition_failed"}
+    assert not downloaded
+    assert not service.storage.acquisitions(provider_id="manual")

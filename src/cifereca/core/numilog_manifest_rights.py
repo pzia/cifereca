@@ -6,8 +6,6 @@ network requests, resolve ACSM links, or authorize automatic acquisition.
 """
 from __future__ import annotations
 
-import hashlib
-import re
 import unicodedata
 from collections.abc import Iterable
 from typing import Any
@@ -78,20 +76,11 @@ def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any)
 
 
 def _scoped_record_id(value: Any, credential_id: str) -> str | None:
-    """Accept only the provider's stable (credential, lid, variant) reference."""
-    if type(value) is not str or len(value) > 512:
-        return None
-    scope = hashlib.sha256(credential_id.encode("utf-8")).hexdigest()[:20]
-    prefix = "numilog:" + scope + ":"
-    if not value.startswith(prefix):
-        return None
-    remainder = value[len(prefix):]
-    # Never use titles/ISBNs to infer which variant/edition was purchased.
-    lid, sep, variant = remainder.rpartition(":")
-    if (not sep or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,160}", lid)
-            or not re.fullmatch(r"[0-9a-f]{16}", variant)):
-        return None
-    return value
+    """Provider-specific adapter: record shape is not rights evidence."""
+    from .credential_scoped_record import exact_credential_scoped_record
+    return exact_credential_scoped_record(
+        value, provider_id="numilog", credential_id=credential_id,
+    )
 
 
 def _safe_metadata_text(value: Any) -> str | None:

@@ -11,6 +11,13 @@ def show_error(window, message: str, title: str = "Une erreur est survenue", *, 
     """Keep the functional error mapping and toast-before-dialog order."""
     if getattr(window, "_closed", False):
         return
+    # A TaskRunner callback with an attested background lock contention has
+    # already written the activity receipt. An unsolicited blocking dialog
+    # during Settings navigation adds no actionable information.
+    from .ui_dialog_observation import suppress_background_busy_modal
+    if suppress_background_busy_modal(window):
+        window.toast("Une autre opération est déjà en cours. Consultez les activités.", 6)
+        return
     display_message = window._functional_error_message(message)
     window.toast(display_message, 6)
     dialog = Adw.MessageDialog.new(window, title, display_message)

@@ -243,7 +243,7 @@ def compact_sync_text(sync):
     def count(key):
         value=sync.get(key)
         return str(value) if type(value) is int and value>=0 else '—'
-    return ('État : '+STATUS.get(sync.get('status'),'Jamais synchronisée')
+    return ('État : '+STATUS.get(sync.get('status'),'Non actualisée')
             +' · acquisitions : '+count('new_acquisitions')
             +' · actions requises : '+count('attention_required')
             +' · erreurs : '+count('errors'))

@@ -17,6 +17,7 @@ import pytest
 from cifereca.core.search import file_format
 from cifereca.services import LibraryService
 from cifereca.gui.query_model import result_row
+from cifereca.core.search_owned_evidence import SearchOwnedEvidence
 from tests.test_search_results_view import _book, _host
 
 
@@ -30,8 +31,27 @@ def private_purchase():
     return replace(
         _book("numilog", record=record_id),
         docbase="NUMILOG", scenario="NUMILOG_LIBRARY",
-        source_credential=CREDENTIAL, source_collection="library",
+        source_credential=CREDENTIAL, source_account_id=f"numilog:{scope}",
+        source_collection="library",
         owned=True, downloadable=True, download_url=None,
+    )
+
+def _owned_ledger_right():
+    purchase = private_purchase()
+    return dict(identity_id="alice", provider_id=purchase.source_provider,
+                credential_id=purchase.source_credential,
+                account_id=purchase.source_account_id,
+                item_id=purchase.record_id, revision_id=None,
+                state="active", entitlement_type="owned")
+
+
+def _proof():
+    purchase = private_purchase()
+    return SearchOwnedEvidence(
+        "alice", frozenset({(
+            purchase.source_provider, purchase.source_credential,
+            purchase.source_account_id, purchase.record_id, "",
+        )}),
     )
 
 
@@ -138,6 +158,7 @@ def test_real_private_inventory_keeps_opt_in_search_button_but_not_local_file():
     book = private_purchase()
     host._remote_search_results = [book]
     host.service.can_direct_download = Mock(return_value=True)
+    host.service.storage = NS(entitlements=Mock(return_value=[_owned_ledger_right()]))
     host.service._session_for_source = Mock(return_value=NumilogOfferFixture().session)
     host._populate_search([book], announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
@@ -183,11 +204,13 @@ def test_detail_retains_private_purchase_action_when_broker_positive():
     button = NS(connect=Mock())
     service = NS(
         can_direct_download=Mock(return_value=True),
+        current_identity=NS(identity_id="alice"),
         content_type_for=lambda _: "ebook",
         _session_for_source=Mock(return_value=NumilogOfferFixture().session),
     )
     window = NS(service=service, action_button=Mock(return_value=button),
                 download_direct_item=Mock())
+    window._search_purchase_evidence = _proof()
     panel = NS(window=window, _actions=Mock())
     _direct_download_method()(panel, purchase)
     service.can_direct_download.assert_called_once_with(purchase)
@@ -200,5 +223,6 @@ def test_detail_retains_private_purchase_action_when_broker_positive():
 
 def test_private_ownership_is_independent_of_local_offer_qualification():
     wrong_scope = replace(private_purchase(), downloadable=False)
-    assert result_row(wrong_scope)["state"] == "remote_owned"
+    assert result_row(wrong_scope, purchase_evidence=_proof(),
+                      identity_id="alice")["state"] == "remote_owned"
     assert NumilogOfferFixture().can_direct(wrong_scope) is False

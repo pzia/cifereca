@@ -158,3 +158,38 @@ def test_symlinked_parent_never_counts_as_verified_local_bnf(
     }
     assert not calls and not downloaded
     assert target.read_bytes() == PDF
+
+
+def test_duplicate_exact_bnf_manual_receipts_never_pick_first_or_issue_get(
+    connected_core, monkeypatch,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    _enable(service, account)
+    target = (service.library_identity_provider_dir(account.identity_id, 'bnf-pret')
+              / 'acsm-synthetic' / 'book.pdf')
+    _forge(
+        service, account, loan, path=target,
+        placement_identity=account.identity_id, placement_provider='bnf-pret',
+    )
+    initial = service.storage.acquisitions(provider_id='manual', status='complete')
+    assert len(initial) == 1
+    original = initial[0]
+    service.storage.acquisition_put({
+        'acquisition_id': 'manual-acsm:second-auto-ref',
+        'identity_id': account.identity_id, 'provider_id': 'manual',
+        'credential_id': 'manual', 'item_id': 'different-import',
+        'title': 'Private duplicate', 'status': 'complete',
+        'artifact_id': original['artifact_id'],
+        'metadata': dict(original['metadata']),
+    })
+    called = []
+    monkeypatch.setattr(session, 'download_digital',
+                        lambda *_a, **_kw: called.append(True)
+                        or (_ for _ in ()).throw(AssertionError('forbidden GET')))
+    before = service.storage.acquisitions()
+    assert materialize(service, account, loan) == {
+        'status': 'attention_required', 'code': 'bnf_local_artifact_invalid',
+    }
+    assert not called and not downloaded
+    assert service.storage.acquisitions() == before
+    assert target.read_bytes() == PDF

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+from functools import wraps
 import hmac
 import json
 import os
@@ -21,6 +22,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from . import updater
+from .core.plugin_package_mutation_lock import package_mutation_lease
 from .update_progress import step, update_phase, update_operation, skip_update_phase, jsonl_progress_writer, child_progress_receiver, SMOKE_FAILURE_CODES
 from .update_child import PROGRESS_ENV, ChildOutputError, run_plugin_child
 from .paths import data_dir, state_dir
@@ -178,6 +180,15 @@ def _plugin_store_root() -> Path:
     return data_dir() / "plugins" / "packages"
 
 
+def _serialized_package_task(operation):
+    @wraps(operation)
+    def wrapped(*args, **kwargs):
+        with package_mutation_lease(_plugin_store_root()):
+            return operation(*args, **kwargs)
+    return wrapped
+
+
+@_serialized_package_task
 def _backup_plugins(package_ids: list[str], backup_root: Path) -> None:
     store = _plugin_store_root()
     backup_root.mkdir(parents=True, exist_ok=True)
@@ -187,6 +198,7 @@ def _backup_plugins(package_ids: list[str], backup_root: Path) -> None:
             shutil.copytree(source, backup_root / package_id, symlinks=False)
 
 
+@_serialized_package_task
 def _restore_plugins(package_ids: list[str], backup_root: Path) -> None:
     store = _plugin_store_root()
     store.mkdir(parents=True, exist_ok=True)
@@ -511,6 +523,7 @@ def _validate_plugins_only_index(
     return index
 
 
+@_serialized_package_task
 def _record_partial_install_provenance(
     indexed: dict[str, Any], packages: list[tuple[str, str, Path, bool]],
     *, snapshot_id: str, snapshot_sha256: str, trusted_digest_verified: bool,
@@ -565,6 +578,25 @@ def _record_partial_install_provenance(
                     pass
 
 
+def _postcommit_dev_backup_retention() -> dict[str, Any]:
+    """Best-effort post-success cleanup; reuse the supervised GC policy."""
+    from .updater_dev_backup_maintenance import dev_backup_maintenance
+    try:
+        root = updater.install_root()
+        backups = state_dir() / "dev-updates"
+        plan = dev_backup_maintenance(root, backups)
+        if plan["candidate_backups"] == 0:
+            return {"status": "complete", "removed": 0}
+        applied = dev_backup_maintenance(
+            root, backups, apply=True,
+            acknowledge=plan["acknowledgement_sha256"],
+        )
+        return {"status": "complete", "removed": applied["removed"]}
+    except (ValueError, OSError, updater.UpdateError):
+        return {"status": "deferred", "removed": None}
+
+
+@updater._serial_updater_operation
 def apply_snapshot(
     archive: Path,
     *,
@@ -575,6 +607,11 @@ def apply_snapshot(
     expected_sha256: str | None = None,
     require_plugins_only: bool = False,
 ) -> dict[str, Any]:
+    # A delegated child runs inside Core's already-validated transaction.
+    # The parent's in-flight journal is not a *new* incomplete update to
+    # preflight or independently recover; direct DevUpdater calls still check.
+    if not dry_run and not getattr(updater._UPDATER_LOCK_DEPTH, "borrowed", False):
+        updater._preflight_incomplete_recovery(updater.install_root())
     try:
         archive = step("resolve_archive", resolve_archive, archive)
     except ArchiveNotFoundError as exc:
@@ -678,7 +715,24 @@ def apply_snapshot(
         backup_name = hashlib.sha256(snapshot_id.encode()).hexdigest()[:16] + '-' + str(time.time_ns())
         backup_base = state_dir() / "dev-updates" / backup_name
         backup_plugins = backup_base / "plugins"
+        # Ownership is minted only by the updater after the copy completed,
+        # never inferred from a directory name or its mtime. A crash before
+        # receipt fsync leaves an unqualified backup to be retained.
+        try:
+            backup_base.parent.mkdir(parents=True, exist_ok=True)
+            backup_base.mkdir(mode=0o700, exist_ok=False)
+            # Create the empty backup envelope before the copy stage. Some
+            # valid snapshots back up zero installed plugins; test doubles
+            # must not affect the receipt's filesystem preconditions.
+            backup_plugins.mkdir(mode=0o700, exist_ok=False)
+        except OSError:
+            raise DevUpdateError("répertoire de sauvegarde non sûr") from None
         step("plugin_backup", _backup_plugins, package_ids, backup_plugins)
+        from .updater_retention_backups import write_dev_backup_receipt
+        try:
+            write_dev_backup_receipt(backup_base, snapshot_sha256=result["sha256"])
+        except (OSError, ValueError):
+            raise DevUpdateError("reçu de sauvegarde de mise à jour indisponible") from None
         old_current = updater._symlink_target(updater.install_root() / "current")
         core_installed = False
         core_result = None
@@ -727,6 +781,10 @@ def apply_snapshot(
                 raise DevUpdateError('Mise à jour échouée ; restauration incomplète : ' + ', '.join(restoration_errors)) from exc
             raise
         result.update({"core": core_result, "core_changed": core_installed, "smoke": smoke, "backup": str(backup_base)})
+        # Normal snapshot updates apply the same backup retention policy as
+        # explicit maintenance, but only AFTER activation/smoke is committed.
+        # Failure of the optional post-commit sweep cannot undo a valid update.
+        result["retention_cleanup"] = _postcommit_dev_backup_retention()
         if restart:
             app = updater._command_path(updater.install_root() / "current", "cifereca")
             try:

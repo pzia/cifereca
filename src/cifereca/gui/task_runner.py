@@ -22,6 +22,40 @@ _TRACE_LOG = logging.getLogger("cifereca")
 class TaskRunner:
     """Run non-UI operations outside GTK with priority and global feedback."""
 
+    @staticmethod
+    def _task_has_typed_lock_busy(error: BaseException) -> bool:
+        """Only a genuine LockBusyError (possibly chained) proves lock contention.
+    
+        Error messages, provider text and a lone BlockingIOError are insufficient.
+        Avoid unbounded or cyclic exception chains.
+        """
+        from cifereca.locking import LockBusyError
+        visited: set[int] = set()
+        current: BaseException | None = error
+        for _ in range(6):
+            if current is None or id(current) in visited:
+                break
+            visited.add(id(current))
+            if isinstance(current, LockBusyError):
+                return True
+            current = getattr(current, "__cause__", None)
+        return False
+    
+    
+    @staticmethod
+    def _task_feedback_classification(origin: str, kind: str, control: object) -> str:
+        """Closed, non-sensitive attribution from the submitted task contract."""
+        if origin == "user" or control is not None:
+            return "user_action"
+        if kind == "provider-connect":
+            return "provider_connect"
+        if kind in {
+            "opening-sync", "deep-sync", "source-sync", "source-materialize",
+            "sync-preflight", "sync-audit",
+        }:
+            return "sync"
+        return "background_task"
+
 
     def __init__(
         self, window: Any, *, max_workers: int = 3,
@@ -398,6 +432,22 @@ class TaskRunner:
                 else (self._borrow_outcome(outcome[1]) if trace_kind == "borrow"
                       else self._source_sync_outcome(outcome[1], trace_kind))
             )
+            # Isolated legacy submit() adapters do not carry the class's
+            # helper methods. Those adapters cannot attest lock contention,
+            # so they fail closed without changing their established result.
+            lock_classifier = getattr(self, "_task_has_typed_lock_busy", None)
+            typed_lock_busy = (
+                outcome[0] == "error"
+                and callable(lock_classifier)
+                and lock_classifier(outcome[1])
+            )
+            classify_task = getattr(self, "_task_feedback_classification", None)
+            task_classification = (
+                classify_task(origin, trace_kind, control)
+                if callable(classify_task) else
+                "user_action" if origin == "user" or control is not None
+                else "background_task"
+            )
             # A completed worker may still be awaiting GTK delivery. Keep
             # its original result as the authoritative pending operation
             # until the UI consumes it; close() clears detached reservations.
@@ -430,6 +480,14 @@ class TaskRunner:
             gtk_pending_since = time.monotonic()
 
             def deliver() -> bool:
+                # Some legacy isolation tests compile deliver() by itself.
+                # Missing outer diagnostic closure must remain harmless.
+                try:
+                    busy_lock_attested = typed_lock_busy
+                    feedback_classification = task_classification
+                except NameError:
+                    busy_lock_attested = False
+                    feedback_classification = "background_task"
                 # This callback is part of the real GTK/TaskRunner lifecycle:
                 # it owns the pending coalescing reservation until delivery.
                 # Its historical name also identifies the actual event held
@@ -461,7 +519,15 @@ class TaskRunner:
                 if control is not None and control.get_root() is not None:
                     control.set_sensitive(True)
                 kind_outcome, payload = outcome
+                if busy_lock_attested:
+                    from cifereca.gui.ui_dialog_observation import observe_background_busy_task
+                    observe_background_busy_task(
+                        self.window, task_ref=task_id,
+                        classification=feedback_classification,
+                    )
                 feedback_error = None if business_status == "success" else (
+                    "Une autre opération est déjà en cours"
+                    if busy_lock_attested else
                     "Emprunt non confirmé — vérification nécessaire"
                     if trace_kind == "borrow" and business_status == "pending"
                     else "Emprunt bloqué — aucune confirmation"
@@ -479,6 +545,16 @@ class TaskRunner:
                     else payload.user_message if isinstance(payload, UserFacingError)
                     else "Traitement indisponible"
                 )
+                # Preserve main's explicit pending-borrow instruction,
+                # independent of the background lock-contention feedback.
+                if (business_status == "pending" and not busy_lock_attested
+                        and trace_kind == "borrow"
+                        and kind_outcome == "ok" and type(payload) is dict
+                        and payload.get("reason_code") == "borrow_result_unverified"):
+                    feedback_error = (
+                        "Demande d’emprunt envoyée ; confirmation indisponible. "
+                        "Ne réempruntez pas : actualisez vos prêts ultérieurement."
+                    )
                 finish_args = (
                     task_id, remaining, label,
                     business_status == "success", feedback_error,
@@ -523,20 +599,45 @@ class TaskRunner:
                 else:
                     if getattr(self.window, "_closed", False):
                         return False
-                    if err:
-                        try:
-                            err(payload)
-                        except Exception as callback_error:
-                            trace_failure("gtk_error_callback", callback_error)
-                            if getattr(self.window, "_closed", False):
-                                return False
-                            if origin != "automatic":
-                                self.present_error(callback_error)
-                    elif origin != "automatic":
-                        # Automatic exceptions are already visible in the
-                        # activity feedback and correlated local diagnostics.
-                        # Only an intentional request gets a blocking modal.
-                        self.present_error(payload)
+                    # Carry the exact TaskRunner identity into *this* GTK
+                    # completion only; no context survives a later callback.
+                    # A background lock contention is nonmodal even if an
+                    # existing provider-specific err() calls show_error().
+                    from cifereca.gui.ui_dialog_observation import task_dialog_context
+                    with task_dialog_context(
+                        self.window, task_ref=task_id,
+                        classification=feedback_classification,
+                        reason_code="lock_busy" if busy_lock_attested else "unknown",
+                        suppress_busy_modal=(
+                            busy_lock_attested
+                            and origin in {"automatic", "maintenance", "navigation"}
+                            and control is None
+                        ),
+                    ):
+                        if err:
+                            try:
+                                err(payload)
+                            except Exception as callback_error:
+                                trace_failure("gtk_error_callback", callback_error)
+                                if getattr(self.window, "_closed", False):
+                                    return False
+                                if origin != "automatic":
+                                    # A *new* failure in the error callback is
+                                    # not the worker's attested busy lock.
+                                    # Preserve its actionable dialog, scoped
+                                    # to the same task, with no suppression.
+                                    with task_dialog_context(
+                                        self.window, task_ref=task_id,
+                                        classification=feedback_classification,
+                                        reason_code="unknown",
+                                        suppress_busy_modal=False,
+                                    ):
+                                        self.present_error(callback_error)
+                        elif origin != "automatic":
+                            # The caller remains responsible for marking user
+                            # intent. Background contention keeps its task
+                            # receipt and nonblocking status instead of a modal.
+                            self.present_error(payload)
                 return False
 
             # Terminal outcomes are more important than repaint/progress
