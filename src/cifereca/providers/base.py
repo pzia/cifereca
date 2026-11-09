@@ -41,14 +41,15 @@ class ProviderCapabilities:
     # Explicit legacy-compatible opt-in for acquisition during opening sync.
     # Presence of loans/digital_download or an ACSM URL alone is not consent.
     opening_loan_auto_acquisition: bool = False
-    # Display-only availability of a separate loan fulfillment phase.
-    # Never implies consent, ADEPT readiness or permission to GET.
-    loan_auto_materialization: bool = False
     direct_download: bool = False
     personal_library: bool = False
     backup: bool = False
     return_loan: bool = False
     renew_loan: bool = False
+    # Append-only flag: preserve positional construction ABI for older users.
+    # Display-only availability of a separate loan fulfillment phase.
+    # Never implies consent, ADEPT readiness or permission to GET.
+    loan_auto_materialization: bool = False
 
     def names(self) -> list[str]:
         return [name for name, value in self.__dict__.items() if value]
