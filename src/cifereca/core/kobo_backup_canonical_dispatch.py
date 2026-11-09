@@ -1,9 +1,9 @@
 """#4858 W2: route a selected legacy Kobo resume through canonical A→B.
 
 This adapter exists only at the PUBLIC, *unlocked* LibraryService boundary.
-The 0.7 backup worker still owns incomplete-ABI sessions; its internal entry
-points remain closed to complete-ABI sessions. A canonical Sync owns the global
-lock itself, validates fresh provider A/offers/consent and publishes B.
+Incomplete-ABI sessions cannot use the retired 0.7 worker. A canonical Sync
+owns the global lock itself, validates fresh provider A/offers/consent and
+publishes B.
 """
 from __future__ import annotations
 
@@ -50,8 +50,8 @@ def _valid_id(value):
 
 
 def _account_and_session(service, credential_id):
-    # Legacy dispatch is permissible ONLY when the provider ABI is partial.
-    # The probe does not fetch any inventory, resolve a candidate or touch SQL.
+    # An incomplete ABI returns None to the caller, whose retired W2 entry
+    # refuses without a GET. This probe performs no inventory or SQL.
     sessions = [
         session for session in service._sessions.values()
         if getattr(session, "provider_id", None) == "kobo"
@@ -167,7 +167,7 @@ def run_scoped_canonical_kobo_resume(
     cancelled: Callable[[], bool] | None = None,
     retry_scope_blocked: bool = False,
 ) -> dict[str, Any] | None:
-    """Dispatch *only* a modern connected Kobo source; return None for legacy.
+    """Dispatch *only* a modern connected Kobo source; legacy is refused upstream.
 
     Complete ABI + exact borrower + persisted SourceKey-wide ON are mandatory.
     No fallback to W2 after selecting the modern route, including when its
