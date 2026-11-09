@@ -43,6 +43,8 @@ def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evide
         if result_row(
             item, purchase_evidence=purchase_evidence,
             identity_id=getattr(getattr(service, "current_identity", None), "identity_id", None),
+            account_context_epoch=getattr(service, "_account_context_epoch", None),
+            source_context_epoch=getattr(service, "_source_context_epoch", None),
         )["state"] == "remote_owned":
             return "Mes achats Numilog · fichier local non présumé"
         return "Notice Numilog · aucun droit d'achat attesté"
@@ -672,7 +674,9 @@ class DetailPanel(Gtk.Box):
                 or (item.source_provider == "numilog"
                     and result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
                    identity_id=getattr(getattr(self.window.service, "current_identity", None),
-                                       "identity_id", None))["state"] != "remote_owned")):
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))["state"] != "remote_owned")):
             return
         if not self.window.service.can_direct_download(item):
             return
@@ -1008,7 +1012,9 @@ class DetailPanel(Gtk.Box):
             ],
             links=document_links(result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
                    identity_id=getattr(getattr(self.window.service, "current_identity", None),
-                                       "identity_id", None))),
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
             metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
         direct_download = (
@@ -1016,7 +1022,9 @@ class DetailPanel(Gtk.Box):
                       or (item.source_provider == "numilog"
                           and result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
                    identity_id=getattr(getattr(self.window.service, "current_identity", None),
-                                       "identity_id", None))["state"] != "remote_owned"))
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))["state"] != "remote_owned"))
             else self.window.service.can_direct_download(item)
         )
         if direct_download:
