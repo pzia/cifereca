@@ -16,7 +16,6 @@ from ..library_files import safe_library_component
 from ..paths import config_file, database_file
 from ..identities import Identity
 from ..storage import Storage, CURRENT_SCHEMA_VERSION
-from .kobo_backup import _kobo_preview_paths
 
 
 class ReconciliationRejected(ValueError):
@@ -30,29 +29,6 @@ class ReconciliationRejected(ValueError):
 def _require(condition, code):
     if not condition:
         raise ReconciliationRejected(code)
-
-
-def _roots(service, identity):
-    _require(type(identity) is str and 0 < len(identity) <= 1024
-             and not any(char in identity for char in ("\0", "\n", "\r")), "unknown_identity")
-    profile = service.identity_by_id(identity)
-    _require(profile is not None, "unknown_identity")
-    library, target = _kobo_preview_paths(service, identity)
-    folder = safe_library_component(profile.directory_name or identity, "default")
-    _require(not any(other.identity_id != identity
-                     and safe_library_component(other.directory_name or other.identity_id, "default") == folder
-                     for other in getattr(service, "identities", ())), "ambiguous_identity_directory")
-    return (target, library / folder)
-
-
-def _within(path, roots):
-    if type(path) is not str or not path or "\0" in path:
-        return False
-    value = Path(path)
-    if not value.is_absolute() or ".." in value.parts:
-        return False
-    value = Path(os.path.abspath(value))
-    return any(value != root and value.is_relative_to(root) for root in roots)
 
 
 def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expected_sha256,
