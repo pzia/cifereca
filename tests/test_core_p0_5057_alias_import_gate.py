@@ -70,7 +70,7 @@ x = import_module("cifereca.kobo.executor")
 notice = "provider-kobo"
 x = getattr(service, "provider-kobo")
 ''')
-    assert result == {"imports": [], "comparisons": [], "dispatch_tables": []}
+    assert result == {"imports": [], "comparisons": [], "dispatch_tables": [], "dispatch_calls": []}
 
 
 def test_identifier_parts_not_substring_for_dynamic_imports():
@@ -80,7 +80,7 @@ importlib.import_module("package.kobold.impl")
 importlib.import_module("package.numeric.helper")
 importlib.import_module(get_dynamic_module())
 ''')
-    assert result == {"imports": [], "comparisons": [], "dispatch_tables": []}
+    assert result == {"imports": [], "comparisons": [], "dispatch_tables": [], "dispatch_calls": []}
 
 
 def test_existing_debt_is_stable_and_new_alias_trips_delta():
@@ -168,3 +168,47 @@ class Controller:
     assert report["dispatch_tables"] == [{
         "line": 6, "providers": ["bnf-pret", "kobo"],
     }]
+
+
+def test_provider_keyed_executable_lookup_is_counted_without_explicit_table():
+    source = '''
+def run(handlers, service, ACTION):
+    return handlers["kobo"]() + service.operations["bnf-pret"](42)
+'''
+    result = inspect_source(source)
+    assert result["dispatch_calls"] == [
+        {"line": 3, "providers": ["kobo"]},
+        {"line": 3, "providers": ["bnf-pret"]},
+    ]
+    assert added_signals("pass\\n", source) == {
+        ("dispatch_calls", "kobo"): 1,
+        ("dispatch_calls", "bnf-pret"): 1,
+    }
+
+
+def test_metadata_subscripts_and_non_provider_keys_are_not_executable_dispatch():
+    result = inspect_source('''
+TITLE = LABELS["kobo"]
+version = config["bnf-pret"]
+handlers[get_provider()]()
+handlers["unknown-provider"]()
+''')
+    assert result["dispatch_calls"] == []
+
+
+def test_module_constant_provider_key_works_and_shadow_is_not_assumed():
+    result = inspect_source('''
+ACTIVE_PROVIDER = "provider-kobo"
+handlers[ACTIVE_PROVIDER]()
+def other(ACTIVE_PROVIDER):
+    pass
+''')
+    assert result["dispatch_calls"] == []  # shadowed: no immutable binding
+
+    result = inspect_source('''
+ACTIVE_PROVIDER = "provider-kobo"
+handlers[ACTIVE_PROVIDER]()
+''')
+    assert result["dispatch_calls"] == [
+        {"line": 3, "providers": ["provider-kobo"]},
+    ]
