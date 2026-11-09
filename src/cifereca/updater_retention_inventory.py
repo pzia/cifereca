@@ -204,6 +204,51 @@ def _has_attested_abandoned_previous(root: Path, folder: Path, tx: dict[str, Any
         return False
 
 
+def _release_transaction_pointer(releases: Path, name: str) -> str | None:
+    """Read a Core-owned release's transaction pointer without following links.
+
+    A missing pointer is legitimate for pre-transaction releases. A present
+    malformed/dangling pointer must never be silently treated as absent.
+    """
+    flags = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+             | getattr(os, "O_NOFOLLOW", 0))
+    parent_fd = os.open(releases, flags)
+    try:
+        release_fd = os.open(name, flags, dir_fd=parent_fd)
+        try:
+            try:
+                fd = os.open(
+                    updater.TRANSACTION_FILE,
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=release_fd,
+                )
+            except FileNotFoundError:
+                return None
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                        or not 0 < info.st_size <= 4096):
+                    raise ValueError("invalid_release_transaction_pointer")
+                with os.fdopen(fd, "rb", closefd=False) as stream:
+                    raw = stream.read(4097)
+                if len(raw) != info.st_size:
+                    raise ValueError("invalid_release_transaction_pointer")
+            finally:
+                os.close(fd)
+        finally:
+            os.close(release_fd)
+    finally:
+        os.close(parent_fd)
+    payload = json.loads(raw.decode("utf-8"))
+    identity = payload.get("id") if type(payload) is dict else None
+    if (type(payload) is not dict or payload.get("schema") != 1
+            or type(identity) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}", identity) is None
+            or ".." in identity):
+        raise ValueError("invalid_release_transaction_pointer")
+    return _name_id("transaction", identity)
+
+
 def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any]:
     """Return a bounded read-only projection; **never** an apply plan.
 
@@ -249,12 +294,20 @@ def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any
                     owned, installed_at = False, None
                 if not owned:
                     blockers.add("release_ownership_unqualified")
-                # No nested recursive traversal, file hashing or plugin call.
+                try:
+                    transaction_ref = _release_transaction_pointer(releases, item.name)
+                    references = (transaction_ref,) if transaction_ref else ()
+                except (OSError, UnicodeError, ValueError, TypeError):
+                    blockers.add("invalid_release_transaction_pointer")
+                    references = (_name_id("missing_release_transaction_proof", item.name),)
+                # A retained release pins the exact journal used by rollback.
+                # A broken pointer blocks all deletion candidates.
                 objects.append(RetentionObject(
                     object_id=release_id, store="core_releases",
                     unit="core", generation=release_id,
                     installed_at=installed_at,
                     owned_by_updater=owned,
+                    references=references,
                 ))
 
     pins: set[str] = set()
@@ -342,6 +395,7 @@ def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any
                         unit="updater", generation=snapshot_id,
                         installed_at=_created_timestamp(tx.get("created_at")),
                         owned_by_updater=True,
+                        references=(transaction_id,),
                     ))
                     references.add(snapshot_id)
                 elif any(type(v) is dict and type(v.get("before")) is dict
