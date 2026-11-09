@@ -1550,6 +1550,8 @@ class ParisProviderSession(ProviderSession):
                 or len(edition_id) > 256 or len(right_id) > 256):
             raise ProviderCapabilityError("paris_selected_offer_not_admitted")
         lease = self._current_source_sync_offer_lease(account)
+        if self._source_sync_offer_lease.get() is not None and lease is None:
+            raise ProviderCapabilityError("paris_source_sync_lease_revoked")
         cached = lease.get("rights") if lease is not None else None
         if (type(cached) is ProviderRightsSnapshot
                 and cached.status == "success"
@@ -1631,6 +1633,8 @@ class ParisProviderSession(ProviderSession):
             # revalidate scope and candidate before *content* GET.
             with self._loan_inventory_lock:
                 lease = self._current_source_sync_offer_lease(account)
+                if self._source_sync_offer_lease.get() is not None and lease is None:
+                    raise ProviderCapabilityError("paris_source_sync_lease_revoked")
                 old_rights = lease.get("rights") if lease is not None else None
                 old_inventory = lease.get("inventory") if lease is not None else None
                 prior = (
