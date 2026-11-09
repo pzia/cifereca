@@ -60,6 +60,7 @@ def _version_refs(tx: dict[str, Any]) -> set[str]:
 def inspect_transaction_plugin_references(
     runtime_root: Path, plugin_version_plan: dict[str, Any] | None,
     *, core_transaction_plan: dict[str, Any] | None = None,
+    _include_internal_resolved_refs: bool = False,
 ) -> dict[str, Any]:
     """Observe a bounded reference edge subset; **always** no-apply.
 
@@ -198,4 +199,12 @@ def inspect_transaction_plugin_references(
         "unresolved_retained_edges": len(retained_refs - known_ids) if classified and complete else None,
         "candidate_transaction_plugin_edges": len(candidate_refs) if classified and complete else None,
         "blockers": sorted(blockers),
+        **({
+            # Internal-only IDs. The aggregator MUST consume/remove this
+            # field before returning a public inventory result. Never expose
+            # receipt names, transaction paths or original package IDs.
+            "_resolved_retained_plugin_ids": sorted(retained_refs & known_ids)
+        } if _include_internal_resolved_refs
+             and classified and complete and not (retained_refs - known_ids)
+           else {}),
     }
