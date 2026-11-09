@@ -127,7 +127,6 @@ def transaction_maintenance(root: Path, *, apply: bool = False,
             for source in folders:
                 # Under the updater lock, a completed journal cannot become
                 # active through any cooperating updater operation.
-                _qualified(root, now=now)
                 destination = quarantine / source.name
                 receipt = quarantine / (source.name + ".json")
                 if destination.exists() or receipt.exists() or destination.is_symlink():
