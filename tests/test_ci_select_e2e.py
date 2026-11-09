@@ -15,7 +15,7 @@ class SelectionTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 41)
+        self.assertEqual(len(mod.ALL), 42)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["height"], 768)
@@ -32,6 +32,7 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("book-detail-960", mod.ALL)
         self.assertIn("book-detail-1280", mod.ALL)
         self.assertIn("book-detail-1300", mod.ALL)
+        self.assertIn("book-detail-1700", mod.ALL)
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
 
