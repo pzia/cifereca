@@ -268,3 +268,48 @@ def test_missing_rollback_generation_blocks_every_unfinished_state_before_restor
         updater._preflight_incomplete_recovery(root)
     assert (folder / "transaction.json").read_bytes() == before
     assert not missing.exists()
+
+
+def test_forged_degraded_state_without_audit_does_not_unlock_core_gc(tmp_path, monkeypatch):
+    root, folder, missing = _scenario(tmp_path, monkeypatch)
+    record = updater._read_transaction(folder)
+    record["state"] = "reconciled_degraded"
+    record["reconciliation"] = {
+        "schema": 1, "reason": "before_previous_missing",
+        "acknowledgement_sha256": "a" * 64,
+        "audit": ID + "-" + "a" * 16 + ".json",
+    }
+    updater._write_json_atomic(folder / "transaction.json", record)
+    from cifereca.updater_retention_inventory import inspect_core_transaction_history
+    plan = inspect_core_transaction_history(root, now=updater.time.time())
+    assert "unresolved_transaction_reference" in plan["blockers"]
+    assert updater._gc(root, 2)["deferred"] == 1
+    assert not missing.exists()
+
+
+@pytest.mark.parametrize("damage", ["remove", "symlink", "mismatch"])
+def test_reconciled_degraded_without_original_intact_private_audit_defers_gc(
+    tmp_path, monkeypatch, damage,
+):
+    root, folder, missing = _scenario(tmp_path, monkeypatch)
+    plan = updater.reconcile_lost_previous(ID)
+    outcome = updater.reconcile_lost_previous(
+        ID, acknowledge=plan["acknowledgement_sha256"],
+    )
+    audit = root / "reconciliation-audit" / outcome["audit"]
+    if damage == "remove":
+        audit.unlink()
+    elif damage == "symlink":
+        private = tmp_path / "private-secret.json"
+        private.write_text('{"secret":"PRIVATE"}', encoding="utf-8")
+        audit.unlink()
+        audit.symlink_to(private)
+    else:
+        original = json.loads(audit.read_text(encoding="utf-8"))
+        original["original_transaction"]["core"]["before_previous"] = None
+        audit.write_text(json.dumps(original), encoding="utf-8")
+    from cifereca.updater_retention_inventory import inspect_core_transaction_history
+    report = inspect_core_transaction_history(root, now=updater.time.time())
+    assert "unresolved_transaction_reference" in report["blockers"]
+    assert updater._gc(root, 2)["deferred"] == 1
+    assert not missing.exists()
