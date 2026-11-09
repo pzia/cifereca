@@ -15,7 +15,9 @@ from cifereca.providers import ProviderConfigurationError
 from tests.test_biblioaccess_sso import _synced_session, mod
 
 
-def _expired_fixture(monkeypatch, *, optin="on", second_credential=False):
+def _expired_fixture(
+    monkeypatch, *, optin="on", second_credential=False, fresh_rows=None,
+):
     first, original_client, calls = _synced_session(credential="cred-a")
     account, = first.connect()
     account.identity_id = "identity-a"
@@ -45,7 +47,10 @@ def _expired_fixture(monkeypatch, *, optin="on", second_credential=False):
         })
     # Prepare synthetic clients BEFORE monkeypatching the plugin's factory:
     # the shared fixture itself calls PLUGIN.create_session().
-    ready = [_synced_session(credential="cred-a") for _ in range(2)]
+    ready = [
+        _synced_session(credential="cred-a", rows=fresh_rows)
+        for _ in range(2)
+    ]
     new_sessions = []
     fresh_calls = []
     def factory(**kwargs):
@@ -236,3 +241,28 @@ def test_foreign_credential_does_not_become_reconnect_target(monkeypatch):
     ) is None
     assert created == []
     assert host.accounts[0] is account
+
+
+def test_fresh_cas_without_acsm_retains_positive_loan_without_download(monkeypatch):
+    # Missing signed ACSM offer is neither missing loan nor permission
+    # to reborrow. The Core may represent the loan but must not acquire it.
+    rows = [NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC",
+        due_at_local="09/11/2026 12:30:00",
+        acsm_offer_present=False, acsm_url=None,
+    )]
+    host, old, account, calls, renewed, created, notes = _expired_fixture(
+        monkeypatch, fresh_rows=rows,
+    )
+    replacement = provider_sessions.reconnect_expired_configured_source_once(
+        host, account, old,
+    )
+    assert replacement is not None
+    snapshot = read_loan_inventory(
+        host._sessions[host._session_key(mod.PROVIDER_ID, "cred-a")],
+        replacement,
+    )
+    assert snapshot.status == "partial" and len(snapshot.loans) == 1
+    assert snapshot.loans[0].raw == {} and snapshot.loans[0].ebook_url is None
+    assert created == ["cred-a"] and renewed[0][2].count("post") == 1
+    assert "SYNTHETIC-SECRET" not in repr(notes)
