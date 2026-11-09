@@ -109,3 +109,11 @@ def test_loan_phase_declaration_accepts_future_provider_and_refuses_partial_abi(
     assert not _loan_materialization_phase_declared(
         NS(capabilities=NS(loan_auto_materialization="true"),
            download_digital=lambda *_: None), {"loans"})
+
+
+def test_loan_phase_flag_is_append_only_and_default_false():
+    from dataclasses import fields
+    from cifereca.providers import ProviderCapabilities
+    names = [field.name for field in fields(ProviderCapabilities)]
+    assert names[-1] == "loan_auto_materialization"
+    assert ProviderCapabilities().loan_auto_materialization is False
