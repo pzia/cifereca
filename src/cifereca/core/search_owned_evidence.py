@@ -95,7 +95,6 @@ def search_result_has_verified_purchase(
                 and evidence.account_context_epoch != current_account_epoch)
             or (evidence.source_context_epoch is not None
                 and evidence.source_context_epoch != current_source_epoch)
-            or item.owned is not True
             or (type(item.metadata) is dict
                 and item.metadata.get("search_provenance") == "known_catalog_stale")):
         return False
