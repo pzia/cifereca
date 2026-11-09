@@ -105,3 +105,38 @@ def test_cli_plan_readonly_on_missing_runtime(tmp_path, monkeypatch, capsys):
     assert report["mode"] == "plan"
     assert report["candidate_transactions"] == 0
     assert not (tmp_path / "runtime").exists()
+
+
+def test_resume_after_crash_between_quarantine_rename_and_delete(tmp_path, monkeypatch):
+    from cifereca import updater_transaction_maintenance as maintenance
+    root = _runtime(tmp_path)
+    monkeypatch.setattr(updater, "_trusted_package_lease",
+                        lambda: __import__("contextlib").nullcontext())
+    paths = [_transaction(root, n, 3 * 86400 + n * 60) for n in range(7)]
+    plan = transaction_maintenance(root, now=NOW)
+    delete = maintenance.shutil.rmtree
+    tripped = False
+
+    def interrupted(path, *args, **kwargs):
+        nonlocal tripped
+        if not tripped:
+            tripped = True
+            raise OSError("synthetic power loss")
+        return delete(path, *args, **kwargs)
+
+    monkeypatch.setattr(maintenance.shutil, "rmtree", interrupted)
+    with pytest.raises(OSError, match="synthetic power loss"):
+        transaction_maintenance(
+            root, now=NOW, apply=True,
+            acknowledge=plan["acknowledgement_sha256"],
+        )
+    assert (root / "transaction-gc" / "tx-2").is_dir()
+    monkeypatch.setattr(maintenance.shutil, "rmtree", delete)
+    next_plan = transaction_maintenance(root, now=NOW)
+    result = transaction_maintenance(
+        root, now=NOW, apply=True,
+        acknowledge=next_plan["acknowledgement_sha256"],
+    )
+    assert result["removed"] == 4
+    assert sum(path.is_dir() for path in paths) == 2
+    assert not any(path.is_dir() for path in (root / "transaction-gc").iterdir())
