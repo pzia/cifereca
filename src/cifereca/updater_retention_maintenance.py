@@ -118,7 +118,7 @@ def retention_maintenance_plan(inventory: dict[str, Any]) -> dict[str, Any]:
         "stores": statistics,
         "pending_stores": sorted(set(inventory["pending_stores"])),
         "blockers": sorted(set(inventory["blockers"]) | {
-            "cross_store_apply_unimplemented",
+            "separate_supervised_apply_required",
         }),
-        "next_action": "complete_cross_store_reference_proofs",
+        "next_action": "run_maintenance_all_plan",
     }
