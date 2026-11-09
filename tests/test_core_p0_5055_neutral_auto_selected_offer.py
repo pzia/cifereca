@@ -56,7 +56,11 @@ def test_foreign_or_missing_selected_right_never_grants_candidate(mutation):
     session, account, loan, selected, right, trace = _rig()
     current = lambda: mutation != "revoked"
     if mutation.startswith("scope_"):
-        setattr(selected.scope, mutation.removeprefix("scope_"), "other")
+        field = {
+            "scope_identity": "identity_id", "scope_provider": "provider_id",
+            "scope_credential": "credential_id", "scope_borrower": "account_id",
+        }[mutation]
+        setattr(selected.scope, field, "other")
     elif mutation == "branch":
         selected.branch = "different"
     elif mutation == "right_missing":
