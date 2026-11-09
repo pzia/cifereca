@@ -94,11 +94,12 @@ def test_six_selected_readbooks_stage_six_distinct_acsm_candidates_no_cross_book
             scope = resource.source
             staging = tmp_path / ("Core-staging-" + str(index))
             staging.mkdir()
-            candidate = session.downloadable_selected_delivery_candidate(
+            candidate = session.downloadable_selected_delivery_candidate_guarded(
                 account, edition_id=scope.edition_id,
                 resource_id=scope.resource_id, kind="purchase",
                 branch="meslivres", selected_offer_id=offer_id,
                 target_dir=staging, explicit_user_action=True,
+                admission_current=lambda: True,  # synthetic Core lease
             )
             assert candidate.path.parent == staging
             assert candidate.path.suffix == ".acsm"
@@ -154,11 +155,12 @@ def test_foreign_book_selected_offer_cannot_stage_other_owned_readbook(
     )
     try:
         with pytest.raises(ProviderCapabilityError, match="numilog_offer_changed"):
-            session.downloadable_selected_delivery_candidate(
+            session.downloadable_selected_delivery_candidate_guarded(
                 account, edition_id=second.source.edition_id,
                 resource_id=second.source.resource_id, kind="purchase",
                 branch="meslivres", selected_offer_id=offered,
                 target_dir=staged, explicit_user_action=True,
+                admission_current=lambda: True,  # synthetic Core lease
             )
         assert seen_network == []
         assert list(staged.iterdir()) == []

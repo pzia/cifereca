@@ -51,6 +51,8 @@ def _prepare(service):
 
 
 def _native(_account, *, target_dir, **kwargs):
+    admission_current = kwargs.pop("admission_current")
+    assert callable(admission_current) and admission_current() is True
     assert kwargs == {
         "edition_id": "edition", "right_id": "purchase",
         "kind": "purchase", "branch": "purchases",

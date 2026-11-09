@@ -333,7 +333,12 @@ def complete_selected_delivery(
                      "delivery_offer_id": offer.delivery_offer_id}),
             kind=source.kind, branch=source.branch,
             target_dir=attempt, explicit_user_action=True,
-            **({"admission_current": admission_current} if guarded else {}),
+            # The rights v2 candidate ABI is already used by BnF and
+            # Numilog. Hand it the same Core-owned revocable lease as the
+            # downloadable guarded ABI; no unguarded rights GET fallback.
+            **({"admission_current": admission_current}
+               if guarded or reader_name == "rights_selected_delivery_candidate"
+               else {}),
             **({"execute_runtime": execute_selected_runtime} if runtime_guarded else {}),
         )
         )
