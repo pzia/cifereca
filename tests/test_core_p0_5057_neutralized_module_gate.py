@@ -18,6 +18,7 @@ NEUTRALIZED = (
     "src/cifereca/gui/library_rows.py",
     "src/cifereca/core/library_evidence_scope.py",
     "src/cifereca/core/source_refresh_policy.py",
+    "src/cifereca/gui/source_inventory_timer.py",
 )
 
 
