@@ -175,6 +175,9 @@ class LaRochelleSession(ProviderSession):
         self._last_probe_phase = "not_attempted"
         self._http = None
         self._sync_auth_live = False
+        # A closed, provider-owned signal consumed only by an opt-in Core
+        # source Sync after its *existing* session loses CAS authority.
+        self.sync_reconnect_reason = None
 
     def _event(self, phase: str, status: str, **facts: Any) -> None:
         # Structured facts are included in the canonical raw journal.
@@ -274,6 +277,7 @@ class LaRochelleSession(ProviderSession):
 
     def connect(self):
         with self._lock:
+            self.sync_reconnect_reason = None
             self.connected = False
             self._accounts = []
             if self._closed:
@@ -509,6 +513,7 @@ class LaRochelleSession(ProviderSession):
                     reason_code="inventory_not_exhaustive",
                 )
                 self._last_probe_phase = "loan_inventory_observed"
+                self.sync_reconnect_reason = None
                 # Count and coverage only. No borrower, book, title,
                 # response body, signed URL or cookie leaves this method.
                 self._event(
@@ -537,6 +542,16 @@ class LaRochelleSession(ProviderSession):
                     if candidate in allowed:
                         code = candidate
                 self._last_probe_phase = "loan_inventory_failed"
+                # Only an observed redirect/invalid authenticated MyLoans
+                # document can request ONE new CAS session. A slow network,
+                # malformed inventory or unknown error is not consent.
+                self.sync_reconnect_reason = (
+                    "session_expired"
+                    if code in {
+                        "cas_loans_unverified", "cas_landing_required",
+                        "cas_authenticated_page_unverified",
+                    } else None
+                )
                 self._event(
                     "loan_inventory", "error",
                     probe="authenticated_sync", connected=False,
