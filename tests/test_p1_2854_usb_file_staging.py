@@ -128,7 +128,7 @@ def test_cancelled_after_first_chunk_leaves_only_recoverable_stage(volume):
 
     result = stage.stage_usb_file(**(args | {"check_cancelled": cancel}))
     assert result.status == "recovery_required"
-    assert result.detail == "user cancelled"
+    assert result.detail is None
     assert (root / STAGED).read_bytes() == PAYLOAD[:8]
     assert not (root / TARGET).exists()
 
@@ -150,3 +150,20 @@ def test_expired_sink_cannot_write_after_return(volume):
         assert (root / STAGED).read_bytes() == PAYLOAD
     finally:
         os.close(result.staged_fd)
+
+
+def test_plugin_exception_does_not_expose_private_transport_details(volume):
+    args, root, rows = volume
+    private_marker = "/private/mounted/reader/card-token"
+
+    def fail(payload, append):
+        append(payload[:4])
+        raise RuntimeError(private_marker)
+
+    rows[0].service.write_usb_stage = fail
+    result = stage.stage_usb_file(**args)
+    assert (result.status, result.reason, result.detail) == (
+        "recovery_required", "usb_stage_transport_failed", None,
+    )
+    assert (root / STAGED).read_bytes() == PAYLOAD[:4]
+    assert private_marker not in repr(result)

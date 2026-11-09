@@ -251,3 +251,16 @@ def test_user_rejecting_target_review_never_reserves_or_stages(copy):
     assert args["journal"].get(args["consent"].operation_id) is None
     assert not observations
     assert list(managed.iterdir()) == []
+
+
+def test_supervisor_exception_redacts_private_details_after_journal(copy):
+    args, managed, observations, _ = copy
+    private_marker = "/private/card-token/usb-volume"
+
+    def fail_after_pending(*_args):
+        raise RuntimeError(private_marker)
+
+    result = supervisor.execute_usb_copy(**(args | {"review_target": fail_after_pending}))
+    assert result.detail is None
+    assert private_marker not in repr(result)
+    assert not list(managed.iterdir())
