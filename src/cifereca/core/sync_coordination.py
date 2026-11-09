@@ -715,9 +715,6 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     never an authorization to download. Deep inventory scanning cannot
     silently change an acquisition policy. No provider calls here.
     """
-    from .source_materialization_schedule import (
-        kobo_on_start_sessions, on_start_due,
-    )
     legacy_enabled = self.kobo_backup_enabled() is True
     kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
     connected = [s for s in kobo if s.connected]
@@ -732,11 +729,6 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         s for s in capable
         if any(a.credential_id == s.credential_id for a in eligible_accounts)
     ]
-    scheduled = kobo_on_start_sessions(self)
-    scheduled_credentials = {s.credential_id for s in scheduled}
-    scheduled_accounts = [
-        a for a in eligible_accounts if a.credential_id in scheduled_credentials
-    ]
     # #3198: only current source/session facts determine the opening state.
     # Historical kobo_backup.enabled is exposed separately for rollback,
     # never as a source-wide OFF decision or acquisition permission.
@@ -748,12 +740,8 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         reason = "capability_unavailable"
     elif not eligible:
         reason = "source_disabled"
-    elif not scheduled:
-        reason = "manual_only"
-    elif any(on_start_due(self, account) for account in scheduled_accounts):
-        reason = "started"
     else:
-        reason = "fresh_cache"
+        reason = "manual_only"  # Legacy on_start W2 is retired.
     # Only age/counts, never user/account identifiers, file paths or tokens.
     raw_last = self.storage.metadata_get("kobo_backup_last_success_at")
     try:
@@ -767,7 +755,7 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         "configured_kobo": len(kobo), "connected_kobo": len(connected),
         "eligible_kobo": len(eligible),
         "eligible_kobo_bindings": len(eligible_accounts),
-        "scheduled_kobo": len(scheduled),
+        "scheduled_kobo": 0,
         "interval_minutes": self.kobo_backup_interval_minutes(),
         "last_success_age_minutes": last_success_age_minutes,
         "deep": bool(deep),
