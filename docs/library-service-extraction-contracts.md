@@ -163,7 +163,6 @@ Aucune migration, opération réseau réelle ou changement métier dans ce lot.
 | `filter_loaded_search_results` | #1118 | `core/provider_search.py + core/provider_stream.py` | 0 | 0 | — |
 | `_mirror_remote_results` | #1119 | `core/library_materialization.py + materialization.py` | 2 | 3 | — |
 | `mirror_personal_libraries` | #1119 | `core/library_materialization.py + materialization.py` | 6 | 1 | — |
-| `_acquire_personal_library_item` | #1119 | `core/library_materialization.py + materialization.py` | 3 | 0 | — |
 | `recent_acquisitions` | #1119 | `core/library_materialization.py + materialization.py` | 4 | 3 | — |
 | `local_book_path` | #1119 | `core/library_materialization.py + materialization.py` | 3 | 3 | — |
 | `local_placement_for_source` | #1119 | `core/library_materialization.py + materialization.py` | 2 | 3 | — |

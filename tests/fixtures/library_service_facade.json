@@ -307,10 +307,6 @@
     "kind": "method",
     "signature": "(self) -> 'dict[str, int]'"
   },
-  "_acquire_personal_library_item": {
-    "kind": "method",
-    "signature": "(self, session, row, identity_id: 'str') -> 'dict[str, Any]'"
-  },
   "recent_acquisitions": {
     "kind": "method",
     "signature": "(self, *, identity_id: 'str | None' = None, limit: 'int' = 100) -> 'list[dict[str, Any]]'"
