@@ -98,11 +98,12 @@ def test_mixed_modern_and_legacy_are_scoped_independently(rig, monkeypatch):
         )
     monkeypatch.setattr(service, "sync_kobo_backup_account", scoped)
     report = service.sync_kobo_backup()
-    assert calls == ["vault-1", "vault-2"]
-    assert report["status"] == "complete"
+    assert calls == ["vault-1"]  # Partial ABI never reaches account dispatch.
+    assert report["status"] == "partial"
     assert report["canonical_sources"] == 1
     assert report["compatibility_sources"] == 1
-    assert report["downloaded"] == 1 and report["unchanged"] == 2
+    assert report["downloaded"] == 1 and report["unchanged"] == 0
+    assert report["errors"] == 1
     assert all("credential_id" not in row for row in report["sources"])
 
 
@@ -117,10 +118,10 @@ def test_one_scoped_failure_does_not_poison_other_credentials(rig, monkeypatch):
         return _fake_report(modern=False, downloaded=1)
     monkeypatch.setattr(service, "sync_kobo_backup_account", scoped)
     report = service.sync_kobo_backup()
-    assert calls == ["vault-1", "vault-2"]
-    assert report["status"] == "partial"
-    assert report["errors"] == 1
-    assert report["downloaded"] == 1
+    assert calls == ["vault-1"]
+    assert report["status"] == "failed"
+    assert report["errors"] == 2
+    assert report["downloaded"] == 0
     assert "signed URL" not in str(report)
     assert "private token" not in str(report)
 
@@ -162,16 +163,19 @@ def test_duplicate_credential_sessions_fail_before_any_global_get(
         service.sync_kobo_backup()
 
 
-def test_all_legacy_keeps_original_global_behavior(tmp_path, monkeypatch):
+def test_all_legacy_fails_closed_before_get_or_write(tmp_path, monkeypatch):
     service = _service(tmp_path)
-    calls = []
-    def legacy(_service, progress=None, **kwargs):
-        calls.append(kwargs)
-        return {"status": "legacy-complete", "downloaded": 1}
-    monkeypatch.setattr(kobo_backup, "sync_kobo_backup", legacy)
+    monkeypatch.setattr(
+        service, "_execute_kobo_acquisition",
+        lambda *_a, **_k: pytest.fail("legacy GET forbidden"),
+    )
+    monkeypatch.setattr(
+        service.storage, "backup_put",
+        lambda *_a, **_k: pytest.fail("legacy W2 writer forbidden"),
+    )
     try:
-        result = service.sync_kobo_backup()
-        assert result["status"] == "legacy-complete"
-        assert len(calls) == 1
+        with pytest.raises(ProviderConfigurationError,
+                           match="kobo_legacy_w2_retired_use_canonical_provider"):
+            service.sync_kobo_backup()
     finally:
         service.close()
