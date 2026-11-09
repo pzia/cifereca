@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.biblioaccess",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "name": "La Rochelle — catalogue, prêts et acquisition ADEPT",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.7,<2"
@@ -12,7 +12,7 @@
       "id": "provider.biblioaccess.la-rochelle",
       "type": "provider.library",
       "entrypoint": "cifereca_biblioaccess:PLUGIN",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "display_name": "Médiathèques de La Rochelle",
       "description": "Connexion au compte lecteur, synchronisation des prêts numériques et récupération ACSM pour ADEPT.",
       "priority": 85,
@@ -40,7 +40,7 @@
       "id": "provider.biblioaccess-catalogue.la-rochelle",
       "type": "provider.library",
       "entrypoint": "cifereca_biblioaccess_catalogue:PLUGIN",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "display_name": "La Rochelle — catalogue numérique",
       "description": "Catalogue public de BiblioAccess tenant 1409, sans identifiants.",
       "priority": 86,
