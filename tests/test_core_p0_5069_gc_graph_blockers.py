@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from cifereca import updater
 
 
@@ -43,9 +45,9 @@ def test_unqualified_core_pointer_defers_physical_gc(tmp_path, monkeypatch):
     root, stale = _runtime(tmp_path, monkeypatch)
     (root / "previous").unlink()
     (root / "previous").symlink_to("releases/missing")
-    result = updater._gc(root, 2)
-    assert result["removed"] == 0
-    assert result["deferred"] == 1
+    # Existing Core pointer validation rejects earlier than inventory GC.
+    with pytest.raises(updater.UpdateError, match="référence Core non résolue"):
+        updater._gc(root, 2)
     assert stale.is_dir()
 
 
