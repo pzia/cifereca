@@ -74,4 +74,11 @@ def test_atomic_replace_commits_new_bytes_without_unlink_first(
     assert final_path == destination
     assert destination.read_bytes() == new
     assert not produced.exists()
+    # No premature cleanup before completed index+SQLite receipt.
+    assert old.exists()
+    assert adept_artifact_publication.cleanup_after_commit(
+        previous_path=old, final_path=destination, repair_mode=repair,
+        Path=Path, loan=NS(id="synthetic-loan", identity_id="owner"),
+        _TRACE_LOG=logging.getLogger("synthetic"),
+    ) is repair
     assert old.exists() is (not repair)
