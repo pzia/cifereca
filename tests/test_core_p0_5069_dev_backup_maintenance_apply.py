@@ -115,3 +115,15 @@ def test_plan_does_not_create_state_directory(tmp_path):
     assert plan["candidate_backups"] == 0
     assert not runtime.exists()
     assert not backups.parent.exists()
+
+
+def test_cli_backup_maintenance_plans_without_creating_state(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setattr(updater, "install_root", lambda: tmp_path / "runtime")
+    monkeypatch.setattr(updater, "state_dir", lambda create=False: tmp_path / "state")
+    assert updater.main(["--maintenance-dev-backups", "--json"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["mode"] == "plan"
+    assert output["candidate_backups"] == 0
+    assert not (tmp_path / "state").exists()
