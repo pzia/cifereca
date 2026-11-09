@@ -7,10 +7,8 @@ Neither advisory previews nor persisted counters are acquisition permissions.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
-import logging
 import os
 import re
 import secrets
@@ -21,12 +19,9 @@ import time
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..plugin_api import SyncResult
-from . import kobo_backup
 from .canonical_delivery_abi import has_complete_delivery_abi
-from .kobo_local_audit import _read_hash_within
-from .kobo_local_reconciliation import _roots, _within
+from .kobo_local_reconciliation import _roots
 
-_LOG = logging.getLogger("cifereca.sync")
 _TTL = 600
 _PROCESS_NONCE = secrets.token_hex(16)
 _BUDGET = 8 * 1024 * 1024
