@@ -2114,8 +2114,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="Plan synthétique de maintenance read-only ; aucune suppression autorisée")
     p.add_argument("--maintenance-transactions", action="store_true",
                    help="Plan ou purge supervisée des seules transactions terminées expirées")
+    p.add_argument("--maintenance-plugins", action="store_true",
+                   help="Plan ou purge supervisée des versions historiques plugins")
     p.add_argument("--apply", action="store_true",
-                   help="Appliquer --maintenance-transactions avec --acknowledge SHA256")
+                   help="Appliquer la maintenance supervisée avec --acknowledge SHA256")
     p.add_argument("--recovery-reconcile", metavar="TRANSACTION_ID",
                    help="Plan de réconciliation ciblée (lecture seule sauf --acknowledge)")
     p.add_argument("--acknowledge", metavar="SHA256",
@@ -2128,11 +2130,24 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.maintenance_transactions:
+        if a.maintenance_plugins:
+            if (a.maintenance_transactions or a.archive or a.github is not None
+                    or a.rollback or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-plugins incompatible avec ces options")
+            from .updater_plugin_maintenance import plugin_history_maintenance
+            result = plugin_history_maintenance(
+                install_root(), _plugin_packages_root(), apply=a.apply,
+                acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_transactions:
             if (a.archive or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
                     or a.retention_inspect or a.retention_plan or a.dry_run
-                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                    or a.maintenance_plugins or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
                 p.error("--maintenance-transactions incompatible avec ces options")
             from .updater_transaction_maintenance import transaction_maintenance
             result = transaction_maintenance(install_root(), apply=a.apply,
