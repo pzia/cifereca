@@ -56,3 +56,33 @@ def test_recent_projection_is_pure_for_empty_and_one_pass_iterable():
     assert rows[0][4] == "Paris"
     assert lookup["one"]["provider_id"] == "paris"
     assert len(calls) == 1
+
+
+def test_recent_names_come_from_provider_descriptors_not_brands():
+    labels = {"kobo": "My connected shelf", "numilog": "Ebooks source",
+              "fictional-provider": "Future library"}
+    items = [{"provider_id": provider, "placement_id": provider}
+             for provider in (*labels, "local")]
+    called = []
+    def display(provider):
+        called.append(provider)
+        return labels[provider]
+    rows, _ = project_recent_rows(
+        items, row_factory=_row, provider_display_name=display)
+    assert [row[4] for row in rows] == [
+        "My connected shelf", "Ebooks source", "Future library", "Local"]
+    assert called == list(labels)
+
+
+def test_recent_untrusted_descriptor_labels_fail_closed_without_leaking_secrets():
+    for hostile in (None, "", 17, "\\nPRIVATE", "x" * 81, " space "):
+        rows, _ = project_recent_rows(
+            [{"provider_id": "new-provider"}], row_factory=_row,
+            provider_display_name=lambda _: hostile)
+        assert rows[0][4] == "Source"
+    def broken(_provider):
+        raise RuntimeError("https://private.invalid/?token=SECRET")
+    rows, _ = project_recent_rows(
+        [{"provider_id": "new-provider"}], row_factory=_row,
+        provider_display_name=broken)
+    assert rows[0][4] == "Source"
