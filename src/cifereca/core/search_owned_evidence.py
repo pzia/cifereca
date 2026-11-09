@@ -20,6 +20,8 @@ class SearchOwnedEvidence:
     """Immutable Core-built canonical purchase scope, never a provider flag."""
     identity_id: str
     rights: frozenset[tuple[str, str, str, str, str]]
+    account_context_epoch: int | None = None
+    source_context_epoch: int | None = None
 
 
 def _coordinate(value: object, *, allow_empty: bool = False) -> bool:
@@ -40,6 +42,11 @@ def snapshot_search_owned_evidence(service: Any) -> SearchOwnedEvidence | None:
     identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
     reader = getattr(getattr(service, "storage", None), "entitlements", None)
     if not _coordinate(identity) or not callable(reader):
+        return None
+    account_epoch = getattr(service, "_account_context_epoch", None)
+    source_epoch = getattr(service, "_source_context_epoch", None)
+    if any(type(value) not in (int, type(None)) or (type(value) is int and value < 0)
+           for value in (account_epoch, source_epoch)):
         return None
     try:
         rows = reader(state="active")
@@ -63,9 +70,11 @@ def snapshot_search_owned_evidence(service: Any) -> SearchOwnedEvidence | None:
             if revision is not None and not _coordinate(revision):
                 continue
             rights.add((*keys, revision or ""))
-        if getattr(getattr(service, "current_identity", None), "identity_id", None) != identity:
+        if (getattr(getattr(service, "current_identity", None), "identity_id", None) != identity
+                or getattr(service, "_account_context_epoch", None) != account_epoch
+                or getattr(service, "_source_context_epoch", None) != source_epoch):
             return None
-        return SearchOwnedEvidence(identity, frozenset(rights))
+        return SearchOwnedEvidence(identity, frozenset(rights), account_epoch, source_epoch)
     except Exception:
         return None
 
@@ -73,11 +82,17 @@ def snapshot_search_owned_evidence(service: Any) -> SearchOwnedEvidence | None:
 def search_result_has_verified_purchase(
     item: SearchResult, evidence: SearchOwnedEvidence | None, *,
     current_identity_id: object,
+    current_account_epoch: object = None,
+    current_source_epoch: object = None,
 ) -> bool:
     """No provider-controlled flag, scenario or metadata can create a right."""
     if (type(item) is not SearchResult or type(evidence) is not SearchOwnedEvidence
             or not _coordinate(current_identity_id)
             or evidence.identity_id != current_identity_id
+            or (evidence.account_context_epoch is not None
+                and evidence.account_context_epoch != current_account_epoch)
+            or (evidence.source_context_epoch is not None
+                and evidence.source_context_epoch != current_source_epoch)
             or item.owned is not True
             or (type(item.metadata) is dict
                 and item.metadata.get("search_provenance") == "known_catalog_stale")):
