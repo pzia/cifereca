@@ -111,3 +111,14 @@ pas la revue humaine des captures de ces pages. Une variation moyenne des pixels
 n'est pas une certification WCAG AA. Si le runner est vert, ce n'est
 **toujours pas** une validation UX manuelle, ni une justification de
 fusion automatique.
+
+
+## Revue privée des captures réelles
+
+Après les deux scénarios GTK PASS sur le même commit, exécuter sur l'hôte
+habilité `python3 e2e/modern_light_review.py --root e2e-artifacts`.
+La vérification refuse les PNG absents, réécrits ou d'un autre HEAD et génère
+six planches clair/sombre et une grille `ux-checklist.csv` privée.
+L'agent UX doit inspecter les PNG originaux en pleine résolution : la création
+de planches n'est **pas** une validation visuelle, WCAG ou un droit de fusion.
+Aucune capture réelle ni donnée de compte ne doit être publiée dans les CI.
