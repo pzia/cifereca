@@ -262,7 +262,7 @@ class DetailPanel(Gtk.Box):
                     kind, marker, value = line.partition(": ")
                     record = Adw.ActionRow()
                     record.set_use_markup(False)
-                    record.set_title(kind if marker else "Information")
+                    record.set_title(kind.strip() if marker else "Information")
                     compact = value if marker else line
                     record.set_subtitle(compact)
                     record.set_subtitle_lines(1)
