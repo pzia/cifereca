@@ -196,3 +196,44 @@ def test_second_cas_failure_ends_after_one_reconnect(monkeypatch, tmp_path):
     assert created == ["cred-a"]
     assert renewed[0][2].count("post") == 1
     assert renewed[0][1].closed
+
+
+@pytest.mark.parametrize("when", ["before", "during"])
+def test_disabling_account_never_installs_new_cas_authority(monkeypatch, when):
+    host, old, account, calls, renewed, created, notes = _expired_fixture(monkeypatch)
+    row = host.config.provider_accounts()[0]
+    if when == "before":
+        row["enabled"] = False
+    else:
+        def revoke_after_request(**kwargs):
+            fresh, http, events = _synced_session(credential=kwargs["credential_id"])
+            original = http.submit_observed_login_once
+            def submit(**details):
+                response = original(**details)
+                row["enabled"] = False
+                return response
+            http.submit_observed_login_once = submit
+            renewed.append((fresh, http, events))
+            created.append(kwargs["credential_id"])
+            return fresh
+        monkeypatch.setattr(mod.PLUGIN, "create_session", revoke_after_request)
+    assert provider_sessions.reconnect_expired_configured_source_once(
+        host, account, old,
+    ) is None
+    assert host.accounts[0] is account
+    assert host._sessions[host._session_key(mod.PROVIDER_ID, "cred-a")] is old
+    assert created == ([] if when == "before" else ["cred-a"])
+    if when == "during":
+        assert renewed[0][1].closed
+
+
+def test_foreign_credential_does_not_become_reconnect_target(monkeypatch):
+    host, old, account, calls, renewed, created, notes = _expired_fixture(
+        monkeypatch, second_credential=True,
+    )
+    wrong = host.accounts[1]
+    assert provider_sessions.reconnect_expired_configured_source_once(
+        host, wrong, old,
+    ) is None
+    assert created == []
+    assert host.accounts[0] is account
