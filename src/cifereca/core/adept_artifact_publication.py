@@ -56,17 +56,59 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
 
     if repair_mode:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists() and destination.resolve() != produced_path.resolve():
-            destination.unlink()
+        # os.replace is atomic on the destination filesystem. Do NOT unlink
+        # the existing valid publication first: if the rename fails (quota,
+        # permissions, power loss), the previously indexed artifact must
+        # remain readable for safe replay/rollback.
         produced_path.replace(destination)
         final_path = destination
-        if previous_path is not None and previous_path.exists() and previous_path.resolve() != destination.resolve():
-            previous_path.unlink(missing_ok=True)
+        # IMPORTANT: publication is NOT the Core/SQLite commit. Keep the
+        # old version until catalog indexing and acquisition_put(completed)
+        # succeed. This prevents an index/ledger error from destroying the
+        # last recorded artifact. The caller invokes cleanup_after_commit().
         _TRACE_LOG.info("TRACE download adept repair-replace loan_ref=%s", trace_ref)
     else:
         if produced_path.resolve() != destination.resolve():
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.unlink(missing_ok=True)
+            # Replacing the existing file is already atomic. Unlink-first
+            # creates an avoidable window where an earlier valid loan is lost
+            # if publication fails before the SQLite receipt is committed.
             produced_path.replace(destination)
         final_path = destination
     return final_path, artifact_drm, artifact_format, artifact_protected, hook_info
+
+
+def cleanup_after_commit(*, previous_path, final_path, repair_mode: bool,
+                         Path, _TRACE_LOG, loan, identity_id=None) -> bool:
+    """Best-effort, post-ledger cleanup of a *distinct* prior repair artifact.
+
+    A cleanup error must never convert a committed acquisition into a failed
+    loan or a second provider request. Never follow a symlink or include file
+    paths, title, loan identifiers, or exceptions in diagnostics.
+    """
+    if (repair_mode is not True
+            or not isinstance(previous_path, Path)
+            or not isinstance(final_path, Path)
+            or previous_path.is_symlink()
+            or final_path.is_symlink()):
+        return False
+    try:
+        if (not previous_path.is_file()
+                or not final_path.is_file()
+                or previous_path.resolve() == final_path.resolve()
+                or previous_path.parent.resolve() != final_path.parent.resolve()):
+            return False
+        previous_path.unlink()
+    except OSError:
+        _TRACE_LOG.warning(
+            "TRACE download adept prior-cleanup loan_ref=%s status=retained",
+            loan_trace_ref(loan, identity_id if identity_id is not None
+                           else getattr(loan, "identity_id", None)),
+        )
+        return False
+    _TRACE_LOG.info(
+        "TRACE download adept prior-cleanup loan_ref=%s status=removed",
+        loan_trace_ref(loan, identity_id if identity_id is not None
+                       else getattr(loan, "identity_id", None)),
+    )
+    return True

@@ -160,8 +160,13 @@ def periodic_identities_due(
                         ):
                             continue
                     else:
-                        if getattr(source, "provider_id", None) == "numilog":
-                            continue  # Numilog requires its own attested inventory clock.
+                        # A real broker SyncSourceRef explicitly carries the
+                        # phase_states contract. Empty means no attested
+                        # discover_rights clock, irrespective of provider ID.
+                        # Only older test/broker doubles with no such attribute
+                        # may use the legacy passive last_attempt projection.
+                        if hasattr(source, "phase_states"):
+                            continue
                         last_inventory_attempt = getattr(source, "last_attempt", "")
                         inventory_status = getattr(source, "status", "idle")
                     if getattr(source, "status", None) == "running":

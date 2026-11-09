@@ -114,7 +114,113 @@ def test_dashboard_state_reports_latest_sync_without_remote_work(tmp_path: Path)
         })
         cards = service.dashboard_state()
         assert [card["identity_id"] for card in cards] == ["default", "alex"]
-        assert cards[0]["sync"]["new_acquisitions"] == 3
+        # A pre-launch run remains queryable, never an active dashboard fact.
+        assert cards[0]["sync"] is None
+        assert service.storage.latest_sync_run("default")["new_acquisitions"] == 3
         assert cards[1]["sync"] is None
     finally:
         service.close()
+
+
+def test_dashboard_current_opening_isolated_from_historic_partial(tmp_path: Path):
+    service = _service(tmp_path)
+    try:
+        launch = service._dashboard_launch_at
+        service.storage.sync_run_put({
+            "identity_id": "default", "scope": "opening", "status": "partial",
+            "started_at": launch - 100, "finished_at": launch - 99,
+            "errors": 2, "attention_required": 0,
+        })
+        assert all(card["sync"] is None for card in service.dashboard_state())
+        assert service.storage.latest_sync_run("default")["errors"] == 2
+
+        run_id = service.storage.sync_run_put({
+            "identity_id": "default", "scope": "opening", "status": "running",
+            "started_at": launch + 1,
+        })
+        cards = service.dashboard_state()
+        assert cards[0]["sync"]["status"] == "running"
+        assert cards[1]["sync"] is None
+        service.storage.sync_run_put({
+            "sync_run_id": run_id, "identity_id": "default", "scope": "opening",
+            "status": "partial", "started_at": launch + 1,
+            "finished_at": launch + 2, "errors": 1,
+        })
+        cards = service.dashboard_state()
+        assert cards[0]["sync"]["errors"] == 1
+        assert cards[1]["sync"] is None
+    finally:
+        service.close()
+
+
+def test_dashboard_restart_does_not_reuse_previous_launch_errors(tmp_path: Path):
+    first = _service(tmp_path)
+    try:
+        first.storage.sync_run_put({
+            "identity_id": "alex", "scope": "opening", "status": "failed",
+            "started_at": first._dashboard_launch_at + 1,
+            "errors": 2,
+        })
+        assert first.dashboard_state()[1]["sync"]["errors"] == 2
+    finally:
+        first.close()
+    second = _service(tmp_path)
+    try:
+        assert second.dashboard_state()[1]["sync"] is None
+        assert second.storage.latest_sync_run("alex")["errors"] == 2
+    finally:
+        second.close()
+
+
+def test_sync_runs_same_second_keep_distinct_attempts_and_latest_is_newest(tmp_path: Path):
+    storage = Storage(tmp_path / "sync-same-second.sqlite3")
+    try:
+        old = storage.sync_run_put({
+            "sync_run_id": "sync:one", "identity_id": "alice",
+            "scope": "opening", "status": "partial", "started_at": 90,
+            "errors": 2,
+        })
+        current = storage.sync_run_put({
+            "sync_run_id": "sync:two", "identity_id": "alice",
+            "scope": "opening", "status": "running", "started_at": 90,
+        })
+        assert old != current
+        assert [r["sync_run_id"] for r in storage.sync_runs(
+            identity_id="alice", scope="opening", limit=2,
+        )] == [current, old]
+        assert storage.latest_sync_run("alice")["sync_run_id"] == current
+    finally:
+        storage.close()
+
+
+def test_dashboard_current_opening_survives_same_second_historic_baseline(tmp_path: Path):
+    before = _service(tmp_path)
+    try:
+        # Fixed second reproduces a restart with an old run at the exact
+        # timestamp of the new launch; historical status remains persistent.
+        tick = before._dashboard_launch_at
+        before.storage.sync_run_put({
+            "sync_run_id": "sync:old", "identity_id": "default",
+            "scope": "opening", "status": "partial", "started_at": tick,
+            "errors": 2,
+        })
+    finally:
+        before.close()
+    current = _service(tmp_path)
+    try:
+        current._dashboard_launch_at = tick
+        assert current.dashboard_state()[0]["sync"] is None
+        current.storage.sync_run_put({
+            "sync_run_id": "sync:new", "identity_id": "default",
+            "scope": "opening", "status": "running", "started_at": tick,
+        })
+        cards = current.dashboard_state()
+        assert cards[0]["sync"]["sync_run_id"] == "sync:new"
+        assert cards[0]["sync"]["status"] == "running"
+        assert cards[0]["sync"]["errors"] == 0
+        assert cards[1]["sync"] is None
+        assert [row["sync_run_id"] for row in current.storage.sync_runs(
+            identity_id="default", scope="opening", limit=2,
+        )] == ["sync:new", "sync:old"]
+    finally:
+        current.close()

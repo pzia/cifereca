@@ -397,3 +397,39 @@ def test_lender_binding_reader_side_effect_does_not_publish_old_claim(
     assert result.reason_code == "lender_scope_unverified"
     assert result.loan == "unknown"
     assert result.transfer == "blocked" and result.retry_borrow is False
+
+
+@pytest.mark.parametrize("read_stage", ["before", "metadata", "checkpoint"])
+def test_replaced_same_id_reader_context_never_reveals_lender_claim(
+    setup, monkeypatch, read_stage,
+):
+    service, account, notice = setup
+    complete_claim(service, account, notice)
+    original_context = service.current_identity
+
+    def replace_context():
+        # A fresh context instance with the same public identity ID and
+        # unchanged account/source epochs must not inherit the old read.
+        service.current_identity = replace(original_context)
+        assert service.current_identity.identity_id == original_context.identity_id
+        assert service.current_identity is not original_context
+
+    if read_stage == "before":
+        replace_context()
+        # A new deliberate observation of the new, current context is valid.
+        assert read(service, account, notice).loan == "confirmed"
+        return
+    name = "metadata_get" if read_stage == "metadata" else "loan_borrow_state"
+    original = getattr(service.storage, name)
+
+    def context_replaced_during_read(*args):
+        result = original(*args)
+        replace_context()
+        return result
+
+    monkeypatch.setattr(service.storage, name, context_replaced_during_read)
+    result = read(service, account, notice)
+    assert result.reason_code == "lender_scope_unverified"
+    assert result.loan == "unknown"
+    assert result.transfer == "blocked"
+    assert result.executable is result.retry_borrow is False

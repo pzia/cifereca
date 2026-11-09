@@ -124,4 +124,12 @@ def test_adept_publication_logs_no_paths_or_runtime_metadata_and_keeps_original_
     for record in records:
         assert PRIVATE not in record.getMessage() + repr(record.args)
         assert 'loan_ref='+expected in record.getMessage()
-    assert previous.exists() is (not repair)
+    # The old version is kept until the acquisition's completed ledger write.
+    assert previous.exists() is True
+    if repair:
+        assert adept_artifact_publication.cleanup_after_commit(
+            previous_path=previous, final_path=outcome[0], repair_mode=True,
+            Path=Path, _TRACE_LOG=logging.getLogger('test'), loan=loan,
+            identity_id='resolved-owner',
+        ) is True
+        assert not previous.exists()
