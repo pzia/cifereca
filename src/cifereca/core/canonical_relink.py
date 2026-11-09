@@ -26,11 +26,16 @@ from .canonical_recovery import _exact_borrower_bound_in_db
 from .convergence_verified_presence import _verified_copy
 
 _MAX_PROFILES = 10000
-_SCHEMA = "core.kobo.canonical-placement-relink/1"
-_JOURNAL = "core.kobo.canonical-placement-relink."
-# Transactional per-Placement cursor: second-resolution SQLite timestamps
-# cannot detect a relink ABA returning to an identical physical pathname.
-_LATEST = "core.kobo.canonical-placement-last-operation.v1."
+_SCHEMA = "core.canonical-placement-relink/1"
+_JOURNAL = "core.canonical-placement-relink."
+# Transactional cursor: timestamps alone cannot detect same-path ABA.
+_LATEST = "core.canonical-placement-last-operation.v1."
+# Keep old Kobo audit keys byte-for-byte compatible with past receipts.
+_LEGACY_JOURNAL = (
+    "core.kobo.canonical-placement-relink/1",
+    "core.kobo.canonical-placement-relink.",
+    "core.kobo.canonical-placement-last-operation.v1.",
+)
 
 
 def _unique_journal_fields(pairs):
@@ -73,7 +78,7 @@ def _id(value, *, limit=256, empty=False):
 
 
 def _inspect(db, *, library_root, scope, edition_id, right_id,
-             branch_id, reference_kind, placement_id, new_path):
+             branch_id, reference_kind, placement_id, new_path, schema, latest_prefix):
     _require(
         _exact_borrower_bound_in_db(db, scope),
         "canonical_relink_scope_unavailable",
@@ -212,7 +217,7 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
     # preview and subsequent operation to the last committed Placement cursor.
     latest = db.execute(
         "SELECT value FROM metadata WHERE key=?",
-        (_LATEST + hashlib.sha256(placement_id.encode("utf-8")).hexdigest(),),
+        (latest_prefix + hashlib.sha256(placement_id.encode("utf-8")).hexdigest(),),
     ).fetchone()
     _require(
         latest is None or (
@@ -223,7 +228,7 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
         "canonical_relink_plan_changed",
     )
     plan = {
-        "schema": _SCHEMA,
+        "schema": schema,
         "scope": [scope.identity_id, scope.provider_id, scope.credential_id, scope.account_id,
                   branch_id, edition_id, right_id, reference_kind],
         "placement_id": placement_id,
@@ -248,6 +253,7 @@ def relink_verified_canonical(
     reference_kind: str = "purchase",
     context_current: Callable[[], bool] | None = None,
     undo_operation: str | None = None,
+    _legacy_journal: bool = False,
 ) -> dict[str, object]:
     """Preview/relink only an EXISTING provider B, never infer fresh ownership.
 
@@ -274,6 +280,7 @@ def relink_verified_canonical(
             type(confirmation) is str and len(confirmation) == 64
             and all(c in "0123456789abcdef" for c in confirmation)
         ))
+        and type(_legacy_journal) is bool
         and (context_current is None or callable(context_current))
         and (undo_operation is None or (
             type(undo_operation) is str and len(undo_operation) == 64
@@ -282,6 +289,9 @@ def relink_verified_canonical(
         "invalid_relink_request",
     )
     scope = ProviderRightsScope(identity_id, provider_id, credential_id, account_id)
+    schema, journal_prefix, latest_prefix = (
+        _LEGACY_JOURNAL if _legacy_journal else (_SCHEMA, _JOURNAL, _LATEST)
+    )
     write = confirmation is not None
     try:
         guard = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
@@ -298,7 +308,7 @@ def relink_verified_canonical(
                 edition_id=edition_id, right_id=right_id,
                 branch_id=branch_id, reference_kind=reference_kind,
                 placement_id=placement_id,
-                new_path=new_path,
+                new_path=new_path, schema=schema, latest_prefix=latest_prefix,
             )
             if undo_operation is not None:
                 # An undo is another physically verified relink, NEVER a
@@ -307,7 +317,7 @@ def relink_verified_canonical(
                 # forward path must be absent. _inspect() enforces both.
                 archived = db.execute(
                     "SELECT value FROM metadata WHERE key=?",
-                    (_JOURNAL + undo_operation,),
+                    (journal_prefix + undo_operation,),
                 ).fetchone()
                 _require(
                     archived is not None and type(archived[0]) is str
@@ -324,7 +334,7 @@ def relink_verified_canonical(
                     ) from None
                 _require(
                     type(previous) is dict
-                    and previous.get("schema") == _SCHEMA
+                    and previous.get("schema") == schema
                     and previous.get("source_reference_id") == source_ref
                     and previous.get("source_evidence_ref") == source_evidence
                     and previous.get("origin_evidence_ref") == origin_evidence
@@ -332,7 +342,7 @@ def relink_verified_canonical(
                     and previous.get("placement_id") == placement_id
                     and db.execute(
                         "SELECT value FROM metadata WHERE key=?",
-                        (_LATEST + hashlib.sha256(
+                        (latest_prefix + hashlib.sha256(
                             placement_id.encode("utf-8"),
                         ).hexdigest(),),
                     ).fetchone() == (undo_operation,)
@@ -354,12 +364,12 @@ def relink_verified_canonical(
                 # A generic reverse confirmation never substitutes for an
                 # exact journal-bound cancellation token.
                 token = hashlib.sha256(
-                    ("canonical-kobo-undo/1\0" + undo_operation + "\0" + token)
+                    ((("canonical-kobo-undo/1" if _legacy_journal else "canonical-undo/1") + "\0") + undo_operation + "\0" + token)
                     .encode("utf-8"),
                 ).hexdigest()
             if not write:
                 return {
-                    "schema": _SCHEMA, "status": "preview", "ok": True,
+                    "schema": schema, "status": "preview", "ok": True,
                     "changed": 0, "plan_token": token,
                     "legacy_backup_mutations": 0, "rights_mutations": 0,
                     "file_mutations": 0,
@@ -388,8 +398,8 @@ def relink_verified_canonical(
             ).hexdigest()
             db.execute(
                 "INSERT INTO metadata(key,value) VALUES(?,?)",
-                (_JOURNAL + operation_id, json.dumps({
-                    "schema": _SCHEMA, "source_reference_id": source_ref,
+                (journal_prefix + operation_id, json.dumps({
+                    "schema": schema, "source_reference_id": source_ref,
                     "source_evidence_ref": source_evidence,
                     "origin_evidence_ref": origin_evidence,
                     "identity_id": identity_id, "placement_id": placement_id,
@@ -406,7 +416,7 @@ def relink_verified_canonical(
             db.execute(
                 "INSERT INTO metadata(key,value) VALUES(?,?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (_LATEST + hashlib.sha256(
+                (latest_prefix + hashlib.sha256(
                     placement_id.encode("utf-8"),
                 ).hexdigest(), operation_id),
             )
@@ -446,7 +456,7 @@ def relink_verified_canonical(
                 "canonical_relink_plan_changed",
             )
             return {
-                "schema": _SCHEMA, "status": "relinked", "ok": True,
+                "schema": schema, "status": "relinked", "ok": True,
                 "changed": 1, "plan_token": None,
                 "operation_id": operation_id,
                 "legacy_backup_mutations": 0, "rights_mutations": 0,
@@ -478,6 +488,7 @@ def relink_verified_canonical_kobo(
         branch_id=branch_id, placement_id=placement_id, new_path=new_path,
         confirmation=confirmation, reference_kind=reference_kind,
         context_current=context_current, undo_operation=undo_operation,
+        _legacy_journal=True,
     )
 
 __all__ = ["CanonicalRelinkRejected", "relink_verified_canonical", "relink_verified_canonical_kobo"]
