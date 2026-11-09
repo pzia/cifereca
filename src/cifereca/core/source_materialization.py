@@ -441,6 +441,10 @@ def prepare(broker, source_id):
                     acquisition_authorized=False, manifest_refreshed=True,
                     execution_path="canonical",
                 )
+            # #4858 D2: legacy 0.7 cannot issue confirmation tokens. A
+            # partial ABI is not a delivery contract, even when the account
+            # or an old local receipt looks valid. No manifest read follows.
+            return _result("canonical_delivery_unavailable")
             # Legacy manual confirmation was previously scoped by source
             # coordinates/evidence only: replacing a connected provider
             # session with an equivalent borrower could reuse the old
@@ -488,6 +492,9 @@ def execute(broker, source_id, token, control=None):
         return _result(str(exc))
     except Exception:
         return _result("source_unavailable")
+    # #4858 D2: an old one-use token cannot resurrect W2. This branch
+    # must not acquire the legacy lock, read a manifest, or write backup_items.
+    return _result("canonical_delivery_unavailable")
     downloaded = 0
     durable_downloaded = 0
     attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
