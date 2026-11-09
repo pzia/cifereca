@@ -764,14 +764,11 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         for session in searchable
         if session.provider_id in {"numilog", "kobo"}
     )
-    numilog_owner_leases = tuple(
-        (session, owner) for session, owner in private_owner_leases
-        if session.provider_id == "numilog"
-    )
-    kobo_owner_leases = tuple(
-        (session, owner) for session, owner in private_owner_leases
-        if session.provider_id == "kobo"
-    )
+    private_owner_groups = {"numilog": [], "kobo": []}
+    for session, owner in private_owner_leases:
+        private_owner_groups[session.provider_id].append((session, owner))
+    numilog_owner_leases = tuple(private_owner_groups["numilog"])
+    kobo_owner_leases = tuple(private_owner_groups["kobo"])
     shared_numilog_sessions = {
         id(session) for session, owner in numilog_owner_leases if owner != active_id
     }
@@ -1384,14 +1381,11 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
         if session.provider_id in {"numilog", "kobo"}
     )
-    numilog_owner_leases = tuple(
-        (session, owner) for session, owner in private_owner_leases
-        if session.provider_id == "numilog"
-    )
-    kobo_owner_leases = tuple(
-        (session, owner) for session, owner in private_owner_leases
-        if session.provider_id == "kobo"
-    )
+    private_owner_groups = {"numilog": [], "kobo": []}
+    for session, owner in private_owner_leases:
+        private_owner_groups[session.provider_id].append((session, owner))
+    numilog_owner_leases = tuple(private_owner_groups["numilog"])
+    kobo_owner_leases = tuple(private_owner_groups["kobo"])
     shared_numilog_sessions = {
         id(session) for session, owner in numilog_owner_leases if owner != active_id
     }
