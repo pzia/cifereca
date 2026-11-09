@@ -317,7 +317,7 @@ def test_offline_profile_changed_during_sql_commit_rolls_back_B(
     published, tmp_path, monkeypatch,
 ):
     from cifereca.core import kobo_local_reconciliation as repair
-    from cifereca.core import kobo_canonical_relink as canonical
+    from cifereca.core import canonical_placement_relink as canonical
 
     store, original, path, args, source, finished = published
     original.rename(path)
