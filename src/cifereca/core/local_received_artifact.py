@@ -21,6 +21,13 @@ def received_book_file_within_root(path: Any, root_dir: Any) -> bool:
                 or not root_dir.is_dir()
                 or path.is_symlink() or not path.is_file()):
             return False
+        # A symlink higher than the immediate parent is also an alias to
+        # another identity tree. Do not accept a root through that alias.
+        ancestor = root_dir
+        while ancestor != ancestor.parent:
+            if ancestor.is_symlink():
+                return False
+            ancestor = ancestor.parent
         root = root_dir.resolve(strict=True)
         current = path.parent
         if not path.resolve(strict=True).is_relative_to(root):
