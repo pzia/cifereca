@@ -310,7 +310,7 @@ def test_full_biblioaccess_manifest_ids_cannot_hide_core_provider_dispatch():
             "pass\n", f"if source.provider_id == {provider_id!r}:\n    pass\n",
         ) == {("comparisons", provider_id): 1}
         assert added_signals(
-            "pass\n", f"action = {{ {provider_id!r}: handler }}\n",
+            "pass\n", f"LABELS = {{ {provider_id!r}: 'Bibliothèque' }}\n",
         ) == {}  # Metadata alone is not executable dispatch.
         source = (
             "def handler(): return 1\n"
