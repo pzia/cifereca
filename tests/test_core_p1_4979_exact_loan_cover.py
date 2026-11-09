@@ -254,3 +254,35 @@ def test_bounded_local_library_preserves_exact_cover_and_ambiguous_result(monkey
                   tier="origin", artifact="art-b", placement="place-b")
     assert mod.loan_local_cover(current, (a,)).status == "selected"
     assert mod.loan_local_cover(current, (a, b)).status == "ambiguous"
+
+
+def test_gtk_loan_cover_snapshot_is_bounded_before_materialization(monkeypatch):
+    from cifereca.core import loan_cover_fallback as mod
+
+    current = loan()
+    monkeypatch.setattr(mod, "_MAX_LOAN_COVER_ROWS", 2)
+    inspected = []
+    def lazy():
+        for index in range(50):
+            inspected.append(index)
+            yield local_row(current)
+    assert mod.materialized_loan_cover_rows(lazy()) == ()
+    assert inspected == [0, 1, 2]
+    assert len(mod.materialized_loan_cover_rows(iter((local_row(current),)))) == 1
+
+
+def test_gtk_loan_cover_snapshot_drops_partial_failure():
+    from cifereca.core.loan_cover_fallback import materialized_loan_cover_rows
+
+    current = loan()
+    def partial():
+        yield local_row(current)
+        raise RuntimeError("private supplier path")
+    assert materialized_loan_cover_rows(partial()) == ()
+
+
+def test_gtk_loan_worker_uses_bounded_local_snapshot():
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/loans_controller.py").read_text(encoding="utf-8")
+    assert "materialized_loan_cover_rows(" in source
+    assert "cover_rows = tuple(" not in source

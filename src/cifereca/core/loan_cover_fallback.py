@@ -16,6 +16,25 @@ from .loan_source_identity import loan_source_key
 _MAX_LOAN_COVER_ROWS = 10000
 
 
+def materialized_loan_cover_rows(
+    library_rows: Iterable[Mapping[str, object]],
+) -> tuple[Mapping[str, object], ...]:
+    """Bound a UI loan-cover snapshot before retaining it in GTK memory.
+
+    A failing or oversized lazy library projection is not evidence. Discard
+    partial rows, preserving the loan inventory independently of its cover.
+    """
+    rows: list[Mapping[str, object]] = []
+    try:
+        for index, row in enumerate(library_rows):
+            if index >= _MAX_LOAN_COVER_ROWS:
+                return ()
+            rows.append(row)
+    except Exception:
+        return ()
+    return tuple(rows)
+
+
 def attested_local_loan_cover_proof(
     loan: Loan | None, entitlement: Mapping[str, object],
     library_row: Mapping[str, object], *,
@@ -137,4 +156,4 @@ def loan_local_cover(
     return resolve_cover(candidates)
 
 
-__all__ = ["attested_local_loan_cover_proof", "loan_local_cover"]
+__all__ = ["attested_local_loan_cover_proof", "loan_local_cover", "materialized_loan_cover_rows"]
