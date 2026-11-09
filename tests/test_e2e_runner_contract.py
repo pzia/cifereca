@@ -803,3 +803,13 @@ def test_p1_774_search_1024_diagnostic_minimum_widths_are_whitelisted():
     assert 'set(widths) == width_keys' in runner
     assert 'all(type(v) is int and 0 <= v <= 4096' in runner
     assert 'P1_3687_WIDTH_' in runner
+
+
+def test_modern_light_real_gtk_scenarios_remain_targetable():
+    runner = _module()
+    probe = (ROOT / "e2e/modern_light_theme_probe.py").read_text(encoding="utf-8")
+    assert "MainWindow" in probe
+    for width in (1366, 1600):
+        scenario = runner.SCENARIOS[f"modern-light-{width}"]
+        assert scenario["width"] == width
+        assert scenario["runner"] == "gtk-modern-light"
