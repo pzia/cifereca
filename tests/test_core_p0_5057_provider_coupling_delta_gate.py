@@ -139,3 +139,67 @@ def test_non_callable_provider_labels_do_not_trigger_new_gate(tmp_path):
     )
     result = gate(root, base, head)
     assert result["pass"] is True
+
+
+def test_dotted_tenant_and_underscore_provider_aliases_are_not_invisible():
+    before = "pass\n"
+    cases = (
+        ("if source_id == 'biblioaccess.la-rochelle':\n    pass\n",
+         ("comparisons", "biblioaccess.la-rochelle")),
+        ("if source_id in {'provider-biblioaccess'}:\n    pass\n",
+         ("comparisons", "provider-biblioaccess")),
+        ("from . import biblioaccess_la_rochelle_actions\n",
+         ("imports", "biblioaccess_la_rochelle")),
+        ("from importlib import import_module as resolve\n"
+         "resolve('cifereca.core.biblioaccess_adapter')\n",
+         ("imports", "biblioaccess")),
+    )
+    for source, signal in cases:
+        assert added_signals(before, source) == {signal: 1}
+
+
+def test_cross_file_relocation_is_detected_even_when_global_count_is_constant(
+    tmp_path,
+):
+    root = tmp_path / "repo"
+    base = _repo(root)
+    _commit(root, "src/cifereca/core/second.py", "pass\n")
+    base = _git(root, "rev-parse", "HEAD")
+    (root / "src/cifereca/core/example.py").write_text("pass\n")
+    (root / "src/cifereca/core/second.py").write_text(
+        "if source == 'kobo':\n    pass\n")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "move")
+    head = _git(root, "rev-parse", "HEAD")
+    assert gate(root, base, head)["violations"] == {
+        "src/cifereca/core/second.py": {"comparisons:kobo": 1},
+    }
+
+
+def test_cross_file_move_into_renamed_module_still_detects_new_provider_signal(
+    tmp_path,
+):
+    root = tmp_path / "repo"
+    base = _repo(root)
+    _git(root, "mv", "src/cifereca/core/example.py",
+         "src/cifereca/core/renamed.py")
+    _git(root, "commit", "-m", "rename")
+    head = _git(root, "rev-parse", "HEAD")
+    # --no-renames deliberately treats this as an added destination. A naive
+    # global total or rename-aware move could conceal a new executable owner.
+    assert gate(root, base, head)["violations"] == {
+        "src/cifereca/core/renamed.py": {"comparisons:kobo": 1},
+    }
+
+
+def test_new_alias_constant_and_dynamic_import_is_rejected_without_execution():
+    source = (
+        "NEW_PROVIDER = 'biblioaccess.la-rochelle'\n"
+        "if account.source_provider == NEW_PROVIDER:\n    pass\n"
+        "import importlib as loader\n"
+        "loader.import_module('cifereca.biblioaccess.dispatch')\n"
+    )
+    assert added_signals("pass\n", source) == {
+        ("comparisons", "biblioaccess.la-rochelle"): 1,
+        ("imports", "biblioaccess"): 1,
+    }
