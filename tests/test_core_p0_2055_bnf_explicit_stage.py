@@ -5,6 +5,7 @@ Core/SQLite; there is no browser, live account, Adobe runtime or remote I/O.
 """
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace as NS
 import sys
 
 import pytest
@@ -39,6 +40,12 @@ def connected_core(tmp_path, monkeypatch):
         "account_id": account.unique_id, "label": "Fictional borrower",
     })
     service._sessions[service._session_key("bnf-pret", account.credential_id)] = session
+    # Exact v2 owner binding required by the selected-offer provider ABI.
+    session.identity_broker = NS(accounts=lambda identity_id=None: (
+        NS(provider_id="bnf-pret", scope_version=2,
+           identity_id="default", credential_id=account.credential_id,
+           account_id=account.unique_id),
+    ) if identity_id in (None, "default") else ())
     monkeypatch.setattr(services, "acquisition_lock_file", lambda: tmp_path / "acquisition.lock")
     try:
         yield service, session, account, loan, state, downloaded
@@ -132,7 +139,7 @@ def test_core_independently_refuses_invalid_loan_claim_even_if_provider_returns_
     original_acquisitions = service.storage.acquisitions()
     staged_paths = []
 
-    def unverified_download(_loan, _account, target_dir, *, explicit_user_action):
+    def unverified_download(_loan, _account, target_dir, *, explicit_user_action, **kwargs):
         assert explicit_user_action is True
         target_dir.mkdir(parents=True, exist_ok=True)
         staged = target_dir / "unverified.acsm"
@@ -212,7 +219,7 @@ def test_url_bearing_candidate_is_rejected_and_deleted(connected_core, monkeypat
     service, session, account, loan, state, downloaded = connected_core
     files = []
 
-    def wrong_return(_loan, _account, target_dir, *, explicit_user_action):
+    def wrong_return(_loan, _account, target_dir, *, explicit_user_action, **kwargs):
         assert explicit_user_action is True
         target_dir.mkdir(parents=True, exist_ok=True)
         candidate = target_dir / "private.acsm"
@@ -235,7 +242,7 @@ def test_untrusted_artifact_outside_stage_is_never_deleted(
     unrelated = tmp_path / "outside.acsm"
     unrelated.write_bytes(TOKEN)
 
-    def wrong_return(_loan, _account, target_dir, *, explicit_user_action):
+    def wrong_return(_loan, _account, target_dir, *, explicit_user_action, **kwargs):
         return unrelated, ""
 
     monkeypatch.setattr(session, "download_digital", wrong_return)
@@ -345,3 +352,13 @@ def test_loan_scope_guard_is_not_consent_or_public_bnf_capability(connected_core
     # Capturing/revalidating an action scope must never perform a GET.
     assert not downloaded
     assert not service.storage.acquisitions()
+
+def test_selected_offer_abi_missing_fails_closed_before_signed_get(
+    connected_core, monkeypatch,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    monkeypatch.setattr(session, "rights_selected_delivery_candidate", None)
+    with pytest.raises(ProviderConfigurationError, match="bnf_loan_token_unavailable"):
+        service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id="default")
+    assert downloaded == []
+    assert service.storage.acquisitions() == []
