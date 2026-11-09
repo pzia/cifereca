@@ -507,6 +507,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                 # including its legacy library mirror and typed A observation.
                 # Providers without this contract retain their original path.
                 # Never use a TTL cache of personal rights across Sync runs.
+                source_session = None
                 if self.sync_source_enabled(account):
                     source_session = self._sessions.get(
                         self._session_key(account.provider_id, account.credential_id),
@@ -525,7 +526,30 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                     self._synchronize_account_source_inventory_impl
                     if inventory_only else self._synchronize_account_source_impl
                 )
-                result = implementation(account, deep=deep, control=control)
+                try:
+                    result = implementation(account, deep=deep, control=control)
+                except ProviderConfigurationError:
+                    # Only a provider-owned *typed* expiry signal from this
+                    # exact disconnected session can authorize one new
+                    # interactive CAS connection. No retry on generic 302,
+                    # timeout, invalid loan rows, or another source.
+                    # The original public Sync already owns the acquisition
+                    # lock, so this cannot launch a parallel refresh.
+                    from .provider_sessions import (
+                        reconnect_expired_configured_source_once,
+                    )
+                    rebound = (
+                        reconnect_expired_configured_source_once(
+                            self, account, source_session,
+                        )
+                        if source_session is not None else None
+                    )
+                    if rebound is None:
+                        raise
+                    account = rebound
+                    # ONE retry only; any failure here propagates to the
+                    # existing broker's closed failure path, no loop.
+                    result = implementation(account, deep=deep, control=control)
                 if result.get("status") != "skipped":
                     # #3171: one optional typed A read and verified B plan
                     # within the existing source Sync's acquisition lock.
