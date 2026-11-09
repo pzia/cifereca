@@ -18,7 +18,7 @@ SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py
 class Widget:
     def __init__(self, *args, **kwargs):
         self.children = []
-        self.title = ""
+        self.title = kwargs.get("label", "")
         self.subtitle = ""
         self.tooltip = ""
         self.classes = set()
