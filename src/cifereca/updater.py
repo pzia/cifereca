@@ -2112,6 +2112,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="Inventaire read-only de rétention Core/transactions/versions plugins ; jamais d'effacement")
     p.add_argument("--retention-plan", action="store_true",
                    help="Plan synthétique de maintenance read-only ; aucune suppression autorisée")
+    p.add_argument("--maintenance-transactions", action="store_true",
+                   help="Plan ou purge supervisée des seules transactions terminées expirées")
+    p.add_argument("--apply", action="store_true",
+                   help="Appliquer --maintenance-transactions avec --acknowledge SHA256")
     p.add_argument("--recovery-reconcile", metavar="TRANSACTION_ID",
                    help="Plan de réconciliation ciblée (lecture seule sauf --acknowledge)")
     p.add_argument("--acknowledge", metavar="SHA256",
@@ -2124,7 +2128,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.retention_inspect or a.retention_plan:
+        if a.maintenance_transactions:
+            if (a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-transactions incompatible avec ces options")
+            from .updater_transaction_maintenance import transaction_maintenance
+            result = transaction_maintenance(install_root(), apply=a.apply,
+                                             acknowledge=a.acknowledge)
+        elif a.retention_inspect or a.retention_plan:
             if (a.archive or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
                     or a.acknowledge is not None or a.dry_run or a.to or a.python
@@ -2139,6 +2152,8 @@ def main(argv: list[str] | None = None) -> int:
             if a.retention_plan:
                 from .updater_retention_maintenance import retention_maintenance_plan
                 result = retention_maintenance_plan(result)
+        elif a.apply:
+            p.error("--apply exige --maintenance-transactions")
         elif a.recovery_inspect:
             result = recovery_inspect()
         elif a.recovery_reconcile is not None:
@@ -2170,7 +2185,7 @@ def main(argv: list[str] | None = None) -> int:
         _print({"ok": False, "error": {"code": "update_error",
                "message": "Délai dépassé pour un sous-processus de mise à jour"}}, a.json)
         return 1
-    except UpdateError as exc:
+    except (UpdateError, ValueError) as exc:
         detail = {"code": "update_error", "message": str(exc)}
         if type(exc) is ReleasePluginSmokeError:
             detail["reason_code"] = exc.reason_code
