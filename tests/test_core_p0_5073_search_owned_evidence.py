@@ -57,6 +57,7 @@ def _service(rows, *, identity=IDENTITY):
 def test_untrusted_flags_never_mark_owned_without_independent_ledger():
     item = _item()
     assert result_row(item)["state"] == "remote_catalog"
+    assert result_row(item)["owned"] is False  # no unverified flag leak via dict
     assert result_row(replace(item, source_provider="numilog",
                               scenario="NUMILOG_LIBRARY", source_collection="library"))["state"] == "remote_catalog"
     assert result_row(replace(item, source_provider="kobo"))["state"] == "remote_catalog"
@@ -70,6 +71,8 @@ def test_exact_canonical_ownership_works_for_multiple_unrelated_providers():
         assert type(proof) is SearchOwnedEvidence
         assert result_row(item, purchase_evidence=proof,
                           identity_id=IDENTITY)["state"] == "remote_owned"
+        assert result_row(item, purchase_evidence=proof,
+                          identity_id=IDENTITY)["owned"] is True
         service.storage.entitlements.assert_called_once_with(state="active")
         service.search.assert_not_called()
 
