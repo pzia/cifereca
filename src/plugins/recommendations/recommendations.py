@@ -497,6 +497,9 @@ def _public_cover_url(item: Any) -> str | None:
         # arbitrary signed URL. Accept precisely the already-attested
         # size+timestamp query used by public cover CDNs; nothing else.
         query = parts.query
+        if (parts.scheme != "https" or parts.netloc != "covers.feedbooks.net"
+                or not parts.path.startswith("/item/")):
+            continue
         if (parts.fragment
                 or not re.fullmatch(
                     r"(?:size=(?:small|medium|large)&t=[0-9]{1,12}"
