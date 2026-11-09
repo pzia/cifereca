@@ -61,7 +61,7 @@ def _transaction_retention_timestamp(tx: dict[str, Any]) -> float | None:
     if changed is None:
         return created
     if type(changed) is not str or not re.fullmatch(
-        r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z", changed,
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", changed,
     ):
         return None
     try:
