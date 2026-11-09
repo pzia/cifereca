@@ -82,3 +82,67 @@ def test_atomic_replace_commits_new_bytes_without_unlink_first(
         _TRACE_LOG=logging.getLogger("synthetic"),
     ) is repair
     assert old.exists() is (not repair)
+
+
+def test_cleanup_never_removes_cross_profile_or_symlinked_prior(
+    tmp_path, monkeypatch,
+):
+    a = tmp_path / "profile-A"
+    b = tmp_path / "profile-B"
+    a.mkdir()
+    b.mkdir()
+    previous = a / "private.epub"
+    previous.write_bytes(b"OLD")
+    final = b / "current.epub"
+    final.write_bytes(b"NEW")
+    kwargs = dict(
+        previous_path=previous, final_path=final,
+        repair_mode=True, Path=Path, _TRACE_LOG=logging.getLogger("synthetic"),
+        loan=NS(id="synthetic", identity_id="owner"),
+    )
+    assert adept_artifact_publication.cleanup_after_commit(**kwargs) is False
+    assert previous.read_bytes() == b"OLD"
+
+    alias = b / "private.epub"
+    alias.symlink_to(previous)
+    assert adept_artifact_publication.cleanup_after_commit(
+        **{**kwargs, "previous_path": alias}
+    ) is False
+    assert alias.is_symlink() and previous.read_bytes() == b"OLD"
+
+
+def test_cleanup_failure_is_nonfatal_after_committed_publication(
+    tmp_path, monkeypatch,
+):
+    previous = tmp_path / "old.epub"
+    previous.write_bytes(b"OLD")
+    final = tmp_path / "final.epub"
+    final.write_bytes(b"NEW")
+    real_unlink = Path.unlink
+    def reject(self, *args, **kwargs):
+        if self == previous:
+            raise PermissionError("private OS information")
+        return real_unlink(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", reject)
+    assert adept_artifact_publication.cleanup_after_commit(
+        previous_path=previous, final_path=final, repair_mode=True,
+        Path=Path, _TRACE_LOG=logging.getLogger("synthetic"),
+        loan=NS(id="synthetic", identity_id="owner"),
+    ) is False
+    assert previous.read_bytes() == b"OLD"
+    assert final.read_bytes() == b"NEW"
+
+
+def test_services_invokes_cleanup_only_after_index_and_completed_ledger():
+    # Protect the ordering contract against future extraction/reorganisation.
+    services = (
+        Path(__file__).resolve().parents[1] / "src/cifereca/services.py"
+    ).read_text(encoding="utf-8")
+    beginning = services.index("def _acquire_active_loan_automatically_guarded(")
+    ending = services.index("\n    def ", beginning + 6)
+    routine = services[beginning:ending]
+    indexed = routine.index("loan_provider_delivery.index_local_loan_artifact(")
+    receipt = routine.index("loan_completion_receipt.completed_receipt(")
+    cleanup = routine.index("adept_artifact_publication.cleanup_after_commit(")
+    assert indexed < receipt < cleanup
+    assert routine.index("if acquisition.kind == \"acsm\":", receipt) < cleanup
