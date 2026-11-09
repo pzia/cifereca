@@ -91,6 +91,58 @@ def _qualified(root: Path, *, now: float) -> tuple[dict, list[Path]]:
     return report, folders
 
 
+def _resume_quarantine(root: Path, quarantine: Path) -> None:
+    """Finish interrupted post-rename deletion; preserve completed receipts."""
+    if not quarantine.is_dir() or quarantine.is_symlink():
+        raise ValueError("transaction_gc_unsafe_quarantine")
+    for receipt in sorted(quarantine.glob("*.json")):
+        name = receipt.name[:-5]
+        if _ID.fullmatch(name) is None or receipt.is_symlink():
+            raise ValueError("transaction_gc_invalid_audit")
+        fd = os.open(receipt, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            st = os.fstat(fd)
+            if (not stat.S_ISREG(st.st_mode) or st.st_nlink != 1
+                    or st.st_uid != os.getuid() or st.st_mode & 0o077
+                    or not 0 < st.st_size <= 8192):
+                raise ValueError("transaction_gc_invalid_audit")
+            raw = os.read(fd, 8193)
+            if len(raw) != st.st_size:
+                raise ValueError("transaction_gc_invalid_audit")
+        finally:
+            os.close(fd)
+        try:
+            record = json.loads(raw)
+        except (ValueError, UnicodeError):
+            raise ValueError("transaction_gc_invalid_audit") from None
+        if (type(record) is not dict or record.get("schema") != _SCHEMA
+                or record.get("transaction_sha256") != sha256(name.encode()).hexdigest()
+                or type(record.get("source_inode")) is not int
+                or type(record.get("source_device")) is not int
+                or record.get("state") != "pending_delete"):
+            raise ValueError("transaction_gc_invalid_audit")
+        pending = quarantine / name
+        original = root / "transactions" / name
+        if pending.is_symlink():
+            raise ValueError("transaction_gc_invalid_pending")
+        if pending.exists():
+            if original.exists() or original.is_symlink():
+                raise ValueError("transaction_gc_duplicate_pending")
+            info = os.lstat(pending)
+            if (not stat.S_ISDIR(info.st_mode)
+                    or (info.st_ino, info.st_dev) != (
+                        record["source_inode"], record["source_device"])):
+                raise ValueError("transaction_gc_invalid_pending")
+            shutil.rmtree(pending)
+            _sync_dir(quarantine)
+        elif original.exists() and (os.lstat(original).st_ino,
+                                   os.lstat(original).st_dev) == (
+                                       record["source_inode"], record["source_device"]):
+            # Crash after durable receipt but before rename: no delete started.
+            receipt.unlink()
+            _sync_dir(quarantine)
+
+
 def transaction_maintenance(root: Path, *, apply: bool = False,
                             acknowledge: str | None = None,
                             now: float | None = None) -> dict:
@@ -111,6 +163,13 @@ def transaction_maintenance(root: Path, *, apply: bool = False,
         raise ValueError("transaction_gc_acknowledgement_required")
     with updater._exclusive_updater_lock(root):
         with updater._trusted_package_lease():
+            quarantine = root / "transaction-gc"
+            if quarantine.exists() or quarantine.is_symlink():
+                if (quarantine.is_symlink() or not quarantine.is_dir()
+                        or quarantine.stat().st_uid != os.getuid()
+                        or quarantine.stat().st_mode & 0o077):
+                    raise ValueError("transaction_gc_unsafe_quarantine")
+                _resume_quarantine(root, quarantine)
             _, folders = _qualified(root, now=now)
             digest = sha256("\n".join(p.name for p in folders).encode()).hexdigest()
             if digest != acknowledge:
