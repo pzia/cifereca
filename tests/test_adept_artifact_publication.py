@@ -82,10 +82,10 @@ def test_actual_pdf_format_and_hook_survive_publication(tmp_path, repair):
     assert not staged.exists() and not (tmp_path / 'staged.pdf').exists()
     assert format_ == 'pdf' and drm == 'none' and protected is None
     assert reported_hook is hook
-    if repair:
-        assert not previous.exists()
-    else:
-        assert previous.read_bytes() == b'previous loan'
+    # Publishing the file is not the acquisition's SQLite commit.
+    # A retained previous artifact is cleaned only by the caller AFTER
+    # successful indexing and completion receipt.
+    assert previous.read_bytes() == b'previous loan'
 
 
 PRIVATE_INSPECTION = "https://private.invalid/acsm?token=DO_NOT_EXPOSE"

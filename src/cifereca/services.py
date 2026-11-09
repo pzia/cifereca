@@ -3850,6 +3850,14 @@ class LibraryService:
                 )
             )
             if acquisition.kind == "acsm":
+                # The repaired previous artifact is still needed when
+                # indexing or the completed SQLite ledger write fails.
+                # Cleanup is noncritical and runs only after both succeed.
+                adept_artifact_publication.cleanup_after_commit(
+                    previous_path=previous_path, final_path=final_path,
+                    repair_mode=repair_mode, Path=Path, loan=loan,
+                    identity_id=identity.identity_id, _TRACE_LOG=_TRACE_LOG,
+                )
                 self._cleanup_acsm_after_success(retained_acsm, loan_id=loan.id)
                 retained_acsm = None
             if acquisition.kind == "acsm":
