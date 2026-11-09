@@ -24,3 +24,7 @@ soumise aux contrats de téléchargement existants.
 La preuve n'est pas persistée dans les caches de recherche ni inférée
 des champs libres `metadata`. Une bascule de profil invalide la
 comparaison avec le snapshot de l'identité précédente.
+
+Le snapshot épingle aussi les générations Core `_account_context_epoch` et
+`_source_context_epoch`. Un compte sélectionné ou une session reconnectée
+sous la même identité révoque immédiatement la preuve de la vue précédente.
