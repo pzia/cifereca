@@ -31,7 +31,7 @@ def _broker(*, broken_owner=False):
     ))
     kobo = service.accounts[-1]
     service._sessions[service._session_key("kobo", "vault-secret")] = NS(
-        connected=True, capabilities=NS(personal_library=True, backup=True, local_materialization=True),
+        connected=True, capabilities=NS(personal_library=True, backup=True, local_materialization=True, legacy_materialization_checkpoint=True),
     )
     service.storage.identity_for_connection = lambda provider, credential: (
         "other-identity" if broken_owner else "reader-2"
