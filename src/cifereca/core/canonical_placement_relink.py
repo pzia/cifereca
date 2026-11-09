@@ -18,7 +18,6 @@ from contextlib import nullcontext
 from typing import Callable
 
 from ..locking import InterProcessLock, LockBusyError
-from ..paths import acquisition_lock_file
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_publication import _stable, _same_file
 from .missing_placement_retirement import _directory_signature
@@ -273,7 +272,7 @@ def relink_verified_canonical(
             identity_id, credential_id, edition_id,
             right_id, branch_id, placement_id,
         ))
-        # The empty upstream Kobo primary account is a literal exact scope,
+        # An empty upstream primary account remains an exact SQL scope,
         # not a missing borrower; the SQL connection/borrower join still vets it.
         and _id(account_id, empty=True)
         and type(reference_kind) is str
