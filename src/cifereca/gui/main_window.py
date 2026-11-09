@@ -1688,22 +1688,24 @@ class MainWindow(Adw.ApplicationWindow):
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
         # #2055: the historic session.borrow() path must NEVER be used for
         # BnF. Source-specific consent and a durable Core claim are required.
-        # Read-only follow-up is tagged on the specific action widget, not
-        # a new public MainWindow method parameter (stable façade contract).
-        # A forged flag can only enter verification, never borrower dispatch.
-        verification_only = (
-            control is not None
-            and callable(getattr(control, "get_name", None))
-            and control.get_name() == "cifereca-paris-borrow-followup"
-        )
         if getattr(item, "source_provider", None) == "bnf-pret":
-            if verification_only:
+            if (control is not None
+                    and callable(getattr(control, "get_name", None))
+                    and control.get_name() == "cifereca-paris-borrow-followup"):
                 return
             from .bnf_borrow_controller import present_bnf_borrow
             present_bnf_borrow(
                 self, item, control, Adw=Adw, TaskPriority=TaskPriority,
             )
             return
+        # Preserve the required initial BnF guard above and the stable
+        # MainWindow method signature. A forged widget name can only request
+        # read-only verification, never authorize a provider borrow.
+        verification_only = (
+            control is not None
+            and callable(getattr(control, "get_name", None))
+            and control.get_name() == "cifereca-paris-borrow-followup"
+        )
         if getattr(item, "source_provider", None) == "paris":
             # One established provider routing import; the read-only branch
             # is segregated from the one permitted mutating borrower call.
