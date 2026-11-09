@@ -148,6 +148,7 @@ def test_recent_projection_uses_search_facets_and_no_library_filters():
     input_data = [{"key": "recent-a"}, {"key": "recent-b"}]
     controls = object()
     window = NS(
+        service=NS(provider_display_name=lambda provider: "Provider " + provider),
         recent_page=NS(show_rows=lambda rows: events.append(("show", rows))),
         _recent_entries_cache=[],
         search_controls=controls,
@@ -159,6 +160,7 @@ def test_recent_projection_uses_search_facets_and_no_library_filters():
         )),
     )
     def project(items, **kwargs):
+        assert kwargs["provider_display_name"] is window.service.provider_display_name
         events.append(("project", len(items), kwargs["row_factory"]))
         return ["first", "second"], {"recent-a": input_data[0]}
 
