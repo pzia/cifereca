@@ -64,10 +64,11 @@ def stage_bnf_loan_acsm(
                         or account.provider_id != "bnf-pret"
                         or account.credential_id != loan.source_credential
                         or account.unique_id != loan.source_account_id
-                        or session.connected is not True
-                        or session.provider_id != "bnf-pret"
-                        or session.credential_id != loan.source_credential
-                        or sum(a is account for a in session.accounts) != 1):
+                        # The Core lease below checks the exact connected
+                        # session, credential and unique borrower from inert
+                        # session memory. Never invoke provider properties in
+                        # this preflight: even a getter may perform I/O.
+                        ):
                     _refuse("bnf_loan_scope_unproven")
             except Exception:
                 _refuse("bnf_loan_scope_unproven")
