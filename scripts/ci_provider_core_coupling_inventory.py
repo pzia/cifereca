@@ -83,6 +83,51 @@ def _match_providers(
     return set()
 
 
+def _known_callable_symbols(tree: ast.Module) -> set[str]:
+    """Unambiguous locally defined function names; no execution or inference."""
+    declared: set[str] = set()
+    overwritten: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in declared:
+                overwritten.add(node.name)
+            declared.add(node.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            overwritten.add(node.id)
+        elif isinstance(node, ast.arg):
+            # A parameter can shadow a global function when referenced inside
+            # a nested dispatcher; avoiding a missed signal matters less than
+            # avoiding a false-positive provider-keyed data lookup.
+            overwritten.add(node.arg)
+    return declared - overwritten
+
+
+_DISPATCH_HINTS = ("dispatch", "handler", "route", "executor", "callback", "operation", "action")
+
+
+def _dispatch_table_literal(
+    node: ast.Dict, *, providers: set[str], functions: set[str],
+    hint: bool,
+) -> list[str]:
+    """Only callable-valued provider-keyed maps are *executable* dispatch."""
+    matched: set[str] = set()
+    for key, value in zip(node.keys, node.values):
+        if key is None:
+            continue
+        names = _literal_providers(key, providers)
+        if not names:
+            continue
+        callable_value = (
+            isinstance(value, ast.Lambda)
+            or isinstance(value, ast.Name) and (value.id in functions or hint)
+            or isinstance(value, ast.Attribute) and hint
+            or isinstance(value, ast.Call) and hint
+        )
+        if callable_value:
+            matched.update(names)
+    return sorted(matched)
+
+
 def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
     """Report imports of implementations and comparisons to concrete provider IDs."""
     tree = ast.parse(content)
@@ -102,9 +147,31 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
                     import_module_names.add(alias.asname or alias.name)
     # Import names are Python identifiers; provider IDs may contain hyphens.
     import_names = {name for name in names if name.isidentifier()}
+    functions = _known_callable_symbols(tree)
+    # The declaring assignment can establish a named dispatch table. The
+    # reference is the *exact AST dict node*; names in text/docs do not count.
+    dispatch_hints: set[int] = set()
+    for stmt in ast.walk(tree):
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            value = stmt.value
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else (stmt.target,)
+            if isinstance(value, ast.Dict) and any(
+                isinstance(target, ast.Name)
+                and any(token in target.id.casefold() for token in _DISPATCH_HINTS)
+                for target in targets
+            ):
+                dispatch_hints.add(id(value))
     imports: list[dict[str, object]] = []
     dispatches: list[dict[str, object]] = []
+    tables: list[dict[str, object]] = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            matched = _dispatch_table_literal(
+                node, providers=names, functions=functions,
+                hint=id(node) in dispatch_hints,
+            )
+            if matched:
+                tables.append({"line": node.lineno, "providers": matched})
         if isinstance(node, ast.Import):
             modules = [alias.name for alias in node.names]
         elif isinstance(node, ast.ImportFrom):
@@ -158,7 +225,8 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
                 if matched:
                     dispatches.append({"line": case.pattern.lineno, "providers": matched})
     return {"imports": sorted(imports, key=lambda x: x["line"]),
-            "comparisons": sorted(dispatches, key=lambda x: x["line"])}
+            "comparisons": sorted(dispatches, key=lambda x: x["line"]),
+            "dispatch_tables": sorted(tables, key=lambda x: x["line"])}
 
 
 def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, object]:
@@ -176,16 +244,19 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
             except (SyntaxError, UnicodeError) as exc:
                 parse_errors[relative] = type(exc).__name__
                 continue
-            if result["imports"] or result["comparisons"]:
+            if any(result[category] for category in (
+                "imports", "comparisons", "dispatch_tables",
+            )):
                 findings[relative] = result
     return {"metric": "core.provider.static-coupling/1",
             "providers": list(providers),
             "files_with_signals": len(findings),
             "import_signals": sum(len(x["imports"]) for x in findings.values()),
             "comparison_signals": sum(len(x["comparisons"]) for x in findings.values()),
+            "dispatch_table_signals": sum(len(x["dispatch_tables"]) for x in findings.values()),
             "findings": dict(sorted(findings.items())),
             "parse_errors": dict(sorted(parse_errors.items())),
-            "limitation": "AST signals are not reachability proofs; dynamic imports and indirect dispatch are not detected."}
+            "limitation": "AST signals, not reachability proofs; indirect dynamic dispatch may remain."}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -201,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Core provider coupling: {report['files_with_signals']} files, "
               f"{report['import_signals']} imports, "
               f"{report['comparison_signals']} comparisons, "
+              f"{report['dispatch_table_signals']} dispatch tables, "
               f"{len(report['parse_errors'])} parse errors")
     return 1 if report["parse_errors"] else 0
 
