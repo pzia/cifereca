@@ -195,6 +195,59 @@ def inspect_plugin_version_history(packages_root: Path, *, now: float) -> dict[s
     }
 
 
+def _overlay_attested_transaction_pins(
+    plugin_plan: dict[str, Any] | None,
+    retained_ids: list[str] | None,
+) -> dict[str, Any] | None:
+    """Project exact cross-store pins without mutating the source inventory.
+
+    A retained transaction may depend on an otherwise aged installed plugin
+    version. That version can *never* remain a candidate in the public plan.
+    Only IDs that were attested by the transaction reader AND plugin receipts
+    are accepted. No apply permit is minted.
+    """
+    if plugin_plan is None:
+        return None
+    if (type(plugin_plan) is not dict
+            or plugin_plan.get("safe_to_apply") is not False
+            or type(plugin_plan.get("objects")) is not list
+            or type(plugin_plan.get("candidates")) is not int
+            or type(retained_ids) is not list
+            or len(retained_ids) > MAX_PACKAGES * MAX_VERSIONS_PER_PACKAGE
+            or any(type(ref) is not str
+                   or re.fullmatch(r"plugin_version:[a-f0-9]{64}", ref) is None
+                   for ref in retained_ids)):
+        return plugin_plan
+    refs = set(retained_ids)
+    if len(refs) != len(retained_ids):
+        return plugin_plan
+    rows = []
+    observed = set()
+    for row in plugin_plan["objects"]:
+        if (type(row) is not dict
+                or type(row.get("object_id")) is not str
+                or type(row.get("reasons")) is not list
+                or row.get("decision") not in ("candidate", "retain")
+                or row["object_id"] in observed):
+            return plugin_plan
+        observed.add(row["object_id"])
+        entry = dict(row)
+        if entry["object_id"] in refs:
+            entry["decision"] = "retain"
+            entry["reasons"] = sorted(set(entry["reasons"]) | {
+                "retained_transaction_reference",
+            })
+        rows.append(entry)
+    if not refs.issubset(observed):
+        return plugin_plan
+    result = dict(plugin_plan)
+    result["objects"] = rows
+    result["candidates"] = sum(row["decision"] == "candidate" for row in rows)
+    # Preserve the mandatory fail-closed flag and inventory-only blocker.
+    result["safe_to_apply"] = False
+    return result
+
+
 def inspect_updater_retention_readonly(
     runtime_root: Path, packages_root: Path, *, now: float,
     backups_root: Path | None = None,
@@ -213,6 +266,14 @@ def inspect_updater_retention_readonly(
     from .updater_retention_cross_store import inspect_transaction_plugin_references
     cross_store = inspect_transaction_plugin_references(
         runtime_root, plugins.get("plan"), core_transaction_plan=core.get("plan"),
+        _include_internal_resolved_refs=True,
+    )
+    # Never return the opaque *set* of referenced version IDs to the CLI:
+    # count-only public diagnostics remain unchanged. The pinned versions are
+    # represented only by safe aggregate counts and retention reasons.
+    retained_ids = cross_store.pop("_resolved_retained_plugin_ids", None)
+    plugin_plan = _overlay_attested_transaction_pins(
+        plugins.get("plan"), retained_ids,
     )
     backups = None
     if backups_root is not None:
@@ -231,7 +292,7 @@ def inspect_updater_retention_readonly(
     blockers.update(cross_store["blockers"])
     plans = {
         "core_transactions": core["plan"],
-        "plugin_versions": plugins["plan"],
+        "plugin_versions": plugin_plan,
         "known_persistent_staging": staging["plan"],
     }
     pending = ["persistent_staging", "cross_store_reference_proofs"]
