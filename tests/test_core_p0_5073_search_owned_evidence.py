@@ -143,6 +143,17 @@ def test_account_epoch_changed_during_ledger_read_refuses_snapshot():
     assert snapshot_search_owned_evidence(service) is None
 
 
+def test_versioned_proof_or_missing_core_capability_cannot_fabricate_right():
+    service = _service([_entitlement()])
+    proof = snapshot_search_owned_evidence(service)
+    assert proof is not None and proof.schema_version == 1
+    assert result_row(_item(), purchase_evidence=replace(proof, schema_version=2),
+                      identity_id=IDENTITY)["state"] == "remote_catalog"
+    assert snapshot_search_owned_evidence(NS(
+        current_identity=NS(identity_id=IDENTITY), storage=NS(),
+    )) is None
+
+
 def test_pending_archived_and_loan_entitlements_are_not_purchase_proofs():
     rows = [
         _entitlement(entitlement_type="loan"),
