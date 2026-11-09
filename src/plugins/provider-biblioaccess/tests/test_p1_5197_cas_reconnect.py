@@ -43,10 +43,14 @@ def _expired_fixture(monkeypatch, *, optin="on", second_credential=False):
         rows.append({
             **row, "identity_id": "identity-b", "id": "cred-b",
         })
+    # Prepare synthetic clients BEFORE monkeypatching the plugin's factory:
+    # the shared fixture itself calls PLUGIN.create_session().
+    ready = [_synced_session(credential="cred-a") for _ in range(2)]
     new_sessions = []
     fresh_calls = []
     def factory(**kwargs):
-        fresh, http, events = _synced_session(credential=kwargs["credential_id"])
+        assert kwargs["credential_id"] == "cred-a"
+        fresh, http, events = ready[len(new_sessions)]
         fresh.options = kwargs["options"]
         new_sessions.append((fresh, http, events))
         fresh_calls.append(kwargs["credential_id"])
@@ -77,6 +81,7 @@ def _expired_fixture(monkeypatch, *, optin="on", second_credential=False):
         diagnostics=NS(add=lambda *a, **kw: notes.append((a, kw)),
                        add_core_source_sync=lambda *a, **kw: None),
     )
+    host._synthetic_fresh_candidates = ready
     return host, first, account, calls, new_sessions, fresh_calls, notes
 
 
@@ -162,16 +167,10 @@ def test_full_source_sync_retries_once_with_new_cas_and_keeps_positive_row(
 
 def test_second_cas_failure_ends_after_one_reconnect(monkeypatch, tmp_path):
     host, old, account, calls, renewed, created, notes = _expired_fixture(monkeypatch)
-    first, _, _ = _synced_session(credential="cred-a")
-    def next_expired(**kwargs):
-        fresh, http, events = _synced_session(credential=kwargs["credential_id"])
-        def expired_again():
-            raise biblioaccess_ajax_cas.AjaxCasError("cas_loans_unverified")
-        http.read_authenticated_loans = expired_again
-        renewed.append((fresh, http, events))
-        created.append(kwargs["credential_id"])
-        return fresh
-    monkeypatch.setattr(mod.PLUGIN, "create_session", next_expired)
+    fresh, http, events = host._synthetic_fresh_candidates[0]
+    def expired_again():
+        raise biblioaccess_ajax_cas.AjaxCasError("cas_loans_unverified")
+    http.read_authenticated_loans = expired_again
     attempts = []
     def read(account_row, *, deep=False, control=None):
         attempts.append(account_row)
@@ -206,7 +205,7 @@ def test_disabling_account_never_installs_new_cas_authority(monkeypatch, when):
         row["enabled"] = False
     else:
         def revoke_after_request(**kwargs):
-            fresh, http, events = _synced_session(credential=kwargs["credential_id"])
+            fresh, http, events = host._synthetic_fresh_candidates[0]
             original = http.submit_observed_login_once
             def submit(**details):
                 response = original(**details)
