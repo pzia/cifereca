@@ -10,6 +10,7 @@ from cifereca.core.device_usb_removal_execute import UsbRemovalJournalEntry
 from cifereca.core.device_usb_removal_review import UsbRemovalConsent
 from cifereca.core.device_usb_copy_supervisor import execute_usb_copy
 from tests.test_p1_2854_usb_copy_supervisor import copy
+from tests.test_p1_2854_usb_copy_preparation import copy_review
 
 
 class _Storage:
@@ -70,3 +71,18 @@ def test_parallel_pending_targets_do_not_share_a_destination(tmp_path):
     assert not journal.begin(b)
     assert journal.compare_and_set(a, replace(a, phase="completed"))
     assert journal.begin(b)
+
+
+def test_operation_journal_uses_the_existing_canonical_storage_db(copy_review):
+    storage = copy_review["storage"]
+    journal = SqliteUsbOperationJournal(storage)
+    consent = _remove_consent("e" * 32)
+    entry = UsbRemovalJournalEntry(consent)
+    assert journal.begin(entry)
+    assert SqliteUsbOperationJournal(storage).get(consent.operation_id) == entry
+    with storage._lock, storage._connect() as db:
+        recorded = db.execute(
+            "SELECT phase FROM device_usb_operations WHERE operation_id=?",
+            (consent.operation_id,),
+        ).fetchone()
+    assert recorded == ("pending",)
