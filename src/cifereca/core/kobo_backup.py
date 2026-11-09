@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Callable
 from ..acquisition import Acquisition
 from ..kobo import KoboAdeptError
-from ..kobo.executor import execute_kobo_acquisition
 from ..kobo.vault import KoboVaultError
 from ..locking import InterProcessLock, LockBusyError
 from ..library_files import safe_library_component, sha256_file
@@ -199,8 +198,8 @@ def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> P
 
 
 def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
-    """Compatibility façade; Kobo execution lives in the provider adapter."""
-    return execute_kobo_acquisition(self, item, target_dir)
+    """Retired D3 direct Kobo executor: use the selected canonical delivery API."""
+    raise ProviderConfigurationError("kobo_legacy_direct_get_retired_use_canonical_provider")
 
 
 def kobo_backup_records(self) -> list[dict[str, Any]]:
