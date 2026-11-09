@@ -23,7 +23,8 @@ class QueryState:
         )
 
 
-def result_row(item, *, purchase_evidence=None, identity_id=None):
+def result_row(item, *, purchase_evidence=None, identity_id=None,
+               account_context_epoch=None, source_context_epoch=None):
     """Render a verified purchase only with independent Core ledger evidence.
 
     Provider flags, inventory scenario and account coordinates are not rights.
@@ -33,6 +34,8 @@ def result_row(item, *, purchase_evidence=None, identity_id=None):
     from ..core.search_owned_evidence import search_result_has_verified_purchase
     verified_purchase = search_result_has_verified_purchase(
         item, purchase_evidence, current_identity_id=identity_id,
+        current_account_epoch=account_context_epoch,
+        current_source_epoch=source_context_epoch,
     )
     result = asdict(item)
     # asdict() includes every ClassificationEvidence.raw_code, which is
