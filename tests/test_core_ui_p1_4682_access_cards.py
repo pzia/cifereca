@@ -109,7 +109,7 @@ def test_real_detail_renders_attested_per_profile_access_as_typed_rows():
 
 
 def test_detail_access_rows_do_not_infer_missing_rights_from_file_or_source():
-    rows = [("Profil A", "\\n".join(("Fichier local : book.epub", "Source : Kobo")))]
+    rows = [("Profil A", chr(10).join(("Fichier local : book.epub", "Source : Kobo")))]
     host = NS(content=[], _append_content=lambda widget: host.content.append(widget))
     _real_group()(host, "Bibliothèques et accès", rows)
     assert [row.title for row in host.content[0].children[0].children[1:]] == [
