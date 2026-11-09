@@ -63,6 +63,34 @@ def _immutable_provider_constants(tree: ast.Module, providers: set[str]) -> dict
     return constants
 
 
+def _immutable_import_module_constants(tree: ast.Module) -> dict[str, str]:
+    """Resolve only static, unshadowed module path constants for importlib.
+
+    No concatenation, attribute lookup, interpolation or source execution.
+    Imported and locally shadowed bindings never qualify.
+    """
+    writes: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            writes[node.id] += 1
+        elif isinstance(node, ast.arg):
+            writes[node.arg] += 1
+    result: dict[str, str] = {}
+    for stmt in tree.body:
+        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)):
+            name, value = stmt.targets[0].id, stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            name, value = stmt.target.id, stmt.value
+        else:
+            continue
+        if (name.isupper() and writes[name] == 1
+                and isinstance(value, ast.Constant)
+                and type(value.value) is str and 0 < len(value.value) <= 512):
+            result[name] = value.value
+    return result
+
+
 def _literal_providers(
     node: ast.AST, providers: set[str], constants: dict[str, str] | None = None,
 ) -> set[str]:
@@ -138,6 +166,7 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     tree = ast.parse(content)
     names = set(providers)
     constants = _immutable_provider_constants(tree, names)
+    module_constants = _immutable_import_module_constants(tree)
     # Track actual importlib bindings before accepting dynamic module loading.
     importlib_names: set[str] = set()
     import_module_names: set[str] = set()
@@ -227,11 +256,14 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
                 and isinstance(fn.value, ast.Name)
                 and fn.value.id in importlib_names
             )
-            modules = (
-                [node.args[0].value]
-                if dynamic and node.args and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str) else []
-            )
+            module_name = None
+            if dynamic and node.args:
+                arg = node.args[0]
+                if isinstance(arg, ast.Constant) and type(arg.value) is str:
+                    module_name = arg.value
+                elif isinstance(arg, ast.Name):
+                    module_name = module_constants.get(arg.id)
+            modules = [module_name] if module_name is not None else []
         else:
             modules = []
         for module in modules:
