@@ -13,6 +13,7 @@ from ..plugin_api import Cancelled
 from .loan_acsm_token_validation import (
     discard_untrusted_staged_acsm as _discard_invalid_candidate,
     valid_loan_acsm_token as _valid_loan_token,
+    staged_loan_acsm_path_safe,
 )
 
 
@@ -326,9 +327,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         )
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        if (not isinstance(candidate, Path) or type(url) is not str or url
-                or candidate.is_symlink() or directory.is_symlink()
-                or candidate.parent.resolve() != directory.resolve()
+        if (type(url) is not str or url
+                or not staged_loan_acsm_path_safe(candidate, directory)
                 or not _valid_loan_token(candidate, inspect_artifact)):
             return {'status': 'attention_required', 'code': 'bnf_loan_token_invalid'}
         if control is not None:
