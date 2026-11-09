@@ -115,6 +115,28 @@ def test_closed_source_denies_before_network(connected_core):
     assert not downloaded
 
 
+def test_untrusted_session_accounts_property_is_never_invoked_before_get(
+    connected_core, monkeypatch,
+):
+    """Core refuses provider getters rather than invoking them to check scope."""
+    service, session, account, loan, state, downloaded = connected_core
+    reads = []
+
+    def hostile_accounts(_session):
+        reads.append("provider_getter_invoked")
+        raise RuntimeError("private network side effect")
+
+    monkeypatch.setattr(type(session), "accounts", property(hostile_accounts))
+    with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default",
+        )
+    assert reads == []
+    assert not downloaded
+    assert not service.storage.acquisitions()
+    assert not service.storage.placements()
+
+
 def test_duplicate_live_borrower_object_refuses_before_selected_offer_or_get(connected_core):
     """A session with two references to the same account is not a unique binding."""
     service, session, account, loan, state, downloaded = connected_core
