@@ -145,7 +145,11 @@ def _remote_result_row_keys(rows: list[SearchResult]) -> list[str]:
         else:
             scope = _exact_remote_catalogue_scope(item)
             if scope is not None:
-                key = f"{base}:scope:{sha256(repr(scope).encode('utf-8')).hexdigest()}"
+                # Separate accounts and revisions even when a legacy row ID
+                # and catalogue coordinates collide. This display key is
+                # never ownership evidence and never aliases another account.
+                exact = (*scope, item.source_account_id or "", item.revision_id or "")
+                key = f"{base}:scope:{sha256(repr(exact).encode('utf-8')).hexdigest()}"
             else:
                 # Historical/unqualified notices remain visible but are not
                 # silently assigned another edition's verified coordinates.
