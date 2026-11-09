@@ -557,6 +557,47 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
             }:
                 raise UpdateError("Nettoyage refusé : état de transaction inconnu")
 
+    # The active release is not the only rollback root. A second (or
+    # younger-than-24h) committed transaction can still require an older
+    # before_previous release. Reuse the exact Core 24h + min2 retention
+    # closure before any physical release GC; never invent a separate TTL.
+    # Missing/contradictory transaction proofs defer the whole cleanup.
+    if transactions.is_dir():
+        from .updater_retention_inventory import (
+            _name_id, inspect_core_transaction_history,
+        )
+        inventory = inspect_core_transaction_history(root, now=now)
+        plan = inventory.get("plan")
+        blockers = set(inventory.get("blockers", ()))
+        critical = {
+            "unsafe_transactions_root", "unsafe_transaction_entry",
+            "unexpected_transaction_entry", "unsafe_transaction_journal",
+            "transaction_unreadable", "transaction_identity_mismatch",
+            "transaction_state_unknown", "transaction_proof_invalid",
+            "unresolved_transaction_reference", "missing_transaction_snapshot",
+            "unsafe_transaction_snapshot", "incomplete_reference_graph",
+            "transaction_inventory_too_large", "unsafe_runtime_root",
+        }
+        if (type(plan) is not dict or type(plan.get("objects")) is not list
+                or critical & blockers):
+            return {
+                "retained": len(releases), "removed": 0,
+                "protected": len(protected), "deferred": 1,
+            }
+        by_id = {_name_id("release", release.name): release.resolve()
+                 for release in releases}
+        for row in plan["objects"]:
+            if (type(row) is not dict or type(row.get("reasons")) is not list):
+                raise UpdateError("Nettoyage refusé : plan de rétention invalide")
+            if not str(row.get("object_id", "")).startswith("release:"):
+                continue
+            if "referenced" not in row["reasons"]:
+                continue
+            target = by_id.get(row["object_id"])
+            if target is None:
+                raise UpdateError("Nettoyage refusé : release référencée absente")
+            protected.add(target)
+
     active = _symlink_target(root / "current")
     if active is not None and active.is_dir():
         linked = _transaction_for_release(root, active)
