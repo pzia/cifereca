@@ -2132,6 +2132,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="Plan ou purge des scratchs persistants abandonnés attestés")
     p.add_argument("--maintenance-core-releases", action="store_true",
                    help="Plan ou GC autonome supervisé des releases Core")
+    p.add_argument("--maintenance-all", action="store_true",
+                   help="Plan puis maintenance coordonnée de tous les historiques Updater")
     p.add_argument("--maintenance-plugins", action="store_true",
                    help="Plan ou purge supervisée des versions historiques plugins")
     p.add_argument("--apply", action="store_true",
@@ -2148,8 +2150,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.maintenance_core_releases:
-            if (a.maintenance_staging or a.maintenance_transactions
+        if a.maintenance_all:
+            if (a.maintenance_core_releases or a.maintenance_staging
+                    or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.maintenance_core_backups
+                    or a.archive or a.github is not None or a.rollback
+                    or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-all incompatible avec ces options")
+            from .updater_maintenance_all import maintenance_all
+            result = maintenance_all(
+                install_root(), _plugin_packages_root(),
+                state_dir(create=False) / "dev-updates",
+                state_dir(create=False) / "update-backups",
+                keep=a.keep, apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_core_releases:
+            if (a.maintenance_all or a.maintenance_staging or a.maintenance_transactions
                     or a.maintenance_plugins or a.maintenance_dev_backups
                     or a.maintenance_core_backups or a.archive
                     or a.github is not None or a.rollback or a.status
@@ -2163,7 +2182,7 @@ def main(argv: list[str] | None = None) -> int:
                 acknowledge=a.acknowledge,
             )
         elif a.maintenance_staging:
-            if (a.maintenance_core_releases or a.maintenance_transactions or a.maintenance_plugins
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_transactions or a.maintenance_plugins
                     or a.maintenance_dev_backups or a.maintenance_core_backups
                     or a.archive or a.github is not None or a.rollback
                     or a.status or a.recovery_inspect
@@ -2178,7 +2197,7 @@ def main(argv: list[str] | None = None) -> int:
                 apply=a.apply, acknowledge=a.acknowledge,
             )
         elif a.maintenance_core_backups:
-            if (a.maintenance_core_releases or a.maintenance_staging or a.maintenance_transactions or a.maintenance_plugins
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_transactions or a.maintenance_plugins
                     or a.maintenance_dev_backups or a.archive
                     or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
@@ -2191,7 +2210,7 @@ def main(argv: list[str] | None = None) -> int:
                 apply=a.apply, acknowledge=a.acknowledge,
             )
         elif a.maintenance_dev_backups:
-            if (a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_transactions
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_transactions
                     or a.maintenance_plugins
                     or a.archive or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
@@ -2204,7 +2223,7 @@ def main(argv: list[str] | None = None) -> int:
                 apply=a.apply, acknowledge=a.acknowledge,
             )
         elif a.maintenance_plugins:
-            if (a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_dev_backups
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_dev_backups
                     or a.maintenance_transactions
                     or a.archive or a.github is not None
                     or a.rollback or a.status or a.recovery_inspect
@@ -2218,7 +2237,7 @@ def main(argv: list[str] | None = None) -> int:
                 acknowledge=a.acknowledge,
             )
         elif a.maintenance_transactions:
-            if (a.maintenance_core_releases or a.maintenance_staging or a.archive or a.github is not None or a.rollback or a.status
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.archive or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
                     or a.retention_inspect or a.retention_plan or a.dry_run
                     or a.maintenance_plugins or a.maintenance_dev_backups
