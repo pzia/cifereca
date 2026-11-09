@@ -148,3 +148,75 @@ def test_official_retention_command_keeps_cross_store_incomplete(tmp_path, monke
     assert edges["unresolved_edges"] == 2
     assert report["safe_to_apply"] is False
     assert "cross_store_reference_proofs" in report["pending_stores"]
+
+
+def _core_decisions(*rows):
+    from hashlib import sha256
+    return {"objects": [
+        {"object_id": "transaction:" + sha256(name.encode("utf-8")).hexdigest(),
+         "decision": decision, "reasons": ["minimum_generations"] if decision == "retain" else []}
+        for name, decision in rows
+    ]}
+
+
+def test_retained_transaction_edges_are_distinct_from_historical_candidates(tmp_path):
+    root = tmp_path / "runtime"
+    older = "20261107T101214Z-2b88f133f09d"
+    _write_transaction(root, name=older, version_before="1.0", version_after="1.1")
+    _write_transaction(root, name=TX, version_before="1.1", version_after="1.2")
+    plan = _core_decisions((older, "candidate"), (TX, "retain"))
+    report = inspect_transaction_plugin_references(
+        root, _plan("1.0", "1.1", "1.2"), core_transaction_plan=plan,
+    )
+    assert report["retention_edges_qualified"] is True
+    assert report["plugin_version_edges"] == 3
+    assert report["retained_transaction_plugin_edges"] == 2
+    assert report["candidate_transaction_plugin_edges"] == 2
+    assert report["resolved_retained_edges"] == 2
+    assert report["unresolved_retained_edges"] == 0
+    assert report["safe_to_apply"] is False
+
+
+def test_missing_retained_plugin_remains_unresolved_and_never_permits_purge(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    report = inspect_transaction_plugin_references(
+        root, _plan("1.2.1"), core_transaction_plan=_core_decisions((TX, "retain")),
+    )
+    assert report["retention_edges_qualified"] is True
+    assert report["retained_transaction_plugin_edges"] == 2
+    assert report["unresolved_retained_edges"] == 1
+    assert "transaction_plugin_version_missing" in report["blockers"]
+    assert report["safe_to_apply"] is False
+
+
+@pytest.mark.parametrize("core_plan", [
+    {"objects": []},
+    {"objects": [{"object_id": "transaction:bad", "decision": "retain"}]},
+    _core_decisions((TX, "retain"), (TX, "candidate")),
+    _core_decisions((TX, "other")),
+])
+def test_unqualified_core_retention_cannot_claim_retained_edge_closure(tmp_path, core_plan):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    report = inspect_transaction_plugin_references(
+        root, _plan("1.2.0", "1.2.1"), core_transaction_plan=core_plan,
+    )
+    assert report["retention_edges_qualified"] is False
+    assert report["retained_transaction_plugin_edges"] is None
+    assert "core_transaction_retention_unqualified" in report["blockers"]
+    assert report["safe_to_apply"] is False
+
+
+def test_malformed_transaction_revokes_entire_edge_retention_qualification(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    malformed = "20261108T101215Z-2b88f133f09d"
+    _write_transaction(root, name=malformed, packages={"../secrets": {}})
+    report = inspect_transaction_plugin_references(
+        root, _plan("1.2.0", "1.2.1"),
+        core_transaction_plan=_core_decisions((TX, "retain"), (malformed, "retain")),
+    )
+    assert report["retention_edges_qualified"] is False
+    assert report["retained_transaction_plugin_edges"] is None
+    assert report["safe_to_apply"] is False

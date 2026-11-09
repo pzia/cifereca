@@ -212,7 +212,7 @@ def inspect_updater_retention_readonly(
     plugins = inspect_plugin_version_history(packages_root, now=now)
     from .updater_retention_cross_store import inspect_transaction_plugin_references
     cross_store = inspect_transaction_plugin_references(
-        runtime_root, plugins.get("plan"),
+        runtime_root, plugins.get("plan"), core_transaction_plan=core.get("plan"),
     )
     backups = None
     if backups_root is not None:
