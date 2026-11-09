@@ -101,7 +101,7 @@ def stage_bnf_loan_acsm(
                 session, "rights_selected_delivery_candidate", None,
             )
             if not callable(offer_snapshot) or not callable(deliver_selected):
-                _refuse("bnf_selected_delivery_abi_unavailable")
+                _refuse("bnf_loan_token_unavailable")
             try:
                 selected = offer_snapshot(
                     account, edition_id=loan.record_id, right_id=loan.id,
