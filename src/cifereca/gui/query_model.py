@@ -38,6 +38,10 @@ def result_row(item, *, purchase_evidence=None, identity_id=None,
         current_source_epoch=source_context_epoch,
     )
     result = asdict(item)
+    # A provider-supplied owned=True must not bypass the verified state via
+    # the generic row dictionary consumed by filters or action adapters.
+    if not verified_purchase and result.get('owned') is True:
+        result['owned'] = False
     # asdict() includes every ClassificationEvidence.raw_code, which is
     # upstream-supplied and may contain sensitive data. Publish only the
     # versioned, fixed-vocabulary UI projection; never emit provenance raw.
