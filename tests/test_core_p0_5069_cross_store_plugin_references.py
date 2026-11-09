@@ -1,0 +1,136 @@
+"""#5069 B8: transaction-plugin graph edges are diagnostic, never GC authority."""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from cifereca import updater
+from cifereca.updater_retention_cross_store import (
+    _plugin_version_id, inspect_transaction_plugin_references,
+)
+
+
+PACKAGE = "org.synthetic.provider"
+TX = "20261108T101214Z-2b88f133f09d"
+
+
+def _write_transaction(runtime, *, version_before="1.2.0",
+                       version_after="1.2.1", name=TX, packages=None):
+    directory = runtime / "transactions" / name
+    directory.mkdir(parents=True)
+    record = {
+        "schema": updater.TRANSACTION_SCHEMA, "id": name,
+        "created_at": "20261108T101214Z", "state": "applied",
+        "packages": packages if packages is not None else {
+            PACKAGE: {
+                "before": {"exists": True, "versions": [version_before]},
+                "after": {"exists": True, "versions": [version_after]},
+            },
+        },
+    }
+    (directory / "transaction.json").write_text(json.dumps(record))
+    return directory
+
+
+def _plan(*versions):
+    return {"objects": [
+        {"object_id": _plugin_version_id(PACKAGE, version)}
+        for version in versions
+    ]}
+
+
+def test_absent_store_is_readonly_but_not_gc_eligibility(tmp_path):
+    root = tmp_path / "runtime"
+    report = inspect_transaction_plugin_references(root, _plan())
+    assert report["transactions"] == 0
+    assert report["plugin_version_edges"] == 0
+    assert report["coverage"] == ["transaction_plugin_version_edges"]
+    assert report["safe_to_apply"] is False
+    assert not root.exists()
+
+
+def test_exact_before_after_versions_resolve_without_leaking_package_names(tmp_path):
+    root = tmp_path / "runtime"
+    journal = _write_transaction(root)
+    before = journal.stat().st_mtime_ns
+    report = inspect_transaction_plugin_references(root, _plan("1.2.0", "1.2.1"))
+    assert report["transactions"] == 1
+    assert report["plugin_version_edges"] == 2
+    assert report["resolved_edges"] == 2
+    assert report["unresolved_edges"] == 0
+    assert report["safe_to_apply"] is False
+    assert journal.stat().st_mtime_ns == before
+    assert PACKAGE not in json.dumps(report)
+    assert str(root) not in json.dumps(report)
+
+
+def test_missing_historical_version_is_blocker_not_orphan_purge_license(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    report = inspect_transaction_plugin_references(root, _plan("1.2.1"))
+    assert report["resolved_edges"] == 1
+    assert report["unresolved_edges"] == 1
+    assert "transaction_plugin_version_missing" in report["blockers"]
+    assert report["safe_to_apply"] is False
+
+
+@pytest.mark.parametrize("bad", [
+    {PACKAGE: {"before": {"exists": True, "versions": ["../private"]}}},
+    {PACKAGE: {"before": {"exists": True, "versions": [True]}}},
+    {PACKAGE: {"before": {"exists": True, "versions": ["1.2", "1.2"]}}},
+    {PACKAGE: {"before": {"exists": "true", "versions": ["1.2"]}}},
+    {"../../secrets": {"before": {"exists": True, "versions": ["1.2"]}}},
+])
+def test_malformed_or_private_references_refused_without_echo(tmp_path, bad):
+    root = tmp_path / "runtime"
+    _write_transaction(root, packages=bad)
+    report = inspect_transaction_plugin_references(root, _plan("1.2"))
+    assert "transaction_plugin_reference_unqualified" in report["blockers"]
+    assert report["coverage"] == []
+    assert report["safe_to_apply"] is False
+    assert "../../secrets" not in json.dumps(report)
+
+
+def test_seven_transactions_and_two_versions_do_not_imply_deletion(tmp_path):
+    root = tmp_path / "runtime"
+    for idx in range(7):
+        _write_transaction(
+            root, name=f"20261108T10121{idx}Z-2b88f133f09d",
+            version_before="1.2.0", version_after="1.2.1",
+        )
+    report = inspect_transaction_plugin_references(root, _plan("1.2.0", "1.2.1"))
+    assert report["transactions"] == 7
+    assert report["plugin_version_edges"] == 2
+    assert report["resolved_edges"] == 2
+    assert report["safe_to_apply"] is False
+
+
+def test_symbolic_link_never_exposes_private_transaction(tmp_path):
+    root = tmp_path / "runtime"
+    outside = tmp_path / "secret"
+    outside.mkdir()
+    (outside / "transaction.json").write_text("PRIVATE_CONTENT")
+    txdir = root / "transactions"
+    txdir.mkdir(parents=True)
+    (txdir / TX).symlink_to(outside, target_is_directory=True)
+    report = inspect_transaction_plugin_references(root, _plan())
+    assert report["transactions"] == 0
+    assert "unsafe_transaction_reference_entry" in report["blockers"]
+    assert "PRIVATE_CONTENT" not in json.dumps(report)
+    assert report["safe_to_apply"] is False
+
+
+def test_official_retention_command_keeps_cross_store_incomplete(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    monkeypatch.setattr(updater, "install_root", lambda: root)
+    monkeypatch.setattr(updater, "_plugin_packages_root", lambda: tmp_path / "packages")
+    monkeypatch.setattr(updater, "state_dir", lambda **kw: tmp_path / "state")
+    assert updater.main(["--retention-inspect", "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    edges = report["cross_store_reference_inspection"]
+    assert edges["plugin_version_edges"] == 2
+    assert edges["unresolved_edges"] == 2
+    assert report["safe_to_apply"] is False
+    assert "cross_store_reference_proofs" in report["pending_stores"]
