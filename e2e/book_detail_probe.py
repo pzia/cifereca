@@ -648,9 +648,15 @@ def main():
         access = [node for node in walk(panel("library").content)
                   if isinstance(node, Adw.PreferencesGroup) and node.get_title() == "Bibliothèques et accès"]
         assert len(access) == 1
-        facts = [node.get_subtitle() for node in walk(access[0]) if isinstance(node, Adw.ActionRow)]
-        assert any("Achat possédé en ligne" in value for value in facts)
-        assert not any("Fichier local :" in value for value in facts)
+        facts = [(node.get_title(), node.get_subtitle())
+                 for node in walk(access[0]) if isinstance(node, Adw.ActionRow)]
+        # #4682: entitlement kind is a typed row heading, not a raw
+        # paragraph in the subtitle. Preserve the exact positive/right
+        # and no-local-file checks after rendering separate profile cards.
+        assert any(kind.strip() == "Achat possédé en ligne" and bool(value.strip())
+                   for kind, value in facts)
+        assert not any(kind.strip() == "Fichier local"
+                       or "Fichier local :" in value for kind, value in facts)
         buttons = [node for node in walk(panel("library"))
                    if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_id", "") == ("resume-index-numilog" if owned_action["resume"] else "download-owned-" + owned_action["provider"])]
         assert len(buttons) == 1, "Action individuelle du livre possédé absente"
