@@ -22,6 +22,7 @@ from time import monotonic, time
 from browser_recorder_http import (
     MAX_BODY_BYTES, MAX_EXCHANGES, MAX_TOTAL_BODY_BYTES,
     PrivateExchange, PrivateHttpTrace, _BODY_REASONS,
+    _AUTH_SCHEMA_REASONS, _valid_auth_schema, _auth_flow, _url_origin,
 )
 
 SCHEMA = "cifereca.browser-recorder.private-session/1"
@@ -67,12 +68,49 @@ def _aead():
         raise VaultError("vault_crypto_unavailable") from exc
 
 
+def _validated_auth_structure_row(row: dict, allowed_origins: tuple[str, ...]) -> bool:
+    """Validate optional version-1, values-free schema at both storage edges."""
+    schema_keys = ("auth_request_schema", "auth_response_schema")
+    state_keys = ("auth_request_schema_state", "auth_response_schema_state")
+    for direction, schema_key, state_key in (
+        ("request", schema_keys[0], state_keys[0]),
+        ("response", schema_keys[1], state_keys[1]),
+    ):
+        schema = row.get(schema_key)
+        state = row.get(state_key, "not_applicable")
+        if (type(state) is not str or state not in _AUTH_SCHEMA_REASONS
+                or not _valid_auth_schema(schema, direction=direction)
+                or (state == "schema_captured") != (schema is not None)):
+            return False
+        if schema is not None and (
+            row.get("metadata_only") is not False
+            or _url_origin(row.get("url")) not in allowed_origins
+            or not str(row.get("url", "")).startswith("https://")
+            or not _auth_flow(row.get("url"))
+            or (direction == "request" and (
+                row.get("method") != "POST"
+                or row.get("request_body") is not None
+                or row.get("request_body_reason") != "auth_redacted"
+            ))
+            or (direction == "response" and (
+                row.get("response_body") is not None
+                or row.get("response_body_reason") != "auth_redacted"
+                or row.get("response_body_state") != "body_omitted"
+            ))
+        ):
+            return False
+    return True
+
+
 def _record(trace: PrivateHttpTrace, session_id: str, state: str) -> bytes:
     if state not in _STATES or not _ID.fullmatch(session_id):
         raise VaultError("vault_invalid")
     if len(trace.exchanges) > MAX_EXCHANGES:
         raise VaultError("vault_limit")
     entries = [asdict(e) for e in trace.exchanges]
+    for row in entries:
+        if not _validated_auth_structure_row(row, trace.origins):
+            raise VaultError("vault_invalid")
     data = {
         "schema": SCHEMA,
         "id": session_id,
@@ -144,13 +182,20 @@ def _unrecord(blob: bytes, session_id: str):
         for index, row in enumerate(rows):
             # Old CFRVLT01 sessions predate per-direction reason codes.
             # Accept only those exact legacy fields, never arbitrary data.
-            legacy_fields = _FIELD_NAMES - {
-                "request_body_reason", "response_body_reason",
+            schema_fields = {
+                "auth_request_schema", "auth_response_schema",
+                "auth_request_schema_state", "auth_response_schema_state",
             }
+            old_fields = _FIELD_NAMES - schema_fields
+            without_reasons = {"request_body_reason", "response_body_reason"}
+            legacy_fields = old_fields - without_reasons
+            new_legacy_fields = _FIELD_NAMES - without_reasons
             if type(row) is not dict or set(row) not in (
-                _FIELD_NAMES, legacy_fields,
+                _FIELD_NAMES, new_legacy_fields, old_fields, legacy_fields,
             ):
                 raise ValueError("invalid entry")
+            if not _validated_auth_structure_row(row, trace.origins):
+                raise ValueError("invalid auth structure")
             if any(
                 type(row[key]) is not str or row[key] not in _BODY_REASONS
                 for key in ("request_body_reason", "response_body_reason")

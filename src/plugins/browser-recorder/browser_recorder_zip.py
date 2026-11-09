@@ -25,7 +25,7 @@ from browser_recorder import RecorderError, SAFE_SEGMENTS, site_origin
 from browser_recorder_review import _SECRETS, _IDS, _JWT, _variants
 from browser_recorder_devkit import core_contract_kit
 from browser_recorder_download import _open_parent_without_symlinks
-from browser_recorder_http import _BODY_REASONS
+from browser_recorder_http import _BODY_REASONS, _valid_auth_schema, _AUTH_SCHEMA_REASONS, _auth_flow, _url_origin
 
 ZIP_SCHEMA = "cifereca.browser-recorder.approved-zip/1"
 MAX_EXCHANGES = 240
@@ -732,6 +732,50 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
             "response_headers": _safe_headers(entry["response_headers"]),
             "bodies": {},
         }
+        # Reviewed/shared ZIP is stricter than the encrypted private vault:
+        # expose only safe structural field names, never dynamic IDs or any
+        # original auth value. The source bodies remain absent.
+        projected_auth = {}
+        raw_auth = entry.get("auth_structure")
+        for direction in ("request", "response"):
+            record = (raw_auth.get(direction)
+                      if type(raw_auth) is dict else None)
+            state = record.get("state") if type(record) is dict else None
+            schema = record.get("schema") if type(record) is dict else None
+            if (outgoing["metadata_only"] is True
+                    or _url_origin(entry["url"]) not in allowed_origins
+                    or not str(entry["url"]).startswith("https://")
+                    or not _auth_flow(entry["url"])
+                    or state not in _AUTH_SCHEMA_REASONS
+                    or state != "schema_captured"
+                    or not _valid_auth_schema(schema, direction=direction)
+                    or schema is None):
+                projected_auth[direction] = {
+                    "state": ("metadata_only" if outgoing["metadata_only"] is True
+                              else state if state in _AUTH_SCHEMA_REASONS
+                              and state != "schema_captured"
+                              else "auth_schema_unavailable"),
+                    "schema": None,
+                }
+                continue
+            if direction == "request":
+                filtered = {
+                    "version": 1,
+                    "query_names": [name for name in schema["query_names"]
+                                    if _safe_field_key(name)],
+                    "form_names": [name for name in schema["form_names"]
+                                   if _safe_field_key(name)],
+                }
+            else:
+                filtered = {
+                    "version": 1,
+                    "keys": [row for row in schema["keys"]
+                             if _safe_field_key(row[0])],
+                }
+            projected_auth[direction] = {
+                "state": "schema_captured", "schema": filtered,
+            }
+        outgoing["auth_structure"] = projected_auth
         if "~route-" in outgoing["url"]:
             masked_exchange_routes += 1
         for direction in ("request", "response"):

@@ -8,6 +8,10 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     if window._closed:
         return False
     window._closed = True
+    # #757: drop this window's scoped GTK4 overlay and StyleManager handler.
+    # This is safe for headless windows with no theme installed.
+    from cifereca.gui.modern_light_theme import release_modern_light
+    release_modern_light(window)
     frame_probe = getattr(window, "_ui_perf_frame_probe", None)
     window._ui_perf_frame_probe = None
     if frame_probe is not None:

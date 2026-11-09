@@ -14,15 +14,15 @@ import re
 import subprocess
 import sys
 
-from scripts.ci_provider_core_coupling_inventory import inspect_source
+from scripts.ci_provider_core_coupling_inventory import DEFAULT_PROVIDERS, inspect_source
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _SOURCE = "src/cifereca/"
 
 
-def signal_counts(source: str) -> Counter[tuple[str, str]]:
+def signal_counts(source: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> Counter[tuple[str, str]]:
     """Provider-specific import/comparison multiplicity, ignoring line moves."""
-    result = inspect_source(source)
+    result = inspect_source(source, providers)
     counts: Counter[tuple[str, str]] = Counter()
     for kind, rows in result.items():
         for row in rows:
@@ -33,8 +33,9 @@ def signal_counts(source: str) -> Counter[tuple[str, str]]:
 
 def added_signals(
     old_source: str, new_source: str,
+    providers: tuple[str, ...] = DEFAULT_PROVIDERS,
 ) -> dict[tuple[str, str], int]:
-    old, new = signal_counts(old_source), signal_counts(new_source)
+    old, new = signal_counts(old_source, providers), signal_counts(new_source, providers)
     return {key: count - old[key] for key, count in sorted(new.items())
             if count > old[key]}
 
@@ -51,6 +52,50 @@ def _git(root: Path, *args: str, missing_ok: bool = False) -> bytes:
     return result.stdout
 
 
+def _manifest_providers(root: Path, revision: str) -> set[str]:
+    """Read provider IDs and import roots from committed manifests, never plugins.
+
+    The two revisions are unioned so a manifest rename/removal cannot hide
+    an added Core dependency in the same PR. Invalid manifests fail closed.
+    """
+    paths = _git(root, "ls-tree", "-r", "--name-only", revision, "--", "src/plugins/")
+    names: set[str] = set()
+    for path in paths.decode("utf-8").splitlines():
+        if not path.endswith("/cifereca-plugin.json"):
+            continue
+        raw = json.loads(_git(root, "show", revision + ":" + path))
+        if not isinstance(raw, dict) or not isinstance(raw.get("plugins"), list):
+            raise ValueError("invalid_plugin_manifest")
+        package = raw.get("package")
+        if not isinstance(package, dict) or not isinstance(package.get("id"), str):
+            raise ValueError("invalid_plugin_manifest")
+        for descriptor in raw["plugins"]:
+            if not isinstance(descriptor, dict):
+                raise ValueError("invalid_plugin_manifest")
+            if not str(descriptor.get("type", "")).startswith("provider."):
+                continue
+            identifier = descriptor.get("id")
+            if not isinstance(identifier, str) or not identifier.strip():
+                raise ValueError("invalid_plugin_manifest")
+            names.add(identifier.casefold())
+            # Include the provider's opaque suffix (e.g. library.example)
+            # and exact Python import root declared by its entrypoint.
+            if identifier.startswith("provider.") and len(identifier) > 9:
+                names.add(identifier[9:].casefold())
+            entrypoint = descriptor.get("entrypoint")
+            if isinstance(entrypoint, str) and ":" in entrypoint:
+                module = entrypoint.split(":", 1)[0]
+                if module and all(part.isidentifier() for part in module.split(".")):
+                    names.add(module.casefold().split(".")[0])
+        # Package-level imports are also implementation dependencies.
+        package_id = package["id"].casefold()
+        names.add(package_id)
+        if ".provider." in package_id:
+            names.add(package_id.split(".provider.", 1)[1])
+        names.add(path.split("/")[2].casefold())
+    return names
+
+
 def gate(root: Path, base: str, head: str) -> dict[str, object]:
     """Inspect ONLY changed installed Core Python objects, never plugins."""
     if not (_SHA.fullmatch(base) and _SHA.fullmatch(head)):
@@ -61,6 +106,7 @@ def gate(root: Path, base: str, head: str) -> dict[str, object]:
         root, "diff", "--name-status", "--no-renames",
         base + "..." + head, "--", _SOURCE,
     )
+    providers = tuple(sorted(set(DEFAULT_PROVIDERS) | _manifest_providers(root, base) | _manifest_providers(root, head)))
     violations: dict[str, dict[str, int]] = {}
     parse_errors: list[str] = []
     scanned = 0
@@ -83,7 +129,7 @@ def gate(root: Path, base: str, head: str) -> dict[str, object]:
                      else _git(root, "show", base + ":" + path))
         try:
             delta = added_signals(
-                old_bytes.decode("utf-8"), new_bytes.decode("utf-8"),
+                old_bytes.decode("utf-8"), new_bytes.decode("utf-8"), providers,
             )
         except (SyntaxError, UnicodeError):
             parse_errors.append(path)
@@ -96,6 +142,7 @@ def gate(root: Path, base: str, head: str) -> dict[str, object]:
     return {
         "schema": "core.provider.coupling-monotone/1",
         "changed_core_python_files": scanned,
+        "discovered_provider_ids": len(providers),
         "violations": dict(sorted(violations.items())),
         "parse_errors": sorted(parse_errors),
         "pass": not violations and not parse_errors,

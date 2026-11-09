@@ -34,10 +34,22 @@ def test_private_history_is_opt_in_and_does_not_change_attested_stats():
 
 def test_history_only_uses_safe_source_and_review_status_vocabulary():
     from cifereca.gui.library_declaration_history import (
-        _REVIEW_LABELS, _SOURCE_LABELS,
+        _REVIEW_LABELS, _source_label,
     )
 
-    assert set(_SOURCE_LABELS) == {'kobo', 'numilog', 'paris'}
+    from types import SimpleNamespace as NS
+    window = NS(service=NS(provider_display_name=lambda key: {
+        'kobo': 'Kobo', 'numilog': 'Numilog', 'paris': 'Bibliothèques de Paris',
+        'future': 'Bibliothèque future',
+    }[key]))
+    assert _source_label(window, 'future') == 'Bibliothèque future'
+    assert _source_label(window, 'paris') == 'Bibliothèques de Paris'
+    assert _source_label(window, 'unknown') == 'Source non identifiée'
+    assert _source_label(window, 'bad\nprovider') == 'Source non identifiée'
+    assert _source_label(NS(service=NS(provider_display_name=lambda _: '\nSECRET')),
+                         'future') == 'Source non identifiée'
+    assert _source_label(NS(service=NS(provider_display_name=lambda _: 32)),
+                         'future') == 'Source non identifiée'
     assert set(_REVIEW_LABELS) == {
         'recorded_unverified_file', 'source_or_right_changed', 'revoked',
     }

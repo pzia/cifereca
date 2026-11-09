@@ -24,15 +24,21 @@ class ChildOutputError(RuntimeError):
 
 
 def run_plugin_child(command: list[str], *, timeout: float,
-                     on_line: Callable[[bytes], None]) -> subprocess.CompletedProcess:
+                     on_line: Callable[[bytes], None],
+                     pass_fds: tuple[int, ...] = (),
+                     extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     """Drain both pipes concurrently, with bounded memory and a single deadline.
 
     Callbacks run on the caller thread. Never return/rollback while the direct
     child is alive; on POSIX its subprocess group is also stopped on failure.
     """
     env = dict(os.environ, **{PROGRESS_ENV: "1"})
+    if extra_env:
+        env.update(extra_env)
+    child_kwargs = {"pass_fds": pass_fds} if pass_fds else {}
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            env=env, start_new_session=(os.name == "posix"))
+                            env=env, start_new_session=(os.name == "posix"),
+                            **child_kwargs)
     events: queue.Queue[bytes] = queue.Queue(maxsize=128)
     stopped = threading.Event()
     overflow = threading.Event()

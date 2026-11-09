@@ -148,6 +148,7 @@ def test_recent_projection_uses_search_facets_and_no_library_filters():
     input_data = [{"key": "recent-a"}, {"key": "recent-b"}]
     controls = object()
     window = NS(
+        service=NS(provider_display_name=lambda provider: "Provider " + provider),
         recent_page=NS(show_rows=lambda rows: events.append(("show", rows))),
         _recent_entries_cache=[],
         search_controls=controls,
@@ -159,6 +160,7 @@ def test_recent_projection_uses_search_facets_and_no_library_filters():
         )),
     )
     def project(items, **kwargs):
+        assert kwargs["provider_display_name"] is window.service.provider_display_name
         events.append(("project", len(items), kwargs["row_factory"]))
         return ["first", "second"], {"recent-a": input_data[0]}
 
@@ -175,6 +177,26 @@ def test_recent_projection_uses_search_facets_and_no_library_filters():
     assert round(events[3][2]) == 4
     assert window._recent_entries_cache == input_data
     assert window._recent_entries_cache is not input_data
+
+
+def test_recent_render_without_service_is_inert_and_keeps_headless_fixtures():
+    events = []
+    window = NS(
+        recent_page=NS(show_rows=lambda rows: events.append(("show", rows))),
+        _recent_entries_cache=[],
+        search_controls=object(),
+        _attach_row_facets=lambda *_args: events.append(("facets",)),
+        ui_perf=NS(record=lambda *_args: events.append(("perf",))),
+    )
+    def project(items, **kwargs):
+        assert kwargs["provider_display_name"] is None
+        return [], {}
+    ticks = iter((1.0, 1.001))
+    render.render_recent(
+        window, [], perf_counter=lambda: next(ticks),
+        project_recent_rows=project, BookListItem=object,
+    )
+    assert events == [("facets",), ("show", []), ("perf",)]
 
 
 def test_recent_render_without_page_does_not_scan_or_advance_clock():

@@ -10,8 +10,18 @@ import json
 
 import pytest
 
-from cifereca.core.manual_bnf_borrow import (
-    manual_bnf_borrow, manual_bnf_borrow_available,
+from functools import partial
+from cifereca.core.manual_library_borrow import (
+    manual_borrow, manual_borrow_available,
+)
+
+# The provider-specific wrapper is retired; preserve the exact test
+# preconditions through the generic Core admission contract.
+manual_bnf_borrow = partial(
+    manual_borrow, provider_id="bnf-pret", docbase="BNF_PRET",
+)
+manual_bnf_borrow_available = partial(
+    manual_borrow_available, provider_id="bnf-pret", docbase="BNF_PRET",
 )
 from cifereca.core.borrow_action_scope import borrow_claim_key
 from cifereca.models import Account, Loan, SearchResult

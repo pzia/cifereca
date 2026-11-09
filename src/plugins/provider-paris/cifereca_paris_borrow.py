@@ -136,9 +136,27 @@ def borrow_with_claim(session, item, account, *, admission, claimed_receipt,
             # Only a fresh, exact ListLoans response can resolve this attempt.
             require_current()
         require_current()
-        confirmed_loan = observed_loan(client.loans("DILICOM", ""))
+        try:
+            confirmation_rows = client.loans("DILICOM", "")
+        except Cancelled:
+            raise
+        except Exception:
+            # The redirect may already have created the loan and yielded
+            # an ACSM; a failed verification GET is NOT an absent loan.
+            logging.getLogger("cifereca").info(
+                "TRACE paris pnb-loan phase=borrow_pending_confirmation "
+                "reason=inventory_unavailable initial_acsm_offer=%s",
+                bool(acsm_url),
+            )
+            raise ProviderCapabilityError("paris_borrow_confirmation_unavailable") from None
         require_current()
+        confirmed_loan = observed_loan(confirmation_rows)
         if confirmed_loan is None:
+            logging.getLogger("cifereca").info(
+                "TRACE paris pnb-loan phase=borrow_pending_confirmation "
+                "reason=loan_not_attested initial_acsm_offer=%s",
+                bool(acsm_url),
+            )
             raise ProviderCapabilityError("paris_borrow_result_unverified")
         if acsm_url:
             confirmed_loan.ebook_url = acsm_url
