@@ -877,8 +877,13 @@ def reconnect_expired_configured_source_once(
         return None
 
     accepted = False
+    # A plugin factory returning an already registered sibling must not
+    # result in reconnecting or closing that sibling session.
+    fresh_object = all(
+        existing is not replacement for existing in self._sessions.values()
+    )
     try:
-        if not isinstance(replacement, ProviderSession) or replacement is expired_session:
+        if not fresh_object or not isinstance(replacement, ProviderSession):
             return None
         accounts = replacement.connect()
         if (replacement.connected is not True
@@ -954,7 +959,7 @@ def reconnect_expired_configured_source_once(
     except Exception:
         return None
     finally:
-        if not accepted:
+        if not accepted and fresh_object:
             try:
                 replacement.close()
             except Exception:
