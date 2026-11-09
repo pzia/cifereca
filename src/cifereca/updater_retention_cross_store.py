@@ -72,7 +72,9 @@ def inspect_transaction_plugin_references(
     blockers: set[str] = {"cross_store_other_edges_unqualified"}
     refs: set[str] = set()
     transactions_seen = 0
-    if (root.is_symlink() or folder.is_symlink()
+    if (any(node.is_symlink() for node in (root, *root.parents))
+            or folder.is_symlink()
+            or (root.exists() and not root.is_dir())
             or (folder.exists() and not folder.is_dir())):
         blockers.add("unsafe_transaction_reference_root")
         entries: list[Path] = []
@@ -120,9 +122,22 @@ def inspect_transaction_plugin_references(
         else:
             for item in observed:
                 value = item.get("object_id") if type(item) is dict else None
-                if type(value) is not str or not value.startswith("plugin_version:"):
+                reasons = item.get("reasons") if type(item) is dict else None
+                if (type(value) is not str
+                        or re.fullmatch(r"plugin_version:[a-f0-9]{64}", value) is None
+                        or type(reasons) is not list
+                        or any(type(reason) is not str for reason in reasons)
+                        or value in known_ids):
                     complete = False
                     blockers.add("plugin_reference_identity_unqualified")
+                    continue
+                # A hash name alone does not prove an updater-owned version.
+                # Only the version inspector's validated receipt can count
+                # as resolved; uncertain versions remain unresolved.
+                if any(reason in reasons for reason in (
+                    "unowned", "unknown_timestamp", "future_timestamp",
+                )):
+                    blockers.add("plugin_reference_ownership_unqualified")
                     continue
                 known_ids.add(value)
     missing = refs - known_ids
