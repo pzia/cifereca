@@ -86,6 +86,14 @@ SCENARIOS = {
         "runner": "gtk-detail",
         "width": 1600,
     },
+    "book-detail-1700": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P1 #4682 : reproduire la largeur terrain ~1700 px en vraie fiche GTK.",
+        "runner": "gtk-detail",
+        "width": 1700,
+        "height": 900,
+    },
     "mainwindow-baseline-1366": {
         "plugin": "core", "fixture": "search-filters",
         "description": "P0 #1123: MainWindow, async navigation, keyboard, two identities and normal close.",
