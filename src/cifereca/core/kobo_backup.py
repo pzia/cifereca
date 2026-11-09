@@ -18,7 +18,6 @@ from typing import Any, Callable
 from ..acquisition import Acquisition
 from ..kobo import KoboAdeptError
 from ..kobo.vault import KoboVaultError
-from ..locking import InterProcessLock, LockBusyError
 from ..library_files import safe_library_component, sha256_file
 from ..artifact_inspection import inspect_artifact
 from ..paths import acquisition_lock_file
@@ -1129,38 +1128,8 @@ def _kobo_backup_due(
 
 
 def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, credential_id: str | None=None, retry_scope_blocked: bool=False, cancelled: Callable[[], bool] | None=None, lock_factory, lock_path) -> dict[str, Any]:
-    """Compatibility entry point for the Kobo local synchronization.
-
-    0.8.0 keeps the validated cross-process serialization for acquisition work. The
-    same global lock is intentionally named for local acquisition rather
-    than Kobo so the 0.8.x loan synchronizer can share it.
-    """
-    # The public legacy entry must fail before acquiring a filesystem lock
-    # or evaluating caller-supplied callbacks, including for an unscoped batch.
-    # Canonical source synchronization is dispatched through plugin_api.
+    """Retired legacy W2 facade: never invoke a fallback or acquire its lock."""
     raise ProviderConfigurationError("kobo_legacy_w2_retired_use_canonical_provider")
-
-    lock = lock_factory(lock_path())
-    try:
-        with lock:
-            if credential_id is None:
-                if retry_scope_blocked:
-                    raise ProviderConfigurationError(
-                        "Le réessai de délégation Kobo exige un compte explicite"
-                    )
-                if cancelled is not None:
-                    raise ProviderConfigurationError(
-                        "Annulation Kobo : compte explicite requis"
-                    )
-                return self._sync_kobo_backup_locked(progress=progress)
-            return self._sync_kobo_backup_account_locked(
-                credential_id, progress=progress, cancelled=cancelled,
-                retry_scope_blocked=retry_scope_blocked,
-            )
-    except LockBusyError as exc:
-        raise ProviderConfigurationError(
-            "Une synchronisation locale est déjà en cours dans une autre instance de cifereca"
-        ) from exc
 
 
 def _attested_received_kobo_copy(
