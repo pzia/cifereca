@@ -35,7 +35,7 @@ def _write_transaction(runtime, *, version_before="1.2.0",
 
 def _plan(*versions):
     return {"objects": [
-        {"object_id": _plugin_version_id(PACKAGE, version)}
+        {"object_id": _plugin_version_id(PACKAGE, version), "reasons": []}
         for version in versions
     ]}
 
@@ -90,6 +90,20 @@ def test_malformed_or_private_references_refused_without_echo(tmp_path, bad):
     assert report["coverage"] == []
     assert report["safe_to_apply"] is False
     assert "../../secrets" not in json.dumps(report)
+
+
+def test_unqualified_plugin_version_is_not_a_resolved_reference(tmp_path):
+    root = tmp_path / "runtime"
+    _write_transaction(root)
+    plan = _plan("1.2.0", "1.2.1")
+    plan["objects"][0]["reasons"] = ["unowned", "unknown_timestamp"]
+    report = inspect_transaction_plugin_references(root, plan)
+    assert report["resolved_edges"] == 1
+    assert report["unresolved_edges"] == 1
+    assert "plugin_reference_ownership_unqualified" in report["blockers"]
+    assert report["safe_to_apply"] is False
+
+
 
 
 def test_seven_transactions_and_two_versions_do_not_imply_deletion(tmp_path):
