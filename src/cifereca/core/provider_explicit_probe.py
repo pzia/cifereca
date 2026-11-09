@@ -49,8 +49,16 @@ def run_explicit_provider_probe(
         raise ExplicitProbeRefused("explicit_probe_provider_unavailable")
     if getattr(plugin.descriptor, "interactive_authentication", False) is not True:
         raise ExplicitProbeRefused("explicit_probe_not_interactive")
-    # Provider-owned options validate the selected diagnostic mode.
-    # Core must not know a provider-specific configuration key.
+    # For an HTTP-capable interactive provider the button is a one-shot
+    # consent to TEST the saved account, even when background sync is OFF.
+    # The descriptor declares the opt-in key; Core never knows provider IDs
+    # or persists this overlay. No global reconnect or account registration.
+    options = dict(row.get("options") or {})
+    key = getattr(plugin.descriptor, "background_authentication_option_key", None)
+    specs = getattr(plugin.descriptor, "account_options", ())
+    if (type(key) is str and key and type(specs) is tuple
+            and any(getattr(spec, "key", None) == key for spec in specs)):
+        options[key] = "on"
 
     session = None
     try:
@@ -58,7 +66,7 @@ def run_explicit_provider_probe(
             credential_id=credential_id,
             label=str(row.get("label") or plugin.descriptor.display_name),
             credentials=dict(row.get("credentials") or {}),
-            options=dict(row.get("options") or {}),
+            options=options,
             config=service.config, storage=service.storage,
             diagnostics=service.diagnostics,
         )
@@ -71,6 +79,17 @@ def run_explicit_provider_probe(
                 provider_id=provider_id, status="observed",
                 reason="provider_diagnostic_completed_unverified",
             )
+        # Successful ephemeral authentication is visible as such, but does
+        # not register the temporary account in the Core. The client is
+        # closed by finally and cannot enter the automatic sync registry.
+        if getattr(session, "connected", None) is True:
+            accounts = getattr(session, "accounts", ())
+            if isinstance(accounts, (tuple, list)) and accounts:
+                return ExplicitProbeResult(
+                    provider_id=provider_id, status="connected_ephemeral",
+                    reason="provider_connection_test_succeeded_ephemeral",
+                    connected=True,
+                )
         return ExplicitProbeResult(
             provider_id=provider_id, status="observed",
             reason="provider_diagnostic_completed_unverified",

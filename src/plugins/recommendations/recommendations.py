@@ -470,16 +470,46 @@ def _public_recommendation_notice(item: Any) -> str | None:
 
 
 def _public_cover_url(item: Any) -> str | None:
-    """Conservative cover URL for both list rows and the detail panel.
+    """Preserve attested public image URLs for both list and detail.
 
-    The renderer may load thumbnails automatically, without a user click.
-    Reject credentials, signed URLs and private origins before either view
-    receives the image URL. Try the second declared image if the first fails.
+    Unlike public *document* links, genuine BnF catalogue images may carry
+    only the public size/cache-version pair (`size` and `t`). Keep the
+    exact source URL; do not erase the query or infer an edition. A signed,
+    unknown or partial query is still rejected before it can reach CoverView.
+    The existing public origin/path validator remains the authority.
     """
     for field in ("thumbnail_url", "cover_url"):
-        url = _public_external_field(item, field)
-        if url:
-            return url
+        ordinary = _public_external_field(item, field)
+        if ordinary:
+            return ordinary
+        try:
+            value = get_field(item, field, None)
+        except Exception:
+            continue
+        if type(value) is not str or not 1 <= len(value) <= 2048:
+            continue
+        original = value.strip()
+        try:
+            parts = urlsplit(original)
+        except ValueError:
+            continue
+        # A versioned catalogue image is not an acquisition URL or an
+        # arbitrary signed URL. Accept precisely the already-attested
+        # size+timestamp query used by public cover CDNs; nothing else.
+        query = parts.query
+        if (parts.scheme != "https" or parts.netloc != "covers.feedbooks.net"
+                or not parts.path.startswith("/item/")):
+            continue
+        if (parts.fragment
+                or not re.fullmatch(
+                    r"(?:size=(?:small|medium|large)&t=[0-9]{1,12}"
+                    r"|t=[0-9]{1,12}&size=(?:small|medium|large))",
+                    query,
+                )):
+            continue
+        public_base = parts._replace(query="", fragment="").geturl()
+        if _external_book_url(public_base) is not None:
+            return original
     return None
 
 
@@ -868,6 +898,19 @@ class UxRecommendationsView:
         self._exclude_owned.connect("toggled", lambda *_: self.refresh())
         controls.append(self._exclude_owned)
 
+        # #4681: never infer liking from possession or enable saved feedback
+        # on page load. The user deliberately opts in for the current Core
+        # identity, and only for whole-library recommendations.
+        self._preference_optin = Gtk.CheckButton(label="Utiliser mes appréciations")
+        self._preference_optin.set_active(False)
+        self._preference_optin.set_tooltip_text(
+            "Calcul facultatif avec mes appréciations enregistrées pour ce profil. "
+            "Désactivé par défaut ; aucun prêt ou achat n'est une appréciation."
+        )
+        self._resetting_preference_optin = False
+        self._preference_optin.connect("toggled", self._preference_optin_changed)
+        controls.append(self._preference_optin)
+
         # The configured threshold is the baseline. A later user change
         # is an active *view* filter, not a new recommendation ranking.
         self._affinity_initial_threshold = self._config_int("minimum_score", 15)
@@ -1179,6 +1222,21 @@ class UxRecommendationsView:
             self._reload_reference_books(())
             self.refresh()
 
+    def _clear_preference_optin(self) -> None:
+        widget = getattr(self, "_preference_optin", None)
+        if widget is not None and widget.get_active():
+            self._resetting_preference_optin = True
+            try:
+                widget.set_active(False)
+            finally:
+                self._resetting_preference_optin = False
+
+    def _preference_optin_changed(self, *_args) -> None:
+        if not getattr(self, "_resetting_preference_optin", False):
+            # The explicit click invalidates the previous ranking. No saved
+            # preference is used merely by displaying or filtering the view.
+            self.refresh()
+
     def _reference_changed(self, *_args) -> None:
         if self._reloading_references:
             return
@@ -1192,6 +1250,10 @@ class UxRecommendationsView:
             return
         self._reference_book = reference
         self.plugin._pending_reference = reference
+        self._clear_preference_optin()
+        optin = getattr(self, "_preference_optin", None)
+        if optin is not None:
+            optin.set_sensitive(reference is None)
         self.refresh()
 
     def set_reference_book(self, book, *, refresh: bool = True) -> None:
@@ -1200,6 +1262,10 @@ class UxRecommendationsView:
         prepare_reference(book, max_queries=self._config_int("max_queries", 8))
         self._reference_book = book
         self.plugin._pending_reference = book
+        self._clear_preference_optin()
+        optin = getattr(self, "_preference_optin", None)
+        if optin is not None:
+            optin.set_sensitive(False)
         self._reload_reference_books(self._reference_books)
         if refresh:
             self.refresh()
@@ -1613,6 +1679,12 @@ class UxRecommendationsView:
             )
         exploration = int(self._exploration.get_value())
         exclude_owned = bool(self._exclude_owned.get_active())
+        use_preferences = (
+            reference is None
+            and bool(getattr(self, "_preference_optin", None)
+                     and self._preference_optin.get_active())
+            and self.selected_identity_id() == identity_id
+        )
 
         def operation(control):
             def progress(done: int, total: int, detail: str) -> None:
@@ -1660,6 +1732,7 @@ class UxRecommendationsView:
                 exploration=exploration,
                 exclude_owned=exclude_owned,
                 snapshot_cache=self._library_snapshot_cache,
+                **({"use_saved_explicit_preferences": True} if use_preferences else {}),
                 progress=progress,
                 partial=partial,
                 control=control,
@@ -1713,6 +1786,10 @@ class UxRecommendationsView:
             self._active_identity_id is not None
             and identity_id != self._active_identity_id
         )
+        if profile_changed:
+            # Preferences are account-local consent, not a sticky global UI
+            # setting. A→B→A requires a new explicit opt-in.
+            self._clear_preference_optin()
         self._active_identity_id = identity_id
         self._provisional_order.clear()
         self._set_provisional(False)

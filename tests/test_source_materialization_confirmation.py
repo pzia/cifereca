@@ -1,5 +1,6 @@
 """Confirmed per-source acquisition: real broker/SQLite/executor, fake transport."""
 import hashlib
+from dataclasses import replace
 import json
 import os
 import sqlite3
@@ -22,6 +23,10 @@ def case(tmp_path, monkeypatch):
     manifest = [{"product_id": "PRIVATE-book-1", "revision_id": "r1", "title": "PRIVATE title", "format": "EPUB"},
                 {"product_id": "PRIVATE-book-2", "revision_id": "r2", "title": "PRIVATE second", "format": "EPUB"}]
     service, session = _service(tmp_path, manifest)
+    session.descriptor = replace(session.descriptor, capabilities=replace(
+        session.capabilities, local_materialization=True,
+        legacy_materialization_checkpoint=True,
+    ))
     service.accounts = list(session.accounts)
     sessions = [session]
     # The selected source is the middle of three identities/accounts; current

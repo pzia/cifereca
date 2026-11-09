@@ -34,7 +34,8 @@ def test_configurable_account_probe_opt_in_no_automatic_network():
     p = mod.PLUGIN
     assert p.descriptor.state == "ready"
     assert p.descriptor.interactive_authentication
-    assert p.descriptor.capabilities.names() == []
+    assert p.descriptor.capabilities.loans is True
+    assert p.descriptor.background_authentication_option_key == "authenticated_sync"
     assert [f.key for f in p.descriptor.credential_fields] == ["username", "password"]
     assert p.descriptor.credential_fields[1].secret
     session = p.create_session(
@@ -548,5 +549,720 @@ def test_explicit_script_probe_failure_never_sends_post():
         assert details[-1]["error_code"] == "cas_script_unobserved"
         assert "logon.js" not in repr(details[-1])
         assert not session.connected and session.accounts == []
+    finally:
+        session.close()
+
+
+def test_unique_pagespeed_logon_is_selected_without_manual_account_option():
+    from types import SimpleNamespace
+    found = "/ui/250297600004/plug-in/logon/logon.js.pagespeed.ce.E1q2XCAAyC.js"
+    calls = []
+    diagnostics = []
+    class Client:
+        def observe_entry_once(self):
+            calls.append("entry")
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            calls.append("login")
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            calls.append("preflight")
+            return SimpleNamespace(
+                script_count=3,
+                same_origin_script_paths=("/scripts/vendor.js", found, "/assets/app.js"),
+                external_script_count=3,
+                field_names=("username", "password"),
+                inline_identifier_names=())
+        def inspect_login_script_once(self, *, path, consent):
+            assert consent is True and path == found
+            calls.append("script")
+            return SimpleNamespace(
+                identifier_names=("_dc", "captchaCheckValue"),
+                ajax_endpoint_referenced=True)
+        def close(self):
+            calls.append("close")
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            diagnostics.append(detail)
+    s = mod.PLUGIN.create_session(
+        credential_id="synthetic", label="reader",
+        credentials={"username": "PRIVATE-USER", "password": "PRIVATE-PASS"},
+        options={"experimental_http_probe": "on"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    s._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderCapabilityError, match="completed_login_not_attempted"):
+            s.connect()
+        assert calls == ["entry", "login", "preflight", "script", "close"]
+        assert diagnostics[-1]["phase"] == "login_script"
+        assert diagnostics[-1]["selection"] == "auto"
+        assert diagnostics[-1]["ajax_endpoint_referenced"] is True
+        assert s.diagnostic_state()["probe_phase"] == "script_structure_unverified"
+        assert found not in repr(diagnostics[-1])
+        assert not s.connected and s.accounts == []
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("paths", [
+    (),
+    ("/assets/app.js",),
+    ("/scripts/logon.js", "/plugins/logon.js"),
+    ("/scripts/logon.js", "/plugins/logon.js.pagespeed.ce.AA.js"),
+])
+def test_auto_logon_skips_absent_or_ambiguous_sources(paths):
+    assert mod._observed_logon_script(paths) == ""
+
+
+def test_auto_logon_picks_plain_static_script_too():
+    assert mod._observed_logon_script(
+        ("/assets/jquery.js", "/plug-in/logon/logon.js")
+    ) == "/plug-in/logon/logon.js"
+
+
+def test_auto_post_mode_reuses_one_session_without_manual_ajax_options():
+    from types import SimpleNamespace
+    events = []
+    calls = []
+    class Client:
+        def observe_entry_once(self):
+            calls.append("entry")
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            calls.append("login")
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            calls.append("preflight")
+            return SimpleNamespace(
+                script_count=0, same_origin_script_paths=(),
+                external_script_count=0, field_names=("username",),
+                inline_identifier_names=())
+        def submit_observed_login_once(self, *, username, password, consent):
+            calls.append("auto_post")
+            assert consent is True
+            assert username == "PRIVATE-SYNTHETIC-USER"
+            assert password == "PRIVATE-SYNTHETIC-PASSWORD"
+            return SimpleNamespace(status=200, outcome="failure_reported")
+        def observe_cas_once(self):
+            pytest.fail("no CAS for unsuccessful AJAX response")
+        def close(self):
+            calls.append("close")
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            events.append(detail)
+    s = mod.PLUGIN.create_session(
+        credential_id="cred", label="reader",
+        credentials={"username": "PRIVATE-SYNTHETIC-USER",
+                     "password": "PRIVATE-SYNTHETIC-PASSWORD"},
+        options={"experimental_http_probe": "auto-post"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    s._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderCapabilityError, match="completed_identity_unverified"):
+            s.connect()
+        assert calls == ["entry", "login", "preflight", "auto_post", "close"]
+        assert any(e["phase"] == "ajax_logon" and e.get("outcome") == "failure_reported"
+                   for e in events)
+        assert "PRIVATE-SYNTHETIC" not in repr(events)
+        assert not s.connected and s.accounts == []
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize(("failure_step", "expected_phase"), [
+    ("entry", "entry"),
+    ("login", "institution_login"),
+    ("preflight", "login_preflight"),
+    ("post", "ajax_logon"),
+    ("cas", "cas_return"),
+    ("loans", "loans_page"),
+])
+def test_error_diagnostic_reports_failing_ssostep_not_generic_preflight(
+    failure_step, expected_phase,
+):
+    from types import SimpleNamespace
+    events, calls = [], []
+
+    class Client:
+        def step(self, name):
+            calls.append(name)
+            if name == failure_step:
+                raise ValueError("SYNTHETIC-PRIVATE-DETAIL")
+        def observe_entry_once(self):
+            self.step("entry")
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            self.step("login")
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            self.step("preflight")
+            return SimpleNamespace(
+                script_count=0, same_origin_script_paths=(),
+                external_script_count=0, field_names=(), inline_identifier_names=())
+        def submit_observed_login_once(self, **kwargs):
+            self.step("post")
+            return SimpleNamespace(
+                outcome="success_reported", status=200,
+                error_count=0, message_present=False)
+        def observe_cas_once(self):
+            self.step("cas")
+            return SimpleNamespace(phase="landing_unverified", status=200)
+        def observe_loans_once(self):
+            self.step("loans")
+            return SimpleNamespace(phase="loans_html_unverified", status=200)
+        def close(self):
+            calls.append("closed")
+
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            events.append((status, detail))
+
+    session = mod.PLUGIN.create_session(
+        credential_id="synthetic", label="reader",
+        credentials={"username": "SYNTHETIC", "password": "SYNTHETIC"},
+        options={"experimental_http_probe": "auto-post"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    session._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderConfigurationError, match="biblioaccess_probe_http_failure"):
+            session.connect()
+        status, detail = events[-1]
+        assert status == "error"
+        assert detail["phase"] == expected_phase
+        assert detail["error_code"] == "biblioaccess_probe_http_failure"
+        assert "SYNTHETIC-PRIVATE-DETAIL" not in repr(events)
+        assert calls[-1] == "closed"
+        assert not session.connected and session.accounts == []
+    finally:
+        session.close()
+
+
+def test_ajax_failure_diagnostic_reports_only_json_presence_and_error_count():
+    from types import SimpleNamespace
+    events = []
+
+    class Client:
+        def observe_entry_once(self):
+            return SimpleNamespace(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            return SimpleNamespace(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            return SimpleNamespace(
+                script_count=0, same_origin_script_paths=(),
+                external_script_count=0, field_names=(), inline_identifier_names=())
+        def submit_observed_login_once(self, **kwargs):
+            return SimpleNamespace(
+                status=200, outcome="failure_reported",
+                error_count=2, message_present=True)
+        def close(self):
+            pass
+
+    class Diagnostics:
+        def add(self, category, operation, status, *, detail):
+            events.append(detail)
+
+    session = mod.PLUGIN.create_session(
+        credential_id="synthetic", label="reader",
+        credentials={"username": "SYNTHETIC", "password": "SYNTHETIC"},
+        options={"experimental_http_probe": "auto-post"},
+        config=None, storage=None, diagnostics=Diagnostics())
+    session._client_factory = Client
+    try:
+        with pytest.raises(mod.ProviderCapabilityError, match="completed_identity_unverified"):
+            session.connect()
+        answer = next(x for x in events if x["phase"] == "ajax_logon"
+                      and x.get("outcome") == "failure_reported")
+        assert answer["reported_error_count"] == 2
+        assert answer["response_message_present"] is True
+        assert answer["identity_verified"] is False
+        assert session.accounts == [] and not session.connected
+    finally:
+        session.close()
+
+
+def _synced_session(*, rows=None, logout=True, expired=False, credential="cred-a"):
+    """No real cookie, title, identifier or private capture enters the tests."""
+    from types import SimpleNamespace as NS
+
+    if rows is None:
+        rows = [NS(
+            product_ref="10001", book_id="20002",
+            title="SYNTHETIC-BOOK", due_at_local="08/11/2026 12:30:00",
+            acsm_offer_present=True,
+        )]
+    calls = []
+
+    class Client:
+        def __init__(self):
+            self.closed = False
+        def observe_entry_once(self):
+            calls.append("entry")
+            return NS(phase="entry_redirect_unverified", status=302)
+        def observe_login_once(self):
+            calls.append("login")
+            return NS(phase="login_html_unverified", status=200)
+        def login_preflight(self):
+            calls.append("preflight")
+            return NS(
+                script_count=0, same_origin_script_paths=(),
+                external_script_count=0, field_names=(),
+                inline_identifier_names=())
+        def submit_observed_login_once(self, *, username, password, consent):
+            assert username == "SYNTHETIC-USER"
+            assert password == "SYNTHETIC-SECRET" and consent is True
+            calls.append("post")
+            return NS(
+                outcome="success_reported", status=200,
+                error_count=0, message_present=False)
+        def observe_cas_once(self):
+            calls.append("cas")
+            return NS(phase="landing_unverified", status=200)
+        def observe_loans_once(self):
+            calls.append("initial_loans")
+            return NS(
+                phase="loans_html_unverified", status=200,
+                page_book_link_count=len(rows),
+                page_book_unique_count=len(rows),
+                page_loan_row_count=len(rows),
+                page_loan_row_partial_count=0,
+                logout_form_observed=logout,
+                _loan_rows=tuple(rows))
+        def read_authenticated_loans(self):
+            calls.append("live_loans")
+            if expired:
+                raise RuntimeError("PRIVATE-SYNTHETIC-SESSION-CLOSED")
+            return self.observe_loans_once()
+        def close(self):
+            self.closed = True
+            calls.append("close")
+    client = Client()
+    session = mod.PLUGIN.create_session(
+        credential_id=credential, label="SYNTHETIC-READER",
+        credentials={"username": "SYNTHETIC-USER", "password": "SYNTHETIC-SECRET"},
+        options={"authenticated_sync": "on", "experimental_http_probe": "off"},
+        config=None, storage=None, diagnostics=None,
+    )
+    session._client_factory = lambda: client
+    return session, client, calls
+
+
+def test_background_auth_promotes_only_positive_cookie_scoped_account_and_loan():
+    from cifereca.plugin_api import read_loan_inventory
+
+    session, http, calls = _synced_session()
+    accounts = session.connect()
+    assert session.connected is True
+    assert len(accounts) == 1
+    account = accounts[0]
+    assert account is session.accounts[0] and account.unique_id == "primary"
+    assert account.credential_id == "cred-a"
+    assert not http.closed
+    account.identity_id = "identity-a"  # Core does this on registration
+    observed = read_loan_inventory(session, account)
+    assert observed.status == "partial" and observed.reason_code == "inventory_not_exhaustive"
+    assert not observed.branch_claims_complete("biblioaccess", "digital")
+    assert len(observed.loans) == 1
+    loan = observed.loans[0]
+    assert loan.id == "biblioaccess:1409:10001"
+    assert loan.record_id == "20002" and loan.title == "SYNTHETIC-BOOK"
+    assert loan.medium == "digital"
+    assert loan.due_at.startswith("2026-11-08T12:30:00+01:00")
+    assert loan.source_provider == mod.PROVIDER_ID
+    assert loan.source_credential == "cred-a"
+    assert loan.source_account_id == "primary"
+    assert loan.identity_id == "identity-a"
+    assert loan.ebook_url is None and loan.can_return is False
+    assert calls.count("post") == 1
+    assert calls.count("live_loans") == 1
+    assert "PRIVATE" not in repr(observed)
+    session.close()
+    assert http.closed and not session.connected and session.accounts == []
+
+
+def test_background_sync_rejects_missing_logout_form_without_retaining_session():
+    session, http, calls = _synced_session(logout=False)
+    with pytest.raises(mod.ProviderConfigurationError, match="authenticated_page_unverified"):
+        session.connect()
+    assert not session.connected and not session.accounts and http.closed
+    assert calls.count("post") == 1
+    session.close()
+
+
+def test_background_synced_empty_page_is_partial_not_evidence_of_returned_loans():
+    from cifereca.plugin_api import read_loan_inventory
+
+    session, http, calls = _synced_session(rows=[])
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        observation = read_loan_inventory(session, account)
+        assert observation.status == "partial"
+        assert observation.loans == ()
+        assert not observation.branch_claims_complete("biblioaccess", "digital")
+        assert calls.count("post") == 1
+    finally:
+        session.close()
+
+
+def test_login_session_expiry_revokes_borrower_and_never_reuses_cookie():
+    from cifereca.plugin_api import read_loan_inventory
+
+    session, http, calls = _synced_session(expired=True)
+    account, = session.connect()
+    account.identity_id = "identity-a"
+    observation = read_loan_inventory(session, account)
+    assert observation.status == "failed"
+    assert observation.reason_code == "read_failed"
+    assert not session.connected and session.accounts == []
+    assert http.closed
+    with pytest.raises(mod.ProviderCapabilityError, match="loan_account_unbound"):
+        session.loans(account)
+    assert calls.count("post") == 1
+    session.close()
+
+
+def test_loan_binding_rejects_other_credential_and_different_account_object():
+    from cifereca.plugin_api import read_loan_inventory
+    from dataclasses import replace
+
+    one, client_one, calls_one = _synced_session(credential="cred-one")
+    two, client_two, calls_two = _synced_session(credential="cred-two")
+    try:
+        a, = one.connect()
+        b, = two.connect()
+        a.identity_id = "identity-one"
+        b.identity_id = "identity-two"
+        with pytest.raises(mod.ProviderCapabilityError, match="loan_account_unbound"):
+            one.loan_inventory_snapshot(replace(a))
+        with pytest.raises(mod.ProviderCapabilityError, match="loan_account_unbound"):
+            one.loan_inventory_snapshot(b)
+    finally:
+        # Validation failure may disconnect one, but never the other.
+        assert two.connected is True and b.credential_id == "cred-two"
+        assert calls_two.count("post") == 1
+        one.close()
+        two.close()
+    assert client_one.closed and client_two.closed
+
+
+def test_background_sync_requires_literal_opt_in_even_for_valid_probe_options():
+    session, client, calls = _synced_session()
+    session.options["authenticated_sync"] = "true"
+    session.options["experimental_http_probe"] = "auto-post"
+    with pytest.raises(mod.ProviderCapabilityError, match="completed_identity_unverified"):
+        session.connect()
+    assert client.closed and not session.connected and session.accounts == []
+    session.close()
+
+
+def test_authenticated_sync_does_not_get_stale_experimental_js():
+    """Legacy diagnostic JS cannot block background auth or add a GET."""
+    session, http, calls = _synced_session()
+    session.options["experimental_http_probe"] = "on"
+    session.options["experimental_login_script_path"] = "/scripts/old.pagespeed.js"
+    try:
+        accounts = session.connect()
+        assert len(accounts) == 1 and session.connected is True
+        assert calls.count("post") == 1
+        assert calls == [
+            "entry", "login", "preflight", "post", "cas", "initial_loans"]
+    finally:
+        session.close()
+
+
+def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage():
+    from cifereca.plugin_api import read_loan_inventory
+
+    class Diagnostics:
+        def __init__(self):
+            self.events = []
+        def add(self, category, operation, status, *, detail):
+            self.events.append((category, operation, status, detail))
+
+    session, http, calls = _synced_session()
+    diagnostics = Diagnostics()
+    session._diagnostics = diagnostics
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        observed = read_loan_inventory(session, account)
+        assert observed.status == "partial"
+        live_events = [
+            (status, detail) for _, _, status, detail in diagnostics.events
+            if detail.get("phase") == "loan_inventory"
+        ]
+        assert len(live_events) == 1
+        status, detail = live_events[0]
+        assert status == "observed"
+        assert detail["page_loan_row_count"] == 1
+        assert detail["page_loan_row_partial_count"] == 0
+        assert detail["completeness"] == "partial"
+        assert detail["connected"] is True
+        assert detail["session_revoked"] is False
+        assert detail["probe"] == "authenticated_sync"
+        assert "credential_id" not in detail
+        assert session.diagnostic_state()["probe_phase"] == "loan_inventory_observed"
+        for secret in ("SYNTHETIC-BOOK", "SYNTHETIC-USER", "SYNTHETIC-SECRET"):
+            assert secret not in repr(live_events)
+        assert calls.count("post") == 1
+    finally:
+        session.close()
+
+
+def test_expired_inventory_emits_closed_public_code_and_revokes_cookies():
+    from cifereca.plugin_api import read_loan_inventory
+
+    class Diagnostics:
+        def __init__(self):
+            self.events = []
+        def add(self, category, operation, status, *, detail):
+            self.events.append((status, detail))
+
+    session, http, calls = _synced_session(expired=True)
+    session._diagnostics = diag = Diagnostics()
+    account, = session.connect()
+    account.identity_id = "identity-a"
+    observed = read_loan_inventory(session, account)
+    assert observed.status == "failed"
+    assert not session.connected and http.closed
+    assert session.diagnostic_state()["probe_phase"] == "loan_inventory_failed"
+    errors = [d for status, d in diag.events
+              if status == "error" and d.get("phase") == "loan_inventory"]
+    assert len(errors) == 1
+    assert errors[0]["error_code"] == "biblioaccess_loan_inventory_unavailable"
+    assert errors[0]["session_revoked"] is True
+    assert errors[0]["connected"] is False
+    assert "PRIVATE-SYNTHETIC-SESSION-CLOSED" not in repr(diag.events)
+    assert calls.count("post") == 1
+    session.close()
+
+
+def test_known_cas_expiry_code_remains_classified_without_leaking_url():
+    from cifereca.plugin_api import read_loan_inventory
+    from biblioaccess_ajax_cas import AjaxCasError
+
+    class Diagnostics:
+        def __init__(self):
+            self.events = []
+        def add(self, _category, _operation, status, *, detail):
+            self.events.append((status, detail))
+
+    session, http, calls = _synced_session()
+    session._diagnostics = diag = Diagnostics()
+    account, = session.connect()
+    account.identity_id = "identity-a"
+    def expired():
+        calls.append("live_loans")
+        raise AjaxCasError("cas_authenticated_page_unverified")
+    http.read_authenticated_loans = expired
+    result = read_loan_inventory(session, account)
+    assert result.status == "failed"
+    assert session.connected is False and http.closed
+    failures = [d for status, d in diag.events
+                if status == "error" and d.get("phase") == "loan_inventory"]
+    assert len(failures) == 1
+    assert failures[0]["error_code"] == "cas_authenticated_page_unverified"
+    assert failures[0]["session_revoked"] is True
+    assert calls.count("post") == 1
+    session.close()
+
+
+def test_diagnostic_sink_failure_never_leaks_private_traceback(caplog):
+    import logging
+    from cifereca.plugin_api import read_loan_inventory
+
+    class BrokenDiagnostics:
+        def add(self, category, operation, status, *, detail):
+            raise RuntimeError("PRIVATE-SYNTHETIC-ACSM-TOKEN-NEVER-LOG")
+
+    session, http, calls = _synced_session()
+    session._diagnostics = BrokenDiagnostics()
+    try:
+        with caplog.at_level(logging.WARNING, logger="cifereca.plugin.biblioaccess"):
+            account, = session.connect()
+            account.identity_id = "identity-a"
+            snapshot = read_loan_inventory(session, account)
+        assert snapshot.status == "partial" and len(snapshot.loans) == 1
+        assert "biblioaccess_probe_diagnostic_sink_failed" in caplog.text
+        assert "PRIVATE-SYNTHETIC-ACSM-TOKEN-NEVER-LOG" not in caplog.text
+        assert calls.count("post") == 1
+    finally:
+        session.close()
+
+
+def test_production_account_declaration_has_no_stale_ajax_or_manual_diagnostic_fields():
+    descriptor = mod.PLUGIN.descriptor
+    assert [field.key for field in descriptor.credential_fields] == [
+        "username", "password"]
+    assert [field.key for field in descriptor.account_options] == [
+        "authenticated_sync"]
+    assert descriptor.account_options[0].default == "off"
+    assert descriptor.background_authentication_option_key == "authenticated_sync"
+    assert descriptor.interactive_authentication is True
+    assert descriptor.capabilities.loans is True
+
+
+def test_legacy_technical_options_are_still_supported_when_already_persisted():
+    """Retiring Settings rows must not silently delete a legacy probe path."""
+    session = mod.PLUGIN.create_session(
+        credential_id="SYNTHETIC-CREDENTIAL",
+        label="SYNTHETIC",
+        credentials={"username": "SYNTHETIC-USER", "password": "SYNTHETIC-PASS"},
+        options={
+            "authenticated_sync": "off",
+            "experimental_http_probe": "post",
+            "ajax_change_user": "false",
+            "ajax_provider": "SYNTHETIC-IDP",
+            "ajax_dc": "SYNTHETIC-FRESH-DYNAMIC",
+            "ajax_remember_me": "false",
+            "ajax_captcha": "",
+            "ajax_captcha_check_value": "SYNTHETIC-CHALLENGE",
+        },
+        config=None, storage=None, diagnostics=None,
+    )
+    try:
+        query, fields = session._post_payload()
+        assert query["provider"] == "SYNTHETIC-IDP"
+        assert fields["username"] == "SYNTHETIC-USER"
+        assert fields["captchaCheckValue"] == "SYNTHETIC-CHALLENGE"
+        assert session.connected is False
+    finally:
+        session.close()
+
+
+def test_active_loan_acsm_download_uses_fresh_signed_action_on_every_call(
+    monkeypatch, tmp_path,
+):
+    """Core does not receive or persist the signed URL; re-download allowed."""
+    from types import SimpleNamespace as NS
+    from cifereca.plugin_api import read_loan_inventory
+    import biblioaccess_acsm_delivery
+
+    signed = (
+        "https://entrepot2r.numilog.com/fulfillment/URLLink.acsm"
+        "?code=PRIVATE-SYNTHETIC-URL-TOKEN"
+    )
+    row = NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC-BOOK",
+        due_at_local="08/11/2026 12:30:00", acsm_offer_present=True,
+        acsm_url=signed,
+    )
+    session, client, calls = _synced_session(rows=[row])
+    received = []
+    def stage(url, folder):
+        received.append(url)
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / ("offer-" + str(len(received)) + ".acsm")
+        path.write_bytes(b"SYNTHETIC-ACSM-CONTENT")
+        return path
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm", stage)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = read_loan_inventory(session, account).loans
+        assert loan.raw == {"acsm_offer_present": True}
+        assert loan.ebook_url is None
+        for attempt in range(2):
+            path, returned_url = session.download_digital(loan, account, tmp_path)
+            assert returned_url == ""
+            assert path.read_bytes() == b"SYNTHETIC-ACSM-CONTENT"
+            assert path.suffix == ".acsm"
+        assert received == [signed, signed]
+        assert calls.count("post") == 1  # No repeat auth on re-download.
+        assert calls.count("live_loans") == 3  # One inventory + two fresh offers.
+        assert "PRIVATE-SYNTHETIC-URL-TOKEN" not in repr(loan)
+        assert session.connected is True
+    finally:
+        session.close()
+    assert client.closed
+
+
+def test_signed_acsm_cannot_be_downloaded_for_another_credential_or_book(
+    monkeypatch, tmp_path,
+):
+    from dataclasses import replace
+    from types import SimpleNamespace as NS
+    import biblioaccess_acsm_delivery
+
+    row = NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC-BOOK",
+        due_at_local="08/11/2026 12:30:00", acsm_offer_present=True,
+        acsm_url="https://entrepot2r.numilog.com/fulfillment/URLLink.acsm?x=secret",
+    )
+    session, client, calls = _synced_session(rows=[row])
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm",
+                        lambda *args: pytest.fail("unexpected delivery"))
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = session.loans(account)
+        with pytest.raises(mod.ProviderCapabilityError, match="loan_account_unbound"):
+            session.download_digital(
+                replace(loan, source_credential="other"), account, tmp_path)
+        assert client.closed is False
+        with pytest.raises(mod.ProviderCapabilityError, match="acsm_offer_unavailable"):
+            session.download_digital(
+                replace(loan, record_id="other"), account, tmp_path)
+        # The CAS session remains usable; the user can re-download later.
+        assert client.closed is False and session.connected
+        assert calls.count("post") == 1
+    finally:
+        session.close()
+
+
+def test_no_signed_offer_produces_a_visible_loan_but_no_auto_download():
+    from types import SimpleNamespace as NS
+
+    row = NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC-BOOK",
+        due_at_local="08/11/2026 12:30:00",
+        acsm_offer_present=False, acsm_url=None,
+    )
+    session, client, calls = _synced_session(rows=[row])
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = session.loans(account)
+        assert loan.raw == {} and loan.ebook_url is None
+        assert loan.medium == "digital"
+        assert session.capabilities.digital_download
+        assert session.capabilities.opening_loan_auto_acquisition
+    finally:
+        session.close()
+
+
+def test_transient_acsm_403_keeps_cas_session_for_redownload(monkeypatch, tmp_path):
+    from types import SimpleNamespace as NS
+    import biblioaccess_acsm_delivery
+
+    row = NS(
+        product_ref="10001", book_id="20002", title="SYNTHETIC-BOOK",
+        due_at_local="08/11/2026 12:30:00", acsm_offer_present=True,
+        acsm_url="https://entrepot2r.numilog.com/fulfillment/URLLink.acsm"
+                 "?token=PRIVATE-SYNTHETIC-RETRY",
+    )
+    session, http, calls = _synced_session(rows=[row])
+    attempts = []
+    def stage(url, folder):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise biblioaccess_acsm_delivery.ACSMDeliveryError(
+                "biblioaccess_acsm_denied")
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "fresh.acsm"
+        path.write_bytes(b"SYNTHETIC")
+        return path
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm", stage)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = session.loans(account)
+        with pytest.raises(mod.ProviderCapabilityError, match="acsm_stage_unavailable"):
+            session.download_digital(loan, account, tmp_path)
+        assert session.connected and not http.closed
+        path, used_url = session.download_digital(loan, account, tmp_path)
+        assert path.exists() and used_url == ""
+        assert calls.count("post") == 1
+        assert len(attempts) == 2
     finally:
         session.close()

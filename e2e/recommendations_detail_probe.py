@@ -48,7 +48,7 @@ from recommendations import RecommendationsPlugin
 from x11_input import X11Input
 
 
-COVER_URL = "https://covers.example.org/recommendation.png"
+COVER_URL = "https://covers.feedbooks.net/item/synthetic-id_12345.jpg?size=medium&t=1762000000"
 
 
 def ranked(book_id, title, isbn, *, score, provider="fixture"):

@@ -11,6 +11,7 @@ from ..plugin_api.models import DetailField, DetailSection
 from .borrow_for_identity_preview import (
     BorrowForIdentityOption, BorrowForIdentityPreview, _display_account_label,
 )
+from .borrow_for_identity_progress import CrossProfileBorrowProgress
 
 
 def cross_profile_borrow_detail_section(
@@ -79,4 +80,64 @@ def cross_profile_borrow_detail_section(
     )
 
 
-__all__ = ["cross_profile_borrow_detail_section"]
+def cross_profile_borrow_progress_detail_section(
+    progress: CrossProfileBorrowProgress,
+) -> DetailSection | None:
+    """Represent loan, delivery and copy as distinct non-actionable facts.
+
+    The loan's confirmed state never implies an available local book or a
+    transferable licence. The result intentionally carries only closed UI
+    labels, not lender IDs, claim receipts, URLs or an executable callback.
+    """
+    if (type(progress) is not CrossProfileBorrowProgress
+            or progress.executable is not False
+            or progress.retry_borrow is not False):
+        return None
+    states = {
+        ("not_attempted", "unavailable", "not_attempted",
+         "loan_not_attempted"): (
+            "Aucun emprunt effectué sur le profil prêteur",
+            "Livraison non vérifiée",
+            "Aucun transfert effectué",
+        ),
+        ("confirmed", "unavailable", "blocked",
+         "lender_loan_confirmed_transfer_unverified"): (
+            "Prêt confirmé sur le profil prêteur",
+            "Livraison non vérifiée",
+            "Copie vers le profil demandeur bloquée · droits non vérifiés",
+        ),
+        ("unknown", "unavailable", "blocked",
+         "loan_result_not_confirmed"): (
+            "Résultat du prêt inconnu · ne pas recommencer l'emprunt",
+            "Livraison non vérifiée",
+            "Copie vers le profil demandeur bloquée",
+        ),
+        ("unknown", "unavailable", "blocked",
+         "lender_scope_unverified"): (
+            "Profil prêteur non vérifié · statut du prêt inaccessible",
+            "Livraison non vérifiée",
+            "Copie vers le profil demandeur bloquée",
+        ),
+    }
+    labels = states.get((
+        progress.loan, progress.delivery, progress.transfer,
+        progress.reason_code,
+    ))
+    if labels is None:
+        return None
+    return DetailSection(
+        id="borrow-for-identity-progress",
+        title="Emprunt entre profils · suivi",
+        fields=(
+            DetailField("borrow-for-identity-loan", "Prêt", labels[0]),
+            DetailField("borrow-for-identity-delivery", "Livraison", labels[1]),
+            DetailField("borrow-for-identity-transfer", "Transfert", labels[2]),
+        ),
+        order=951,
+    )
+
+
+__all__ = [
+    "cross_profile_borrow_detail_section",
+    "cross_profile_borrow_progress_detail_section",
+]

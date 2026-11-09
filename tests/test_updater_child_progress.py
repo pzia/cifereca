@@ -17,11 +17,12 @@ from cifereca.update_progress import child_progress_receiver, update_operation, 
 SECRET = "https://private.invalid/?token=CHILD_SECRET"
 
 
-def _run(tmp_path, code, *, on_line=lambda _line: None, timeout=5):
+def _run(tmp_path, code, *, on_line=lambda _line: None, timeout=5, **child_options):
     script = tmp_path / "child.py"
     script.write_text(textwrap.dedent(code))
     return update_child.run_plugin_child([sys.executable, str(script)],
-                                         timeout=timeout, on_line=on_line)
+                                         timeout=timeout, on_line=on_line,
+                                         **child_options)
 
 
 def _line(**fields):
@@ -270,7 +271,7 @@ def test_real_child_is_reaped_before_transaction_restores_packages(tmp_path, mon
     monkeypatch.setattr(update_child.subprocess, "Popen", track)
     payload = packages / "org.test" / "1.0.0" / "payload.bin"
     terminal = "sys.exit(1)" if boundary == "failed_exit" else "time.sleep(10)"
-    def run(_command, *, timeout, on_line):
+    def run(_command, *, timeout, on_line, **child_options):
         def receive(line):
             on_line(line)
             if boundary == "interrupted":
@@ -282,7 +283,7 @@ def test_real_child_is_reaped_before_transaction_restores_packages(tmp_path, mon
             print(json.dumps({{"schema":"cifereca.update.progress/1", "stage":"plugin_install",
                 "status":"RUNNING", "plugin_index":2, "plugin_total":3}}), file=sys.stderr, flush=True)
             {terminal}
-        ''', on_line=receive, timeout=.4)
+        ''', on_line=receive, timeout=.4, **child_options)
     monkeypatch.setattr(updater, "run_plugin_child", run)
     monkeypatch.setattr(updater, "_apply_release_plugin_snapshot", real_apply)
     restore = updater._restore_transaction_packages

@@ -107,3 +107,19 @@ def test_invalid_unrelated_declaration_rejected_with_explicit_selection():
     bad = D("plugin.other", "genre", "", "1.0.0", "schema:genre.v1")
     with pytest.raises(ValueError, match="invalid_consolidator_declaration"):
         resolve([ONE, bad], "plugin.age.alpha", "1.0.0")
+
+
+@pytest.mark.parametrize("registry", [
+    [ONE, ONE],
+    [ONE, D("plugin.genre.alpha", "genre", "edition:fr",
+            "1.0.0", "schema:genre.v1"),
+     D("plugin.genre.alpha", "genre", "edition:fr",
+       "1.0.0", "schema:genre.other")],
+])
+def test_duplicate_registry_is_invalid_even_without_relevant_selection(registry):
+    # A no-op preview must not skip registry-wide ambiguity validation.
+    with pytest.raises(ValueError, match="ambiguous_consolidator_declaration"):
+        resolve(registry)
+    with pytest.raises(ValueError, match="ambiguous_consolidator_declaration"):
+        resolve(registry, "plugin.age.alpha", "1.0.0",
+                canonical_type="library.other")

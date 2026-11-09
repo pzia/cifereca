@@ -44,23 +44,31 @@ def unambiguous_loan_rows(loans: Iterable[Any]) -> tuple[Loan, ...]:
     """
     rows: dict[str, Loan] = {}
     conflicting: set[str] = set()
-    for loan in loans:
-        if type(loan) is not Loan:
-            continue
-        key = loan_source_key(loan)
-        if key in conflicting:
-            continue
-        previous = rows.get(key)
-        if previous is None:
-            rows[key] = loan
-            continue
-        try:
-            identical = previous == loan
-        except (ValueError, TypeError, RecursionError):
-            identical = False
-        if not identical:
-            conflicting.add(key)
-            rows.pop(key, None)
+    try:
+        for index, loan in enumerate(loans):
+            if index >= 10000:
+                # A truncated inventory cannot establish that any source key
+                # is unique; the missing tail may contradict an earlier card.
+                return ()
+            if type(loan) is not Loan:
+                continue
+            key = loan_source_key(loan)
+            if key in conflicting:
+                continue
+            previous = rows.get(key)
+            if previous is None:
+                rows[key] = loan
+                continue
+            try:
+                identical = previous == loan
+            except (ValueError, TypeError, RecursionError):
+                identical = False
+            if not identical:
+                conflicting.add(key)
+                rows.pop(key, None)
+    except Exception:
+        # Never publish early action rows from a failed lazy provider source.
+        return ()
     return tuple(rows.values())
 
 
@@ -74,10 +82,25 @@ def unique_library_loan(
     when provided by the library, narrow the match; no UI active-identity
     fallback or title/ISBN heuristic is permitted.
     """
-    loan_id = str(item.get("loan_id") or "")
-    if not loan_id:
+    # The library row may be plugin-projected. Never coerce opaque objects
+    # (including account credentials or IDs) to strings for action lookup.
+    if not isinstance(item, Mapping):
         return None
-    candidates = [loan for loan in loans if str(getattr(loan, "id", "") or "") == loan_id]
+    loan_id = item.get("loan_id")
+    if (type(loan_id) is not str or not 0 < len(loan_id) <= 1024
+            or not loan_id.isprintable()):
+        return None
+    candidates: list[Loan] = []
+    try:
+        for index, loan in enumerate(loans):
+            if index >= 10000:
+                # Not a complete inventory: a later conflicting borrower
+                # could carry the same loan ID. No partial match is safe.
+                return None
+            if type(loan) is Loan and loan.id == loan_id:
+                candidates.append(loan)
+    except Exception:
+        return None
     fields = (
         ("source_provider", "provider_id"),
         ("identity_id", "identity_id"),
@@ -86,11 +109,15 @@ def unique_library_loan(
     )
     for loan_attr, item_attr in fields:
         expected = item.get(item_attr)
-        if expected is not None and str(expected) != "":
-            candidates = [
-                loan for loan in candidates
-                if str(getattr(loan, loan_attr, "") or "") == str(expected)
-            ]
+        if expected is not None:
+            if type(expected) is not str or len(expected) > 1024:
+                return None
+            if expected:
+                candidates = [
+                    loan for loan in candidates
+                    if type(getattr(loan, loan_attr, None)) is str
+                    and getattr(loan, loan_attr) == expected
+                ]
     # An explicit empty primary-account ID is NOT an unknown borrower.
     # Converting both to strings made None and "" indistinguishable and
     # could attach an action to the wrong exact lending account.

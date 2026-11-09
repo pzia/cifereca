@@ -6,6 +6,7 @@ import hashlib
 import os
 import httpx
 from contextvars import ContextVar
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 from threading import RLock
@@ -167,6 +168,19 @@ DESCRIPTOR = ProviderDescriptor(
     id="paris",
     display_name="Bibliothèques de Paris",
     description="Catalogue, compte lecteur et prêt numérique PNB des Bibliothèques de Paris.",
+    # Versioned, read-only text contributions. State classification is the
+    # generic CoreUI projection, never a connection/acquisition permission.
+    search_status_notice_schema="cifereca.provider-search-ui/1",
+    search_status_notices=(
+        ("unknown", "Bibliothèques de Paris : source non connectée ; état du compte indéterminé."),
+        ("plugin_missing", "Bibliothèques de Paris : plugin absent ; recherche en ligne indisponible."),
+        ("plugin_disabled", "Bibliothèques de Paris : plugin désactivé ; recherche en ligne indisponible."),
+        ("catalog_unavailable", "Bibliothèques de Paris : catalogue non disponible dans ce profil."),
+        ("account_disconnected", "Bibliothèques de Paris : compte configuré mais source non connectée ; recherche en ligne indisponible."),
+        ("account_disabled", "Bibliothèques de Paris : compte désactivé pour ce profil ; recherche en ligne indisponible."),
+        ("account_unscoped", "Bibliothèques de Paris : source non connectée ; profil du compte à vérifier."),
+        ("account_missing", "Bibliothèques de Paris : aucun compte rattaché à ce profil ; recherche en ligne indisponible."),
+    ),
     state="ready",
     capabilities=ProviderCapabilities(
         authentication=True,
@@ -358,12 +372,84 @@ class ParisProviderSession(ProviderSession):
         # Tiny one-shot proof that Core's defensive copy stems from THIS
         # session's latest completed typed read, not a different borrower,
         # account instance or older session. Never retain loan rows here.
+        # One-call, task-local exact inventory pin for selected delivery. The
+        # candidate already fetched the current DILICOM card under the same
+        # inventory lock; do not issue a redundant ListLoans before file GET.
+        self._selected_delivery_inventory: ContextVar[LoanInventorySnapshot | None] = ContextVar(
+            "paris_selected_delivery_inventory", default=None,
+        )
+        # One source-sync invocation, one source, one session generation.
+        # No TTL/global rights cache and no reuse by manual actions.
+        self._source_sync_offer_lease: ContextVar[dict | None] = ContextVar(
+            "paris_source_sync_offer_lease", default=None,
+        )
         self._last_typed_loan_marker = None
         self.account_status: dict[str, Any] = {"usable": None, "reason": None}
         self.pairing_status: dict[str, Any] = {"complete": None, "error": None}
         self._loan_catalog_metadata_cache: dict[str, dict[str, Any]] = {}
         # Core owns the persistent claim; never reuse one in this session.
         self._borrow_claim_attempts: set[str] = set()
+
+    def _current_source_sync_offer_lease(self, account: Account) -> dict | None:
+        """Fail closed on rebind, reconnect, linked account or task migration."""
+        lease = self._source_sync_offer_lease.get()
+        if type(lease) is not dict or type(account) is not Account:
+            return None
+        with self._loan_inventory_lock:
+            try:
+                scope = LoanInventoryScope.for_account(account)
+                if (self.connected is not True
+                        or lease["scope"] != scope
+                        or lease["epoch"] != getattr(self, "_epoch", None)
+                        or lease["accounts_id"] != id(self._accounts)):
+                    return None
+                owners = [
+                    a for a in self._accounts if type(a) is Account
+                    and LoanInventoryScope.for_account(a) == scope
+                ]
+                if len(owners) != 1 or id(owners[0]) != lease["account_object_id"]:
+                    return None
+                return lease
+            except (TypeError, AttributeError, ValueError, KeyError):
+                return None
+
+    @contextmanager
+    def source_sync_inventory(self, account: Account):
+        """Ephemeral exact evidence only inside one Core source Sync.
+
+        Core already serializes acquisition with the shared writer lock.
+        The lease cannot outlive its ContextVar token or be used by a manual
+        selected offer after that source Sync. No HTTP or rights write here.
+        """
+        if type(account) is not Account:
+            raise ProviderCapabilityError("paris_source_sync_account_invalid")
+        with self._loan_inventory_lock:
+            scope = LoanInventoryScope.for_account(account)
+            owners = [
+                a for a in self._accounts if type(a) is Account
+                and LoanInventoryScope.for_account(a) == scope
+            ]
+            if (self.connected is not True
+                    or scope.provider_id != self.provider_id
+                    or scope.credential_id != self.credential_id
+                    or len(owners) != 1
+                    or self._source_sync_offer_lease.get() is not None):
+                raise ProviderCapabilityError("paris_source_sync_lease_unavailable")
+            lease = {
+                "scope": scope, "epoch": getattr(self, "_epoch", None),
+                "accounts_id": id(self._accounts),
+                "account_object_id": id(owners[0]),
+                "inventory": None, "rights": None,
+            }
+            token = self._source_sync_offer_lease.set(lease)
+        try:
+            yield
+        finally:
+            # Source-scoped evidence is erased regardless of success, timeout,
+            # cancellation or exception. Never retain an inter-cycle URL.
+            lease["inventory"] = None
+            lease["rights"] = None
+            self._source_sync_offer_lease.reset(token)
 
     @staticmethod
     def _account_unusable_reason(summary: dict[str, Any]) -> str | None:
@@ -1131,7 +1217,7 @@ class ParisProviderSession(ProviderSession):
                     for loan in digital_candidates
                 )
             )
-            return ProviderRightsSnapshot(
+            report = ProviderRightsSnapshot(
                 scope=ProviderRightsScope(
                     scope.identity_id, scope.provider_id,
                     scope.credential_id, scope.account_id,
@@ -1144,6 +1230,17 @@ class ParisProviderSession(ProviderSession):
                 pagination_complete=bool(complete), branch="dilicom",
                 observed_at=observed, snapshot_ref="paris.dilicom.listloans",
             )
+            # Only an exact, complete two-branch typed inventory can serve
+            # as an offer proof inside this already-locked Core source cycle.
+            # A failed/partial read never replaces an earlier attestation.
+            lease = self._current_source_sync_offer_lease(account)
+            if (lease is not None and complete
+                    and inventory.status == "success"
+                    and inventory.branch_claims_complete("syracuse", "physical")
+                    and report.status == "success"):
+                lease["inventory"] = inventory
+                lease["rights"] = report
+            return report
 
     def history(self, account: Account) -> list[HistoryItem]:
         return self._decorate(self.client.all_history(account.unique_id), self.provider_id, self.credential_id)
@@ -1452,10 +1549,33 @@ class ParisProviderSession(ProviderSession):
                 or type(right_id) is not str or not right_id
                 or len(edition_id) > 256 or len(right_id) > 256):
             raise ProviderCapabilityError("paris_selected_offer_not_admitted")
-        snapshot = self.rights_observation_snapshot(account)
+        lease = self._current_source_sync_offer_lease(account)
+        if self._source_sync_offer_lease.get() is not None and lease is None:
+            raise ProviderCapabilityError("paris_source_sync_lease_revoked")
+        cached = lease.get("rights") if lease is not None else None
+        if (type(cached) is ProviderRightsSnapshot
+                and cached.status == "success"
+                and cached.coverage == "complete"
+                and cached.scope == self._downloadable_scope(account)):
+            snapshot = cached
+            _TRACE_LOG.info(
+                "TRACE paris selected offer proof=previously_attested "
+                "reobservation_attempted=false reason_code=same_cycle_exact",
+            )
+        else:
+            snapshot = self.rights_observation_snapshot(account)
+            _TRACE_LOG.info(
+                "TRACE paris selected offer proof=fresh_observation "
+                "reobservation_attempted=true reason_code=unscoped_or_unproven",
+            )
         right = snapshot.exact(edition_id, right_id, "loan")
         if right is None or not right.provider_attested:
-            raise ProviderCapabilityError("paris_selected_offer_unobserved")
+            # A failed or incomplete private inventory is not evidence that
+            # this already-attested loan disappeared or was revoked.
+            reason = ("paris_selected_offer_observation_unavailable"
+                      if snapshot.coverage != "complete"
+                      else "paris_selected_offer_unobserved")
+            raise ProviderCapabilityError(reason)
         # State='unknown' is descriptive. The PNB action is independently
         # attested only when the fresh private ListLoans has EbookUrl.
         return replace(snapshot, rights=(right,))
@@ -1507,10 +1627,39 @@ class ParisProviderSession(ProviderSession):
                     or selected.delivery_offer_id != delivery_offer_id):
                 raise ProviderCapabilityError("paris_candidate_offer_unavailable")
             # Preserve the same exact account/borrower binding as the observation.
-            # The legacy explicit method independently validates both identities,
-            # the live loan card and owner *again* around the PNB token GET.
+            # A fully attested A→B Core source cycle can use its exact typed
+            # inventory; independent/manual requests must do a fresh GET.
+            # Existing download_digital and supplier host/token guards still
+            # revalidate scope and candidate before *content* GET.
             with self._loan_inventory_lock:
-                inventory = self._snapshot_for_account(account)
+                lease = self._current_source_sync_offer_lease(account)
+                if self._source_sync_offer_lease.get() is not None and lease is None:
+                    raise ProviderCapabilityError("paris_source_sync_lease_revoked")
+                old_rights = lease.get("rights") if lease is not None else None
+                old_inventory = lease.get("inventory") if lease is not None else None
+                prior = (
+                    old_rights.exact(edition_id, right_id, "loan")
+                    if type(old_rights) is ProviderRightsSnapshot
+                    else None
+                )
+                if (type(old_inventory) is LoanInventorySnapshot
+                        and old_inventory.status == "success"
+                        and old_inventory.scope == LoanInventoryScope.for_account(account)
+                        and old_inventory.branch_claims_complete("dilicom", "digital")
+                        and old_inventory.branch_claims_complete("syracuse", "physical")
+                        and prior is not None and prior.delivery_attested
+                        and prior.delivery_offer_id == delivery_offer_id):
+                    inventory = old_inventory
+                    _TRACE_LOG.info(
+                        "TRACE paris candidate proof=previously_attested "
+                        "reobservation_attempted=false reason_code=same_cycle_exact",
+                    )
+                else:
+                    inventory = self._snapshot_for_account(account)
+                    _TRACE_LOG.info(
+                        "TRACE paris candidate proof=fresh_observation "
+                        "reobservation_attempted=true reason_code=unscoped_or_unproven",
+                    )
                 if not _paris_core_admission_current(admission_current):
                     raise ProviderCapabilityError("paris_core_admission_revoked")
                 candidates = []
@@ -1537,14 +1686,18 @@ class ParisProviderSession(ProviderSession):
                     raise ProviderCapabilityError("paris_candidate_source_unobserved")
                 # Another fresh ListLoans inside download_digital rejects a
                 # disappeared link, rebind or loan mismatch before any PNB GET.
-                return self.download_digital(
-                    candidates[0], account, directory,
-                    expected_right_id=right_id,
-                    expected_identity_id=account.identity_id,
-                    selected_stage_fd=stage_fd,
-                    **({"admission_current": admission_current}
-                       if admission_current is not None else {}),
-                )
+                pin = self._selected_delivery_inventory.set(inventory)
+                try:
+                    return self.download_digital(
+                        candidates[0], account, directory,
+                        expected_right_id=right_id,
+                        expected_identity_id=account.identity_id,
+                        selected_stage_fd=stage_fd,
+                        **({"admission_current": admission_current}
+                           if admission_current is not None else {}),
+                    )
+                finally:
+                    self._selected_delivery_inventory.reset(pin)
 
         finally:
             os.close(stage_fd)
@@ -1666,7 +1819,18 @@ class ParisProviderSession(ProviderSession):
                 # new acquisition/token GET. It cannot prove complete
                 # absence or turn an untrusted state into 'active'. Require
                 # a single exact DILICOM right before touching any PNB URL.
-                fresh = self._snapshot_for_account(account)
+                pinned = self._selected_delivery_inventory.get()
+                if pinned is not None:
+                    # The pinned read is only usable inside the candidate
+                    # call under the same reentrant session lock. A changed
+                    # account or incomplete upstream observation fails closed.
+                    if (type(pinned) is not LoanInventorySnapshot
+                            or pinned.scope != LoanInventoryScope.for_account(account)
+                            or not pinned.branch_claims_complete("dilicom", "digital")):
+                        raise ProviderConfigurationError("paris_selected_right_unobserved")
+                    fresh = pinned
+                else:
+                    fresh = self._snapshot_for_account(account)
                 if not scope_current():
                     raise ProviderConfigurationError("paris_download_scope_mismatch")
                 failed_dilicom = any(

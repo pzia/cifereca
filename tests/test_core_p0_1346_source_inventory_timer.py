@@ -482,3 +482,41 @@ def test_scheduled_refresh_refuses_missing_or_malformed_capabilities(bad_caps):
     assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ()
     assert r.configure() is False
     assert r.records["timers"] == {}
+
+
+@pytest.mark.parametrize("provider", ["kobo", "numilog", "fixture-source"])
+def test_modern_source_with_empty_inventory_phase_fails_closed_for_every_provider(provider):
+    """An explicit empty broker phase snapshot never falls back to last_attempt."""
+    row = NS(
+        identity_id="alice", source_id=SOURCE_ID, provider_id=provider,
+        sync_capabilities=("scheduled_refresh",),
+        enabled=True, connected=True, sync_capable=True,
+        status="idle", last_attempt="",
+        phase_states=(),
+    )
+    r = rig(
+        accounts=[row],
+        modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}},
+    )
+    assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ()
+    # Heartbeat registration is policy-driven, but no unauthorized batch is queued.
+    assert r.configure() is False
+    tick = next(iter(r.records["timers"].values()))
+    assert tick() is True
+    assert r.jobs == []
+
+
+def test_legacy_source_without_phase_contract_preserves_passive_fallback():
+    """Compatibility for older broker doubles is structural, not a brand list."""
+    row = NS(
+        identity_id="alice", source_id=SOURCE_ID,
+        provider_id="synthetic-unrecognized",
+        sync_capabilities=("scheduled_refresh",),
+        enabled=True, connected=True, sync_capable=True,
+        status="idle", last_attempt="",
+    )
+    r = rig(
+        accounts=[row],
+        modes={SOURCE_ID: {"mode": "periodic", "interval_minutes": 15}},
+    )
+    assert timer.periodic_identities_due(r.window, r.broker, now=NOW) == ("alice",)

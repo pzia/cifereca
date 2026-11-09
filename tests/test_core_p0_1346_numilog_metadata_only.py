@@ -70,11 +70,8 @@ def _install(service, monkeypatch, tmp_path, identities=("default",)):
         assert rows == [_row(f"private-{identity_id}", 0)]
         return len(rows)
 
-    def forbidden_acquire(*args, **kwargs):
-        pytest.fail("a generic source inventory sync may not acquire an EPUB")
-
     monkeypatch.setattr(service, "_mirror_remote_results", mirror)
-    monkeypatch.setattr(service, "_acquire_personal_library_item", forbidden_acquire)
+    assert not hasattr(service, "_acquire_personal_library_item")
     return accounts, calls
 
 
@@ -182,6 +179,7 @@ def test_source_sync_and_opening_mirror_never_call_legacy_numilog_backup():
     assert "_acquire_personal_library_item" not in account_impl
     code = (root / "src/cifereca/services.py").read_text(encoding="utf-8")
     mirror = code.split("def mirror_personal_libraries(", 1)[1]
-    mirror = mirror.split("\n    def _acquire_personal_library_item(", 1)[0]
+    mirror = mirror.split("\n    def recent_acquisitions(", 1)[0]
+    assert "def _acquire_personal_library_item(" not in code
     assert "_acquire_personal_library_item" not in mirror
     assert "session.download_library_item(" not in mirror
