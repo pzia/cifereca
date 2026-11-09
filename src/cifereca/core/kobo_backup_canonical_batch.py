@@ -2,9 +2,8 @@
 
 Only the PUBLIC legacy `LibraryService.sync_kobo_backup` facade calls this
 adapter. A modern Kobo session always uses the canonical A→B executor through
-`sync_kobo_backup_account`; an incomplete ABI keeps its guarded compatibility
-worker in an independently acquired lock. No one global W2 lock nests a
-canonical Sync lock, and no selected modern session may fall back to W2.
+`sync_kobo_backup_account`; an incomplete ABI is refused by the retired W2 entry and never triggers an
+opaque provider GET. No global W2 lock nests a canonical Sync lock.
 """
 from __future__ import annotations
 
@@ -51,9 +50,9 @@ def _active_source_batch(service):
                             "backup", None) is not True):
             continue
         selected.append((session, canonical))
-    # Historical account-wide W2 behavior remains unchanged while NO modern
-    # source is connected. As soon as one is modern, the global W2 writer
-    # must not be the entry point, including in a mixed modern/legacy batch.
+    # When no connected source has a complete ABI, return None so that the
+    # public facade refuses the retired W2 path. Mixed batches are dispatched
+    # per account and incomplete-ABI accounts fail without legacy GET.
     if not any(canonical for _session, canonical in selected):
         return None
     credentials = [
@@ -95,7 +94,7 @@ def run_global_kobo_with_canonical_sources(
 ) -> dict[str, Any] | None:
     """Run a modern/mixed global Kobo batch by EXACT credential.
 
-    Return None only when ALL connected Kobo sources are legacy-compatible.
+    Return None only when no connected Kobo source has a complete ABI.
     Modern sources are exclusively canonical. Each account gets its own
     acquisition lease; a changed session is not dispatched by an old W2
     fallback. The public report has aggregate counts only.
