@@ -888,6 +888,13 @@ def reconnect_expired_configured_source_once(
                 or len(accounts) != 1 or type(accounts[0]) is not Account):
             return None
         candidate = accounts[0]
+        # The returned account must be the actual object registered inside
+        # the NEW ProviderSession, not a copy or an unbound assertion.
+        from .loan_action_scope import _inert_session_accounts
+        registered = _inert_session_accounts(replacement)
+        if (registered is None
+                or sum(member is candidate for member in registered) != 1):
+            return None
         candidate.identity_id = scope[0]
         if ((candidate.identity_id, candidate.provider_id,
              candidate.credential_id, candidate.unique_id,
