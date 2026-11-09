@@ -70,7 +70,7 @@ x = import_module("cifereca.kobo.executor")
 notice = "provider-kobo"
 x = getattr(service, "provider-kobo")
 ''')
-    assert result == {"imports": [], "comparisons": [], "dispatch_tables": [], "dispatch_calls": [], "provider_method_calls": []}
+    assert result == {"imports": [], "comparisons": [], "dispatch_tables": [], "dispatch_calls": [], "provider_method_calls": [], "provider_dynamic_calls": []}
 
 
 def test_identifier_parts_not_substring_for_dynamic_imports():
@@ -80,7 +80,7 @@ importlib.import_module("package.kobold.impl")
 importlib.import_module("package.numeric.helper")
 importlib.import_module(get_dynamic_module())
 ''')
-    assert result == {"imports": [], "comparisons": [], "dispatch_tables": [], "dispatch_calls": [], "provider_method_calls": []}
+    assert result == {"imports": [], "comparisons": [], "dispatch_tables": [], "dispatch_calls": [], "provider_method_calls": [], "provider_dynamic_calls": []}
 
 
 def test_existing_debt_is_stable_and_new_alias_trips_delta():
