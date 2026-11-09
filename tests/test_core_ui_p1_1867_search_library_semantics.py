@@ -63,8 +63,6 @@ def test_remote_catalogue_cannot_be_promoted_to_owned_by_search_flags():
 def test_private_numilog_requires_full_scope_and_origin_before_claiming_owned():
     private = _private_numilog()
     variants = (
-        replace(private, owned=1),
-        replace(private, owned=False),
         replace(private, source_collection="public_catalog"),
         replace(private, source_credential=""),
         replace(private, source_credential="__public__"),
@@ -77,6 +75,13 @@ def test_private_numilog_requires_full_scope_and_origin_before_claiming_owned():
     # Neither supplier scenario nor collection vocabulary creates the right.
     assert result_row(replace(private, scenario="NUMILOG_PUBLIC"),
                       purchase_evidence=_proof(), identity_id="alice")["state"] == "remote_owned"
+    for vendor_hint in (None, False, 1):
+        actual = result_row(
+            replace(private, owned=vendor_hint), purchase_evidence=_proof(),
+            identity_id="alice",
+        )
+        assert actual["state"] == "remote_owned"
+        assert actual["owned"] is True
 
 
 def test_anonymous_numilog_search_shows_notice_not_purchase_or_download():
