@@ -80,10 +80,12 @@ def test_colliding_private_accounts_and_revisions_keep_distinct_stable_ui_keys()
     first = replace(base, source_account_id="account-A", revision_id="v1")
     second = replace(base, source_account_id="account-B", revision_id="v1")
     third = replace(base, source_account_id="account-A", revision_id="v2")
-    from cifereca.gui.search_results import _remote_result_row_keys
-    keys = _remote_result_row_keys([first, second, third])
+    # The headless fixture binds standalone module functions to its fake
+    # host; call the original pure function without importing GTK widgets.
+    keys_for = host._remote_result_row_keys.__func__
+    keys = keys_for([first, second, third])
     assert len(set(keys)) == 3
-    reversed_keys = _remote_result_row_keys([third, second, first])
+    reversed_keys = keys_for([third, second, first])
     assert reversed_keys == list(reversed(keys))
     assert all(":scope:" in key for key in keys)
 
