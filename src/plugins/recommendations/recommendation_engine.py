@@ -168,16 +168,34 @@ def identifier_values(item: Any) -> set[str]:
     """
 
     cleaned: set[str] = set()
-    provider = _text(
-        get_field(item, "source_provider", "")
-        or get_field(item, "provider_id", "")
-        or get_field(item, "provider", "")
-    )
-    source_item = _text(
-        get_field(item, "source_item_id", "")
-        or get_field(item, "item_id", "")
-        or get_field(item, "record_id", "")
-    )
+
+    def _first_string(mapping: Mapping[str, Any], names: tuple[str, ...]) -> str:
+        for name in names:
+            value = mapping.get(name)
+            if type(value) is str and value:
+                return value
+        return ""
+
+    # Legacy source identity may be read from one projection only. Never
+    # splice a provider from one nested mapping with an item from another:
+    # the resulting synthetic key could suppress an unrelated edition.
+    top = {
+        name: get_field(item, name, None)
+        for name in ("source_provider", "provider_id", "provider",
+                     "source_item_id", "item_id", "record_id")
+    }
+    provider = _first_string(top, ("source_provider", "provider_id", "provider"))
+    source_item = _first_string(top, ("source_item_id", "item_id", "record_id"))
+    legacy_sources: set[str] = set()
+
+    def _legacy_key(provider_value: str, item_value: str) -> str:
+        provider_key = _identifier_scalar(provider_value)
+        source_key = _identifier_scalar(item_value)
+        return f"source:{provider_key}:{source_key}" if provider_key and source_key else ""
+
+    top_legacy = _legacy_key(provider, source_item)
+    if top_legacy:
+        legacy_sources.add(top_legacy)
 
     isbn_values = field_values(
         item,
@@ -207,18 +225,15 @@ def identifier_values(item: Any) -> set[str]:
     isbn_mapping_keys = {"isbn", "isbns", "isbn10", "isbn_10", "isbn13", "isbn_13"}
 
     for mapping in _identifier_mappings(item):
-        provider = _text(
-            mapping.get("provider")
-            or mapping.get("provider_id")
-            or mapping.get("source_provider")
-            or provider
-        )
-        source_item = _text(
-            mapping.get("source_item_id")
-            or mapping.get("item_id")
-            or mapping.get("record_id")
-            or source_item
-        )
+        # Nested coordinates are one independent pair; partial values
+        # cannot borrow a missing half from top-level or another mapping.
+        nested_provider = _first_string(
+            mapping, ("provider", "provider_id", "source_provider"))
+        nested_item = _first_string(
+            mapping, ("source_item_id", "item_id", "record_id"))
+        nested_legacy = _legacy_key(nested_provider, nested_item)
+        if nested_legacy:
+            legacy_sources.add(nested_legacy)
         for raw_key, raw_value in mapping.items():
             key = normalize(raw_key).replace(" ", "_")
             if not key:
@@ -241,9 +256,6 @@ def identifier_values(item: Any) -> set[str]:
                 scalar = _identifier_scalar(value)
                 if scalar:
                     cleaned.add(f"{key}:{scalar}")
-
-    provider_key = _identifier_scalar(provider)
-    source_key = _identifier_scalar(source_item)
 
     # A provider + record_id is NOT globally unique once the same provider
     # serves several credentials, docbases or collections. The old generic
@@ -271,8 +283,10 @@ def identifier_values(item: Any) -> set[str]:
                 exact, ensure_ascii=True, separators=(",", ":"),
             ).encode("utf-8")).hexdigest()
             cleaned.add("source-exact.v1:" + digest)
-    elif provider_key and source_key:
-        cleaned.add(f"source:{provider_key}:{source_key}")
+    elif len(legacy_sources) == 1:
+        # Multiple different coordinate pairs are contradictory, not
+        # alternatives that may be treated as the same book.
+        cleaned.update(legacy_sources)
     return cleaned
 
 
