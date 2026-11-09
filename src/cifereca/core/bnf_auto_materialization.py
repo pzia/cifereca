@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from .source_context import source_context_epoch
-from .legacy_source_account_id import ambiguous_legacy_source_account_id
 
 import hashlib
 import logging
@@ -26,39 +25,11 @@ def policy_key(account: Account) -> str:
 
 
 def binding_ready(service, account: Account) -> bool:
-    try:
-        if (type(account) is not Account or account.provider_id != 'bnf-pret'
-                or ambiguous_legacy_source_account_id(
-                    'bnf-pret', account.credential_id, account.unique_id
-                )
-                or not service.sync_source_enabled(account)
-                or service.identity_by_id(account.identity_id) is None
-                or service.storage.identity_for_connection(
-                    'bnf-pret', account.credential_id) != account.identity_id):
-            return False
-        # The SQLite provider_accounts registry is the durable account
-        # identity for this credential. A connected Python session may stay
-        # alive after the borrower was removed/rebound in SQLite; do not
-        # issue a private ACSM GET in that state.
-        matches = service.storage.provider_accounts(
-            identity_id=account.identity_id,
-        )
-        if sum(
-            row.get('provider_id') == 'bnf-pret'
-            and row.get('credential_id') == account.credential_id
-            and row.get('account_id') == account.unique_id
-            for row in matches
-        ) != 1:
-            return False
-        session = service._sessions.get(service._session_key('bnf-pret', account.credential_id))
-        return (getattr(session, 'connected', None) is True
-                and sum(row is account for row in getattr(session, 'accounts', ())) == 1
-                and sum(row is account for row in service.accounts) == 1
-                and sum(type(row) is Account and row.provider_id == 'bnf-pret'
-                        and row.credential_id == account.credential_id
-                        for row in service.accounts) == 1)
-    except Exception:
-        return False
+    """BnF auto materialization uses the same exact Core account fence."""
+    from .source_account_binding import source_account_binding_ready
+    return source_account_binding_ready(
+        service, account, expected_provider_id="bnf-pret",
+    )
 
 
 def enabled(service, account: Account) -> bool:
