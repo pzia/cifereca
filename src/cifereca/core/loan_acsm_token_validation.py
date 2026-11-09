@@ -35,19 +35,39 @@ def valid_loan_acsm_token(path: Path, inspect_artifact) -> bool:
     )
 
 
+
+def staged_loan_acsm_path_safe(path: object, destination: object) -> bool:
+    """A private ACSM must be a direct, non-aliased child of the exact stage.
+
+    Resolving two paths to the same directory is not sufficient: a provider
+    could return an alias through a symlinked ancestor, including the
+    grandparent of the staging directory. This check grants no loan/right.
+    """
+    try:
+        if (type(path) is not Path or type(destination) is not Path
+                or path.parent != destination or path.suffix.casefold() != ".acsm"
+                or path.is_symlink() or not path.is_file()
+                or not destination.is_dir()):
+            return False
+        current = destination
+        while True:
+            if current.is_symlink():
+                return False
+            if current == current.parent:
+                break
+            current = current.parent
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def discard_untrusted_staged_acsm(path: object, destination: Path) -> None:
     """Unlink only a candidate directly inside the caller's staging dir.
 
     Never follow a symlink or delete an arbitrary provider-returned path.
     """
-    if not isinstance(path, Path):
-        return
     try:
-        if path.suffix.casefold() != ".acsm":
-            return
-        if (not destination.is_symlink() and not path.is_symlink()
-                and path.parent.resolve() == destination.resolve()
-                and path.is_file()):
+        if staged_loan_acsm_path_safe(path, destination):
             path.unlink(missing_ok=True)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         pass
