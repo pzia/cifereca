@@ -13,7 +13,7 @@ from .device_usb_live_source import prepare_usb_live_source
 
 
 def execute_usb_library_copy(
-    *, storage: Any, journal: UsbCopyJournal, lock_root: Path, placement_id: str,
+    *, storage: Any, journal: UsbCopyJournal | None = None, lock_root: Path, placement_id: str,
     mountpoint: Path, consent: UsbCopyConsent, rights: UsbCopyRightsEvidence,
     current_profile: Callable[[], tuple[str, Path, int]],
     policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None,
@@ -26,6 +26,9 @@ def execute_usb_library_copy(
     journal. The whole managed area is reviewed under the volume lock before
     consuming consent, so moved books are detected as well as name collisions.
     """
+    if journal is None:
+        from .device_usb_operation_journal import SqliteUsbOperationJournal
+        journal = SqliteUsbOperationJournal(storage)
     source = prepare_usb_live_source(
         storage=storage, placement_id=placement_id, mountpoint=mountpoint,
         consent=consent, rights=rights, current_profile=current_profile,

@@ -8,11 +8,11 @@ consent is exposed through the versioned plugin/source policy contract.
 """
 from __future__ import annotations
 
-import hashlib
 import re
 import logging
 
 from .source_convergence import SourceKey
+from .legacy_source_account_id import ambiguous_legacy_source_account_id
 from .source_sync_consent import read_policy, policy_in_transaction
 
 # Scoped *automatic acquisition* policies, NOT source-inventory switches.
@@ -34,15 +34,11 @@ _HEX = re.compile(r"[0-9a-f]{32}\Z")
 
 
 def _source_id(scope):
-    identity, provider, credential, account = (
+    from .legacy_source_identifier import legacy_source_id
+    return legacy_source_id(
         scope.identity_id, scope.provider_id, scope.credential_id,
         scope.account_id,
     )
-    # Match the public Sync broker's stable identifier, including its legacy
-    # primary-account fallback. Empty account IDs are not wildcard grants.
-    unique = account.strip() or f"{provider}:{credential}:primary"
-    raw = "\0".join((identity, provider, credential, unique))
-    return "sync:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 def toggle_state(db, source: SourceKey):
@@ -73,11 +69,8 @@ def toggle_state(db, source: SourceKey):
     # current account list. Deny the ambiguous *literal* borrower until it
     # receives the new exact-scope, CAS-versioned source policy above.
     scope = source.scope
-    if scope.account_id and (
-        scope.account_id != scope.account_id.strip()
-        or scope.account_id == (
-            scope.provider_id + ":" + scope.credential_id + ":primary"
-        )
+    if ambiguous_legacy_source_account_id(
+        scope.provider_id, scope.credential_id, scope.account_id
     ):
         return "off"
     prefix, active, epoch_prefix = spec
@@ -103,15 +96,21 @@ def toggle_state(db, source: SourceKey):
 
 
 def _consent_generation_key(scope):
-    """Generation key for every source-wide automatic acquisition switch."""
+    """Read the exact legacy epoch key from the same compatibility policy.
+
+    The policy itself remains legacy until every provider has migrated to
+    versioned CAS consent. Unknown or ambiguous provider mappings fail closed.
+    """
+    specs = [
+        spec for (provider, _kind), spec in _POLICIES.items()
+        if provider == scope.provider_id
+    ]
+    if len(specs) != 1:
+        return None
+    prefix, _active, epoch_prefix = specs[0]
     sid = _source_id(scope)
-    if scope.provider_id == "numilog":
-        return "sync.source.numilog.materialization.epoch.v1." + sid
-    if scope.provider_id == "kobo":
-        return "sync.source.materialization.on_start." + sid + ".revision"
-    if scope.provider_id == "bnf-pret":
-        return "sync.source.bnf_auto." + sid + ".revision"
-    return None
+    return (epoch_prefix + sid if epoch_prefix is not None
+            else prefix + sid + ".revision")
 
 
 def consent_generation(storage, scope):

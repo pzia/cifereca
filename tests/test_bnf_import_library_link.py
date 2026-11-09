@@ -263,7 +263,7 @@ def test_two_storage_connections_cannot_replace_first_binding(bnf_importer):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
     from cifereca.storage import Storage
-    from cifereca.core.bnf_import_provenance import observed_loan
+    from cifereca.core.observed_loan_scope import observed_loan
     service, loan, requests = bnf_importer
     result = service.import_acsm(staged(service, loan), identity_id='default',
                                  placement_provider_id='bnf-pret')

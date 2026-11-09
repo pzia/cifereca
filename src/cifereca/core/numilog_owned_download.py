@@ -92,8 +92,10 @@ def target_for_entry(service, entry):
         _require(identity_id is not None)
         possessions = entry.get('possessions')
         _require(type(possessions) in (tuple, list))
+        # A future provider's owned right can be a competing local action:
+        # never silently discard it just because this legacy facade does not
+        # recognize its brand. Ambiguity is not authorization to select Numilog.
         candidates = [p for p in possessions if type(p) is dict
-                      and p.get('provider_id') in {'kobo', 'numilog'}
                       and p.get('identity_id') == identity_id and p.get('kind') == 'owned'
                       and p.get('state') == 'active']
         _require(len(candidates) == 1 and candidates[0].get('provider_id') == 'numilog')

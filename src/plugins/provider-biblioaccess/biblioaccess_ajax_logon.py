@@ -36,6 +36,8 @@ class AjaxLogonObservation:
     cas_completed: bool = False
     identity_verified: bool = False
     core_connected: bool = False
+    error_count: int | None = None
+    message_present: bool = False
 
 
 def _validate_params(query: dict[str, str], fields: dict[str, str]) -> None:
@@ -61,21 +63,45 @@ def inspect_ajax_response(*, status: int, mime: str, data: bytes) -> AjaxLogonOb
     media = mime.split(";", 1)[0].strip().lower()
     if media != "application/json":
         raise AjaxLogonError("ajax_logon_response_type")
+    def unique_keys(pairs):
+        values = {}
+        for key, value in pairs:
+            if key in values:
+                raise ValueError("duplicate-json-key")
+            values[key] = value
+        return values
+
+    def reject_nonfinite(_value):
+        raise ValueError("non-finite-json-number")
+
     try:
-        document = json.loads(data)
+        document = json.loads(
+            data, object_pairs_hook=unique_keys, parse_constant=reject_nonfinite,
+        )
     except (ValueError, UnicodeError, RecursionError):
         raise AjaxLogonError("ajax_logon_json_invalid") from None
     if type(document) is not dict or not set(document) <= _RESPONSE_KEYS:
         raise AjaxLogonError("ajax_logon_json_shape")
     # Field d may carry an opaque session continuation value. Never expose it.
     reported = document.get("success")
+    # A response carrying reported errors is ambiguous even if success=true.
+    # Never use it to request a CAS ticket; no error values leave the client.
+    errors = document.get("errors", [])
+    errors_clear = type(errors) is list and not errors
     if type(reported) is not bool:
         outcome = "unknown"
-    elif reported and status == 200:
+    elif reported and status == 200 and errors_clear:
         outcome = "success_reported"
+    elif reported and status == 200:
+        outcome = "unknown"
     else:
         outcome = "failure_reported"
-    return AjaxLogonObservation(status=status, media_type=media, outcome=outcome)
+    return AjaxLogonObservation(
+        status=status, media_type=media, outcome=outcome,
+        error_count=min(len(errors), 99) if type(errors) is list else None,
+        message_present=(type(document.get("message")) is str
+                         and bool(document["message"])),
+    )
 
 
 class ObservedAjaxLogonClient:

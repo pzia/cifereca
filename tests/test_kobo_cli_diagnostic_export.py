@@ -71,6 +71,13 @@ def test_cli_redacts_persisted_private_book_and_provider_details(
         output = capsys.readouterr().out
         data = json.loads(output)
         assert data["redacted"] is True
+        assert data["status_authority"] == "historical_legacy_backup"
+        assert data["current_canonical_cycle"] == {
+            "status": "not_evaluated", "same_source_proof": "unavailable",
+        }
+        assert data["legacy_checkpoint_freshness"] == [
+            {"source_index": 1, "age_known": False},
+        ]
         assert data["items"] == 3
         assert data["statuses"] == {
             "error": 1, "reconcile_required": 1, "attention_required": 1,
@@ -135,8 +142,12 @@ def test_export_allowlist_rejects_untrusted_statuses_and_source_metadata():
         "reconcile_examples": [{"local_path": "/home/PRIVATE_FOLDER"}],
     }
     raw_before = json.dumps(report, sort_keys=True)
-    exported = safe_kobo_backup_report(report)
+    exported = cli._kobo_legacy_report_view(safe_kobo_backup_report(report))
     published = json.dumps(exported, sort_keys=True)
+    assert exported["status_authority"] == "historical_legacy_backup"
+    assert exported["current_canonical_cycle"] == {
+        "status": "not_evaluated", "same_source_proof": "unavailable",
+    }
     assert exported["items"] == 12
     assert exported["items_blocked_by_scope"] == 4
     assert exported["statuses"] == {
@@ -195,3 +206,41 @@ def test_kobo_diagnostic_recovers_checkpoint_without_sessions_after_reopen(tmp_p
         assert reopened._sessions == {}
     finally:
         reopened.close()
+
+
+def test_p1_5078_history_age_is_scoped_and_no_current_success_is_invented():
+    """Legacy checkpoint age is numeric; no cross-source or status inference."""
+    raw = {
+        "items": 3,
+        "statuses": {"error": 1, "complete": 2},
+        "sources": [
+            {"source_id": "0" * 24, "status": "partial",
+             "updated_at": 1_800_000_000, "errors": 1},
+            {"source_id": "1" * 24, "status": "complete",
+             "updated_at": 1_800_086_401, "downloaded": 2},
+            {"source_id": "2" * 24, "status": "failed",
+             "updated_at": "https://private.invalid/?token=SECRET_5078"},
+        ],
+    }
+    before = json.dumps(raw, sort_keys=True)
+    exported = cli._kobo_legacy_report_view(
+        safe_kobo_backup_report(raw), observed_at=1_800_086_400,
+    )
+    assert exported["legacy_checkpoint_freshness"] == [
+        {"source_index": 1, "age_known": True, "age_seconds": 86400},
+        {"source_index": 2, "age_known": False},  # Future clock: not fresh
+        {"source_index": 3, "age_known": False},  # Injection: not published
+    ]
+    assert [row["status"] for row in exported["sources"]] == [
+        "partial", "complete", "failed",
+    ]
+    assert exported["current_canonical_cycle"]["status"] == "not_evaluated"
+    assert safe_kobo_backup_report(raw).get("status_authority") is None
+    assert "legacy_checkpoint_freshness" not in safe_kobo_backup_report(raw)
+    assert exported["error_count"] == 1  # Historical, not a current failure.
+    assert "SECRET_5078" not in json.dumps(exported, sort_keys=True)
+    assert json.dumps(raw, sort_keys=True) == before
+    # Invalid clock must not forge zero-age freshness.
+    assert all(not row["age_known"] for row in cli._kobo_legacy_report_view(
+        safe_kobo_backup_report(raw), observed_at=True,
+    )["legacy_checkpoint_freshness"])

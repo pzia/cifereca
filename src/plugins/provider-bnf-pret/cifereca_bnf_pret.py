@@ -26,7 +26,8 @@ DESCRIPTOR = ProviderDescriptor(
     id='bnf-pret', display_name='BnF Prêt', state='ready',
     description='Catalogue, fiches et prêts du portail lecteur BnF, par HTTPX.',
     capabilities=ProviderCapabilities(authentication=True, multiple_credentials=True, loans=True,
-                                      search=True, holdings=True, borrow=True),
+                                      search=True, holdings=True, borrow=True,
+                                      loan_auto_materialization=True),
     search_capabilities=ProviderSearchCapabilities(
         fields=('all',), scopes=('all', 'digital'), pagination='next-link',
         max_pages=MAX_SEARCH_PAGES,

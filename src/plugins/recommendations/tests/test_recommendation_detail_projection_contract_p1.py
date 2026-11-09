@@ -446,3 +446,65 @@ def test_two_broken_public_url_getters_do_not_disclose_exception_or_add_action()
     assert _public_recommendation_notice(item) is None
     assert _public_cover_url(item) is None
     assert "PRIVATE_SIGNED_TOKEN" not in repr((rows, details))
+
+
+# P1 #4979 / #3104: Search and Recommendations must share the exact
+# already-attested public BnF Feedbooks image, including the CDN's
+# *non-secret* size/cache version. Do not promote a catalogue image to a
+# borrower right or issue an acquisition from a passive render.
+PUBLIC_BNF_COVER = (
+    "https://covers.feedbooks.net/item/synthetic-id_12345.jpg"
+    "?size=medium&t=1762000000"
+)
+
+
+def test_bnf_public_versioned_cover_is_shared_by_recommendation_list_and_detail():
+    item = {
+        "title": "Livre BnF synthétique",
+        "author": "Autrice synthétique",
+        "source_provider": "bnf-pret",
+        "thumbnail_url": PUBLIC_BNF_COVER,
+    }
+    assert _public_cover_url(item) == PUBLIC_BNF_COVER
+    view, rows, details, empty = _make_view(item)
+    view._render(preserve_summary=True)
+    assert len(rows) == 1 and rows[0].thumbnail_url == PUBLIC_BNF_COVER
+    view._selected_row(rows[0])
+    assert len(details) == 1
+    assert details[0].thumbnail_url == rows[0].thumbnail_url
+    assert all(action.id != "purchase" for action in details[0].actions)
+    assert empty == []
+
+
+@pytest.mark.parametrize("query", (
+    "size=medium&t=1762000000&token=PRIVATE_SIGNED",
+    "size=medium&t=1762000000&X-Amz-Signature=PRIVATE_SIGNED",
+    "size=medium&t=PRIVATE_SIGNED",
+    "size=medium",
+    "t=1762000000",
+    "size=medium&t=1762000000#PRIVATE_ID",
+    "size=giant&t=1762000000",
+    "size=medium&t=1762000000&t=1762000001",
+))
+def test_bnf_cover_query_rejects_signed_unknown_and_incomplete_variants(query):
+    unsafe = PUBLIC_BNF_COVER.split("?", 1)[0] + "?" + query
+    assert _public_cover_url({"thumbnail_url": unsafe}) is None
+    assert _public_cover_url({
+        "thumbnail_url": unsafe, "cover_url": "https://covers.feedbooks.net/item/safe.jpg",
+    }) == "https://covers.feedbooks.net/item/safe.jpg"
+
+
+@pytest.mark.parametrize("url", (
+    "https://reader.local/item/cover.jpg?size=medium&t=1762000000",
+    "https://user:secret@covers.feedbooks.net/item/cover.jpg?size=medium&t=1762000000",
+    "http://127.0.0.1/item/cover.jpg?size=medium&t=1762000000",
+    "https://covers.feedbooks.net/acquisition/cover.jpg?size=medium&t=1762000000",
+))
+def test_versioned_cover_keeps_public_origin_and_path_safety(url):
+    assert _public_cover_url({"thumbnail_url": url}) is None
+
+
+def test_public_feedbooks_cache_query_ordering_and_signed_tail():
+    url = "https://covers.feedbooks.net/item/edition.jpg?t=1762000000&size=small"
+    assert _public_cover_url({"thumbnail_url": url}) == url
+    assert _public_cover_url({"thumbnail_url": url + "&auth=SECRET"}) is None

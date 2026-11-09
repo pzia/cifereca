@@ -62,6 +62,7 @@ def select_consolidator(
                              or not _identifier(selected_version)):
         raise ValueError("incomplete_consolidator_selection")
     matched: list[ConsolidatorDeclaration] = []
+    registered: set[tuple[str, str, str, str]] = set()
     for row in declarations:
         if type(row) is not ConsolidatorDeclaration:
             raise ValueError("invalid_consolidator_declaration")
@@ -71,6 +72,12 @@ def select_consolidator(
                        row.version, row.schema_id,
                    ))):
             raise ValueError("invalid_consolidator_declaration")
+        identity = (row.canonical_type, row.scope, row.plugin_id, row.version)
+        # Even an unselected or unrelated duplicate is an ambiguous registry.
+        # Never let a missing selection skip the global declaration check.
+        if identity in registered:
+            raise ValueError("ambiguous_consolidator_declaration")
+        registered.add(identity)
         if (row.canonical_type == canonical_type and row.scope == scope
                 and row.plugin_id == selected_plugin_id
                 and row.version == selected_version):

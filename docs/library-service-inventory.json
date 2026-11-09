@@ -1686,7 +1686,6 @@
     "issue": "#1119",
     "target": "core/library_materialization.py + materialization.py",
     "self_attributes": [
-      "_acquire_personal_library_item",
       "_mirror_remote_results",
       "_sessions",
       "accounts",
@@ -1697,24 +1696,6 @@
     "candidate_callsites": [
       "tests/test_kobo_sync_modes.py"
     ]
-  },
-  "_acquire_personal_library_item": {
-    "domain": "Bibliothèque / placements",
-    "issue": "#1119",
-    "target": "core/library_materialization.py + materialization.py",
-    "self_attributes": [
-      "catalog_index_path",
-      "library_identity_provider_dir",
-      "storage"
-    ],
-    "imported_globals": [
-      "Any",
-      "Path",
-      "ProviderConfigurationError",
-      "asdict",
-      "inspect_artifact"
-    ],
-    "candidate_callsites": []
   },
   "recent_acquisitions": {
     "domain": "Bibliothèque / placements",
@@ -3309,7 +3290,6 @@
     "issue": "#1122",
     "target": "core/opening_sync.py + sync_state.py",
     "self_attributes": [
-      "_acquire_personal_library_item",
       "_loans_for_account",
       "_mirror_remote_results",
       "_session_for_account",

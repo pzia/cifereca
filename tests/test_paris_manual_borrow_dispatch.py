@@ -92,6 +92,10 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
         if request.url.path.endswith("ListLoans"):
             assert request.method == "GET"
             assert request.url.params["userUniqueIdentifier"] == ""
+            if state["mutations"] and result == "confirmation-timeout":
+                raise httpx.ReadTimeout("synthetic confirmation timeout", request=request)
+            if state["mutations"] and result == "confirmation-empty":
+                return httpx.Response(200, json={"success": True, "d": {"Loans": []}})
             rows = [{"Id": "loan-exact", "RecordId": "edition", "State": loan_state,
                      "WhenBack": f"/Date({when_back_ms})/"}] if state["active"] else []
             if result == "duplicate" and state["active"]:
@@ -179,6 +183,51 @@ def test_single_manual_action_confirms_current_loan_independently_of_acsm(tmp_pa
         assert service.can_borrow_paris(item) is False
         assert attempt(service, account, replace(item, id="fresh-ui-row"))["reason_code"] == "borrow_previous_attempt"
         assert state["mutations"] == 1
+    finally:
+        service.close()
+
+
+def test_source_epoch_rebound_during_local_preflight_blocks_before_claim(
+    tmp_path, monkeypatch,
+):
+    """A source rebind with an unchanged account/session must revoke the click."""
+    service, session, account, item, state = setup(tmp_path)
+    try:
+        original = service.storage.loan_borrow_state
+
+        def rebound_during_lookup(key):
+            result = original(key)
+            service._source_context_epoch += 2  # source ABA, same lender key
+            return result
+
+        monkeypatch.setattr(
+            service.storage, "loan_borrow_state", rebound_during_lookup,
+        )
+        outcome = attempt(service, account, item)
+        assert outcome["status"] == "blocked"
+        assert outcome["reason_code"] == "borrow_scope_changed"
+        assert state["calls"] == [] and state["mutations"] == 0
+        assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
+    finally:
+        service.close()
+
+
+def test_source_epoch_rebound_during_provider_preflight_never_posts_again(
+    tmp_path,
+):
+    """After the claim, even a same-session source epoch ABA closes the gate."""
+    service, session, account, item, state = setup(tmp_path)
+    try:
+        state["before_holdings"] = lambda: setattr(
+            service, "_source_context_epoch",
+            service._source_context_epoch + 2,
+        )
+        outcome = attempt(service, account, item)
+        assert outcome["status"] != "confirmed"
+        assert state["mutations"] == 0
+        assert state["calls"].count("/numerique/Portal/ASSARedirect.ashx") == 0
+        # No automatic retry is performed; a later deliberate click is a
+        # separate action only if the provider attests that no POST was sent.
     finally:
         service.close()
 
@@ -522,46 +571,32 @@ def test_first_acsm_epoch_rebind_after_get_cannot_publish_receipt(tmp_path, monk
         service.close()
 
 
-def test_source_epoch_rebound_during_local_preflight_blocks_before_claim(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize(("result", "reason", "acsm_ready"), [
+    ("confirmation-timeout", "inventory_unavailable", True),
+    ("confirmation-empty", "loan_not_attested", True),
+    ("no-acsm", None, False),
+])
+def test_paris_post_confirmation_distinguishes_initial_acsm_from_inventory(
+    tmp_path, result, reason, acsm_ready, caplog,
 ):
-    """A source rebind with an unchanged account/session must revoke the click."""
-    service, session, account, item, state = setup(tmp_path)
+    service, session, account, item, state = setup(tmp_path, result=result)
     try:
-        original = service.storage.loan_borrow_state
-
-        def rebound_during_lookup(key):
-            result = original(key)
-            service._source_context_epoch += 2  # source ABA, same lender key
-            return result
-
-        monkeypatch.setattr(
-            service.storage, "loan_borrow_state", rebound_during_lookup,
-        )
-        outcome = attempt(service, account, item)
-        assert outcome["status"] == "blocked"
-        assert outcome["reason_code"] == "borrow_scope_changed"
-        assert state["calls"] == [] and state["mutations"] == 0
-        assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
-    finally:
-        service.close()
-
-
-def test_source_epoch_rebound_during_provider_preflight_never_posts_again(
-    tmp_path,
-):
-    """After the claim, even a same-session source epoch ABA closes the gate."""
-    service, session, account, item, state = setup(tmp_path)
-    try:
-        state["before_holdings"] = lambda: setattr(
-            service, "_source_context_epoch",
-            service._source_context_epoch + 2,
-        )
-        outcome = attempt(service, account, item)
-        assert outcome["status"] != "confirmed"
-        assert state["mutations"] == 0
-        assert state["calls"].count("/numerique/Portal/ASSARedirect.ashx") == 0
-        # No automatic retry is performed; a later deliberate click is a
-        # separate action only if the provider attests that no POST was sent.
+        import logging
+        with caplog.at_level(logging.INFO, logger="cifereca"):
+            outcome = attempt(service, account, item)
+        assert state["mutations"] == 1
+        if reason:
+            assert outcome["status"] == "verification_unavailable"
+            assert outcome["reason_code"] == "borrow_result_unverified"
+            assert outcome["provider_verified"] is False
+            assert f"phase=borrow_pending_confirmation reason={reason}" in caplog.text
+            assert f"initial_acsm_offer={acsm_ready}" in caplog.text
+            assert "synthetic.acsm" not in caplog.text
+            row = service.storage.loan_borrow_state(borrow_claim_key(account, item))
+            assert row["status"] == "verification_unavailable"
+            assert attempt(service, account, item)["reason_code"] == "borrow_previous_attempt"
+            assert state["mutations"] == 1
+        else:
+            assert outcome["status"] == "confirmed" and outcome["provider_verified"] is True
     finally:
         service.close()

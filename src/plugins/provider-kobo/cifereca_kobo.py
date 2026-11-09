@@ -6,6 +6,7 @@ import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -223,6 +224,8 @@ DESCRIPTOR = ProviderDescriptor(
         holdings=True,
         personal_library=True,
         backup=True,
+        local_materialization=True,
+        legacy_materialization_checkpoint=True,
     ),
     search_capabilities=ProviderSearchCapabilities(
         # Vault accepts arbitrary 'field' as a query parameter, but the
@@ -732,6 +735,16 @@ class KoboSession(ProviderSession):
             except Exception:
                 # Never expose the provider's exception text or class name.
                 continue
+            # Only typed, authenticated personal-library SearchResult rows
+            # acquire this account coordinate. Public notices remain unscoped.
+            # The coordinate is NOT purchase evidence: Core's exact active
+            # entitlement independently decides the UI's remote_owned state.
+            if (type(item) is SearchResult and personal_binding is not None
+                    and collection in ("library", "archived")):
+                claimed = item.source_account_id
+                if claimed is not None and claimed != account_id:
+                    continue
+                item = replace(item, source_account_id=account_id)
             accepted.append(item)
         cover_count = 0
         for item in accepted:

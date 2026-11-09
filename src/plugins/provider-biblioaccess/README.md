@@ -1,5 +1,187 @@
 # BiblioAccess — La Rochelle (tenant 1409)
 
+## Acquisition des prêts numériques — bundle 0.4.0
+
+La synchronisation du lecteur `authenticated_sync=on` relève toujours les
+prêts positifs via AJAX/CAS et MyLoans. Lorsqu'une ligne affiche réellement
+une action ACSM, le provider annonce `digital_download` et
+`opening_loan_auto_acquisition`. Le Core peut déclencher sa pipeline
+d'acquisition existante (staging, Kobo-Adept, publication EPUB/PDF, indexation
+locale, suivi des erreurs et reprise).
+
+**Flux effectif :**
+1. à la demande d'acquisition, relire MyLoans **dans le cookie jar du
+   credential exact**, sans rejouer l'authentification AJAX ;
+2. sélectionner la ligne selon la référence produit du prêt ET son identifiant
+   de notice ; utiliser l'URL ACSM signée fraîchement exposée ;
+3. effectuer le GET HTTPS sur le seul hôte observé
+   `entrepot2r.numilog.com/fulfillment/URLLink.acsm` via un client neuf
+   sans cookies du lecteur, valider le jeton XML ADEPT et écrire un fichier
+   temporaire `.acsm` ;
+4. remettre au Core uniquement le **chemin du fichier ACSM**, jamais l'URL
+   signée. Le Core exploite son profil Kobo-Adept lié à l'identité pour
+   produire le document final. Le fournisseur ne contourne pas les DRM.
+
+**Retéléchargement :** le provider ne mémorise aucun drapeau
+« déjà récupéré » ; un nouvel appel obtient une nouvelle action depuis
+MyLoans. Le Core conserve sa politique habituelle de cache/reprise et
+accepte ses actions explicites de rafraîchissement forcé.
+
+**Échec :** un prêt sans offre ACSM reste un prêt synchronisable, mais n'est
+pas éligible à l'acquisition automatique. Un rejet distant, un XML qui n'est
+pas un token ADEPT ou la disparition du prêt produit un code fermé ; jamais
+de journalisation du corps HTTP, du token, du lien signé ou du cookie.
+Une session devenue non fiable est fermée. Le profil ADEPT doit être
+configuré sur l'identité ; l'acquisition peut rester en attente si
+Kobo-Adept n'est pas opérationnel.
+
+**Limite terrain** : le lien ACSM a été observé dans deux MyLoans privés le
+08/11/2026, mais **sa récupération effective et le fulfillment ADEPT
+n'ont pas encore été capturés** sur le nouveau code. Les tests sont
+entièrement synthétiques ; une erreur de livraison sera corrigée à partir
+des journaux de recette.
+
+## Catalogue public et prêts privés — bundle 0.3.0
+
+Le même bundle déclare désormais **deux providers indépendants** :
+
+- **La Rochelle — catalogue numérique** : source publique (sans compte),
+  `catalog.search` et `catalog.detail`. Recherche plein texte dans
+  BiblioAccess tenant 1409, pages 0–100 suivies via les vrais liens
+  « Suivant », titres issus des liens de résultats et métadonnées
+  structurées à l'ouverture d'une fiche. Les notices ne produisent
+  **aucun droit de prêt** : disponibilité inconnue, aucun lien de
+  téléchargement, aucune action d'emprunt.
+- **Médiathèques de La Rochelle** : compte privé avec les identifiants du
+  lecteur et `authenticated_sync=on` sur consentement. Connexion AJAX/CAS,
+  MyLoans et synchronisation **positive, partielle et non destructive**,
+  liés à l'identité et au credential précis. `authenticated_sync=off`
+  n'empêche **pas** la recherche dans le catalogue public.
+
+Le catalogue ne lit ni les options ni les cookies SSO du lecteur. Les
+fiches du catalogue public sont consultées via une session HTTPX propre,
+et les liens vers d'autres tenants ou domaines sont ignorés. Aucune
+requête n'est effectuée au rendu des réglages. Le bouton de vérification
+de compte est sans effet sur le catalogue public.
+
+**Contrat de recherche v0.3.0 :** `query` plein texte côté fournisseur,
+`field=all`, `scope=all|digital`, pagination indexée depuis 0.
+Titre issu du lien de notice quand disponible ; sinon libellé « Notice
+<id> » non bibliographique. Les métadonnées JSON-LD attestées (titre,
+auteur, éditeur, année, couverture) sont consultées lors de l'ouverture
+d'un résultat. Le service ne revendique ni inventaire exhaustif du
+catalogue ni disponibilité d'exemplaires à partir d'une recherche vide.
+
+## Déclaration simplifiée du compte (v0.2.2)
+
+L'écran **Paramètres → Sources et comptes fournisseurs → Médiathèques
+de La Rochelle** expose les seuls champs utiles au lecteur :
+compte activé, libellé, identité Cifereca, identifiant de bibliothèque,
+mot de passe, et **Synchronisation des prêts (on/off)**, `off`
+par défaut.
+
+L'utilisateur ne doit plus renseigner manuellement `_dc`,
+`captchaCheckValue`, le fournisseur AJAX, des champs de POST ou le
+chemin JS : ces valeurs proviennent du formulaire distant frais lors de
+l'authentification normale. Les anciennes options `experimental_*` et
+`ajax_*` déjà enregistrées sont **conservées à l'identique dans la
+configuration**, mais n'apparaissent plus dans l'éditeur normal. La
+recette HTTP historique reste accessible au code, sans migration
+destructive de paramètres de comptes.
+
+Le bouton **« Tester ce compte »** lance une unique authentification
+HTTP explicite à partir des **credentials enregistrés** (un POST,
+CAS et MyLoans), même lorsque `authenticated_sync=off`. Cette
+autorisation est **ponctuelle et non persistée** ; la session de test
+est systématiquement fermée et aucun compte ou prêt n'est enregistré
+par cette opération. Un formulaire réellement modifié doit d'abord
+être enregistré. Après une sauvegarde terminée, le test peut cibler
+la nouvelle configuration **sans rouvrir l'écran**.
+
+La validation terrain de la capture privée du 08/11/2026 à 21h08
+(build `b52ab11`) confirmait une connexion SSO suivie de deux relectures
+MyLoans positives et sept clics de test refusés comme brouillons.
+La v0.2.2 simplifie l'éditeur et corrige la comparaison fausse avec
+les défauts de champs non enregistrés ; elle doit encore être
+recettée sur l'interface installée.
+
+## État actuel — synchronisation positive des prêts (opt-in)
+
+Suite à la double recette HTTP AJAX/CAS réelle du 08/11/2026,
+la branche **0.2.x** peut établir une session **HTTPS directe**, sans
+navigateur ni cookie importé, et relire les prêts actifs de MyLoans.
+
+**Consentement nécessaire par compte :**
+- compte La Rochelle enregistré et activé ;
+- option **`authenticated_sync=on`** sauvegardée explicitement
+  (valeur par défaut `off`, les autres valeurs refusées) ;
+- `Enregistrer et reconnecter` ou le prochain démarrage déclenche
+  l'authentification via le client HTTPX du provider. Aucune opération
+  au démarrage sans l'opt-in exact.
+
+`experimental_http_probe=auto-post` et `Tester ce compte` restent
+des outils de qualification séparés : **l'option `authenticated_sync`
+est le seul consentement à la connexion automatisée**.
+
+La session issue de AJAX `success_reported` → CAS ticket → landing tenant
+1409 → `MyLoans` HTML avec formulaire de déconnexion a un **compte local
+primaire** `primary` attaché à la connexion exacte (identité Core,
+provider et credential). Il **n'existe pas d'identifiant emprunteur
+upstream attesté** : `primary` est un identifiant local, jamais une
+identité distante déduite d'un titre ou d'un HTML public.
+
+Les lignes MyLoans reconnues dans le même conteneur (référence produit,
+notice BiblioAccess, titre, date de fin locale `Europe/Paris`) produisent
+des `Loan` positifs, sans action ni lien de livraison. L'échéance est
+représentée avec un fuseau explicite et la date locale originale reste
+une métadonnée ; sa sémantique métier définitive dépend du fournisseur.
+L'identité du produit de ligne n'est jamais remplacée par l'identifiant
+de notice. Le résultat typé `cifereca.loan.inventory/1` est **toujours
+`partial`**, même quand MyLoans renvoie zéro ligne : ni expiration,
+ni retour, ni suppression ne peut découler d'une absence.
+
+Le cookie jar est conservé en RAM par la session et détruit sur
+`close()`. Une lecture refusée, redirigée, dépourvue de structure
+authentifiée ou expirée **invalide la session** : aucune reconnexion
+automatique, aucun rejeu de POST en cours de lecture. Les comptes de
+credentials distincts ont des clients et des états séparés.
+
+### Correctif 0.2.1 — diagnostics et cohérence des prêts
+
+Version corrective du bundle `provider-biblioaccess` diffusée après
+la validation de la session `authenticated_sync=on` en 0.2.0.
+Aucun changement de contrat ni nouvelle capacité demandée.
+
+### Diagnostic des relectures de prêts et ambiguïtés
+
+La lecture persistante MyLoans écrit un événement `loan_inventory`
+expurgé : nombre de lignes reconnues, nombre de lignes partielles,
+couverture `partial` et état de conservation/révocation de la session.
+Il ne contient **ni titre, ni date exacte, ni identifiant de livre ou de
+lecteur, ni URL signée, ni cookie**. En cas d'échec, le code d'erreur
+appartient à une liste fermée ; les détails d'exceptions et les corps
+HTTP ne sont jamais reproduits.
+
+Deux lignes portant la **même référence produit** rendent désormais
+toute la page MyLoans ambiguë, même si les titres et notices sont
+identiques : la session de synchronisation est révoquée et aucune
+nouvelle ligne n'est admise. Deux produits différents pointant vers
+une même notice restent autorisés (les prêts sont distincts).
+Une réponse vide continue à donner une couverture partielle et ne
+prouve jamais le retour ou l'expiration d'un prêt.
+
+**Toujours non fournis :** emprunt, retour, renouvellement, lecture
+du contenu ACSM, téléchargement, DRM et inventaire exhaustif.
+Le lien ACSM privé est détecté uniquement comme booléen dans
+la phase d'inspection, sans être stocké dans `Loan.ebook_url`.
+Le booléen `connected` atteste une session CAS applicative
+du credential local, pas un identifiant distant supplémentaire.
+
+*Les sections historiques ci-dessous documentent les étapes de
+qualification antérieures à la version 0.2.0 ; leurs anciens états
+« aucune synchronisation » ne décrivent pas le statut actuel.*
+
+
 Issue #3691. Provider **désactivé par défaut**. Le compte peut être configuré ; les GET de recette réseau ne sont déclenchés qu'après un opt-in explicite.
 
 ## Faits établis et limites
@@ -400,3 +582,250 @@ elle n'est pas personnalisable et ne sert pas à fabriquer `service`.
 un paramètre `service` CAS non vide, de même origine et de tenant exact ?
 Les gardes sur la destination, le service, le POST AJAX et les tickets
 demeurent inchangés ; aucune identité ni capacité de prêt n'est attestée.
+
+
+### Refus des réponses AJAX contradictoires
+
+Une réponse `success=true` HTTP 200 n'est classée `success_reported`
+que si `errors` est absent ou explicitement une liste vide. Une réponse
+contenant `errors` non vide, `null` ou d'un autre type reste `unknown` :
+aucun GET CAS ne doit être déclenché sur cette seule base. Les clés JSON
+dupliquées (y compris dans un objet imbriqué) et les constantes JSON
+non standard `NaN`/`Infinity` sont refusées. Les valeurs d'erreur et
+de continuation demeurent opaques. Cela ne prouve toujours ni identité,
+ni propriété de prêts, ni mécanisme d'authentification supporté.
+
+
+### Qualification consentie du JavaScript institutionnel (sans exécution)
+
+Après un test GET `experimental_http_probe=on` réussi, le journal
+`login_preflight.same_origin_script_paths` indique les chemins JS
+institutionnels déjà observés dans le HTML du **même** GET /login. Pour
+inspecter un seul de ces scripts, renseigner l'option facultative du compte
+`experimental_login_script_path` avec son **chemin exact** (ex.
+`/assets/logon.js` seulement si ce chemin a été observé), enregistrer,
+puis cliquer **« Tester ce compte »**.
+
+Le probe effectue les deux GET initiaux puis un unique GET additionnel,
+uniquement sur l'origine IdP HTTPS, sans redirection, avec MIME JavaScript
+autorisé et corps borné à 128 Kio. La sélection ne permet ni URL externe,
+ni query, ni découverte/enregistrement arbitraire des scripts. Le journal
+`login_script` publie uniquement les noms d'identifiants reconnus dans une
+liste fermée et la présence lexicale de `/logon.svc/logon` : **ni source JS,
+ni valeurs dynamiques, ni URL/headers/tokens de réponse**. Une référence
+lexicale à `_dc` ou `captchaCheckValue` ne démontre pas leur provenance.
+
+Sans option renseignée, aucun GET JS n'est effectué. Un chemin absent du
+HTML observé, une redirection ou une erreur HTTP bloquent la recette ; en
+mode `post`, ces erreurs bloquent également le POST. Il ne s'agit ni d'une
+exécution JavaScript ni d'une résolution automatique de CAPTCHA. Aucun
+état connecté ni droit de prêt n'est déduit de ces observations.
+
+
+### Confidentialité des métadonnées HTML du login
+
+Le diagnostic `login_preflight` ne restitue désormais que les **noms
+de champs SSO connus** (liste fermée, notamment `username`,
+`password`, `checkValue`, `rememberMe`, `captcha`, `RequestKey`).
+Les noms de champs arbitraires peuvent incorporer des données de session :
+ils sont ignorés et ne constituent pas une absence de champs sur le site.
+
+Les chemins JS présentés pour l'inspection explicite sont filtrés avant
+la journalisation : chemins statiques HTTPS même origine uniquement, sans
+segments encodés, de traversée ou de forme manifestement opaque/tokenisée,
+sans query affichée. Un script non admissible n'est **jamais** téléchargé
+par le probe facultatif. Les nombres globaux de scripts restent observables
+sans que les éléments écartés soient qualifiés de preuves négatives.
+
+Ce filtrage ne valide toujours pas la provenance des paramètres du POST ;
+l'activation de l'authentification et des droits reste exclue.
+
+
+### Fidélité du GET JavaScript aux ressources observées
+
+La page d'authentification peut référencer un script versionné
+`/scripts/logon.js?v=...`. Le préflight n'affiche **que le chemin**
+admissible, mais conserve en mémoire de la session temporaire l'URL
+exacte observée. Le GET explicitement consenti vise désormais **cette
+URL exacte**, avec sa query si elle était présente ; demander seulement
+`/scripts/logon.js` risquait de recevoir un autre contenu.
+
+La query et ses valeurs ne figurent jamais dans les diagnostics de
+préflight ou de lecture du JS, ni dans la représentation textuelle des
+observations. Le ZIP HTTP brut peut néanmoins contenir la requête :
+il doit être considéré comme sensible et revu avant tout partage.
+Si deux références HTML distinctes ont le même chemin mais des queries
+différentes, ce chemin est **exclu** de l'inspection facultative pour
+éviter toute sélection ambiguë. Aucun GET supplémentaire n'est lancé
+pour résoudre cette ambiguïté. Ces garanties ne prouvent pas la
+provenance des champs dynamiques ni un résultat d'authentification.
+
+
+### Préparation de l'inventaire MyLoans après CAS
+
+La dernière étape HTTP `GET /1409/Catalog/MyLoans` ne perd plus
+systématiquement son corps HTML : le composant hors réseau
+`biblioaccess_loans_page.py` extrait un **ensemble candidat** de liens
+bibliographiques HTTPS strictement limités à
+`/1409/Catalog/Book/{id}[/slug]` (maximum 128 identifiants).
+Il conserve les URL de notices validées et leurs identifiants **uniquement
+dans l'observation éphémère** du client, et expose deux compteurs de
+diagnostic : `page_book_link_count` et `page_book_unique_count`.
+
+Ce n'est PAS un parseur de prêts : le HTML pourrait être une page publique,
+une liste de recommandations ou contenir des liens hors inventaire. Les
+dates de retour, identifiants de prêt, états et droits nécessitent une
+structure de page réelle, un rattachement d'identité et une recette positive
+encore absents. Même zéro lien candidat signifie `completeness=unknown`,
+jamais « aucun prêt ». Aucun `Account`, `Loan`, `sync.loans` ou
+acquisition n'est produit. Cette étape constitue le point de raccordement
+de la future normalisation quand le HTML authentifié aura été qualifié.
+
+
+### Inspection automatique du script de connexion observé
+
+En mode `experimental_http_probe=on`, après lecture de `/login`,
+le client détecte désormais automatiquement l'unique script de connexion
+`logon.js` ou `logon.js.pagespeed.*.js` **effectivement référencé** dans
+le HTML du portail institutionnel, et l'inspecte via le GET JS existant
+(même origine, URL exacte et query privée). Le chemin manuellement configuré
+dans `experimental_login_script_path` conserve la priorité s'il est renseigné.
+S'il n'existe aucun script de connexion reconnu ou plusieurs candidats,
+aucune inspection automatique n'a lieu.
+
+Pour la page observée le 08/11/2026 17:18, le chemin de cette famille est
+`/ui/250297600004/plug-in/logon/logon.js.pagespeed.ce.E1q2XCAAyC.js`.
+Le but est de supprimer une étape de saisie à chaque itération terrain ;
+ce n'est ni une authentification ni une résolution automatique du challenge.
+Le mode `post` ne déclenche pas cette inspection implicite : il continue
+d'exiger le consentement et les paramètres de POST explicites jusqu'à
+qualification du protocole. La future session syncable devra utiliser ce
+parcours sans options expérimentales.
+
+
+### Premier POST AJAX à partir de la page fraîche (qualification opt-in)
+
+La capture terrain du 08/11/2026 17:37 contient le JavaScript de connexion
+réel. Pour le formulaire ordinaire, `logonManager.provider='Form'`,
+`logonManager.action='logon'`, `changeUser=true`, et `_dc` est
+l'horodatage Unix en millisecondes. Le formulaire contient un
+`#logon-captcha-checkvalue` caché, dont la **valeur doit être prélevée
+dans le même GET /login**, pas enregistrée dans une option de compte.
+Le CAPTCHA visuel est initialement masqué ; après refus du serveur,
+le navigateur peut demander une vérification supplémentaire.
+
+Le mode facultatif `experimental_http_probe=auto-post` est déclenché
+**uniquement** par une action explicite « Tester ce compte » :
+entrée BiblioAccess, GET institutionnel, lecture du contexte du formulaire,
+POST AJAX **unique** avec identifiants déjà enregistrés et champs dynamiques
+frais du HTML. Aucun script n'est exécuté, aucun CAPTCHA n'est résolu ;
+un formulaire inattendu, un challenge initial visible ou une valeur
+cachée absente interdisent le POST. Le mode `on` reste en GET uniquement ;
+le mode `post` historique avec valeurs fournies reste disponible.
+Le résultat AJAX peut conduire aux observations CAS/MyLoans existantes,
+mais **ne constitue jamais** une authentification Core vérifiée :
+aucun compte, prêt, téléchargement ou `sync.loans` n'est publié.
+Les captures HTTP brutes de ce mode peuvent contenir des identifiants :
+fichiers privés et partage après expurgation uniquement.
+
+
+La reconnaissance lexicale de la route AJAX accepte désormais également
+le littéral relatif `logon.svc/logon` observé dans le JS PageSpeed, sans
+imposer un slash initial. Ce signal sert seulement au diagnostic : il
+n'exécute pas le JS et ne conditionne pas la connexion.
+
+Une régression MockTransport couvre désormais le chemin **positif
+synthétique** complet : session cookie institutionnel initiale, POST avec
+valeurs fraîches, cookie de succès, CAS avec ticket, cookie BiblioAccess,
+puis lecture de MyLoans. Ce test ne vaut pas validation en production.
+
+
+### Préparation de la prochaine recette du compte : phases et diagnostic expurgé
+
+Pour `experimental_http_probe=auto-post`, un incident est désormais
+attribué à **la phase exacte** (`entry`, `institution_login`,
+`login_preflight`, `login_script`, `ajax_logon`, `cas_return`,
+`loans_page`) au lieu d'une phase générique `preflight`.
+L'authentification reste explicitement déclenchée, à tentative unique,
+et les transitions CAS ne sont pas assouplies.
+
+Si le POST renvoie un JSON de forme reconnue, l'événement `ajax_logon`
+rapporte `reported_error_count` (nombre plafonné à 99, `null` si le champ
+est mal typé) et `response_message_present` (booléen).
+**Aucun corps JSON, message, erreur textuelle, credential, cookie ou ticket**
+n'est restitué. Un `failure_reported` n'est pas forcément un CAPTCHA.
+
+Interprétation après un **log réel privé** :
+- arrêt `ajax_logon` : déterminer si le POST a été refusé, sans relance
+  automatique ni contournement du challenge ;
+- `success_reported` puis refus `cas_return` : analyser la continuité
+  ticket/service/cookies dans les seules preuves autorisées ;
+- `loans_page` 200 : qualifier l'identité réellement authentifiée,
+  puis les *lignes de prêt* et leur caractère exhaustif avant de
+  publier `Loan`, `sync.loans` ou une preuve d'absence de prêt.
+
+Le maintien de `connected=False` est volontaire : ces indicateurs ne
+constituent pas une preuve de compte ni de droit.
+
+
+### Qualification MyLoans sur capture réelle 08/11/2026 19:11
+
+La recette `auto-post` a **réussi deux fois** sur la source réelle :
+entrée 302, institution `/login` 200, POST AJAX 200
+`success_reported` avec 0 erreur déclarée, CAS 302 avec ticket éphémère,
+landing tenant 1409 200, puis `Catalog/MyLoans` 200.
+Les cookies, tickets, identifiants, corps et liens signés sont **privés**
+et ne figurent pas dans Git.
+
+Les deux pages MyLoans capturées (réponses Brotli décompressées hors du
+dépôt) comportent une ligne de prêt stable de structure
+`div.JSProductRow-<product-ref>`, avec `p.titleLoans`,
+`span.jsDateEnd` au format jour/mois/année et heure,
+et un lien de notice `/1409/Catalog/Book/<book-id>/...`.
+La référence de produit de la ligne **diffère** de l'identifiant de la
+notice. Une action ACSM porte un hôte exact
+`entrepot2r.numilog.com` et un chemin `/fulfillment/URLLink.acsm` :
+l'observation ne garde qu'un booléen et **ne conserve aucun paramètre de
+son URL**, sans GET de téléchargement. Le formulaire de déconnexion
+`POST /1409/Account/LogOff` est présent, sans être utilisé.
+
+Le parseur MyLoans fournit désormais des **observations positives
+strictes** `page_loan_row_count`, `page_loan_row_partial_count` et
+`logout_form_observed` ; les références produit, notice, titre et
+échéance restent mémoire et hors `repr`/journal. Il refuse les liens
+d'autres tenants, les lignes ambiguës et les dates invalides.
+Aucune valeur ni DOM réel n'est intégrée aux tests : uniquement des
+fixtures synthétiques fondées sur la **structure** observée.
+
+**Ne pas confondre cette étape avec la synchronisation :**
+`identity_verified=False`, `loans_verified=False`,
+`inventory_verified=False` et couverture `unknown` ;
+les lignes sont des candidats positifs, ni des identifiants de prêts
+définitifs ni un signal d'inventaire complet.
+Reste à établir le contrat d'identité du compte et la durée de vie
+d'une session authentifiée pour fournir des `Account`/`Loan`
+scoppés sous le contrat public Core ; seul le Core autorisera
+l'admission d'une acquisition (ACSM traité séparément).
+
+
+## P1 #5209 — offres PNB/DILICOM `/do` dans MyLoans
+
+Une ligne de prêt positive et authentifiée peut désormais annoncer l'une de
+deux actions distinctes : `numilog_acsm` (lien Numilog `URLLink.acsm` signé)
+ou `pnb_do` (hôte exact `pnb-dilicom.centprod.com`, chemin se terminant par
+`/do`). **Aucune extension .acsm n'est exigée pour établir l'existence
+d'une action PNB**, mais la réponse réseau doit contenir un **véritable
+fulfillment Adobe ACSM structurellement valide** avant publication locale.
+
+Le GET est HTTPS, limité en taille, sans cookies/headers de l'institution.
+Les redirects sont bornés à trois sauts et à des hôtes de livraison fournisseurs
+approuvés ; une redirection vers un fournisseur non qualifié, un HTML de login,
+un refus HTTP ou un ACSM malformé produit un code d'échec fermé. Le plugin
+ne déclenche **aucun POST de prêt** et n'attribue aucun droit depuis le
+catalogue. Les identifiants de livres et URLs signées ne sont pas journalisés ;
+la corrélation d'étape utilise un `loan_ref` aléatoire non persistant.
+
+Une nouvelle chaîne fournisseur observée mais encore inconnue doit être
+qualifiée explicitement ; aucun suivi automatique de redirect arbitraire.
+Le Core conserve la chaîne canonique ACSM → ADEPT → EPUB déjà utilisée par
+les offres Numilog.
