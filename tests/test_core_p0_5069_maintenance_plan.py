@@ -57,7 +57,8 @@ def test_seven_young_and_seven_old_still_never_authorize_apply():
     assert report["stores"]["plugin_versions"]["candidates"] == 4
     assert report["stores"]["plugin_versions"]["retained"] == 3
     assert report["stores"]["known_persistent_staging"]["known"] is False
-    assert "cross_store_apply_unimplemented" in report["blockers"]
+    assert "separate_supervised_apply_required" in report["blockers"]
+    assert report["next_action"] == "run_maintenance_all_plan"
     assert len(report["plan_sha256"]) == 64
     assert "release:0" not in repr(report)
     assert "tx:0" not in repr(report)
