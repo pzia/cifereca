@@ -24,7 +24,7 @@ _UNSAFE_ESCAPE = re.compile(r"%(?:2e|2f|5c|00|0[ad])", re.I)
 _PNB_DOT_DO = re.compile(
     r"/[A-Za-z0-9_-]{1,32}//[A-Za-z0-9_-]{1,32}/"
     r"[0-9]{13}/[A-Za-z0-9_-]{1,32}/[A-Za-z0-9_-]{8,64}/"
-    r"[A-Za-z0-9_-]{8,96}\.do\Z", re.ASCII,
+    r"[0-9]{13}-[A-Za-z0-9]{32}\.do\Z", re.ASCII,
 )
 
 
