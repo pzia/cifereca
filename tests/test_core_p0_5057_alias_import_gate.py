@@ -154,3 +154,17 @@ provider_handlers = {"provider-kobo": public_handler,
     assert result["dispatch_tables"] == [{
         "line": 2, "providers": ["provider-kobo", "provider-numilog"],
     }]
+
+
+def test_known_provider_constant_key_and_attribute_bound_callable_table():
+    report = inspect_source('''
+KOBO_PROVIDER = "kobo"
+def search(): return 1
+class Controller:
+    def __init__(self):
+        self.provider_handlers = {KOBO_PROVIDER: self.search,
+                                  "bnf-pret": search}
+''')
+    assert report["dispatch_tables"] == [{
+        "line": 6, "providers": ["bnf-pret", "kobo"],
+    }]
