@@ -169,10 +169,18 @@ def _provider_method_name(name: str, providers: set[str]) -> list[str]:
     """
     if type(name) is not str or not name.isidentifier():
         return []
-    tokens = set(name.casefold().strip("_").split("_"))
-    # Dotted/hyphenated provider identifiers are data IDs, not Python tokens.
-    return sorted(tokens & {provider for provider in providers
-                            if provider.isidentifier() and "_" not in provider})
+    parts = name.casefold().strip("_").split("_")
+    # Match whole identifier components, including multi-token provider aliases
+    # declared by manifests (library_example), never arbitrary substrings.
+    matched = set()
+    for provider in providers:
+        if not provider.isidentifier():
+            continue
+        segments = provider.split("_")
+        if any(parts[i:i + len(segments)] == segments
+               for i in range(len(parts) - len(segments) + 1)):
+            matched.add(provider)
+    return sorted(matched)
 
 
 def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
