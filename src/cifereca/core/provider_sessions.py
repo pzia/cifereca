@@ -880,9 +880,10 @@ def reconnect_expired_configured_source_once(
 
     accepted = False
     try:
+        if not isinstance(replacement, ProviderSession) or replacement is expired_session:
+            return None
         accounts = replacement.connect()
-        if (replacement is expired_session
-                or replacement.connected is not True
+        if (replacement.connected is not True
                 or replacement.provider_id != scope[1]
                 or replacement.credential_id != scope[2]
                 or type(accounts) not in (tuple, list)
