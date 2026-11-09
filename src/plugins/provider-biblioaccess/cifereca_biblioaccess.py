@@ -637,6 +637,17 @@ class LaRochelleSession(ProviderSession):
             from biblioaccess_acsm_delivery import (
                 stage_loan_acsm, ACSMDeliveryError,
             )
+            # Safe closed provider category only; never emit the signed URL.
+            from urllib.parse import urlsplit
+            delivery_kind = (
+                "pnb_do" if urlsplit(matches[0].acsm_url).hostname
+                == "pnb-dilicom.centprod.com" else "numilog_acsm"
+            )
+            self._event(
+                "acsm_stage", "observed", probe="authenticated_sync",
+                connected=True, stage="offer_selected",
+                delivery_kind=delivery_kind, download_link_observed=True,
+            )
             try:
                 path = stage_loan_acsm(matches[0].acsm_url, target_dir)
             except Exception as exc:
@@ -664,7 +675,7 @@ class LaRochelleSession(ProviderSession):
                 self._event(
                     "acsm_stage", "error", probe="authenticated_sync",
                     connected=True, stage="signed_get", error_code=code,
-                    session_revoked=False,
+                    delivery_kind=delivery_kind, session_revoked=False,
                 )
                 raise ProviderCapabilityError(
                     "biblioaccess_acsm_stage_unavailable") from None
@@ -672,6 +683,7 @@ class LaRochelleSession(ProviderSession):
             self._event(
                 "acsm_stage", "observed", probe="authenticated_sync",
                 connected=True, stage="staged", signed_url_logged=False,
+                delivery_kind=delivery_kind,
             )
             # Never return the signed ACSM link to Core/receipts/hooks.
             return path, ""
