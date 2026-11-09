@@ -577,6 +577,13 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
             "unresolved_transaction_reference", "missing_transaction_snapshot",
             "unsafe_transaction_snapshot", "incomplete_reference_graph",
             "transaction_inventory_too_large", "unsafe_runtime_root",
+            # The inventory is only a source of GC authority when every
+            # release-to-transaction proof and runtime pointer is qualified.
+            # A malformed pointer must never be downgraded to "not referenced".
+            "invalid_release_transaction_pointer", "unsafe_releases_root",
+            "unsafe_release_entry", "unexpected_release_entry",
+            "release_inventory_too_large", "invalid_core_pointer",
+            "unresolved_core_pointer",
         }
         if (type(plan) is not dict or type(plan.get("objects")) is not list
                 or critical & blockers):
