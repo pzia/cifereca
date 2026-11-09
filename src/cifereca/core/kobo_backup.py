@@ -182,18 +182,8 @@ def _indexed_kobo_catalog_paths(self) -> dict[tuple[str, str], list[Path]]:
 
 
 def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> Path:
-    ext = ".pdf" if fmt.lower() == "pdf" else ".epub"
-    author = (item.author or "").strip()
-    stem = f"{author} - {item.title}" if author else item.title
-    safe = self.acquisition._safe_filename(stem or item.record_id)
-    path = target_dir / f"{safe}{ext}"
-    # Avoid an unrelated existing file blocking a different Kobo product.
-    if path.exists() or path.is_symlink():
-        current = self.storage.backup_get("kobo", item.source_credential, item.record_id)
-        if not current or Path(str(current.get("local_path") or "")) != path:
-            suffix = re.sub(r"[^A-Za-z0-9]", "", item.record_id)[-8:] or "kobo"
-            path = target_dir / f"{safe} [{suffix}]{ext}"
-    return path
+    """Retired 0.7 placement decision; canonical Core owns file placement."""
+    raise ProviderConfigurationError("kobo_legacy_destination_retired")
 
 
 def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
