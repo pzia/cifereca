@@ -371,6 +371,7 @@ class SynchronizationBrokerImpl:
 
     def _phase_states(
         self, account: Any, state: dict[str, Any], sync_caps: tuple[str, ...],
+        *, legacy_checkpoint: bool = False,
     ) -> tuple[SyncPhaseState, ...]:
         """Safe, read-only projection: no remote call, migration or acquisition."""
         raw_status = state.get("status")
@@ -419,7 +420,7 @@ class SynchronizationBrokerImpl:
                 # Legacy W2 checkpoint only; future providers use the exact
                 # generic explicit phase receipt below, never backup_items.
                 row = None
-                if provider_id == "kobo":
+                if legacy_checkpoint:
                     from .core.kobo_backup import _kobo_checkpoint_for
                     row = _kobo_checkpoint_for(self.service, identity, credential)
                 if row is None:
@@ -576,7 +577,13 @@ class SynchronizationBrokerImpl:
             status=str(state.get("status") or "idle"),
             error=str(state.get("error") or ""),
             sync_capabilities=tuple(declared_sync_caps),
-            phase_states=self._phase_states(account, state, tuple(declared_sync_caps)),
+            phase_states=self._phase_states(
+                account, state, tuple(declared_sync_caps),
+                legacy_checkpoint=(
+                    getattr(getattr(session, "capabilities", None),
+                            "legacy_materialization_checkpoint", False) is True
+                ),
+            ),
             last_cycle=receipt,
         )
 
