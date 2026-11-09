@@ -112,6 +112,34 @@ def test_cross_identity_or_changed_ledger_revokes_the_verdict():
                       identity_id=service.current_identity.identity_id)["state"] == "remote_catalog"
 
 
+def test_account_or_source_rebinding_revokes_old_proof_even_same_identity():
+    service = _service([_entitlement()])
+    service._account_context_epoch = 17
+    service._source_context_epoch = 29
+    proof = snapshot_search_owned_evidence(service)
+    assert proof is not None
+    assert result_row(
+        _item(), purchase_evidence=proof, identity_id=IDENTITY,
+        account_context_epoch=17, source_context_epoch=29,
+    )["state"] == "remote_owned"
+    for account_epoch, source_epoch in ((18, 29), (17, 30), (None, None)):
+        assert result_row(
+            _item(), purchase_evidence=proof, identity_id=IDENTITY,
+            account_context_epoch=account_epoch, source_context_epoch=source_epoch,
+        )["state"] == "remote_catalog"
+
+
+def test_account_epoch_changed_during_ledger_read_refuses_snapshot():
+    service = _service([_entitlement()])
+    service._account_context_epoch = 5
+    service._source_context_epoch = 7
+    def rotate(*, state):
+        service._source_context_epoch += 1
+        return [_entitlement()]
+    service.storage.entitlements.side_effect = rotate
+    assert snapshot_search_owned_evidence(service) is None
+
+
 def test_pending_archived_and_loan_entitlements_are_not_purchase_proofs():
     rows = [
         _entitlement(entitlement_type="loan"),
