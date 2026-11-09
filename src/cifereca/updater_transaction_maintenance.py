@@ -16,6 +16,7 @@ import time
 
 from .updater_retention_inventory import (
     _name_id, inspect_core_transaction_history, _read_transaction_for_inspection,
+    _release_transaction_pointer,
 )
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,255}\Z")
@@ -57,6 +58,23 @@ def _qualified(root: Path, *, now: float) -> tuple[dict, list[Path]]:
         raise ValueError("transaction_gc_inventory_incomplete")
     decisions = {row["object_id"]: row for row in plan["objects"]
                  if type(row) is dict and type(row.get("object_id")) is str}
+    # A transaction still named by an on-disk Core release must survive
+    # until that release has been collected. Removing the journal first
+    # makes the release's rollback pointer dangling and blocks later Core GC.
+    referenced_by_physical_release: set[str] = set()
+    releases = root / "releases"
+    if releases.is_symlink():
+        raise ValueError("transaction_gc_unsafe_releases")
+    if releases.is_dir():
+        for release in releases.iterdir():
+            if release.is_symlink() or not release.is_dir():
+                raise ValueError("transaction_gc_unsafe_release")
+            try:
+                reference = _release_transaction_pointer(releases, release.name)
+            except (OSError, UnicodeError, ValueError, TypeError):
+                raise ValueError("transaction_gc_invalid_release_pointer") from None
+            if reference is not None:
+                referenced_by_physical_release.add(reference)
     folders: list[Path] = []
     transactions = root / "transactions"
     if transactions.is_symlink():
@@ -69,7 +87,8 @@ def _qualified(root: Path, *, now: float) -> tuple[dict, list[Path]]:
             row = decisions.get(_name_id("transaction", entry.name))
             if row is None:
                 raise ValueError("transaction_gc_missing_decision")
-            if row.get("decision") != "candidate":
+            if (row.get("decision") != "candidate"
+                    or _name_id("transaction", entry.name) in referenced_by_physical_release):
                 continue
             if row.get("reasons") != []:
                 raise ValueError("transaction_gc_invalid_candidate")
