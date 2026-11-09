@@ -23,7 +23,9 @@ class _Storage:
 
 
 def test_exact_usb_copy_stays_completed_after_reopening_sqlite(copy, tmp_path):
-    args, managed, _, _ = copy
+    args, managed, _, resolved = copy
+    from types import SimpleNamespace
+    resolved.service = SimpleNamespace(write_usb_stage=lambda payload, append: append(payload))
     store = _Storage(tmp_path / "usb-operations.sqlite3")
     journal = SqliteUsbOperationJournal(store)
     assert journal.get(args["consent"].operation_id) is None
