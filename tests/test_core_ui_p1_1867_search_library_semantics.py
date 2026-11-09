@@ -150,12 +150,16 @@ def test_library_references_do_not_confuse_loan_purchase_and_catalogue():
     from tests.test_core_ui_346_local_dedupe import _standalone_pair
 
     host = _standalone_pair()
-    assert "Achat Kobo" in host._library_state_label(
+    assert host._library_state_label(
         {"state": "remote_owned", "provider_id": "kobo"}
-    )
-    assert "Achat Numilog" in host._library_state_label(
+    ) == host._library_state_label(
         {"state": "remote_owned", "provider_id": "numilog"}
-    )
+    ) == host._library_state_label(
+        {"state": "remote_owned", "provider_id": "fictional-provider"}
+    ) == "Droit de possession · en ligne"
+    assert host._library_state_label(
+        {"state": "remote_archived", "provider_id": "fictional-provider"}
+    ) == "Droit archivé · en ligne"
     assert "Notice de catalogue" in host._library_state_label(
         {"state": "remote_catalog", "provider_id": "numilog-catalog"}
     )
