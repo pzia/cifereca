@@ -85,10 +85,7 @@ def test_opening_inventory_handles_zero_one_or_many_purchases_without_acquisitio
     service = _service(tmp_path)
     try:
         _account, _session, calls = _connect(service, number=number)
-        monkeypatch.setattr(
-            service, "_acquire_personal_library_item",
-            lambda *_args: pytest.fail("legacy backup path must never run"),
-        )
+        assert not hasattr(service, "_acquire_personal_library_item")
         # Current UI selection is unrelated to the store account provenance.
         service.current_identity = service.identity_by_id("alex")
         first = service.mirror_personal_libraries()
@@ -123,10 +120,7 @@ def test_manual_source_inventory_sync_does_not_use_backup_or_direct_download(
         )
         assert "remote_inventory" in source.sync_capabilities
         assert "local_materialization" not in source.sync_capabilities
-        monkeypatch.setattr(
-            service, "_acquire_personal_library_item",
-            lambda *_args: pytest.fail("legacy backup"),
-        )
+        assert not hasattr(service, "_acquire_personal_library_item")
         result = broker.synchronize_source(source.source_id)
         assert result.ok and result.changed == 4  # two notices and two attested ownership rights
         assert result.facts["library"] == 2
@@ -192,12 +186,7 @@ def test_deprecated_backup_helper_fails_closed_with_no_provider_call(tmp_path):
     service = _service(tmp_path)
     try:
         _account, session, calls = _connect(service, number=1)
-        blocked = service._acquire_personal_library_item(
-            session, _row("numilog-private", 0), "default",
-        )
-        assert blocked == {
-            "status": "blocked", "reason": "explicit_acquisition_required",
-        }
+        assert not hasattr(service, "_acquire_personal_library_item")
         assert calls == []
     finally:
         service.close()
@@ -208,10 +197,7 @@ def _opening_dependencies(service, monkeypatch):
     monkeypatch.setattr(service, "_loans_for_account", lambda *_args, **_kw: [])
     monkeypatch.setattr(service, "_reconcile_identity_adept_inventory",
                         lambda _identity: {"status": "skipped"})
-    monkeypatch.setattr(
-        service, "_acquire_personal_library_item",
-        lambda *_args: pytest.fail("automatic backup never authorized"),
-    )
+    assert not hasattr(service, "_acquire_personal_library_item")
 
 
 def test_real_opening_reports_inventory_only_and_explicit_zero_acquisitions(

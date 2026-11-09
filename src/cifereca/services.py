@@ -1662,17 +1662,6 @@ class LibraryService:
                 )
         return result
 
-    def _acquire_personal_library_item(self, session, row, identity_id: str) -> dict[str, Any]:
-        """Deprecated fail-closed backup shim; never called by mirroring.
-
-        The old method passed Numilog SearchResult dictionaries to the
-        unsupported ProviderSession.download_library_item contract, then
-        swallowed errors as if opening acquisition had succeeded. A per-book
-        user action must instead use the existing direct acquisition broker,
-        which validates the provider, account and ACSM/ADEPT path.
-        """
-        return {"status": "blocked", "reason": "explicit_acquisition_required"}
-
     def recent_acquisitions(self, *, identity_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """Return recent local materializations, newest first.
 
