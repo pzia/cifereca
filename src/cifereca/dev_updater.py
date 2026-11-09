@@ -583,7 +583,7 @@ def _postcommit_dev_backup_retention() -> dict[str, Any]:
     from .updater_dev_backup_maintenance import dev_backup_maintenance
     try:
         root = updater.install_root()
-        backups = state_dir(create=False) / "dev-updates"
+        backups = state_dir() / "dev-updates"
         plan = dev_backup_maintenance(root, backups)
         if plan["candidate_backups"] == 0:
             return {"status": "complete", "removed": 0}
