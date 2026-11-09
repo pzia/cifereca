@@ -1016,9 +1016,14 @@ class DetailPanel(Gtk.Box):
             )
         except Exception:
             pending_followup = False
+        if pending_followup:
+            # Preserve the existing borrow-candidate renderer/contract while
+            # making a spent claim visible even when catalogue availability
+            # changed. This is a local variable used by the action gate only.
+            availability = "Empruntable"
         if direct_download:
             self._direct_download_action(item)
-        elif search_detail_borrow_action_candidate(item, availability) or pending_followup:
+        elif search_detail_borrow_action_candidate(item, availability):
             # Commercial store inventory/catalogues never become loan sources,
             # even if a generic availability label is malformed.
             action = Adw.PreferencesGroup()
@@ -1083,11 +1088,10 @@ class DetailPanel(Gtk.Box):
                             "Vérifier le prêt sans réemprunter",
                             "view-refresh-symbolic",
                         )
+                        verify.set_name("cifereca-paris-borrow-followup")
                         verify.connect(
                             "clicked",
-                            lambda _b: self.window.borrow_search_item(
-                                item, verify, verification_only=True,
-                            ),
+                            lambda _b: self.window.borrow_search_item(item, verify),
                         )
                         self._actions([verify])
                 row.set_subtitle(explanation)
