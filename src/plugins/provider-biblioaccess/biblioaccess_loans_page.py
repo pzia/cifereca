@@ -166,12 +166,21 @@ class _ObservedRows(HTMLParser):
                     self.row["book_ids"].add(book_id)
                 if self.download_depth:
                     dest = urlsplit(href)
-                    if (dest.scheme == "https"
-                            and dest.hostname == "entrepot2r.numilog.com"
+                    # Only exact observed fulfillment shapes from the
+                    # authenticated row. A PNB /do action is a candidate ACSM
+                    # delivery, not proof that the endpoint returns ACSM.
+                    numilog = (dest.hostname == "entrepot2r.numilog.com"
+                               and dest.path == "/fulfillment/URLLink.acsm"
+                               and bool(dest.query))
+                    pnb = (dest.hostname == "pnb-dilicom.centprod.com"
+                           and dest.path.endswith("/do")
+                           and dest.path.startswith("/")
+                           and all(part not in ("", ".", "..")
+                                   for part in dest.path[1:].split("/"))
+                           and not dest.path.startswith("//"))
+                    if (dest.scheme == "https" and (numilog or pnb)
                             and dest.username is None and dest.password is None
-                            and dest.port in (None, 443) and not dest.fragment
-                            and dest.path == "/fulfillment/URLLink.acsm"
-                            and bool(dest.query)):
+                            and dest.port in (None, 443) and not dest.fragment):
                         # Private ephemeral value, used only by the provider's
                         # same-session acquisition method. Never store in Loan.
                         if self.row["acsm_url"] is not None:
