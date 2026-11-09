@@ -107,14 +107,14 @@ _DISPATCH_HINTS = ("dispatch", "handler", "route", "executor", "callback", "oper
 
 def _dispatch_table_literal(
     node: ast.Dict, *, providers: set[str], functions: set[str],
-    hint: bool,
+    constants: dict[str, str], hint: bool,
 ) -> list[str]:
     """Only callable-valued provider-keyed maps are *executable* dispatch."""
     matched: set[str] = set()
     for key, value in zip(node.keys, node.values):
         if key is None:
             continue
-        names = _literal_providers(key, providers)
+        names = _literal_providers(key, providers, constants)
         if not names:
             continue
         callable_value = (
@@ -129,7 +129,7 @@ def _dispatch_table_literal(
 
 
 def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
-    """Report imports of implementations and comparisons to concrete provider IDs."""
+    """Inventory imports, provider comparisons and executable dispatch maps."""
     tree = ast.parse(content)
     names = set(providers)
     constants = _immutable_provider_constants(tree, names)
@@ -156,8 +156,9 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             value = stmt.value
             targets = stmt.targets if isinstance(stmt, ast.Assign) else (stmt.target,)
             if isinstance(value, ast.Dict) and any(
-                isinstance(target, ast.Name)
-                and any(token in target.id.casefold() for token in _DISPATCH_HINTS)
+                isinstance(target, (ast.Name, ast.Attribute))
+                and any(token in (target.id if isinstance(target, ast.Name) else target.attr).casefold()
+                        for token in _DISPATCH_HINTS)
                 for target in targets
             ):
                 dispatch_hints.add(id(value))
@@ -168,7 +169,7 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
         if isinstance(node, ast.Dict):
             matched = _dispatch_table_literal(
                 node, providers=names, functions=functions,
-                hint=id(node) in dispatch_hints,
+                constants=constants, hint=id(node) in dispatch_hints,
             )
             if matched:
                 tables.append({"line": node.lineno, "providers": matched})
