@@ -25,6 +25,7 @@ def case(tmp_path, monkeypatch):
     service, session = _service(tmp_path, manifest)
     session.descriptor = replace(session.descriptor, capabilities=replace(
         session.capabilities, local_materialization=True,
+        legacy_materialization_checkpoint=True,
     ))
     service.accounts = list(session.accounts)
     sessions = [session]
