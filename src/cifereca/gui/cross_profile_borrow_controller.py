@@ -160,7 +160,7 @@ def present_cross_profile_lender_choice(
                     and result.get("retry_borrow") is False):
                 window._activity_result(
                     "Prêt confirmé sur le profil prêteur. "
-                    "Livraison et transfert vers ce profil non autorisés."
+                    "Livraison non vérifiée ; transfert vers ce profil bloqué (droits non vérifiés)."
                 )
                 # #5124: the optional renderer is inert, and accepts only
                 # the same visible Search detail plus pinned context epochs.
