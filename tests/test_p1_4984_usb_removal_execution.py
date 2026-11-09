@@ -6,6 +6,7 @@ import pytest
 
 from cifereca.core import device_usb_removal_execute as executor
 from tests.test_p1_2854_usb_removal_review import completed_copy
+from tests.test_p1_2854_usb_live_source import live_args
 
 
 def test_confirmed_owned_usb_copy_is_physically_removed(completed_copy, monkeypatch):
