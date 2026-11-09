@@ -152,6 +152,10 @@ class PublicBookMasterDetailView:
             item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
             identity_id=getattr(getattr(getattr(self._window, "service", None),
                                         "current_identity", None), "identity_id", None),
+            account_context_epoch=getattr(getattr(self._window, "service", None),
+                                           "_account_context_epoch", None),
+            source_context_epoch=getattr(getattr(self._window, "service", None),
+                                          "_source_context_epoch", None),
         ))
         self._append_recommendation_context(panel, context_sections)
 
@@ -171,6 +175,10 @@ class PublicBookMasterDetailView:
             item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
             identity_id=getattr(getattr(getattr(self._window, "service", None),
                                         "current_identity", None), "identity_id", None),
+            account_context_epoch=getattr(getattr(self._window, "service", None),
+                                           "_account_context_epoch", None),
+            source_context_epoch=getattr(getattr(self._window, "service", None),
+                                          "_source_context_epoch", None),
         ))
         self._append_recommendation_context(panel, context_sections)
 
