@@ -28,3 +28,7 @@ comparaison avec le snapshot de l'identité précédente.
 Le snapshot épingle aussi les générations Core `_account_context_epoch` et
 `_source_context_epoch`. Un compte sélectionné ou une session reconnectée
 sous la même identité révoque immédiatement la preuve de la vue précédente.
+
+Les clés d’affichage des résultats ayant un ID fournisseur en collision
+incluent aussi le compte et la révision ; permuter des comptes ne réutilise
+pas la sélection d’une autre édition. Ces clés ne sont jamais une preuve de droit.
