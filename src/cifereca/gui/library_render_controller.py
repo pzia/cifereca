@@ -157,6 +157,7 @@ def render_recent(window, items: list[dict[str, Any]] | None = None, *, perf_cou
     window._recent_entries_cache = list(items)
     rows, window._recent_objects = project_recent_rows(
         items, row_factory=BookListItem,
+        provider_display_name=window.service.provider_display_name,
     )
     if phase is not None:
         phase("row_projection")
