@@ -193,6 +193,14 @@ def test_missing_retained_plugin_remains_unresolved_and_never_permits_purge(tmp_
 @pytest.mark.parametrize("core_plan", [
     {"objects": []},
     {"objects": [{"object_id": "transaction:bad", "decision": "retain"}]},
+    {"objects": [
+        *_core_decisions((TX, "retain"))["objects"],
+        {"object_id": "transaction:forged", "decision": "retain"},
+    ]},
+    {"objects": [
+        *_core_decisions((TX, "retain"))["objects"],
+        {"object_id": None, "decision": "retain"},
+    ]},
     _core_decisions((TX, "retain"), (TX, "candidate")),
     _core_decisions((TX, "other")),
 ])
