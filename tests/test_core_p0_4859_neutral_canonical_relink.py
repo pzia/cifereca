@@ -36,10 +36,11 @@ def test_canonical_relink_for_unrecognized_provider_is_exact(store, tmp_path, mo
         edition_id="edition-A", right_id="purchase", branch_id="purchases",
         placement_id=published.placement_id, new_path=moved,
     )
-    before = {
-        name: tuple(store._connect().execute("SELECT * FROM " + name))
-        for name in ("source_references", "origin_links", "artifacts")
-    }
+    with store._lock, store._connect() as db:
+        before = {
+            name: tuple(db.execute("SELECT * FROM " + name))
+            for name in ("source_references", "origin_links", "artifacts")
+        }
     with pytest.raises(CanonicalRelinkRejected):
         relink_verified_canonical(store, **{**arguments, "provider_id": "kobo"})
     preview = relink_verified_canonical(store, **arguments)
@@ -51,8 +52,9 @@ def test_canonical_relink_for_unrecognized_provider_is_exact(store, tmp_path, mo
     assert store.placement_get(published.placement_id)["path"] == str(moved)
     assert moved.read_bytes() == BYTES
     assert not old.exists()
-    after = {
-        name: tuple(store._connect().execute("SELECT * FROM " + name))
-        for name in before
-    }
+    with store._lock, store._connect() as db:
+        after = {
+            name: tuple(db.execute("SELECT * FROM " + name))
+            for name in before
+        }
     assert before == after
