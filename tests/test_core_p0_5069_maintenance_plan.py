@@ -1,0 +1,101 @@
+"""#5069 B9: read-only maintenance preview, never an apply permit."""
+from __future__ import annotations
+
+from copy import deepcopy
+from pathlib import Path
+
+import pytest
+
+from cifereca.updater_retention import RetentionObject, plan_retention
+from cifereca.updater_retention_maintenance import retention_maintenance_plan
+
+
+def _fixture():
+    # Seven releases generated during the 24 h union window: all are
+    # retained, even when a default minimum of 2 would be enough otherwise.
+    base = 1_900_000_000
+    young = plan_retention(
+        [RetentionObject(
+            object_id=f"release:{i}", store="releases", unit="core",
+            generation=f"release:{i}", installed_at=base - i * 60,
+            owned_by_updater=True,
+        ) for i in range(7)],
+        now=base,
+    )
+    aged = plan_retention(
+        [RetentionObject(
+            object_id=f"tx:{i}", store="transactions", unit="core",
+            generation=f"tx:{i}", installed_at=base - 90_000 - i * 60,
+            owned_by_updater=True, pinned=i == 6,
+        ) for i in range(7)],
+        now=base,
+    )
+    return {
+        "schema": "cifereca.updater.retention-inventory-combined/1",
+        "safe_to_apply": False,
+        "plans": {
+            "core_transactions": young,
+            "plugin_versions": aged,
+            "known_persistent_staging": None,
+            "updater_backups": None,
+            "core_preactivation_backups": None,
+        },
+        "coverage": ["releases", "transactions", "plugin_versions"],
+        "pending_stores": ["persistent_staging", "updater_backups"],
+        "blockers": ["partial_store_coverage", "cross_store_references_unqualified"],
+    }
+
+
+def test_seven_young_and_seven_old_still_never_authorize_apply():
+    report = retention_maintenance_plan(_fixture())
+    assert report["schema"] == "cifereca.updater.maintenance-plan/1"
+    assert report["mode"] == "dry_run"
+    assert report["safe_to_apply"] is False
+    assert report["apply_supported"] is False
+    assert report["stores"]["core_transactions"]["total"] == 7
+    assert report["stores"]["core_transactions"]["candidates"] == 0
+    assert report["stores"]["plugin_versions"]["candidates"] == 4
+    assert report["stores"]["plugin_versions"]["retained"] == 3
+    assert report["stores"]["known_persistent_staging"]["known"] is False
+    assert "cross_store_apply_unimplemented" in report["blockers"]
+    assert len(report["plan_sha256"]) == 64
+    assert "release:0" not in repr(report)
+    assert "tx:0" not in repr(report)
+
+
+def test_digest_changes_when_pin_or_reference_changes():
+    original = _fixture()
+    one = retention_maintenance_plan(original)
+    two = deepcopy(original)
+    two["plans"]["plugin_versions"]["objects"][0]["reasons"].append("pinned")
+    changed = retention_maintenance_plan(two)
+    assert one["plan_sha256"] != changed["plan_sha256"]
+    assert one["stores"] == changed["stores"]
+    assert retention_maintenance_plan(original) == one
+
+
+@pytest.mark.parametrize("alter", [
+    lambda data: data.update(safe_to_apply=True),
+    lambda data: data.update(plans={}),
+    lambda data: data["plans"]["core_transactions"].update(safe_to_apply=True),
+    lambda data: data["plans"]["core_transactions"].update(candidates=2),
+    lambda data: data["plans"]["core_transactions"].update(total=100),
+    lambda data: data["plans"].update(unknown={"schema": "x"}),
+    lambda data: data.update(blockers=["invalid\nSECRET"]),
+    lambda data: data["plans"]["core_transactions"].update(objects=[]),
+])
+def test_foreign_or_incomplete_report_fails_closed(alter):
+    candidate = deepcopy(_fixture())
+    alter(candidate)
+    with pytest.raises(ValueError):
+        retention_maintenance_plan(candidate)
+
+
+def test_cli_declares_dedicated_readonly_mode_not_disposal():
+    source = (
+        Path(__file__).resolve().parents[1] / "src/cifereca/updater.py"
+    ).read_text(encoding="utf-8")
+    assert 'p.add_argument("--retention-plan"' in source
+    assert "result = retention_maintenance_plan(result)" in source
+    assert "or (a.retention_inspect and a.retention_plan)" in source
+    assert "--retention-inspect/--retention-plan sont exclusifs et read-only" in source
