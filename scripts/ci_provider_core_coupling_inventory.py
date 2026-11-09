@@ -22,6 +22,10 @@ DEFAULT_PROVIDERS = (
     # underscore alias just because Python imports use different spelling.
     "biblioaccess", "biblioaccess.la-rochelle",
     "biblioaccess_la_rochelle", "provider-biblioaccess",
+    # Full IDs in the installed BiblioAccess manifest, including the public
+    # catalogue's distinct source. These are routing identities, not labels.
+    "provider.biblioaccess.la-rochelle",
+    "provider.biblioaccess-catalogue.la-rochelle",
 )
 
 
