@@ -130,10 +130,10 @@ def publish_usb_pending_copy(
     try:
         if checkpoint_pending(pin) is not True:
             return UsbFilePublication("blocked", "usb_recovery_checkpoint_refused")
-    except Exception as error:
-        return UsbFilePublication(
-            "blocked", "usb_recovery_checkpoint_failed", detail=str(error),
-        )
+    except Exception:
+        # Journal callbacks may include private mount paths or account data.
+        # The stage remains untouched; do not expose exception text.
+        return UsbFilePublication("blocked", "usb_recovery_checkpoint_failed")
 
     def current() -> bool:
         if pending_is_current(pin) is not True or pin.boot_id != _boot_id():
