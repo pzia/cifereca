@@ -57,7 +57,8 @@ def test_seven_young_and_seven_old_still_never_authorize_apply():
     assert report["stores"]["plugin_versions"]["candidates"] == 4
     assert report["stores"]["plugin_versions"]["retained"] == 3
     assert report["stores"]["known_persistent_staging"]["known"] is False
-    assert "cross_store_apply_unimplemented" in report["blockers"]
+    assert "separate_supervised_apply_required" in report["blockers"]
+    assert report["next_action"] == "run_maintenance_all_plan"
     assert len(report["plan_sha256"]) == 64
     assert "release:0" not in repr(report)
     assert "tx:0" not in repr(report)
@@ -70,7 +71,16 @@ def test_digest_changes_when_pin_or_reference_changes():
     two["plans"]["plugin_versions"]["objects"][0]["reasons"].append("pinned")
     changed = retention_maintenance_plan(two)
     assert one["plan_sha256"] != changed["plan_sha256"]
-    assert one["stores"] == changed["stores"]
+    assert {key: {field: value for field, value in store.items()
+                  if field != "retention_reasons"}
+            for key, store in one["stores"].items()} == {
+                key: {field: value for field, value in store.items()
+                      if field != "retention_reasons"}
+                for key, store in changed["stores"].items()
+            }
+    assert changed["stores"]["plugin_versions"]["retention_reasons"]["pinned"] == (
+        one["stores"]["plugin_versions"]["retention_reasons"]["pinned"] + 1
+    )
     assert retention_maintenance_plan(original) == one
 
 
@@ -146,3 +156,15 @@ def test_retention_plan_never_dispatches_another_command(
         updater.main(["--retention-plan", *invalid, "--json"])
     assert err.value.code == 2
     assert not (tmp_path / "runtime").exists()
+
+
+def test_compact_maintenance_reason_counts_are_derived_from_existing_plan():
+    report = retention_maintenance_plan(_fixture())
+    current = report["stores"]["core_transactions"]
+    old = report["stores"]["plugin_versions"]
+    assert current["retention_reasons"]["within_24h"] == 7
+    assert current["retention_reasons"]["minimum_generations"] == 2
+    assert old["retention_reasons"]["pinned"] == 1
+    assert old["retention_reasons"]["within_24h"] == 0
+    assert all(type(value) is int for value in old["retention_reasons"].values())
+    assert all(value >= 0 for value in old["retention_reasons"].values())
