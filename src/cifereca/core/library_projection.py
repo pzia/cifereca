@@ -1316,6 +1316,21 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
             existing.update({"title":title,"author":author,"state":"local" if existing.get("local") else remote_state,"media_format":str(media_format or "").lower() or None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"metadata":combined_meta})
         else:
             merged[canonical_key]={"key":canonical_key,"book_id":item_id,"title":title,"author":author,"provider_id":provider_id,"providers":[provider_id],"identity_id":entitlement_identity,"identity_ids":[entitlement_identity] if entitlement_identity else [],"item_id":item_id,"source_refs":[{"provider_id":provider_id,"item_id":item_id,"identity_id":entitlement_identity}],"state":remote_state,"local":False,"local_path":None,"media_format":str(media_format or "").lower() or None,"artifact_kind":None,"bundle_members":[],"playlist":None,"entitlement_type":entitlement_type,"entitlement_id":entitlement.get("entitlement_id"),"due_at":entitlement.get("expires_at"),"source":"entitlement","loan_id":entitlement.get("loan_id"),"thumbnail_url":thumbnail,"artifact_id":None,"sha256":None,"placement_id":None,"placements":[],"possessions":[possession],"metadata":combined_meta}
+        # The same remote entitlement may retain a provider/canonical
+        # catalogue thumbnail even without an on-disk Placement. Record a
+        # borrower-scoped display proof only when the fresh Loan matches the
+        # exact entitlement, never by title or bare edition alone.
+        if entitlement_type == "loan" and loan is not None:
+            from .loan_cover_fallback import attested_remote_loan_cover_proof
+            remote_proof = attested_remote_loan_cover_proof(
+                loan, entitlement, merged[canonical_key],
+                identity_id=entitlement_identity,
+                provider_id=provider_id, item_id=item_id,
+            )
+            if remote_proof is not None:
+                proofs = merged[canonical_key].setdefault("_exact_loan_cover_proofs", [])
+                if remote_proof not in proofs:
+                    proofs.append(remote_proof)
 
     result=[]
     for row in merged.values():

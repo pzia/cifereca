@@ -92,6 +92,69 @@ def attested_local_loan_cover_proof(
     }
 
 
+
+def attested_remote_loan_cover_proof(
+    loan: Loan | None, entitlement: Mapping[str, object],
+    library_row: Mapping[str, object], *,
+    identity_id: str, provider_id: str, item_id: str,
+) -> dict[str, str] | None:
+    """Read-only exact remote loan/entitlement proof for a catalogue cover.
+
+    A library row with no local Placement can still have an attested public
+    cover. Do not join on title/ISBN or the edition alone: require the same
+    borrower, credential, account, provider, edition and loan identifier.
+    """
+    if (type(loan) is not Loan or type(entitlement) is not dict
+            or type(library_row) is not dict
+            or library_row.get("local") is not False
+            or library_row.get("identity_id") != identity_id
+            or library_row.get("provider_id") != provider_id
+            or library_row.get("item_id") != item_id
+            or library_row.get("entitlement_type") != "loan"
+            or library_row.get("loan_id") != loan.id
+            or entitlement.get("entitlement_type") != "loan"
+            or entitlement.get("identity_id") != identity_id
+            or entitlement.get("provider_id") != provider_id
+            or entitlement.get("item_id") != item_id
+            or entitlement.get("loan_id") != loan.id
+            or type(entitlement.get("entitlement_id")) is not str
+            or not entitlement["entitlement_id"]
+            or library_row.get("entitlement_id") != entitlement["entitlement_id"]
+            or type(loan.identity_id) is not str or loan.identity_id != identity_id
+            or type(loan.id) is not str or not loan.id
+            or type(loan.record_id) is not str or loan.record_id != item_id
+            or loan.source_provider != provider_id
+            or type(loan.source_credential) is not str
+            or not loan.source_credential
+            or loan.source_credential != entitlement.get("credential_id")
+            or type(loan.source_account_id) is not str
+            or loan.source_account_id != entitlement.get("account_id")):
+        return None
+    metadata = library_row.get("metadata")
+    resolution = metadata.get("cover_resolution") if type(metadata) is dict else None
+    if (type(resolution) is not dict
+            or resolution.get("status") != "selected"
+            or resolution.get("tier") not in ("origin", "catalog")
+            or type(resolution.get("url")) is not str
+            or resolution["url"] != library_row.get("thumbnail_url")
+            or candidate(resolution["url"], tier=resolution["tier"],
+                         source="verified-remote-loan") is None):
+        return None
+    return {
+        "kind": "remote-entitlement",
+        "loan_source_key": loan_source_key(loan),
+        "identity_id": identity_id,
+        "source_provider": provider_id,
+        "source_credential": loan.source_credential,
+        "source_account_id": loan.source_account_id,
+        "record_id": item_id,
+        "loan_id": loan.id,
+        "entitlement_id": entitlement["entitlement_id"],
+        "url": resolution["url"],
+        "tier": resolution["tier"],
+    }
+
+
 def loan_local_cover(
     loan: Loan, library_rows: Iterable[Mapping[str, object]],
 ) -> CoverResolution:
@@ -117,12 +180,21 @@ def loan_local_cover(
         for index, row in enumerate(library_rows):
             if index >= _MAX_LOAN_COVER_ROWS:
                 return missing
-            if (type(row) is not dict or row.get("local") is not True
-                    or row.get("identity_id") != loan.identity_id
-                    or type(row.get("placement_id")) is not str
-                    or not row["placement_id"]
-                    or type(row.get("artifact_id")) is not str
-                    or not row["artifact_id"]):
+            if type(row) is not dict or row.get("identity_id") != loan.identity_id:
+                continue
+            local = row.get("local") is True
+            if local and (type(row.get("placement_id")) is not str
+                          or not row["placement_id"]
+                          or type(row.get("artifact_id")) is not str
+                          or not row["artifact_id"]):
+                continue
+            if not local and (row.get("local") is not False
+                              or row.get("entitlement_type") != "loan"
+                              or row.get("loan_id") != loan.id
+                              or row.get("provider_id") != loan.source_provider
+                              or row.get("item_id") != loan.record_id
+                              or type(row.get("entitlement_id")) is not str
+                              or not row["entitlement_id"]):
                 continue
             proofs = row.get("_exact_loan_cover_proofs", ())
             if type(proofs) not in (tuple, list) or len(proofs) > 128:
@@ -136,8 +208,18 @@ def loan_local_cover(
                         or proof.get("source_account_id") != loan.source_account_id
                         or proof.get("record_id") != loan.record_id
                         or proof.get("loan_id") != loan.id
-                        or proof.get("artifact_id") != row["artifact_id"]
-                        or proof.get("placement_id") != row["placement_id"]):
+                        or (local and (
+                            proof.get("artifact_id") != row["artifact_id"]
+                            or proof.get("placement_id") != row["placement_id"]))
+                        or (not local and (
+                            proof.get("kind") != "remote-entitlement"
+                            or proof.get("entitlement_id") != row["entitlement_id"]
+                            or proof.get("url") != row.get("thumbnail_url")
+                            or type(row.get("metadata")) is not dict
+                            or row["metadata"].get("cover_resolution", {}).get("status") != "selected"
+                            or row["metadata"]["cover_resolution"].get("url") != proof.get("url")
+                            or row["metadata"]["cover_resolution"].get("tier") != proof.get("tier")
+                        ))):
                     continue
                 tier = proof.get("tier")
                 if tier not in ("embedded", "origin", "catalog"):
@@ -145,7 +227,7 @@ def loan_local_cover(
                 # Equal-strength conflicting evidence must remain ambiguous.
                 cover = candidate(
                     proof.get("url"), tier=tier, source="verified-local-placement",
-                    evidence_id=str(row["placement_id"]), evidence_strength=100,
+                    evidence_id=str(row["placement_id"] if local else row["entitlement_id"]), evidence_strength=100,
                 )
                 if cover is not None:
                     candidates.append(cover)
@@ -156,4 +238,4 @@ def loan_local_cover(
     return resolve_cover(candidates)
 
 
-__all__ = ["attested_local_loan_cover_proof", "loan_local_cover", "materialized_loan_cover_rows"]
+__all__ = ["attested_local_loan_cover_proof", "attested_remote_loan_cover_proof", "loan_local_cover", "materialized_loan_cover_rows"]
