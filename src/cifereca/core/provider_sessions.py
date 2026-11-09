@@ -842,7 +842,10 @@ def reconnect_expired_configured_source_once(
         candidates = _configured_rows_for_source(
             rows, source_scope=scope[:3], default_identity=scope[0],
         )
-        row = candidates[0]
+        # Snapshot persisted consent and credential values before POST;
+        # config can mutate in place during provider I/O.
+        from copy import deepcopy
+        row = deepcopy(candidates[0])
         plugin = self.registry.maybe_get(scope[1])
         if (plugin is None or plugin.descriptor.state != "ready"
                 or getattr(plugin.descriptor, "interactive_authentication", False) is not True
@@ -907,6 +910,15 @@ def reconnect_expired_configured_source_once(
         if selected != row or not _interactive_background_opted_in(
             plugin.descriptor, selected,
         ):
+            return None
+        live_bindings = self.storage.provider_connections(identity_id=scope[0])
+        if (type(live_bindings) is not list
+                or sum(type(r) is dict
+                       and r.get("identity_id") == scope[0]
+                       and r.get("provider_id") == scope[1]
+                       and r.get("credential_id") == scope[2]
+                       and r.get("enabled") is True
+                       for r in live_bindings) != 1):
             return None
         self._sessions[key] = replacement
         self.accounts = [
