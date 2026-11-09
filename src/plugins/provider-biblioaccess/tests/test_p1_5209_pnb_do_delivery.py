@@ -234,3 +234,37 @@ def test_missing_pnb_offer_does_not_infer_permission_from_catalogue(
         assert list(tmp_path.iterdir()) == []
     finally:
         session.close()
+
+
+def test_pnb_supplier_403_propagates_closed_reason_without_private_url(
+    tmp_path, monkeypatch, caplog,
+):
+    from types import SimpleNamespace as NS
+    from tests.test_biblioaccess_sso import _synced_session, mod
+    import biblioaccess_acsm_delivery
+
+    row = NS(
+        product_ref="10001", book_id="20001", title="SYNTHETIC-PRIVATE",
+        due_at_local="09/11/2026 12:30:00",
+        acsm_offer_present=True, acsm_url=PNB, delivery_kind="pnb_do",
+    )
+    session, http, calls = _synced_session(rows=[row])
+    def denied(_url, _folder):
+        raise biblioaccess_acsm_delivery.ACSMDeliveryError(
+            "biblioaccess_acsm_denied",
+        )
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm", denied)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        loan, = session.loans(account)
+        with caplog.at_level("INFO"), pytest.raises(
+            mod.ProviderCapabilityError, match="biblioaccess_acsm_denied",
+        ):
+            session.download_digital(loan, account, tmp_path)
+        assert calls.count("post") == 1
+        assert not list(tmp_path.iterdir())
+        assert PNB not in caplog.text
+        assert "SYNTHETIC-PRIVATE" not in caplog.text
+    finally:
+        session.close()
