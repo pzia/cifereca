@@ -146,8 +146,9 @@ def test_full_source_sync_retries_once_with_new_cas_and_keeps_positive_row(
                         lambda *a, **k: nullcontext(NS()))
     monkeypatch.setattr(sync_coordination, "acquisition_lock_file",
                         lambda: tmp_path / "fake.lock")
-    monkeypatch.setattr(sync_coordination, "observe_canonical_rights_in_sync",
-                        lambda *a, **k: None, raising=False)
+    from cifereca.core import canonical_sync_stage
+    monkeypatch.setattr(canonical_sync_stage, "observe_canonical_rights_in_sync",
+                        lambda *a, **k: None)
     monkeypatch.setattr(sync_coordination, "_run_observed_canonical_convergence",
                         lambda *a, **k: None)
     result = sync_coordination.synchronize_account_source(host, account)
@@ -157,3 +158,41 @@ def test_full_source_sync_retries_once_with_new_cas_and_keeps_positive_row(
     assert created == ["cred-a"] and renewed[0][2].count("post") == 1
     assert renewed[0][2].count("live_loans") == 1
     assert host._sessions[host._session_key(mod.PROVIDER_ID, "cred-a")] is renewed[0][0]
+
+
+def test_second_cas_failure_ends_after_one_reconnect(monkeypatch, tmp_path):
+    host, old, account, calls, renewed, created, notes = _expired_fixture(monkeypatch)
+    first, _, _ = _synced_session(credential="cred-a")
+    def next_expired(**kwargs):
+        fresh, http, events = _synced_session(credential=kwargs["credential_id"])
+        def expired_again():
+            raise biblioaccess_ajax_cas.AjaxCasError("cas_loans_unverified")
+        http.read_authenticated_loans = expired_again
+        renewed.append((fresh, http, events))
+        created.append(kwargs["credential_id"])
+        return fresh
+    monkeypatch.setattr(mod.PLUGIN, "create_session", next_expired)
+    attempts = []
+    def read(account_row, *, deep=False, control=None):
+        attempts.append(account_row)
+        if account_row is account:
+            raise ProviderConfigurationError("loan_inventory_read_unavailable")
+        snap = read_loan_inventory(
+            host._sessions[host._session_key(mod.PROVIDER_ID, "cred-a")],
+            account_row,
+        )
+        assert snap.status == "failed"
+        raise ProviderConfigurationError("loan_inventory_read_unavailable")
+    host._synchronize_account_source_impl = read
+    host.sync_source_enabled = lambda a: True
+    host._record_action = lambda *a, **k: None
+    monkeypatch.setattr(sync_coordination, "InterProcessLock",
+                        lambda *a, **k: nullcontext(NS()))
+    monkeypatch.setattr(sync_coordination, "acquisition_lock_file",
+                        lambda: tmp_path / "fake.lock")
+    with pytest.raises(ProviderConfigurationError):
+        sync_coordination.synchronize_account_source(host, account)
+    assert len(attempts) == 2
+    assert created == ["cred-a"]
+    assert renewed[0][2].count("post") == 1
+    assert renewed[0][1].closed
