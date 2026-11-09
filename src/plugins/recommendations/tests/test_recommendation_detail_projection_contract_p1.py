@@ -502,3 +502,9 @@ def test_bnf_cover_query_rejects_signed_unknown_and_incomplete_variants(query):
 ))
 def test_versioned_cover_keeps_public_origin_and_path_safety(url):
     assert _public_cover_url({"thumbnail_url": url}) is None
+
+
+def test_public_feedbooks_cache_query_ordering_and_signed_tail():
+    url = "https://covers.feedbooks.net/item/edition.jpg?t=1762000000&size=small"
+    assert _public_cover_url({"thumbnail_url": url}) == url
+    assert _public_cover_url({"thumbnail_url": url + "&auth=SECRET"}) is None
