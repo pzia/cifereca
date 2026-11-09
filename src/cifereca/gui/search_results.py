@@ -47,6 +47,7 @@ def _sync_search_detail_after_results(self) -> None:
 def _populate_local_search(self, rows: list[dict[str, Any]]) -> None:
     self._search_local_objects = {str(row.get("key") or f"local:{index}"): row for index, row in enumerate(rows)}
     self._search_mode = "local"
+    self._search_purchase_evidence = None
     self._loaded_search_context = None
     self.search_objects = {}
     shown = self._render_search_results()
@@ -68,6 +69,10 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
         getattr(self, "_online_source_context", None) == context
         else None
     )
+    # Read Core's canonical owned-right ledger once, before GTK projection.
+    # No provider transport, session or acquisition is consulted by this view.
+    from ..core.search_owned_evidence import snapshot_search_owned_evidence
+    self._search_purchase_evidence = snapshot_search_owned_evidence(self.service)
     self.service.last_search = rows
     self.search_objects = dict(zip(_remote_result_row_keys(rows), rows))
     shown = self._render_search_results()
@@ -179,6 +184,12 @@ def _render_search_results(self) -> int:
     from cifereca.gui.offer_actions import requires_selected_offer_check, download_action_label
 
     identity = self.service.current_identity
+    identity_id = getattr(identity, "identity_id", None)
+    def project(item):
+        return result_row(
+            item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+            identity_id=identity_id,
+        )
     linked = self.service.local_placements_for_sources(identity.identity_id) if identity else {}
     # A public Kobo catalog 'owned' flag is not an authenticated entitlement.
     # Read the Core's identity-scoped rights once per render, not per book.
@@ -229,7 +240,7 @@ def _render_search_results(self) -> int:
     ))
     filtered = {
         row["key"] for row in state.filter([
-            {**result_row(item), "key": key} for key, item in remote_rows
+            {**project(item), "key": key} for key, item in remote_rows
         ])
     }
     for key, item in remote_rows:
@@ -258,7 +269,7 @@ def _render_search_results(self) -> int:
             # An anonymous commercial notice is not an owned ebook, even if
             # the provider unexpectedly supplies owned/downloadable=True.
             extras.append("Catalogue public Numilog · aucun achat attesté")
-        elif item.source_provider == "numilog" and result_row(item)["state"] == "remote_owned":
+        elif item.source_provider == "numilog" and project(item)["state"] == "remote_owned":
             # Private inventory, NOT a locally available EPUB/ACSM.
             extras.append("Mes achats Numilog · fichier local non présumé")
         # Core's exact identity/credential/product entitlement is the only
@@ -294,7 +305,7 @@ def _render_search_results(self) -> int:
             kobo_download_ready if item.source_provider == "kobo"
             else False if (stale_known or item.source_provider == "numilog-catalog"
                            or (item.source_provider == "numilog"
-                               and result_row(item)["state"] != "remote_owned"))
+                               and project(item)["state"] != "remote_owned"))
             else self.service.can_direct_download(item)
         )
         # An installed v2 interface is a preflight hint, not an attested offer.
@@ -318,7 +329,7 @@ def _render_search_results(self) -> int:
         ))
     objects = {
         **self._search_local_objects,
-        **{key: result_row(item) for key, item in remote_rows},
+        **{key: project(item) for key, item in remote_rows},
     }
     self._attach_row_facets(ui_rows, objects, self.search_controls)
     self.search_page.show_rows(ui_rows)
