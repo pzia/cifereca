@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .updater_retention_inventory import _read_transaction_for_inspection
+from .updater_retention_inventory import _name_id, _read_transaction_for_inspection
 
 _MAX_TX = 20_000
 _MAX_PACKAGES = 4096
@@ -59,6 +59,7 @@ def _version_refs(tx: dict[str, Any]) -> set[str]:
 
 def inspect_transaction_plugin_references(
     runtime_root: Path, plugin_version_plan: dict[str, Any] | None,
+    core_transaction_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Observe a bounded reference edge subset; **always** no-apply.
 
@@ -72,6 +73,35 @@ def inspect_transaction_plugin_references(
     blockers: set[str] = {"cross_store_other_edges_unqualified"}
     refs: set[str] = set()
     transactions_seen = 0
+    # Candidate transactions remain evidence until independently deleted;
+    # this classification does not authorize GC.
+    retained_refs: set[str] = set()
+    candidate_refs: set[str] = set()
+    seen_transaction_ids: set[str] = set()
+    plan_decisions: dict[str, str] | None = None
+    complete_plan = True
+    if core_transaction_plan is not None:
+        plan_decisions = {}
+        rows = (core_transaction_plan.get("objects")
+                if type(core_transaction_plan) is dict else None)
+        if type(rows) is not list or len(rows) > _MAX_TX * 4:
+            complete_plan = False
+        else:
+            for row in rows:
+                if type(row) is not dict:
+                    complete_plan = False
+                    continue
+                key, decision = row.get("object_id"), row.get("decision")
+                if type(key) is not str or not key.startswith("transaction:"):
+                    continue
+                if (re.fullmatch(r"transaction:[a-f0-9]{64}", key) is None
+                        or decision not in ("retain", "candidate")
+                        or key in plan_decisions):
+                    complete_plan = False
+                    continue
+                plan_decisions[key] = decision
+        if not complete_plan:
+            blockers.add("transaction_retention_plan_unqualified")
     if (any(node.is_symlink() for node in (root, *root.parents))
             or folder.is_symlink()
             or (root.exists() and not root.is_dir())
@@ -105,11 +135,27 @@ def inspect_transaction_plugin_references(
             tx = _read_transaction_for_inspection(entry)
             if tx.get("id") != entry.name:
                 raise ValueError("transaction_id_mismatch")
-            refs.update(_version_refs(tx))
+            edges = _version_refs(tx)
+            refs.update(edges)
             transactions_seen += 1
+            if plan_decisions is not None:
+                tx_id = _name_id("transaction", entry.name)
+                seen_transaction_ids.add(tx_id)
+                decision = plan_decisions.get(tx_id)
+                if decision == "retain":
+                    retained_refs.update(edges)
+                elif decision == "candidate":
+                    candidate_refs.update(edges)
+                else:
+                    complete = False
+                    blockers.add("transaction_retention_identity_unqualified")
         except (OSError, UnicodeError, ValueError, TypeError):
             complete = False
             blockers.add("transaction_plugin_reference_unqualified")
+    if plan_decisions is not None:
+        if not complete_plan or seen_transaction_ids != set(plan_decisions):
+            complete = False
+            blockers.add("transaction_retention_inventory_mismatch")
     known_ids: set[str] = set()
     if type(plugin_version_plan) is not dict or type(plugin_version_plan.get("objects")) is not list:
         complete = False
@@ -151,5 +197,15 @@ def inspect_transaction_plugin_references(
         "plugin_version_edges": len(refs),
         "resolved_edges": len(refs & known_ids),
         "unresolved_edges": len(missing),
+        "retained_transaction_edges": (
+            len(retained_refs) if plan_decisions is not None and complete else None
+        ),
+        "candidate_transaction_edges": (
+            len(candidate_refs) if plan_decisions is not None and complete else None
+        ),
+        "retained_unresolved_edges": (
+            len(retained_refs - known_ids)
+            if plan_decisions is not None and complete else None
+        ),
         "blockers": sorted(blockers),
     }
