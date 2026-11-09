@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from .source_context import source_context_epoch
-from .selected_offer_scope import selected_offer_scope_matches
 
 import hashlib
 import logging
@@ -307,32 +306,17 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         # The persisted opt-in is the ONLY positive Core authority. The
         # provider owns the private offer/GET; no v1 download_digital fallback.
-        offer_snapshot = getattr(
-            session, "rights_selected_delivery_offer_snapshot", None,
+        from .selected_loan_offer import select_exact_loan_offer
+        verdict, selected = select_exact_loan_offer(
+            session, account, loan, branch='bnf_html', current=current,
         )
-        selected_candidate = getattr(
-            session, "rights_selected_delivery_candidate", None,
-        )
-        if not callable(offer_snapshot) or not callable(selected_candidate):
+        if verdict == 'unavailable':
             return {'status': 'attention_required',
                     'code': 'bnf_auto_acquisition_failed'}
-        observed = offer_snapshot(
-            account, edition_id=loan.record_id, right_id=loan.id,
-            kind='loan', branch='bnf_html', explicit_user_action=True,
-        )
-        right = observed.exact(loan.record_id, loan.id, 'loan')
-        if (not selected_offer_scope_matches(
-                observed, identity_id=account.identity_id,
-                provider_id=loan.source_provider,
-                credential_id=account.credential_id,
-                account_id=account.unique_id, branch='bnf_html',
-            )
-                or right is None or right.provider_attested is not True
-                or right.delivery_attested is not True
-                or type(right.delivery_offer_id) is not str
-                or not right.delivery_offer_id or not current()):
+        if verdict != 'selected':
             return {'status': 'attention_required',
                     'code': 'bnf_loan_scope_unproven'}
+        observed, right, selected_candidate = selected
         candidate, url = selected_candidate(
             account, edition_id=loan.record_id, right_id=loan.id,
             kind='loan', branch=observed.branch,
