@@ -143,7 +143,9 @@ def test_partial_cycle_never_mints_reusable_delivery_proof(tmp_path, monkeypatch
                 account, edition_id="edition-1", right_id="loan-1",
                 kind="loan", branch="dilicom", explicit_user_action=True,
             )
-            assert len(client.calls) == before + 2
+            # The fake transport records only successful DILICOM responses:
+            # SYRACUSE fails before it can append a call.
+            assert len(client.calls) == before + 1
             assert gets == []
     finally:
         session.close()
