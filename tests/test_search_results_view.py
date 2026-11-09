@@ -80,9 +80,10 @@ def test_colliding_private_accounts_and_revisions_keep_distinct_stable_ui_keys()
     first = replace(base, source_account_id="account-A", revision_id="v1")
     second = replace(base, source_account_id="account-B", revision_id="v1")
     third = replace(base, source_account_id="account-A", revision_id="v2")
-    keys = host._remote_result_row_keys([first, second, third])
+    from cifereca.gui.search_results import _remote_result_row_keys
+    keys = _remote_result_row_keys([first, second, third])
     assert len(set(keys)) == 3
-    reversed_keys = host._remote_result_row_keys([third, second, first])
+    reversed_keys = _remote_result_row_keys([third, second, first])
     assert reversed_keys == list(reversed(keys))
     assert all(":scope:" in key for key in keys)
 
