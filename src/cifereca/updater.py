@@ -662,6 +662,29 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
                         raise UpdateError("Nettoyage différé : transaction en cours")
         if release.is_symlink() or not release.is_dir():
             raise UpdateError("Nettoyage refusé : génération devenue non sûre")
+        # Revalidate the complete rollback graph at the start of the physical
+        # deletion sweep. A newly finalized transaction may have acquired a
+        # dependency since planning. Do this before the FIRST deletion: old
+        # candidate transaction journals currently outlive their releases,
+        # so later inventories can legitimately contain dangling old refs.
+        # The updater-level OS lock must serialize cooperative writers.
+        if transactions.is_dir() and removed == 0:
+            refreshed = inspect_core_transaction_history(root, now=time.time())
+            fresh_plan = refreshed.get("plan")
+            fresh_blockers = set(refreshed.get("blockers", ()))
+            if (type(fresh_plan) is not dict
+                    or type(fresh_plan.get("objects")) is not list
+                    or critical & fresh_blockers):
+                raise UpdateError("Nettoyage différé : graphe de rétention modifié")
+            release_id = _name_id("release", release.name)
+            matching = [
+                row for row in fresh_plan["objects"]
+                if type(row) is dict and row.get("object_id") == release_id
+            ]
+            if (len(matching) != 1
+                    or matching[0].get("decision") != "candidate"
+                    or matching[0].get("reasons") != []):
+                raise UpdateError("Nettoyage différé : release désormais protégée")
         # Do not ignore deletion errors: a partial cleanup must be diagnosed.
         shutil.rmtree(release)
         removed += 1
