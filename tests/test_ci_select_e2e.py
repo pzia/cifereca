@@ -162,7 +162,7 @@ class SelectionTests(unittest.TestCase):
     def test_1599_detail_plugin_changes_select_gtk_smoke(self):
         self.assertEqual(mod.select(["src/plugins/constellations/view_model.py"]), mod.CONSTELLATIONS)
         self.assertEqual(mod.select(["src/plugins/recommendations/page.py"]), mod.RECOMMENDATIONS)
-        self.assertEqual(mod.select(["e2e/constellations_detail_probe.py"]), mod.CONSTELLATIONS_GTK)
+        self.assertEqual(mod.select(["e2e/constellations_detail_probe.py"]), mod.CONSTELLATIONS_GTK + mod.THEME)
         self.assertEqual(mod.select(["e2e/recommendations_detail_probe.py"]), mod.RECOMMENDATIONS_GTK)
 
     def test_1599_constellations_real_gtk_both_widths(self):
