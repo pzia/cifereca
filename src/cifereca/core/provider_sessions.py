@@ -815,11 +815,9 @@ def reconnect_expired_configured_source_once(
     connection and never authorizes an interactive provider without its own
     persisted, exact background-authentication opt-in.
     """
-    if type(account) is not Account or type(expired_session) is not ProviderSession:
-        # A subclass of the genuine installed ProviderSession is expected.
-        if (type(account) is not Account
-                or not isinstance(expired_session, ProviderSession)):
-            return None
+    # Only a real installed ProviderSession subclass can request reauth.
+    if type(account) is not Account or not isinstance(expired_session, ProviderSession):
+        return None
     if (getattr(expired_session, "sync_reconnect_reason", None) != "session_expired"
             or getattr(expired_session, "connected", None) is not False):
         return None
