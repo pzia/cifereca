@@ -17,6 +17,11 @@ DEFAULT_PROVIDERS = (
     # not neutral capabilities. No partial/substring matches for literals.
     "provider-kobo", "provider-numilog", "provider-bnf-pret",
     "provider-bnf-catalogue", "provider-paris", "bnf_pret", "bnf_catalogue",
+    # Interactive tenant plugin and canonical dotted ID. A provider that is
+    # new to Core must not hide behind a hyphen, a dotted identifier or an
+    # underscore alias just because Python imports use different spelling.
+    "biblioaccess", "biblioaccess.la-rochelle",
+    "biblioaccess_la_rochelle", "provider-biblioaccess",
 )
 
 
