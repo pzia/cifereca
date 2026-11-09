@@ -918,8 +918,14 @@ def reconnect_expired_configured_source_once(
         selected = _configured_rows_for_source(
             latest_rows, source_scope=scope[:3], default_identity=scope[0],
         )[0]
-        if selected != row or not _interactive_background_opted_in(
-            plugin.descriptor, selected,
+        if (selected != row
+                or not _interactive_background_opted_in(plugin.descriptor, selected)
+                or self.registry.maybe_get(scope[1]) is not plugin):
+            return None
+        latest_plugin_status = self._provider_plugin_status(scope[1])
+        if latest_plugin_status is not None and (
+            latest_plugin_status.enabled is not True
+            or latest_plugin_status.state != "ready"
         ):
             return None
         live_bindings = self.storage.provider_connections(identity_id=scope[0])
