@@ -110,7 +110,7 @@ HANDLERS = {"kobo": handle_kobo, "numilog": handle_numilog}
     assert report["imports"] == []
     assert report["comparisons"] == []
     assert report["dispatch_tables"] == [{
-        "line": 5, "providers": ["kobo", "numilog"],
+        "line": 6, "providers": ["kobo", "numilog"],
     }]
     assert added_signals(old, new) == {
         ("dispatch_tables", "kobo"): 1, ("dispatch_tables", "numilog"): 1,
