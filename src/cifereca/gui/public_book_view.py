@@ -148,7 +148,11 @@ class PublicBookMasterDetailView:
         # Search appends these same Core local/open/send/owned actions after
         # the same renderer. Rights remain with the common controller.
         from .query_model import result_row
-        self._window._add_local_book_actions(panel, result_row(item))
+        self._window._add_local_book_actions(panel, result_row(
+            item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
+            identity_id=getattr(getattr(getattr(self._window, "service", None),
+                                        "current_identity", None), "identity_id", None),
+        ))
         self._append_recommendation_context(panel, context_sections)
 
     def show_existing_search_unavailable(
@@ -163,7 +167,11 @@ class PublicBookMasterDetailView:
         panel = self._page.detail
         panel.show_search(item, loading=False)
         from .query_model import result_row
-        self._window._add_local_book_actions(panel, result_row(item))
+        self._window._add_local_book_actions(panel, result_row(
+            item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
+            identity_id=getattr(getattr(getattr(self._window, "service", None),
+                                        "current_identity", None), "identity_id", None),
+        ))
         self._append_recommendation_context(panel, context_sections)
 
     def _append_recommendation_context(self, panel, context_sections) -> None:
