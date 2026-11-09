@@ -61,54 +61,51 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
     try:
         try:
             current = url
-            # Never forward signed URLs, cookies or authorization to another
-            # origin. Permit only bounded same-provider HTTPS redirects.
             for hop in range(3):
-                response = client.get(
-                    current, follow_redirects=False,
+                # Stream rather than buffering untrusted provider responses.
+                with client.stream(
+                    "GET", current, follow_redirects=False,
                     headers={"Accept": "application/vnd.adobe.adept+xml, application/xml, */*"},
-                )
-                if response.status_code not in (301, 302, 303, 307, 308):
-                    break
-                if origin != "pnb-dilicom.centprod.com" or hop >= 2:
-                    raise ACSMDeliveryError("biblioaccess_acsm_redirect")
-                location = response.headers.get("location", "")
-                from urllib.parse import urljoin
-                target = urljoin(current, location)
-                # Redirect destinations may contain one-time opaque URLs.
-                # Forbid cross-origin, userinfo, non-HTTPS and odd ports.
-                try:
-                    next_parts = urlsplit(target)
-                    if (not location or location.startswith("//")
-                            or next_parts.scheme != "https"
-                            or next_parts.hostname != origin
-                            or next_parts.port not in (None, 443)
-                            or next_parts.username is not None
-                            or next_parts.password is not None
-                            or next_parts.fragment
-                            or not next_parts.path.startswith("/")):
-                        raise ACSMDeliveryError("biblioaccess_acsm_redirect")
-                except ValueError:
-                    raise ACSMDeliveryError("biblioaccess_acsm_redirect") from None
-                current = target
-            if True:
-                if response.status_code != 200:
+                ) as response:
                     status = response.status_code
-                    code = (
-                        "biblioaccess_acsm_redirect" if 300 <= status < 400 else
-                        "biblioaccess_acsm_denied" if status in (401, 403) else
-                        "biblioaccess_acsm_missing" if status == 404 else
-                        "biblioaccess_acsm_rate_limited" if status == 429 else
-                        "biblioaccess_acsm_remote_error" if status >= 500 else
-                        "biblioaccess_acsm_unavailable"
-                    )
-                    raise ACSMDeliveryError(code)
-                chunks, size = [], 0
-                for chunk in response.iter_bytes():
-                    size += len(chunk)
-                    if size > MAX_ACSM_BYTES:
-                        raise ACSMDeliveryError("biblioaccess_acsm_body_limit")
-                    chunks.append(chunk)
+                    if status in (301, 302, 303, 307, 308):
+                        if origin != "pnb-dilicom.centprod.com" or hop >= 2:
+                            raise ACSMDeliveryError("biblioaccess_acsm_redirect")
+                        location = response.headers.get("location", "")
+                        from urllib.parse import urljoin
+                        target = urljoin(current, location)
+                        try:
+                            next_parts = urlsplit(target)
+                            if (not location or location.startswith("//")
+                                    or next_parts.scheme != "https"
+                                    or next_parts.hostname != origin
+                                    or next_parts.port not in (None, 443)
+                                    or next_parts.username is not None
+                                    or next_parts.password is not None
+                                    or next_parts.fragment
+                                    or not next_parts.path.startswith("/")):
+                                raise ACSMDeliveryError("biblioaccess_acsm_redirect")
+                        except ValueError:
+                            raise ACSMDeliveryError("biblioaccess_acsm_redirect") from None
+                        current = target
+                        continue
+                    if status != 200:
+                        code = (
+                            "biblioaccess_acsm_redirect" if 300 <= status < 400 else
+                            "biblioaccess_acsm_denied" if status in (401, 403) else
+                            "biblioaccess_acsm_missing" if status == 404 else
+                            "biblioaccess_acsm_rate_limited" if status == 429 else
+                            "biblioaccess_acsm_remote_error" if status >= 500 else
+                            "biblioaccess_acsm_unavailable"
+                        )
+                        raise ACSMDeliveryError(code)
+                    chunks, size = [], 0
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if size > MAX_ACSM_BYTES:
+                            raise ACSMDeliveryError("biblioaccess_acsm_body_limit")
+                        chunks.append(chunk)
+                    break
         except httpx.HTTPError:
             raise ACSMDeliveryError("biblioaccess_acsm_transport_unavailable") from None
         data = b"".join(chunks)
