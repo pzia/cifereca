@@ -1759,6 +1759,13 @@ def install_source(
                 row["after"] = _package_identity(package_id)
             step("transaction_finalize", _save_transaction, transaction_path, transaction, "applied")
             cleanup_result = step("cleanup", _gc, root, keep)
+            from .updater_postcommit_retention import postcommit_updater_retention
+            cleanup_result["other_stores"] = postcommit_updater_retention(
+                root,
+                _plugin_packages_root(),
+                state_dir(create=False) / "dev-updates",
+                state_dir(create=False) / "update-backups",
+            )
     except (Exception, KeyboardInterrupt) as update_exc:
         # Ctrl-C after Core activation must attempt the same safe transactional
         # restore as ordinary failures; never leave a success-looking state.
