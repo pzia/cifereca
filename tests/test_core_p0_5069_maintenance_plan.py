@@ -99,3 +99,50 @@ def test_cli_declares_dedicated_readonly_mode_not_disposal():
     assert "result = retention_maintenance_plan(result)" in source
     assert "or (a.retention_inspect and a.retention_plan)" in source
     assert "--retention-inspect/--retention-plan sont exclusifs et read-only" in source
+
+
+def test_official_maintenance_plan_cli_is_pure_and_without_apply(
+    tmp_path, monkeypatch, capsys,
+):
+    import json
+    from cifereca import updater
+
+    runtime = tmp_path / "runtime"
+    packages = tmp_path / "packages"
+    monkeypatch.setattr(updater, "install_root", lambda: runtime)
+    monkeypatch.setattr(updater, "_plugin_packages_root", lambda: packages)
+    monkeypatch.setattr(updater, "state_dir", lambda **_kw: tmp_path / "state")
+    assert updater.main(["--retention-plan", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["schema"] == "cifereca.updater.maintenance-plan/1"
+    assert result["safe_to_apply"] is False
+    assert result["apply_supported"] is False
+    assert result["stores"]["core_transactions"]["known"] is True
+    assert not runtime.exists() and not packages.exists()
+    assert not (tmp_path / "state").exists()
+
+
+@pytest.mark.parametrize("invalid", [
+    ["--retention-inspect"], ["--rollback"], ["--github", "main"],
+    ["--acknowledge", "a" * 64], ["--recovery-reconcile", "id"],
+    ["--dry-run"], ["--status"],
+])
+def test_retention_plan_never_dispatches_another_command(
+    tmp_path, monkeypatch, invalid,
+):
+    from cifereca import updater
+
+    monkeypatch.setattr(updater, "install_root", lambda: tmp_path / "runtime")
+    monkeypatch.setattr(updater, "state_dir", lambda **_kw: tmp_path / "state")
+    monkeypatch.setattr(
+        updater, "install_github",
+        lambda *a, **kw: pytest.fail("unexpected update"),
+    )
+    monkeypatch.setattr(
+        updater, "rollback",
+        lambda *a, **kw: pytest.fail("unexpected rollback"),
+    )
+    with pytest.raises(SystemExit) as err:
+        updater.main(["--retention-plan", *invalid, "--json"])
+    assert err.value.code == 2
+    assert not (tmp_path / "runtime").exists()
