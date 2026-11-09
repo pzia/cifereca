@@ -113,3 +113,29 @@ def test_deleting_core_file_does_not_reintroduce_coupling(tmp_path):
     report = gate(root, base, head)
     assert report["pass"] is True
     assert report["changed_core_python_files"] == 0
+
+
+def test_new_callable_provider_routing_table_rejected_by_committed_git_gate(tmp_path):
+    root = tmp_path / "repo"
+    base = _repo(root)
+    head = _commit(
+        root, "src/cifereca/core/example.py",
+        "def kobo_action(): return 1\\n"
+        "HANDLERS = {'kobo': kobo_action}\\n",
+    )
+    result = gate(root, base, head)
+    assert result["pass"] is False
+    assert result["violations"] == {
+        "src/cifereca/core/example.py": {"dispatch_tables:kobo": 1},
+    }
+
+
+def test_non_callable_provider_labels_do_not_trigger_new_gate(tmp_path):
+    root = tmp_path / "repo"
+    base = _repo(root)
+    head = _commit(
+        root, "src/cifereca/core/example.py",
+        "DISPLAY_LABELS = {'kobo': 'Kobo', 'numilog': 'Numilog'}\\n",
+    )
+    result = gate(root, base, head)
+    assert result["pass"] is True
