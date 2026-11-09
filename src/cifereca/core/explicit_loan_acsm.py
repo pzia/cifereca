@@ -16,6 +16,7 @@ from .loan_acsm_token_validation import (
     MAX_LOAN_TOKEN_BYTES as _MAX_BYTES,
     valid_loan_acsm_token as _valid_loan_token,
     discard_untrusted_staged_acsm as _discard_invalid_candidate,
+    staged_loan_acsm_path_safe,
 )
 
 
@@ -150,10 +151,7 @@ def stage_explicit_loan_acsm(
             try:
                 if not isinstance(artifact, Path) or type(url) is not str or url:
                     _refuse(error_codes["invalid"])
-                if (destination.is_symlink() or artifact.is_symlink()
-                        or artifact.parent.resolve() != destination.resolve()
-                        or artifact.suffix.casefold() != ".acsm"
-                        or not artifact.is_file()
+                if (not staged_loan_acsm_path_safe(artifact, destination)
                         or not 0 < artifact.stat().st_size <= _MAX_BYTES
                         or not _valid_loan_token(artifact, inspect_artifact)):
                     _refuse(error_codes["invalid"])
