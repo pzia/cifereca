@@ -494,17 +494,19 @@ class SynchronizationBrokerImpl:
             declared_sync_caps.append("remote_inventory")
         if source_caps & {"loans", "personal_library"}:
             declared_sync_caps.append("entitlements")
-        # The service owns this session. Kobo's explicit backup capability
-        # alone licenses declaring the *availability* of an opt-in local
-        # materialization phase; this metadata read never executes it.
+        # Only an explicit provider-declared phase may be displayed.
+        # This is a static metadata read, not acquisition authorization.
         provider_id = account_ref.provider_id
         credential_id = str(getattr(account, "credential_id", "") or "")
         session = getattr(self.service, "_sessions", {}).get(
             self.service._session_key(provider_id, credential_id)
         )
         if (
-            provider_id == "kobo" and session is not None
-            and bool(getattr(getattr(session, "capabilities", None), "backup", False))
+            session is not None
+            and type(getattr(getattr(session, "capabilities", None),
+                             "local_materialization", None)) is bool
+            and getattr(session.capabilities, "local_materialization") is True
+            and getattr(session.capabilities, "backup", False) is True
         ):
             declared_sync_caps.append("local_materialization")
         # Provider-declared loan→ACSM→ADEPT is distinct from generic
