@@ -27,6 +27,7 @@ def test_no_direct_provider_imports_or_dispatch_in_neutralized_core(relative_pat
     result = inspect_source(source)
     assert result["imports"] == [], (relative_path, result["imports"])
     assert result["comparisons"] == [], (relative_path, result["comparisons"])
+    assert result["dispatch_tables"] == [], (relative_path, result["dispatch_tables"])
 
 
 def test_gate_detects_hard_coded_branch_and_relative_implementation_import():
