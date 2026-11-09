@@ -19,6 +19,13 @@ _REDIRECT_HOSTS = frozenset({
     "acs4.edelivres.fr", "acs4.edenlivres.fr", "acs4.cantook.net",
 })
 _UNSAFE_ESCAPE = re.compile(r"%(?:2e|2f|5c|00|0[ad])", re.I)
+# Exact shape of the observed La Rochelle PNB action: an internal empty
+# segment and a terminal .do file. Never normalize it to a different URL.
+_PNB_DOT_DO = re.compile(
+    r"/[A-Za-z0-9_-]{1,32}//[A-Za-z0-9_-]{1,32}/"
+    r"[0-9]{13}/[A-Za-z0-9_-]{1,32}/[A-Za-z0-9_-]{8,64}/"
+    r"[0-9]{13}-[A-Za-z0-9]{32}\.do\Z", re.ASCII,
+)
 
 
 def _parsed_safe(url: str):
@@ -33,7 +40,9 @@ def _parsed_safe(url: str):
                 or part.fragment or not part.hostname
                 or part.hostname.endswith(".") or "%" in part.netloc
                 or not part.path.startswith("/") or len(part.path) > 2048
-                or "//" in part.path or _UNSAFE_ESCAPE.search(part.path)
+                or ("//" in part.path and not (
+                    part.hostname == _PNB and _PNB_DOT_DO.fullmatch(part.path)
+                )) or _UNSAFE_ESCAPE.search(part.path)
                 or any(segment in (".", "..") for segment in part.path.split("/"))):
             return None
         return part
@@ -51,8 +60,9 @@ def classify_loan_delivery(url: str) -> str | None:
             and bool(part.query)):
         return "numilog_acsm"
     if (part.hostname == _PNB
-            and part.path.endswith("/do")
-            and len(part.path.split("/")) >= 3):
+            and (_PNB_DOT_DO.fullmatch(part.path) is not None
+                 or (part.path.endswith("/do")
+                     and len(part.path.split("/")) >= 3))):
         return "pnb_do"
     return None
 
