@@ -669,6 +669,7 @@ class LaRochelleSession(ProviderSession):
                     "biblioaccess_acsm_body_limit",
                     "biblioaccess_acsm_transport_unavailable",
                     "biblioaccess_acsm_structure_invalid",
+                    "biblioaccess_acsm_content_type_invalid",
                     "biblioaccess_acsm_stage_unavailable",
                 })
                 code = (
