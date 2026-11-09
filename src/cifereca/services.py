@@ -2716,20 +2716,6 @@ class LibraryService:
             raise ProviderConfigurationError(str(exc)) from exc
 
     @staticmethod
-    def _kobo_canonical_drm(value: Any) -> str:
-        raw = str(value or "").strip()
-        key = re.sub(r"[^a-z0-9]", "", raw.lower())
-        if key in {"signednodrm", "nodrm", "none"}:
-            return "SignedNoDrm"
-        if key in {"kdrm", "kobo"}:
-            return "KDRM"
-        if key in {"adobedrm", "adept", "adobeadept"}:
-            return "AdobeDrm"
-        if key == "kobokdrm":
-            return "KDRM"
-        return raw or "unknown"
-
-    @staticmethod
     def _kobo_url_format(candidate: dict[str, Any]) -> str | None:
         value = (
             candidate.get("url_format")

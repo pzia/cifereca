@@ -543,10 +543,6 @@
     "kind": "classmethod",
     "signature": "(cls, payload: 'dict[str, Any]', preferred_format: 'str' = 'epub') -> 'dict[str, Any]'"
   },
-  "_kobo_canonical_drm": {
-    "kind": "staticmethod",
-    "signature": "(value: 'Any') -> 'str'"
-  },
   "_kobo_url_format": {
     "kind": "staticmethod",
     "signature": "(candidate: 'dict[str, Any]') -> 'str | None'"
