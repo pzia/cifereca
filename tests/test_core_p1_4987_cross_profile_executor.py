@@ -56,6 +56,8 @@ class BorrowingOffline(ParisOffline):
             loan.identity_id = "default"
         if self.outcome == "inactive":
             loan.state = "expired"
+        if isinstance(self.outcome, str) and self.outcome.startswith("state:"):
+            loan.state = self.outcome.removeprefix("state:")
         return loan
 
 
@@ -329,3 +331,27 @@ def test_per_identity_plugin_admission_must_be_explicit_even_when_globally_enabl
     assert service.storage.metadata_get(
         borrow_claim_key(account, row.notice),
     ) is None
+
+
+@pytest.mark.parametrize("state", [
+    "cancelled", "CANCELED", "refused", "rejected", "failed",
+    "pending", "unknown", "closed", " returned ",
+])
+def test_explicit_non_active_loan_state_cannot_confirm_or_authorize_transfer(
+    harness, state,
+):
+    service, account, session, row, preview = setup_borrower(
+        harness, "state:" + state,
+    )
+    result = execute(service, row, preview)
+    assert result["status"] == "verification_unavailable"
+    assert result["provider_verified"] is False
+    assert result["delivery"] == "unavailable"
+    assert result["transfer"] == "blocked"
+    assert result["retry_borrow"] is False
+    assert session.actions == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, row.notice),
+    )["status"] == "verification_unavailable"
+    assert execute(service, row, preview)["status"] == "blocked"
+    assert session.actions == 1
