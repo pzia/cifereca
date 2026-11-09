@@ -169,10 +169,18 @@ def _provider_method_name(name: str, providers: set[str]) -> list[str]:
     """
     if type(name) is not str or not name.isidentifier():
         return []
-    tokens = set(name.casefold().strip("_").split("_"))
-    # Dotted/hyphenated provider identifiers are data IDs, not Python tokens.
-    return sorted(tokens & {provider for provider in providers
-                            if provider.isidentifier() and "_" not in provider})
+    parts = name.casefold().strip("_").split("_")
+    # Match whole identifier components, including multi-token provider aliases
+    # declared by manifests (library_example), never arbitrary substrings.
+    matched = set()
+    for provider in providers:
+        if not provider.isidentifier():
+            continue
+        segments = provider.split("_")
+        if any(parts[i:i + len(segments)] == segments
+               for i in range(len(parts) - len(segments) + 1)):
+            matched.add(provider)
+    return sorted(matched)
 
 
 def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
@@ -215,7 +223,24 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     tables: list[dict[str, object]] = []
     calls: list[dict[str, object]] = []
     method_calls: list[dict[str, object]] = []
+    dynamic_calls: list[dict[str, object]] = []
     for node in ast.walk(tree):
+        # Immediately invoked static getattr is executable dispatch, unlike
+        # a descriptive attribute read or an uninvoked getattr result.
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Call)
+                and isinstance(node.func.func, ast.Name)
+                and node.func.func.id == "getattr"
+                and len(node.func.args) >= 2
+                and isinstance(node.func.args[1], ast.Constant)
+                and type(node.func.args[1].value) is str):
+            attribute = node.func.args[1].value
+            matched_dynamic = _provider_method_name(attribute, names)
+            if attribute.casefold() in names:
+                matched_dynamic = sorted(set(matched_dynamic) | {attribute.casefold()})
+            if matched_dynamic:
+                dynamic_calls.append({"line": node.lineno,
+                                      "providers": matched_dynamic})
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             # Examples: service.sync_kobo_backup(), service.bnf_borrow().
             # Do not treat attribute reads or descriptor metadata as calls.
@@ -309,7 +334,8 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             "comparisons": sorted(dispatches, key=lambda x: x["line"]),
             "dispatch_tables": sorted(tables, key=lambda x: x["line"]),
             "dispatch_calls": sorted(calls, key=lambda x: x["line"]),
-            "provider_method_calls": sorted(method_calls, key=lambda x: x["line"])}
+            "provider_method_calls": sorted(method_calls, key=lambda x: x["line"]),
+            "provider_dynamic_calls": sorted(dynamic_calls, key=lambda x: x["line"])}
 
 
 def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, object]:
@@ -329,7 +355,7 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
                 continue
             if any(result[category] for category in (
                 "imports", "comparisons", "dispatch_tables", "dispatch_calls",
-                "provider_method_calls",
+                "provider_method_calls", "provider_dynamic_calls",
             )):
                 findings[relative] = result
     return {"metric": "core.provider.static-coupling/1",
@@ -340,6 +366,7 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
             "dispatch_table_signals": sum(len(x["dispatch_tables"]) for x in findings.values()),
             "dispatch_call_signals": sum(len(x["dispatch_calls"]) for x in findings.values()),
             "provider_method_call_signals": sum(len(x["provider_method_calls"]) for x in findings.values()),
+            "provider_dynamic_call_signals": sum(len(x["provider_dynamic_calls"]) for x in findings.values()),
             "findings": dict(sorted(findings.items())),
             "parse_errors": dict(sorted(parse_errors.items())),
             "limitation": "AST signals, not reachability proofs; indirect dynamic dispatch may remain."}
@@ -361,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
               f"{report['dispatch_table_signals']} dispatch tables, "
               f"{report['dispatch_call_signals']} provider-keyed calls, "
               f"{report['provider_method_call_signals']} provider method calls, "
+              f"{report['provider_dynamic_call_signals']} dynamic provider calls, "
               f"{len(report['parse_errors'])} parse errors")
     return 1 if report["parse_errors"] else 0
 
