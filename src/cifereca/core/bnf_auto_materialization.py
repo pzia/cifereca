@@ -333,10 +333,40 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         directory = service._acquisition_work_dir(account.identity_id, 'bnf-pret', loan.id)
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        # The opt-in is a durable affirmative action. The provider itself
-        # re-reads the exact account/loan and rejects missing signed actions.
-        candidate, url = session.download_digital(
-            loan, account, directory, explicit_user_action=True)
+        # The persisted opt-in is the ONLY positive Core authority. The
+        # provider owns the private offer/GET; no v1 download_digital fallback.
+        offer_snapshot = getattr(
+            session, "rights_selected_delivery_offer_snapshot", None,
+        )
+        selected_candidate = getattr(
+            session, "rights_selected_delivery_candidate", None,
+        )
+        if not callable(offer_snapshot) or not callable(selected_candidate):
+            return {'status': 'attention_required',
+                    'code': 'bnf_auto_acquisition_failed'}
+        observed = offer_snapshot(
+            account, edition_id=loan.record_id, right_id=loan.id,
+            kind='loan', branch='bnf_html', explicit_user_action=True,
+        )
+        right = observed.exact(loan.record_id, loan.id, 'loan')
+        if (observed.branch != 'bnf_html'
+                or observed.scope.identity_id != account.identity_id
+                or observed.scope.provider_id != loan.source_provider
+                or observed.scope.credential_id != account.credential_id
+                or observed.scope.account_id != account.unique_id
+                or right is None or right.provider_attested is not True
+                or right.delivery_attested is not True
+                or type(right.delivery_offer_id) is not str
+                or not right.delivery_offer_id or not current()):
+            return {'status': 'attention_required',
+                    'code': 'bnf_loan_scope_unproven'}
+        candidate, url = selected_candidate(
+            account, edition_id=loan.record_id, right_id=loan.id,
+            kind='loan', branch=observed.branch,
+            delivery_offer_id=right.delivery_offer_id,
+            target_dir=directory, explicit_user_action=True,
+            admission_current=current,
+        )
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         if (not isinstance(candidate, Path) or type(url) is not str or url
