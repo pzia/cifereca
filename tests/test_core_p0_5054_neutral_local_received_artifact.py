@@ -68,3 +68,19 @@ def test_invalid_root_or_untrusted_argument_fails_closed(tmp_path):
     alias.symlink_to(target, target_is_directory=True)
     assert not received_book_file_within_root(alias / "book.pdf", alias)
     assert not received_book_file_within_root(file, alias)
+
+
+def test_root_grandparent_symlink_is_not_a_trusted_identity_tree(tmp_path):
+    physical = tmp_path / "physical" / "alice" / "source"
+    physical.mkdir(parents=True)
+    book = physical / "book.epub"
+    book.write_bytes(b"synthetic")
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path / "physical", target_is_directory=True)
+    aliased_root = alias / "alice" / "source"
+    assert not aliased_root.is_symlink()
+    assert not aliased_root.parent.is_symlink()
+    assert not received_book_file_within_root(aliased_root / "book.epub", aliased_root)
+    with pytest.raises(ProviderConfigurationError, match="artefact local non attesté"):
+        require_local_artifact(aliased_root / "book.epub", aliased_root)
+    assert received_book_file_within_root(book, physical)
