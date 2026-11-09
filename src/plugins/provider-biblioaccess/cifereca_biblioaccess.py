@@ -685,8 +685,13 @@ class LaRochelleSession(ProviderSession):
                     loan_ref=loan_ref, delivery_kind=kind,
                     session_revoked=False,
                 )
+                # Preserve the historical Numilog compatibility error;
+                # publish precise *allowlisted* failures for PNB /do, so the
+                # Core can distinguish expired/denied/redirect/invalid XML.
                 raise ProviderCapabilityError(
-                    "biblioaccess_acsm_stage_unavailable") from None
+                    code if kind == "pnb_do"
+                    else "biblioaccess_acsm_stage_unavailable"
+                ) from None
             self._last_probe_phase = "acsm_staged"
             self._event(
                 "acsm_stage", "observed", probe="authenticated_sync",
