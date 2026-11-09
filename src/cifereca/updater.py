@@ -662,12 +662,13 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
                         raise UpdateError("Nettoyage différé : transaction en cours")
         if release.is_symlink() or not release.is_dir():
             raise UpdateError("Nettoyage refusé : génération devenue non sûre")
-        # Rebuild the COMPLETE retained-reference closure immediately before
-        # each physical deletion. A newly finalized transaction may reference
-        # this old release since the initial inventory; checking only for
-        # unfinished transactions would miss that rollback dependency.
-        # No plan token grants removal, and any changed/partial proof defers GC.
-        if transactions.is_dir():
+        # Revalidate the complete rollback graph at the start of the physical
+        # deletion sweep. A newly finalized transaction may have acquired a
+        # dependency since planning. Do this before the FIRST deletion: old
+        # candidate transaction journals currently outlive their releases,
+        # so later inventories can legitimately contain dangling old refs.
+        # The updater-level OS lock must serialize cooperative writers.
+        if transactions.is_dir() and removed == 0:
             refreshed = inspect_core_transaction_history(root, now=time.time())
             fresh_plan = refreshed.get("plan")
             fresh_blockers = set(refreshed.get("blockers", ()))
