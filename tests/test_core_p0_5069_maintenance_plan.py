@@ -146,3 +146,15 @@ def test_retention_plan_never_dispatches_another_command(
         updater.main(["--retention-plan", *invalid, "--json"])
     assert err.value.code == 2
     assert not (tmp_path / "runtime").exists()
+
+
+def test_compact_maintenance_reason_counts_are_derived_from_existing_plan():
+    report = retention_maintenance_plan(_fixture())
+    current = report["stores"]["core_transactions"]
+    old = report["stores"]["plugin_versions"]
+    assert current["retention_reasons"]["within_24h"] == 7
+    assert current["retention_reasons"]["minimum_generations"] == 2
+    assert old["retention_reasons"]["pinned"] == 1
+    assert old["retention_reasons"]["within_24h"] == 0
+    assert all(type(value) is int for value in old["retention_reasons"].values())
+    assert all(value >= 0 for value in old["retention_reasons"].values())
