@@ -91,3 +91,45 @@ def test_dotdo_denial_does_not_stage_any_bytes(tmp_path):
         stage_loan_acsm(_PNB, tmp_path, transport=httpx.MockTransport(denied))
     assert calls == [_PNB.split(".com", 1)[1]]
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(("location", "code"), [
+    ("https://untrusted.invalid/fulfillment", "redirect_refused"),
+    ("http://acs4.cantook.net/fulfillment", "redirect_refused"),
+    ("https://acs4.cantook.net:444/fulfillment", "redirect_refused"),
+    ("https://acs4.cantook.net/%2foutside", "redirect_refused"),
+    ("", "acsm_redirect"),
+])
+def test_observed_dotdo_redirect_refusal_is_not_staged(tmp_path, location, code):
+    calls = []
+    def handler(request):
+        calls.append((request.method, request.url.host, request.url.path))
+        return httpx.Response(302, headers={"location": location} if location else {})
+    with pytest.raises(ACSMDeliveryError, match=code):
+        stage_loan_acsm(_PNB, tmp_path, transport=httpx.MockTransport(handler))
+    assert calls == [("GET", "pnb-dilicom.centprod.com",
+                      _PNB.split(".com", 1)[1])]
+    assert not list(tmp_path.iterdir())
+
+
+def test_observed_dotdo_redirect_keeps_path_and_no_credentials(tmp_path):
+    calls = []
+    def handler(request):
+        calls.append((request.method, request.url.host, request.url.path,
+                      request.headers.get("cookie"),
+                      request.headers.get("authorization")))
+        if request.url.host == "pnb-dilicom.centprod.com":
+            return httpx.Response(302, headers={
+                "location": "https://acs4.cantook.net/fulfillment/opaque"})
+        return httpx.Response(
+            200, headers={"content-type": "application/octet-stream"},
+            content=_ACSM)
+    path = stage_loan_acsm(
+        _PNB, tmp_path, transport=httpx.MockTransport(handler))
+    assert path.read_bytes() == _ACSM
+    assert calls == [
+        ("GET", "pnb-dilicom.centprod.com", _PNB.split(".com", 1)[1],
+         None, None),
+        ("GET", "acs4.cantook.net", "/fulfillment/opaque", None, None),
+    ]
+    assert len(list(tmp_path.glob("*.acsm"))) == 1
