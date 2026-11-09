@@ -20,6 +20,17 @@ def install_css(window, *, Gtk, Gdk, Adw=None) -> None:
     .page-title { font-weight: 750; font-size: 1.55em; }
     .detail-title { font-weight: 800; font-size: 1.7em; }
     .detail-subtitle { font-size: 1.08em; }
+    /* #4682: compact only proven detail-header facts. */
+    .detail-compact-fields row.detail-compact-value {
+        min-height: 36px; padding-top: 1px; padding-bottom: 1px;
+    }
+    .detail-compact-fields row.detail-compact-value .title { font-weight: 600; }
+    .detail-profile-card {
+        border: 1px solid @borders; border-radius: 10px;
+        padding: 8px 10px; margin-top: 4px; margin-bottom: 4px;
+    }
+    .detail-profile-card > label.heading { margin: 2px 6px 4px; }
+    .detail-profile-card row.detail-access-line { min-height: 34px; }
     .badge { border-radius: 999px; padding: 3px 8px; background: alpha(currentColor, 0.10); font-size: 0.88em; }
     .book-tag { border-radius: 10px; padding: 2px 6px; font-size: 0.88em; }
     .tag-content { background: alpha(@accent_color, 0.14); font-weight: 600; }

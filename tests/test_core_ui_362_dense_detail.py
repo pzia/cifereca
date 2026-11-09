@@ -56,10 +56,10 @@ def test_book_header_is_compact_and_long_text_is_bounded():
     assert "set_tooltip_text" in header
 
 
-def test_essential_grid_is_two_columns_and_neutral_by_default():
+def test_essential_grid_is_responsive_and_neutral_by_default():
     group = ast.unparse(_method("DetailPanel", "_group"))
     assert "'Essentiel'" in group
-    assert "grid.set_max_children_per_line(2)" in group
+    assert "grid.set_max_children_per_line(3 if title == 'Essentiel' else 2)" in group
     assert "search_controls" not in group
     assert "detail_subtitle_lines(title, display_value)" in group
 
