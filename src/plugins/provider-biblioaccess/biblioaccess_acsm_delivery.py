@@ -71,6 +71,19 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
                             "biblioaccess_acsm_unavailable"
                         )
                         raise ACSMDeliveryError(code)
+                    content_type = (
+                        response.headers.get("content-type", "")
+                        .split(";", 1)[0].strip().casefold()
+                    )
+                    if content_type in {
+                        "text/html", "application/xhtml+xml",
+                        "application/json", "text/plain",
+                    }:
+                        raise ACSMDeliveryError(
+                            "biblioaccess_acsm_content_type_invalid",
+                        )
+                    # XML/octet-stream or a missing Content-Type still
+                    # requires independent Adobe ACSM structural validation.
                     chunks, size = [], 0
                     for chunk in response.iter_bytes():
                         size += len(chunk)
