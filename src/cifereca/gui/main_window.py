@@ -1685,12 +1685,17 @@ class MainWindow(Adw.ApplicationWindow):
             return session, []
         return session, accounts
 
-    def borrow_search_item(
-        self, item: SearchResult, control: Gtk.Widget | None = None, *,
-        account=None, verification_only: bool = False,
-    ) -> None:
+    def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
         # #2055: the historic session.borrow() path must NEVER be used for
         # BnF. Source-specific consent and a durable Core claim are required.
+        # Read-only follow-up is tagged on the specific action widget, not
+        # a new public MainWindow method parameter (stable façade contract).
+        # A forged flag can only enter verification, never borrower dispatch.
+        verification_only = (
+            control is not None
+            and callable(getattr(control, "get_name", None))
+            and control.get_name() == "cifereca-paris-borrow-followup"
+        )
         if getattr(item, "source_provider", None) == "bnf-pret":
             if verification_only:
                 return
