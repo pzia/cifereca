@@ -72,6 +72,21 @@ def test_local_filter_count_and_detail_reset_never_query_provider():
     host.toast.assert_not_called()
 
 
+def test_colliding_private_accounts_and_revisions_keep_distinct_stable_ui_keys():
+    from dataclasses import replace
+
+    host = _host()
+    base = _book("fictional-provider")
+    first = replace(base, source_account_id="account-A", revision_id="v1")
+    second = replace(base, source_account_id="account-B", revision_id="v1")
+    third = replace(base, source_account_id="account-A", revision_id="v2")
+    keys = host._remote_result_row_keys([first, second, third])
+    assert len(set(keys)) == 3
+    reversed_keys = host._remote_result_row_keys([third, second, first])
+    assert reversed_keys == list(reversed(keys))
+    assert all(":scope:" in key for key in keys)
+
+
 def test_remote_ids_remain_distinct_and_local_placement_callback_is_pinned():
     host = _host()
     books = [_book("paris"), _book("gallica")]
