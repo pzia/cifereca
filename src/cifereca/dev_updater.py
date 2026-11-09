@@ -578,6 +578,24 @@ def _record_partial_install_provenance(
                     pass
 
 
+def _postcommit_dev_backup_retention() -> dict[str, Any]:
+    """Best-effort post-success cleanup; reuse the supervised GC policy."""
+    from .updater_dev_backup_maintenance import dev_backup_maintenance
+    try:
+        root = updater.install_root()
+        backups = state_dir() / "dev-updates"
+        plan = dev_backup_maintenance(root, backups)
+        if plan["candidate_backups"] == 0:
+            return {"status": "complete", "removed": 0}
+        applied = dev_backup_maintenance(
+            root, backups, apply=True,
+            acknowledge=plan["acknowledgement_sha256"],
+        )
+        return {"status": "complete", "removed": applied["removed"]}
+    except (ValueError, OSError, updater.UpdateError):
+        return {"status": "deferred", "removed": None}
+
+
 @updater._serial_updater_operation
 def apply_snapshot(
     archive: Path,
@@ -763,6 +781,10 @@ def apply_snapshot(
                 raise DevUpdateError('Mise à jour échouée ; restauration incomplète : ' + ', '.join(restoration_errors)) from exc
             raise
         result.update({"core": core_result, "core_changed": core_installed, "smoke": smoke, "backup": str(backup_base)})
+        # Normal snapshot updates apply the same backup retention policy as
+        # explicit maintenance, but only AFTER activation/smoke is committed.
+        # Failure of the optional post-commit sweep cannot undo a valid update.
+        result["retention_cleanup"] = _postcommit_dev_backup_retention()
         if restart:
             app = updater._command_path(updater.install_root() / "current", "cifereca")
             try:
