@@ -12,7 +12,7 @@ import pytest
 
 from cifereca.models import Account, SearchResult
 from cifereca.core.borrow_action_scope import borrow_claim_key
-from cifereca.core.bnf_borrow_claim_observation import observe_bnf_borrow_claim
+from cifereca.core.borrow_claim_observation import observe_borrow_claim
 from cifereca.storage import Storage
 
 
@@ -35,9 +35,10 @@ def _item(account):
 
 
 def _observe(db, account, item, identity_id="alice"):
-    return observe_bnf_borrow_claim(
+    return observe_borrow_claim(
         storage=db, account=account, item=item,
         expected_identity_id=identity_id,
+        provider_id='bnf-pret', docbase='BNF_PRET',
     )
 
 

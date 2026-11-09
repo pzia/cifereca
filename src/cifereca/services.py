@@ -302,11 +302,11 @@ class LibraryService:
         checkpoint does not enable a POST; a consumed checkpoint is never
         cleared. No provider call, session refresh or account fallback.
         """
-        from .core.bnf_borrow_claim_observation import (
-            BnfBorrowClaimObservation, observe_bnf_borrow_claim,
+        from .core.borrow_claim_observation import (
+            BorrowClaimObservation, observe_borrow_claim,
         )
 
-        unavailable = BnfBorrowClaimObservation(
+        unavailable = BorrowClaimObservation(
             "scope_unverified", None, False,
         )
         if (type(item) is not SearchResult
@@ -328,9 +328,10 @@ class LibraryService:
         ]
         if len(accounts) != 1:
             return unavailable
-        return observe_bnf_borrow_claim(
+        return observe_borrow_claim(
             storage=self.storage, account=accounts[0], item=item,
             expected_identity_id=expected_identity_id,
+            provider_id="bnf-pret", docbase="BNF_PRET",
         )
 
     def borrow_bnf_manual(
