@@ -44,7 +44,7 @@ def staged_loan_acsm_path_safe(path: object, destination: object) -> bool:
     grandparent of the staging directory. This check grants no loan/right.
     """
     try:
-        if (type(path) is not Path or type(destination) is not Path
+        if (not isinstance(path, Path) or not isinstance(destination, Path)
                 or path.parent != destination or path.suffix.casefold() != ".acsm"
                 or path.is_symlink() or not path.is_file()
                 or not destination.is_dir()):
