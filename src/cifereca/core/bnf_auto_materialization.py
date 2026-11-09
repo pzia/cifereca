@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .source_context import source_context_epoch
+from .selected_offer_scope import selected_offer_scope_matches
 
 import hashlib
 import logging
@@ -320,11 +321,12 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             kind='loan', branch='bnf_html', explicit_user_action=True,
         )
         right = observed.exact(loan.record_id, loan.id, 'loan')
-        if (observed.branch != 'bnf_html'
-                or observed.scope.identity_id != account.identity_id
-                or observed.scope.provider_id != loan.source_provider
-                or observed.scope.credential_id != account.credential_id
-                or observed.scope.account_id != account.unique_id
+        if (not selected_offer_scope_matches(
+                observed, identity_id=account.identity_id,
+                provider_id=loan.source_provider,
+                credential_id=account.credential_id,
+                account_id=account.unique_id, branch='bnf_html',
+            )
                 or right is None or right.provider_attested is not True
                 or right.delivery_attested is not True
                 or type(right.delivery_offer_id) is not str
