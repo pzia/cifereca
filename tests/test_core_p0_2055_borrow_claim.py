@@ -289,3 +289,45 @@ def test_unsent_release_refuses_corrupt_confirmed_or_ambiguous_checkpoints(tmp_p
         assert db.loan_borrow_claim_once(key, "retry")[0] is False
     finally:
         db.close()
+
+
+def test_disabled_lender_connection_revokes_borrow_scope_without_provider_io(
+    connected_core,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    item = notice(account)
+    lease = capture(service, session, account, item)
+    assert lease is not None
+    service.storage.provider_connection_put({
+        "identity_id": "default", "provider_id": account.provider_id,
+        "credential_id": account.credential_id, "label": "Disabled",
+        "enabled": False, "metadata": {},
+    })
+    assert lease.current(service) is False
+    assert capture(service, session, account, item) is None
+    assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
+    assert not downloaded
+
+
+def test_ambiguous_lender_binding_revokes_borrow_scope_before_claim(
+    connected_core, monkeypatch,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    item = notice(account)
+    lease = capture(service, session, account, item)
+    assert lease is not None
+    original = service.storage.provider_connections
+
+    def ambiguous(*, identity_id):
+        rows = original(identity_id=identity_id)
+        if identity_id == "default":
+            exact = next(row for row in rows
+                         if row.get("credential_id") == account.credential_id)
+            return rows + [{**exact, "enabled": False}]
+        return rows
+
+    monkeypatch.setattr(service.storage, "provider_connections", ambiguous)
+    assert lease.current(service) is False
+    assert capture(service, session, account, item) is None
+    assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
+    assert not downloaded

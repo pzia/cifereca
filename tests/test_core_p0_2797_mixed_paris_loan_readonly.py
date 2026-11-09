@@ -78,7 +78,7 @@ def test_mixed_provider_paris_loans_have_explicit_private_expiry_no_write(tmp_pa
                for case in paris_rights.cases)
     assert any("2020-01-01T00:00:00Z" in case.details for case in paris_rights.cases)
     assert any("2099-01-01T00:00:00Z" in case.details for case in paris_rights.cases)
-    assert all("Validité actuelle du prêt / identité ADEPT : non démontrée"
+    assert all("Validité actuelle du prêt / identité de l’emprunteur : non démontrée"
                in case.details for case in paris_rights.cases)
 
     for provider, expected in (("kobo", 1), ("numilog", 1), ("paris", 2)):

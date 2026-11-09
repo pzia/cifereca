@@ -32,7 +32,7 @@ STATES = {
     'stored_path_missing_historical': 'Ancien emplacement déjà marqué manquant',
     'stored_path_returned_historical': 'Fichier revenu, placement SQLite encore manquant',
     'stored_path_missing_other': 'Chemin absent, état SQLite atypique',
-    'loan_inactive': 'Prêt Paris non actif enregistré (lecture seule)',
+    'loan_inactive': 'Prêt non actif enregistré (lecture seule)',
     'stored_path_unavailable': 'Chemin non inspectable', 'stored_path_out_of_scope': 'Chemin hors périmètre',
 }
 _REASONS = {
@@ -241,13 +241,12 @@ def _right_bibliography(right, matches):
     media = right.get('display_media_format')
     media = (media if type(media) is str
              and media in {'epub', 'kepub', 'pdf', 'acsm'} else 'Non renseigné')
-    # Provider-private right kind matters for temporary library loans.
-    # Neither state="active" nor an expiry string confirms that a Paris
-    # loan is currently valid. No ADEPT/license/remote read is performed.
-    is_paris_loan = (right.get('provider_id') == 'paris'
-                     and right.get('entitlement_type') == 'loan')
+    # The canonical entitlement type, not a provider ID, identifies a loan.
+    # Neither state="active" nor an expiry string proves a loan is valid.
+    # Rendering performs no license, provider or remote check.
+    is_loan = right.get('entitlement_type') == 'loan'
     kind = (
-        'Prêt temporaire (consultation uniquement)' if is_paris_loan
+        'Prêt temporaire (consultation uniquement)' if is_loan
         else 'Achat / possession enregistrée'
         if right.get('entitlement_type') == 'owned'
         else 'Nature non attestée (consultation uniquement)'
@@ -255,13 +254,13 @@ def _right_bibliography(right, matches):
     expiry = _text(right.get('expires_at'))[:96].strip()
     loan_notes = (
         '• Échéance déclarée dans SQLite : ' + (expiry or 'Non renseignée'),
-        '• Validité actuelle du prêt / identité ADEPT : non démontrée '
+        '• Validité actuelle du prêt / identité de l’emprunteur : non démontrée '
         'par cet enregistrement local. Aucune prolongation, restitution '
         'ou association permanente autorisée.',
-    ) if is_paris_loan else ()
+    ) if is_loan else ()
     lines = (
         ('Bibliographie du prêt (description, pas preuve de fichier) :'
-         if is_paris_loan else
+         if is_loan else
          'Bibliographie de l’achat / droit (description, pas preuve de fichier) :'),
         '• Nature du droit : ' + kind,
         '• Titre : ' + title,
@@ -772,12 +771,11 @@ class LocalInspection:
             and type(row.get('item_id')) is str and row.get('item_id')
         )
         # Active unverified rights remain the audit's original universe.
-        # Closed/returned/expired Paris loans are a distinct READ-ONLY
+        # Closed/returned/expired typed loans are a distinct READ-ONLY
         # inspection population, never counted as active missing rights.
-        inactive_paris_loans = {
+        inactive_loans = {
             index for index, right in enumerate(rights)
             if right.get('identity_id') == identity_id
-            and right.get('provider_id') == 'paris'
             and right.get('entitlement_type') == 'loan'
             and right.get('state') != 'active'
         }
@@ -786,7 +784,7 @@ class LocalInspection:
         active_unverified = tuple(dict.fromkeys(audit.reconciliation.unverified_rights))
         active_indices = set(active_unverified)
         displayed_rights = active_unverified + tuple(
-            index for index in sorted(inactive_paris_loans)
+            index for index in sorted(inactive_loans)
             if index not in active_indices
         )
         # Read declarations for *display only*; file bytes and provider rights
@@ -810,7 +808,7 @@ class LocalInspection:
             if not 0 <= index < len(rights) or rights[index].get('identity_id') != identity_id:
                 continue
             right = rights[index]
-            is_closed_paris_loan = index in inactive_paris_loans
+            is_inactive_loan = index in inactive_loans
             right_provider, right_item = right.get('provider_id'), right.get('item_id')
             matches = (notices.get((right_provider, right_item), [])
                        if type(right_provider) is str and type(right_item) is str
@@ -1014,16 +1012,16 @@ class LocalInspection:
                         'peuvent distinguer les éditions.'
                     )
             case_heading = (
-                'Prêt Paris non actif (lecture seule)'
-                if is_closed_paris_loan else 'Droit sans fichier vérifié'
+                'Prêt non actif (lecture seule)'
+                if is_inactive_loan else 'Droit sans fichier vérifié'
             )
             case_state = (
-                {'loan_inactive'} if is_closed_paris_loan
+                {'loan_inactive'} if is_inactive_loan
                 else {'rights_without_verified_file'}
             )
             # Both states intentionally coexist: a user assertion is NOT
             # supplier provenance nor verified local-file presence.
-            if (not is_closed_paris_loan and scope in recorded_scopes
+            if (not is_inactive_loan and scope in recorded_scopes
                     and scope_counts[scope] == 1):
                 case_state.add('declared_link_recorded')
                 case_heading = 'Association manuelle enregistrée · droit sans fichier attesté'
@@ -1451,7 +1449,12 @@ class LocalInspection:
                                           and case.provider == 'unattributed'
                                           for case in self._cases.values()),
                 'unverified_rights': by_state['rights_without_verified_file'],
-                'paris_inactive_loans': by_state['loan_inactive'],
+                'inactive_loans': by_state['loan_inactive'],
+                # Backward-compatible Paris-only counter for older clients.
+                'paris_inactive_loans': sum(
+                    case.provider == 'paris' and 'loan_inactive' in case.states
+                    for case in self._cases.values()
+                ),
                 'local_without_right': by_state['local_file_without_attested_right'],
                 'unverified_files': by_state['unverified_file'],
                 'inspection_limited': self._limited,
@@ -1554,7 +1557,7 @@ class LocalInspection:
         if (right is None or file is None
                 or not (
                     'rights_without_verified_file' in right.states
-                    or (right.provider == 'paris' and 'loan_inactive' in right.states)
+                    or 'loan_inactive' in right.states
                 )
                 or 'confirmed_link' in file.states
                 or not right_key.startswith('right:')
@@ -1604,8 +1607,7 @@ class LocalInspection:
             return review_source_read_only(
                 right.provider,
                 audit_complete=self._manual_audit_complete,
-                loan_inactive=(right.provider == 'paris'
-                               and 'loan_inactive' in right.states),
+                loan_inactive='loan_inactive' in right.states,
                 bibliographic_hint=(
                     file_key in self._candidate_file_keys.get(right_key, ())
                 ),

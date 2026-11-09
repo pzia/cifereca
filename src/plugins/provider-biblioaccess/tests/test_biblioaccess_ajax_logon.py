@@ -59,7 +59,6 @@ def test_ajax_endpoint_fields_and_status_never_connect_core():
     ({"changeUser": "false", "provider": "0"}, FORM),
     (QUERY, {"username": "x", "password": "y"}),
     ({"changeUser": "false", "provider": "0", "_dc": "123", "token": "secret"}, FORM),
-    (QUERY, {**FORM, "captchaCheckValue": ""}),
 ])
 def test_shape_changes_refused_without_post(changed_query, changed_form):
     client = mod.ObservedAjaxLogonClient(transport=httpx.MockTransport(
@@ -120,3 +119,83 @@ def test_json_payload_opaque_and_bounded():
             client.submit_once(query=QUERY, fields=FORM, consent=True)
     finally:
         client.close()
+
+
+def test_explicit_empty_captcha_check_value_is_not_assumed_invalid():
+    calls = []
+    def handler(request):
+        calls.append(request.content.decode("ascii"))
+        return httpx.Response(200, headers={"content-type": "application/json"},
+                              json={"success": False, "errors": [], "message": None})
+    client = mod.ObservedAjaxLogonClient(transport=httpx.MockTransport(handler))
+    try:
+        result = client.submit_once(
+            query=QUERY, fields={**FORM, "captchaCheckValue": ""}, consent=True)
+        assert result.outcome == "failure_reported"
+        assert len(calls) == 1
+        assert "captchaCheckValue=" in calls[0]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("payload", [
+    b'{"success":true,"errors":["SYNTHETIC-FAILURE"]}',
+    b'{"success":true,"errors":{"code":"SYNTHETIC-FAILURE"}}',
+    b'{"success":true,"errors":null}',
+    b'{"success":true,"errors":"SYNTHETIC-FAILURE"}',
+])
+def test_ajax_contradictory_errors_cannot_report_success(payload):
+    observation = mod.inspect_ajax_response(
+        status=200, mime="application/json", data=payload)
+    assert observation.outcome == "unknown"
+    assert not observation.identity_verified
+    assert not observation.cas_completed
+    assert "SYNTHETIC-FAILURE" not in repr(observation)
+
+
+@pytest.mark.parametrize("payload", [
+    b'{"success":false,"success":true,"errors":[]}',
+    b'{"success":true,"errors":[],"errors":["SYNTHETIC-FAILURE"]}',
+    b'{"success":true,"errors":[],"d":{"a":1,"a":2}}',
+    b'{"success":true,"errors":[],"d":NaN}',
+    b'{"success":true,"errors":[],"d":Infinity}',
+])
+def test_ajax_ambiguous_json_is_refused(payload):
+    with pytest.raises(mod.AjaxLogonError, match="ajax_logon_json_invalid"):
+        mod.inspect_ajax_response(
+            status=200, mime="application/json", data=payload)
+
+
+def test_ajax_reported_success_without_errors_key_remains_unverified():
+    observation = mod.inspect_ajax_response(
+        status=200, mime="application/json",
+        data=b'{"success":true,"d":"SYNTHETIC-OPAQUE"}')
+    assert observation.outcome == "success_reported"
+    assert not observation.cas_completed
+    assert not observation.identity_verified
+    assert "SYNTHETIC-OPAQUE" not in repr(observation)
+
+
+@pytest.mark.parametrize(("payload", "count", "message"), [
+    (b'{"success":false,"errors":["SYNTHETIC-A","SYNTHETIC-B"],"message":"OPAQUE"}', 2, True),
+    (b'{"success":false,"errors":[],"message":null}', 0, False),
+    (b'{"success":true,"errors":{"secret":"SYNTHETIC"}}', None, False),
+    (b'{"success":false,"message":"OPAQUE"}', 0, True),
+])
+def test_ajax_json_structural_diagnostic_never_exposes_values(payload, count, message):
+    observed = mod.inspect_ajax_response(
+        status=200, mime="application/json", data=payload)
+    assert observed.error_count == count
+    assert observed.message_present is message
+    assert "OPAQUE" not in repr(observed)
+    assert "SYNTHETIC-A" not in repr(observed)
+    assert not observed.core_connected and not observed.identity_verified
+
+
+def test_json_reported_error_count_is_bounded():
+    import json
+    payload = json.dumps({"success": False, "errors": ["SYNTHETIC"] * 120}).encode()
+    observed = mod.inspect_ajax_response(
+        status=200, mime="application/json", data=payload)
+    assert observed.error_count == 99
+    assert "SYNTHETIC" not in repr(observed)

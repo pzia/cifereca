@@ -68,3 +68,53 @@ def test_generic_view_only_uses_declared_capability_and_does_not_overwrite_real_
     garbage = source((SyncPhaseState("materialize", "not_supported"),),
                      tuple("loan_auto_materialization" for _ in range(33)))
     assert "Non prise en charge" in _phase_text(garbage)
+
+
+def test_bnf_loan_phase_is_explicit_default_deny_not_brand_inferred(
+    connected_core, monkeypatch,
+):
+    from dataclasses import replace
+    service, session, account, _loan, _state, downloaded = connected_core
+    # An otherwise valid BnF session with no ABI opt-in advertises no phase.
+    session.descriptor = replace(
+        session.descriptor, capabilities=replace(
+            session.capabilities, loan_auto_materialization=False))
+    source, = SynchronizationBrokerImpl(service).sources(account.identity_id)
+    assert "loan_auto_materialization" not in source.sync_capabilities
+    assert downloaded == []
+
+
+def test_loan_phase_declaration_accepts_future_provider_and_refuses_partial_abi():
+    from cifereca.brokers import _loan_materialization_phase_declared
+    from cifereca.providers import ProviderCapabilities
+
+    class SyntheticSession:
+        capabilities = ProviderCapabilities(
+            loans=True, loan_auto_materialization=True)
+        def download_digital(self, loan, account, target):
+            raise AssertionError("must not be called for capability projection")
+
+    session = SyntheticSession()
+    assert _loan_materialization_phase_declared(session, {"loans"})
+    assert not _loan_materialization_phase_declared(session, set())
+    assert not _loan_materialization_phase_declared(None, {"loans"})
+    session.capabilities = ProviderCapabilities(loans=True)
+    assert not _loan_materialization_phase_declared(session, {"loans"})
+
+    class MissingReader:
+        capabilities = ProviderCapabilities(
+            loans=True, loan_auto_materialization=True)
+
+    assert not _loan_materialization_phase_declared(MissingReader(), {"loans"})
+    assert not _loan_materialization_phase_declared(
+        NS(capabilities=NS(loan_auto_materialization="true"),
+           download_digital=lambda *_: None), {"loans"})
+
+
+def test_loan_phase_flag_is_append_only_and_default_false():
+    from dataclasses import fields
+    from cifereca.providers import ProviderCapabilities
+    names = [field.name for field in fields(ProviderCapabilities)]
+    assert names[-3:] == ["loan_auto_materialization", "local_materialization", "legacy_materialization_checkpoint"]
+    assert ProviderCapabilities().loan_auto_materialization is False
+    assert ProviderCapabilities().local_materialization is False

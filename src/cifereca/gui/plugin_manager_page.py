@@ -15,7 +15,6 @@ from cifereca.plugins.configuration import defaults_for_schema, schema_scope
 from .action_widgets import action_button, AdaptiveActionBar, mirror_sensitivity
 from .plugin_attention import plugin_section_expanded
 from .plugin_manager_error_feedback import plugin_error_message
-from .store_usage_labels import store_plugin_usage_hint
 from .plugin_view import (
     PLUGIN_VIEW_FILTERS,
     PLUGIN_ROLE_FILTERS, PLUGIN_ROLE_LABELS,
@@ -626,10 +625,12 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         role = Gtk.Label(label=f"Rôle · {PLUGIN_ROLE_LABELS[plugin_role(d)]}", xalign=0)
         role.add_css_class("caption"); role.add_css_class("dim-label")
         box.append(role)
-        # Fixed technical role vocabulary: a public Numilog catalogue does
-        # not share a private account or entitlements. Kobo's catalogue is
-        # only an internal catalog.service, never a second user account.
-        usage = store_plugin_usage_hint(d.id)
+        # The package owns this optional, versioned text contribution.
+        # Do not promote it to a provider route, login, entitlement or action.
+        usage = getattr(d, "ui_usage_hint", "")
+        if (type(usage) is not str or len(usage) > 384
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in usage)):
+            usage = ""
         if usage:
             hint = Gtk.Label(label=usage, xalign=0)
             hint.set_wrap(True)
@@ -720,9 +721,8 @@ class PluginManagerPage(Gtk.ScrolledWindow):
         if d.instantiation == "singleton_public":
             identities = Gtk.MenuButton(label="Identités…")
             identities.set_tooltip_text(
-                "Activer ce catalogue public, indépendamment des comptes privés, pour chaque identité"
-                if d.id == "provider.numilog.catalog"
-                else "Activer ce catalogue pour chaque identité"
+                "Activer ce catalogue public pour chaque identité ; "
+                "cette activation ne confère aucun droit sur les achats ou emprunts."
             )
             identity_popover = Gtk.Popover()
             choices = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)

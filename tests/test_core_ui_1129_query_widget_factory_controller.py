@@ -402,7 +402,7 @@ def test_search_paris_plugin_absent_or_disabled_is_scoped(
     window.search_controls = controls
     window.service.current_identity = NS(identity_id="alice")
     window.service.catalogue_source_capabilities = lambda identity_id=None: []
-    window.service.config = NS(provider_accounts=lambda provider: [
+    window.service.config = NS(provider_accounts=lambda provider=None: [
         {"provider": "paris", "identity_id": "alice", "enabled": True,
          "credentials": {"password": "PRIVATE_NOT_FOR_DIAGNOSTICS"}},
     ])
@@ -430,7 +430,7 @@ def test_library_selector_includes_scoped_local_and_numilog_origins():
     }]
     refresh_library_origin_choices(window, snapshot, identity_id="alice")
     options = dict(window.library_controls.set_provider_choices.call_args.args[0])
-    assert options["numilog"] == "Numilog — Mes achats (compte)"
+    assert options["numilog"] == "Display numilog"  # historical plugin descriptor authority
     assert options["local"] == "Local"
     assert len(options) == len(set(options))
     # An offline Library filter must not authorize or announce an online
@@ -452,14 +452,17 @@ def test_library_selector_rejects_foreign_or_malformed_origin_evidence():
          "providers": ["private-provider"]},
         {"identity_id": "alice", "providers": "password=PRIVATE_SOURCE"},
         {"identity_id": "alice", "providers": [None, 41, "account@secret",
-                                               "a\\nb", ""]},
+                                               "a\\nb", "", ".hidden", "BAD",
+                                               "dot..double", "under_score",
+                                               "other", "unattributed", "all"]},
         {"identity_id": "alice", "providers": ["unsafe"] * 33},
     ]
     refresh_library_origin_choices(window, snapshot, identity_id="alice")
     selections = dict(window.library_controls.set_provider_choices.call_args.args[0])
     assert "numilog" in selections
     for forbidden in ("private-provider", "account@secret", "password=PRIVATE_SOURCE",
-                      "unsafe", "a\\nb"):
+                      "unsafe", "a\\nb", ".hidden", "BAD", "dot..double",
+                      "under_score", "unattributed"):
         assert forbidden not in repr(selections)
     assert window._library_origin_provider_ids == ("local", "numilog")
 
@@ -501,3 +504,17 @@ def test_library_origin_choices_hook_is_after_successful_identity_fence():
     assert text.index("self._show_library_entries(entries)") < text.index(
         "refresh_library_origin_choices(self, entries, identity_id=identity_id)"
     )
+
+
+def test_origin_provider_id_validator_matches_public_redacted_group_contract():
+    from cifereca.core.provider_identifier import valid_provider_identifier
+    from cifereca.core.library_evidence_scope import _public_provider_group
+    values = ("kobo", "bnf-pret", "future.store", "local", "other", "all",
+              "unattributed", "_secret", ".hidden", "A", "dot..double",
+              "bad/value", "bad\\nline", "a" * 65, "", None, 9)
+    for value in values:
+        assert (_public_provider_group(value, fallback="other") == value
+                if valid_provider_identifier(value) else
+                _public_provider_group(value, fallback="other") == "other")
+    assert valid_provider_identifier("future.store")
+    assert not valid_provider_identifier("unknown/credential")

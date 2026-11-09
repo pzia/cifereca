@@ -509,6 +509,7 @@ def test_dashboard_invalid_counts_never_leak_private_data_or_create_fake_ownersh
 
 def test_p1_1867_store_only_dashboard_distinguishes_ownership_catalogue_and_loans():
     card = _card(
+        loan_sources_explicitly_absent=True,
         providers=["kobo", "numilog"],
         statistics={
             "local_books": 0, "known_loans": None,
@@ -524,16 +525,18 @@ def test_p1_1867_store_only_dashboard_distinguishes_ownership_catalogue_and_loan
     labels = _descendant_labels(window.dashboard_cards.children[0])
     assert "0 livres locaux · aucune source de prêt configurée" in labels
     assert "5 droits d’achat distants · fichier local non présumé" in labels
-    assert "Sources : Kobo (Mes achats / Catalogue), Numilog (Mes achats)" in labels
+    assert "Sources : Kobo, Numilog" in labels
     assert events == ["statistics", "snapshot"]
 
 
 def test_p1_1867_optional_numilog_catalogue_not_mistaken_for_purchases():
     card = _card(
+        loan_sources_explicitly_absent=True,
         providers=["numilog"],
         sources=[
             {"provider_id": "numilog", "label": "Numilog", "connected": True},
-            {"provider_id": "numilog-catalog", "label": "Numilog", "connected": False},
+            {"provider_id": "numilog-catalog", "label": "Numilog — Catalogue public",
+             "connected": False, "public_catalogue": True},
         ],
         statistics={"local_books": 2, "known_loans": 0,
                     "loan_sources_observed": 0, "remote_owned_rights": 1},
@@ -542,7 +545,7 @@ def test_p1_1867_optional_numilog_catalogue_not_mistaken_for_purchases():
     render()
     labels = _descendant_labels(window.dashboard_cards.children[0])
     assert "2 livres locaux · aucune source de prêt configurée" in labels
-    assert "Sources : Numilog (Mes achats), Numilog (Catalogue public) (recherche indisponible)" in labels
+    assert "Sources : Numilog, Numilog — Catalogue public (recherche indisponible)" in labels
 
 
 def test_p1_1867_loan_evidence_or_unknown_source_keeps_existing_count():
@@ -580,7 +583,8 @@ def test_p1_1867_no_implicit_provider_call_for_unrecognized_or_malformed_scope()
               statistics={"local_books": 0, "known_loans": None}),
         _card(providers="kobo",
               statistics={"local_books": 0, "known_loans": None}),
-        _card(providers=["numilog"], statistics={
+        _card(providers=["numilog"], loan_sources_explicitly_absent=True,
+              statistics={
             "local_books": 0, "known_loans": 0, "loan_sources_observed": 0
         }),
     ]
@@ -606,3 +610,73 @@ def test_p1_1867_catalogue_descriptor_with_scope_already_named_not_duplicated():
     labels = _descendant_labels(window.dashboard_cards.children[0])
     assert "Sources : Numilog — Catalogue public" in labels
     assert "Catalogue public (Catalogue public)" not in str(labels)
+
+
+def test_source_presentation_is_descriptor_driven_for_unknown_private_and_public():
+    card = _card(
+        sources=[
+            {"provider_id": "future-private", "label": "Librairie inconnue",
+             "connected": False, "public_catalogue": False},
+            {"provider_id": "future-public", "label": "Catalogue futur",
+             "connected": False, "public_catalogue": True},
+            {"provider_id": "numilog-catalog", "label": "Catalogue privé simulé",
+             "connected": False, "public_catalogue": False},
+        ],
+    )
+    window, _, _, _, render = _window([card])
+    render()
+    labels = _descendant_labels(window.dashboard_cards.children[0])
+    assert ("Sources : Librairie inconnue (à connecter), "
+            "Catalogue futur (recherche indisponible), "
+            "Catalogue privé simulé (à connecter)") in labels
+    assert "Mes achats" not in repr(labels)
+
+
+def test_dashboard_source_name_is_not_inferred_from_provider_id():
+    from cifereca.gui.dashboard_render_controller import _dashboard_source_label
+    for name in ("Kobo", "Numilog", "Bibliothèque future"):
+        assert _dashboard_source_label({
+            "provider_id": "kobo", "label": name, "connected": True,
+        }) == name
+    assert _dashboard_source_label({"provider_id": "numilog-catalog"}) == "Source inconnue"
+
+
+def test_p0_no_loan_statement_requires_canonical_capability_evidence():
+    cases = [
+        (_card(providers=["fixture-store"], loan_sources_explicitly_absent=True,
+               statistics={"local_books": 0, "known_loans": 0,
+                           "loan_sources_observed": 0}), True),
+        (_card(providers=["kobo"], loan_sources_explicitly_absent=False,
+               statistics={"local_books": 0, "known_loans": None,
+                           "loan_sources_observed": 0}), False),
+        (_card(providers=["future-store"], statistics={
+            "local_books": 0, "known_loans": None,
+            "loan_sources_observed": 0}), False),
+        (_card(providers=["fixture-store"], loan_sources_explicitly_absent=True,
+               statistics={"local_books": 0, "known_loans": 2,
+                           "loan_sources_observed": 1}), False),
+        (_card(providers=["fixture-store"], loan_sources_explicitly_absent=True,
+               capabilities=[{"id": "loans", "label": "Emprunts"}],
+               statistics={"local_books": 0, "known_loans": 0,
+                           "loan_sources_observed": 0}), False),
+    ]
+    window, _events, _, _, render = _window([row for row, _ in cases])
+    render()
+    for node, (_row, should_say_none) in zip(window.dashboard_cards.children, cases):
+        labels = _descendant_labels(node)
+        assert any("aucune source de prêt configurée" in label for label in labels) is should_say_none
+
+
+def test_dashboard_unknown_current_sync_is_not_historic_failure_or_never_synced():
+    cards = [_card("alice", sync=None), _card("bob", sync={
+        "status": "partial", "errors": 2, "attention_required": 0,
+    })]
+    window, _events, _diagnostics, _styles, render = _window(cards)
+    render()
+    alice, bob = window.dashboard_cards.children
+    alice_labels = _descendant_labels(alice)
+    bob_labels = _descendant_labels(bob)
+    assert "Non actualisée" in alice_labels
+    assert "À actualiser" in bob_labels
+    assert not any("Erreurs : 2" in label for label in alice_labels)
+    assert "Nouvelles acquisitions : 0 · Actions : 0 · Erreurs : 2" in bob_labels

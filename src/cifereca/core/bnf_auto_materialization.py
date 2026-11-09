@@ -10,7 +10,10 @@ from pathlib import Path
 from ..artifact_inspection import inspect_artifact
 from ..models import Account, Loan
 from ..plugin_api import Cancelled
-from .bnf_explicit_acsm import _discard_invalid_candidate, _valid_loan_token
+from .loan_acsm_token_validation import (
+    discard_untrusted_staged_acsm as _discard_invalid_candidate,
+    valid_loan_acsm_token as _valid_loan_token,
+)
 
 
 _TRACE_LOG = logging.getLogger("cifereca")
@@ -22,42 +25,11 @@ def policy_key(account: Account) -> str:
 
 
 def binding_ready(service, account: Account) -> bool:
-    try:
-        if (type(account) is not Account or account.provider_id != 'bnf-pret'
-                or (account.unique_id and (
-                    account.unique_id != account.unique_id.strip()
-                    or account.unique_id == (
-                        'bnf-pret:' + account.credential_id + ':primary'
-                    )
-                ))
-                or not service.sync_source_enabled(account)
-                or service.identity_by_id(account.identity_id) is None
-                or service.storage.identity_for_connection(
-                    'bnf-pret', account.credential_id) != account.identity_id):
-            return False
-        # The SQLite provider_accounts registry is the durable account
-        # identity for this credential. A connected Python session may stay
-        # alive after the borrower was removed/rebound in SQLite; do not
-        # issue a private ACSM GET in that state.
-        matches = service.storage.provider_accounts(
-            identity_id=account.identity_id,
-        )
-        if sum(
-            row.get('provider_id') == 'bnf-pret'
-            and row.get('credential_id') == account.credential_id
-            and row.get('account_id') == account.unique_id
-            for row in matches
-        ) != 1:
-            return False
-        session = service._sessions.get(service._session_key('bnf-pret', account.credential_id))
-        return (getattr(session, 'connected', None) is True
-                and sum(row is account for row in getattr(session, 'accounts', ())) == 1
-                and sum(row is account for row in service.accounts) == 1
-                and sum(type(row) is Account and row.provider_id == 'bnf-pret'
-                        and row.credential_id == account.credential_id
-                        for row in service.accounts) == 1)
-    except Exception:
-        return False
+    """BnF auto materialization uses the same exact Core account fence."""
+    from .source_account_binding import source_account_binding_ready
+    return source_account_binding_ready(
+        service, account, expected_provider_id="bnf-pret",
+    )
 
 
 def enabled(service, account: Account) -> bool:
@@ -69,65 +41,28 @@ def enabled(service, account: Account) -> bool:
 
 
 def _receipt_local_file_verified(service, account: Account, row: dict, path: Path) -> bool:
-    """A private auto-ref is only a hint, never proof of an unchanged book.
+    """BnF legacy wrapper: keep exact source scope, delegate byte evidence.
 
-    Verify that the complete acquisition still names the exact BnF directory,
-    indexed placement and original physical SHA. No provider/DRM I/O.
+    A private auto-ref does not authorize a new loan or a new file.
     """
-    from ..library_files import sha256_file
-    try:
-        if (type(row) is not dict or row.get('identity_id') != account.identity_id
-                or row.get('provider_id') != 'manual'
-                or row.get('credential_id') != 'manual'
-                or type(row.get('artifact_id')) is not str):
-            return False
-        expected_id = row['artifact_id']
-        artifact = service.storage.artifact_get(expected_id)
-        if (type(artifact) is not dict or type(artifact.get('sha256')) is not str
-                or expected_id != 'sha256:' + artifact['sha256']
-                or type(artifact.get('size')) is not int
-                or artifact['size'] <= 0):
-            return False
-        root = service.library_identity_provider_dir(account.identity_id, 'bnf-pret')
-        if root.is_symlink() or path.is_symlink() or not path.is_file():
-            return False
-        # Reject ALL symlinks below the identity/provider directory, not just
-        # the last component. An external EPUB must never satisfy this loan.
-        relative = path.relative_to(root)
-        if len(relative.parts) < 2:
-            return False
-        current = root
-        for part in relative.parts:
-            current = current / part
-            if current.is_symlink():
-                return False
-        path.resolve(strict=True).relative_to(root.resolve(strict=True))
-        linked = service.storage.placement_for_path(path)
-        if (type(linked) is not dict
-                or linked.get('state') != 'present'
-                or linked.get('identity_id') != account.identity_id
-                or linked.get('provider_id') != 'bnf-pret'
-                or linked.get('artifact_id') != expected_id):
-            return False
-        before = path.stat(follow_symlinks=False)
-        if before.st_size != artifact['size'] or sha256_file(path) != artifact['sha256']:
-            return False
-        inspected = inspect_artifact(path)
-        after = path.stat(follow_symlinks=False)
-        if (inspected.valid is not True
-                or inspected.media_format not in {'epub', 'pdf'}
-                or any(getattr(before, key) != getattr(after, key)
-                       for key in ('st_dev', 'st_ino', 'st_size',
-                                   'st_mtime_ns', 'st_ctime_ns'))):
-            return False
-        return True
-    except (OSError, ValueError, TypeError, KeyError):
-        # The caught filesystem/SQL cause may carry a private book path.
+    from .local_receipt_verification import local_receipt_file_verified
+
+    def closed_read_failure():
+        # Preserve the historical diagnostics contract, never traceback or
+        # path: an exception from an arbitrary filesystem can be private.
         _TRACE_LOG.warning(
             "TRACE bnf auto receipt file check failed provider_id=%s",
             account.provider_id,
         )
-        return False
+
+    return local_receipt_file_verified(
+        service,
+        identity_id=account.identity_id,
+        placement_provider_id="bnf-pret",
+        acquisition_provider_id="manual",
+        acquisition_credential_id="manual",
+        row=row, path=path, on_read_failure=closed_read_failure,
+    )
 
 
 def materialize(service, account: Account, loan: Loan, *, control=None,
@@ -194,17 +129,17 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     if not current():
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
     manual_acquisitions = service.storage.acquisitions(provider_id='manual', status='complete')
-    for row in manual_acquisitions:
-        # Inspect only a record explicitly bound to this identity and loan.
-        # All other manual acquisitions may contain unrelated personal files:
-        # do not stat, open or parse them on each BnF synchronization.
-        if row.get('identity_id') != account.identity_id:
-            continue
-        meta = row.get('metadata') or {}
-        if type(meta) is not dict or meta.get('bnf_auto_ref') != ref:
-            continue
-        path = Path(str(meta.get('path') or ''))
-        usable = _receipt_local_file_verified(service, account, row, path)
+    from .manual_receipt_scope_lookup import exact_manual_receipt
+    receipt_status, matched_row, matched_path = exact_manual_receipt(
+        manual_acquisitions, identity_id=account.identity_id,
+        metadata_ref='bnf_auto_ref', expected_ref=ref,
+    )
+    if receipt_status == 'ambiguous':
+        return {'status': 'attention_required', 'code': 'bnf_local_artifact_invalid'}
+    if receipt_status == 'matched':
+        usable = _receipt_local_file_verified(
+            service, account, matched_row, matched_path,
+        )
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         return ({'status': 'unchanged'} if usable else
@@ -369,10 +304,26 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         directory = service._acquisition_work_dir(account.identity_id, 'bnf-pret', loan.id)
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        # The opt-in is a durable affirmative action. The provider itself
-        # re-reads the exact account/loan and rejects missing signed actions.
-        candidate, url = session.download_digital(
-            loan, account, directory, explicit_user_action=True)
+        # The persisted opt-in is the ONLY positive Core authority. The
+        # provider owns the private offer/GET; no v1 download_digital fallback.
+        from .selected_loan_offer import select_exact_loan_offer
+        verdict, selected = select_exact_loan_offer(
+            session, account, loan, branch='bnf_html', current=current,
+        )
+        if verdict == 'unavailable':
+            return {'status': 'attention_required',
+                    'code': 'bnf_auto_acquisition_failed'}
+        if verdict != 'selected':
+            return {'status': 'attention_required',
+                    'code': 'bnf_loan_scope_unproven'}
+        observed, right, selected_candidate = selected
+        candidate, url = selected_candidate(
+            account, edition_id=loan.record_id, right_id=loan.id,
+            kind='loan', branch=observed.branch,
+            delivery_offer_id=right.delivery_offer_id,
+            target_dir=directory, explicit_user_action=True,
+            admission_current=current,
+        )
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
         if (not isinstance(candidate, Path) or type(url) is not str or url
@@ -384,7 +335,8 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             control.check_cancelled()
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        from .bnf_import_provenance import observed_loan, remember_import
+        from .observed_loan_scope import observed_loan
+        from .observed_import_provenance import remember_observed_import
         display_scope = observed_loan(loan)
         handed_to_adept = True
         result = service.import_acsm(candidate, identity_id=account.identity_id,
@@ -415,7 +367,10 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                 result['acquisition_id'], 'complete', metadata={'bnf_auto_ref': ref})
             if not current():
                 return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-            remember_import(service, result, display_scope)
+            remember_observed_import(
+                service, result, display_scope, provider_id='bnf-pret',
+                provenance_field='bnf_observed_loan',
+            )
         return ({'status': result.get('status', 'attention_required')}
                 if current() else
                 {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'})

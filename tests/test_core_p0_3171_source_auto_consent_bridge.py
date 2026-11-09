@@ -86,7 +86,10 @@ def test_source_grant_cannot_bypass_exact_account_binding_and_positive_A(policy,
 
 def test_unconfigured_provider_type_and_legacy_per_right_are_unchanged(policy):
     service, db, _key = policy
-    assert bridge.configured_kind("seller-a", "loan") is False
+    # Check the effective policy decision, not a dead membership helper.
+    loan = replace(service.source, kind="loan")
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, loan) is None
     set_source_acquisition_consent(
         service, service.account, service.source, allowed=True,
     )
@@ -176,7 +179,9 @@ def test_kobo_exact_source_opt_in_not_legacy_global_backup_pref(policy):
     db.metadata_set("sync.source.materialization.on_start." + sid, "0")
     with db._lock, db._connect() as conn:
         assert bridge.toggle_state(conn, kobo) == "off"
-    assert bridge.configured_kind("kobo", "loan") is False
+    # An unrelated loan kind cannot inherit a Kobo purchase preference.
+    with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, replace(kobo, kind="loan")) is None
 
 
 @pytest.mark.parametrize("state", ["unknown", "inactive"])
@@ -247,3 +252,7 @@ def test_bnf_legacy_auto_prevents_parallel_canonical_dispatch(monkeypatch):
         admitted_epoch=1, sync_lease=None, cancelled_for_rights=lambda: False,
     )
     assert result is None
+
+
+def test_provider_kind_membership_facade_is_retired():
+    assert not hasattr(bridge, "configured_kind")

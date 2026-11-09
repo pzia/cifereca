@@ -8,11 +8,11 @@ consent is exposed through the versioned plugin/source policy contract.
 """
 from __future__ import annotations
 
-import hashlib
 import re
 import logging
 
 from .source_convergence import SourceKey
+from .legacy_source_account_id import ambiguous_legacy_source_account_id
 from .source_sync_consent import read_policy, policy_in_transaction
 
 # Scoped *automatic acquisition* policies, NOT source-inventory switches.
@@ -34,20 +34,11 @@ _HEX = re.compile(r"[0-9a-f]{32}\Z")
 
 
 def _source_id(scope):
-    identity, provider, credential, account = (
+    from .legacy_source_identifier import legacy_source_id
+    return legacy_source_id(
         scope.identity_id, scope.provider_id, scope.credential_id,
         scope.account_id,
     )
-    # Match the public Sync broker's stable identifier, including its legacy
-    # primary-account fallback. Empty account IDs are not wildcard grants.
-    unique = account.strip() or f"{provider}:{credential}:primary"
-    raw = "\0".join((identity, provider, credential, unique))
-    return "sync:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
-
-
-def configured_kind(provider_id, kind):
-    """Whether an existing source/type-wide acquisition switch is available."""
-    return (provider_id, kind) in _POLICIES
 
 
 def toggle_state(db, source: SourceKey):
@@ -78,11 +69,8 @@ def toggle_state(db, source: SourceKey):
     # current account list. Deny the ambiguous *literal* borrower until it
     # receives the new exact-scope, CAS-versioned source policy above.
     scope = source.scope
-    if scope.account_id and (
-        scope.account_id != scope.account_id.strip()
-        or scope.account_id == (
-            scope.provider_id + ":" + scope.credential_id + ":primary"
-        )
+    if ambiguous_legacy_source_account_id(
+        scope.provider_id, scope.credential_id, scope.account_id
     ):
         return "off"
     prefix, active, epoch_prefix = spec
@@ -106,46 +94,23 @@ def toggle_state(db, source: SourceKey):
     return "on"
 
 
-def numilog_generation(storage, scope):
-    """Opaque consent epoch for this exact account; None if unavailable.
-
-    This epoch changes on Numilog revoke/re-opt-in. Pinning it prevents an
-    ON→OFF→ON race from reviving a previously admitted delivery.
-    """
-    if getattr(scope, "provider_id", None) != "numilog":
-        return None
-    try:
-        value = storage.metadata_get(
-            "sync.source.numilog.materialization.epoch.v1." + _source_id(scope)
-        )
-        return value if type(value) is str and _HEX.fullmatch(value) else None
-    except Exception:
-        return None
-
-
-def numilog_generation_in_transaction(db, source):
-    """Read the same generation from the canonical publisher's transaction."""
-    if type(source) is not SourceKey or source.scope.provider_id != "numilog":
-        return None
-    row = db.execute(
-        "SELECT value FROM metadata WHERE key=?",
-        ("sync.source.numilog.materialization.epoch.v1." +
-         _source_id(source.scope),),
-    ).fetchone()
-    value = row[0] if row else None
-    return value if type(value) is str and _HEX.fullmatch(value) else None
-
 
 def _consent_generation_key(scope):
-    """Generation key for every source-wide automatic acquisition switch."""
+    """Read the exact legacy epoch key from the same compatibility policy.
+
+    The policy itself remains legacy until every provider has migrated to
+    versioned CAS consent. Unknown or ambiguous provider mappings fail closed.
+    """
+    specs = [
+        spec for (provider, _kind), spec in _POLICIES.items()
+        if provider == scope.provider_id
+    ]
+    if len(specs) != 1:
+        return None
+    prefix, _active, epoch_prefix = specs[0]
     sid = _source_id(scope)
-    if scope.provider_id == "numilog":
-        return "sync.source.numilog.materialization.epoch.v1." + sid
-    if scope.provider_id == "kobo":
-        return "sync.source.materialization.on_start." + sid + ".revision"
-    if scope.provider_id == "bnf-pret":
-        return "sync.source.bnf_auto." + sid + ".revision"
-    return None
+    return (epoch_prefix + sid if epoch_prefix is not None
+            else prefix + sid + ".revision")
 
 
 def consent_generation(storage, scope):

@@ -11,7 +11,7 @@ these names in the initial HTML.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 import re
@@ -25,6 +25,20 @@ MAX_FIELDS = 64
 MAX_INLINE = 128 * 1024
 _NAMES = frozenset(("_dc", "captchaCheckValue", "captcha", "changeUser", "provider"))
 _SAFE_FIELD_NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9.:-]{0,63}\Z")
+
+
+# Only recognized SSO field names may enter canonical diagnostics.
+# Arbitrary remote field names can themselves encode session credentials.
+_KNOWN_FIELDS = frozenset((
+    "username", "password", "rememberMe", "checkValue", "captcha",
+    "captchaCheckValue", "mailaddress", "RequestKey", "oldpassword",
+    "passwordconfirm", "provider", "changeUser",
+))
+_STATIC_SEGMENT = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
+_OPAQUE_SEGMENT = re.compile(
+    r"(?:[0-9a-f]{16,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12})", re.IGNORECASE,
+)
 
 
 class LoginPreflightError(ValueError):
@@ -44,6 +58,13 @@ class LoginPreflight:
     status: str = "unverified"
     values_extracted: bool = False
     challenge_resolved: bool = False
+    # Ephemeral, never in repr/diagnostics; only for the selected GET.
+    _script_request_urls: tuple[tuple[str, str], ...] = field(
+        default=(), repr=False, compare=False,
+    )
+    _login_post_context: tuple[str, str, str, str, bool] | None = field(
+        default=None, repr=False, compare=False,
+    )
 
 
 class _Page(HTMLParser):
@@ -57,6 +78,10 @@ class _Page(HTMLParser):
         self.scripts = []
         self.fields = []
         self.invalid = False
+        self.hidden_check_values = []
+        self.captcha_text_values = []
+        self.remember_checked = False
+        self.captcha_visibility = []
 
     def handle_starttag(self, tag, attrs):
         self.nodes += 1
@@ -71,9 +96,20 @@ class _Page(HTMLParser):
                 raise LoginPreflightError("login_preflight_limit")
             self.script_depth = 1
             self.scripts.append(values.get("src") or "")
+        elif tag == "div" and values.get("id") == "logon-captcha-form-group":
+            style = (values.get("style") or "").replace(" ", "").lower()
+            self.captcha_visibility.append("display:none" in style)
         elif tag == "input":
             name = values.get("name") or ""
-            if name and _SAFE_FIELD_NAME.fullmatch(name):
+            if (values.get("id") == "logon-captcha-checkvalue"
+                    and name == "checkValue" and values.get("type") == "hidden"):
+                self.hidden_check_values.append(values.get("value"))
+            if values.get("id") == "logon-captcha":
+                self.captcha_text_values.append(values.get("value") or "")
+            if (values.get("id") == "logon-rememberMe"
+                    and name == "rememberMe" and values.get("type") == "checkbox"):
+                self.remember_checked = "checked" in values
+            if name in _KNOWN_FIELDS and _SAFE_FIELD_NAME.fullmatch(name):
                 if len(self.fields) >= MAX_FIELDS:
                     raise LoginPreflightError("login_preflight_limit")
                 self.fields.append(name)
@@ -97,15 +133,27 @@ def _script_path(raw: str) -> str | None:
             or any(ord(ch) <= 32 or ch == "\\" for ch in raw)):
         return None
     try:
+        # Reject traversal *before* urljoin normalizes dot segments away.
+        original = urlsplit(raw)
+        if any(segment in (".", "..") for segment in original.path.split("/")):
+            return None
         target = urljoin(IDP + _LOGIN_PATH, raw)
         p = urlsplit(target)
         if (p.scheme != "https" or p.netloc != "mediatheques.agglo-larochelle.fr"
                 or not p.path.endswith(".js") or p.fragment
                 or p.username is not None or p.password is not None):
             return None
-        # Query values may embed dynamic IDs or tokens; path is enough for
-        # offline inventory. Script paths are bounded and not auto-fetched.
-        if not 1 <= len(p.path) <= 512:
+        # Only ordinary static segments can enter diagnostics or opt-in GET.
+        # No encoded, opaque or tokenized segments; no query values retained.
+        if not 1 <= len(p.path) <= 256 or "%" in p.path:
+            return None
+        segments = p.path.split("/")[1:]
+        if (not segments or any(
+            not _STATIC_SEGMENT.fullmatch(segment)
+            or segment in (".", "..")
+            or _OPAQUE_SEGMENT.search(segment)
+            for segment in segments
+        )):
             return None
         return p.path
     except (TypeError, ValueError):
@@ -133,9 +181,23 @@ def inspect_login_preflight(html: str, *, page_url: str = IDP + _LOGIN_PATH) -> 
         raise LoginPreflightError("login_preflight_invalid_html") from None
     if page.depth:
         raise LoginPreflightError("login_preflight_invalid_html")
-    paths = tuple(dict.fromkeys(
-        p for raw in page.scripts if (p := _script_path(raw)) is not None
-    ))
+    # The browser may load /logon.js?v=...; silently fetching /logon.js
+    # instead can inspect the wrong code. Keep the exact observed URL only
+    # in this private, in-memory preflight record, never in its repr or log.
+    # Ambiguous paths mapped to multiple URLs cannot be selected safely.
+    observed: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for raw in page.scripts:
+        path = _script_path(raw)
+        if path is None:
+            continue
+        full_url = urljoin(IDP + _LOGIN_PATH, raw)
+        if path in observed and observed[path] != full_url:
+            ambiguous.add(path)
+        else:
+            observed[path] = full_url
+    paths = tuple(path for path in observed if path not in ambiguous)
+    script_request_urls = tuple((path, observed[path]) for path in paths)
     external = sum(bool(raw) for raw in page.scripts)
     inline_text = "\n".join(page.inline_chunks)
     identifiers = tuple(sorted(
@@ -143,9 +205,35 @@ def inspect_login_preflight(html: str, *, page_url: str = IDP + _LOGIN_PATH) -> 
         if re.search(r"(?<![A-Za-z0-9_])" + re.escape(name)
                      + r"(?![A-Za-z0-9_])", inline_text)
     ))
+    # Fresh hidden challenge context from the very same page and cookie jar.
+    # The ordinary first POST includes the server's hidden checkValue even
+    # when its visual CAPTCHA is initially hidden. Never persist or log it.
+    provider_matches = re.findall(
+        r"logonManager\.provider\s*=\s*['\"]([A-Za-z]{1,32})['\"]",
+        inline_text,
+    )
+    action_matches = re.findall(
+        r"logonManager\.action\s*=\s*['\"]([A-Za-z]{1,32})['\"]",
+        inline_text,
+    )
+    context = None
+    if (provider_matches == ["Form"] and action_matches == ["logon"]
+            and len(page.hidden_check_values) == 1
+            and type(page.hidden_check_values[0]) is str
+            and 1 <= len(page.hidden_check_values[0]) <= 8192
+            and len(page.captcha_visibility) == 1
+            and page.captcha_visibility[0]
+            and len(page.captcha_text_values) == 1
+            and page.captcha_text_values[0] == ""):
+        context = (
+            "Form", "logon", page.hidden_check_values[0], "",
+            page.remember_checked,
+        )
     return LoginPreflight(
+        _login_post_context=context,
         script_count=len(page.scripts),
         same_origin_script_paths=paths,
+        _script_request_urls=script_request_urls,
         external_script_count=external,
         inline_script_count=len(page.scripts) - external,
         field_names=tuple(dict.fromkeys(page.fields)),
@@ -178,5 +266,8 @@ def inspect_javascript_evidence(source: str) -> JavascriptEvidence:
     ))
     return JavascriptEvidence(
         identifier_names=identifiers,
-        ajax_endpoint_referenced="/logon.svc/logon" in source,
+        # The observed PageSpeed JS builds the URL from a base directory.
+        # Its literal lacks the leading slash; this is still only lexical
+        # evidence, never proof of a successful POST.
+        ajax_endpoint_referenced="logon.svc/logon" in source,
     )

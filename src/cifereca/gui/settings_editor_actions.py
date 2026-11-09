@@ -11,6 +11,110 @@ from .settings_identity_editor import build_identity_settings_editor
 from .settings_account_editor import build_provider_account_editor
 
 
+def _saved_interactive_probe_ready(row: dict[str, Any]) -> bool:
+    """Use the same legacy enabled semantics as Config.provider_accounts.
+
+    A persisted account without 'enabled' remains ON. Corrupt truthy values
+    must not unlock an authentication action.
+    """
+    return (
+        type(row.get("id")) is str and bool(row["id"])
+        and row.get("enabled", True) is True
+    )
+
+
+def _probe_has_unsaved_draft(editor, saved, descriptor) -> bool:
+    """Compare against the *rendered* initial form, not raw legacy defaults.
+
+    The old check treated e.g. an option missing in persisted data but shown
+    with its descriptor default as an unsaved user edit. We must still refuse
+    a genuinely changed secret, option, identity or account status.
+    """
+    if editor.get("invalid_saved_snapshot") is True:
+        return True
+    baseline = editor.get("probe_rendered_baseline")
+    if type(baseline) is dict:
+        return (
+            editor["enabled"].get_active() != baseline.get("enabled")
+            or editor["identity"].get_text() != baseline.get("identity")
+            or editor["label"].get_text() != baseline.get("label")
+            or {key: field.get_text() for key, field in editor["fields"].items()}
+               != baseline.get("fields")
+            or {key: field.get_text() for key, field
+                in editor["option_fields"].items()} != baseline.get("option_fields")
+        )
+    # Compatibility with headless legacy editor shims, which did not project
+    # the rendered baseline. This path is not used by real Settings GTK.
+    return (
+        editor["enabled"].get_active() is not True
+        or editor["identity"].get_text() != saved.get("identity_id")
+        or editor["label"].get_text() != str(
+            saved.get("label") or descriptor.display_name)
+        or any(
+            row.get_text() != str((saved.get("credentials") or {}).get(key) or "")
+            for key, row in editor["fields"].items()
+        )
+        or any(
+            row.get_text() != str(
+                (saved.get("options") or {}).get(key, next(
+                    (spec.default for spec in
+                     getattr(descriptor, "account_options", ())
+                     if spec.key == key), ""))
+            )
+            for key, row in editor["option_fields"].items()
+        )
+    )
+
+
+def _current_probe_account(config, *, provider_id, account_id):
+    """Resolve the current persisted connection, not the Settings-open copy.
+
+    Save+reconnect may complete while the Settings page remains mounted.
+    Selecting the unique saved record also rules out stale/detached credentials.
+    """
+    try:
+        rows = config.provider_accounts()
+    except Exception:
+        return None
+    if type(rows) is not list:
+        return None
+    matching = [
+        row for row in rows if type(row) is dict
+        and row.get("provider") == provider_id and row.get("id") == account_id
+    ]
+    return matching[0] if len(matching) == 1 else None
+
+
+def _probe_form_matches_saved(editor, persisted, descriptor) -> bool:
+    """Typed equality only; no normalization of malformed secret values."""
+    if (editor.get("invalid_saved_snapshot") is True
+            or not _saved_interactive_probe_ready(persisted)
+            or type(persisted.get("identity_id")) is not str
+            or not persisted["identity_id"]
+            or editor["enabled"].get_active() is not True
+            or editor["identity"].get_text() != persisted["identity_id"]
+            or editor["label"].get_text() != (
+                persisted.get("label") or descriptor.display_name)):
+        return False
+    creds = persisted.get("credentials")
+    opts = persisted.get("options")
+    if type(creds) is not dict or type(opts) is not dict:
+        return False
+    for key, entry in editor["fields"].items():
+        value = creds.get(key, "")
+        if type(value) is not str or entry.get_text() != value:
+            return False
+    for key, entry in editor["option_fields"].items():
+        spec = next((s for s in getattr(descriptor, "account_options", ())
+                     if s.key == key), None)
+        if spec is None:
+            return False
+        value = opts.get(key, getattr(spec, "default", ""))
+        if type(value) is not str or entry.get_text() != value:
+            return False
+    return True
+
+
 def build_settings_editors(self, *, box, descriptors, public_ids,
                            mark_settings_dirty, library_directory, Gtk, Adw, add_css,
                            page_lifetime=None):
@@ -193,6 +297,107 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             observed_loans=getattr(self.service, "last_loans", ()),
         )
         account_editors.append(editor)
+
+        probe_button = editor.get("explicit_probe_button")
+        if probe_button is not None:
+            eligible = _saved_interactive_probe_ready(data)
+            probe_button.set_sensitive(eligible)
+            if not eligible:
+                editor["explicit_probe_status"].set_subtitle(
+                    "Enregistrer et activer ce compte avant la recette.")
+
+            def explicit_probe(_button, *, e=editor, saved=dict(data),
+                               pid=provider_id):
+                # Closed, value-free diagnostic for the repeated field case
+                # where no provider HTTP request follows an attempted test.
+                # No credential, account ID, draft or exception is logged.
+                def record(phase, status="ok"):
+                    try:
+                        self.service.diagnostics.add(
+                            "PLUGIN", "explicit provider probe UI", status,
+                            detail={"provider_id": pid, "phase": phase})
+                    except Exception:
+                        pass
+
+                record("clicked")
+                # Resolve the saved row again: Save+reconnect can happen
+                # without rebuilding the Settings widgets. Never run a
+                # detached/disabled account, or use a stale credential copy.
+                current = _current_probe_account(
+                    self.config, provider_id=pid, account_id=saved.get("id"))
+                if (not _saved_interactive_probe_ready(current or {})
+                        or e.get("deleted") or e.get("_probe_pending")
+                        or getattr(self, "_closed", False)
+                        or (page_lifetime is not None and not page_lifetime.alive)):
+                    record("blocked_unavailable", "warning")
+                    return
+                # An actually edited draft must be saved before its
+                # credentials may be sent. A legacy missing option rendered
+                # with its default is not a user edit.
+                unchanged_original = current == saved
+                form_valid = (
+                    not _probe_has_unsaved_draft(e, saved, descriptor)
+                    if unchanged_original else
+                    _probe_form_matches_saved(e, current, descriptor)
+                )
+                if (type(current.get("identity_id")) is not str
+                        or not current["identity_id"] or not form_valid):
+                    e["explicit_probe_status"].set_subtitle(
+                        "Enregistrer les modifications avant de tester le compte.")
+                    record("blocked_unsaved", "warning")
+                    return
+                e["_probe_pending"] = True
+                button = e["explicit_probe_button"]
+                button.set_sensitive(False)
+                e["explicit_probe_status"].set_subtitle(
+                    "Recette HTTP du compte sélectionné en cours…")
+
+                def release():
+                    e["_probe_pending"] = False
+                    if page_lifetime is None or page_lifetime.alive:
+                        button.set_sensitive(True)
+
+                def done(result):
+                    release()
+                    status = getattr(result, "status", None)
+                    live = status == "connected_ephemeral"
+                    observed = status == "observed"
+                    record(
+                        "test_connected_ephemeral" if live else
+                        "completed_unverified" if observed else "unavailable",
+                        "ok" if (live or observed) else "warning",
+                    )
+                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                        e["explicit_probe_status"].set_subtitle(
+                            "Connexion vérifiée pour ce test. "
+                            "Session temporaire refermée ; aucune modification du compte."
+                            if live else
+                            "Diagnostic effectué sans compte connecté. Consulter le journal."
+                            if observed else
+                            "Diagnostic indisponible. Consulter le journal brut.")
+
+                def error(_exc):
+                    release()
+                    record("failed", "warning")
+                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                        e["explicit_probe_status"].set_subtitle(
+                            "Diagnostic refusé. Enregistrer, activer le compte "
+                            "et vérifier l’option de recette.")
+
+                try:
+                    self.runner.submit(
+                        "Recette HTTP fournisseur…",
+                        lambda: self.service.explicit_provider_diagnostic(
+                            identity_id=current["identity_id"], provider_id=pid,
+                            credential_id=current["id"], user_consent=True,
+                        ),
+                        done, error, control=button,
+                    )
+                    record("dispatched")
+                except Exception:
+                    error(None)
+            probe_button.connect("clicked", explicit_probe)
+
         def delete_account(_button, e=editor):
             e["deleted"] = True
             e["group"].set_visible(False)

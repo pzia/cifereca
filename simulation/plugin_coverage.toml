@@ -142,3 +142,12 @@ contract_tests = ["src/plugins/provider-reference/tests/test_reference_provider.
 failure_tests = ["src/plugins/provider-reference/tests/test_reference_v2_selected_candidate_3722.py"]
 data = []
 gap = "Fournisseur fictif local et désactivé par défaut ; scénarios de droits, offres et candidats v2 synthétiques, aucune preuve de fournisseur réel ni recette GTK"
+
+# Inventaire statique uniquement : aucune simulation / HTTP / GTK attestée.
+[package.provider-biblioaccess]
+data = []
+gap = "BiblioAccess La Rochelle : plugin HTTP expérimental désactivé par défaut, aucune session authentifiée, aucun inventaire de droits ni scénario de simulation/GTK attesté"
+
+[package.storage-usb]
+data = []
+gap = "Stockage USB : adaptateur de staging hors réseau, aucun scénario de simulation/GTK attesté ; admission, vérification de volume et publication restent au Core"

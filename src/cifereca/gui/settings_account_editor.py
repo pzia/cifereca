@@ -170,8 +170,42 @@ def build_provider_account_editor(
             observation.set_title(title)
             observation.set_subtitle(subtitle)
             group.add(observation)
+    # An explicit per-account diagnostic is separate from startup reconnect.
+    # The host binds the callback only for a persisted enabled account.
+    probe_button = None
+    probe_status = None
+    if getattr(descriptor, "interactive_authentication", False) is True:
+        probe_row = Adw.ActionRow()
+        probe_row.set_title("Vérifier la connexion au compte")
+        probe_row.set_subtitle(
+            "Une tentative SSO ponctuelle avec les identifiants enregistrés. "
+            "La session est refermée et n'active pas la synchronisation.")
+        probe_button = Gtk.Button(label="Tester ce compte")
+        probe_button.set_valign(Gtk.Align.CENTER)
+        probe_row.add_suffix(probe_button)
+        group.add(probe_row)
+        probe_status = probe_row
     delete_row = Adw.ActionRow(); delete_row.set_title("Supprimer cette source de la configuration")
     delete_button = Gtk.Button(label="Supprimer"); delete_button.add_css_class("destructive-action"); delete_button.set_valign(Gtk.Align.CENTER); delete_row.add_suffix(delete_button); group.add(delete_row)
+    # The preview values are the baseline for the explicit connection test.
+    # Compare *what GTK actually rendered*, not raw storage: absent legacy
+    # options may display declared defaults without being modified. Never
+    # store this baseline in diagnostics or any persistent configuration.
+    def rendered_text(widget):
+        # Standard GTK exposes get_text(); lightweight headless widget stubs
+        # store their last set_text value directly.
+        getter = getattr(widget, "get_text", None)
+        return getter() if callable(getter) else widget.text
+
+    probe_rendered_baseline = {
+        "enabled": saved_enabled is True,
+        "identity": chosen_owner,
+        "label": rendered_text(label_row),
+        "fields": {key: rendered_text(widget) for key, widget in fields.items()},
+        "option_fields": {
+            key: rendered_text(widget) for key, widget in option_fields.items()
+        },
+    }
     editor = {
         "id": account_id, "provider": provider_id, "group": group, "enabled": enabled,
         "label": label_row, "identity": identity_row, "fields": fields,
@@ -180,6 +214,9 @@ def build_provider_account_editor(
         "original_options": options, "original_credentials": credentials,
         "original_account": dict(data),
         "invalid_saved_snapshot": invalid_saved_snapshot,
+        "probe_rendered_baseline": probe_rendered_baseline,
         "deleted": False,
+        "explicit_probe_button": probe_button,
+        "explicit_probe_status": probe_status,
     }
     return editor, delete_button

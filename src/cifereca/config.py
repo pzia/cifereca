@@ -381,7 +381,9 @@ class Config:
         value: Any = None
         if provider_id:
             value = self.provider_option(provider_id, "request_timeout_seconds", None, credential_id=credential_id)
-            if value is None and str(provider_id).lower() == "kobo":
+            # Both legacy and plugin-declared timeout keys are source-scoped.
+            # Never infer a fallback value from the provider's brand.
+            if value is None:
                 value = self.provider_option(provider_id, "timeout_seconds", None, credential_id=credential_id)
         if value is None:
             value = self.get("request_timeout_seconds", DEFAULT_REQUEST_TIMEOUT_SECONDS)

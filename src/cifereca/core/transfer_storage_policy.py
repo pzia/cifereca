@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Literal
+from unicodedata import category
 
 
 TransferStorageClass = Literal["transfer"]
@@ -39,6 +40,9 @@ def _filename_component(value: object) -> str:
     if type(value) is not str:
         return ""
     value = value.encode("utf-8", "ignore").decode("utf-8")
+    # Bidirectional overrides and invisible format controls can disguise
+    # extensions or make two readable filenames misleadingly identical.
+    value = "".join(" " if category(char) == "Cf" else char for char in value)
     value = re.sub(r"[\x00-\x1f\x7f/\\]+", " ", value)
     value = re.sub(r"\s+", " ", value).strip(" .-")
     return value[:96].rstrip(" .-")

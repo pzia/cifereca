@@ -471,13 +471,19 @@ def _shared_paris_catalogue_row(
     )
 
 
-def _numilog_search_owner(self, session: ProviderSession) -> str | None:
-    """Inert owner snapshot for an authenticated Numilog search session."""
+def _private_search_owner(self, session: ProviderSession) -> str | None:
+    """Inert, provider-neutral SQLite owner for one private search session.
+
+    This snapshot only determines when public-only projection is required.
+    It never confers a right to read a different account's private catalogue.
+    """
+    provider_id = getattr(session, "provider_id", None)
     credential = getattr(session, "credential_id", None)
-    if type(credential) is not str or not credential:
+    if (type(provider_id) is not str or not provider_id
+            or type(credential) is not str or not credential):
         return None
     try:
-        owner = self.storage.identity_for_connection("numilog", credential)
+        owner = self.storage.identity_for_connection(provider_id, credential)
     except (AttributeError, LookupError, TypeError, ValueError):
         return None
     return owner if type(owner) is str and owner else None
@@ -499,18 +505,6 @@ def _shared_numilog_public_row(row: SearchResult) -> SearchResult | None:
         metadata=_shared_catalogue_bibliography(row),
         document_classification=None,
     )
-
-
-def _kobo_search_owner(self, session: ProviderSession) -> str | None:
-    """Inert SQLite owner snapshot for an authenticated Kobo session."""
-    credential = getattr(session, "credential_id", None)
-    if type(credential) is not str or not credential:
-        return None
-    try:
-        owner = self.storage.identity_for_connection("kobo", credential)
-    except (AttributeError, LookupError, TypeError, ValueError):
-        return None
-    return owner if type(owner) is str and owner else None
 
 
 def _shared_kobo_public_row(
@@ -712,10 +706,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
             return False
-        if any(_numilog_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in numilog_owner_leases):
             return False
-        if any(_kobo_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in kobo_owner_leases):
             return False
         return True
@@ -763,17 +757,21 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     shared_paris_sessions = {
         id(session) for session, owner in paris_owner_leases if owner != active_id
     }
-    numilog_owner_leases = tuple(
-        (session, _numilog_search_owner(self, session))
-        for session in searchable if session.provider_id == "numilog"
+    # One exact SQL owner read per private-library session; vendor-specific
+    # catalogue projections below still preserve their own safe row grammar.
+    private_owner_leases = tuple(
+        (session, _private_search_owner(self, session))
+        for session in searchable
+        if session.provider_id in {"numilog", "kobo"}
     )
+    private_owner_groups = {"numilog": [], "kobo": []}
+    for session, owner in private_owner_leases:
+        private_owner_groups[session.provider_id].append((session, owner))
+    numilog_owner_leases = tuple(private_owner_groups["numilog"])
+    kobo_owner_leases = tuple(private_owner_groups["kobo"])
     shared_numilog_sessions = {
         id(session) for session, owner in numilog_owner_leases if owner != active_id
     }
-    kobo_owner_leases = tuple(
-        (session, _kobo_search_owner(self, session))
-        for session in searchable if session.provider_id == "kobo"
-    )
     shared_kobo_sessions = {
         id(session) for session, owner in kobo_owner_leases if owner != active_id
     }
@@ -1376,17 +1374,21 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     shared_paris_sessions = {
         id(session) for session, owner in paris_owner_leases if owner != active_id
     }
-    numilog_owner_leases = tuple(
-        (session, _numilog_search_owner(self, session))
-        for session in searchable if session.provider_id == "numilog"
+    # One exact SQL owner read per private-library session; vendor-specific
+    # catalogue projections below still preserve their own safe row grammar.
+    private_owner_leases = tuple(
+        (session, _private_search_owner(self, session))
+        for session in searchable
+        if session.provider_id in {"numilog", "kobo"}
     )
+    private_owner_groups = {"numilog": [], "kobo": []}
+    for session, owner in private_owner_leases:
+        private_owner_groups[session.provider_id].append((session, owner))
+    numilog_owner_leases = tuple(private_owner_groups["numilog"])
+    kobo_owner_leases = tuple(private_owner_groups["kobo"])
     shared_numilog_sessions = {
         id(session) for session, owner in numilog_owner_leases if owner != active_id
     }
-    kobo_owner_leases = tuple(
-        (session, _kobo_search_owner(self, session))
-        for session in searchable if session.provider_id == "kobo"
-    )
     shared_kobo_sessions = {
         id(session) for session, owner in kobo_owner_leases if owner != active_id
     }
@@ -1428,10 +1430,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
             return False
-        if any(_numilog_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in numilog_owner_leases):
             return False
-        if any(_kobo_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in kobo_owner_leases):
             return False
         return True

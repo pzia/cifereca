@@ -253,3 +253,12 @@ def test_selected_usb_root_removed_during_read_is_unverified(tmp_path, monkeypat
     row = usb.observe_usb_files(root, ("book.epub",))[0]
     assert row.status == "unverified"
     assert row.sha256 is None
+
+
+def test_unicode_composed_decomposed_usb_aliases_are_rejected_before_io(tmp_path):
+    import unicodedata
+    composed = "Livres/Édition.epub"
+    decomposed = unicodedata.normalize("NFD", composed)
+    assert composed != decomposed
+    with pytest.raises(ValueError, match="usb_observation_paths_collide"):
+        observe_usb_files(tmp_path / "not-mounted", (composed, decomposed))

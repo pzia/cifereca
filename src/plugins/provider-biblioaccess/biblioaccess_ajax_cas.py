@@ -7,9 +7,9 @@ Core authentication or a library right. No networking at import time.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
-from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
 import httpx
 
@@ -21,7 +21,11 @@ from biblioaccess_ajax_preflight import (
 
 BIBLIO = "https://www.biblioaccess.com"
 IDP = "https://mediatheques.agglo-larochelle.fr"
-ENTRY = BIBLIO + "/1409/Account/Login"
+# Exact navigation target observed when the user clicks BiblioAccess login.
+# returnUrl is a navigation parameter, not a CAS service ticket.
+RETURN_URL = BIBLIO + "/1409/"
+ENTRY = (BIBLIO + "/1409/Account/Login?returnUrl="
+         + quote(RETURN_URL, safe=""))
 CAS = IDP + "/cas/login"
 LOANS = BIBLIO + "/1409/Catalog/MyLoans"
 _LIMIT = 256 * 1024
@@ -38,6 +42,16 @@ class CasHttpObservation:
     connected: bool = False
     identity_verified: bool = False
     loans_verified: bool = False
+    page_book_link_count: int = 0
+    page_book_unique_count: int = 0
+    page_loan_row_count: int = 0
+    page_loan_row_partial_count: int = 0
+    logout_form_observed: bool = False
+    inventory_verified: bool = False
+    _loan_rows: tuple[object, ...] = field(default=(), repr=False, compare=False)
+    _candidate_book_urls: tuple[tuple[str, str], ...] = field(
+        default=(), repr=False, compare=False,
+    )
 
 
 def _url(url: str):
@@ -73,7 +87,8 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         self._cas_lock = Lock()
         self._service = None
         self._login_url = None
-        self._login_seen = False
+        self._login_attempted = False
+        self._login_qualified = False
         self._preflight = None
         self._script_attempted = False
         self._entry_attempted = False
@@ -115,12 +130,18 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
             raise AjaxCasError("cas_transport_unavailable") from None
 
     def observe_login_once(self) -> CasHttpObservation:
-        """GET the institution's fresh service URL; no DOM or browser."""
-        if self._closed:
-            raise AjaxCasError("cas_client_closed")
-        if not self._login_url or self._login_seen:
-            raise AjaxCasError("cas_login_unavailable")
-        self._login_seen = True
+        """One GET, qualified only after a complete bounded login HTML read.
+
+        A failed preflight (302, 403, truncated body or transport failure)
+        permanently consumes this client's login attempt and cannot enable
+        the credential-bearing AJAX POST.
+        """
+        with self._cas_lock:
+            if self._closed:
+                raise AjaxCasError("cas_client_closed")
+            if not self._login_url or self._login_attempted:
+                raise AjaxCasError("cas_login_unavailable")
+            self._login_attempted = True
         try:
             with self.http.stream("GET", self._login_url,
                                   follow_redirects=False,
@@ -131,9 +152,14 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise AjaxCasError("cas_login_unverified")
                 body = _bounded(response)
-                self._preflight = inspect_login_preflight(
+                preflight = inspect_login_preflight(
                     body.decode("utf-8", errors="strict"), page_url=self._login_url)
-                return CasHttpObservation("login_html_unverified", 200)
+            with self._cas_lock:
+                if self._closed:
+                    raise AjaxCasError("cas_client_closed")
+                self._preflight = preflight
+                self._login_qualified = True
+            return CasHttpObservation("login_html_unverified", 200)
         except (httpx.HTTPError, UnicodeError):
             raise AjaxCasError("cas_transport_unavailable") from None
 
@@ -161,10 +187,16 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
             if (self._preflight is None or type(path) is not str
                     or path not in self._preflight.same_origin_script_paths):
                 raise AjaxCasError("cas_script_unobserved")
+            # The selected path maps to exactly one freshly observed URL.
+            # Its query is deliberately ephemeral and never returned/logged.
+            sources = dict(self._preflight._script_request_urls)
+            observed_url = sources.get(path)
+            if observed_url is None:
+                raise AjaxCasError("cas_script_unobserved")
             self._script_attempted = True
         try:
             with self.http.stream(
-                "GET", IDP + path, follow_redirects=False,
+                "GET", observed_url, follow_redirects=False,
                 headers={"Accept": "application/javascript, text/javascript"},
             ) as response:
                 if response.status_code != 200:
@@ -183,11 +215,49 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         # The AJAX client remains an explicit one-shot POST. The preflight
         # anchors the institution and tenant; it does not construct dynamic
         # parameters or bypass challenges.
-        if self._service is None or not self._login_seen:
-            raise AjaxCasError("cas_login_required")
+        with self._cas_lock:
+            if self._closed or self._service is None or not self._login_qualified:
+                raise AjaxCasError("cas_login_required")
         result = super().submit_once(query=query, fields=fields, consent=consent)
-        self._ajax_succeeded = result.outcome == "success_reported"
+        with self._cas_lock:
+            self._ajax_succeeded = (
+                not self._closed and result.outcome == "success_reported"
+            )
         return result
+
+    def submit_observed_login_once(
+        self, *, username: str, password: str, consent: bool,
+    ):
+        """One consented ordinary AJAX login with fresh HTML-derived values.
+
+        No screenshot, JS execution, CAPTCHA solving or manual token entry.
+        Never use this path when the HTML already requires a CAPTCHA.
+        """
+        from time import time_ns
+        if consent is not True:
+            raise AjaxCasError("cas_login_consent_required")
+        with self._cas_lock:
+            if self._closed or not self._login_qualified or self._preflight is None:
+                raise AjaxCasError("cas_login_required")
+            context = self._preflight._login_post_context
+            if context is None:
+                raise AjaxCasError("cas_login_dynamic_inputs_unavailable")
+            provider, action, check_value, captcha, remember = context
+            if provider != "Form" or action != "logon":
+                raise AjaxCasError("cas_login_dynamic_inputs_unavailable")
+        query = {
+            "changeUser": "true",
+            "provider": provider,
+            "_dc": str(time_ns() // 1_000_000),
+        }
+        fields = {
+            "username": username,
+            "password": password,
+            "rememberMe": "true" if remember else "false",
+            "captcha": captcha,
+            "captchaCheckValue": check_value,
+        }
+        return self.submit_once(query=query, fields=fields, consent=True)
 
     def observe_cas_once(self) -> CasHttpObservation:
         with self._cas_lock:
@@ -242,9 +312,29 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 raise AjaxCasError("cas_loans_already_attempted")
             if self._closed:
                 raise AjaxCasError("cas_client_closed")
+            # The one-shot diagnostic has historically required only the
+            # CAS landing; authenticated repeated reads enforce AJAX proof.
             if not self._cas_landed:
                 raise AjaxCasError("cas_landing_required")
             self._loans_attempted = True
+        return self._read_loans_html()
+
+    def read_authenticated_loans(self) -> CasHttpObservation:
+        """Fresh same-session read after a complete initial CAS+MyLoans flow.
+
+        Must not replay the POST, re-import cookies or follow an SSO redirect.
+        A 200 public/login page without the observed logout form is refused.
+        """
+        with self._cas_lock:
+            if (self._closed or not self._ajax_succeeded
+                    or not self._cas_landed or not self._loans_attempted):
+                raise AjaxCasError("cas_landing_required")
+        observation = self._read_loans_html()
+        if not observation.logout_form_observed:
+            raise AjaxCasError("cas_authenticated_page_unverified")
+        return observation
+
+    def _read_loans_html(self) -> CasHttpObservation:
         try:
             with self.http.stream("GET", LOANS, follow_redirects=False,
                                   headers={"Accept": "text/html"}) as response:
@@ -253,8 +343,25 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                 media = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
                 if media not in ("text/html", "application/xhtml+xml"):
                     raise AjaxCasError("cas_loans_unverified")
-                _bounded(response)
-                return CasHttpObservation("loans_html_unverified", 200)
+                body = _bounded(response)
+                from biblioaccess_loans_page import (
+                    inspect_myloans_html, LoanPageError,
+                )
+                try:
+                    candidates = inspect_myloans_html(
+                        body.decode("utf-8", errors="strict"))
+                except LoanPageError:
+                    raise AjaxCasError("cas_loans_structure_unverified") from None
+                return CasHttpObservation(
+                    "loans_html_unverified", 200,
+                    page_book_link_count=candidates.page_book_link_count,
+                    page_book_unique_count=candidates.page_book_unique_count,
+                    page_loan_row_count=candidates.page_loan_row_count,
+                    page_loan_row_partial_count=candidates.page_loan_row_partial_count,
+                    logout_form_observed=candidates.logout_form_observed,
+                    _loan_rows=candidates._loan_rows,
+                    _candidate_book_urls=candidates._book_urls,
+                )
         except (httpx.HTTPError, UnicodeError):
             raise AjaxCasError("cas_transport_unavailable") from None
 
@@ -262,6 +369,7 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
         self._service = None
         self._login_url = None
         self._preflight = None
+        self._login_qualified = False
         self._ajax_succeeded = False
         self._cas_landed = False
         super().close()

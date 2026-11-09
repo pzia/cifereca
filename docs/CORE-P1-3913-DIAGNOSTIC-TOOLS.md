@@ -266,6 +266,24 @@ d'import dynamique. Le code de sortie non nul signale une erreur de parsing.
 Les noms de providers sont définis par défaut et surchargeables avec
 `--providers` ; ce n'est pas une permission de connexion/acquisition.
 
+### Contrôle monotone des nouveaux couplages Core (P0 #5057)
+
+`scripts/ci_provider_coupling_delta_gate.py` (**F — contrôle local des objets Git,
+utilisé en PR CI**) : exécuter `python3 -m scripts.ci_provider_coupling_delta_gate
+--base-ref <SHA_BASE_40> --head-ref <SHA_HEAD_40>`. Cette commande lit
+exclusivement les objets Git committés des fichiers Python ajoutés ou modifiés
+dans `src/cifereca/` (pas `src/plugins/`, ni bibliothèque utilisateur), puis
+compare par fichier, catégorie et provider le nombre de signaux AST
+d'import et de comparaison. Une augmentation, un Python non analysable ou
+une référence Git invalide fait échouer le contrôle. Une diminution de dette
+est admise ; une suppression de fichier n'en réintroduit pas.
+
+La commande n'importe ni Core ni plugin, ne fait ni requête fournisseur ni
+écriture. Elle n'est **pas une preuve de reachability** et ne détecte pas les
+dispatchs indirects ou dynamiques. La PR CI utilise les SHA exacts de GitHub
+après `actions/checkout` avec historique complet. Ne jamais passer de branche
+mutable à la place d'un SHA de 40 caractères.
+
 ## Interpréteur Python du Core actif
 
 `cifereca-python` est publié dans le même répertoire de commandes que `cifereca` par l'Updater Core. Il exécute `current/.venv/bin/python` à chaque invocation et suit les mises à jour et rollbacks, sans se rabattre sur le Python système. Exemples :

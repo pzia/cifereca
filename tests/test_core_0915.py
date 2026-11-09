@@ -78,11 +78,96 @@ class Core0915(unittest.TestCase):
         session=NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='c',connected=True,capabilities=NS(search=True,loans=True,bookings=True))
         self.service.accounts=[NS(unique_id='main',identity_id='stable',provider_id='paris',credential_id='c')];self.service._sessions={'c':session}
         self.assertEqual([r['id'] for r in self.service.dashboard_state()[0]['capabilities']],['search','loans'])
+        self.assertEqual(self.service.dashboard_state()[0]['sources'][0]['public_catalogue'], False)
         # Older installed plugins can still announce bookings=True; retired
         # reservations never reappear in the Home capability chips.
         self.assertNotIn('bookings', {r['id'] for r in self.service.dashboard_state()[0]['capabilities']})
         session.connected=False;self.assertEqual(self.service.dashboard_state()[0]['capabilities'],[])
         self.service._sessions={}
+    def test_public_singleton_projection_is_read_only_and_provider_neutral(self):
+        session=NS(
+            descriptor=NS(instantiation='singleton_public',display_name='Catalogue fictif'),
+            provider_id='future-public',credential_id='',connected=False,
+            capabilities=NS(search=True),
+        )
+        self.service._sessions={'public':session}
+        self.service._provider_enabled_for_identity=lambda provider, identity: (
+            provider == 'future-public' and identity == 'stable'
+        )
+        sources=self.service.dashboard_state()[0]['sources']
+        self.assertEqual(sources, [{
+            'provider_id':'future-public','label':'Catalogue fictif',
+            'connected':False,'public_catalogue':True,
+        }])
+        self.assertFalse(self.service.dashboard_state()[0]['capabilities'])
+        self.service._sessions={}
+
+    def test_no_loan_source_is_proved_by_exact_live_capability_not_brand(self):
+        account=NS(unique_id='source-user',identity_id='stable',
+                   provider_id='fixture-store',credential_id='c')
+        session=NS(descriptor=NS(instantiation='multiple',display_name='Fixture Store'),
+                   provider_id='fixture-store',credential_id='c',
+                   connected=True,capabilities=NS(search=True,loans=False))
+        self.service.accounts=[account]
+        self.config.set('providers.accounts', [
+            {'id':'c','provider':'fixture-store','identity_id':'stable','enabled':True},
+        ])
+        self.service._sessions={'source':session}
+        self.service._provider_enabled_for_identity=lambda _provider,_identity: True
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],True)
+        session.connected=False
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        session.connected=True
+        session.capabilities.loans=True
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        session.capabilities.loans=None
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        session.capabilities.loans=False
+        self.service._sessions['duplicate']=session
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        self.service._sessions.pop('duplicate')
+        self.service.accounts.append(NS(unique_id='another',identity_id='stable',
+                                        provider_id='fixture-other',credential_id='x'))
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        self.service._sessions={}
+
+    def test_configured_disconnected_lender_prevents_no_loan_claim(self):
+        store=NS(unique_id='user',identity_id='stable',
+                 provider_id='future-store',credential_id='store-cred')
+        session=NS(descriptor=NS(instantiation='multiple',display_name='Store'),
+                   provider_id='future-store',credential_id='store-cred',
+                   connected=True,capabilities=NS(loans=False))
+        self.service.accounts=[store]
+        self.service._sessions={'store':session}
+        self.service._provider_enabled_for_identity=lambda _provider,_identity: True
+        persisted=[
+            {'id':'store-cred','provider':'future-store','identity_id':'stable','enabled':True},
+        ]
+        self.config.set('providers.accounts',list(persisted))
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'], True)
+        # A failed lender login removes it from live accounts but not config.
+        self.config.set('providers.accounts',persisted + [
+            {'id':'loan-cred','provider':'fixture-lender','identity_id':'stable','enabled':True},
+        ])
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        # Even an unscoped legacy lender might belong to this identity.
+        self.config.set('providers.accounts',persisted + [
+            {'id':'loan-cred','provider':'fixture-lender','enabled':True},
+        ])
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        self.config.set('providers.accounts',persisted + [
+            {'id':'loan-cred','provider':'fixture-lender','identity_id':'stable',
+             'enabled':'false'},
+        ])
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],False)
+        # A disabled lender cannot become a hidden live source.
+        self.config.set('providers.accounts',persisted + [
+            {'id':'loan-cred','provider':'fixture-lender','identity_id':'stable',
+             'enabled':False},
+        ])
+        self.assertIs(self.service.dashboard_state()[0]['loan_sources_explicitly_absent'],True)
+        self.service._sessions={}
+
     def test_overview_does_not_expose_another_identity_session(self):
         self.service._sessions={'c':NS(descriptor=NS(instantiation='multiple',display_name='Paris'),provider_id='paris',credential_id='other',connected=True,capabilities=NS(search=True))}
         self.assertEqual(self.service.dashboard_state()[0]['sources'],[]);self.service._sessions={}

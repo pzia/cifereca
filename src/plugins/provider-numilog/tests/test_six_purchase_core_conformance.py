@@ -354,7 +354,7 @@ def test_revoke_then_reenable_during_delivery_cannot_revive_old_sync(
     )
     refs_before = [p for p in service.storage.placements()]
     from cifereca.core import source_auto_consent_bridge as bridge
-    before_epoch = bridge.numilog_generation(service.storage, snapshot.scope)
+    before_epoch = bridge.consent_generation(service.storage, snapshot.scope)
     calls = []
     def revoke_while_delivering(source, offer):
         calls.append(source)
@@ -362,11 +362,11 @@ def test_revoke_then_reenable_during_delivery_cannot_revive_old_sync(
             source_id=sid, activate=False,
         )
         if reopt_in:
-            revoked_epoch = bridge.numilog_generation(service.storage, snapshot.scope)
+            revoked_epoch = bridge.consent_generation(service.storage, snapshot.scope)
             assert service.storage.numilog_materialization_change_consent(
                 source_id=sid, activate=True, expected_revision=revoked_epoch,
             )
-        assert bridge.numilog_generation(service.storage, snapshot.scope) != before_epoch
+        assert bridge.consent_generation(service.storage, snapshot.scope) != before_epoch
         path = root / "hugues" / "numilog" / "unpublished.epub"
         path.write_bytes(epub_bytes(99))
         return CompletedDelivery(

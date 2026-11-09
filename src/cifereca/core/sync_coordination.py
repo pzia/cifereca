@@ -8,6 +8,7 @@ from .source_context import source_context_epoch
 from .source_sync_consent import configured as source_consent_configured
 
 from contextvars import ContextVar
+from uuid import uuid4
 
 import time
 import hashlib
@@ -506,6 +507,7 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                 # including its legacy library mirror and typed A observation.
                 # Providers without this contract retain their original path.
                 # Never use a TTL cache of personal rights across Sync runs.
+                source_session = None
                 if self.sync_source_enabled(account):
                     source_session = self._sessions.get(
                         self._session_key(account.provider_id, account.credential_id),
@@ -524,7 +526,30 @@ def synchronize_account_source(self, account: Account, *, deep: bool=False, cont
                     self._synchronize_account_source_inventory_impl
                     if inventory_only else self._synchronize_account_source_impl
                 )
-                result = implementation(account, deep=deep, control=control)
+                try:
+                    result = implementation(account, deep=deep, control=control)
+                except ProviderConfigurationError:
+                    # Only a provider-owned *typed* expiry signal from this
+                    # exact disconnected session can authorize one new
+                    # interactive CAS connection. No retry on generic 302,
+                    # timeout, invalid loan rows, or another source.
+                    # The original public Sync already owns the acquisition
+                    # lock, so this cannot launch a parallel refresh.
+                    from .provider_sessions import (
+                        reconnect_expired_configured_source_once,
+                    )
+                    rebound = (
+                        reconnect_expired_configured_source_once(
+                            self, account, source_session,
+                        )
+                        if source_session is not None else None
+                    )
+                    if rebound is None:
+                        raise
+                    account = rebound
+                    # ONE retry only; any failure here propagates to the
+                    # existing broker's closed failure path, no loop.
+                    result = implementation(account, deep=deep, control=control)
                 if result.get("status") != "skipped":
                     # #3171: one optional typed A read and verified B plan
                     # within the existing source Sync's acquisition lock.
@@ -974,6 +999,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         )
     for identity in self.identities:
         run_id = self.storage.sync_run_put({
+            # A UUID per actual cycle preserves history across consecutive
+            # runs in the same second; the stable fallback remains for other
+            # older callers of Storage.sync_run_put.
+            "sync_run_id": "sync:" + uuid4().hex,
             "identity_id": identity.identity_id, "scope": "opening", "status": "running", "started_at": started,
             "detail": {"label": identity.label},
         })

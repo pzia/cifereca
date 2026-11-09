@@ -145,7 +145,7 @@ def test_current_failure_uses_generic_message_without_exception_details():
     callback = _extract_search_detail_callback("_search_detail_error")
     # Import of result_row is postponed until after context validation; inject
     # only the expected projection for the live callback path.
-    callback.__globals__["result_row"] = lambda item: {"id": item.id}
+    callback.__globals__["result_row"] = lambda item, **_kwargs: {"id": item.id}
     callback(host, "book-A", item, RuntimeError("secret-token=LEAK"), context=(3, 7, 11, "identity-A"))
     assert calls == ["search", "actions", "cache"]
     assert messages == ["Disponibilités indisponibles. Réessayez ultérieurement."]

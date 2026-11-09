@@ -14,23 +14,15 @@ def _dashboard_count(stats: dict, key: str) -> str:
     return str(value) if type(value) is int and value >= 0 else "—"
 
 
-# The dashboard has the same source applicability rule as the public
-# Accueil overview (#1867), but must not import a plugin/private Core service.
-# Unknown sources fail closed to existing 'prêts non actualisés' semantics.
-_NON_LENDING_SOURCES = frozenset({
-    "kobo", "numilog", "numilog-catalog", "gallica", "gutenberg",
-    "bnf-catalogue", "baen", "ebooksgratuits", "local",
-})
-
-
 def _dashboard_has_no_loan_source(card: object, stats: object) -> bool:
+    """A negative loan statement requires scoped, live capability evidence.
+
+    Provider IDs, absent live sessions and a zero count are not evidence of
+    missing loan support. Never turn an unknown lender into a false absence.
+    """
     if type(card) is not dict or type(stats) is not dict:
         return False
-    providers = card.get("providers")
-    if (type(providers) not in (list, tuple, set, frozenset)
-            or not providers or len(providers) > 128
-            or any(type(pid) is not str or pid not in _NON_LENDING_SOURCES
-                   for pid in providers)):
+    if card.get("loan_sources_explicitly_absent") is not True:
         return False
     caps = card.get("capabilities")
     if isinstance(caps, (list, tuple)) and any(
@@ -39,25 +31,17 @@ def _dashboard_has_no_loan_source(card: object, stats: object) -> bool:
         return False
     observed = stats.get("loan_sources_observed")
     known = stats.get("known_loans")
-    # Historic loan evidence survives a change in configured providers.
+    # Historical loans remain visible after source disconnect or revocation.
     return not ((type(observed) is int and observed > 0)
                 or (type(known) is int and known > 0))
 
 
 def _dashboard_source_label(source: object) -> str:
-    # Presentation only. A store account does not attest a downloaded file,
-    # and the Kobo catalogue is not a second configured account.
+    """Display the plugin-provided name without interpreting its provider ID."""
     if type(source) is not dict:
         return "Source inconnue"
-    name = str(source.get("label") or "Source inconnue")
-    pid = source.get("provider_id")
-    if pid == "kobo":
-        return name + " (Mes achats / Catalogue)"
-    if pid == "numilog":
-        return name + " (Mes achats)"
-    if pid == "numilog-catalog":
-        return name if "catalogue" in name.casefold() else name + " (Catalogue public)"
-    return name
+    label = source.get("label")
+    return label if type(label) is str and label.strip() else "Source inconnue"
 
 
 def render_dashboard(window, *, Gtk, add_css) -> None:
@@ -122,7 +106,11 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
         ))
         add_css(name, "flat", "book-title"); head.append(name)
         sync = card.get("sync") or {}
-        badge = Gtk.Label(label=window._sync_status_label(sync.get("status"))); add_css(badge, "badge"); head.append(badge)
+        # A missing run is not evidence that this profile has never synced.
+        # It can mean the current startup has not refreshed its old history.
+        sync_label = (window._sync_status_label(sync.get("status"))
+                      if sync else "Non actualisée")
+        badge = Gtk.Label(label=sync_label); add_css(badge, "badge"); head.append(badge)
         box.append(head)
         stats=card.get('statistics') or {}
         if stats:
@@ -153,7 +141,7 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
             _dashboard_source_label(source) + (
                 "" if source.get("connected") is True
                 else " (recherche indisponible)"
-                if source.get("provider_id") == "numilog-catalog"
+                if source.get("public_catalogue") is True
                 else " (à connecter)"
             )
             for source in card.get("sources", [])

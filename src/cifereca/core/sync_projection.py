@@ -87,12 +87,60 @@ def identity_statistics(self, identity_id, *, window_seconds: int=2592000):
             'scope':'persisted_inventory_last_observed_provider_loans_and_action_window'}
 
 
+def _configured_source_keys_for_identity(service, identity_id: str) -> set[tuple[str, str]] | None:
+    """Read configured accounts as negative-capability proof, fail closed.
+
+    Live upstream accounts may omit a configured lender after login failure.
+    A connected store alone cannot prove absence of lending sources.
+    """
+    try:
+        rows = service.config.get("providers.accounts", None)
+    except Exception:
+        return None
+    if type(rows) is not list or len(rows) > 2048:
+        return None
+    keys: set[tuple[str, str]] = set()
+    for row in rows:
+        if type(row) is not dict:
+            return None
+        enabled = row.get("enabled", True)
+        if enabled is False:
+            continue
+        if enabled is not True:
+            return None
+        owner = row.get("identity_id")
+        # An unscoped legacy account might belong to this profile.
+        if type(owner) is not str or not owner:
+            return None
+        if owner != identity_id:
+            continue
+        provider, credential = row.get("provider"), row.get("id")
+        if (type(provider) is not str or not provider
+                or type(credential) is not str or not credential):
+            return None
+        key = (provider, credential)
+        if key in keys:
+            return None
+        keys.add(key)
+    return keys
+
+
 def dashboard_state(self) -> list[dict[str, Any]]:
     """Return dashboard cards without triggering network I/O."""
     cards: list[dict[str, Any]] = []
     for identity in self.identities:
-        providers = sorted({a.provider_id for a in self.accounts_for_identity(identity.identity_id)})
-        latest = self.storage.latest_sync_run(identity.identity_id)
+        account_rows = tuple(self.accounts_for_identity(identity.identity_id))
+        providers = sorted({a.provider_id for a in account_rows})
+        historic = self.storage.latest_sync_run(identity.identity_id)
+        # Only runs initiated since this service was constructed describe the
+        # current launch. Keep the original in SQLite for diagnostics/history.
+        started = historic.get("started_at") if isinstance(historic, dict) else None
+        launch = getattr(self, "_dashboard_launch_at", None)
+        baseline = getattr(self, "_dashboard_initial_run_ids", {})
+        initial_id = baseline.get(identity.identity_id) if isinstance(baseline, dict) else None
+        latest = (historic if type(started) is int and type(launch) is int
+                  and started >= launch and historic.get("sync_run_id") != initial_id
+                  else None)
         profile_id = self.storage.adept_profile_binding_get("identity", identity.identity_id)
         try:
             deep_last_at = int(self.storage.metadata_get("catalog_deep_last_at") or 0) or None
@@ -103,7 +151,18 @@ def dashboard_state(self) -> list[dict[str, Any]]:
                   "direct_download": "Téléchargement direct", "personal_library": "Livres de mon compte fournisseur",
                   "return_loan": "Restituer un prêt", "renew_loan": "Prolonger un prêt"}
         capabilities = set(); sources = []
-        credentials = {(account.provider_id, account.credential_id) for account in self.accounts_for_identity(identity.identity_id)}
+        credential_rows = [(account.provider_id, account.credential_id)
+                           for account in account_rows]
+        credentials = set(credential_rows)
+        # Negative lending evidence is only available from a unique, live
+        # session for EVERY configured private source. A missing/disconnected
+        # or partially declared source is unknown, never "no loan source".
+        configured_keys = _configured_source_keys_for_identity(self, identity.identity_id)
+        non_lending_proven = (
+            bool(account_rows) and len(credentials) == len(credential_rows)
+            and configured_keys is not None and configured_keys == credentials
+        )
+        matched_private_sessions = Counter()
         for session in self._sessions.values():
             descriptor = session.descriptor
             public = getattr(descriptor, "instantiation", "multiple") == "singleton_public"
@@ -111,11 +170,27 @@ def dashboard_state(self) -> list[dict[str, Any]]:
                 continue
             if not public and (session.provider_id, session.credential_id) not in credentials:
                 continue
+            if not public:
+                matched_private_sessions[(session.provider_id, session.credential_id)] += 1
+            loans = getattr(getattr(session, "capabilities", None), "loans", None)
+            if (getattr(session, "connected", None) is not True
+                    or type(loans) is not bool or loans):
+                non_lending_proven = False
             sources.append({"provider_id": session.provider_id, "label": descriptor.display_name,
-                            "connected": bool(session.connected)})
+                            "connected": bool(session.connected),
+                            # Presentation-only descriptor fact; never a grant
+                            # to search, connect or access any private account.
+                            "public_catalogue": public})
             if session.connected:
                 capabilities.update(key for key in labels if bool(getattr(session.capabilities, key, False)))
+        non_lending_proven = (
+            non_lending_proven
+            and all(matched_private_sessions[key] == 1 for key in credentials)
+        )
         cards.append({
+            # A closed, identity-scoped capability statement. This is not a
+            # lender-right, loan expiry check or authorization for acquisition.
+            "loan_sources_explicitly_absent": non_lending_proven,
             "sources": sources,
             "statistics": self.identity_statistics(identity.identity_id),
             "selected": bool(self.current_identity and self.current_identity.identity_id == identity.identity_id),

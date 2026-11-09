@@ -1342,3 +1342,47 @@ def test_zip_capture_reason_provenance_is_closed_and_counted_without_payloads():
     finally:
         review.destroy()
         trace.destroy()
+
+
+def test_reviewed_zip_exports_only_safe_auth_field_names_not_values():
+    trace = PrivateHttpTrace((ORIGIN,))
+    trace.exchanges.append(PrivateExchange(
+        1, "POST", url=ORIGIN + "/login?provider=REDACTED",
+        status=200, mime="application/json",
+        request_body=None, response_body=None,
+        request_body_reason="auth_redacted",
+        response_body_reason="auth_redacted",
+        auth_request_schema={
+            "version": 1, "query_names": ["provider"],
+            "form_names": ["account123456789", "password", "username"],
+        },
+        auth_response_schema={
+            "version": 1, "keys": [["success", "boolean"], ["token", "string"]],
+        },
+        auth_request_schema_state="schema_captured",
+        auth_response_schema_state="schema_captured",
+    ))
+    review = IdentifierReview(trace)
+    try:
+        for candidate in review.candidates():
+            review.decide(candidate.key, "anonymize")
+        reviewed = review.preview()
+        assert reviewed["exchanges"][0]["auth_structure"]["request"]["schema"][
+            "form_names"
+        ] == ["account123456789", "password", "username"]
+        plan = prepare_reviewed_zip(review)
+        entry = next(row for row in plan.preview()["members"]
+                     if row["name"] == "exchanges/0001.json")
+        published = json.loads(entry["text"])
+        auth = published["auth_structure"]
+        assert auth["request"]["state"] == "schema_captured"
+        assert auth["request"]["schema"]["form_names"] == ["password", "username"]
+        assert auth["response"]["schema"]["keys"] == [
+            ["success", "boolean"], ["token", "string"],
+        ]
+        assert "account123456789" not in json.dumps(published)
+        assert published["bodies"]["request"]["file"] is None
+        assert published["bodies"]["response"]["file"] is None
+    finally:
+        review.destroy()
+        trace.destroy()

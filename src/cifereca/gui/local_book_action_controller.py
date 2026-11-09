@@ -93,10 +93,23 @@ def _add_owned_download(window, detail, item, TaskPriority):
                      'Indisponible : aucune cible exacte vérifiée pour ce compte et cette identité.'),
                 ])
         return
-    provider = getattr(target, 'provider_id', 'kobo')
+    # No provider on a target is not an implicit Kobo acquisition authority.
+    provider = getattr(target, 'provider_id', None)
     if provider not in {'kobo', 'numilog'}:
         return
-    label = 'Numilog' if provider == 'numilog' else 'Kobo'
+    # Presentation belongs to the registered provider descriptor, not a
+    # hard-coded CoreUI mapping. The admission allowlist remains separate:
+    # a display name can never grant download capability.
+    label = provider.capitalize()
+    display_name = getattr(window.service, 'provider_display_name', None)
+    if callable(display_name):
+        try:
+            candidate = display_name(provider)
+            if (type(candidate) is str and 0 < len(candidate.strip()) <= 80
+                    and all(char.isprintable() for char in candidate)):
+                label = candidate.strip()
+        except Exception:
+            pass
     resume = provider == 'numilog' and getattr(target, 'operation', None) == 'resume_index'
     button = window.action_button('Reprendre l’indexation Numilog' if resume else f'Télécharger ce livre {label}',
                                   'view-refresh-symbolic' if resume else 'folder-download-symbolic')

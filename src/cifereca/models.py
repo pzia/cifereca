@@ -118,6 +118,9 @@ class SearchResult:
     metadata: dict[str, Any] = field(default_factory=dict, repr=False)
     # Additive projection: legacy medium/type/format/content_type remain ABI-stable.
     document_classification: DocumentClassification | None = field(default=None, repr=False)
+    # Optional exact account scope for Core's canonical purchase ledger. This
+    # supplier field alone is never entitlement evidence.
+    source_account_id: str | None = None
 
 @dataclass
 class Holding:

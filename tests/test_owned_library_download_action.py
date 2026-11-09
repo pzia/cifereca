@@ -7,15 +7,40 @@ from cifereca.gui.local_book_action_controller import add_local_book_actions
 from tests.test_core_ui_1129_local_book_actions import _environment
 
 
-def setup_action(provider="kobo", operation=None):
+def setup_action(provider="kobo", operation=None, *, provider_label=None):
     window, entry, detail, actions, events, submissions, launched, deps = _environment(
         item={"provider_id": "kobo", "item_id": "book", "possessions": []}, local=False)
     target = NS(identity_id="alice", provider_id=provider, operation=operation)
+    if provider_label is not None:
+        window.service.provider_display_name = lambda _provider: provider_label
     window.service.owned_library_download_target = lambda entry: target
     calls = []
     window.service.obtain_owned_library_item = lambda requested: calls.append(requested) or NS(path="fake-path")
     add_local_book_actions(window, detail, entry, **deps)
     return window, actions, calls, submissions, target
+
+
+def test_owned_action_presents_exact_plugin_display_name_without_new_authority():
+    window, actions, calls, submissions, _ = setup_action(
+        "kobo", provider_label="Librairie déclarée"
+    )
+    assert len(actions) == 1
+    assert "Librairie déclarée" in actions[0].label
+    assert "Kobo" not in actions[0].label
+    assert calls == submissions == []
+    actions[0].click()
+    assert len(submissions) == 1
+
+
+@pytest.mark.parametrize("untrusted_label", ["A\nPRIVATE", "X" * 81, "  "])
+def test_owned_action_does_not_render_invalid_provider_display_name(untrusted_label):
+    _window, actions, calls, submissions, _ = setup_action(
+        "kobo", provider_label=untrusted_label
+    )
+    assert len(actions) == 1
+    assert "Kobo" in actions[0].label
+    assert untrusted_label not in actions[0].label
+    assert not calls and not submissions
 
 
 def test_unlinked_remote_purchase_shows_explicit_manual_download_refusal():
@@ -74,6 +99,35 @@ def test_public_and_local_notices_do_not_claim_missing_acquisition(state):
     window.service.owned_library_download_target = lambda _item: None
     add_local_book_actions(window, detail, entry, **deps)
     assert groups == [] and actions == [] and submissions == []
+
+
+@pytest.mark.parametrize("provider", [None, "", "unknown-store", "numilog-catalog"])
+def test_unrecognized_owned_target_never_creates_provider_action(provider):
+    window, entry, detail, actions, events, submissions, _, deps = _environment(
+        item={"provider_id": "kobo", "item_id": "book", "state": "remote_owned"},
+        local=False,
+    )
+    values = {"identity_id": "alice"}
+    if provider is not None:
+        values["provider_id"] = provider
+    window.service.owned_library_download_target = lambda _item: NS(**values)
+    called = []
+    window.service.obtain_owned_library_item = lambda _target: called.append(_target)
+    add_local_book_actions(window, detail, entry, **deps)
+    assert actions == [] and submissions == [] and called == []
+
+
+def test_canonical_kobo_owned_target_declares_provider_as_immutable_class_contract():
+    from cifereca.core.owned_library_download import OwnedDownloadTarget
+    from dataclasses import fields
+    assert OwnedDownloadTarget.provider_id == "kobo"
+    assert "provider_id" not in {field.name for field in fields(OwnedDownloadTarget)}
+    target = OwnedDownloadTarget(
+        entitlement_id="right", identity_id="alice", source_id="source",
+        scope=("alice",), configuration="configuration", item_id="book",
+        revision_id="revision",
+    )
+    assert target.provider_id == "kobo"
 
 
 def test_render_is_passive_and_only_explicit_click_submits_one_book():
