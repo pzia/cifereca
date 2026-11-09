@@ -1354,16 +1354,13 @@ class MainWindow(Adw.ApplicationWindow):
         if state == "local":
             return "Local"
         if state == "remote_owned":
-            # Core library_entries publishes this state only from an active
-            # owned entitlement, never from a catalogue or a local placement.
-            provider = item.get("provider_id")
-            if provider == "kobo":
-                return "Achat Kobo · en ligne"
-            if provider == "numilog":
-                return "Achat Numilog · en ligne"
+            # The canonical Core owned-entitlement projection, not provider
+            # branding, decides availability. The book row displays the
+            # plugin's source name independently via provider_display_name().
             return "Droit de possession · en ligne"
         if state == "remote_archived":
-            return "Kobo · archivé · en ligne"
+            # Archival provenance is not restricted to any named provider.
+            return "Droit archivé · en ligne"
         if state == "remote_loan_active":
             return "Emprunté"
         if state == "remote_loan_realized":
