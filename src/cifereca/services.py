@@ -537,13 +537,17 @@ class LibraryService:
                 raise
             except Exception:
                 raise BnfLoanActionError('bnf_loan_scope_unproven') from None
-            from .core.bnf_import_provenance import observed_loan, remember_import
+            from .core.observed_loan_scope import observed_loan
+            from .core.observed_import_provenance import remember_observed_import
             display_scope = observed_loan(loan)
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
                                       provider_id='manual', title=title,
                                       placement_provider_id='bnf-pret')
-            remember_import(self, result, display_scope)
+            remember_observed_import(
+                self, result, display_scope, provider_id='bnf-pret',
+                provenance_field='bnf_observed_loan',
+            )
         except BnfLoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
