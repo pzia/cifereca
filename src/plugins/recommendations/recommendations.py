@@ -470,16 +470,43 @@ def _public_recommendation_notice(item: Any) -> str | None:
 
 
 def _public_cover_url(item: Any) -> str | None:
-    """Conservative cover URL for both list rows and the detail panel.
+    """Preserve attested public image URLs for both list and detail.
 
-    The renderer may load thumbnails automatically, without a user click.
-    Reject credentials, signed URLs and private origins before either view
-    receives the image URL. Try the second declared image if the first fails.
+    Unlike public *document* links, genuine BnF catalogue images may carry
+    only the public size/cache-version pair (`size` and `t`). Keep the
+    exact source URL; do not erase the query or infer an edition. A signed,
+    unknown or partial query is still rejected before it can reach CoverView.
+    The existing public origin/path validator remains the authority.
     """
     for field in ("thumbnail_url", "cover_url"):
-        url = _public_external_field(item, field)
-        if url:
-            return url
+        ordinary = _public_external_field(item, field)
+        if ordinary:
+            return ordinary
+        try:
+            value = get_field(item, field, None)
+        except Exception:
+            continue
+        if type(value) is not str or not 1 <= len(value) <= 2048:
+            continue
+        original = value.strip()
+        try:
+            parts = urlsplit(original)
+        except ValueError:
+            continue
+        # A versioned catalogue image is not an acquisition URL or an
+        # arbitrary signed URL. Accept precisely the already-attested
+        # size+timestamp query used by public cover CDNs; nothing else.
+        query = parts.query
+        if (parts.fragment
+                or not re.fullmatch(
+                    r"(?:size=(?:small|medium|large)&t=[0-9]{1,12}"
+                    r"|t=[0-9]{1,12}&size=(?:small|medium|large))",
+                    query,
+                )):
+            continue
+        public_base = parts._replace(query="", fragment="").geturl()
+        if _external_book_url(public_base) is not None:
+            return original
     return None
 
 
