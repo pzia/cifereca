@@ -370,12 +370,26 @@ def baseline_render_recent(self, items: list[dict[str, Any]] | None = None) -> N
         self._recent_objects[key] = item
         provider = str(item.get("provider_id") or "local")
         temporal = format_recent_timestamp(item.get("acquired_at"))
+        if provider == "local":
+            label = "Local"
+        else:
+            try:
+                candidate = self.service.provider_display_name(provider)
+                label = (
+                    candidate if type(candidate) is str
+                    and 0 < len(candidate) <= 80
+                    and candidate == candidate.strip()
+                    and all(character.isprintable() for character in candidate)
+                    else "Source"
+                )
+            except Exception:
+                label = "Source"
         rows.append(BookListItem(
             key,
             str(item.get("title") or "Sans titre"),
             str(item.get("author") or ""),
             temporal,
-            "Kobo" if provider == "kobo" else provider.capitalize(),
+            label,
             item.get("thumbnail_url"),
         ))
     self._attach_row_facets(rows,self._recent_objects,self.search_controls)
