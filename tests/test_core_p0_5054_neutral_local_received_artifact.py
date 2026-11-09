@@ -1,4 +1,4 @@
-"""P0 #5054: provider-neutral filesystem evidence is not a delivery/right."""
+"""P0 #5054: filesystem evidence is never a delivery, entitlement or GET grant."""
 from pathlib import Path
 
 import pytest
