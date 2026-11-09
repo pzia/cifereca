@@ -37,3 +37,16 @@ def test_w2_refuses_even_when_cancellation_requested():
             _NoLegacyAccess(), logger=_NoLegacyAccess(),
             cancelled=lambda: pytest.fail("unexpected cancellation callback"),
         )
+
+
+def test_public_sync_w2_refuses_before_lock_creation():
+    from cifereca.core.kobo_backup import sync_kobo_backup
+
+    with pytest.raises(ProviderConfigurationError, match="kobo_legacy_w2_retired_use_canonical_provider"):
+        sync_kobo_backup(
+            _NoLegacyAccess(),
+            credential_id="vault-1", retry_scope_blocked=True,
+            lock_factory=lambda *_args: pytest.fail("legacy lock must not be created"),
+            lock_path=lambda: pytest.fail("legacy lock path must not be resolved"),
+            cancelled=lambda: pytest.fail("legacy cancellation callback must not run"),
+        )
