@@ -180,7 +180,7 @@ def run(handlers, service, ACTION):
         {"line": 3, "providers": ["kobo"]},
         {"line": 3, "providers": ["bnf-pret"]},
     ]
-    assert added_signals("pass\\n", source) == {
+    assert added_signals("pass\n", source) == {
         ("dispatch_calls", "kobo"): 1,
         ("dispatch_calls", "bnf-pret"): 1,
     }
