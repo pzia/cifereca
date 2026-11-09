@@ -628,8 +628,19 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
             protected.add(release.resolve())
 
     removed = 0
+    from .updater_retention_inventory import _release_receipt_proof
     for release in releases:
         if release.resolve() in protected:
+            continue
+        # The common inventory's owned_by_updater proof is mandatory for
+        # physical GC too. An old mtime or a similarly named directory is
+        # not permission to destroy a legacy/manual release.
+        try:
+            owned, _installed = _release_receipt_proof(releases_root, release.name)
+        except (OSError, ValueError, UnicodeError, OverflowError):
+            owned = False
+        if not owned:
+            protected.add(release.resolve())
             continue
         # A concurrent link change must never turn a purge candidate into
         # the active or previous runtime. New transactions defer cleanup.
