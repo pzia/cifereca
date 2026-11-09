@@ -46,6 +46,35 @@ def _created_timestamp(value: Any) -> float | None:
 
 
 
+def _transaction_retention_timestamp(tx: dict[str, Any]) -> float | None:
+    """Retain a finalized transaction for 24h after its latest state change.
+
+    The updater writes updated_at on every finalized/restore transition.
+    Legacy receipts lacking updated_at retain their created_at. A malformed,
+    stale-before-creation, or non-finite declared update time is uncertain and
+    must *retain* its transaction rather than silently shortening its TTL.
+    """
+    created = _created_timestamp(tx.get("created_at"))
+    if created is None:
+        return None
+    changed = tx.get("updated_at")
+    if changed is None:
+        return created
+    if type(changed) is not str or not re.fullmatch(
+        r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z", changed,
+    ):
+        return None
+    try:
+        updated = datetime.strptime(
+            changed, "%Y-%m-%dT%H:%M:%SZ",
+        ).replace(tzinfo=timezone.utc).timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+    if updated < created:
+        return None
+    return updated
+
+
 def _read_transaction_for_inspection(folder: Path) -> dict[str, Any]:
     """Anchor each directory/receipt to a NOFOLLOW descriptor before reading.
 
@@ -406,7 +435,7 @@ def inspect_core_transaction_history(root: Path, *, now: float) -> dict[str, Any
                     object_id=transaction_id,
                     store="transactions", unit="updater",
                     generation=transaction_id,
-                    installed_at=_created_timestamp(tx.get("created_at")),
+                    installed_at=_transaction_retention_timestamp(tx),
                     owned_by_updater=True,
                     pinned=state in _UNFINISHED,
                     references=tuple(sorted(references)),
