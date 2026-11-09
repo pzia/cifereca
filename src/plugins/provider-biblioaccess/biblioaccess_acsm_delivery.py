@@ -19,25 +19,37 @@ class ACSMDeliveryError(ValueError):
     """Closed error codes; no private token, URL or response content."""
 
 
+def _delivery_origin(url: str) -> str:
+    """Strict known-provider URL validation; never accept arbitrary hosts."""
+    if type(url) is not str or len(url) > 8192:
+        raise ACSMDeliveryError("biblioaccess_acsm_url_invalid")
+    try:
+        parts = urlsplit(url)
+        numilog = (parts.hostname == "entrepot2r.numilog.com"
+                   and parts.path == "/fulfillment/URLLink.acsm"
+                   and bool(parts.query))
+        pnb = (parts.hostname == "pnb-dilicom.centprod.com"
+               and parts.path.startswith("/")
+               and parts.path.endswith("/do")
+               and not parts.path.startswith("//")
+               and all(segment not in ("", ".", "..")
+                       for segment in parts.path[1:].split("/")))
+        if (parts.scheme != "https" or not (numilog or pnb)
+                or parts.username is not None or parts.password is not None
+                or parts.port not in (None, 443) or parts.fragment):
+            raise ACSMDeliveryError("biblioaccess_acsm_url_invalid")
+        return parts.hostname
+    except ValueError:
+        raise ACSMDeliveryError("biblioaccess_acsm_url_invalid") from None
+
+
 def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
     """Direct HTTPS GET of the observed signed offer; no replay restrictions.
 
     Every call fetches the current link. Existing files do not suppress a
     requested re-download, and the caller's source session owns the identity.
     """
-    if type(url) is not str or len(url) > 8192:
-        raise ACSMDeliveryError("biblioaccess_acsm_url_invalid")
-    try:
-        parts = urlsplit(url)
-        if (parts.scheme != "https"
-                or parts.hostname != "entrepot2r.numilog.com"
-                or parts.username is not None or parts.password is not None
-                or parts.port not in (None, 443) or parts.fragment
-                or parts.path != "/fulfillment/URLLink.acsm"
-                or not parts.query):
-            raise ACSMDeliveryError("biblioaccess_acsm_url_invalid")
-    except ValueError:
-        raise ACSMDeliveryError("biblioaccess_acsm_url_invalid") from None
+    origin = _delivery_origin(url)
     if not isinstance(target_dir, Path):
         raise ACSMDeliveryError("biblioaccess_acsm_destination_invalid")
 
@@ -48,10 +60,38 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
     )
     try:
         try:
-            with client.stream(
-                "GET", url, follow_redirects=False,
-                headers={"Accept": "application/vnd.adobe.adept+xml, application/xml, */*"},
-            ) as response:
+            current = url
+            # Never forward signed URLs, cookies or authorization to another
+            # origin. Permit only bounded same-provider HTTPS redirects.
+            for hop in range(3):
+                response = client.get(
+                    current, follow_redirects=False,
+                    headers={"Accept": "application/vnd.adobe.adept+xml, application/xml, */*"},
+                )
+                if response.status_code not in (301, 302, 303, 307, 308):
+                    break
+                if origin != "pnb-dilicom.centprod.com" or hop >= 2:
+                    raise ACSMDeliveryError("biblioaccess_acsm_redirect")
+                location = response.headers.get("location", "")
+                from urllib.parse import urljoin
+                target = urljoin(current, location)
+                # Redirect destinations may contain one-time opaque URLs.
+                # Forbid cross-origin, userinfo, non-HTTPS and odd ports.
+                try:
+                    next_parts = urlsplit(target)
+                    if (not location or location.startswith("//")
+                            or next_parts.scheme != "https"
+                            or next_parts.hostname != origin
+                            or next_parts.port not in (None, 443)
+                            or next_parts.username is not None
+                            or next_parts.password is not None
+                            or next_parts.fragment
+                            or not next_parts.path.startswith("/")):
+                        raise ACSMDeliveryError("biblioaccess_acsm_redirect")
+                except ValueError:
+                    raise ACSMDeliveryError("biblioaccess_acsm_redirect") from None
+                current = target
+            if True:
                 if response.status_code != 200:
                     status = response.status_code
                     code = (
