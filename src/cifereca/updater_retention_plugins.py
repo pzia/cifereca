@@ -213,7 +213,7 @@ def _overlay_attested_transaction_pins(
             or type(plugin_plan.get("objects")) is not list
             or type(plugin_plan.get("candidates")) is not int
             or type(retained_ids) is not list
-            or len(retained_ids) > MAX_PACKAGES * MAX_VERSIONS
+            or len(retained_ids) > MAX_PACKAGES * MAX_VERSIONS_PER_PACKAGE
             or any(type(ref) is not str
                    or re.fullmatch(r"plugin_version:[a-f0-9]{64}", ref) is None
                    for ref in retained_ids)):
