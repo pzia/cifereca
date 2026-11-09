@@ -71,7 +71,16 @@ def test_digest_changes_when_pin_or_reference_changes():
     two["plans"]["plugin_versions"]["objects"][0]["reasons"].append("pinned")
     changed = retention_maintenance_plan(two)
     assert one["plan_sha256"] != changed["plan_sha256"]
-    assert one["stores"] == changed["stores"]
+    assert {key: {field: value for field, value in store.items()
+                  if field != "retention_reasons"}
+            for key, store in one["stores"].items()} == {
+                key: {field: value for field, value in store.items()
+                      if field != "retention_reasons"}
+                for key, store in changed["stores"].items()
+            }
+    assert changed["stores"]["plugin_versions"]["retention_reasons"]["pinned"] == (
+        one["stores"]["plugin_versions"]["retention_reasons"]["pinned"] + 1
+    )
     assert retention_maintenance_plan(original) == one
 
 
