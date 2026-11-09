@@ -48,7 +48,7 @@ def _show_search():
         search_detail_support_label=search_detail_support_label,
         # Isolated AST execution does not import module-level GTK helpers.
         # This scenario is Gallica-only; the Numilog scope is tested separately.
-        _commercial_search_usage=lambda _item, _service=None: "",
+        _commercial_search_usage=lambda _item, _service=None, **_kwargs: "",
         Adw=NS(PreferencesGroup=lambda: NS(set_title=lambda *_: None, add=lambda *_: None),
                ActionRow=lambda: NS(set_title=lambda *_: None)),
     )

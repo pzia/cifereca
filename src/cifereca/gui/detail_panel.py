@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
-def _commercial_search_usage(item: SearchResult, service=None) -> str:
+def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evidence=None) -> str:
     """Read-only commercial scope; a public notice never proves ownership.
 
     For Kobo, consult only Core's persisted, identity-scoped entitlement
@@ -40,7 +40,12 @@ def _commercial_search_usage(item: SearchResult, service=None) -> str:
     if item.source_provider == "numilog-catalog":
         return "Catalogue commercial public · aucun achat attesté"
     if item.source_provider == "numilog":
-        if result_row(item)["state"] == "remote_owned":
+        if result_row(
+            item, purchase_evidence=purchase_evidence,
+            identity_id=getattr(getattr(service, "current_identity", None), "identity_id", None),
+            account_context_epoch=getattr(service, "_account_context_epoch", None),
+            source_context_epoch=getattr(service, "_source_context_epoch", None),
+        )["state"] == "remote_owned":
             return "Mes achats Numilog · fichier local non présumé"
         return "Notice Numilog · aucun droit d'achat attesté"
     if item.source_provider != "kobo":
@@ -667,7 +672,11 @@ class DetailPanel(Gtk.Box):
         # merely because a mocked/legacy provider reports direct_download.
         if (item.source_provider == "numilog-catalog"
                 or (item.source_provider == "numilog"
-                    and result_row(item)["state"] != "remote_owned")):
+                    and result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))["state"] != "remote_owned")):
             return
         if not self.window.service.can_direct_download(item):
             return
@@ -824,7 +833,10 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
-        usage = _commercial_search_usage(item, self.window.service)
+        usage = _commercial_search_usage(
+            item, self.window.service,
+            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+        )
         freshness_rows = [
             ("Recherche en ligne", "Indisponible"),
         ] if stale_known else []
@@ -971,7 +983,10 @@ class DetailPanel(Gtk.Box):
         paris_catalogue_candidate, visible_availability = (
             paris_catalogue_availability(item, availability)
         )
-        usage = _commercial_search_usage(item, self.window.service)
+        usage = _commercial_search_usage(
+            item, self.window.service,
+            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+        )
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
@@ -995,13 +1010,21 @@ class DetailPanel(Gtk.Box):
                     ("Support", medium if fmt else ""),
                 ]),
             ],
-            links=document_links(result_row(item)),
+            links=document_links(result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
             metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
         direct_download = (
             False if (item.source_provider == "numilog-catalog"
                       or (item.source_provider == "numilog"
-                          and result_row(item)["state"] != "remote_owned"))
+                          and result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
+                                       "identity_id", None),
+                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))["state"] != "remote_owned"))
             else self.window.service.can_direct_download(item)
         )
         # A spent, uncertain loan may no longer be advertised as
