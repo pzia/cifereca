@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -37,13 +38,13 @@ def test_unified_maintenance_exact_plan_and_dependency_reclassification(
                      name=name, **kwargs):
             if apply:
                 events.append(("apply", name, acknowledge))
-                assert acknowledge == name[0] * 64
+                assert acknowledge == sha256(name.encode()).hexdigest()
                 if name == "releases":
                     mutation["transactions"] = True
                 return {"removed": 1}
             events.append(("plan", name, None))
             candidate = 1
-            proof = name[0] * 64
+            proof = sha256(name.encode()).hexdigest()
             if name == "transactions" and mutation["transactions"]:
                 candidate = 2
             return {"mode": "plan", "acknowledgement_sha256": proof,
