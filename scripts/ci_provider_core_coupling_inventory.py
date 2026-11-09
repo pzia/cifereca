@@ -170,7 +170,16 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     imports: list[dict[str, object]] = []
     dispatches: list[dict[str, object]] = []
     tables: list[dict[str, object]] = []
+    calls: list[dict[str, object]] = []
     for node in ast.walk(tree):
+        # A provider-keyed callable lookup is an executable decision even
+        # without an explicit if/match or a locally declared dispatch table.
+        # A plain metadata lookup is NOT counted: only a direct call counts.
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Subscript)):
+            matched = sorted(_literal_providers(
+                node.func.slice, names, constants))
+            if matched:
+                calls.append({"line": node.lineno, "providers": matched})
         if isinstance(node, ast.Dict):
             matched = _dispatch_table_literal(
                 node, providers=names, functions=functions,
@@ -232,7 +241,8 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
                     dispatches.append({"line": case.pattern.lineno, "providers": matched})
     return {"imports": sorted(imports, key=lambda x: x["line"]),
             "comparisons": sorted(dispatches, key=lambda x: x["line"]),
-            "dispatch_tables": sorted(tables, key=lambda x: x["line"])}
+            "dispatch_tables": sorted(tables, key=lambda x: x["line"]),
+            "dispatch_calls": sorted(calls, key=lambda x: x["line"])}
 
 
 def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, object]:
@@ -251,7 +261,7 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
                 parse_errors[relative] = type(exc).__name__
                 continue
             if any(result[category] for category in (
-                "imports", "comparisons", "dispatch_tables",
+                "imports", "comparisons", "dispatch_tables", "dispatch_calls",
             )):
                 findings[relative] = result
     return {"metric": "core.provider.static-coupling/1",
@@ -260,6 +270,7 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
             "import_signals": sum(len(x["imports"]) for x in findings.values()),
             "comparison_signals": sum(len(x["comparisons"]) for x in findings.values()),
             "dispatch_table_signals": sum(len(x["dispatch_tables"]) for x in findings.values()),
+            "dispatch_call_signals": sum(len(x["dispatch_calls"]) for x in findings.values()),
             "findings": dict(sorted(findings.items())),
             "parse_errors": dict(sorted(parse_errors.items())),
             "limitation": "AST signals, not reachability proofs; indirect dynamic dispatch may remain."}
@@ -279,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
               f"{report['import_signals']} imports, "
               f"{report['comparison_signals']} comparisons, "
               f"{report['dispatch_table_signals']} dispatch tables, "
+              f"{report['dispatch_call_signals']} provider-keyed calls, "
               f"{len(report['parse_errors'])} parse errors")
     return 1 if report["parse_errors"] else 0
 
