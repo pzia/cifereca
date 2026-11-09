@@ -242,6 +242,39 @@ class DetailPanel(Gtk.Box):
         widget.connect("unmap", unmapped)
 
     def _group(self, title: str, rows: list[tuple[str, str]], *, fields=(), parent=None):
+        if title == "Bibliothèques et accès":
+            # #4682 / mockup #566: the projection already groups exact
+            # placements, source references and rights by profile. Present
+            # each attested line separately, not as one raw paragraph.
+            group = Adw.PreferencesGroup()
+            group.set_title(title)
+            for profile, description in rows:
+                if not description:
+                    continue
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                card.add_css_class("detail-profile-card")
+                heading = Gtk.Label(label=str(profile), xalign=0)
+                heading.add_css_class("heading")
+                card.append(heading)
+                for line in str(description).splitlines():
+                    if not line.strip():
+                        continue
+                    kind, marker, value = line.partition(": ")
+                    record = Adw.ActionRow()
+                    record.set_use_markup(False)
+                    record.set_title(kind if marker else "Information")
+                    compact = value if marker else line
+                    record.set_subtitle(compact)
+                    record.set_subtitle_lines(1)
+                    record.set_tooltip_text(line)
+                    record.add_css_class("detail-access-line")
+                    card.append(record)
+                group.add(card)
+            if parent is None:
+                self._append_content(group)
+            else:
+                parent.append(group)
+            return
         if title == "Détail":
             # Explicit and local-only. Per-element actions; no network on display.
             group = Adw.PreferencesGroup()
