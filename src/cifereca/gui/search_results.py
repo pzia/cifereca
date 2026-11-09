@@ -189,6 +189,8 @@ def _render_search_results(self) -> int:
         return result_row(
             item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
             identity_id=identity_id,
+            account_context_epoch=getattr(self.service, "_account_context_epoch", None),
+            source_context_epoch=getattr(self.service, "_source_context_epoch", None),
         )
     linked = self.service.local_placements_for_sources(identity.identity_id) if identity else {}
     # A public Kobo catalog 'owned' flag is not an authenticated entitlement.
