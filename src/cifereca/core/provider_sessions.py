@@ -804,6 +804,145 @@ def _interactive_background_opted_in(descriptor: object, row: object) -> bool:
     return type(opts) is dict and opts.get(key) == "on"
 
 
+
+def reconnect_expired_configured_source_once(
+    self, account: Account, expired_session: ProviderSession,
+) -> Account | None:
+    """One fresh CAS authentication only after a typed expired-session event.
+
+    The normal configured connection sweep is deliberately forbidden here:
+    it disconnects *all* accounts. This helper swaps only one exact existing
+    connection and never authorizes an interactive provider without its own
+    persisted, exact background-authentication opt-in.
+    """
+    if type(account) is not Account or type(expired_session) is not ProviderSession:
+        # A subclass of the genuine installed ProviderSession is expected.
+        if (type(account) is not Account
+                or not isinstance(expired_session, ProviderSession)):
+            return None
+    if (getattr(expired_session, "sync_reconnect_reason", None) != "session_expired"
+            or getattr(expired_session, "connected", None) is not False):
+        return None
+    scope = (
+        account.identity_id, account.provider_id, account.credential_id,
+        account.unique_id, account.is_primary,
+    )
+    if (any(type(x) is not str or not x or len(x) > 256
+            for x in scope[:3]) or type(scope[3]) is not str
+            or type(scope[4]) is not bool or scope[4] is not True):
+        return None
+    key = self._session_key(scope[1], scope[2])
+    if (self._sessions.get(key) is not expired_session
+            or sum(a is account for a in self.accounts) != 1):
+        return None
+    try:
+        from .source_context import source_context_epoch
+        epoch = source_context_epoch(self)
+        rows = self.config.provider_accounts(enabled_only=True)
+        candidates = _configured_rows_for_source(
+            rows, source_scope=scope[:3], default_identity=scope[0],
+        )
+        row = candidates[0]
+        plugin = self.registry.maybe_get(scope[1])
+        if (plugin is None or plugin.descriptor.state != "ready"
+                or getattr(plugin.descriptor, "interactive_authentication", False) is not True
+                or not _interactive_background_opted_in(plugin.descriptor, row)):
+            return None
+        installed = self._provider_plugin_status(scope[1])
+        if installed is not None and (
+            installed.enabled is not True or installed.state != "ready"
+        ):
+            return None
+        bindings = self.storage.provider_connections(identity_id=scope[0])
+        if (type(bindings) is not list
+                or sum(type(r) is dict
+                       and r.get("identity_id") == scope[0]
+                       and r.get("provider_id") == scope[1]
+                       and r.get("credential_id") == scope[2]
+                       and r.get("enabled") is True
+                       for r in bindings) != 1):
+            return None
+        # An old CAS jar / attempted login may never be revived: only a
+        # newly constructed provider session may submit the one fresh POST.
+        replacement = plugin.create_session(
+            credential_id=scope[2],
+            label=str(row.get("label") or plugin.descriptor.display_name),
+            credentials=dict(row.get("credentials") or {}),
+            options=dict(row.get("options") or {}),
+            config=self.config, storage=self.storage,
+            diagnostics=self.diagnostics,
+        )
+    except Exception:
+        return None
+
+    accepted = False
+    try:
+        accounts = replacement.connect()
+        if (replacement is expired_session
+                or replacement.connected is not True
+                or replacement.provider_id != scope[1]
+                or replacement.credential_id != scope[2]
+                or type(accounts) not in (tuple, list)
+                or len(accounts) != 1 or type(accounts[0]) is not Account):
+            return None
+        candidate = accounts[0]
+        candidate.identity_id = scope[0]
+        if ((candidate.identity_id, candidate.provider_id,
+             candidate.credential_id, candidate.unique_id,
+             candidate.is_primary) != scope):
+            return None
+        # No old-source resurrection, reconfiguration, A→B switch or consent
+        # change during the CAS calls may authorize installing new authority.
+        if (source_context_epoch(self) != epoch
+                or self._sessions.get(key) is not expired_session
+                or sum(a is account for a in self.accounts) != 1
+                or (account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id,
+                    account.is_primary) != scope):
+            return None
+        latest_rows = self.config.provider_accounts(enabled_only=True)
+        selected = _configured_rows_for_source(
+            latest_rows, source_scope=scope[:3], default_identity=scope[0],
+        )[0]
+        if selected != row or not _interactive_background_opted_in(
+            plugin.descriptor, selected,
+        ):
+            return None
+        self._sessions[key] = replacement
+        self.accounts = [
+            candidate if existing is account else existing for existing in self.accounts
+        ]
+        if self.current_account is account:
+            self.current_account = candidate
+        if self.primary is account:
+            self.primary = candidate
+        self._source_context_epoch = epoch + 1
+        self._account_context_epoch += 1
+        self._session_errors.pop(key, None)
+        accepted = True
+        try:
+            expired_session.close()
+        except Exception:
+            pass
+        try:
+            self.diagnostics.add(
+                "PLUGIN", "provider source session renewed", "ok",
+                detail={"code": "session_expired_reconnected"},
+                level="detailed",
+            )
+        except Exception:
+            pass
+        return candidate
+    except Exception:
+        return None
+    finally:
+        if not accepted:
+            try:
+                replacement.close()
+            except Exception:
+                pass
+
+
 def connect_configured(self, *, logger, caller_category: str = "other",
                        source_scope: tuple[str, str, str] | None = None) -> dict[str, Any]:
     """Connect all enabled provider identities from local preferences.
