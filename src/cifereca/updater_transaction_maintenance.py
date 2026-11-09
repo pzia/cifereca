@@ -163,6 +163,10 @@ def transaction_maintenance(root: Path, *, apply: bool = False,
         raise ValueError("transaction_gc_acknowledgement_required")
     with updater._exclusive_updater_lock(root):
         with updater._trusted_package_lease():
+            _, folders = _qualified(root, now=now)
+            digest = sha256("\n".join(p.name for p in folders).encode()).hexdigest()
+            if digest != acknowledge:
+                raise ValueError("transaction_gc_plan_changed")
             quarantine = root / "transaction-gc"
             if quarantine.exists() or quarantine.is_symlink():
                 if (quarantine.is_symlink() or not quarantine.is_dir()
@@ -170,13 +174,8 @@ def transaction_maintenance(root: Path, *, apply: bool = False,
                         or quarantine.stat().st_mode & 0o077):
                     raise ValueError("transaction_gc_unsafe_quarantine")
                 _resume_quarantine(root, quarantine)
-            _, folders = _qualified(root, now=now)
-            digest = sha256("\n".join(p.name for p in folders).encode()).hexdigest()
-            if digest != acknowledge:
-                raise ValueError("transaction_gc_plan_changed")
             if not folders:
                 return {"schema": _SCHEMA, "mode": "apply", "removed": 0}
-            quarantine = root / "transaction-gc"
             if quarantine.is_symlink():
                 raise ValueError("transaction_gc_unsafe_quarantine")
             quarantine.mkdir(mode=0o700, exist_ok=True)
