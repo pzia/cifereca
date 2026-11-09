@@ -16,7 +16,7 @@ _STORES = (
     "core_transactions", "plugin_versions", "known_persistent_staging",
     "updater_backups", "core_preactivation_backups",
 )
-_PUBLIC_CODE = re.compile(r"[a-z][a-z0-9_]{0,79}\\Z")
+_PUBLIC_CODE = re.compile(r"[a-z][a-z0-9_]{0,79}\Z")
 _PENDING = frozenset((*_STORES, "persistent_staging", "cross_store_reference_proofs"))
 
 
