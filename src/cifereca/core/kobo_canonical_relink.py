@@ -241,8 +241,8 @@ def _inspect(db, *, library_root, scope, edition_id, right_id,
     )
 
 
-def relink_verified_canonical_kobo(
-    storage, *, library_root: Path, identity_id: str, credential_id: str,
+def relink_verified_canonical(
+    storage, *, provider_id: str, library_root: Path, identity_id: str, credential_id: str,
     account_id: str, edition_id: str, right_id: str, branch_id: str,
     placement_id: str, new_path: Path, confirmation: str | None = None,
     reference_kind: str = "purchase",
@@ -258,7 +258,7 @@ def relink_verified_canonical_kobo(
     """
     _require(
         all(_id(x) for x in (
-            identity_id, credential_id, edition_id,
+            provider_id, identity_id, credential_id, edition_id,
             right_id, branch_id, placement_id,
         ))
         # The empty upstream Kobo primary account is a literal exact scope,
@@ -281,7 +281,7 @@ def relink_verified_canonical_kobo(
         )),
         "invalid_relink_request",
     )
-    scope = ProviderRightsScope(identity_id, "kobo", credential_id, account_id)
+    scope = ProviderRightsScope(identity_id, provider_id, credential_id, account_id)
     write = confirmation is not None
     try:
         guard = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
@@ -460,4 +460,24 @@ def relink_verified_canonical_kobo(
         raise CanonicalRelinkRejected("canonical_relink_unavailable") from None
 
 
-__all__ = ["CanonicalRelinkRejected", "relink_verified_canonical_kobo"]
+
+
+def relink_verified_canonical_kobo(
+    storage, *, library_root: Path, identity_id: str, credential_id: str,
+    account_id: str, edition_id: str, right_id: str, branch_id: str,
+    placement_id: str, new_path: Path, confirmation: str | None = None,
+    reference_kind: str = "purchase",
+    context_current: Callable[[], bool] | None = None,
+    undo_operation: str | None = None,
+) -> dict[str, object]:
+    """Compatibility facade: the original Kobo source scope stays exact."""
+    return relink_verified_canonical(
+        storage, provider_id="kobo", library_root=library_root,
+        identity_id=identity_id, credential_id=credential_id,
+        account_id=account_id, edition_id=edition_id, right_id=right_id,
+        branch_id=branch_id, placement_id=placement_id, new_path=new_path,
+        confirmation=confirmation, reference_kind=reference_kind,
+        context_current=context_current, undo_operation=undo_operation,
+    )
+
+__all__ = ["CanonicalRelinkRejected", "relink_verified_canonical", "relink_verified_canonical_kobo"]
