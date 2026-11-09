@@ -5,6 +5,7 @@ import pytest
 
 from cifereca.core.kobo_backup import _sync_kobo_backup_locked
 from cifereca.providers import ProviderConfigurationError
+from tests.test_source_materialization_confirmation import case  # noqa: F401
 
 
 class _NoLegacyAccess:
@@ -50,3 +51,58 @@ def test_public_sync_w2_refuses_before_lock_creation():
             lock_path=lambda: pytest.fail("legacy lock path must not be resolved"),
             cancelled=lambda: pytest.fail("legacy cancellation callback must not run"),
         )
+
+
+def test_d2_partial_abi_cannot_prepare_legacy_confirmation(case, monkeypatch):
+    from cifereca.core import source_materialization
+
+    monkeypatch.setattr(
+        case.target, "backup_manifest",
+        lambda: pytest.fail("D2 must not read a legacy manifest"),
+    )
+    prepared = source_materialization.prepare(case.broker, case.source)
+    assert not prepared.ok
+    assert prepared.facts["status"] == "canonical_delivery_unavailable"
+    assert "confirmation_token" not in prepared.facts
+    assert not case.downloaded and not any(case.calls.values())
+    replay = source_materialization.execute(
+        case.broker, case.source, "a" * 64,
+    )
+    assert not replay.ok
+    assert replay.facts["status"] == "canonical_delivery_unavailable"
+    assert not case.downloaded and not any(case.calls.values())
+
+
+def test_d3_legacy_direct_executor_is_removed():
+    from pathlib import Path
+    from cifereca.core.kobo_backup import _execute_kobo_acquisition
+
+    with pytest.raises(ProviderConfigurationError, match="kobo_legacy_direct_get_retired"):
+        _execute_kobo_acquisition(_NoLegacyAccess(), _NoLegacyAccess(), Path("."))
+
+
+def test_d4_retired_on_start_never_persists_attempt():
+    from cifereca.core import source_materialization_schedule as schedule
+
+    assert not schedule.can_enable_kobo_on_start(_NoLegacyAccess(), _NoLegacyAccess())
+    assert schedule.kobo_on_start_sessions(_NoLegacyAccess()) == ()
+    assert not schedule.on_start_due(_NoLegacyAccess(), _NoLegacyAccess())
+    assert not schedule.mark_on_start_attempt(_NoLegacyAccess(), _NoLegacyAccess())
+
+
+def test_d1_partial_abi_cannot_refresh_legacy_manifest(tmp_path, monkeypatch):
+    from tests.test_kobo_backup_guard import _service
+    from cifereca.core.kobo_backup import kobo_backup_preview
+
+    service = _service(tmp_path)
+    session = service._sessions[service._session_key("kobo", "vault-1")]
+    monkeypatch.setattr(
+        session, "backup_manifest",
+        lambda: pytest.fail("D1 must not read a legacy manifest"),
+    )
+    try:
+        with pytest.raises(ProviderConfigurationError, match="canonical_kobo_preview_abi_unavailable"):
+            kobo_backup_preview(service, "vault-1", refresh_manifest=True)
+        assert service.storage.backup_list("kobo") == []
+    finally:
+        service.close()
