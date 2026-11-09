@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 from pathlib import Path
+from secrets import token_hex
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
@@ -637,6 +638,19 @@ class LaRochelleSession(ProviderSession):
             from biblioaccess_acsm_delivery import (
                 stage_loan_acsm, ACSMDeliveryError,
             )
+            from biblioaccess_delivery_url import classify_loan_delivery
+            kind = classify_loan_delivery(matches[0].acsm_url)
+            if kind is None:
+                raise ProviderCapabilityError("biblioaccess_acsm_offer_unavailable")
+            # Random invocation-local correlation, not an account, title,
+            # book identifier, persistent fingerprint or private signed URL.
+            loan_ref = token_hex(8)
+            self._event(
+                "acsm_stage", "started", probe="authenticated_sync",
+                connected=True, stage="signed_get",
+                loan_ref=loan_ref, delivery_kind=kind,
+                download_link_observed=True, session_revoked=False,
+            )
             try:
                 path = stage_loan_acsm(matches[0].acsm_url, target_dir)
             except Exception as exc:
@@ -645,6 +659,9 @@ class LaRochelleSession(ProviderSession):
                     "biblioaccess_acsm_destination_invalid",
                     "biblioaccess_acsm_unavailable",
                     "biblioaccess_acsm_redirect",
+                    "biblioaccess_acsm_redirect_cycle",
+                    "biblioaccess_acsm_redirect_refused",
+                    "biblioaccess_acsm_redirect_limit",
                     "biblioaccess_acsm_denied",
                     "biblioaccess_acsm_missing",
                     "biblioaccess_acsm_rate_limited",
@@ -652,6 +669,7 @@ class LaRochelleSession(ProviderSession):
                     "biblioaccess_acsm_body_limit",
                     "biblioaccess_acsm_transport_unavailable",
                     "biblioaccess_acsm_structure_invalid",
+                    "biblioaccess_acsm_content_type_invalid",
                     "biblioaccess_acsm_stage_unavailable",
                 })
                 code = (
@@ -664,14 +682,21 @@ class LaRochelleSession(ProviderSession):
                 self._event(
                     "acsm_stage", "error", probe="authenticated_sync",
                     connected=True, stage="signed_get", error_code=code,
+                    loan_ref=loan_ref, delivery_kind=kind,
                     session_revoked=False,
                 )
+                # Preserve the historical Numilog compatibility error;
+                # publish precise *allowlisted* failures for PNB /do, so the
+                # Core can distinguish expired/denied/redirect/invalid XML.
                 raise ProviderCapabilityError(
-                    "biblioaccess_acsm_stage_unavailable") from None
+                    code if kind == "pnb_do"
+                    else "biblioaccess_acsm_stage_unavailable"
+                ) from None
             self._last_probe_phase = "acsm_staged"
             self._event(
                 "acsm_stage", "observed", probe="authenticated_sync",
                 connected=True, stage="staged", signed_url_logged=False,
+                loan_ref=loan_ref, delivery_kind=kind,
             )
             # Never return the signed ACSM link to Core/receipts/hooks.
             return path, ""

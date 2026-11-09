@@ -806,3 +806,26 @@ Reste à établir le contrat d'identité du compte et la durée de vie
 d'une session authentifiée pour fournir des `Account`/`Loan`
 scoppés sous le contrat public Core ; seul le Core autorisera
 l'admission d'une acquisition (ACSM traité séparément).
+
+
+## P1 #5209 — offres PNB/DILICOM `/do` dans MyLoans
+
+Une ligne de prêt positive et authentifiée peut désormais annoncer l'une de
+deux actions distinctes : `numilog_acsm` (lien Numilog `URLLink.acsm` signé)
+ou `pnb_do` (hôte exact `pnb-dilicom.centprod.com`, chemin se terminant par
+`/do`). **Aucune extension .acsm n'est exigée pour établir l'existence
+d'une action PNB**, mais la réponse réseau doit contenir un **véritable
+fulfillment Adobe ACSM structurellement valide** avant publication locale.
+
+Le GET est HTTPS, limité en taille, sans cookies/headers de l'institution.
+Les redirects sont bornés à trois sauts et à des hôtes de livraison fournisseurs
+approuvés ; une redirection vers un fournisseur non qualifié, un HTML de login,
+un refus HTTP ou un ACSM malformé produit un code d'échec fermé. Le plugin
+ne déclenche **aucun POST de prêt** et n'attribue aucun droit depuis le
+catalogue. Les identifiants de livres et URLs signées ne sont pas journalisés ;
+la corrélation d'étape utilise un `loan_ref` aléatoire non persistant.
+
+Une nouvelle chaîne fournisseur observée mais encore inconnue doit être
+qualifiée explicitement ; aucun suivi automatique de redirect arbitraire.
+Le Core conserve la chaîne canonique ACSM → ADEPT → EPUB déjà utilisée par
+les offres Numilog.

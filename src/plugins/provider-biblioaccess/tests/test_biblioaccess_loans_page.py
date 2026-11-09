@@ -6,7 +6,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-for name in ("biblioaccess_observations", "biblioaccess_loans_page"):
+for name in ("biblioaccess_observations", "biblioaccess_delivery_url", "biblioaccess_loans_page"):
     spec = importlib.util.spec_from_file_location(name, ROOT / (name + ".py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod

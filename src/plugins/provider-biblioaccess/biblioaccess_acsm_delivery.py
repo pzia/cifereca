@@ -8,11 +8,14 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import os
-from urllib.parse import urlsplit
+from urllib.parse import urljoin
 
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 from biblioaccess_observations import MAX_ACSM_BYTES, inspect_acsm_structure
+from biblioaccess_delivery_url import (
+    classify_loan_delivery, allowed_delivery_redirect,
+)
 
 
 class ACSMDeliveryError(ValueError):
@@ -25,19 +28,8 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
     Every call fetches the current link. Existing files do not suppress a
     requested re-download, and the caller's source session owns the identity.
     """
-    if type(url) is not str or len(url) > 8192:
+    if classify_loan_delivery(url) is None:
         raise ACSMDeliveryError("biblioaccess_acsm_url_invalid")
-    try:
-        parts = urlsplit(url)
-        if (parts.scheme != "https"
-                or parts.hostname != "entrepot2r.numilog.com"
-                or parts.username is not None or parts.password is not None
-                or parts.port not in (None, 443) or parts.fragment
-                or parts.path != "/fulfillment/URLLink.acsm"
-                or not parts.query):
-            raise ACSMDeliveryError("biblioaccess_acsm_url_invalid")
-    except ValueError:
-        raise ACSMDeliveryError("biblioaccess_acsm_url_invalid") from None
     if not isinstance(target_dir, Path):
         raise ACSMDeliveryError("biblioaccess_acsm_destination_invalid")
 
@@ -48,27 +40,59 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
     )
     try:
         try:
-            with client.stream(
-                "GET", url, follow_redirects=False,
-                headers={"Accept": "application/vnd.adobe.adept+xml, application/xml, */*"},
-            ) as response:
-                if response.status_code != 200:
+            current = url
+            visited: set[str] = set()
+            for _hop in range(4):
+                if current in visited:
+                    raise ACSMDeliveryError("biblioaccess_acsm_redirect_cycle")
+                visited.add(current)
+                with client.stream(
+                    "GET", current, follow_redirects=False,
+                    headers={
+                        "Accept": "application/vnd.adobe.adept+xml, application/xml, */*",
+                    },
+                ) as response:
                     status = response.status_code
-                    code = (
-                        "biblioaccess_acsm_redirect" if 300 <= status < 400 else
-                        "biblioaccess_acsm_denied" if status in (401, 403) else
-                        "biblioaccess_acsm_missing" if status == 404 else
-                        "biblioaccess_acsm_rate_limited" if status == 429 else
-                        "biblioaccess_acsm_remote_error" if status >= 500 else
-                        "biblioaccess_acsm_unavailable"
+                    if 300 <= status < 400:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise ACSMDeliveryError("biblioaccess_acsm_redirect")
+                        target = urljoin(current, location)
+                        if not allowed_delivery_redirect(target):
+                            raise ACSMDeliveryError("biblioaccess_acsm_redirect_refused")
+                        current = target
+                        continue
+                    if status != 200:
+                        code = (
+                            "biblioaccess_acsm_denied" if status in (401, 403) else
+                            "biblioaccess_acsm_missing" if status == 404 else
+                            "biblioaccess_acsm_rate_limited" if status == 429 else
+                            "biblioaccess_acsm_remote_error" if status >= 500 else
+                            "biblioaccess_acsm_unavailable"
+                        )
+                        raise ACSMDeliveryError(code)
+                    content_type = (
+                        response.headers.get("content-type", "")
+                        .split(";", 1)[0].strip().casefold()
                     )
-                    raise ACSMDeliveryError(code)
-                chunks, size = [], 0
-                for chunk in response.iter_bytes():
-                    size += len(chunk)
-                    if size > MAX_ACSM_BYTES:
-                        raise ACSMDeliveryError("biblioaccess_acsm_body_limit")
-                    chunks.append(chunk)
+                    if content_type in {
+                        "text/html", "application/xhtml+xml",
+                        "application/json", "text/plain",
+                    }:
+                        raise ACSMDeliveryError(
+                            "biblioaccess_acsm_content_type_invalid",
+                        )
+                    # XML/octet-stream or a missing Content-Type still
+                    # requires independent Adobe ACSM structural validation.
+                    chunks, size = [], 0
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if size > MAX_ACSM_BYTES:
+                            raise ACSMDeliveryError("biblioaccess_acsm_body_limit")
+                        chunks.append(chunk)
+                    break
+            else:
+                raise ACSMDeliveryError("biblioaccess_acsm_redirect_limit")
         except httpx.HTTPError:
             raise ACSMDeliveryError("biblioaccess_acsm_transport_unavailable") from None
         data = b"".join(chunks)

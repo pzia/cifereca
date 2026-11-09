@@ -13,6 +13,7 @@ import re
 from urllib.parse import urljoin, urlsplit
 
 from biblioaccess_observations import book_id_from_url
+from biblioaccess_delivery_url import classify_loan_delivery
 
 MY_LOANS_URL = "https://www.biblioaccess.com/1409/Catalog/MyLoans"
 MAX_HTML_BYTES = 256 * 1024
@@ -39,6 +40,8 @@ class ObservedLoanRow:
     title: str = field(repr=False)
     due_at_local: str = field(repr=False)
     acsm_offer_present: bool = False
+    # Closed provider-owned kind. A PNB /do is an offer, not confirmed ACSM.
+    delivery_kind: str | None = None
     # Memory-only exact action URL from an authenticated MyLoans response.
     # The token is never repr()'d, persisted, or attached to a Core Loan.
     acsm_url: str | None = field(default=None, repr=False, compare=False)
@@ -143,7 +146,7 @@ class _ObservedRows(HTMLParser):
                 self.row = {
                     "ref": ids[0], "titles": [], "dates": [], "book_ids": set(),
                     "acsm": False, "acsm_url": None,
-                    "ambiguous": False,
+                    "delivery_kind": None, "ambiguous": False,
                 }
             if (self.row is not None and "downloadbook" in classes
                     and "JSdownloadbook-" + self.row["ref"] in classes):
@@ -165,20 +168,17 @@ class _ObservedRows(HTMLParser):
                 if book_id is not None:
                     self.row["book_ids"].add(book_id)
                 if self.download_depth:
-                    dest = urlsplit(href)
-                    if (dest.scheme == "https"
-                            and dest.hostname == "entrepot2r.numilog.com"
-                            and dest.username is None and dest.password is None
-                            and dest.port in (None, 443) and not dest.fragment
-                            and dest.path == "/fulfillment/URLLink.acsm"
-                            and bool(dest.query)):
-                        # Private ephemeral value, used only by the provider's
-                        # same-session acquisition method. Never store in Loan.
+                    kind = classify_loan_delivery(href)
+                    if kind is not None:
+                        # An authenticated row may attest a PNB /do action
+                        # without asserting the response is an Adobe ACSM.
+                        # The raw signed URL remains private and transient.
                         if self.row["acsm_url"] is not None:
                             self.row["ambiguous"] = True
                         else:
                             self.row["acsm_url"] = href
                             self.row["acsm"] = True
+                            self.row["delivery_kind"] = kind
             except ValueError:
                 pass
 
@@ -239,6 +239,7 @@ class _ObservedRows(HTMLParser):
                 book_id=next(iter(row["book_ids"])),
                 title=titles[0], due_at_local=dates[0],
                 acsm_offer_present=row["acsm"],
+                delivery_kind=row["delivery_kind"],
                 acsm_url=row["acsm_url"],
             ))
         else:
