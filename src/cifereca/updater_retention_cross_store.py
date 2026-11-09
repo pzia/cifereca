@@ -88,9 +88,17 @@ def inspect_transaction_plugin_references(
                     classified = False
                     break
                 key, decision = row.get("object_id"), row.get("decision")
-                if type(key) is not str or not re.fullmatch(r"transaction:[a-f0-9]{64}", key):
+                # Other store families are irrelevant, but a malformed
+                # transaction identity is NOT an ignorable other-family row:
+                # accepting it could falsely attest a complete rollback graph.
+                if type(key) is not str:
+                    classified = False
+                    break
+                if not key.startswith("transaction:"):
                     continue
-                if decision not in ("retain", "candidate") or key in decisions:
+                if (re.fullmatch(r"transaction:[a-f0-9]{64}", key) is None
+                        or decision not in ("retain", "candidate")
+                        or key in decisions):
                     classified = False
                     break
                 decisions[key] = decision
