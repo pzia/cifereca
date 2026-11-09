@@ -747,506 +747,53 @@ def kobo_backup_preview(
     _manifest_evidence: tuple[list, int] | None = None,
     _item_reasons: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Read-only preflight for one Kobo source; never grants acquisition.
+    """Read-only Kobo D1: provider A (complete ABI) or attested historical B.
 
-    Without refresh_manifest the projection may omit recent purchases or
-    revocations. An explicit manifest refresh requests *rights only* from an
-    already connected provider, never content URLs or local materialization.
-
-    The returned list contains only opaque item digests and reason codes,
-    neither book titles, raw product IDs, credentials nor signed URLs. It is
-    advisory: a subsequent acquisition MUST revalidate manifest and files.
+    Neither a legacy manifest, an old 0.7 checkpoint, nor local file bytes
+    constitute current source rights. A partial ABI cannot refresh A, provide
+    an acquisition plan, or authorize a legacy fallback.
     """
-    from .library_declared_links import DeclarationRejected, has_active_declared_link
-
     credential_id = str(credential_id or "").strip()
     identity_id = self.storage.identity_for_connection("kobo", credential_id)
     if not credential_id or not identity_id:
         raise ProviderConfigurationError("Compte Kobo demandé non configuré")
-
-    # The CLI offline route never connects Kobo or promotes cached 0.7
-    # delivery statuses. Only already published Core B is audited; all
-    # acquisition-decision counters remain zero, even with verified bytes.
+    if _manifest_evidence is not None or _item_reasons is not None:
+        # D1/D2 private legacy evidence has no Core delivery authority.
+        raise ProviderConfigurationError("canonical_kobo_preview_abi_unavailable")
     if offline_canonical_only:
-        if (refresh_manifest or _manifest_evidence is not None
-                or _item_reasons is not None):
+        if refresh_manifest:
             raise ProviderConfigurationError("canonical_kobo_preview_scope_unavailable")
         return _canonical_kobo_disconnected_offline_preview(
             self, credential_id, identity_id,
             verify_local_files=verify_local_files,
         )
-
     session = next((
         value for value in self._sessions.values()
         if value.provider_id == "kobo" and value.credential_id == credential_id
         and value.connected and getattr(value.capabilities, "backup", False)
     ), None)
-    if refresh_manifest and session is None:
-        raise ProviderConfigurationError(
-            "Compte Kobo non connecté : impossible de rafraîchir les droits"
-        )
-    # D1 cutover: a configured canonical source consent, including OFF,
-    # invalid and unreadable, retires legacy 0.7 *preview authority* even
-    # when the delivery ABI later becomes incomplete or the session is
-    # disconnected. Do not convert that policy into legacy manifest access,
-    # candidate counters or local presence. Probe only exact borrowers from
-    # the current Core account roster and the durable SQLite account binding.
-    # The latter is essential for local-only/offline callers with no sessions.
-    if session is None or not has_complete_delivery_abi(session):
-        from ..plugin_api.provider_rights_observation import ProviderRightsScope
-        from .source_sync_consent import read_policy
-        try:
-            borrowers = {
-                row.unique_id for row in self.accounts
-                if row.provider_id == "kobo"
-                and row.credential_id == credential_id
-                and row.identity_id == identity_id
-                and type(row.unique_id) is str
-            }
-            with self.storage._lock, self.storage._connect() as db:
-                bound = db.execute(
-                    "SELECT account_id FROM provider_accounts WHERE "
-                    "provider_id='kobo' AND credential_id=? AND identity_id=? "
-                    "LIMIT 3",
-                    (credential_id, identity_id),
-                ).fetchall()
-            if len(bound) > 2:
-                raise ProviderConfigurationError(
-                    "canonical_kobo_preview_scope_unavailable"
-                )
-            borrowers.update(
-                row[0] for row in bound if type(row[0]) is str
-            )
-            has_canonical_consent = False
-            for borrower in borrowers:
-                try:
-                    policy = read_policy(
-                        self.storage, ProviderRightsScope(
-                            identity_id, "kobo", credential_id, borrower,
-                        ),
-                    )
-                    has_canonical_consent |= policy.configured
-                except Exception:
-                    # Cannot infer that an unreadable configured CAS is
-                    # missing and thereby resurrect 0.7 preview authority.
-                    has_canonical_consent = True
-        except ProviderConfigurationError:
-            raise
-        except Exception:
-            # Unreadable binding/policy state is not absence of consent.
-            raise ProviderConfigurationError(
-                "canonical_kobo_preview_scope_unavailable"
-            ) from None
-        if has_canonical_consent:
-            if (refresh_manifest or _manifest_evidence is not None
-                    or _item_reasons is not None):
-                # A partial ABI cannot re-observe typed A. The old manifest
-                # is not a substitute and must not become executable proof.
-                raise ProviderConfigurationError(
-                    "canonical_kobo_preview_abi_unavailable"
-                )
-            if session is None:
-                return _canonical_kobo_disconnected_offline_preview(
-                    self, credential_id, identity_id,
-                    verify_local_files=verify_local_files,
-                )
-            return _canonical_kobo_backup_offline_preview(
-                self, credential_id, identity_id, session,
-                verify_local_files=verify_local_files,
-            )
-    # D1 cutover: a complete provider ABI uses the typed A/verified B
-    # projection. The 0.7 checkpoint is never read for a modern live preview.
-    # An explicitly supplied legacy private manifest is excluded from this
-    # dispatch; it cannot be rebranded as canonical evidence.
-    if (_manifest_evidence is None and _item_reasons is None
-            and session is not None and has_complete_delivery_abi(session)):
+    if session is None:
         if refresh_manifest:
-            return _canonical_kobo_backup_preview(
-                self, credential_id, identity_id, session,
-            )
-        # Even an offline preview for a connected modern source must not
-        # classify legacy backup_items as authoritative delivery/presence.
-        # The Core B audit is physical/history-only until fresh A is read.
+            raise ProviderConfigurationError("canonical_kobo_preview_abi_unavailable")
+        return _canonical_kobo_disconnected_offline_preview(
+            self, credential_id, identity_id,
+            verify_local_files=verify_local_files,
+        )
+    if not has_complete_delivery_abi(session):
+        if refresh_manifest:
+            raise ProviderConfigurationError("canonical_kobo_preview_abi_unavailable")
         return _canonical_kobo_backup_offline_preview(
             self, credential_id, identity_id, session,
             verify_local_files=verify_local_files,
         )
-
-    # A fresh remote manifest must remain attached to this *same* Core
-    # account/session throughout the subsequent local projection. The
-    # offline checkpoint preview is intentionally still usable disconnected.
-    core_epoch = source_context_epoch(self)
-    provider_epoch = getattr(session, "_epoch", None)
-    # Multiple borrowers are legitimate diagnostic inputs: the existing
-    # preview must classify their rights as attention_required rather than
-    # convert an ambiguous account into an authoritative owner. Pin every
-    # observed instance/value so mid-read replacement is still rejected.
-    accounts = tuple(session.accounts) if session is not None else ()
-    account_scopes = tuple(
-        (row.identity_id, row.provider_id, row.credential_id, row.unique_id)
-        for row in accounts
-    )
-
-    def fresh_source_current() -> bool:
-        try:
-            return bool(
-                session is not None
-                and session.connected is True
-                and source_context_epoch(self) == core_epoch
-                and self._sessions.get(self._session_key("kobo", credential_id)) is session
-                and getattr(session, "_epoch", None) == provider_epoch
-                and len(session.accounts) == len(accounts)
-                and all(
-                    live is original
-                    for live, original in zip(session.accounts, accounts)
-                )
-                and tuple(
-                    (row.identity_id, row.provider_id,
-                     row.credential_id, row.unique_id)
-                    for row in session.accounts
-                ) == account_scopes
-                and (
-                    len(accounts) != 1
-                    or (
-                        # Kobo's plugin Account historically defaults to
-                        # identity_id="default" even when the exact Core
-                        # credential belongs to a named identity. A legacy
-                        # model default is not evidence of a source switch.
-                        # Require provider+credential on the live Account,
-                        # and independently pin the binding in SQLite below.
-                        account_scopes[0][1:3] == ("kobo", credential_id)
-                        and account_scopes[0][0] in (identity_id, "default")
-                    )
-                )
-                and self.storage.identity_for_connection(
-                    "kobo", credential_id,
-                ) == identity_id
-            )
-        except Exception:
-            return False
-
-    if refresh_manifest and not fresh_source_current():
-        raise ProviderConfigurationError("Source Kobo modifiée pendant l’aperçu")
-
-    stored = self.storage.backup_list("kobo", credential_id)
-    previous = {str(row.get("item_id") or ""): row for row in stored}
-    if _manifest_evidence is not None:
-        manifest, upstream_rejected = _manifest_evidence
-        refresh_manifest = True
-    elif refresh_manifest:
-        manifest = session.backup_manifest()
-        if not isinstance(manifest, list):
-            raise ProviderConfigurationError("Manifeste Kobo non conforme")
-        upstream_rejected = _kobo_manifest_rejection_count(session)
-    else:
-        upstream_rejected = 0
-        # A local projection is never an authoritative rights manifest.
-        manifest = [
-            {"product_id": row["item_id"], "revision_id": row.get("revision_id"),
-             "title": row.get("title"), "author": row.get("author"),
-             "format": row.get("format")}
-            for row in stored
-        ]
-
-    # #3196 D1: this preview is a 0.7 diagnostic, not Core's A->B
-    # publication/presence projection. Where an edition is already typed,
-    # never count a historical backup path or its stored revision as
-    # `already_local_linked`, `already_local_verified` or a fresh
-    # acquisition candidate. The v0.7 scope has no borrower/branch, so
-    # the credential + edition is the conservative boundary.
-    with self.storage._lock, self.storage._connect() as db:
-        typed_rows = db.execute(
-            "SELECT edition_id FROM source_references WHERE "
-            "provider_id='kobo' AND credential_id=? LIMIT 10001",
-            (credential_id,),
-        ).fetchall()
-    if len(typed_rows) > 10000:
-        raise ProviderConfigurationError(
-            "Aperçu Kobo indisponible : références canoniques trop nombreuses"
+    if refresh_manifest:
+        return _canonical_kobo_backup_preview(
+            self, credential_id, identity_id, session,
         )
-    typed_editions = {
-        edition for (edition,) in typed_rows if type(edition) is str
-    }
-
-    library_root, target_dir = _kobo_preview_paths(self, identity_id)
-    indexed = _indexed_kobo_catalog_paths(self)
-    source_digest = _kobo_checkpoint_key(identity_id, credential_id).rsplit(".", 1)[-1]
-    checkpoint = _kobo_checkpoint_for(self, identity_id, credential_id)
-    unlinked_local_books = self.kobo_unlinked_local_count(identity_id)
-    counts = {
-        "already_local_linked": 0, "already_local_verified": 0,
-        "needs_reconciliation": 0, "attention_required": 0, "skipped_archived": 0,
-        "blocked_scope": 0, "blocked_unlinked": 0, "not_downloadable": 0, "candidate_unverified": 0,
-        "potentially_missing": 0, "invalid_manifest_items": upstream_rejected,
-    }
-    # Do not change the historical offline/legacy counter schema. A
-    # declaration-presence result is exposed only by a caller that explicitly
-    # refreshed its manifest AND requested a physical file check.
-    if refresh_manifest and verify_local_files:
-        counts["already_local_declared"] = 0
-    examples: list[dict[str, str]] = []
-    seen: set[str] = set()
-    # A verified declaration is local presence, not an authenticated Kobo
-    # receipt. Keep one bounded physical-check budget for the entire preview.
-    presence_seconds_remaining = 8.0
-
-    for raw in manifest:
-        if refresh_manifest and not fresh_source_current():
-            raise ProviderConfigurationError("Source Kobo modifiée pendant l’aperçu")
-        if not isinstance(raw, dict):
-            counts["invalid_manifest_items"] += 1
-            continue
-        product_id = str(raw.get("product_id") or raw.get("id") or "").strip()
-        if not product_id or product_id in seen:
-            counts["invalid_manifest_items"] += 1
-            continue
-        seen.add(product_id)
-        if refresh_manifest and _kobo_manifest_flags_invalid(raw):
-            # A preview must not suggest "potentially missing" when the
-            # source explicitly denies ownership or has invalid rights flags.
-            counts["invalid_manifest_items"] += 1
-            continue
-        current = previous.get(product_id)
-        revision_id = str(raw.get("revision_id") or "").strip() or None
-        identity_item_key = (identity_id, product_id)
-        record = {
-            "item_id": product_id,
-            "title": raw.get("title") or (current or {}).get("title"),
-            "author": _manifest_author(raw) or (current or {}).get("author"),
-        }
-
-        # The 0.7 cached "skipped_archived" status cannot decide a Core
-        # edition's availability. Only an explicit *fresh supplier* archived
-        # flag may still classify that edition as skipped; an offline
-        # projection or an omitted flag must defer to canonical Core.
-        if product_id in typed_editions:
-            reason = (
-                "skipped_archived"
-                if refresh_manifest and raw.get("archived") is True
-                else "attention_required"
-            )
-        elif refresh_manifest and raw.get("archived") is True:
-            # A fresh explicit provider archive flag is independent of the
-            # 0.7 file/borrower claim. It never authorizes a local B.
-            reason = "skipped_archived"
-        elif (refresh_manifest and current is not None
-              and (len(accounts) != 1
-                   or current.get("identity_id") != identity_id
-                   or current.get("account_id") != accounts[0].unique_id)):
-            # #3196 D1/W2: a refreshed manifest may belong to a different
-            # upstream borrower than the old credential-scoped backup row.
-            # Do not report its path, SHA or state as this borrower's local
-            # presence, even in the private _item_reasons preflight. Missing
-            # legacy owner/account is ambiguous too. The offline diagnostic
-            # keeps historical classifications without claiming authority.
-            reason = "attention_required"
-        else:
-            reason = "skipped_archived" if _manifest_archived(raw, current) else ""
-        path_raw = str((current or {}).get("local_path") or "").strip()
-        # #3196 D1: neither a fresh provider inventory nor an *offline*
-        # 0.7 path/record can prove B's delivery or exact file origin.
-        # Historical complete/ok rows in the PUBLIC read-only preview are
-        # therefore always review cases, even if the current file happens to
-        # hash to the old receipt. No file needs to be opened to decide this.
-        # Keep the private _item_reasons execution preflight unchanged until
-        # W2 is migrated: it still uses legacy admission under its lock.
-        if (_item_reasons is None and not reason and current
-                and current.get("status") in {"ok", "complete"}
-                and path_raw):
-            reason = "needs_reconciliation"
-        # #3196 W2/D1: the private _item_reasons plan historically treated
-        # any old complete+filename as already linked, even if the original
-        # download left no usable SHA/size. The actual sync now quarantines
-        # that row before opening its bytes (#4812). Keep the *private*
-        # admission consistent: a candidate file cannot invent an original
-        # delivery baseline or authorize a legacy confirmation.
-        if (not reason and _item_reasons is not None and current
-                and current.get("status") in {"ok", "complete"} and path_raw
-                and not _kobo_legacy_has_integrity_baseline(current)):
-            reason = "needs_reconciliation"
-        if path_raw and not reason:
-            linked = Path(path_raw)
-            if linked.is_symlink():
-                reason = "needs_reconciliation"
-            elif linked.is_file():
-                if (
-                    current and current.get("status") in {"ok", "complete"}
-                    and (not refresh_manifest or current.get("revision_id") == revision_id)
-                ):
-                    if verify_local_files:
-                        try:
-                            observed = _observed_backup_artifact(linked)
-                        except (ProviderConfigurationError, OSError):
-                            reason = "needs_reconciliation"
-                        else:
-                            expected_hash = str(current.get("sha256") or "")
-                            expected_size = current.get("size")
-                            if (expected_hash and observed["sha256"] == expected_hash
-                                    and (expected_size is None or observed["size"] == expected_size)):
-                                reason = "already_local_verified"
-                            else:
-                                reason = "needs_reconciliation"
-                    else:
-                        reason = "already_local_linked"
-                else:
-                    reason = "needs_reconciliation"
-            else:
-                # A previously linked but now missing placement is not proof
-                # that a new file should be downloaded with another name.
-                reason = "needs_reconciliation"
-
-        if not reason and not path_raw and current and current.get("status") in {"ok", "complete"}:
-            # An earlier completed acquisition without a recorded placement
-            # is inconsistent provenance, not proof that no file was written.
-            reason = "needs_reconciliation"
-
-        if not reason:
-            candidate_paths = _kobo_record_candidate_paths(self, record, target_dir)
-            for explicit in indexed.get(identity_item_key, ()):
-                if explicit not in candidate_paths:
-                    candidate_paths.append(explicit)
-            if library_root != target_dir:
-                for legacy in _kobo_record_candidate_paths(self, record, library_root):
-                    if legacy not in candidate_paths:
-                        candidate_paths.append(legacy)
-            if candidate_paths or (
-                current and current.get("status") in {"reconcile_required", "reconcile_conflict"}
-            ):
-                reason = "needs_reconciliation"
-
-        if not reason:
-            # A private declaration blocks a candidate acquisition, but is
-            # never classified as a verified Kobo backup. Resolve the borrower
-            # from the live provider for a refreshed manifest; do not trust a
-            # backup row belonging to a previous login as the current owner.
-            account_id = None
-            if session is not None and len(session.accounts) == 1:
-                owner = session.accounts[0]
-                if owner.identity_id == identity_id:
-                    account_id = owner.unique_id
-            elif session is None and current and current.get("identity_id") == identity_id:
-                account_id = current.get("account_id")
-            if type(account_id) is str and account_id:
-                try:
-                    if has_active_declared_link(
-                        self.storage, identity_id=identity_id,
-                        provider_id="kobo", credential_id=credential_id,
-                        account_id=account_id, item_id=product_id,
-                    ):
-                        reason = "attention_required"
-                        # Only an explicit, fresh-file preview can recognize
-                        # physical presence. Mere recording never proves
-                        # the EPUB exists or authorizes an acquisition.
-                        if (verify_local_files and refresh_manifest
-                                and session is not None
-                                and presence_seconds_remaining > 0):
-                            from .library_declared_presence import verify_declared_presence
-                            storage_at_start = self.storage
-
-                            def source_current() -> bool:
-                                return bool(
-                                    self.storage is storage_at_start
-                                    and session.connected
-                                    and any(value is session for value in self._sessions.values())
-                                    and len(session.accounts) == 1
-                                    and session.accounts[0].identity_id == identity_id
-                                    and session.accounts[0].unique_id == account_id
-                                    and self.storage.identity_for_connection(
-                                        "kobo", credential_id) == identity_id
-                                )
-
-                            checked_started = time.monotonic()
-                            try:
-                                presence = verify_declared_presence(
-                                    self, identity_id=identity_id,
-                                    provider_id="kobo", credential_id=credential_id,
-                                    account_id=account_id, item_id=product_id,
-                                    source_current=source_current,
-                                    seconds=presence_seconds_remaining,
-                                )
-                            finally:
-                                presence_seconds_remaining = max(
-                                    0.0, presence_seconds_remaining
-                                    - max(0.0, time.monotonic() - checked_started),
-                                )
-                            if presence.status == "declared_current":
-                                reason = "already_local_declared"
-                except DeclarationRejected:
-                    # Malformed user statements cannot authorize a fresh GET.
-                    reason = "attention_required"
-            elif refresh_manifest:
-                # A fresh manifest without a unique account is not evidence
-                # that a particular user's file/declaration is absent.
-                reason = "attention_required"
-
-        if not reason:
-            if bool(raw.get("archived")):
-                reason = "skipped_archived"
-            elif raw.get("downloadable") is False:
-                reason = "not_downloadable"
-            elif (current and current.get("status") == "attention_required"
-                  and current.get("attention_code") not in {
-                      "declared_link_recorded", "declared_links_unavailable", "archived_book",
-                  }):
-                # The previous declaration-only attention is recalculated
-                # above on every preview. A revoked statement must not remain
-                # a permanent non-downloadable status.
-                reason = (
-                    "blocked_scope"
-                    if current.get("attention_code") == "missing_delegation_scope"
-                    else "attention_required"
-                )
-            elif not refresh_manifest:
-                reason = "candidate_unverified"
-            else:
-                # No descriptor has been resolved and no file was downloaded:
-                # this is NOT a promise that the provider can deliver a file.
-                reason = "potentially_missing"
-
-        counts[reason] += 1
-        if _item_reasons is not None:
-            _item_reasons[product_id] = reason
-        if len(examples) < 20 and reason not in {
-            "already_local_linked", "already_local_verified",
-            "already_local_declared",
-        }:
-            item_digest = hashlib.sha256(
-                (credential_id + "\\x00" + product_id).encode("utf-8")
-            ).hexdigest()[:20]
-            examples.append({"item_ref": item_digest, "reason": reason})
-
-    # Do not publish stale positive local presence after a concurrent
-    # account rebind, reconnect or consent/session transition during SHA
-    # verification or declaration checking.
-    if refresh_manifest and not fresh_source_current():
-        raise ProviderConfigurationError("Source Kobo modifiée pendant l’aperçu")
-    # Explicitly discourage treating the output as an executable download
-    # plan. A complete fresh manifest is still only a rights snapshot.
-    return {
-        "scope": "account",
-        "source_id": source_digest,
-        "manifest_refreshed": bool(refresh_manifest),
-        "manifest_items": len(manifest),
-        "known_item_count": len(seen),
-        "provider_rejected_manifest_items": upstream_rejected,
-        "checkpoint_status": _kobo_safe_checkpoint_status(
-            (checkpoint or {}).get("status")
-        ),
-        "unlinked_local_books": unlinked_local_books,
-        "counts": counts,
-        "blocking_items": sum(counts[key] for key in (
-            "needs_reconciliation", "attention_required",
-            "blocked_scope", "blocked_unlinked", "not_downloadable",
-            "invalid_manifest_items",
-        )),
-        "examples": examples,
-        "preview_only": True,
-        "acquisition_authorized": False,
-        "requires_manifest_validation": not refresh_manifest,
-        "manifest_valid": counts["invalid_manifest_items"] == 0,
-        "verification": "artifact_hash" if verify_local_files else "linked_path_only",
-    }
-
+    return _canonical_kobo_backup_offline_preview(
+        self, credential_id, identity_id, session,
+        verify_local_files=verify_local_files,
+    )
 
 
 def _safe_kobo_opening_decision(raw: Any) -> dict[str, Any] | None:
