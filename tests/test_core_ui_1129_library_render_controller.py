@@ -179,6 +179,26 @@ def test_recent_projection_uses_search_facets_and_no_library_filters():
     assert window._recent_entries_cache is not input_data
 
 
+def test_recent_render_without_service_is_inert_and_keeps_headless_fixtures():
+    events = []
+    window = NS(
+        recent_page=NS(show_rows=lambda rows: events.append(("show", rows))),
+        _recent_entries_cache=[],
+        search_controls=object(),
+        _attach_row_facets=lambda *_args: events.append(("facets",)),
+        ui_perf=NS(record=lambda *_args: events.append(("perf",))),
+    )
+    def project(items, **kwargs):
+        assert kwargs["provider_display_name"] is None
+        return [], {}
+    ticks = iter((1.0, 1.001))
+    render.render_recent(
+        window, [], perf_counter=lambda: next(ticks),
+        project_recent_rows=project, BookListItem=object,
+    )
+    assert events == [("facets",), ("show", []), ("perf",)]
+
+
 def test_recent_render_without_page_does_not_scan_or_advance_clock():
     window = NS(_recent_entries_cache=[{"key": "kept"}])
     calls = []
