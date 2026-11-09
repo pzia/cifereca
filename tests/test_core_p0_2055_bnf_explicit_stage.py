@@ -118,7 +118,7 @@ def test_closed_source_denies_before_network(connected_core):
 def test_untrusted_session_accounts_property_is_never_invoked_before_get(
     connected_core, monkeypatch,
 ):
-    """Core refuses provider getters rather than invoking them to check scope."""
+    """The Core lease rejects a hostile property without calling its getter."""
     service, session, account, loan, state, downloaded = connected_core
     reads = []
 
