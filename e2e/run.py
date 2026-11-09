@@ -47,6 +47,22 @@ SCENARIOS = {
         "runner": "gtk-probe",
         "width": 1024, "height": 768,
     },
+    "book-detail-960": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P1 #4682 : vraie fiche GTK compacte à 960 px, reflow volet Détail sans clip.",
+        "runner": "gtk-detail",
+        "width": 960,
+        "height": 900,
+    },
+    "book-detail-1280": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P1 #4682 : vraie fiche GTK à 1280 px, en-tête et sections adaptatifs.",
+        "runner": "gtk-detail",
+        "width": 1280,
+        "height": 900,
+    },
     "book-detail-1300": {
         "plugin": "core",
         "fixture": "search-filters",
