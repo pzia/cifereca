@@ -323,3 +323,14 @@ tests headless `tests/test_e2e_x11_hidpi_coordinates.py` protègent la
 conversion 1×/2× et rejettent les coordonnées invalides. Les données de
 classement restent synthétiques ; la recette d'un fournisseur réel et la
 comparaison visuelle complète restent distinctes.
+
+
+## P1 #757 — planches UX du thème clair/sombre (privées)
+
+Après `modern-light-1366` et `modern-light-1600` sur le même HEAD,
+`python3 e2e/modern_light_review.py --root e2e-artifacts` vérifie chaque
+PNG et ses empreintes, puis crée dans `e2e-artifacts/modern-light-private-review/`
+les planches juxtaposant clair/sombre et `ux-checklist.csv` à remplir.
+Les captures demeurent **sur l'hôte GTK autorisé** et ne sont **jamais**
+des artefacts CI publics. Les planches servent au tri UX, les PNG originaux
+restent requis pour inspecter les détails ; aucun verdict UX n'est automatisé.
