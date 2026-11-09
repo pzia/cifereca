@@ -247,3 +247,53 @@ def test_git_gate_accepts_mapping_get_for_metadata_only(tmp_path):
     head = _commit(root, "src/cifereca/core/example.py",
                    'title = labels.get("kobo")\n')
     assert gate(root, base, head)["pass"] is True
+
+
+def test_importlib_module_name_immutable_constant_is_not_an_ast_gate_bypass():
+    source = (
+        "from importlib import import_module as load\n"
+        "MODULE_PATH = 'cifereca.biblioaccess.dispatch'\n"
+        "load(MODULE_PATH)\n"
+    )
+    assert added_signals("pass\n", source) == {("imports", "biblioaccess"): 1}
+
+
+def test_importlib_module_name_shadowed_or_computed_is_not_executed_or_inferred():
+    cases = (
+        "from importlib import import_module as load\n"
+        "MODULE_PATH = 'cifereca.kobo.executor'\n"
+        "MODULE_PATH = make_module_name()\n"
+        "load(MODULE_PATH)\n",
+        "from importlib import import_module as load\n"
+        "MODULE_PATH = 'cifereca.kobo.executor'\n"
+        "def run(MODULE_PATH): return load(MODULE_PATH)\n",
+        "import importlib\n"
+        "MODULE_PATH = prefix + '.kobo.executor'\n"
+        "importlib.import_module(MODULE_PATH)\n",
+        "MODULE_PATH = 'cifereca.kobo.executor'\n"
+        "other_loader(MODULE_PATH)\n",
+    )
+    for source in cases:
+        assert added_signals("pass\n", source) == {}
+
+
+def test_git_gate_rejects_new_constant_based_dynamic_provider_import(tmp_path):
+    root = tmp_path / "repo"
+    base = _repo(root)
+    head = _commit(root, "src/cifereca/core/example.py",
+                   "import importlib as loader\n"
+                   "PROVIDER_MODULE = 'cifereca.numilog.implementation'\n"
+                   "loader.import_module(PROVIDER_MODULE)\n")
+    report = gate(root, base, head)
+    assert report["pass"] is False
+    assert report["violations"] == {
+        "src/cifereca/core/example.py": {"imports:numilog": 1},
+    }
+
+
+def test_immutable_provider_module_literal_not_used_for_import_is_inert():
+    source = (
+        "PROVIDER_MODULE = 'cifereca.biblioaccess.dispatch'\n"
+        "module_description = PROVIDER_MODULE\n"
+    )
+    assert added_signals("pass\n", source) == {}
