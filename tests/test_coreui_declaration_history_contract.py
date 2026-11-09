@@ -45,8 +45,8 @@ def test_history_only_uses_safe_source_and_review_status_vocabulary():
     assert _source_label(window, 'future') == 'Bibliothèque future'
     assert _source_label(window, 'paris') == 'Bibliothèques de Paris'
     assert _source_label(window, 'unknown') == 'Source non identifiée'
-    assert _source_label(window, 'bad\\nprovider') == 'Source non identifiée'
-    assert _source_label(NS(service=NS(provider_display_name=lambda _: '\\nSECRET')),
+    assert _source_label(window, 'bad\nprovider') == 'Source non identifiée'
+    assert _source_label(NS(service=NS(provider_display_name=lambda _: '\nSECRET')),
                          'future') == 'Source non identifiée'
     assert _source_label(NS(service=NS(provider_display_name=lambda _: 32)),
                          'future') == 'Source non identifiée'
