@@ -64,7 +64,8 @@ def test_recent_list_exposes_compact_temporal_label():
     facade = _method(MAIN, "MainWindow", "_render_recent")
     assert "project_recent_rows(" in facade
     assert "row_factory=BookListItem" in facade
-    assert "provider_display_name=window.service.provider_display_name" in facade
+    assert "provider_display_name=provider_display_name" in facade
+    assert "getattr(window, 'service', None)" in facade
     assert "window._attach_row_facets(rows, window._recent_objects, window.search_controls)" in facade
 
 
