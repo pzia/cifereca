@@ -266,3 +266,17 @@ def test_fresh_cas_without_acsm_retains_positive_loan_without_download(monkeypat
     assert snapshot.loans[0].raw == {} and snapshot.loans[0].ebook_url is None
     assert created == ["cred-a"] and renewed[0][2].count("post") == 1
     assert "SYNTHETIC-SECRET" not in repr(notes)
+
+
+def test_actual_generic_transport_timeout_does_not_signal_cas_expiry():
+    session, http, calls = _synced_session(expired=True)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        failed = read_loan_inventory(session, account)
+        assert failed.status == "failed"
+        assert session.connected is False and http.closed
+        assert session.sync_reconnect_reason is None
+        assert calls.count("post") == 1
+    finally:
+        session.close()
