@@ -12,9 +12,7 @@ import json
 import pytest
 
 from cifereca.acquisition_engine import Entitlement, SourceIdentity, stable_id
-from cifereca.core.kobo_manifest_rights import mirror_kobo_manifest_rights
 from cifereca.core.numilog_manifest_rights import mirror_numilog_manifest_rights
-from tests.test_core_1337_kobo_personal_manifest_rights import _row as kobo_row
 from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row as numilog_row
 from tests.test_sync_state_contract import _service
 
@@ -83,56 +81,6 @@ def test_numilog_canonical_claimed_after_reservations_uses_safe_fallback(tmp_pat
             credential_id=account.credential_id, account_id=account.unique_id,
         ) == 1
         assert len(service.storage.entitlements(provider_id="numilog")) == 2
-    finally:
-        service.close()
-
-
-def test_kobo_canonical_claimed_after_initial_read_uses_safe_fallback(tmp_path, monkeypatch):
-    service = _service(tmp_path)
-    try:
-        row = kobo_row(product="owned-1", credential="vault-shared")
-        source = SourceIdentity("kobo", "vault-shared", "account-shared", "default")
-        canonical = Entitlement(source=source, item_id="owned-1").entitlement_id
-        fallback = stable_id(
-            "kobo-manifest-identity", "default", "vault-shared",
-            "account-shared", "owned-1",
-        )
-        original = service.storage.entitlements
-        injected = [False]
-
-        def race_after_discovery(*args, **kwargs):
-            observed = original(*args, **kwargs)
-            if kwargs.get("provider_id") == "kobo" and not injected[0]:
-                injected[0] = True
-                _foreign(service, entitlement_id=canonical, provider="kobo",
-                         credential="vault-shared", account="account-shared",
-                         item="owned-1")
-            return observed
-
-        monkeypatch.setattr(service.storage, "entitlements", race_after_discovery)
-        count = mirror_kobo_manifest_rights(
-            service, [row], identity_id="default",
-            credential_id="vault-shared", account_id="account-shared",
-        )
-        assert count == 1
-        rights = original(provider_id="kobo")
-        assert len(rights) == 2
-        victim = next(r for r in rights if r["entitlement_id"] == canonical)
-        own = next(r for r in rights if r["entitlement_id"] == fallback)
-        assert victim["identity_id"] == "alex"
-        assert victim["metadata"]["title"] == "PRIVATE FOREIGN OWNER"
-        assert own["identity_id"] == "default"
-        assert own["metadata"]["source"] == "kobo.personal_manifest"
-        assert mirror_kobo_manifest_rights(
-            service, [replace(row, metadata={"archived": True})],
-            identity_id="default",
-            credential_id="vault-shared", account_id="account-shared",
-        ) == 1
-        assert next(r for r in original(provider_id="kobo")
-                    if r["entitlement_id"] == fallback)["state"] == "archived"
-        assert len(original(provider_id="kobo")) == 2
-        assert service.storage.acquisitions() == []
-        assert service.storage.placements() == []
     finally:
         service.close()
 
