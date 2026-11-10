@@ -49,7 +49,7 @@ def test_kobo_dedicated_scope_matches_existing_inventory(tmp_path):
     _write(tmp_path, "src/cifereca/kobo/executor.py", "a = 2\n")
     _write(tmp_path, "src/cifereca/gui/legacy_kobo_view.py", "a = 3\n")
     _write(tmp_path, "src/cifereca/core/not_kobo.py", "a = 4\n")
-    assert inventory(tmp_path)["by_provider"]["kobo"] == kobo_inventory(tmp_path)["dedicated_lines"]
+    assert inventory(tmp_path)["dedicated_by_provider"]["kobo"] == kobo_inventory(tmp_path)["dedicated_lines"]
 
 
 def test_filenames_without_provider_name_are_generic(tmp_path):
