@@ -194,3 +194,23 @@ def test_harmless_uppercase_or_protocol_relative_url_remains_raw():
     raw = {"links": ["HTTPS://catalogue.example/book?lang=fr",
                      "//catalogue.example/cover.jpg"]}
     assert admit(raw=raw).fields_copy() == raw
+
+
+@pytest.mark.parametrize("url", [
+    "https://cdn.example/c.jpg?access-token=SECRET",
+    "https://cdn.example/c.jpg?Access.Token=SECRET",
+    "https://cdn.example/c.jpg?api-key=SECRET",
+    "https://cdn.example/c.jpg?X-Amz-Security-Token=SECRET",
+    "https://cdn.example/c.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256",
+    "https://cdn.example/c.jpg?AWSAccessKeyId=SECRET",
+    "https://cdn.example/c.jpg?%61ccess%2Dtoken=SECRET",
+    "//cdn.example/c.jpg?authorization=SECRET",
+])
+def test_notice_source_refuses_obfuscated_query_credentials(url):
+    with pytest.raises(ValueError, match="invalid_source_notice_observation"):
+        admit(raw={"cover": url})
+
+
+def test_notice_source_keeps_public_rendering_query_without_authorization():
+    raw = {"cover": "https://cdn.example/c.jpg?size=medium&t=1717&lang=fr"}
+    assert admit(raw=raw).fields_copy() == raw

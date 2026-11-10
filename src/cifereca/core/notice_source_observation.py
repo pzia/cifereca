@@ -29,11 +29,22 @@ _RESTRICTED_FIELD = re.compile(
     r"(?:token|secret|password|passwd|credential|cookie|authorization|signature|signedurl|apikey)",
     re.I,
 )
+# Compare normalized query *names*, never raw spellings: provider URLs may use
+# hyphens, underscores, periods or percent-encoding for the same secret field.
+# Signed AWS request fields are all authority-bearing even when their value is
+# an algorithm, timestamp, credential scope or signed header list.
 _RESTRICTED_QUERY_KEYS = frozenset((
-    "token", "access_token", "refresh_token", "signature", "sig",
-    "x-amz-signature", "x-amz-credential", "key", "api_key",
-    "auth", "session", "expires", "policy",
+    "token", "accesstoken", "refreshtoken", "securitytoken",
+    "signature", "sig", "credential", "credentials", "secret",
+    "key", "apikey", "auth", "authorization", "session",
+    "sessionid", "sessionkey", "expires", "policy",
+    "awsaccesskeyid", "googleaccessid", "jwt", "code",
 ))
+
+
+def _restricted_query_key(value: str) -> bool:
+    normalized = "".join(ch for ch in value.casefold() if ch.isalnum())
+    return normalized in _RESTRICTED_QUERY_KEYS or normalized.startswith("xamz")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -111,7 +122,7 @@ def _safe_scalar(text: str) -> bool:
             u = urlsplit(source_url)
             if (not u.hostname or u.username is not None or u.password is not None
                     or u.fragment or
-                    any(k.casefold() in _RESTRICTED_QUERY_KEYS
+                    any(_restricted_query_key(k)
                         for k, _ in parse_qsl(u.query, keep_blank_values=True))):
                 return False
         except ValueError:
