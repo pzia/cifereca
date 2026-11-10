@@ -60,7 +60,8 @@ def source_account_binding_ready(
             session_accounts = _inert_session_accounts(session)
             if (state is None or session_accounts is None
                     or state.get("provider_id") != expected_provider_id
-                    or state.get("credential_id") != account.credential_id):
+                    or state.get("credential_id") != account.credential_id
+                    or state.get("_closed") is True):
                 return False
             connected = state.get("connected")
         else:
