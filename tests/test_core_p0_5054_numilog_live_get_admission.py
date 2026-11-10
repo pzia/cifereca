@@ -36,6 +36,8 @@ def test_direct_get_receives_current_core_admission_without_unguarded_fallback()
     lease_text = ast.get_source_segment(text, lease)
     assert "session=pinned_session" in lease_text
     assert "admission_scope(item) == pinned_scope" in lease_text
+    assert "source_context_epoch(service) == source_epoch" in lease_text
+    assert "current_identity" in lease_text
     assert "startup_authorized()" in lease_text
     assert "recovery_authorized()" in lease_text
     assert "return False" in lease_text
@@ -58,12 +60,13 @@ def test_provider_checks_admission_during_download():
 
 @pytest.mark.parametrize("revocation", [
     "none", "account", "session", "identity", "scope", "startup", "recovery",
-    "binding_error",
+    "binding_error", "context_epoch", "selected_identity",
 ])
 def test_numilog_live_lease_refuses_changed_source_or_consent(revocation):
     method = _function("delivery_admission_current")
     item = NS(token="edition")
-    service = object()
+    service = NS(current_identity=NS(identity_id="alice"),
+                 _source_context_epoch=7)
     session = object()
     owner = NS(identity_id="alice")
     account = "borrower"
@@ -91,6 +94,10 @@ def test_numilog_live_lease_refuses_changed_source_or_consent(revocation):
         gates["startup"] = False
     if revocation == "recovery":
         gates["recovery"] = False
+    if revocation == "context_epoch":
+        service._source_context_epoch = 9
+    if revocation == "selected_identity":
+        service.current_identity.identity_id = "bob"
 
     namespace = dict(
         require_source=require_source, service=service, item=item,
@@ -99,6 +106,8 @@ def test_numilog_live_lease_refuses_changed_source_or_consent(revocation):
         pinned_scope=scope, automatic=True, reconcile_pending=True,
         startup_authorized=lambda: gates["startup"],
         recovery_authorized=lambda: gates["recovery"],
+        source_context_epoch=lambda service: service._source_context_epoch,
+        source_epoch=7,
     )
     # Pin the original identity, regardless of the later owner mutation.
     namespace["identity"] = NS(identity_id="alice")
