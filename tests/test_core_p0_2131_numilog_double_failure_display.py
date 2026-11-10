@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from cifereca.gui.numilog_materialization_status import describe_run
-from tests.test_numilog_startup_diagnostics import valid
+from tests.numilog_historical_diagnostic_fixture import valid
 
 
 def _status(*, failed=2, attempted=0, downloaded=0):

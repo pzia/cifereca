@@ -161,7 +161,7 @@ def test_anonymous_callbacks_are_explicitly_pinned_to_reviewed_stages():
         seen.add(label[0])
     assert seen == {
         "verify_tab_order", "click_copy", "click_isbn",
-        "begin_owned_book_action", "component_expand",
+        "component_expand",
     }
 
 

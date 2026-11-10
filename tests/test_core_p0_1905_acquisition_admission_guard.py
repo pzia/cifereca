@@ -61,7 +61,7 @@ def test_non_kobo_targeted_admission_rejects_bad_truthy_and_noncallable_payloads
         service.close()
 
 
-def test_unscoped_legacy_numilog_download_api_not_switched_off_by_guard(
+def test_unscoped_retired_numilog_direct_refuses_before_any_provider_get(
     tmp_path, monkeypatch,
 ):
     service = _service(tmp_path)
@@ -69,19 +69,15 @@ def test_unscoped_legacy_numilog_download_api_not_switched_off_by_guard(
         account, session, _calls = _connect(service, number=0)
         item = _row(account.credential_id, 2)
         reached = []
-        def expected_fictitious_provider_call(*_args):
-            reached.append("explicit_direct")
-            raise RuntimeError("fictional download callback ?auth=PRIVATE_PROVIDER_SECRET")
-        monkeypatch.setattr(session, "download_direct", expected_fictitious_provider_call)
-        # The P0 guard does not widen or disable the existing explicitly
-        # requested provider API. This test invokes only a local fake callback.
-        with pytest.raises(ProviderConfigurationError, match="livraison indisponible") as error:
+        monkeypatch.setattr(
+            session, "download_direct",
+            lambda *_args, **_kwargs: reached.append(True),
+        )
+        with pytest.raises(
+            ProviderConfigurationError, match="numilog_canonical_explicit_action_required",
+        ):
             service._acquire_direct_item_impl(item)
-        assert reached == ["explicit_direct"]
-        # Reaching the explicit API does not permit reflecting a private
-        # provider failure into logs or a GTK error message.
-        assert str(error.value) == "Numilog : livraison indisponible ; réessayer manuellement"
-        assert "PRIVATE_PROVIDER_SECRET" not in str(error.value)
-        assert "fictional download" not in str(error.value)
+        assert reached == []
+        assert service.storage.acquisitions(provider_id="numilog") == []
     finally:
         service.close()

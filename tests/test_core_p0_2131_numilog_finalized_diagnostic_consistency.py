@@ -12,7 +12,7 @@ import pytest
 
 from cifereca.core.numilog_startup_diagnostics import public_fields
 from cifereca.gui.numilog_materialization_status import describe_run
-from tests.test_numilog_startup_diagnostics import valid
+from tests.numilog_historical_diagnostic_fixture import valid
 
 
 NOW = 2_000_000_000

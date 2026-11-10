@@ -293,7 +293,11 @@ def test_source_wide_auto_switch_replaces_six_individual_consents(
     # The live Numilog adapter has the full canonical ABI. The legacy worker
     # must NOT create a second acquisition queue for this consented account.
     assert sid not in eligible_source_ids(broker, account.identity_id)
-    assert legacy_execute(broker, account.identity_id, "startup").facts["status"] == "not_due"
+    retired = legacy_execute(broker, account.identity_id, "startup")
+    assert retired.facts["status"] == ("migration_required" if enabled else "not_due")
+    assert retired.facts["acquisition_authorized"] is False
+    assert retired.changed == 0
+    assert content_gets(gets, urls) == []
     result = synchronize(service, account)
     assert result["present_attested"] == 3
     assert result["downloaded"] == (3 if enabled else 0)

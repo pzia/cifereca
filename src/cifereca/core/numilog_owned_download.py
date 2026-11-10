@@ -127,8 +127,16 @@ def _resolve(service, entitlement_id, identity_id, item_id, *, canonical_offer_i
         source_credential=account.credential_id, source_collection='library',
         owned=True, downloadable=True, content_type='ebook', metadata={},
     )
-    owner, session, account_id = require_source(service, item)
+    owner, session, account_id = require_source(service, item, canonical_only=True)
+    from inspect import getattr_static
+    from .canonical_delivery_abi import has_complete_delivery_abi
     _require(owner.identity_id == identity_id and account_id == account.unique_id)
+    # A partial/legacy session cannot expose an actionable owned-library
+    # target: there is no longer an authorized legacy GET writer to back it.
+    _require(has_complete_delivery_abi(session)
+             and callable(getattr_static(
+                 session, "downloadable_selected_delivery_candidate_guarded", None
+             )))
     sid = SynchronizationBrokerImpl(service)._source_id(account)
     target = NumilogOwnedDownloadTarget(
         entitlement_id, identity_id, sid, account.credential_id, account_id, item_id,
@@ -185,19 +193,13 @@ def obtain(service, target):
         item = admission()
         owner = service.identity_by_id(target.identity_id)
         _require(owner is not None)
-        # Installed Numilog v2 sessions use the sole canonical A→B writer.
-        # Never route a complete guarded producer back into the historical
-        # download_direct + numilog_delivered_artifact_v1 receipt namespace.
-        from .canonical_delivery_abi import has_complete_delivery_abi
-        if has_complete_delivery_abi(target.session):
-            from .explicit_owned_canonical import obtain_explicit_owned
-            return obtain_explicit_owned(
-                service, target, resolve=_resolve,
-                right_current=_selected_owned_right_current,
-            )
-        from .numilog_materialization_checkpoint import index_delivered
-        acquired = service.acquire_direct_item(item, _admission=admission)
-        return index_delivered(service, acquired, title=item.title)
+        # Every owned Library acquisition is a one-shot canonical A→B
+        # operation. No historical direct GET or v1 writer fallback remains.
+        from .explicit_owned_canonical import obtain_explicit_owned
+        return obtain_explicit_owned(
+            service, target, resolve=_resolve,
+            right_current=_selected_owned_right_current,
+        )
     except Cancelled:
         raise
     except Exception:
