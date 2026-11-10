@@ -21,7 +21,7 @@ def _rig(tmp_path, *, owner, borrower, archived=False):
         **({"archived": True} if archived else {}),
     }]
     service, session = _service(tmp_path, manifest)
-    path = service._kobo_backup_target_dir("default") / "book.epub"
+    path = service.library_identity_provider_dir("default", "kobo") / "book.epub"
     _write_epub(path)
     service.storage.backup_put({
         "provider_id": "kobo", "credential_id": "vault-1",
