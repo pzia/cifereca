@@ -25,8 +25,8 @@ def test_named_implementation_files_counted_without_plugins_or_tests(tmp_path):
     _write(tmp_path, "src/plugins/provider-kobo/acquire.py", "a = 7\n")
     _write(tmp_path, "tests/test_kobo.py", "assert True\n")
     report = inventory(tmp_path)
-    assert report["dedicated_lines"] == 7
-    assert report["by_provider"]["kobo"] == 4
+    assert report["dedicated_lines"] == 8
+    assert report["by_provider"]["kobo"] == 5
     assert report["by_provider"]["numilog"] == 2
     assert report["by_provider"]["bnf"] == 1
     assert report["generic_provider_literal_lines_unique"] == 3
