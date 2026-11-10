@@ -34,12 +34,12 @@ def _require(condition, code):
 
 def _roots(service, identity):
     """W2 compatibility alias; Core-neutral implementation is independent."""
-    from .local_profile_root_guards import checked_profile_roots
+    from .local_profile_root_guards import checked_profile_roots, ProfileRootRejected
     try:
         return checked_profile_roots(
             service, identity, roots_for_identity=_kobo_preview_paths,
         )
-    except ValueError as exc:
+    except ProfileRootRejected as exc:
         # Preserve the existing finite W2 error vocabulary.
         raise ReconciliationRejected(str(exc)) from None
 
