@@ -10,7 +10,6 @@ from dataclasses import replace
 import pytest
 
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
-from cifereca.plugin_api.provider_rights_observation import ProviderRightsScope
 from cifereca.storage import Storage
 from tests.test_core_p0_3171_atomic_publication_v14 import new_source, register
 
