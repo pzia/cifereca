@@ -390,3 +390,50 @@ def test_loan_confirmation_explains_separate_local_send_after_placement():
     dialog.respond("cancel")
     assert h.window.runner.jobs == []
     assert h.attempts == []
+
+
+
+class _BorrowGtkDetailOffWorker:
+    @property
+    def _rendered_search_detail(self):
+        raise AssertionError("borrow POST worker read GTK detail")
+
+
+def test_lender_borrow_worker_never_reads_gtk_detail():
+    h = setup()
+    assert h.show()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    assert len(h.window.runner.jobs) == 1
+    _title, work, done, _failed, _kwargs = h.window.runner.jobs[0]
+    original = h.window.search_page.detail
+    h.window.search_page.detail = _BorrowGtkDetailOffWorker()
+    outcome = work()
+    assert outcome["status"] == "confirmed"
+    h.window.search_page.detail = original
+    done(outcome)
+    assert len(h.attempts) == 1
+
+
+@pytest.mark.parametrize("rebind", ["identity", "source", "selection", "page", "detail_epoch"])
+def test_lender_borrow_worker_revokes_scalar_lease_before_provider_post(rebind):
+    h = setup()
+    assert h.show()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    assert len(h.window.runner.jobs) == 1
+    _title, work, _done, _failed, _kwargs = h.window.runner.jobs[0]
+    if rebind == "identity":
+        h.service.current_identity = NS(identity_id="bob")
+    elif rebind == "source":
+        h.service._source_context_epoch += 1
+    elif rebind == "selection":
+        h.window._selected_search_id = "stale"
+    elif rebind == "page":
+        h.window.search_page = NS(detail=h.window.search_page.detail)
+    else:
+        h.window._search_detail_request_generation += 1
+    outcome = work()
+    assert outcome["status"] == "blocked"
+    assert outcome["reason_code"] == "lender_scope_revoked"
+    assert h.attempts == []
