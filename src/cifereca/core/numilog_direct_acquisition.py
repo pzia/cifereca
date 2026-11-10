@@ -109,9 +109,8 @@ def acquire_numilog_direct(
             target_dir = service.library_identity_provider_dir(
                 identity.identity_id, "numilog",
             )
-            if (target_dir.is_symlink()
-                    or target_dir.parent.is_symlink()
-                    or not target_dir.is_dir()):
+            from .local_received_artifact import trusted_local_directory
+            if not trusted_local_directory(target_dir):
                 raise ProviderConfigurationError(
                     "Numilog : répertoire identité non attesté"
                 )
