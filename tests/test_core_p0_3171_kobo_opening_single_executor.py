@@ -21,9 +21,7 @@ def _ready_source(tmp_path):
     account = session.accounts[0]
     service.accounts = [account]
     service.storage.metadata_set(policy_key(service.sync_source_id(account)), "1")
-    assert [s.credential_id for s in kobo_on_start_sessions(service)] == [
-        account.credential_id
-    ]
+    assert kobo_on_start_sessions(service) == ()
     return service, account
 
 
@@ -71,7 +69,7 @@ def test_canonical_kobo_does_not_fall_through_to_legacy_get(
         service.close()
 
 
-def test_old_kobo_session_without_canonical_attempt_keeps_legacy_path(
+def test_old_kobo_session_without_canonical_attempt_never_runs_legacy(
     tmp_path, monkeypatch,
 ):
     service, account = _ready_source(tmp_path)
@@ -91,11 +89,11 @@ def test_old_kobo_session_without_canonical_attempt_keeps_legacy_path(
     monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", legacy)
     try:
         service.opening_sync()
-        assert calls == [account.credential_id]
+        assert calls == []
         assert service.storage.metadata_get(
             "sync.source.materialization.last_attempt." +
             service.sync_source_id(account)
-        ) is not None
+        ) is None
     finally:
         service.close()
 
@@ -157,7 +155,7 @@ def test_on_start_policy_never_schedules_complete_canonical_kobo_session(
         service.close()
 
 
-def test_on_start_partial_abi_keeps_older_kobo_worker_eligible(tmp_path, monkeypatch):
+def test_on_start_partial_abi_never_reenables_older_kobo_worker(tmp_path, monkeypatch):
     service, account = _ready_source(tmp_path)
     session = service._sessions[service._session_key("kobo", "vault-1")]
     try:
@@ -167,7 +165,7 @@ def test_on_start_partial_abi_keeps_older_kobo_worker_eligible(tmp_path, monkeyp
                 "an incomplete ABI is not a provider request"
             ), raising=False,
         )
-        assert kobo_on_start_sessions(service) == (session,)
+        assert kobo_on_start_sessions(service) == ()
         assert service.storage.metadata_get(
             policy_key(service.sync_source_id(account))
         ) == "1"
