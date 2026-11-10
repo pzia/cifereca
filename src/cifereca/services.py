@@ -1633,9 +1633,9 @@ class LibraryService:
         return search_orchestration._mirror_remote_results(self, rows, identity_id=identity_id)
 
     def kobo_personal_right_states(self, identity_id: str) -> dict[tuple[str, str], str]:
-        """Read only confirmed Kobo possession for the selected identity."""
-        from .core.kobo_manifest_rights import kobo_personal_right_states
-        return kobo_personal_right_states(self, identity_id)
+        """Compatibility read of persisted rights; no Kobo manifest authority."""
+        from .core.search_owned_evidence import scoped_purchase_states
+        return scoped_purchase_states(self, identity_id=identity_id, provider_id="kobo")
 
     def mirror_personal_libraries(self) -> dict[str, int]:
         """Refresh private metadata with the same pinned binding as source Sync.
