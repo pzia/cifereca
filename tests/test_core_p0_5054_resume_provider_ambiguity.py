@@ -14,7 +14,10 @@ def _selector():
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name == "target_for_entry")
-    namespace = {}
+    def _require(value):
+        if not value:
+            raise ValueError("ambiguous or incomplete")
+    namespace = {"_require": _require}
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[node], type_ignores=[])), str(SOURCE), "exec"), namespace)
     return namespace["target_for_entry"]
