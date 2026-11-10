@@ -41,3 +41,18 @@ def test_read_only_consumers_do_not_import_retired_backup_engine(module):
         and any(alias.name == "_kobo_preview_paths" for alias in node.names)
     ]
     assert selector_imports == ["profile_source_paths"]
+
+
+def test_root_selector_keeps_missing_identity_read_only(tmp_path):
+    library = tmp_path / "offline"
+    service = SimpleNamespace(
+        config=SimpleNamespace(get=lambda key, default=None: {
+            "library.directory": str(library),
+            "kobo_backup.directory": "",
+        }.get(key, default)),
+        identity_by_id=lambda identity: None,
+    )
+    assert _kobo_preview_paths(service, "unknown") == (
+        library, library / "unknown" / "kobo",
+    )
+    assert not library.exists()
