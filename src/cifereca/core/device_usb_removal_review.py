@@ -163,7 +163,10 @@ def review_usb_removal(
         if physical.status != "final_candidate":
             return blocked(physical.reason)
         return UsbRemovalReview("review", "usb_removal_receipt_and_copy_verified")
-    except (sqlite3.Error, OSError, ValueError, TypeError, KeyError, OverflowError, RuntimeError):
+    except Exception:
+        # Backend/journal callbacks can raise arbitrary ordinary exceptions.
+        # A review must fail closed without propagating private paths, volume
+        # identifiers or backend exception text to UI/Diagnostics. Never unlink.
         return blocked("usb_removal_review_unavailable")
 
 

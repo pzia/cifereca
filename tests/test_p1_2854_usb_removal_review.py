@@ -163,3 +163,31 @@ def test_profile_generation_changed_during_scan_revokes_review(completed_copy, m
     monkeypatch.setattr(removal, "inspect_usb_copy_recovery", inspect_then_switch)
     assert removal.review_usb_removal(**args).reason == "usb_removal_scope_changed"
     assert final.exists()
+
+
+@pytest.mark.parametrize("source", ["journal", "storage", "profile"])
+def test_unexpected_review_callback_error_is_closed_and_never_unlinks(
+    completed_copy, monkeypatch, source,
+):
+    args, _, final, src = completed_copy
+    original_bytes = final.read_bytes()
+    private_message = "/media/private/reader-token/secret"
+    assert original_bytes == src.read_bytes()
+
+    def fail(*_args, **_kwargs):
+        raise LookupError(private_message)
+
+    if source == "journal":
+        monkeypatch.setattr(args["journal"], "get", fail)
+    elif source == "storage":
+        monkeypatch.setattr(args["storage"], "device_placement_get", fail)
+    else:
+        args = {**args, "current_profile": fail}
+
+    result = removal.review_usb_removal(**args)
+    assert result == removal.UsbRemovalReview(
+        "blocked", "usb_removal_review_unavailable",
+    )
+    assert result.executable is False
+    assert private_message not in repr(result)
+    assert final.read_bytes() == original_bytes
