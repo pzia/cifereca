@@ -61,6 +61,10 @@ DIAG_STATES = ("diagnostics-states-1366", "diagnostics-navigation-1366",
                "mainwindow-baseline-1366", "mainwindow-baseline-1600")
 
 LOCAL_GUI = {
+    # The source-inventory GTK gateway is startup/sync specific. Running all
+    # 44 independent GTK screens (especially Maintenance XTEST) for this
+    # isolated dispatch removal obscures real source-action regressions.
+    "source_inventory_startup.py": SYNC_CORE + ("startup", "core-navigation"),
     "modern_light_theme.py": THEME,
     "shell_stylesheet_controller.py": THEME,
     "action_layout.py": BOOK_DETAIL,
