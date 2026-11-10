@@ -4055,18 +4055,13 @@ class LibraryService:
         same global lock is intentionally named for local acquisition rather
         than Kobo so the 0.8.x loan synchronizer can share it.
         """
-        # #4858 W2: a global Kobo command may select multiple independent
-        # credentials, including modern and partial ABIs. For any modern
-        # source, dispatch each account with its own Core acquisition lock;
-        # the global 0.7 writer must never own a canonical source or nest
-        # the Sync A→B lease. All-legacy installations keep compatibility.
+        # A complete typed provider ABI is required. No legacy W2 fallback.
         from .core.kobo_backup_canonical_batch import run_global_kobo_with_canonical_sources
         routed = run_global_kobo_with_canonical_sources(self, progress)
         if routed is not None:
             return routed
-        return kobo_backup.sync_kobo_backup(
-            self, progress, lock_factory=InterProcessLock,
-            lock_path=acquisition_lock_file,
+        raise ProviderConfigurationError(
+            "kobo_legacy_w2_retired_use_canonical_provider"
         )
 
     def sync_kobo_backup_account(
@@ -4084,7 +4079,7 @@ class LibraryService:
         # dispatch a complete typed Kobo delivery ABI directly to the same
         # Core A→B Sync executor as generic Sync. The canonical Sync acquires
         # the global lease itself; never nest it beneath the 0.7 backup lock.
-        # An incomplete ABI retains the historical guarded compatibility.
+        # An incomplete ABI must fail closed; no legacy W2 dispatch.
         from .core.kobo_backup_canonical_dispatch import run_scoped_canonical_kobo_resume
         canonical = run_scoped_canonical_kobo_resume(
             self, credential_id, progress=progress, cancelled=cancelled,
@@ -4092,10 +4087,8 @@ class LibraryService:
         )
         if canonical is not None:
             return canonical
-        return kobo_backup.sync_kobo_backup(
-            self, progress, credential_id=credential_id, cancelled=cancelled,
-            retry_scope_blocked=retry_scope_blocked,
-            lock_factory=InterProcessLock, lock_path=acquisition_lock_file,
+        raise ProviderConfigurationError(
+            "kobo_legacy_w2_retired_use_canonical_provider"
         )
 
     def synchronize_kobo_selected_edition(
