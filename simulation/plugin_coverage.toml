@@ -44,7 +44,7 @@ data = ["local-library", "specialized-seed"]
 gap = "PDF e-ink, profils matériels, transformations en erreur non couverts"
 
 [package.home-page]
-contract_tests = ["src/plugins/home-page/tests/test_contract_038.py"]
+contract_tests = ["scripts/validate_plugin_contract.py"]
 failure_tests = ["src/plugins/home-page/tests/test_attention_coverage.py"]
 gtk_scenarios = ["e2e/home_summary_acceptance.py"]
 data = ["local-library"]
@@ -76,13 +76,13 @@ data = ["bnf"]
 gap = "Zéro résultat, indisponibilité et formats atypiques"
 
 [package.provider-gallica]
-contract_tests = ["src/plugins/provider-gallica/tests/test_contract_038.py"]
+contract_tests = ["scripts/validate_plugin_contract.py"]
 failure_tests = ["simulation/tests/test_opds_negative_contracts.py"]
 data = ["opds"]
 gap = "OPDS : 429/503, XML tronqué, page suivante interrompue, EPUB invalide ; audio et GTK non recettés"
 
 [package.provider-gutenberg]
-contract_tests = ["src/plugins/provider-gutenberg/tests/test_contract_038.py"]
+contract_tests = ["scripts/validate_plugin_contract.py"]
 failure_tests = ["simulation/tests/test_opds_negative_contracts.py"]
 data = ["opds"]
 gap = "OPDS : 429/503, XML tronqué, page suivante interrompue, EPUB invalide ; cache et GTK non recettés"
@@ -100,7 +100,7 @@ data = ["numilog"]
 gap = "ACSM, pagination extrême, expiration et documents invalides"
 
 [package.provider-paris]
-contract_tests = ["src/plugins/provider-paris/tests/test_contract_038.py"]
+contract_tests = ["scripts/validate_plugin_contract.py"]
 failure_tests = ["simulation/tests/test_paris_pnb_negative_protocol_p0.py"]
 data = ["paris"]
 gap = "PNB, disponibilité, comptes multiples et erreurs partielles"
