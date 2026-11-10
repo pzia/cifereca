@@ -11,7 +11,6 @@ def _host(accounts, sessions, *, enabled=True, due=False):
         accounts=accounts, _sessions={str(i): s for i, s in enumerate(sessions)},
         kobo_backup_enabled=lambda: enabled,
         kobo_backup_interval_minutes=lambda: 90,
-        _kobo_backup_due=lambda: due,
         sync_source_enabled=lambda account: account.enabled,
         storage=NS(metadata_get=lambda key: None),
     )
