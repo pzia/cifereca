@@ -165,3 +165,74 @@ def test_local_only_programmatic_reset_never_counts_as_user_consent():
     assert view._resetting_local_only_optin is False
     view._local_only_optin_changed()
     assert calls == ["refresh"]
+
+
+def test_feedback_editor_reads_fresh_core_books_even_with_no_ranking_result():
+    import sys
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+
+    repo = Path(__file__).resolve().parents[1]
+    plugin = str(repo / "src/plugins/recommendations")
+    if plugin not in sys.path:
+        sys.path.insert(0, plugin)
+    from recommendations import _fresh_feedback_targets
+
+    source = Mock()
+    source.library_entries.return_value = [
+        {"key": "artifact:a", "identity_id": "alice",
+         "title": "Livre local", "author": "A"},
+        {"key": "artifact:other", "identity_id": "bob",
+         "title": "Livre étranger", "author": "B"},
+        {"key": "artifact:duplicate", "identity_id": "alice",
+         "title": "Duplicata un", "author": "C"},
+        {"key": "artifact:duplicate", "identity_id": "alice",
+         "title": "Duplicata deux", "author": "C"},
+    ]
+    targets = _fresh_feedback_targets(source, "alice")
+    assert tuple(key for key, _ in targets) == ("artifact:a",)
+    source.library_entries.assert_called_once_with(
+        identity_id="alice", scan=False,
+    )
+    assert "Livre local" in targets[0][1]
+    # Neither provider nor ranking results are an input to this editor.
+    assert not source.search.called
+    assert not source.catalog_scan.called
+
+
+def test_feedback_editor_refuses_missing_or_corrupt_snapshot_without_stale_cache():
+    import sys
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+
+    repo = Path(__file__).resolve().parents[1]
+    plugin = str(repo / "src/plugins/recommendations")
+    if plugin not in sys.path:
+        sys.path.insert(0, plugin)
+    from recommendations import _fresh_feedback_targets
+
+    assert _fresh_feedback_targets(NS(), "alice") == ()
+    reader = Mock()
+    reader.library_entries.return_value = {"key": "not-a-list"}
+    assert _fresh_feedback_targets(reader, "alice") == ()
+    reader.library_entries.return_value = [
+        {"key": "artifact:b", "identity_id": "bob", "title": "Other"},
+    ]
+    assert _fresh_feedback_targets(reader, "alice") == ()
+    reader.library_entries.side_effect = RuntimeError(
+        "private provider bearer never shown to user"
+    )
+    import pytest
+    with pytest.raises(RuntimeError):
+        _fresh_feedback_targets(reader, "alice")
+
+
+def test_manage_feedback_does_not_depend_on_completed_recommendations_or_scan():
+    assert "targets = _fresh_feedback_targets(broker, identity_id)[:2048]" in SOURCE
+    assert "rows = reader(identity_id=identity_id, scan=False)" in SOURCE
+    segment = SOURCE.split("def _manage_feedback(self, *_args)", 1)[1].split(
+        "def _submit_feedback(", 1
+    )[0]
+    assert "self._reference_books, identity_id" not in segment
+    assert "catalog_broker" not in segment
+    assert "catalog_scan(" not in segment
