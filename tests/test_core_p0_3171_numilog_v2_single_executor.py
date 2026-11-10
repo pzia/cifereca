@@ -48,7 +48,7 @@ def test_startup_requires_complete_same_version_canonical_abi(names, canonical):
 
 
 @pytest.mark.parametrize("abi", [_V1, _V2, _V2_GUARDED, _V2_RUNTIME, ()])
-def test_legacy_startup_is_excluded_by_complete_v1_or_v2_contract(
+def test_retired_startup_never_uses_legacy_get_for_any_provider_contract(
     monkeypatch, abi,
 ):
     account = SimpleNamespace(
@@ -60,19 +60,10 @@ def test_legacy_startup_is_excluded_by_complete_v1_or_v2_contract(
     broker = SimpleNamespace(
         service=service, _source_id=lambda _account: "sync:synthetic",
     )
-    calls = []
-    def binding(_broker, sid):
-        calls.append(("binding", sid))
-        return (account, session, ())
-    def consent(_broker, sid):
-        calls.append(("consent", sid))
-        return "on_start"
-    monkeypatch.setattr(startup, "_binding", binding)
-    monkeypatch.setattr(startup, "mode", consent)
-    allowed = startup.eligible_source_ids(broker, "owner")
-    assert allowed == (() if abi else ("sync:synthetic",))
-    assert ("binding", "sync:synthetic") in calls
-    assert ("consent", "sync:synthetic") in calls
+    monkeypatch.setattr(startup, "_binding", lambda *_a: (account, session, ()), raising=False)
+    monkeypatch.setattr(startup, "mode", lambda *_a: "on_start", raising=False)
+    assert startup.eligible_source_ids(broker, "owner") == ()
+
 
 
 def test_static_probe_does_not_run_provider_descriptors():
