@@ -98,5 +98,4 @@ def test_only_current_verified_borrow_reprojects_exact_detail(provider_id, outco
         assert loans == [True]
     else:
         assert refreshed == []
-        assert loans == ([] if outcome == "stale" else
-                         [True] if outcome == "unverified" else [])
+        assert loans == []
