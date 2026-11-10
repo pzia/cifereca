@@ -44,7 +44,7 @@ def _controller():
 
 
 @pytest.mark.parametrize("provider_id", ["synthetic-alpha", "synthetic-beta", "unknown"])
-@pytest.mark.parametrize("outcome", ["confirmed", "unverified", "blocked", "stale"])
+@pytest.mark.parametrize("outcome", ["confirmed", "unverified", "blocked", "stale", "stale_after_loans"])
 def test_only_current_verified_borrow_reprojects_exact_detail(provider_id, outcome):
     account = Account(provider_id)
     item = SearchResult(provider_id)
@@ -69,7 +69,11 @@ def test_only_current_verified_borrow_reprojects_exact_detail(provider_id, outco
         search_page=NS(detail=detail),
         _eligible_borrow_accounts=lambda _: (session, [account]),
         _activity_result=lambda text: messages.append(text),
-        refresh_loans=lambda force: loans.append(force),
+        refresh_loans=lambda force: (
+            loans.append(force),
+            setattr(window, "_selected_search_id", "changed-after-refresh")
+            if outcome == "stale_after_loans" else None
+        ),
         show_error=lambda *args: messages.append(args),
     )
 
@@ -98,4 +102,4 @@ def test_only_current_verified_borrow_reprojects_exact_detail(provider_id, outco
         assert loans == [True]
     else:
         assert refreshed == []
-        assert loans == []
+        assert loans == ([True] if outcome == "stale_after_loans" else [])
