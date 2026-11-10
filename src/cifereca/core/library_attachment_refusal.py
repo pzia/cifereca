@@ -7,7 +7,7 @@ one refused attempt; it never grants a later attachment or undo authority.
 """
 from __future__ import annotations
 
-from .kobo_local_reconciliation import ReconciliationRejected
+from .local_attachment_refusal_types import ReconciliationRejected
 from .numilog_manual_link_transaction import ManualAttachmentRejected
 
 
