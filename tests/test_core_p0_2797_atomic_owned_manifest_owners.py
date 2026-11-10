@@ -128,19 +128,19 @@ def test_attested_owned_writer_refreshes_exact_owner_and_rejects_invalid_source(
     try:
         right = {
             "entitlement_id": "PRIVATE-one-pk",
-            "provider_id": "kobo", "credential_id": "vault",
+            "provider_id": "numilog", "credential_id": "vault",
             "account_id": None, "identity_id": "default",
             "item_id": "edition", "entitlement_type": "owned",
             "state": "active",
-            "metadata": {"source": "kobo.personal_manifest", "title": "First"},
+            "metadata": {"source": "numilog.authenticated_library", "title": "First"},
         }
         assert service.storage.entitlement_put_attested_owned(right) is True
         assert service.storage.entitlement_put_attested_owned(
             {**right, "state": "archived", "metadata": {
-                "source": "kobo.personal_manifest", "title": "Revised",
+                "source": "numilog.authenticated_library", "title": "Revised",
             }},
         ) is True
-        saved, = service.storage.entitlements(provider_id="kobo")
+        saved, = service.storage.entitlements(provider_id="numilog")
         assert saved["identity_id"] == "default"
         assert saved["state"] == "archived"
         assert saved["metadata"]["title"] == "Revised"
@@ -151,6 +151,6 @@ def test_attested_owned_writer_refreshes_exact_owner_and_rejects_invalid_source(
         ):
             with pytest.raises(ValueError, match="^invalid_attested_owned_right$"):
                 service.storage.entitlement_put_attested_owned(invalid)
-        assert len(service.storage.entitlements(provider_id="kobo")) == 1
+        assert len(service.storage.entitlements(provider_id="numilog")) == 1
     finally:
         service.close()
