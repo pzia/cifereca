@@ -715,9 +715,6 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     never an authorization to download. Deep inventory scanning cannot
     silently change an acquisition policy. No provider calls here.
     """
-    from .source_materialization_schedule import (
-        kobo_on_start_sessions, on_start_due,
-    )
     legacy_enabled = self.kobo_backup_enabled() is True
     kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
     connected = [s for s in kobo if s.connected]
@@ -732,11 +729,6 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         s for s in capable
         if any(a.credential_id == s.credential_id for a in eligible_accounts)
     ]
-    scheduled = kobo_on_start_sessions(self)
-    scheduled_credentials = {s.credential_id for s in scheduled}
-    scheduled_accounts = [
-        a for a in eligible_accounts if a.credential_id in scheduled_credentials
-    ]
     # #3198: only current source/session facts determine the opening state.
     # Historical kobo_backup.enabled is exposed separately for rollback,
     # never as a source-wide OFF decision or acquisition permission.
@@ -748,12 +740,8 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         reason = "capability_unavailable"
     elif not eligible:
         reason = "source_disabled"
-    elif not scheduled:
-        reason = "manual_only"
-    elif any(on_start_due(self, account) for account in scheduled_accounts):
-        reason = "started"
     else:
-        reason = "fresh_cache"
+        reason = "manual_only"  # Legacy on_start W2 is retired.
     # Only age/counts, never user/account identifiers, file paths or tokens.
     raw_last = self.storage.metadata_get("kobo_backup_last_success_at")
     try:
@@ -767,7 +755,7 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         "configured_kobo": len(kobo), "connected_kobo": len(connected),
         "eligible_kobo": len(eligible),
         "eligible_kobo_bindings": len(eligible_accounts),
-        "scheduled_kobo": len(scheduled),
+        "scheduled_kobo": 0,
         "interval_minutes": self.kobo_backup_interval_minutes(),
         "last_success_age_minutes": last_success_age_minutes,
         "deep": bool(deep),
@@ -1511,136 +1499,31 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         logger.warning("TRACE catalog mirror opening error code=catalog_mirror_failed")
     emit("catalog_mirror", result=catalog_mirror)
 
-    # Inventory/rights above always remain independent of local acquisition.
-    # No legacy global fallback: startup materializes only an explicitly
-    # enabled, unambiguous account under the existing global acquisition lock.
-    from .source_materialization_schedule import (
-        kobo_on_start_sessions, on_start_due, mark_on_start_attempt,
-    )
-    from .kobo_backup import _kobo_checkpoint_key
-    kobo_summary: dict[str, Any] | None = None
+    # #4858 D4: startup Kobo acquisition is handled by the already-executed
+    # canonical source Sync above. Never schedule legacy W2 by the historical
+    # on_start preference or refresh its 0.7 retry clock/checkpoint.
     kobo_decision = _kobo_opening_decision(self, deep=deep)
-    eligible_kobo = kobo_on_start_sessions(self)
-    scheduled_credentials = {session.credential_id for session in eligible_kobo}
-    scheduled_accounts = {
-        account.credential_id: account for account in self.accounts
-        if account.provider_id == "kobo"
-        and account.credential_id in scheduled_credentials
-    }
-    if kobo_decision["status"] in {"started", "fresh_cache"}:
-        legacy_eligible = [
-            session for session in eligible_kobo
-            if self.sync_source_id(
-                scheduled_accounts[session.credential_id]
-            ) not in canonical_kobo_sources
-            and not source_consent_configured(
-                self, scheduled_accounts[session.credential_id]
-            )
-        ]
-        # The outer opening-sync already owns the cross-process lock.
-        # The scoped helper is the ONLY automatic materialization path.
-        due = [
-            session for session in legacy_eligible
-            if on_start_due(self, scheduled_accounts[session.credential_id])
-        ]
-        executed: list[dict[str, Any]] = []
-        for session in due:
-            account = scheduled_accounts[session.credential_id]
-            # Settings/identity bindings may change while an opening task
-            # progresses. A stale planned source never gains authorization.
-            if not any(
-                current is session for current in kobo_on_start_sessions(self)
-            ):
-                # A credential reused for a NEW session is not the same
-                # consented account, even if another ON entry is available.
-                executed.append({"status": "failed", "errors": 1, "sources": []})
-                continue
-            if not mark_on_start_attempt(self, account):
-                executed.append({"status": "failed", "errors": 1, "sources": []})
-                continue
-            # #3196 D4: writing the retry clock may cross a reconnect or
-            # account switch. Recheck the exact live session *after* that
-            # write, immediately before the credential-scoped legacy GET.
-            # An old policy never follows a new Kobo borrower automatically.
-            if not any(
-                current is session for current in kobo_on_start_sessions(self)
-            ):
-                executed.append({"status": "failed", "errors": 1, "sources": []})
-                continue
-            try:
-                executed.append(
-                    self._sync_kobo_backup_account_locked(
-                        session.credential_id, progress=progress,
-                    )
-                )
-            except Exception:
-                logger.warning(
-                    "TRACE kobo scheduled account sync error code=kobo_scheduled_sync_failed"
-                )
-                executed.append({"status": "failed", "errors": 1, "sources": []})
-        metric_keys = (
-            "errors", "downloaded", "unchanged", "attempted", "pending",
-            "attention_required", "skipped_archived", "remaining", "manifest_items",
-        )
-        counters = {
-            key: sum(int(result.get(key) or 0) for result in executed)
-            for key in metric_keys
-        }
-        due_credentials = {session.credential_id for session in due}
-        cached_keys = {
-            _kobo_checkpoint_key(
-                scheduled_accounts[session.credential_id].identity_id,
-                session.credential_id,
-            ).rsplit(".", 1)[-1]
-            for session in legacy_eligible
-            if session.credential_id not in due_credentials
-        }
-        cached_sources = [
-            row for row in self.kobo_backup_diagnostic().get("sources", ())
-            if row.get("source_id") in cached_keys
-        ]
-        sources = [
-            source for result in executed
-            for source in result.get("sources", ())
-            if isinstance(source, dict)
-        ] + cached_sources
-        states = {str(row.get("status") or "partial") for row in sources}
-        if any(result.get("status") == "error" for result in executed):
-            batch_status = "error"
-        elif (counters["errors"] or any(not ok for ok in canonical_kobo_sources.values())
-              or {"aborted", "cancelled", "failed", "partial", "interrupted"} & states):
-            batch_status = "partial"
-        elif "attention_required" in states:
-            batch_status = "attention_required"
-        elif len(sources) < len(legacy_eligible):
-            batch_status = "partial"
-        else:
-            batch_status = "complete"
-        if not due and not canonical_kobo_sources:
-            batch_status = (
-                "fresh_cache" if batch_status == "complete"
-                else "fresh_cache_partial"
-            )
-        kobo_summary = {
-            **counters, "scope": "accounts", "status": batch_status,
-            "sessions": len(eligible_kobo), "synced_accounts": len(due),
-            "cached_accounts": len(legacy_eligible) - len(due),
+    if canonical_kobo_sources:
+        canonical_ok = all(canonical_kobo_sources.values())
+        kobo_summary: dict[str, Any] | None = {
+            "scope": "accounts",
+            "status": "complete" if canonical_ok else "partial",
             "canonical_sources": len(canonical_kobo_sources),
-            "sources": sources, "skipped_fresh": not bool(due or canonical_kobo_sources),
+            "sessions": len(canonical_kobo_sources),
+            "synced_accounts": len(canonical_kobo_sources),
+            "cached_accounts": 0,
+            "sources": [],
+            "skipped_fresh": False,
         }
-        kobo_decision["status"] = (
-            "error" if batch_status == "error"
-            else "partial" if batch_status in {
-                "partial", "attention_required", "fresh_cache_partial", "cancelled",
-            } else "fresh_cache" if batch_status == "fresh_cache" else "started"
+        kobo_decision["status"] = "started" if canonical_ok else "partial"
+    else:
+        # Preserve only a descriptive compatibility state, never an implied
+        # 0.7 permission to acquire bytes or mutate backup_items.
+        kobo_summary = (
+            {"status": "manual_only", "skipped": True}
+            if kobo_decision["persisted_enabled"] is True else None
         )
-    elif (kobo_decision["status"] == "manual_only"
-          and kobo_decision["persisted_enabled"] is True):
-        # Keep the historical compatibility summary exactly as before:
-        # legacy OFF publishes no `kobo` batch, even though the source
-        # diagnostic correctly says manual_only. No source permission here.
-        # A formerly enabled global toggle never licenses new downloads.
-        kobo_summary = {"status": "manual_only", "skipped": True}
+        kobo_decision["status"] = "manual_only"
     for field in ("manifest_items", "owned", "archived", "downloadable",
                   "candidate_count", "attempted", "downloaded", "pending",
                   "attention_required", "reconcile_required", "errors"):

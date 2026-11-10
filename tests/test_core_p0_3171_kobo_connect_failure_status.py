@@ -59,7 +59,7 @@ def test_unconnected_kobo_account_makes_opening_sync_failed(tmp_path, monkeypatc
         assert own["status"] == "failed"
         assert own["errors"] >= 1
         assert own["connection_failures"] == 1
-        assert result["kobo_decision"]["status"] in {"disabled", "no_session"}
+        assert result["kobo_decision"]["status"] in {"disabled", "no_session", "manual_only"}
     finally:
         service.close()
 

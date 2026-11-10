@@ -39,40 +39,27 @@ def test_attested_provider_probe_is_required_and_fail_closed(probe):
     (False, None), (None, None), ("true", None),
     (True, False), (True, RuntimeError),
 ])
-def test_no_delegated_resolver_call_when_session_lacks_current_bearer_grant(
-    tmp_path, claim, probe,
+def test_retired_d3_cannot_use_delegated_bearer_without_canonical_abi(
+    tmp_path, monkeypatch, claim, probe,
 ):
-    def descriptor(product, revision, mode):
-        return {
-            "provider": "kobo", "schema_version": "1.4",
-            "acquisition": {
-                "product_id": product, "revision_id": revision,
-                "mode": mode, "validity": {},
-                "candidates": [_candidate(
-                    url="https://cdn.invalid/kdrm",
-                    media_format="kepub", source_format="KEPUB",
-                    handling="kobo_kdrm", drm="KDRM",
-                )],
-            },
-        }
-
-    service, session = _service(tmp_path, payload_factory=descriptor)
+    from cifereca.providers import ProviderConfigurationError
+    service, session = _service(tmp_path, payload_factory=lambda *_args: pytest.fail("retired D3 must not resolve payload"))
     session.supports_acquisition_delegation = claim
     if probe is not None:
         def current():
             if probe is RuntimeError:
-                raise RuntimeError("synthetic session changed")
+                raise RuntimeError("stale bearer")
             return probe
         session._delegation_admitted = current
-    service.kobo_adept_state = lambda **_kw: _state(acsm=False, delegated=True)
-    service.resolve_adept_profile = lambda **_kw: ("", "none")
+    monkeypatch.setattr(
+        session, "resolve_acquisition",
+        lambda *_a, **_kw: pytest.fail("old D3 must not probe descriptor"),
+    )
     try:
-        with pytest.raises(KoboVaultError) as error:
+        with pytest.raises(ProviderConfigurationError,
+                           match="kobo_legacy_direct_get_retired"):
             service.acquire_direct_item(_item())
-        assert error.value.code == "missing_delegation_scope"
-        assert error.value.status_code == 403
-        assert session.acquisition_modes
-        assert set(session.acquisition_modes) == {"descriptor"}
-        assert session._cifereca_delegation_attempts_saved >= 1
+        assert session.acquisition_modes == []
+        assert service.storage.acquisitions(provider_id="kobo") == []
     finally:
         service.close()

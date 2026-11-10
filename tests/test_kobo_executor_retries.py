@@ -215,276 +215,46 @@ def _success_result(request: dict) -> dict:
     }
 
 
-def test_source_auth_expired_re_resolves_delegated_and_forwards_ephemeral_header(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path)
-    calls: list[dict] = []
-
-    def execute(request):
-        calls.append(request)
-        if len(calls) == 1:
-            raise KoboAdeptError("expired", code="source_auth_expired", exit_code=4)
-        return _success_result(request)
-
-    monkeypatch.setattr(service, "execute_acquisition_request", execute)
-    try:
-        result = service.acquire_direct_item(_item())
-
-        assert result.path and result.path.is_file()
-        assert session.acquisition_modes == ["descriptor", "delegated"]
-        assert calls[0]["source"]["headers"] == {}
-        assert calls[1]["source"]["headers"] == {"Authorization": "Bearer ephemeral"}
-    finally:
-        service.close()
-
-
-def test_unusable_android_candidate_falls_back_to_desktop_profile(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path, ProfileFallbackSession)
-    calls: list[dict] = []
-    monkeypatch.setattr(
-        service,
-        "execute_acquisition_request",
-        lambda request: calls.append(request) or _success_result(request),
-    )
-    try:
-        result = service.acquire_direct_item(_item())
-
-        assert result.path and result.path.is_file()
-        assert session.acquisition_modes == ["descriptor", "descriptor"]
-        assert session.acquisition_profiles == ["Android", "Desktop"]
-        assert len(calls) == 1
-        assert calls[0]["metadata"]["vault_display_profile"] == "Desktop"
-    finally:
-        service.close()
-
-
-class RotatingURLSession(FakeKoboSession):
-    refreshed_candidate: dict | None = None
-
-    def resolve_acquisition(
-        self,
-        product_id,
-        *,
-        revision_id=None,
-        mode="descriptor",
-        display_profile=None,
-    ):
-        payload = super().resolve_acquisition(
-            product_id, revision_id=revision_id, mode=mode, display_profile=display_profile,
-        )
-        if mode == "delegated":
-            candidate = payload["acquisition"]["candidates"][0]
-            candidate["url"] = "https://cdn.example/renewed-book.epub"
-            self.refreshed_candidate = dict(candidate)
-        return payload
-
-
-def test_kobo_expired_url_retry_persists_new_candidate_and_attempt(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path, RotatingURLSession)
-    calls: list[dict] = []
-
-    def execute(request):
-        calls.append(request)
-        if len(calls) == 1:
-            raise KoboAdeptError("expired", code="source_auth_expired", exit_code=4)
-        return _success_result(request)
-
-    monkeypatch.setattr(service, "execute_acquisition_request", execute)
-    try:
-        result = service.acquire_direct_item(_item())
-        assert result.path and result.path.is_file()
-        assert session.acquisition_modes == ["descriptor", "delegated"]
-        assert len(calls) == 2
-        assert calls[1]["source"]["url"] == "https://cdn.example/renewed-book.epub"
-
-        assert session.refreshed_candidate is not None
-        expected = KoboOfferAdapter.normalize_candidate(session.refreshed_candidate)
-        rows = service.storage.acquisitions(provider_id="kobo")
-        assert len(rows) == 1
-        row = rows[0]
-        assert row["status"] == "complete"
-        assert row["attempt_count"] == 2
-        assert row["candidate_id"] == expected.candidate_id
-        assert row["strategy"] == "http_plain"
-        assert row["executor"] == "kobo-adept"
-        assert row["metadata"]["candidate_shape"] == expected.safe_shape()
-        assert row["metadata"]["acquisition_mode"] == "delegated-http"
-    finally:
-        service.close()
-
-
-def test_kobo_runtime_failure_is_retryable_in_ledger(tmp_path: Path, monkeypatch):
-    service, _session = _service(tmp_path)
-
-    def broken(_request):
-        raise KoboAdeptError("download failed", code="source_unavailable", retryable=True)
-
-    monkeypatch.setattr(service, "execute_acquisition_request", broken)
-    try:
-        with pytest.raises(KoboAdeptError, match="download failed"):
-            service.acquire_direct_item(_item())
-
-        rows = service.storage.acquisitions(provider_id="kobo")
-        assert len(rows) == 1
-        assert rows[0]["status"] == "retryable_error"
-        assert rows[0]["error_code"] == "source_unavailable"
-        assert rows[0]["attempt_count"] == 1
-        assert "Bearer" not in (rows[0]["error_message"] or "")
-    finally:
-        service.close()
-
-
-def test_kobo_second_attempt_failure_never_leaves_acquiring(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path)
-    calls = []
-
-    def execute(request):
-        calls.append(request)
-        if len(calls) == 1:
-            raise KoboAdeptError("expired", code="source_auth_expired", exit_code=4)
-        raise KoboAdeptError("runtime rejected", code="not_authorized", retryable=False)
-
-    monkeypatch.setattr(service, "execute_acquisition_request", execute)
-    try:
-        with pytest.raises(KoboAdeptError, match="runtime rejected"):
-            service.acquire_direct_item(_item())
-
-        rows = service.storage.acquisitions(provider_id="kobo")
-        assert len(rows) == 1
-        assert rows[0]["status"] == "attention_required"
-        assert rows[0]["error_code"] == "not_authorized"
-        assert rows[0]["attempt_count"] == 2
-        assert rows[0]["metadata"]["acquisition_mode"] == "delegated-http"
-        assert session.acquisition_modes == ["descriptor", "delegated"]
-    finally:
-        service.close()
-
-
-def test_kobo_configuration_failure_is_attention_required(tmp_path: Path, monkeypatch):
-    service, _session = _service(tmp_path)
-
-    def misconfigured(_request):
-        raise ProviderConfigurationError("bad config")
-
-    monkeypatch.setattr(service, "execute_acquisition_request", misconfigured)
-    try:
-        with pytest.raises(ProviderConfigurationError, match="bad config"):
-            service.acquire_direct_item(_item())
-        row = service.storage.acquisitions(provider_id="kobo")[0]
-        assert row["status"] == "attention_required"
-        assert row["error_code"] == "kobo_acquisition_failed"
-        assert row["attempt_count"] == 1
-    finally:
-        service.close()
-
-
-def test_kobo_preflight_failure_does_not_create_false_ledger_entry(tmp_path: Path):
-    service, _session = _service(tmp_path)
-    service.kobo_adept_state = lambda **_kwargs: {"available": False}
-    try:
-        with pytest.raises(ProviderConfigurationError, match="n'est pas prêt"):
-            service.acquire_direct_item(_item())
-        assert service.storage.acquisitions(provider_id="kobo") == []
-    finally:
-        service.close()
-
-def test_delegation_scope_denied_after_expired_url_is_not_retried(tmp_path: Path, monkeypatch):
-    """A real plugin 403 on URL refresh stays a scoped, nonretryable error."""
-    import importlib.util
-    from dataclasses import replace
-
-    from cifereca.kobo.vault import KoboVaultError as CoreKoboVaultError
-
-    plugin_path = Path(__file__).resolve().parents[1] / "src/plugins/provider-kobo/cifereca_kobo_vault.py"
-    # Keep direct-file provider imports independent from the global test path.
-    monkeypatch.syspath_prepend(str(plugin_path.parent))
-    spec = importlib.util.spec_from_file_location("test_real_vault_refresh_scope", plugin_path)
-    assert spec is not None and spec.loader is not None
-    plugin = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(plugin)
-    assert plugin.KoboVaultError is not CoreKoboVaultError
-
-    service, session = _service(tmp_path)
-    original_resolver = session.resolve_acquisition
-    delegated_requests: list[str] = []
-    runtime_requests: list[dict] = []
-
-    def resolve(product_id, *, revision_id=None, mode="descriptor", display_profile=None):
-        if mode == "delegated":
-            delegated_requests.append(product_id)
-            raise plugin.KoboVaultError(
-                "Kobo-Vault : forbidden", code="forbidden", status_code=403,
-            )
-        return original_resolver(
-            product_id, revision_id=revision_id, mode=mode,
-            display_profile=display_profile,
-        )
-
-    def expired(request):
-        runtime_requests.append(request)
-        raise KoboAdeptError("expired", code="source_auth_expired", exit_code=4)
-
-    monkeypatch.setattr(session, "resolve_acquisition", resolve)
-    monkeypatch.setattr(service, "execute_acquisition_request", expired)
-    try:
-        first = _item()
-        second = replace(first, id="kobo:vault-1:book-2", record_id="book-2")
-        for item in (first, second):
-            with pytest.raises(CoreKoboVaultError) as caught:
-                service.acquire_direct_item(item)
-            assert caught.value.status_code == 403
-            assert caught.value.code == "missing_delegation_scope"
-
-        # The first item probes the missing permission. Subsequent items
-        # still inspect descriptors but send no other forbidden delegated GET.
-        assert delegated_requests == ["book-1"]
-        assert getattr(session, "_cifereca_delegation_attempts_saved", 0) >= 1
-        assert len(runtime_requests) == 2
-        rows = service.storage.acquisitions(provider_id="kobo")
-        assert len(rows) == 2
-        assert all(row["status"] == "attention_required" for row in rows)
-        assert all(row["error_code"] == "missing_delegation_scope" for row in rows)
-    finally:
-        service.close()
-
-
-@pytest.mark.parametrize("status,scope_code", [
-    (403, "missing_delegation_scope"),
-    (401, "unauthorized"),
+@pytest.mark.parametrize("session_type", [FakeKoboSession, ProfileFallbackSession])
+@pytest.mark.parametrize("failure", [
+    "auth_expired", "delegation_403", "invalid_candidate",
+    "runtime_failure", "destination_present",
 ])
-def test_provider_permission_denial_cannot_override_nonretryable_ledger(
-    tmp_path: Path, monkeypatch, status, scope_code,
+def test_retired_direct_executor_never_issues_get_or_retry(
+    tmp_path: Path, monkeypatch, session_type, failure,
 ):
-    """The plugin's retryable hint cannot restart a denied HTTP permission."""
-    import importlib.util
+    """D3 legacy descriptor/HTTP retry is retired; canonical GET owns CAS.
 
-    plugin_path = Path(__file__).resolve().parents[1] / "src/plugins/provider-kobo/cifereca_kobo_vault.py"
-    # Keep direct-file provider imports independent from the global test path.
-    monkeypatch.syspath_prepend(str(plugin_path.parent))
-    spec = importlib.util.spec_from_file_location(
-        "test_vault_nonretryable_permission", plugin_path,
-    )
-    assert spec is not None and spec.loader is not None
-    plugin = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(plugin)
-
-    service, _session = _service(tmp_path)
-    rejected = plugin.KoboVaultError(
-        "provider denied authorization", code=scope_code, status_code=status,
-    )
-    rejected.retryable = True  # hostile/inconsistent upstream retry hint
-
-    def deny(_request):
-        raise rejected
-
-    monkeypatch.setattr(service, "execute_acquisition_request", deny)
+    A previous URL, delegated token, candidate profile or local filename
+    cannot constitute download authority without the exact selected source
+    and persisted canonical consent. Positive 403 recovery/retry belongs
+    to the provider plugin + canonical selected-delivery test suites.
+    """
+    service, session = _service(tmp_path, session_type)
     try:
-        with pytest.raises(plugin.KoboVaultError) as caught:
-            service.acquire_direct_item(_item())
-        assert caught.value.status_code == status
-        rows = service.storage.acquisitions(provider_id="kobo")
-        assert len(rows) == 1
-        assert rows[0]["status"] == "attention_required"
-        assert rows[0]["error_code"] == scope_code
-        assert rows[0]["attempt_count"] == 1
+        item = _item()
+        if failure == "destination_present":
+            path = service._kobo_backup_target_dir("default") / "Book One.epub"
+            _write_epub(path)
+            original = path.read_bytes()
+        else:
+            path, original = None, None
+        calls = []
+        def forbidden(*_args, **_kwargs):
+            calls.append("provider")
+            pytest.fail("retired D3 must not fetch or execute bytes")
+        monkeypatch.setattr(session, "resolve_acquisition", forbidden)
+        monkeypatch.setattr(service, "execute_acquisition_request", forbidden)
+        before = service.storage.acquisitions(provider_id="kobo")
+        with pytest.raises(
+            ProviderConfigurationError,
+            match="kobo_legacy_direct_get_retired",
+        ):
+            service.acquire_direct_item(item)
+        assert calls == []
+        assert service.storage.acquisitions(provider_id="kobo") == before
+        assert session.acquisition_modes == []
+        if path is not None:
+            assert path.read_bytes() == original
     finally:
         service.close()

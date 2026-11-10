@@ -13,7 +13,7 @@ from cifereca.core.source_materialization_schedule import (
     can_enable_kobo_on_start, kobo_on_start_sessions, policy_key,
 )
 from tests.test_kobo_sync_modes import (
-    _service, _enable_on_start, _neutralize_unrelated_sync_work,
+    _service, _neutralize_unrelated_sync_work,
 )
 
 
@@ -23,9 +23,9 @@ def test_detached_alias_cannot_run_legacy_startup_or_consume_clock(
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
-        _enable_on_start(service)
         account = service.accounts[0]
         sid = SynchronizationBrokerImpl._source_id(account)
+        service.storage.metadata_set(policy_key(sid), "1")
         clock = "sync.source.materialization.last_attempt." + sid
         # This historical minimal fake uses a tuple key (unlike the real
         # ProviderSession runtime); arbitrary aliases remain forbidden.
@@ -54,7 +54,7 @@ def test_detached_alias_cannot_run_legacy_startup_or_consume_clock(
         # consent; no policy row is recreated or silently deleted.
         service._sessions.pop(("kobo", "stale-alias"))
         service._sessions[key] = session
-        assert kobo_on_start_sessions(service) == (session,)
+        assert kobo_on_start_sessions(service) == ()
     finally:
         service.close()
 
@@ -107,7 +107,7 @@ def test_real_provider_session_never_accepts_tuple_alias_as_registry_key(
             "enabled": True,
         })
         monkeypatch.setattr(service, "sync_source_enabled", lambda _a: True)
-        assert can_enable_kobo_on_start(service, account)
+        assert not can_enable_kobo_on_start(service, account)
         assert kobo_on_start_sessions(service) == ()
 
         service._sessions.pop(key)

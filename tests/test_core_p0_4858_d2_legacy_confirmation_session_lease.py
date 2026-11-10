@@ -28,96 +28,66 @@ def _snapshot(case):
 
 
 @pytest.mark.parametrize("switch", (
-    "new_session_same_scope",
-    "provider_epoch",
-    "core_epoch",
+    "new_session_same_scope", "provider_epoch", "core_epoch",
 ))
-def test_legacy_token_is_revoked_after_session_aba_even_with_same_manifest(
-    case, switch,
-):
-    plan = case.broker.prepare_local_materialization(case.source)
-    assert plan.ok
-    token = plan.facts["confirmation_token"]
-    assert case.calls == {"vault-1": 0, "vault-2": 1, "vault-3": 0}
-    before = _snapshot(case)
+def test_retired_legacy_token_never_authorizes_session_aba(case, switch):
+    """The revoked D2 token is unusable even before session changes."""
+    initial = _snapshot(case)
+    prepared = case.broker.prepare_local_materialization(case.source)
+    assert not prepared.ok
+    assert prepared.facts["status"] == "canonical_delivery_unavailable"
+    assert "confirmation_token" not in prepared.facts
     if switch == "new_session_same_scope":
-        replacement = copy.copy(case.target)
-        assert replacement is not case.target
-        assert replacement.accounts[0].unique_id == case.target.accounts[0].unique_id
         case.service._sessions[
             case.service._session_key("kobo", case.target.credential_id)
-        ] = replacement
+        ] = copy.copy(case.target)
     elif switch == "provider_epoch":
         case.target._epoch = 1
     else:
         case.service._source_context_epoch += 1
-
-    result = case.broker.materialize_source(case.source, token)
-    assert not result.ok
-    assert result.facts["status"] == "source_changed"
-    assert "PRIVATE" not in repr(result)
-    assert case.calls == {"vault-1": 0, "vault-2": 1, "vault-3": 0}
-    assert not case.downloaded
-    assert _snapshot(case) == before
+    replay = case.broker.materialize_source(case.source, "a" * 64)
+    assert not replay.ok
+    assert replay.facts["status"] in {
+        "canonical_delivery_unavailable", "source_changed",
+    }
+    assert not case.downloaded and not any(case.calls.values())
+    assert _snapshot(case) == initial
 
 
 @pytest.mark.parametrize("switch", (
-    "new_session_same_scope",
-    "provider_epoch",
-    "core_epoch",
+    "new_session_same_scope", "provider_epoch", "core_epoch",
 ))
-def test_reconnect_during_legacy_rights_preview_does_not_issue_token(
-    case, monkeypatch, switch,
-):
-    original = case.target.backup_manifest
-
-    def switch_during_manifest():
-        result = original()
-        if switch == "new_session_same_scope":
-            case.service._sessions[
-                case.service._session_key("kobo", case.target.credential_id)
-            ] = copy.copy(case.target)
-        elif switch == "provider_epoch":
-            case.target._epoch = 1
-        else:
-            case.service._source_context_epoch += 1
-        return result
-
-    monkeypatch.setattr(case.target, "backup_manifest", switch_during_manifest)
+def test_partial_abi_never_reads_manifest_to_issue_token(case, monkeypatch, switch):
+    """No manifest fetch means no old check-then-act TOCTOU window."""
+    def forbidden():
+        pytest.fail("W2 must not fetch a manifest or mint a token")
+    monkeypatch.setattr(case.target, "backup_manifest", forbidden)
     before = _snapshot(case)
-    plan = case.broker.prepare_local_materialization(case.source)
-    assert not plan.ok
-    assert plan.facts["status"] == "source_changed"
-    assert "confirmation_token" not in plan.facts
-    assert not case.downloaded
+    prepared = case.broker.prepare_local_materialization(case.source)
+    assert not prepared.ok
+    assert prepared.facts["status"] == "canonical_delivery_unavailable"
+    assert "confirmation_token" not in prepared.facts
     assert _snapshot(case) == before
+    assert not case.downloaded and not any(case.calls.values())
 
 
 @pytest.mark.parametrize("mode", ("core_secondary", "provider_secondary"))
-def test_secondary_empty_kobo_borrower_cannot_prepare_or_confirm_manual_get(
-    case, mode,
-):
+def test_secondary_empty_borrower_never_issues_legacy_token(case, mode):
     account = case.target.accounts[0]
-    assert account.is_primary is True
     account.unique_id = ""
     case.source = case.broker._source_id(account)
-
     secondary = replace(account, is_primary=False)
     if mode == "core_secondary":
-        # Preserve the canonical source_id even if is_primary is switched,
-        # demonstrating why account ID alone cannot validate it.
         case.service.accounts = [
             secondary if x is account else x for x in case.service.accounts
         ]
-        case.target._accounts = [secondary]
-    else:
-        case.target._accounts = [secondary]
-
+    case.target._accounts = [secondary]
     before = _snapshot(case)
     result = case.broker.prepare_local_materialization(case.source)
     assert not result.ok
-    assert result.facts["status"] in {"invalid_source", "ambiguous_account"}
+    assert result.facts["status"] in {
+        "invalid_source", "ambiguous_account", "canonical_delivery_unavailable",
+    }
     assert "confirmation_token" not in result.facts
-    assert not case.downloaded
-    assert case.calls == {"vault-1": 0, "vault-2": 0, "vault-3": 0}
+    assert not case.downloaded and not any(case.calls.values())
     assert _snapshot(case) == before

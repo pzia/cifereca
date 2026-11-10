@@ -7,7 +7,6 @@ from __future__ import annotations
 import pytest
 
 from cifereca.storage import Storage
-from tests.test_kobo_backup_reconcile_prune import _service
 
 
 def _record(item_id, *, status="acquiring", provider="kobo", credential="vault"):
@@ -71,41 +70,6 @@ def test_seen_interrupted_kobo_record_is_not_modified_by_prune(
         assert store.backup_get("kobo", "vault", "still-listed") == before
     finally:
         store.close()
-
-
-def test_empty_manifest_recovery_is_durable_and_makes_no_download(tmp_path, monkeypatch):
-    service = _service(tmp_path, manifest=[])
-    try:
-        service.storage.backup_put({
-            **_record("interrupted", status="acquiring", credential="vault-1"),
-            "identity_id": "default",
-            # The W3 recovery fixture must use the currently authenticated
-            # account; a previous borrower may not be resumed by this one.
-            "account_id": "account",
-        })
-        monkeypatch.setattr(
-            service, "_execute_kobo_acquisition",
-            lambda *_args, **_kwargs: pytest.fail(
-                "an absent manifest does not attest a fresh download offer"
-            ),
-        )
-        first = service.sync_kobo_backup()
-        receipt = service.storage.backup_get("kobo", "vault-1", "interrupted")
-        assert first["downloaded"] == 0
-        assert first["recovered_interrupted"] == 1
-        assert first["legacy_pruned"] == 0
-        assert receipt is not None
-        assert receipt["status"] == "pending_acquisition"
-        assert receipt["revision_id"] == "revision-a"
-        assert receipt["attempt_count"] == 2
-        assert receipt["local_path"] is None
-        second = service.sync_kobo_backup()
-        assert second["downloaded"] == 0
-        assert second["recovered_interrupted"] == 0
-        assert second["legacy_pruned"] == 0
-        assert service.storage.backup_get("kobo", "vault-1", "interrupted") == receipt
-    finally:
-        service.close()
 
 
 @pytest.mark.parametrize("ledger_state", [

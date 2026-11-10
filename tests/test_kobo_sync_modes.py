@@ -63,18 +63,17 @@ def _neutralize_unrelated_sync_work(service: LibraryService, monkeypatch) -> Non
 
 
 def _enable_on_start(service: LibraryService, credential_id: str = "vault") -> None:
-    """Model a real source binding and an explicit, separate startup opt-in."""
+    """Seed an archived 0.7 ON bit, never an executable startup grant."""
     from cifereca.brokers import SynchronizationBrokerImpl
+    from cifereca.core.source_materialization_schedule import policy_key
     account = next(a for a in service.accounts if a.credential_id == credential_id)
     service.storage.provider_connection_put({
         "identity_id": account.identity_id, "provider_id": "kobo",
         "credential_id": credential_id, "enabled": True,
     })
-    broker = SynchronizationBrokerImpl(service)
-    assert broker.set_local_materialization_schedule(
-        broker._source_id(account), "on_start",
-    ) == "on_start"
-
+    sid = SynchronizationBrokerImpl._source_id(account)
+    service.storage.metadata_set(policy_key(sid), "1")
+    assert service.storage.metadata_get(policy_key(sid)) == "1"
 
 def test_fast_sync_uses_fresh_kobo_cache_and_skips_filesystem_scan(tmp_path: Path, monkeypatch):
     service = _service(tmp_path)
@@ -195,13 +194,10 @@ def test_opening_only_materializes_source_with_explicit_on_start_consent(tmp_pat
 
         monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", scoped)
         result = service._opening_sync_locked(deep=False)
-        assert calls == ["vault"]
-        assert result["kobo"]["scope"] == "accounts"
-        assert result["kobo"]["synced_accounts"] == 1
-        assert result["kobo"]["cached_accounts"] == 0
-        assert result["kobo"]["status"] == "complete"
-        assert len(result["kobo"]["sources"]) == 1
-        assert result["kobo"]["sources"][0]["source_id"] == source1.rsplit(".", 1)[-1]
+        assert calls == []
+        assert result["kobo_decision"]["scheduled_kobo"] == 0
+        assert result["kobo"]["status"] == "manual_only"
+        assert result["kobo"]["skipped"] is True
     finally:
         service.close()
 
@@ -226,10 +222,9 @@ def test_opening_all_cached_partial_sources_remain_visible(tmp_path: Path, monke
             ),
         )
         result = service._opening_sync_locked(deep=False)
-        assert result["kobo"]["status"] == "fresh_cache_partial"
-        assert result["kobo"]["cached_accounts"] == 1
-        assert result["kobo"]["synced_accounts"] == 0
-        assert result["kobo"]["sources"][0]["status"] == "partial"
+        assert result["kobo"]["status"] == "manual_only"
+        assert result["kobo_decision"]["scheduled_kobo"] == 0
+        assert service.storage.metadata_get(key) is not None
     finally:
         service.close()
 
@@ -269,9 +264,9 @@ def test_opening_rechecks_recently_interrupted_kobo_checkpoint_without_global_re
             }
         monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", scoped)
         result = service._opening_sync_locked(deep=False)
-        assert calls == ["vault"]
-        assert result["kobo"]["scope"] == "accounts"
-        assert result["kobo"]["synced_accounts"] == 1
-        assert result["kobo"]["cached_accounts"] == 0
+        assert calls == []
+        assert result["kobo"]["status"] == "manual_only"
+        assert result["kobo_decision"]["scheduled_kobo"] == 0
+        assert service.storage.metadata_get(key) is not None
     finally:
         service.close()

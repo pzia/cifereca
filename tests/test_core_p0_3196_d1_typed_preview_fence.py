@@ -7,9 +7,10 @@ is not used and preview never modifies persisted provenance.
 from __future__ import annotations
 
 import hashlib
-import json
 
 import pytest
+
+from cifereca.providers import ProviderConfigurationError
 
 from tests.test_kobo_backup_preview import _backup
 from tests.test_kobo_backup_fault_isolation import _service, _write_epub
@@ -36,6 +37,28 @@ def _persistent(service):
                           "acquisition_ledger", "entitlements", "artifacts",
                           "placements", "catalog_entries")
         )
+
+
+def _no_legacy_preview_authority(service, *, refresh=False, verify=False):
+    """D1 can refuse or return canonical-B-only history, never a 0.7 claim."""
+    try:
+        result = service.kobo_backup_preview(
+            "vault-1", refresh_manifest=refresh, verify_local_files=verify,
+        )
+    except ProviderConfigurationError as exc:
+        assert str(exc) in {
+            "canonical_kobo_preview_scope_unavailable",
+            "canonical_kobo_preview_scope_changed",
+            "canonical_kobo_preview_abi_unavailable",
+        }
+        return
+    assert not refresh, "partial ABI cannot refresh provider A"
+    assert result["acquisition_authorized"] is False
+    assert result["canonical_source"] is True
+    assert result["historical_canonical_only"] is True
+    assert result["manifest_refreshed"] is False
+    for key in ("already_local_linked", "already_local_verified", "potentially_missing"):
+        assert result["counts"][key] == 0
 
 
 @pytest.mark.parametrize("fresh,verify", [
@@ -66,29 +89,16 @@ def test_typed_source_never_gains_local_presence_from_backup_row(
             lambda *_a, **_kw: pytest.fail("no legacy descriptor"),
         )
         monkeypatch.setattr(
+            session, "backup_manifest",
+            lambda: pytest.fail("retired D1 must not GET a 0.7 manifest"),
+        )
+        monkeypatch.setattr(
             service, "_execute_kobo_acquisition",
             lambda *_a, **_kw: pytest.fail("no legacy GET"),
         )
-        if not fresh:
-            monkeypatch.setattr(
-                session, "backup_manifest",
-                lambda: pytest.fail("offline preview cannot fetch manifest"),
-            )
-        result = service.kobo_backup_preview(
-            "vault-1", refresh_manifest=fresh, verify_local_files=verify,
-        )
-        assert result["counts"]["attention_required"] == 1
-        assert result["counts"]["already_local_linked"] == 0
-        assert result["counts"]["already_local_verified"] == 0
-        assert result["counts"]["potentially_missing"] == 0
-        assert result["counts"]["candidate_unverified"] == 0
-        assert result["blocking_items"] == 1
-        assert result["acquisition_authorized"] is False
+        _no_legacy_preview_authority(service, refresh=fresh, verify=verify)
         assert _persistent(service) == before
         assert file.read_bytes() == raw
-        public = json.dumps(result)
-        for raw_id in ("vault-1", "book-a", "saved.epub", borrower):
-            assert raw_id not in public
     finally:
         service.close()
 
@@ -97,7 +107,7 @@ def test_typed_source_never_gains_local_presence_from_backup_row(
     {"item": "different-edition"},
     {"credential": "another-credential"},
 ])
-def test_unrelated_source_still_quarantines_legacy_offline_local_claim(tmp_path, other):
+def test_unrelated_source_cannot_promote_legacy_offline_local_claim(tmp_path, other):
     service, session = _service(tmp_path, [])
     try:
         file = service._kobo_backup_target_dir("default") / "legacy.epub"
@@ -105,16 +115,14 @@ def test_unrelated_source_still_quarantines_legacy_offline_local_claim(tmp_path,
         _backup(service, "book-a", status="complete", local_path=file)
         _typed(service, **other)
         before = _persistent(service)
-        result = service.kobo_backup_preview("vault-1")
-        assert result["counts"]["already_local_linked"] == 0
-        assert result["counts"]["needs_reconciliation"] == 1
-        assert result["counts"]["attention_required"] == 0
+        _no_legacy_preview_authority(service)
         assert _persistent(service) == before
+        assert file.is_file()
     finally:
         service.close()
 
 
-def test_mixed_preview_uses_core_for_typed_and_legacy_only_for_untyped(tmp_path):
+def test_mixed_typed_and_untyped_legacy_receipts_never_prove_b(tmp_path):
     service, session = _service(tmp_path, [])
     try:
         for item in ("book-a", "book-b"):
@@ -122,28 +130,23 @@ def test_mixed_preview_uses_core_for_typed_and_legacy_only_for_untyped(tmp_path)
             _write_epub(file)
             _backup(service, item, status="complete", local_path=file)
         _typed(service)
-        result = service.kobo_backup_preview("vault-1")
-        assert result["counts"]["attention_required"] == 1
-        assert result["counts"]["already_local_linked"] == 0
-        assert result["counts"]["needs_reconciliation"] == 1
-        assert result["blocking_items"] == 2
-        assert result["acquisition_authorized"] is False
+        before = _persistent(service)
+        _no_legacy_preview_authority(service)
+        assert _persistent(service) == before
     finally:
         service.close()
 
 
-def test_typed_archived_remains_archived_not_present(tmp_path):
+def test_archived_typed_right_cannot_become_legacy_presence(tmp_path):
     service, session = _service(tmp_path, [
         {"product_id": "book-a", "revision_id": "r1",
          "archived": True, "format": "EPUB"},
     ])
     try:
         _typed(service)
-        result = service.kobo_backup_preview("vault-1", refresh_manifest=True)
-        assert result["counts"]["skipped_archived"] == 1
-        assert result["counts"]["already_local_linked"] == 0
-        assert result["counts"]["potentially_missing"] == 0
-        assert result["acquisition_authorized"] is False
+        before = _persistent(service)
+        _no_legacy_preview_authority(service, refresh=True)
+        assert _persistent(service) == before
     finally:
         service.close()
 
@@ -157,12 +160,8 @@ def test_historical_archive_flag_cannot_hide_typed_edition(tmp_path, fresh):
     try:
         _backup(service, "book-a", status="skipped_archived")
         _typed(service)
-        preview = service.kobo_backup_preview(
-            "vault-1", refresh_manifest=fresh,
-        )
-        assert preview["counts"]["skipped_archived"] == 0
-        assert preview["counts"]["attention_required"] == 1
-        assert preview["counts"]["potentially_missing"] == 0
-        assert preview["acquisition_authorized"] is False
+        before = _persistent(service)
+        _no_legacy_preview_authority(service, refresh=fresh)
+        assert _persistent(service) == before
     finally:
         service.close()

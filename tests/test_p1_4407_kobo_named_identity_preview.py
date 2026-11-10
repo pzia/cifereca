@@ -30,43 +30,34 @@ def _named(service, name: str = "heloise"):
     })
 
 
+
 @pytest.mark.parametrize("named", [False, True])
-def test_refresh_accepts_plugin_default_identity_only_with_exact_core_binding(
-    tmp_path, named,
-):
+def test_partial_abi_named_owner_never_fetches_legacy_manifest(tmp_path, named):
     service, session = _service(tmp_path, MANIFEST)
     if named:
         _named(service)
     calls = []
-    original = session.backup_manifest
-
-    def manifest():
-        calls.append("manifest")
-        return original()
-
-    session.backup_manifest = manifest
+    session.backup_manifest = lambda: calls.append("manifest") or MANIFEST
     try:
-        assert session.accounts[0].identity_id == "default"
-        result = service.kobo_backup_preview("vault-1", refresh_manifest=True)
-        assert calls == ["manifest"]
-        assert result["preview_only"] is True
-        assert result["acquisition_authorized"] is False
-        assert result["manifest_refreshed"] is True
-        assert result["manifest_items"] == 1
+        with pytest.raises(ProviderConfigurationError,
+                           match="canonical_kobo_preview_abi_unavailable"):
+            service.kobo_backup_preview("vault-1", refresh_manifest=True)
+        assert calls == []
         assert service.storage.backup_list("kobo", "vault-1") == []
         assert service.storage.acquisitions(provider_id="kobo") == []
     finally:
         service.close()
 
 
-def test_foreign_nondefault_account_identity_rejected_before_manifest(tmp_path):
+def test_foreign_identity_never_grants_legacy_preview(tmp_path):
     service, session = _service(tmp_path, MANIFEST)
     _named(service)
     session.accounts[0].identity_id = "another-identity"
     calls = []
     session.backup_manifest = lambda: calls.append("manifest") or MANIFEST
     try:
-        with pytest.raises(ProviderConfigurationError, match="Source Kobo modifiée"):
+        with pytest.raises(ProviderConfigurationError,
+                           match="canonical_kobo_preview_abi_unavailable"):
             service.kobo_backup_preview("vault-1", refresh_manifest=True)
         assert calls == []
     finally:
@@ -77,58 +68,32 @@ def test_foreign_nondefault_account_identity_rejected_before_manifest(tmp_path):
     "binding_reassigned", "connected_false", "session_replaced",
     "account_replaced", "account_renamed", "core_epoch",
 ])
-def test_named_identity_preserves_freshness_guard_after_provider_get(
-    tmp_path, change,
-):
+def test_named_owner_cannot_race_after_disallowed_manifest_read(tmp_path, change):
     service, session = _service(tmp_path, MANIFEST)
     _named(service)
-    previous = session.backup_manifest
     calls = []
-
-    def raced():
-        data = previous()
-        calls.append("manifest")
-        if change == "binding_reassigned":
-            other = replace(service.identities[0], identity_id="other",
-                            label="Other", directory_name="other")
-            service.identities.append(other)
-            service.storage.identity_put(other)
-            service.storage.provider_connection_put({
-                "identity_id": "other", "provider_id": "kobo",
-                "credential_id": "vault-1", "label": "Rebound",
-            })
-        elif change == "connected_false":
-            session.connected = False
-        elif change == "session_replaced":
-            service._sessions[service._session_key("kobo", "vault-1")] = object()
-        elif change == "account_replaced":
-            session._accounts = [replace(session.accounts[0])]
-        elif change == "account_renamed":
-            session.accounts[0].unique_id = "different-upstream-account"
-        else:
-            service._source_context_epoch += 1
-        return data
-
-    session.backup_manifest = raced
+    session.backup_manifest = lambda: calls.append("manifest") or MANIFEST
     try:
-        with pytest.raises(ProviderConfigurationError, match="Source Kobo modifiée"):
+        # The old D1 provider fetch is forbidden *before* a rebind race.
+        with pytest.raises(ProviderConfigurationError,
+                           match="canonical_kobo_preview_abi_unavailable"):
             service.kobo_backup_preview("vault-1", refresh_manifest=True)
-        assert calls == ["manifest"]
+        assert calls == []
         assert service.storage.backup_list("kobo", "vault-1") == []
     finally:
         service.close()
 
 
-def test_named_identity_disconnected_offline_preview_remains_readonly(tmp_path):
+def test_named_owner_disconnected_diagnostic_requires_exact_binding(tmp_path):
     service, session = _service(tmp_path, MANIFEST)
     _named(service)
     session.connected = False
     try:
-        result = service.kobo_backup_preview("vault-1")
-        assert result["manifest_refreshed"] is False
-        assert result["preview_only"] is True
-        assert result["acquisition_authorized"] is False
-        with pytest.raises(ProviderConfigurationError, match="non connecté"):
+        with pytest.raises(ProviderConfigurationError,
+                           match="canonical_kobo_preview_scope_unavailable"):
+            service.kobo_backup_preview("vault-1")
+        with pytest.raises(ProviderConfigurationError,
+                           match="canonical_kobo_preview_abi_unavailable"):
             service.kobo_backup_preview("vault-1", refresh_manifest=True)
     finally:
         service.close()
@@ -189,26 +154,18 @@ def test_cli_offline_preview_never_connects_provider(monkeypatch, capsys):
     assert closed == [True]
 
 
-def test_cli_named_identity_refresh_reaches_provider_manifest_without_traceback(
+def test_cli_named_identity_partial_abi_returns_redacted_refusal(
     tmp_path, monkeypatch, capsys,
 ):
     from cifereca.core import provider_sessions
-
     service, session = _service(tmp_path, MANIFEST)
     _named(service, "heloise")
     called = []
-    original = session.backup_manifest
-
-    def manifest():
-        called.append("GET manifest")
-        return original()
-
+    session.backup_manifest = lambda: pytest.fail("no old manifest GET")
     def connect_target(owner, credential_id):
         assert owner is service and credential_id == "vault-1"
         called.append("connect exact")
         return session
-
-    session.backup_manifest = manifest
     monkeypatch.setattr(provider_sessions, "connect_kobo_preview", connect_target)
     monkeypatch.setattr(
         cli.CiferecaCore, "open",
@@ -218,13 +175,13 @@ def test_cli_named_identity_refresh_reaches_provider_manifest_without_traceback(
         assert cli.main([
             "kobo-resume-preview", "--credential", "vault-1",
             "--refresh-manifest",
-        ]) == 0
+        ]) == 2
         output = capsys.readouterr()
         result = json.loads(output.out)
-        assert called == ["connect exact", "GET manifest"]
-        assert result["manifest_refreshed"] is True
-        assert result["preview_only"] is True
+        assert called == ["connect exact"]
+        assert result["status"] == "unavailable"
         assert result["acquisition_authorized"] is False
+        assert result["preview_only"] is True
         assert "Traceback" not in output.out + output.err
         assert service.storage.backup_list("kobo", "vault-1") == []
     finally:

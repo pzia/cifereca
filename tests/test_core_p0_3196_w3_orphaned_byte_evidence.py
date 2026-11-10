@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from cifereca.storage import Storage
-from tests.test_kobo_backup_fault_isolation import _ready_adept_state, _service
 
 
 def _legacy(item, *, provider="kobo", credential="vault", status="complete",
@@ -84,88 +83,3 @@ def test_orphaned_kobo_byte_evidence_is_readonly_during_prune(
         storage.close()
 
 
-@pytest.mark.parametrize("initial_status", ["complete", "error", "pending"])
-def test_manifest_disappearance_then_return_quarantines_orphaned_completion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initial_status: str,
-):
-    edition = {
-        "product_id": "book-without-locator", "revision_id": "new-remote-revision",
-        "title": "Synthetic", "format": "EPUB",
-    }
-    service, session = _service(tmp_path, [edition])
-    monkeypatch.setattr(
-        service, "kobo_adept_state", lambda **_kw: _ready_adept_state(),
-    )
-    monkeypatch.setattr(
-        service, "_execute_kobo_acquisition",
-        lambda *_a, **_kw: pytest.fail(
-            "a historical completed SHA is not a new download permission"
-        ),
-    )
-    try:
-        service.storage.backup_put(_legacy(
-            "book-without-locator", credential="vault-1",
-            status=initial_status, sha256="a" * 64, size=128,
-        ))
-        before = service.storage.backup_get(
-            "kobo", "vault-1", "book-without-locator",
-        )
-        session._manifest = []
-        missing = service.sync_kobo_backup_account("vault-1")
-        assert missing["attempted"] == 0
-        assert missing["legacy_pruned"] == 0
-        retained = service.storage.backup_get(
-            "kobo", "vault-1", "book-without-locator",
-        )
-        assert retained is not None
-        assert retained["sha256"] == before["sha256"]
-        assert retained["size"] == before["size"]
-
-        session._manifest = [edition]
-        returned = service.sync_kobo_backup_account("vault-1")
-        assert returned["attempted"] == 0
-        assert returned["downloaded"] == 0
-        last = service.storage.backup_get(
-            "kobo", "vault-1", "book-without-locator",
-        )
-        assert last["status"] == "reconcile_required"
-        assert last["revision_id"] == "old-revision"
-        assert last["sha256"] == before["sha256"]
-        assert last["size"] == before["size"]
-    finally:
-        service.close()
-
-
-def test_scope_denial_with_orphaned_sha_retains_stronger_403_checkpoint(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-):
-    edition = {
-        "product_id": "delegated-blocked", "revision_id": "remote-revision",
-        "title": "Synthetic", "format": "EPUB",
-    }
-    service, _session = _service(tmp_path, [edition])
-    monkeypatch.setattr(
-        service, "kobo_adept_state", lambda **_kw: _ready_adept_state(),
-    )
-    monkeypatch.setattr(
-        service, "_execute_kobo_acquisition",
-        lambda *_a, **_kw: pytest.fail("delegation denied: no second GET"),
-    )
-    try:
-        service.storage.backup_put({
-            **_legacy(
-                "delegated-blocked", credential="vault-1", status="attention_required",
-                sha256="a" * 64, size=64,
-            ),
-            "attention_code": "missing_delegation_scope",
-        })
-        result = service.sync_kobo_backup_account("vault-1")
-        assert result["attempted"] == 0
-        assert result["blocked_non_retryable"] == 1
-        row = service.storage.backup_get("kobo", "vault-1", "delegated-blocked")
-        assert row["status"] == "attention_required"
-        assert row["attention_code"] == "missing_delegation_scope"
-        assert row["revision_id"] == "old-revision"
-        assert row["sha256"] == "a" * 64
-    finally:
-        service.close()
