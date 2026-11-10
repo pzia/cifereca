@@ -1,6 +1,9 @@
 """P0 #5054: the legacy Numilog direct GET cannot bypass live Core admission."""
 import ast
 from pathlib import Path
+from types import SimpleNamespace as NS
+
+import pytest
 
 
 SOURCE = (Path(__file__).resolve().parents[1]
@@ -51,3 +54,54 @@ def test_provider_checks_admission_during_download():
     assert "require_core()" in method
     assert "core_admission_current=core_admission_current" in method
     assert "return self._download(" in method
+
+
+@pytest.mark.parametrize("revocation", [
+    "none", "account", "session", "identity", "scope", "startup", "recovery",
+    "binding_error",
+])
+def test_numilog_live_lease_refuses_changed_source_or_consent(revocation):
+    method = _function("delivery_admission_current")
+    item = NS(token="edition")
+    service = object()
+    session = object()
+    owner = NS(identity_id="alice")
+    account = "borrower"
+    scope = ("numilog", "edition")
+    delivered = {"owner": owner, "session": session,
+                 "account": account, "scope": scope}
+    gates = {"startup": True, "recovery": True}
+
+    def require_source(_service, _item, *, session):
+        assert session is delivered["session_expected"]
+        if revocation == "binding_error":
+            raise ValueError("source revoked")
+        return delivered["owner"], delivered["session"], delivered["account"]
+
+    delivered["session_expected"] = session
+    if revocation == "account":
+        delivered["account"] = "another"
+    if revocation == "session":
+        delivered["session"] = object()
+    if revocation == "identity":
+        delivered["owner"] = NS(identity_id="bob")
+    if revocation == "scope":
+        delivered["scope"] = ("numilog", "other")
+    if revocation == "startup":
+        gates["startup"] = False
+    if revocation == "recovery":
+        gates["recovery"] = False
+
+    namespace = dict(
+        require_source=require_source, service=service, item=item,
+        pinned_session=session, pinned_account_id=account,
+        identity=owner, admission_scope=lambda _item: delivered["scope"],
+        pinned_scope=scope, automatic=True, reconcile_pending=True,
+        startup_authorized=lambda: gates["startup"],
+        recovery_authorized=lambda: gates["recovery"],
+    )
+    # Pin the original identity, regardless of the later owner mutation.
+    namespace["identity"] = NS(identity_id="alice")
+    exec(compile(ast.fix_missing_locations(ast.Module(
+        body=[method], type_ignores=[])), str(SOURCE), "exec"), namespace)
+    assert namespace["delivery_admission_current"]() is (revocation == "none")
