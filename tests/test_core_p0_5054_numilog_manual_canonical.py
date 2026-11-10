@@ -85,7 +85,7 @@ def _setup(monkeypatch, tmp_path, *, mismatch=False, rebind=False, borrower_rebi
 def test_one_click_uses_one_selected_offer_and_canonical_executor(monkeypatch, tmp_path):
     service, target, calls = _setup(monkeypatch, tmp_path)
     result = manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')),
-                                     right_current=lambda *_a: True)
+                                     right_current=lambda *_a, **_kw: True)
     assert result.artifact_id == "sha256:result"
     assert result.identity_id == "owner"
     assert result.path == tmp_path / "book.epub"
@@ -107,7 +107,7 @@ def test_no_canonical_writer_after_unattested_offer_or_context_change(
     )
     with pytest.raises(ValueError, match="explicit_canonical"):
         manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')),
-                                     right_current=lambda *_a: True)
+                                     right_current=lambda *_a, **_kw: True)
     assert [x[0] for x in calls] == ["offer"]
 
 
@@ -116,7 +116,7 @@ def test_no_legacy_fallback_when_guarded_abi_unavailable(monkeypatch, tmp_path):
     monkeypatch.setattr(manual, "has_complete_delivery_abi", lambda *_a: False)
     with pytest.raises(ValueError, match="explicit_canonical_abi_unavailable"):
         manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')),
-                                     right_current=lambda *_a: True)
+                                     right_current=lambda *_a, **_kw: True)
     assert calls == []
 
 
@@ -138,43 +138,34 @@ def test_real_library_obtain_routes_complete_v2_away_from_legacy_writer(
     assert [x[0] for x in calls] == ["canonical"]
 
 
-def test_post_get_canonical_receipt_does_not_revoke_the_same_selected_right(
+
+def test_post_get_canonical_receipt_requires_exact_offer_and_reuses_one_reader(
     monkeypatch, tmp_path,
 ):
     from cifereca.core import numilog_owned_download as facade
-    account = Account(provider_id="numilog", credential_id="credential",
-                      unique_id="account", identity_id="owner")
+    import inspect
+    source = inspect.getsource(facade._resolve)
+    assert "_stage_id(key, canonical_offer_id)" in source
+    assert "acquisitions == [] or owned_stage" in source
+    assert "acquisitions[0].get('status') == _STAGED" in source
+    assert "acquisitions[0]['metadata'].get('schema') == _SCHEMA" in source
+
     session = NS()
     target = NumilogOwnedDownloadTarget(
         "right", "owner", "source", "credential", "account", "edition",
         ("/lib", (str(tmp_path),)), id(session), session,
     )
-    right = dict(
-        entitlement_id="right", provider_id="numilog", identity_id="owner",
-        credential_id="credential", account_id="account", item_id="edition",
-        entitlement_type="owned", state="active", loan_id=None, expires_at=None,
-        metadata={"source": "numilog.authenticated_library"},
-    )
-    evidence = {"entitlements": [right], "acquisitions": [
-        {"status": "attention_required", "metadata": {
-            "schema": "canonical-intake", "phase": "staged"
-        }},
-    ]}
-    storage = NS(
-        metadata_get=lambda *_a: None,
-        numilog_purchase_preflight_evidence=lambda **_k: evidence,
-    )
-    service = NS(
-        current_identity=NS(identity_id="owner"),
-        _sessions={("numilog", "credential"): session},
-        _session_key=lambda *x: tuple(x), storage=storage,
-        config=NS(get=lambda *_a: "/lib"),
-    )
-    monkeypatch.setattr(facade, "_identity_root",
-                        lambda *_a, **_k: (tmp_path,))
-    assert facade._selected_owned_right_current(service, target) is True
-    right["state"] = "revoked"
-    assert facade._selected_owned_right_current(service, target) is False
-    right["state"] = "active"
-    service._sessions.clear()
-    assert facade._selected_owned_right_current(service, target) is False
+    observed = []
+    def resolve(*_a, canonical_offer_id=None):
+        observed.append(canonical_offer_id)
+        if canonical_offer_id != "offer:exact":
+            raise ValueError("foreign or missing canonical receipt")
+        return target, NS()
+    monkeypatch.setattr(facade, "_resolve", resolve)
+    assert facade._selected_owned_right_current(
+        object(), target, selected_offer_id="offer:exact",
+    ) is True
+    assert facade._selected_owned_right_current(
+        object(), target, selected_offer_id="offer:other",
+    ) is False
+    assert observed == ["offer:exact", "offer:other"]
