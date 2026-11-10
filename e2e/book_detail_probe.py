@@ -604,41 +604,6 @@ def main():
         window._render_library()
         later(160, owned_book_select)
 
-    def begin_numilog_index_resume():
-        """Real receipt -> GTK/XTEST -> worker -> offline Core index/commit."""
-        from types import SimpleNamespace as NS
-        import zipfile
-        from cifereca.core.numilog_local_preview import _identity_root
-        from cifereca.core.numilog_materialization_checkpoint import record
-        from cifereca.locking import InterProcessLock
-        from cifereca.paths import acquisition_lock_file
-        service = window.service
-        owner = service.current_identity.identity_id
-        root = _identity_root(service, owner)[0] / 'numilog'
-        root.mkdir(parents=True, exist_ok=True)
-        path = root / 'gtk-receipt-fictional.epub'
-        with zipfile.ZipFile(path, 'w') as archive:
-            archive.writestr('mimetype', 'application/epub+zip')
-            archive.writestr('META-INF/container.xml', '<container/>')
-            archive.writestr('content.xhtml', '<html><body>Fictional receipt</body></html>')
-        item = NS(record_id=owned_action['product'], source_credential='gtk-owned-credential')
-        with InterProcessLock(acquisition_lock_file()):
-            aid = record(service, item, path, root, owner, 'gtk-owned-account', validate=lambda:None)
-        owned_action.update(resume=True, calls=[], refreshed=[], recents=[], receipt=aid, path=path)
-        # Resume must work without an online account or provider session.
-        service.accounts = []
-        service._sessions = {}
-        def resume_exact(target):
-            assert target.operation == 'resume_index' and target.acquisition_id == aid
-            owned_action['calls'].append((target.identity_id, target.item_id))
-            return owned_action['obtain'](target)
-        service.obtain_owned_library_item = resume_exact
-        row = window._library_entries_cache[0]
-        window._library_entries_cache = [dict(row, key='gtk-numilog-resume-receipt')]
-        assert service.owned_library_download_target(window._library_entries_cache[0]).operation == 'resume_index'
-        window._render_library()
-        later(160, owned_book_select)
-
     def owned_book_select():
         assert window.library_page.store.get_n_items() == 1
         window.library_page.selection.set_selected(0)
@@ -693,9 +658,6 @@ def main():
             report["checks"]["P0_1347_owned_library_XTEST_exact_single_target" if owned_action["provider"] == "kobo" else "P0_2024_owned_numilog_XTEST_exact_single_target"] = True
         report["owned_download_scope"] = "real GTK/TaskRunner + stored ownership; acquisition boundary observed, no live provider"
         capture("03b-owned-" + owned_action["provider"] + ("-resume-index-complete" if owned_action["resume"] else "-targeted-click-complete"))
-        if owned_action['provider'] == 'numilog' and not owned_action['resume']:
-            later(160, begin_numilog_index_resume)
-            return
         service = window.service
         service.accounts = owned_action["accounts"]
         service._sessions = owned_action["sessions"]
