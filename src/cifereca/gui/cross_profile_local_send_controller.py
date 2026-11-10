@@ -24,7 +24,8 @@ def offer_cross_profile_local_send(
         return False
     try:
         service = window.service
-        panel = window.search_page.detail
+        search_page = window.search_page
+        panel = search_page.detail
         visible = panel._rendered_search_detail
         identity = service.current_identity
         account_epoch = service._account_context_epoch
@@ -52,6 +53,7 @@ def offer_cross_profile_local_send(
             return bool(
                 not getattr(window, "_closed", False)
                 and window.service is service
+                and window.search_page is search_page
                 and window.search_page.detail is panel
                 and service.current_identity is identity
                 and identity.identity_id == requester
