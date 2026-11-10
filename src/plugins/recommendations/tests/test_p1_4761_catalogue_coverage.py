@@ -4,9 +4,9 @@ All provider replies are synthetic. The classification is closed and never
 includes private remote error messages or Search provenance rights.
 """
 from dataclasses import replace
+from types import SimpleNamespace as NS
 
 import pytest
-from types import SimpleNamespace as NS
 
 from recommendation_service import (
     CatalogueSearchObservation,
