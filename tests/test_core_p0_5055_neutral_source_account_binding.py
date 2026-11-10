@@ -96,7 +96,7 @@ def test_live_session_scalar_property_cannot_forge_connected(
         reads.append("unexpected")
         return True
 
-    monkeypatch.setattr(type(session), "connected", property(hostile))
+    monkeypatch.setattr(type(session), "connected", property(hostile), raising=False)
     assert not source_account_binding_ready(
         service, account, expected_provider_id="bnf-pret",
     )
