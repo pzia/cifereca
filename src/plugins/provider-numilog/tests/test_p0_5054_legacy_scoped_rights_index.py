@@ -1,4 +1,4 @@
-"""#1905: Numilog purchase reconciliation must scale by account, not DB size."""
+"""Legacy Numilog projector security regressions, isolated in provider tests until its removal."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -10,8 +10,83 @@ from cifereca.acquisition_engine import Entitlement, SourceIdentity, stable_id
 from cifereca.core import numilog_manifest_rights
 from cifereca.core.numilog_manifest_rights import mirror_numilog_manifest_rights
 from cifereca.storage import Storage
-from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row
-from tests.test_sync_state_contract import _service
+from types import SimpleNamespace as NS
+from cifereca.models import Account, SearchResult
+from cifereca.config import Config
+from cifereca.diagnostics import Diagnostics
+from cifereca.services import LibraryService
+
+
+def _service(tmp_path):
+    cfg = Config(tmp_path / "config.json")
+    cfg.set("library.directory", str(tmp_path / "EBooks"))
+    cfg.set("identities", [
+        {"id": "default", "label": "Hugues", "directory_name": "hugues", "preferences": {"reading_languages": ["fr"]}},
+        {"id": "alex", "label": "Alex", "directory_name": "alex", "preferences": {"reading_languages": ["fr"]}},
+    ])
+    cfg.set("providers.accounts", [])
+    return LibraryService(cfg, Storage(tmp_path / "db.sqlite3"), Diagnostics())
+
+
+def _row(credential: str, index: int) -> SearchResult:
+    scope = hashlib.sha256(credential.encode("utf-8")).hexdigest()[:20]
+    variant = hashlib.sha256(f"variant-{index}".encode("utf-8")).hexdigest()[:16]
+    record_id = f"numilog:{scope}:lid{index}:{variant}"
+    return SearchResult(
+        id=record_id, record_id=record_id, docbase="NUMILOG",
+        medium="digital", title=f"Achat #{index}", author=None,
+        type="Livre numérique", format=None, publisher=None,
+        published_at=None, description=None, thumbnail_url=None,
+        friendly_url=None, scenario="NUMILOG_LIBRARY",
+        source_provider="numilog", source_credential=credential,
+        source_collection="library", content_type="ebook",
+        owned=True, downloadable=True,
+    )
+
+
+def _connect(service, *, identity="default", credential="numilog-private",
+             number=2, failed=False):
+    calls = []
+    account = Account(
+        display_name="Boutique Numilog", unique_id="account",
+        provider_id="numilog", credential_id=credential, identity_id=identity,
+    )
+    service.accounts.append(account)
+    connection = service.storage.provider_connection_put({
+        "provider_id": "numilog", "credential_id": credential,
+        "identity_id": identity, "enabled": True,
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection, "identity_id": identity,
+        "provider_id": "numilog", "credential_id": credential,
+        "account_id": account.unique_id, "label": "Synthetic borrower",
+    })
+    rows = [_row(credential, i) for i in range(number)]
+
+    def library():
+        calls.append("library")
+        if failed:
+            raise RuntimeError(
+                "ACSM https://entrepot2r.numilog.com/private?token=SIGNATURE-SECRET "
+                "Cookie=SESSION-SECRET"
+            )
+        # Generator: mirroring must not exhaust this before indexing.
+        yield from rows
+
+    def forbidden(*_args, **_kwargs):
+        calls.append("FORBIDDEN DOWNLOAD")
+        raise AssertionError("No download may be launched from inventory")
+
+    session = NS(
+        provider_id="numilog", credential_id=credential, connected=True,
+        capabilities=NS(loans=False, personal_library=True, direct_download=True),
+        library=library, download_direct=forbidden,
+        # Deliberately no download_library_item method: the real Numilog
+        # subclass inherits an unsupported one from ProviderSession.
+    )
+    service._sessions[service._session_key("numilog", credential)] = session
+    return account, session, calls
+
 
 
 def _foreign(storage, entitlement_id, item_id, credential, account_id):
