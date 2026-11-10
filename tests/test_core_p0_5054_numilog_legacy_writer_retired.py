@@ -13,7 +13,6 @@ import pytest
 
 from cifereca.models import Account, SearchResult
 from cifereca.providers import ProviderConfigurationError
-from cifereca.core import numilog_materialization_startup as startup
 from cifereca.core import selected_owned_search as search
 
 
@@ -52,41 +51,10 @@ def test_real_gtk_book_detail_does_not_recreate_retired_v1_receipt():
     assert "P0_1347_owned_library_XTEST_exact_single_target" in source
 
 
-def test_historical_startup_is_passive_and_never_performs_supplier_io():
-    session = NS(
-        library=lambda: pytest.fail("legacy private library must never run"),
-        download_direct=lambda *_a: pytest.fail("legacy GET must never run"),
-    )
-    account = Account(
-        provider_id="numilog", credential_id="card",
-        unique_id="borrower", identity_id="owner",
-    )
-    broker = NS(
-        service=NS(accounts=[account], storage=NS(
-            metadata_get=lambda key: "on_start:v1",
-        )),
-        _source_id=lambda *_a: "sync:" + "a" * 24,
-    )
-    assert startup.eligible_source_ids(broker, "owner") == ()
-    status = startup.execute(broker, "owner", "startup")
-    assert status.ok is False
-    assert status.facts["status"] == "migration_required"
-    assert status.facts["acquisition_authorized"] is False
-    assert status.changed == 0
-    assert session.library is not None
-
-
-def test_retired_startup_with_no_consent_is_inert():
-    account = Account(
-        provider_id="numilog", credential_id="card",
-        unique_id="borrower", identity_id="owner",
-    )
-    broker = NS(
-        service=NS(accounts=[account], storage=NS(metadata_get=lambda *_a: None)),
-        _source_id=lambda *_a: "sync:" + "a" * 24,
-    )
-    result = startup.execute(broker, "owner", "startup")
-    assert result.ok and result.facts["status"] == "not_due"
+def test_retired_v1_startup_has_no_core_dispatch():
+    assert not (ROOT / "src/cifereca/core/numilog_materialization_startup.py").exists()
+    broker = _src("src/cifereca/brokers.py")
+    assert "synchronize_scheduled_numilog_materialization" not in broker
 
 
 @pytest.mark.parametrize("mode", ("on_start", "manual", "", "unexpected"))
