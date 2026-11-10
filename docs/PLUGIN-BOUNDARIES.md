@@ -12,6 +12,14 @@ Le Core et les plugins émettent dans **un journal brut unique**, sans effacer l
 
 Les plugins produisent les faits fournisseurs/branches et offres séparées, et assurent leur protocole ; ils ne publient pas de droit à partir de Notice C, n'accordent pas eux-mêmes l'origine Core au SHA final et ne touchent pas Storage privé. Le Core publiera atomiquement Artifact/Placement/OriginLink après contenu final et ADEPT éventuel, sans double autorité backup_items/ledger. **La cible n'est pas encore entièrement en production** : snapshots read-only #3252 sont disponibles ; #3171/#3196 doivent livrer l'admission et la persistance convergentes. Les responsabilités Diagnostics plus haut restent inchangées.
 
+## Modèle commun achat/emprunt — décision du 10/11/2026
+
+Le Core conserve **origine, artefact et placement**, pas un droit historique. Le plugin observe **une offre et sa capacité actuelle de livraison**. Le Core rapproche ses fichiers et leurs origines vérifiées avec les offres observées, évite les téléchargements inutiles, et peut retélécharger un artefact manquant lorsque le provider propose la livraison ; il vérifie, publie puis dédoublonne sans fusionner les origines, emprunts ou placements entre profils.
+
+Pour **l'achat**, l'absence dans l'inventaire actuel n'efface jamais un fichier ni une origine. Pour **l'emprunt**, distinguer l'offre empruntable, la création explicite d'un emprunt et la livraison d'un emprunt existant ; la Sync ne crée jamais de prêt. Une disparition ne signifie fin du prêt qu'après une lecture suffisamment complète du scope exact (inventaire BnF partiel : aucune clôture par absence). Un GET de confirmation peut être mutateur ; pas de replay automatique après résultat ambigu.
+
+Les plugins emploient les primitives réseau partagées (`HTTPX_TRANSPORT`) pour l'authentification et leurs requêtes métier ; le Core possède aussi la livraison HTTPS générique, les gardes, l'intégrité et la publication. Les anciens `rights`/`Entitlement` sont une compatibilité technique à retirer progressivement, pas une nouvelle autorité. Voir [PROVIDER-DEVELOPMENT.md](PROVIDER-DEVELOPMENT.md) pour le contrat normatif commun et [ARCHITECTURE.md](ARCHITECTURE.md) pour A→B.
+
 ## Principe
 
 Une fonctionnalité appartient au Core lorsqu'elle exprime un mécanisme transversal réutilisable par plusieurs plugins ou par l'orchestration générale. Elle appartient au plugin lorsqu'elle encode un protocole, une politique ou un comportement propre à un fournisseur/runtime.
