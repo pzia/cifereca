@@ -551,10 +551,6 @@
     "kind": "staticmethod",
     "signature": "(payload: 'dict[str, Any]', candidate: 'dict[str, Any]') -> 'dict[str, str] | None'"
   },
-  "_observed_backup_artifact": {
-    "kind": "staticmethod",
-    "signature": "(path: 'Path') -> 'dict[str, Any]'"
-  },
   "_execute_kobo_acquisition": {
     "kind": "method",
     "signature": "(self, item: 'SearchResult', target_dir: 'Path') -> 'Acquisition'"
