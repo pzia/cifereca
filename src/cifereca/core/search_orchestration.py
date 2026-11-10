@@ -1990,7 +1990,8 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         ) in verified_owned
         state = (
             "remote_owned" if owned else
-            "available_to_buy" if row.source_provider in {"kobo", "numilog"} and row.price else
+            # This is descriptive only: a supplier price is not a purchase right.
+            "available_to_buy" if type(row.price) is str and bool(row.price.strip()) else
             "available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else
             "remote_catalog"
         )
