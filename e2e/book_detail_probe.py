@@ -667,9 +667,10 @@ def main():
         with service.storage._lock, service.storage._connect() as db:
             db.execute("DELETE FROM entitlements WHERE entitlement_id='gtk-owned-right'")
             db.execute("DELETE FROM provider_connections WHERE provider_id=? AND credential_id='gtk-owned-credential'", (owned_action["provider"],))
-        if owned_action["provider"] == "kobo":
-            later(160, lambda: begin_owned_book_action("numilog"), public_stage="begin_owned_book_action")
-            return
+        # #5054: the historical synthetic Numilog 'direct_download' session
+        # lacks the guarded v2 delivery ABI and is no longer a valid positive
+        # GTK acquisition. Canonical Numilog admission is covered by the
+        # dedicated guarded-v2 Core/provider contract tests instead.
         window._library_entries_cache = [dict(entry, key="ux942-library")]
         window._render_library()
         window.library_page.selection.set_selected(0)
