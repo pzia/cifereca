@@ -187,6 +187,9 @@ def acquire_numilog_direct(
             if reconcile_pending and not recovery_authorized():
                 raise ProviderConfigurationError('Numilog : preuves modifiées pendant la reprise')
             stage = "acquisition_delivery_failed"
+            from .source_context import source_context_epoch
+            source_epoch = source_context_epoch(service)
+
             def delivery_admission_current():
                 # A live, Core-owned lease for each provider transport hop.
                 # The selected source can be revoked during GET even when
@@ -198,6 +201,11 @@ def acquire_numilog_direct(
                     )
                     return bool(
                         owner.identity_id == identity.identity_id
+                        and getattr(
+                            getattr(service, "current_identity", None),
+                            "identity_id", None,
+                        ) == identity.identity_id
+                        and source_context_epoch(service) == source_epoch
                         and active is pinned_session
                         and account_id == pinned_account_id
                         and admission_scope(item) == pinned_scope
