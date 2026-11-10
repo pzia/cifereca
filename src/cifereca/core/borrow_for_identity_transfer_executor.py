@@ -27,6 +27,8 @@ def send_cross_profile_borrowed_placement(
     }
     if confirmed is not True:
         return {**blocked, "reason_code": "transfer_confirmation_required"}
+    observed_loan = "unknown"
+    observed_delivery = "unavailable"
     try:
         identity = service.current_identity
         identity_epoch = service._account_context_epoch
@@ -40,6 +42,8 @@ def send_cross_profile_borrowed_placement(
             borrowing_account=borrowing_account, exact_notice=exact_notice,
             lender_placement_id=lender_placement_id,
         )
+        observed_loan = preflight.loan
+        observed_delivery = preflight.delivery
         if (preflight.loan != "confirmed"
                 or preflight.delivery != "present"
                 or preflight.transfer != "ready_for_send"
@@ -78,7 +82,9 @@ def send_cross_profile_borrowed_placement(
         # The source/copy may be stale, revoked or already completed.
         # Re-run the *copy* explicitly if needed, never the supplier borrow.
         return {
-            **blocked, "reason_code": "transfer_result_unverified",
+            **blocked, "loan": observed_loan,
+            "delivery": observed_delivery,
+            "reason_code": "transfer_result_unverified",
         }
 
 
