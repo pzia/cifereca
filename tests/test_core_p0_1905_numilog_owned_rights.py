@@ -185,17 +185,20 @@ def test_scoped_manual_refresh_rejects_rebound_numilog_before_network(tmp_path):
         service.close()
 
 
-def test_manual_numilog_source_sync_persists_exact_owned_rights_only(tmp_path):
+def test_manual_numilog_source_sync_observes_notices_without_pseudo_rights(tmp_path):
     service = _service(tmp_path)
     try:
         account, _session, calls = _connect(service, number=2)
         broker = SynchronizationBrokerImpl(service)
         receipt = broker.synchronize_source(service.sync_source_id(account))
         assert receipt.ok and receipt.facts["library"] == 2
-        assert receipt.facts["owned_rights"] == 2
-        assert len(service.storage.entitlements(provider_id="numilog")) == 2
+        assert "owned_rights" not in receipt.facts
+        assert service.storage.entitlements(provider_id="numilog") == []
         assert calls == ["library"]
-        assert receipt.changed == 4
+        assert receipt.changed == 2
+        assert len(service.storage.catalog_entries()) == 2
+        assert service.storage.acquisitions(provider_id="numilog") == []
+        assert service.storage.placements() == []
     finally:
         service.close()
 
