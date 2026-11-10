@@ -12,7 +12,7 @@ import pytest
 from cifereca.providers import ProviderConfigurationError
 
 from cifereca.core.kobo_backup import (
-    _kobo_checkpoint_key, _kobo_manifest_flags_invalid,
+    _kobo_checkpoint_key,
 )
 from tests.test_kobo_backup_reconcile_prune import _manifest_row, _service, _write_epub
 
@@ -57,7 +57,6 @@ def test_ambiguous_flags_never_trigger_acquisition_or_prune(
     try:
         original = saved.read_bytes()
         # Raw 0.7 flags are not canonical A evidence. D3 cannot GET.
-        assert _kobo_manifest_flags_invalid(raw) is True
         with pytest.raises(
             ProviderConfigurationError,
             match="kobo_legacy_w2_retired_use_canonical_provider",
@@ -84,7 +83,7 @@ def test_ambiguous_flags_never_trigger_acquisition_or_prune(
         service.close()
 
 
-def test_legacy_missing_flags_remain_valid_but_explicit_false_is_not(tmp_path, monkeypatch):
+def test_retired_w2_cannot_consume_partial_historical_manifest(tmp_path, monkeypatch):
     service = _service(tmp_path, manifest=[{
         "product_id": "owned-legacy", "title": "Legacy",
         "content_type": "ebook", "downloadable": False, "archived": False,
@@ -95,11 +94,6 @@ def test_legacy_missing_flags_remain_valid_but_explicit_false_is_not(tmp_path, m
         lambda *_a, **_kw: pytest.fail("downloadable=False must skip acquisition"),
     )
     try:
-        assert _kobo_manifest_flags_invalid({"owned": None, "archived": False}) is False
-        assert _kobo_manifest_flags_invalid({"owned": False}) is True
-        assert _kobo_manifest_flags_invalid({"downloadable": None}) is False
-        assert _kobo_manifest_flags_invalid({"downloadable": False}) is False
-        assert _kobo_manifest_flags_invalid({"archived": True}) is False
 
         with pytest.raises(
             ProviderConfigurationError,
