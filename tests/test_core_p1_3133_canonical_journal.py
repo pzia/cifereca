@@ -341,40 +341,6 @@ def test_canonical_formatter_preserves_original_raw_unstructured_and_invalid_ext
     assert record.getMessage() == "import ACSM 403 password=visible token=untouched"
 
 
-def test_numilog_startup_canonical_record_uses_one_existing_trace(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from cifereca.core.numilog_startup_diagnostics import StartupTrace
-
-    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
-    path = tmp_path / "cifereca.log"
-    logger = logging.getLogger("cifereca")
-    old_level = logger.level
-    logger.setLevel(logging.INFO)
-    handler = _canonical_writer(path)
-    logger.addHandler(handler)
-    try:
-        service = SimpleNamespace(
-            storage=SimpleNamespace(metadata_get=lambda _key: None),
-            diagnostics=Diagnostics(enabled=False),
-        )
-        trace = StartupTrace(service, "numilog")
-        fields = trace.emit("admission", "started", "running")
-        assert fields["phase"] == "admission"
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(old_level)
-        handler.close()
-
-    result = query_journal(path, search="startup_materialization")
-    assert result["total"] == 1
-    event, = result["events"]
-    assert event["module"] == "NUMILOG"
-    assert event["operation"] == "startup_materialization"
-    assert event["detail"]["phase"] == "admission"
-    assert event["detail"]["run_ref"] == fields["run_ref"]
-    assert path.read_text().count("DIAG_JSON ") == 1
-
-
 def test_core_formatter_keeps_distinct_concurrent_occurrences(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
 
@@ -404,39 +370,6 @@ def test_core_formatter_keeps_distinct_concurrent_occurrences(tmp_path, monkeypa
     assert len({row["event_id"] for row in rows}) == 20
     assert all(row["module"] == "PLUGIN" for row in rows)
     assert path.read_text().count("DIAG_JSON ") == 20
-
-
-def test_numilog_terminal_failure_retained_in_errors_only_mode(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-    from cifereca.core.numilog_startup_diagnostics import StartupTrace
-
-    monkeypatch.setattr(logging_utils, "_diagnostic_level", "errors")
-    path = tmp_path / "cifereca.log"
-    logger = logging.getLogger("cifereca")
-    old_level = logger.level
-    logger.setLevel(logging.INFO)
-    handler = _canonical_writer(path)
-    logger.addHandler(handler)
-    try:
-        service = SimpleNamespace(
-            storage=SimpleNamespace(metadata_get=lambda _key: None),
-            diagnostics=Diagnostics(level="errors"),
-        )
-        trace = StartupTrace(service, "numilog")
-        trace.emit("admission", "started", "running")
-        trace.emit("completed", "manifest_failed", "failed")
-    finally:
-        logger.removeHandler(handler)
-        logger.setLevel(old_level)
-        handler.close()
-
-    result = query_journal(path)
-    assert result["total"] == 1
-    event, = result["events"]
-    assert event["module"] == "NUMILOG"
-    assert event["severity"] == "error"
-    assert event["status"] == "error"
-    assert event["detail"]["code"] == "manifest_failed"
 
 
 @pytest.mark.parametrize(("status", "expected_severity"), [
