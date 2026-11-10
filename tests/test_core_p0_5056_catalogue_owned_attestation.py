@@ -10,9 +10,10 @@ class Storage:
     def __init__(self, rights):
         self.rights = rights
         self.upserts = []
-    def entitlements(self, *, provider_id, state):
+    def entitlements(self, *, provider_id=None, state):
         assert state == "active"
-        return [x for x in self.rights if x.get("provider_id") == provider_id]
+        return [x for x in self.rights if provider_id is None
+                or x.get("provider_id") == provider_id]
     def catalog_entries_by_ids(self, ids):
         return {}
     def catalog_entries_upsert_many(self, rows):
@@ -80,6 +81,7 @@ def test_legacy_personal_inventory_without_account_or_revision():
     )
     service = NS(storage=Storage([right()]), current_identity=NS(identity_id="alice"))
     proof = snapshot_search_owned_evidence(service)
+    assert proof is not None  # strict actionable evidence really evaluated
     assert not search_result_has_verified_purchase(
         row, proof, current_identity_id="alice",
     )
