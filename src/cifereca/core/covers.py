@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from ipaddress import ip_address
 from typing import Iterable, Literal
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 
 CoverTier = Literal['embedded', 'origin', 'catalog']
@@ -85,10 +85,23 @@ def _safe_cover_url(value: object) -> str:
                 'session', 'sessionid', 'sessionkey', 'ticket', 'apikey',
                 'accesskeyid', 'awsaccesskeyid', 'googleaccessid', 'jwt',
                 'code', 'key',
+                # CloudFront policy + signer identify a private signed URL
+                # even when a separately signed Signature was omitted here.
+                'keypairid', 'cloudfrontpolicy', 'policy',
             }
+            # Legacy servers treat semicolon as another query separator.
+            # A URL such as ?size=medium;token=SECRET must not bypass this
+            # boundary by hiding an account token in the value of "size".
+            if ';' in parts.query:
+                return ''
             for key, _value in parse_qsl(parts.query, keep_blank_values=True):
-                normalized = ''.join(char for char in key.casefold() if char.isalnum())
-                if normalized in secret_keys or normalized.startswith('xamz'):
+                # URL parsers decode once. Bound one additional decoding pass
+                # so %2574oken cannot be smuggled through as a public key.
+                normalized = ''.join(
+                    char for char in unquote(key).casefold() if char.isalnum()
+                )
+                if (normalized in secret_keys
+                        or normalized.startswith(('xamz', 'xgoog'))):
                     return ''
             return url
         if parts.scheme == 'file' and parts.netloc in {'', 'localhost'}:
@@ -106,7 +119,10 @@ def resolve_cover(candidates: Iterable[CoverCandidate]) -> CoverResolution:
         if candidate.tier not in _TIER_PRIORITY:
             continue
         url = _safe_cover_url(candidate.url)
-        if not url:
+        if not url or (url.startswith('file:') and candidate.tier != 'embedded'):
+            # file:// is an embedded Core-local resource only. A remote
+            # catalogue, entitlement or direct CoverCandidate cannot turn a
+            # private local path into a selected external image.
             continue
         normalized = CoverCandidate(
             url=url,
@@ -151,7 +167,7 @@ def candidate(
     url: object, *, tier: CoverTier, source: str, evidence_id: str = '', evidence_strength: int = 0
 ) -> CoverCandidate | None:
     safe = _safe_cover_url(url)
-    if not safe:
+    if not safe or (safe.startswith('file:') and tier != 'embedded'):
         return None
     return CoverCandidate(safe, tier, source, evidence_id, evidence_strength)
 
