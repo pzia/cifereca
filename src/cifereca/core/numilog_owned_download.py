@@ -21,6 +21,7 @@ _ATTESTED_OWNED_RIGHT_SOURCE = "numilog.authenticated_library"
 class NumilogOwnedDownloadTarget:
     provider_id: ClassVar[str] = 'numilog'
     branch: ClassVar[str] = 'meslivres'
+    attested_source: ClassVar[str] = _ATTESTED_OWNED_RIGHT_SOURCE
     entitlement_id: str
     identity_id: str
     source_id: str
