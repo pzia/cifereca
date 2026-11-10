@@ -719,6 +719,21 @@ def _explicit_feedback_targets(
     ))
 
 
+def _fresh_feedback_targets(broker: Any, identity_id: str) -> tuple[tuple[str, str], ...]:
+    """Read exact Core rows independently of a catalogue ranking result.
+
+    A provider failure, offline catalogue, or reference-book mode must not
+    prevent deliberate local preference editing. Reading is strictly Core
+    library_entries(scan=False), not an origin GET, a filesystem rescan or
+    a cached ranking that may belong to a previous identity.
+    """
+    reader = getattr(broker, "library_entries", None)
+    if not callable(reader):
+        return ()
+    rows = reader(identity_id=identity_id, scan=False)
+    return _explicit_feedback_targets(rows, identity_id)
+
+
 class RecommendationsPlugin:
     def __init__(self) -> None:
         self.context = None
@@ -1341,9 +1356,15 @@ class UxRecommendationsView:
         except Exception:
             self.host.toast("Appréciations indisponibles. Réessayez après actualisation.")
             return
-        targets = _explicit_feedback_targets(
-            self._reference_books, identity_id,
-        )[:2048]
+        try:
+            targets = _fresh_feedback_targets(broker, identity_id)[:2048]
+        except Exception:
+            # A Core failure is not a licence to offer stale cached
+            # recommendation rows as actionable preference targets.
+            self.host.toast("Bibliothèque locale indisponible. Actualisez puis réessayez.")
+            return
+        if self.selected_identity_id() != identity_id:
+            return
         if not targets and not preferences:
             self.host.toast("Aucun livre local à apprécier pour ce profil.")
             return
