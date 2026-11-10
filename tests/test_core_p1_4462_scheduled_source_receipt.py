@@ -10,7 +10,6 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.gui import numilog_materialization_startup as backup
 from cifereca.gui import source_inventory_startup as startup
 from cifereca.plugin_api import SyncResult
 from tests.test_core_p0_1346_source_inventory_timer import rig, SOURCE_ID
@@ -36,9 +35,8 @@ def _scheduled_window(provider: str, trigger: str):
 
 def _dispatch(r, trigger: str, monkeypatch):
     if trigger == "startup":
-        # Materialization is an independent optional worker. This test never
-        # activates downloads; inspect only the inventory's task receipt.
-        monkeypatch.setattr(backup, "dispatch_after_opening", lambda _w: True)
+        # Only the generic inventory receipt remains. The historical
+        # Numilog-specific startup worker is permanently retired (#5054).
         assert startup.dispatch_after_opening(r.window) is True
     else:
         assert r.configure() is False
