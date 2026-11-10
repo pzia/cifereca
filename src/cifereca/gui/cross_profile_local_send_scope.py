@@ -38,6 +38,8 @@ def selected_lender_local_scope(
     try:
         if (type(captured_preview) is not BorrowForIdentityPreview
                 or captured_preview.executable is not False
+                or getattr(service.current_identity, "identity_id", None)
+                   != captured_preview.requesting_identity_id
                 or type(selected_option_id) is not str
                 or type(expected_edition_id) is not str
                 or type(observations) not in (list, tuple)
