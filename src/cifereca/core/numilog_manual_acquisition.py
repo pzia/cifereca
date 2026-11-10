@@ -10,7 +10,8 @@ from typing import Any
 
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
-from .numilog_manifest_rights import _scoped_record_id, numilog_inventory_binding_valid
+from .numilog_manifest_rights import _scoped_record_id
+from .private_inventory_binding import exact_private_inventory_binding_valid
 
 
 def _canonical_guarded_source(session: Any) -> bool:
@@ -57,8 +58,8 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
         )
         if (active is None
                 or (session is not None and active is not session)
-                or not numilog_inventory_binding_valid(
-                    service, account, session=active,
+                or not exact_private_inventory_binding_valid(
+                    service, account, session=active, provider_id="numilog",
                 )
                 or not _canonical_guarded_source(active)):
             raise ValueError("source_rebound")
