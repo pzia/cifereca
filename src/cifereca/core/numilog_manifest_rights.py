@@ -13,6 +13,7 @@ from typing import Any
 from ..acquisition_engine import Entitlement, SourceIdentity, stable_id
 from ..models import SearchResult
 from .search_orchestration import _numilog_public_catalog_url
+from .passive_source_session import passive_private_library_session
 
 _MAX_NUMILOG_MIRROR_ROWS = 100_000
 
@@ -59,16 +60,19 @@ def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any)
         # current authority, even if its credential and connected flag match.
         current_sessions = [
             active for active in getattr(service, "_sessions", {}).values()
-            if getattr(active, "provider_id", None) == "numilog"
-            and getattr(active, "credential_id", None) == credential
+            if (coordinates := passive_private_library_session(active)) is not None
+            and coordinates[0] == account.provider_id
+            and coordinates[1] == credential
         ]
         if len(current_sessions) != 1 or current_sessions[0] is not session:
             return False
+        coordinates = passive_private_library_session(session)
         return (
-            getattr(session, "provider_id", None) == "numilog"
-            and getattr(session, "credential_id", None) == credential
-            and getattr(session, "connected", False) is True
-            and getattr(getattr(session, "capabilities", None), "personal_library", False) is True
+            coordinates is not None
+            and coordinates[0] == account.provider_id
+            and coordinates[1] == credential
+            and coordinates[2] is True
+            and coordinates[3] is True
         )
     except Exception:
         # A corrupt binding is never permission for a private provider call.
@@ -116,8 +120,9 @@ def mirror_numilog_manifest_rights(
         ]
         sessions = [
             session for session in service._sessions.values()
-            if getattr(session, "provider_id", None) == "numilog"
-            and getattr(session, "credential_id", None) == credential_id
+            if (coordinates := passive_private_library_session(session)) is not None
+            and coordinates[0] == matches[0].provider_id
+            and coordinates[1] == credential_id
         ]
         if (len(matches) != 1 or len(sessions) != 1
                 or not numilog_inventory_binding_valid(
