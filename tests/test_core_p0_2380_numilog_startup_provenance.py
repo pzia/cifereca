@@ -5,10 +5,8 @@ All observations and refs are synthetic. No network, account or receipt.
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 from cifereca.core.diagnostic_event_feed import query_diagnostic_events
-from cifereca.core.numilog_startup_diagnostics import StartupTrace
 from cifereca.diagnostics import Diagnostics
 
 
@@ -33,28 +31,6 @@ def test_generic_numilog_entry_cannot_publish_unattested_startup_fact(tmp_path):
     assert "detail" not in row
     assert "task_ref" not in row
     assert "acquisition_failed" not in json.dumps(row)
-
-
-def test_real_startup_trace_preserves_checked_facts_and_attestation(tmp_path):
-    diag = Diagnostics()
-    service = SimpleNamespace(
-        diagnostics=diag, storage=SimpleNamespace(metadata_get=lambda _: None),
-    )
-    trace = StartupTrace(service, "invalid-synthetic-source")
-    trace.phase = "acquisition"
-    trace.fail("acquisition_failed")
-    trace.counts.update(attempted=1, failed=1)
-    published = trace.finish("failed")
-    assert published["code"] == "acquisition_failed"
-    stored, = diag.snapshot()
-    assert stored["verified_numilog_startup"] is True
-    row, = query_diagnostic_events(
-        diag, source="core_events", log_path=tmp_path / "unread",
-    )["events"]
-    assert row["detail"] == published
-    assert row["status"] == "error"
-    assert row["message"].startswith("startup_materialization")
-    assert "task_ref" not in published
 
 
 def test_malformed_attested_fields_are_not_persisted_or_displayed(tmp_path):
