@@ -1,62 +1,43 @@
-"""Regression tests for Kobo per-source startup retry throttling (#1346)."""
+"""Retired Kobo W2 startup scheduling cannot regain acquisition authority (#4858).
+
+Historical retry metadata is retained for rollback/diagnostics only.
+"""
 from types import SimpleNamespace
-from unittest.mock import patch
 
-from cifereca.core.source_materialization_schedule import on_start_due
+import pytest
 
-
-class Storage:
-    def __init__(self, clock):
-        self.clock = clock
-
-    def metadata_get(self, key):
-        if key.startswith("sync.source.materialization.retry_minutes."):
-            return None  # Compatibility path before the first scoped attempt.
-        assert key.startswith("sync.source.materialization.last_attempt.")
-        return self.clock
+from cifereca.core.source_materialization_schedule import (
+    mark_on_start_attempt, on_start_due, kobo_on_start_sessions,
+    policy_key, retry_interval_key,
+)
 
 
-def service(clock, checkpoint_due=True):
-    return SimpleNamespace(
-        storage=Storage(clock),
-        kobo_backup_interval_minutes=lambda: 30,
-        _kobo_backup_account_due=lambda credential, *, interval_minutes=None: checkpoint_due,
-    )
+class PoisonStorage:
+    def metadata_get(self, *_args):
+        pytest.fail("retired W2 must not read the historical retry clock")
+
+    def metadata_set(self, *_args):
+        pytest.fail("retired W2 must not advance the historical retry clock")
 
 
 ACCOUNT = SimpleNamespace(identity_id="identity", credential_id="credential")
 
 
-def test_checkpoint_does_not_bypass_recent_attempt():
-    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \
-         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
-         patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
-        assert on_start_due(service("9900"), ACCOUNT) is False
+@pytest.mark.parametrize("clock", [None, "6000", "9900", "invalid", "20000"])
+@pytest.mark.parametrize("checkpoint_due", [True, False])
+def test_retired_w2_schedule_is_never_due_or_persisted(clock, checkpoint_due):
+    service = SimpleNamespace(
+        storage=PoisonStorage(),
+        kobo_backup_interval_minutes=lambda: 30,
+        _kobo_backup_account_due=lambda *_args, **_kwargs: pytest.fail(
+            "retired W2 must not inspect checkpoint eligibility"
+        ),
+    )
+    assert on_start_due(service, ACCOUNT) is False
+    assert mark_on_start_attempt(service, ACCOUNT) is False
+    assert kobo_on_start_sessions(service) == ()
 
 
-def test_checkpoint_is_due_after_attempt_interval():
-    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \
-         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
-         patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
-        # #3198: a legacy 30-minute preference no longer shortens the
-        # conservative 60-minute minimum for source-scoped startup retries.
-        assert on_start_due(service("8000"), ACCOUNT) is False
-        assert on_start_due(service("6500"), ACCOUNT) is False
-        assert on_start_due(service("6000"), ACCOUNT) is True
-        assert on_start_due(service("6000", checkpoint_due=False), ACCOUNT) is False
-
-
-def test_no_checkpoint_first_attempt_remains_due():
-    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=None), \
-         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
-         patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
-        assert on_start_due(service(None), ACCOUNT) is True
-        assert on_start_due(service("9900"), ACCOUNT) is False
-
-
-def test_corrupt_or_future_clock_fails_closed_with_checkpoint():
-    with patch("cifereca.core.kobo_backup._kobo_checkpoint_for", return_value=object()), \
-         patch("cifereca.core.source_materialization_schedule._account_id", return_value="source"), \
-         patch("cifereca.core.source_materialization_schedule.time.time", return_value=10_000):
-        assert on_start_due(service("invalid"), ACCOUNT) is False
-        assert on_start_due(service("20000"), ACCOUNT) is False
+def test_retired_retry_policy_keys_remain_read_only_for_rollback():
+    assert policy_key("source") == "sync.source.materialization.on_start.source"
+    assert retry_interval_key("source") == "sync.source.materialization.retry_minutes.source"
