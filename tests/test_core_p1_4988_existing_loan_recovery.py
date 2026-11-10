@@ -145,3 +145,62 @@ def test_current_reader_is_not_presented_as_foreign_lender(case):
     service.current_identity = NS(identity_id=w.account.identity_id)
     assert recover(service, exact_notice=w.notice) == ()
     loan.assert_not_called()
+
+
+
+def test_real_core_recovers_paris_confirmed_claim_after_late_local_delivery(tmp_path):
+    """Paris HTTP is simulated; SQLite Core state and local FS are real."""
+    import hashlib
+
+    from tests.test_core_p1_4987_cross_profile_paris_http import (
+        _cross_profile_fixture, _execute,
+    )
+
+    service, account, notice, offer, preview, http = _cross_profile_fixture(
+        tmp_path, result="no-acsm",
+    )
+    try:
+        assert _execute(service, offer, preview)["status"] == "confirmed"
+        assert http["mutations"] == 1
+        waiting = service.existing_lender_loan_candidates(exact_notice=notice)
+        assert len(waiting) == 1, waiting
+        assert waiting[0].status == "awaiting_delivery"
+        assert waiting[0]._account is account
+        # The fixture's publisher is synthetic; this is NOT proof that an
+        # actual Paris supplier has delivered bytes or a DRM licence.
+        payload = b"%PDF-1.7\\nSynthetic previously delivered loan\\n"
+        digest = hashlib.sha256(payload).hexdigest()
+        source = tmp_path / "EBooks" / "alex" / "paris" / "Recovery.pdf"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(payload)
+        artifact_id = "sha256:" + digest
+        service.storage.artifact_put({
+            "artifact_id": artifact_id, "sha256": digest,
+            "size": len(payload), "media_format": "pdf",
+        })
+        service.storage.placement_put({
+            "identity_id": account.identity_id,
+            "provider_id": account.provider_id,
+            "source_item_id": notice.record_id,
+            "artifact_id": artifact_id, "path": str(source),
+            "state": "present", "metadata": {},
+        })
+        service.storage.acquisition_put({
+            "acquisition_id": "synthetic-late-paris-delivery",
+            "identity_id": account.identity_id,
+            "provider_id": account.provider_id,
+            "credential_id": account.credential_id,
+            "account_id": account.unique_id,
+            "item_id": notice.record_id,
+            "status": "complete", "artifact_id": artifact_id,
+            "metadata": {"provider_loan_id": "loan-exact"},
+        })
+        resumed = service.existing_lender_loan_candidates(exact_notice=notice)
+        assert len(resumed) == 1, resumed
+        assert resumed[0].status == "present"
+        assert resumed[0]._account is account
+        assert resumed[0].executable is False
+        assert resumed[0].retry_borrow is False
+        assert http["mutations"] == 1
+    finally:
+        service.close()
