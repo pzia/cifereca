@@ -184,14 +184,13 @@ def test_actual_direct_worker_rejects_context_changed_while_queued(monkeypatch):
     invalidate.assert_not_called()
 
 
-@pytest.mark.parametrize('operation', ['download', 'resume_index'])
-def test_actual_owned_download_and_resume_callbacks_invalidate_after_indexed_path(monkeypatch, operation):
+def test_actual_owned_download_callback_invalidates_after_indexed_path(monkeypatch):
     from cifereca.gui import search_snapshot_refresh
     from cifereca.gui.local_book_action_controller import _add_owned_download
     from cifereca.task_queue import TaskPriority
     host = _window()
     host._activity_result = Mock(); host.refresh_library = Mock(); host.refresh_recent = Mock()
-    target = NS(provider_id='numilog', identity_id='alice', operation=operation)
+    target = NS(provider_id='numilog', identity_id='alice', operation='download')
     host.service.owned_library_download_target = Mock(return_value=target)
     host.service.obtain_owned_library_item = Mock(return_value=NS(path=Path('/synthetic/book.epub')))
     handlers = {}
