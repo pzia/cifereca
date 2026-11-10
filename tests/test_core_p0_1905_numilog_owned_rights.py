@@ -38,7 +38,7 @@ def test_authenticated_numilog_inventory_persists_scoped_notices_without_rights(
         assert service.storage.entitlements(provider_id="numilog") == []
         notices = service.storage.catalog_entries()
         assert len(notices) == 3
-        assert len({row["record_id"] for row in notices}) == 3
+        assert len({row["item_id"] for row in notices}) == 3
         assert {row["identity_id"] for row in notices} == {"default"}
         assert all(row["local_state"] == "remote_catalog" for row in notices)
         assert service.library_entries(identity_id="alex") == []
@@ -108,7 +108,7 @@ def test_homonymous_variants_across_two_numilog_accounts_and_three_identities(
         service.mirror_personal_libraries()
         notices = service.storage.catalog_entries()
         assert len(notices) == 4
-        assert len({(r["identity_id"], r["record_id"]) for r in notices}) == 4
+        assert len({(r["identity_id"], r["item_id"]) for r in notices}) == 4
         assert {r["identity_id"] for r in notices} == {"alice", "bob"}
         assert len([r for r in notices if r["identity_id"] == "alice"]) == 2
         assert len([r for r in notices if r["identity_id"] == "bob"]) == 2
