@@ -2658,12 +2658,15 @@ class LibraryService:
     def can_direct_download(self, item: SearchResult) -> bool:
         """Can this *exact* remote offer show a consented direct-download action?
 
-        An unauthenticated Kobo catalogue owned=True flag is not a purchase.
-        Require active, identity/credential/item-bound Core rights before
-        inspecting the provider's executable acquisition capabilities.
-        This read-only check never refreshes, downloads or writes rights.
+        Provider catalogue ownership flags are never acquisition authority.
+        Legacy Kobo direct acquisition is retired; only the canonical
+        provider-delivery flow may acquire from an exact account.
         """
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
+            return False
+        # The legacy Kobo direct GET has no admissible authority after the
+        # provider-only canonical cutover. A partial ABI must fail closed.
+        if item.source_provider == "kobo":
             return False
         if item.source_provider == "paris":
             # Catalogue provenance (including a manually cached old row)
@@ -2716,41 +2719,7 @@ class LibraryService:
                     return False
                 # This is only a read-only visibility hint; the locked
                 # acquisition still re-attests the exact account and edition.
-            if item.source_provider == "kobo":
-                identity_id = getattr(getattr(self, "current_identity", None), "identity_id", None)
-                if (type(identity_id) is not str or not identity_id
-                        or type(item.source_credential) is not str
-                        or not item.source_credential
-                        or item.source_credential == "__public__"
-                        or type(item.record_id) is not str or not item.record_id
-                        or item.owned is not True or item.downloadable is False):
-                    return False
-                if (self.kobo_personal_right_states(identity_id).get(
-                    (item.source_credential, item.record_id)
-                ) != "active"):
-                    return False
-                # #3196 D3: a SourceReference can predate a complete provider
-                # ABI. Never advertise the 0.7 direct GET for that edition.
-                from .core.source_reference_guard import has_typed_source
-                if has_typed_source(
-                    self.storage, "kobo", item.source_credential, item.record_id,
-                ):
-                    return False
             session = self._session_for_source(item.source_provider, item.source_credential)
-            if item.source_provider == "kobo":
-                # #3196: the typed A->B executor supersedes this *legacy*
-                # direct-download action. Retain the existing passive right
-                # admission FIRST: public Kobo catalogue records must not
-                # cause even one session lookup.
-                from .core.canonical_delivery_abi import has_complete_delivery_abi
-                if has_complete_delivery_abi(session):
-                    return False
-                # A verified right still needs an explicit Vault offer and a
-                # working Adept runtime; a local file is never implied.
-                if not hasattr(session, "resolve_acquisition"):
-                    return False
-                state = self.kobo_adept_state()
-                return bool(state.get("available") and state.get("compatible") and state.get("operational"))
             if item.source_provider == "ebooksgratuits":
                 # Public COPS catalogue rows can precede OPDS enrichment:
                 # a generic remote/distant notice is not an EPUB offer.
