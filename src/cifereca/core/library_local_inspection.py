@@ -1795,30 +1795,6 @@ class LocalInspection:
                     'rights_mutations': 0, 'placement_mutations': 0, 'file_mutations': 0}
         return {'status': 'unavailable', 'read_only': True}
 
-    def _transaction_inputs(self, right_key, file_key):
-        if (not self.valid() or self._manual_service is None
-                or type(right_key) is not str or type(file_key) is not str):
-            return None
-        preliminary = self.preflight_manual_link(right_key, file_key)
-        if preliminary.status != 'eligible_for_fresh_validation':
-            return None
-        right = self._manual_right_scopes.get(right_key)
-        file = self._manual_file_observations.get(file_key)
-        if right is None or file is None or len(right) != 5:
-            return None
-        identity_id, provider, credential, account, edition = right
-        if (provider != 'numilog' or identity_id != self._manual_identity
-                or not all(type(value) is str and value
-                           for value in (credential, account, edition))):
-            return None
-        return {
-            'observation': file,
-            'identity_id': identity_id,
-            'credential_id': credential,
-            'account_id': account,
-            'item_id': edition,
-        }
-
     def _kobo_transaction_inputs(self, right_key, file_key):
         """Private exact identifiers only; never an authorization by title/ISBN."""
         if (not self.valid() or self._manual_service is None
@@ -1868,37 +1844,17 @@ class LocalInspection:
                 'status': 'blocked', 'read_only': True,
                 'reason_code': 'kobo_canonical_evidence_required',
             }
-        options = self._transaction_inputs(right_key, file_key)
-        if options is None:
-            return {'status': 'unavailable', 'read_only': True}
-        from .numilog_manual_link_transaction import (
-            ManualAttachmentRejected, reconcile_numilog_manual,
-        )
-        try:
-            result = reconcile_numilog_manual(
-                self._manual_service, **options,
-                cancelled=lambda: (cancelled() or not self.valid()
-                                   or self._manual_preview_generation != generation),
-            )
-        except ManualAttachmentRejected as exc:
-            from .library_attachment_refusal import public_refusal_code
-            code = public_refusal_code('numilog', exc)
-            return {'status': 'blocked', 'read_only': True,
-                    **({'reason_code': code} if code else {})}
-        if (not self.valid() or cancelled()
-                or self._manual_preview_generation != generation):
-            return {'status': 'unavailable', 'read_only': True}
-        token = result.get('plan_token')
-        if (result.get('status') == 'preview'
-                and type(token) is str and len(token) == 64):
-            self._manual_pending = (right_key, file_key, token)
+        # #5054: the historic Numilog file/receipt reconciliation writer is
+        # retired. Re-download through a currently attested canonical provider
+        # entitlement instead; never attach by matching old local metadata.
+        if (case is not None and right_key in self._manual_right_scopes
+                and self.preflight_manual_link(right_key, file_key).status
+                == 'eligible_for_fresh_validation'):
             return {
-                'status': 'preview', 'read_only': True,
-                'requires_explicit_confirmation': True,
+                'status': 'blocked', 'read_only': True,
+                'reason_code': 'numilog_canonical_redownload_required',
             }
-        return {'status': 'already_linked', 'read_only': True} if (
-            result.get('status') == 'already_linked'
-        ) else {'status': 'unavailable', 'read_only': True}
+        return {'status': 'unavailable', 'read_only': True}
 
     def confirm_manual_attachment(self, right_key, file_key, *,
                                   user_confirmed=False, cancelled=lambda: False):
@@ -1918,58 +1874,15 @@ class LocalInspection:
                 'status': 'blocked', 'read_only': True,
                 'reason_code': 'kobo_canonical_evidence_required',
             }
-        options = self._transaction_inputs(right_key, file_key)
-        if options is None:
-            return {'status': 'unavailable', 'read_only': True}
-        from .numilog_manual_link_transaction import (
-            ManualAttachmentRejected, reconcile_numilog_manual,
-        )
-        # Capture this specific durable commit's stamp *inside* Core's
-        # writer/acquisition locks, not afterwards in the GTK worker: another
-        # SQLite writer could otherwise advance the cache stamp in between.
-        cache_stamp_accepted = [None]
-        def committed_under_lock():
-            callback = self._accept_own_core_commit
-            if callable(callback):
-                cache_stamp_accepted[0] = callback() is True
-
-        try:
-            result = reconcile_numilog_manual(
-                self._manual_service, **options, confirmation=pending[2],
-                cancelled=lambda: (cancelled() or not self.valid()
-                                   or self._manual_preview_generation != generation),
-                on_committed=committed_under_lock,
-            )
-        except ManualAttachmentRejected as exc:
-            from .library_attachment_refusal import public_refusal_code
-            code = public_refusal_code('numilog', exc)
-            return {'status': 'blocked', 'read_only': True,
-                    **({'reason_code': code} if code else {})}
-        # A committed write must not be reported as a failure merely because
-        # GTK detached a moment AFTER SQLite commit. The Core transaction
-        # checked generation/cancellation before its own final commit.
-        if result.get('status') in ('applied', 'already_linked'):
-            operation = result.get('operation_id')
-            if (result['status'] == 'applied'
-                    and type(operation) is str and len(operation) == 64):
-                # A cache-sourced inspection guards the old SQLite/WAL
-                # stamp. Our OWN confirmed placement changes that stamp;
-                # without this one-time acknowledgement the next valid()
-                # would revoke the private undo token before the user can
-                # use it. Never acknowledge a rejected/preview-only write.
-                allowed = (self._accept_own_core_commit is None
-                           or cache_stamp_accepted[0] is True)
-                # A foreign modification between transaction return and GUI
-                # completion must not be normalized as our own commit. The
-                # private session is revoked when the stamp changed again.
-                if allowed and self.valid():
-                    self._manual_undo = (right_key, file_key, operation)
+        # #5054: the historic Numilog file/receipt reconciliation writer is
+        # retired. Re-download through a currently attested canonical provider
+        # entitlement instead; never attach by matching old local metadata.
+        if (case is not None and right_key in self._manual_right_scopes
+                and self.preflight_manual_link(right_key, file_key).status
+                == 'eligible_for_fresh_validation'):
             return {
-                'status': result['status'],
-                'read_only': result['status'] != 'applied',
-                # Operation reference is kept in private Core session.
-                'undo_available': result['status'] == 'applied'
-                                  and self._manual_undo is not None,
+                'status': 'blocked', 'read_only': True,
+                'reason_code': 'numilog_canonical_redownload_required',
             }
         return {'status': 'unavailable', 'read_only': True}
 
@@ -1991,37 +1904,16 @@ class LocalInspection:
                 'status': 'blocked', 'read_only': True,
                 'reason_code': 'kobo_canonical_evidence_required',
             }
-        options = self._transaction_inputs(right_key, file_key)
-        if options is None:
-            return {'status': 'unavailable', 'read_only': True}
-        from .numilog_manual_link_transaction import (
-            ManualAttachmentRejected, undo_numilog_manual,
-        )
-        try:
-            result = undo_numilog_manual(
-                self._manual_service, **options, operation_id=previous[2],
-                cancelled=lambda: cancelled() or not self.valid()
-                          or self._manual_preview_generation != generation,
-            )
-        except ManualAttachmentRejected as exc:
-            from .library_attachment_refusal import public_refusal_code
-            code = public_refusal_code('numilog', exc)
-            return {'status': 'blocked', 'read_only': True,
-                    **({'reason_code': code} if code else {})}
-        if (not self.valid() or cancelled()
-                or self._manual_preview_generation != generation):
-            return {'status': 'unavailable', 'read_only': True}
-        token = result.get('plan_token')
-        if (result.get('status') == 'undo_preview'
-                and type(token) is str and len(token) == 64):
-            self._manual_undo_pending = (right_key, file_key, previous[2], token)
+        # #5054: the historic Numilog file/receipt reconciliation writer is
+        # retired. Re-download through a currently attested canonical provider
+        # entitlement instead; never attach by matching old local metadata.
+        if (case is not None and right_key in self._manual_right_scopes
+                and self.preflight_manual_link(right_key, file_key).status
+                == 'eligible_for_fresh_validation'):
             return {
-                'status': 'undo_preview', 'read_only': True,
-                'requires_explicit_confirmation': True,
+                'status': 'blocked', 'read_only': True,
+                'reason_code': 'numilog_canonical_redownload_required',
             }
-        if result.get('status') == 'already_undone':
-            self._manual_undo = None
-            return {'status': 'already_undone', 'read_only': True}
         return {'status': 'unavailable', 'read_only': True}
 
     def confirm_manual_undo(self, right_key, file_key, *,
@@ -2043,28 +1935,15 @@ class LocalInspection:
                 'status': 'blocked', 'read_only': True,
                 'reason_code': 'kobo_canonical_evidence_required',
             }
-        options = self._transaction_inputs(right_key, file_key)
-        if options is None:
-            return {'status': 'unavailable', 'read_only': True}
-        from .numilog_manual_link_transaction import (
-            ManualAttachmentRejected, undo_numilog_manual,
-        )
-        try:
-            result = undo_numilog_manual(
-                self._manual_service, **options,
-                operation_id=pending[2], confirmation=pending[3],
-                cancelled=lambda: cancelled() or not self.valid()
-                          or self._manual_preview_generation != generation,
-            )
-        except ManualAttachmentRejected as exc:
-            from .library_attachment_refusal import public_refusal_code
-            code = public_refusal_code('numilog', exc)
-            return {'status': 'blocked', 'read_only': True,
-                    **({'reason_code': code} if code else {})}
-        if result.get('status') in ('undone', 'already_undone'):
-            self._manual_undo = None
+        # #5054: the historic Numilog file/receipt reconciliation writer is
+        # retired. Re-download through a currently attested canonical provider
+        # entitlement instead; never attach by matching old local metadata.
+        if (case is not None and right_key in self._manual_right_scopes
+                and self.preflight_manual_link(right_key, file_key).status
+                == 'eligible_for_fresh_validation'):
             return {
-                'status': result['status'], 'read_only': result['status'] != 'undone',
+                'status': 'blocked', 'read_only': True,
+                'reason_code': 'numilog_canonical_redownload_required',
             }
         return {'status': 'unavailable', 'read_only': True}
 

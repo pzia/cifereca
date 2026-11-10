@@ -8,39 +8,13 @@ one refused attempt; it never grants a later attachment or undo authority.
 from __future__ import annotations
 
 from .local_attachment_refusal_types import ReconciliationRejected
-from .numilog_manual_link_transaction import ManualAttachmentRejected
 
 
 _LABELS = {
     'numilog': {
-        'purchase_provenance_unattested':
-            "L’achat Numilog n’est pas attesté pour ce compte et cette édition.",
-        'acquisition_ambiguous_or_missing':
-            "La preuve d’acquisition est absente ou ambiguë pour cette édition.",
-        'ambiguous_or_missing_right':
-            "Le droit d’achat est absent ou ambigu dans la base actuelle.",
-        'file_revalidation_failed':
-            "Le fichier sélectionné ne passe plus le contrôle sécurisé.",
-        'file_changed_before_commit':
-            "Le fichier a changé avant la confirmation du placement.",
-        'account_scope_changed':
-            "Le compte fournisseur associé au droit a changé.",
-        'source_scope_changed':
-            "La connexion ou l’identité fournisseur a changé.",
-        'placement_ambiguous':
-            "Plusieurs placements incompatibles empêchent ce rattachement.",
-        'catalogue_conflict':
-            "Un lien de catalogue contredit le placement demandé.",
-        'preview_changed':
-            "Les preuves ont changé depuis la prévisualisation.",
-        'acquisition_busy':
-            "Une autre acquisition ou réparation utilise actuellement le verrou.",
-        'local_storage_unavailable':
-            "La base locale ne permet pas de vérifier cette opération.",
-        'schema_upgrade_required':
-            "Une mise à niveau du schéma local est nécessaire.",
-        'directory_migration_pending':
-            "Une migration des répertoires du profil est en cours.",
+        'numilog_canonical_redownload_required':
+            "Rattachement historique indisponible : utilisez une nouvelle "
+            "acquisition canonique si le droit actuel le permet.",
     },
     'kobo': {
         'kobo_canonical_evidence_required':
@@ -84,7 +58,6 @@ _LABELS = {
 def public_refusal_code(provider: object, exc: BaseException) -> str | None:
     """Project only exact Core exception classes and literal allowlisted codes."""
     expected = {
-        'numilog': ManualAttachmentRejected,
         'kobo': ReconciliationRejected,
     }.get(provider if type(provider) is str else None)
     if expected is None or type(exc) is not expected:

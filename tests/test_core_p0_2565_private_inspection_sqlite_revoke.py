@@ -13,8 +13,7 @@ from cifereca.core import library_local_inspection as inspector
 from cifereca.core.library_audit_broker import LibraryReconciliationReadBrokerImpl
 from cifereca.core.library_local_inspection import LocalInspection, open_local_inspection
 from tests.test_library_audit_broker import scoped
-from tests.test_core_p0_2714_numilog_manual_transaction import rig
-from tests.test_core_p0_2714_numilog_manual_transaction import _rows
+from tests.numilog_inspection_fixture import rig, _rows
 
 
 def test_fresh_scan_revokes_on_followup_external_sqlite_commit(scoped):
@@ -74,31 +73,27 @@ def test_private_projection_window_rejects_source_commit_during_case_building(
     retry.close()
 
 
-def test_direct_fresh_session_preserves_exactly_one_own_commit_and_undo(rig):
-    service, book, options = rig
-    # This is a FRESH CoreUI inspection rather than the one-shot Maintenance
-    # cache session already covered by #2714's separate regression tests.
+def test_direct_fresh_session_retired_numilog_link_is_readonly(rig):
+    """Legacy Numilog attachment is fenced; local bytes and ledger stay intact."""
+    service, book, _options = rig
     session = open_local_inspection(service, identity_id="default")
     assert isinstance(session, LocalInspection)
-    assert session.from_audit_cache() is False
-    assert session.valid()
+    assert session.from_audit_cache() is False and session.valid()
     rights = session.page(provider="numilog", state="rights_without_verified_file").cases
     files = session.unconfirmed_files(query="PRIVATE_edition", limit=10).cases
-    assert len(rights) == 1 and len(files) == 1
+    assert len(rights) == len(files) == 1
     right, file = rights[0].key, files[0].key
     baseline = book.read_bytes()
-    assert session.preflight_manual_link(right, file).status == "eligible_for_fresh_validation"
-    assert session.preview_manual_attachment(right, file)["status"] == "preview"
-    done = session.confirm_manual_attachment(right, file, user_confirmed=True)
-    assert done["status"] == "applied"
-    assert done["undo_available"] is True
-    assert session.valid()
-    assert len(_rows(service, "placements")) == 1
-    assert session.preview_manual_undo(right, file)["status"] == "undo_preview"
-    undo = session.confirm_manual_undo(right, file, user_confirmed=True)
-    assert undo["status"] == "undone"
-    assert _rows(service, "placements") == []
+    before = {name: _rows(service, name) for name in
+              ("placements", "entitlements", "acquisition_ledger", "artifacts")}
+    result = session.preview_manual_attachment(right, file)
+    assert result == {"status": "blocked", "read_only": True,
+                      "reason_code": "numilog_canonical_redownload_required"}
+    assert session.confirm_manual_attachment(right, file, user_confirmed=True)["status"] == "unavailable"
+    assert session.preview_manual_undo(right, file)["status"] == "unavailable"
+    assert session.confirm_manual_undo(right, file, user_confirmed=True)["status"] == "unavailable"
     assert book.read_bytes() == baseline
+    assert {name: _rows(service, name) for name in before} == before
     session.close()
 
 

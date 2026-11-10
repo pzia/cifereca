@@ -47,10 +47,9 @@ def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
     assert report.read_only and not report.attachment_authorized
     assert reason in report.codes and "Numilog" not in report.explanation
     assert "attribution Numilog" not in right.details
-    # Even if a caller supplies a service later, the shared read-only
-    # preflight cannot lead to the Numilog writer.
+    # Even with a service object, unrelated providers cannot reach the
+    # retired Numilog writer; the public refusal remains read-only.
     session._manual_service = object()
-    assert session._transaction_inputs(right.key, file.key) is None
     assert session.preview_manual_attachment(right.key, file.key) == {
         "status": "unavailable", "read_only": True,
     }

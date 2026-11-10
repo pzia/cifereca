@@ -5,30 +5,19 @@ are local. No request/download, plugin authority, or forged acquisition.
 """
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from cifereca.core.library_attachment_refusal import (
     public_refusal_code, public_refusal_label,
 )
 from cifereca.core import kobo_local_reconciliation as kobo
-from cifereca.core import numilog_manual_link_transaction as numilog
 from cifereca.gui.library_inspection_view import _attachment_refusal_message
-from tests.test_core_p0_2714_manual_session_bridge import selected as numilog_selected
-from tests.test_core_p0_2714_numilog_manual_transaction import (
-    rig, _rows as numilog_rows,
-)
 
 
 _PRIVATE = "PRIVATE-account password=SECRET /home/private/BOOK.epub"
 
 
 @pytest.mark.parametrize("provider,exception,expected", [
-    ("numilog", numilog.ManualAttachmentRejected("purchase_provenance_unattested"),
-     "purchase_provenance_unattested"),
-    ("numilog", numilog.ManualAttachmentRejected("file_changed_before_commit"),
-     "file_changed_before_commit"),
     ("kobo", kobo.ReconciliationRejected("backup_evidence_missing"),
      "backup_evidence_missing"),
     ("kobo", kobo.ReconciliationRejected("revision_unproven"),
@@ -48,10 +37,6 @@ def test_core_refusal_codes_are_closed_and_explained(provider, exception, expect
 
 
 @pytest.mark.parametrize("exception", [
-    numilog.ManualAttachmentRejected(_PRIVATE),
-    numilog.ManualAttachmentRejected("FILE_CHANGED"),
-    numilog.ManualAttachmentRejected({"PRIVATE": _PRIVATE}),
-    numilog.ManualAttachmentRejected("source_scope_changed", _PRIVATE),
     kobo.ReconciliationRejected(_PRIVATE),
     kobo.ReconciliationRejected(True),
     RuntimeError(_PRIVATE),
@@ -67,70 +52,17 @@ def test_unknown_private_exceptions_never_appear_in_ui(exception):
 
 
 def test_a_plugin_or_subclass_cannot_forge_core_refusal():
-    class PluginSpoof(numilog.ManualAttachmentRejected):
+    class PluginSpoof(kobo.ReconciliationRejected):
         pass
-    assert public_refusal_code(
-        "numilog", PluginSpoof("purchase_provenance_unattested"),
-    ) is None
-    assert public_refusal_code(
-        "kobo", numilog.ManualAttachmentRejected("acquisition_busy"),
-    ) is None
+    assert public_refusal_code("kobo", PluginSpoof("backup_evidence_missing")) is None
     for malformed in (
         {"status": "blocked", "read_only": True, "reason_code": _PRIVATE},
         {"status": "blocked", "read_only": False,
-         "reason_code": "purchase_provenance_unattested"},
+         "reason_code": "numilog_canonical_redownload_required"},
         {"status": "preview", "read_only": True,
-         "reason_code": "purchase_provenance_unattested"},
+         "reason_code": "numilog_canonical_redownload_required"},
         {"status": "blocked", "read_only": True,
-         "reason_code": ["purchase_provenance_unattested"]},
+         "reason_code": ["numilog_canonical_redownload_required"]},
     ):
-        assert _attachment_refusal_message(
-            malformed, "numilog", "Refus",
-        ) == "Refus"
-
-
-def test_numilog_fresh_preview_reports_missing_receipt_code_without_mutation(
-    numilog_selected, monkeypatch,
-):
-    session, right, file, service = numilog_selected
-    before = numilog_rows(service, "placements")
-
-    def refusal(*_args, **_kwargs):
-        raise numilog.ManualAttachmentRejected("purchase_provenance_unattested")
-
-    monkeypatch.setattr(numilog, "reconcile_numilog_manual", refusal)
-    response = session.preview_manual_attachment(right, file)
-    assert response == {
-        "status": "blocked", "read_only": True,
-        "reason_code": "purchase_provenance_unattested",
-    }
-    assert session._manual_pending is None
-    assert numilog_rows(service, "placements") == before
-    message = _attachment_refusal_message(
-        response, "numilog", "Placement non effectué.",
-    )
-    assert "L’achat Numilog" in message
-    assert _PRIVATE not in json.dumps(response) + message
-
-
-def test_numilog_confirmation_reports_fresh_evidence_failure_and_consumes_token(
-    numilog_selected, monkeypatch,
-):
-    session, right, file, service = numilog_selected
-    assert session.preview_manual_attachment(right, file)["status"] == "preview"
-
-    def refusal(*_args, **_kwargs):
-        raise numilog.ManualAttachmentRejected("file_changed_before_commit")
-
-    monkeypatch.setattr(numilog, "reconcile_numilog_manual", refusal)
-    result = session.confirm_manual_attachment(right, file, user_confirmed=True)
-    assert result == {
-        "status": "blocked", "read_only": True,
-        "reason_code": "file_changed_before_commit",
-    }
-    assert session._manual_pending is None
-    assert session.confirm_manual_attachment(right, file, user_confirmed=True)[
-        "status"
-    ] == "unavailable"
-    assert not numilog_rows(service, "placements")
+        assert _attachment_refusal_message(malformed, "numilog", "Refus") == "Refus"
 
