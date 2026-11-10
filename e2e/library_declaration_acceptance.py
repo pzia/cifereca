@@ -375,12 +375,10 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         service.close()
         tmp.cleanup()
         report['checks']['native_declaration_cleanup_done'] = True
-        if attested:
-            done()
-        else:
-            exercise(parent=parent, Gtk=Gtk, Adw=Adw, GLib=GLib, Pango=Pango,
-                     device=device, until=until, walk=walk, report=report,
-                     checkpoint=checkpoint, done=done, attested=True)
+        # The native historical Kobo W4 replay is retired. Exercise the
+        # generic user-declaration GUI only; Core's W1/W4 negative gates
+        # separately enforce absence of legacy entitlement and Placement.
+        done()
 
     host.present()
     until(host.get_mapped, start)
