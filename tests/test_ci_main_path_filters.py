@@ -84,7 +84,7 @@ def test_e2e_readme_push_keeps_status_aware_selector():
 def test_plugin_only_runs_plugin_suite_not_core_or_wheel():
     for path in (
         "src/plugins/baen/cifereca_baen.py",
-        "src/plugins/provider-gutenberg/tests/test_contract_038.py",
+        "src/plugins/provider-gutenberg/tests/test_pagination_039.py",
         "src/plugins/provider-numilog/cifereca-plugin.json",
     ):
         assert (ROOT / path).is_file(), f"Dead plugin routing fixture: {path}"
@@ -128,6 +128,7 @@ def test_test_script_and_workflow_consumers_are_explicit():
         "scripts/package-dev-snapshot.py": {"core"},
         "scripts/test_partial_plugin_release.py": {"core"},
         "scripts/ci-run-plugin-tests.sh": {"plugins"},
+        "scripts/validate_plugin_contract.py": {"plugins"},
         "scripts/ci-smoke-installed-wheel.sh": {"install"},
         "README.md": {"install"},  # wheel description metadata
     }
