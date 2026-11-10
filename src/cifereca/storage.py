@@ -4012,7 +4012,7 @@ class Storage:
         UI. This passive read is NOT acquisition consent or a download grant.
         The receipt itself is checked separately under the acquisition lock.
         """
-        from .core.numilog_manifest_rights import _scoped_record_id
+        from .core.credential_scoped_record import exact_credential_scoped_record
         if (not all(type(v) is str and 0 < len(v) <= 1024
                     and not any(c in v for c in "\0\r\n")
                     for v in (identity_id, item_id, entitlement_id))
@@ -4038,7 +4038,9 @@ class Storage:
             row = dict(zip(columns, value))
             credential = row.get("credential_id")
             if (type(credential) is not str
-                    or _scoped_record_id(item_id, credential) is None):
+                    or exact_credential_scoped_record(
+                        item_id, provider_id="numilog", credential_id=credential,
+                    ) is None):
                 continue
             row["metadata"] = self._json_load(row.pop("metadata_json"))
             result.append(row)
@@ -4174,8 +4176,10 @@ class Storage:
         Exact stable account-scoped item ID only. No global acquisition scan,
         raw ledger payload, path or title leaves SQLite.
         """
-        from .core.numilog_manifest_rights import _scoped_record_id
-        if (_scoped_record_id(item_id, credential_id) is None):
+        from .core.credential_scoped_record import exact_credential_scoped_record
+        if (exact_credential_scoped_record(
+            item_id, provider_id="numilog", credential_id=credential_id,
+        ) is None):
             raise ValueError("invalid_numilog_purchase")
         with self._lock, self._connect() as db:
             # A consistent SQLite snapshot prevents a concurrent writer
