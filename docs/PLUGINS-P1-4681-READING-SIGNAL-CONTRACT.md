@@ -154,3 +154,38 @@ l'activation facultative, le retour au neutre, les notices
 appel fournisseur. **La comparaison de pertinence en terrain**, le parcours
 UX de consentement et son invalidation GTK restent à faire avant fermeture
 de #4681.
+
+
+## Tranche documentaire — filtre volontaire « fichiers locaux vérifiés »
+
+Le classement neutre **ne change pas** : sans sélection, toute entrée de la
+bibliothèque du profil contribue une fois aux thèmes, auteurs et séries.
+Le nouveau bouton facultatif **« Sources : fichiers locaux vérifiés »** est
+désactivé à l'ouverture et réinitialisé au changement d'identité ou à la
+sélection d'un livre de référence. Il n'est jamais enregistré comme consentement
+pour un autre profil.
+
+Lorsque le lecteur l'active, le mode documentaire « attested_local »
+limite **uniquement les termes documentaires de profil et les requêtes** aux
+entrées que la projection Core qualifie comme locales, avec un Artifact et un
+Placement présent **sur le même profil**. Un prêt, un achat ou une archive
+seulement distants, une source étrangère, un Placement absent ou ambigu ne
+devient pas un signal de préférence.
+
+- **Aucun droit ne change** : tous les identifiants d'édition et couples
+  titre/auteur des livres connus restent pris en compte par l'exclusion
+  « déjà présent ». Aucun POST, GET supplémentaire, scan FS ou accès au chemin
+  d'un autre profil ne découle du choix.
+- Le choix documentaire est indépendant des appréciations **explicites** :
+  « liked » garde priorité positive, y compris pour un livre distant choisi
+  volontairement ; « not_interested » reste prioritaire négatif ; sans avis,
+  la présence physique contrôlée seule décide de contribuer.
+- Des tests comparent neutralité, opt-in, retour au neutre, 0 signal,
+  classements contrôlés, deux éditions distinctes, profil A/B, Placement
+  dupliqué/archivé et refus des entrées étrangères. Les notices originales et
+  coordonnées fournisseur ne sont jamais modifiées par la pondération.
+
+**Limite :** ce filtre vérifie la provenance des **lignes documentaires** déjà
+admises par Core, pas le caractère « lu » du livre, la pertinence réelle ni
+l'éligibilité à un prêt. Le parent #4681 reste ouvert pour l'enrichissement
+Notice C et la mesure terrain de pertinence.
