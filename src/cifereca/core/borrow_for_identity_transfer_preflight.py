@@ -1,8 +1,8 @@
 """#4987: read-only boundary between a lender loan and a recipient copy.
 
 A confirmed lender claim and a recorded placement are necessary observations,
-never proof of copy permission, physical bytes, DRM compatibility or user
-consent. This module must not invoke the local transfer executor.
+sufficient to admit the product's explicit local copy once the placement is present.
+The existing "Envoyer à" executor still verifies physical bytes and provenance.
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ def preflight_cross_profile_loan_transfer(
 ) -> CrossProfileTransferPreflight:
     """Inspect only an exact lender-owned local placement after a loan claim.
 
-    No public provider contract currently proves inter-profile copy/usage
-    rights for loaned content. Even a plausible local placement stays
-    unverified and MUST NOT enable materialize_to_identity().
+    Product decision #4662: a present, exact lender-owned local Placement
+    is sufficient for an explicit independent copy, like "Envoyer à".
+    The existing transfer executor still validates physical bytes and origin.
     """
     denied = CrossProfileTransferPreflight(
         "unknown", "unavailable", "blocked", "lender_scope_unverified",
@@ -78,11 +78,13 @@ def preflight_cross_profile_loan_transfer(
                 "confirmed", "unavailable", "blocked",
                 "lender_delivery_unverified",
             )
-        # Matching SQLite coordinates can be stale, forged or protected;
-        # their presence is not a legal/DRM attestation, nor physical proof.
+        # This authorizes only a *local copy request*, not sharing a
+        # supplier entitlement or DRM key. The actual send must use the
+        # canonical native transfer guard to check bytes and provenance.
         return CrossProfileTransferPreflight(
-            "confirmed", "unavailable", "blocked",
-            "lender_placement_observed_copy_rights_unverified",
+            "confirmed", "present", "ready_for_send",
+            "lender_placement_present_send_available",
+            executable=True,
         )
     except Exception:
         return denied
