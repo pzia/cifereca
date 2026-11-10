@@ -12,7 +12,7 @@ import pytest
 
 from cifereca.core import kobo_backup, source_materialization as materialize
 from cifereca.plugin_api import ProviderRightsScope, ProviderRightsSnapshot, ProviderRightObservation, SyncResult
-from tests.test_source_materialization_confirmation import case, _prepare  # noqa: F401
+from tests.test_source_materialization_confirmation import case  # noqa: F401
 
 
 def _snapshot(case, *, revision="r1"):
