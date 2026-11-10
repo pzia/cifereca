@@ -350,42 +350,6 @@ class StartupTrace:
             _ACTIVE.reset(token)
 
 
-_ACQUISITION_DENIAL_CODES = frozenset(code for code in CODES
-    if code.startswith("acquisition_") and code != "acquisition_failed")
-
-
-def startup_acquisition_active() -> bool:
-    """Diagnostic trace presence, NOT independent acquisition permission.
-
-    The locked executor must separately validate exact consent, session,
-    account and fresh downloadable offer.
-    """
-    return _ACTIVE.get() is not None
-
-
-def mirror_observation_error(source_id):
-    """Preserve raw metadata projection failure in the local Core journal.
-
-    Do not echo SQL/provider exception text to the public bounded GTK trace.
-    """
-    if _source(source_id):
-        _LOG.warning(
-            "Numilog owned-rights projection unavailable (download offer unaffected)",
-            exc_info=True,
-        )
-
-
-def acquisition_refusal(code):
-    """Record only a closed failure boundary within the active startup run.
-
-    This must never become an authorization, retry signal or logger of
-    untrusted exception details. Manual acquisitions have no active trace.
-    """
-    trace = _ACTIVE.get()
-    if trace is not None and code in _ACQUISITION_DENIAL_CODES:
-        trace.fail(code)
-
-
 @contextmanager
 def adept_stage(provider_id):
     """Mark ADEPT only when the public Core import is actually entered."""
