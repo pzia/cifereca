@@ -2,7 +2,7 @@
 
 Only the PUBLIC legacy `LibraryService.sync_kobo_backup` facade calls this
 adapter. A modern Kobo session always uses the canonical A→B executor through
-`sync_kobo_backup_account`; an incomplete ABI keeps its guarded compatibility
+`sync_kobo_backup_account`; a session without any ABI keeps its guarded compatibility
 worker in an independently acquired lock. No one global W2 lock nests a
 canonical Sync lock, and no selected modern session may fall back to W2.
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..providers import ProviderConfigurationError
-from .canonical_delivery_abi import has_complete_delivery_abi
+from .canonical_delivery_abi import (has_complete_delivery_abi, has_incomplete_delivery_abi)
 
 _METRICS = (
     "scanned", "attempted", "downloaded", "unchanged", "completed",
@@ -46,6 +46,10 @@ def _active_source_batch(service):
                 or getattr(session, "connected", None) is not True):
             continue
         canonical = has_complete_delivery_abi(session)
+        if not canonical and has_incomplete_delivery_abi(session):
+            raise ProviderConfigurationError(
+                "kobo_canonical_abi_partial_no_legacy_fallback"
+            )
         if (not canonical
                 and getattr(getattr(session, "capabilities", None),
                             "backup", None) is not True):
