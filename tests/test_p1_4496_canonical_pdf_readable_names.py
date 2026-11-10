@@ -125,3 +125,76 @@ def test_late_xmp_outside_prefix_stays_opaque():
     assert _readable_pdf_target_names(
         BytesIO(payload), opaque_name=digest,
     ) == (digest + ".pdf",)
+
+
+def test_xmp_in_non_metadata_pdf_object_is_not_a_readable_name():
+    digest = "e" * 64
+    decoy = XMP.format(
+        title="Titre forgé hors métadonnées", author="Faux Auteur",
+    ).encode("utf-8")
+    payload = (
+        b"%PDF-1.7\n1 0 obj\n<< /Type /Metadata /Subtype /XML >>\n"
+        b"stream\nnot XMP\nendstream\nendobj\n"
+        b"2 0 obj\n<< /Type /XObject >>\nstream\n"
+        + decoy + b"\nendstream\nendobj\n%%EOF\n"
+    )
+    assert _readable_pdf_target_names(
+        BytesIO(payload), opaque_name=digest,
+    ) == (digest + ".pdf",)
+
+
+def test_metadata_marker_in_pdf_comment_cannot_authorize_xmp_decoy():
+    digest = "d" * 64
+    decoy = XMP.format(
+        title="Titre commentaire", author="Faux Auteur",
+    ).encode("utf-8")
+    payload = (
+        b"%PDF-1.7\n%/Type /Metadata /Subtype /XML\n"
+        b"1 0 obj\n<< /Type /XObject >>\nstream\n"
+        + decoy + b"\nendstream\nendobj\n%%EOF\n"
+    )
+    assert _readable_pdf_target_names(
+        BytesIO(payload), opaque_name=digest,
+    ) == (digest + ".pdf",)
+
+
+def test_two_independent_metadata_xmp_streams_remain_ambiguous():
+    digest = "b" * 64
+    first = pdf(title="Premier titre", author="A").replace(
+        b"\n%%EOF\n", b"\n",
+    )
+    second = pdf(title="Second titre", author="B").split(
+        b"1 0 obj", 1,
+    )[1].replace(b"\n%%EOF\n", b"\n")
+    payload = first + b"2 0 obj" + second + b"%%EOF\n"
+    assert _readable_pdf_target_names(
+        BytesIO(payload), opaque_name=digest,
+    ) == (digest + ".pdf",)
+
+
+def test_compressed_metadata_marker_does_not_authorize_raw_xml_in_stream():
+    digest = "c" * 64
+    payload = pdf().replace(
+        b"/Type /Metadata /Subtype /XML",
+        b"/Type /Metadata /Subtype /XML /Filter /FlateDecode",
+    )
+    assert _readable_pdf_target_names(
+        BytesIO(payload), opaque_name=digest,
+    ) == (digest + ".pdf",)
+
+
+def test_valid_metadata_stream_ignores_nonmetadata_decoy_after_endstream():
+    digest = "a" * 64
+    valid = pdf().replace(b"\n%%EOF\n", b"\n")
+    unrelated = XMP.format(
+        title="Faux titre", author="Faux auteur",
+    ).encode("utf-8")
+    payload = valid + (
+        b"2 0 obj\n<< /Type /XObject >>\nstream\n"
+        + unrelated + b"\nendstream\nendobj\n%%EOF\n"
+    )
+    names = _readable_pdf_target_names(
+        BytesIO(payload), opaque_name=digest,
+    )
+    assert names[-1].startswith("Auteure Test - Titre PDF vérifié - ")
+    assert names[-1].endswith(digest + ".pdf")
