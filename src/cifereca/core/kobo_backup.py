@@ -16,14 +16,13 @@ from .legacy_diagnostic_projection import (
 )
 
 import time
-import os
 import re
 import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable
 from ..acquisition import Acquisition
-from ..library_files import safe_library_component, sha256_file
+from ..library_files import sha256_file
 from ..paths import acquisition_lock_file
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
@@ -45,30 +44,6 @@ def kobo_backup_interval_minutes(self) -> int:
         return max(15, int(self.config.get("kobo_backup.interval_minutes", 60)))
     except (TypeError, ValueError):
         return 60
-
-
-def _kobo_preview_paths(self, identity_id: str) -> tuple[Path, Path]:
-    """Derive Kobo paths without creating a directory or touching metadata."""
-    configured_root = os.path.expandvars(os.path.expanduser(
-        str(self.config.get("library.directory", "~/EBooks") or "~/EBooks").strip()
-    ))
-    library_root = Path(configured_root)
-    if not library_root.is_absolute():
-        library_root = Path.home() / library_root
-
-    configured = os.path.expandvars(os.path.expanduser(
-        str(self.config.get("kobo_backup.directory", "") or "").strip()
-    ))
-    if configured:
-        backup_root = Path(configured)
-        if not backup_root.is_absolute():
-            backup_root = library_root / backup_root
-    else:
-        backup_root = library_root
-    identity = self.identity_by_id(identity_id)
-    directory_name = identity.directory_name if identity and identity.directory_name else identity_id
-    target_dir = backup_root / safe_library_component(directory_name, "default") / "kobo"
-    return library_root, target_dir
 
 
 _KOBO_CHECKPOINT_STATUSES = frozenset({
