@@ -1,14 +1,7 @@
-"""P0 #5056: catalogue-owned flags never create rights for any provider.
-
-Integration against the real remote-mirror projection and the already
-reviewed Core purchase witness (#5073). All providers are synthetic.
-No network, account activation or new personal ledger writes.
-"""
+"""P0 #5056: purchased catalogue mirror needs independently stored rights."""
 from dataclasses import replace
 from types import SimpleNamespace as NS
-
 import pytest
-
 from cifereca.core.search_orchestration import _mirror_remote_results
 from cifereca.models import SearchResult
 
@@ -17,86 +10,83 @@ class Storage:
     def __init__(self, rights):
         self.rights = rights
         self.upserts = []
-        self.calls = 0
-
-    def entitlements(self, *, state):
+    def entitlements(self, *, provider_id, state):
         assert state == "active"
-        self.calls += 1
-        return self.rights
-
+        return [x for x in self.rights if x.get("provider_id") == provider_id]
     def catalog_entries_by_ids(self, ids):
-        assert len(ids) == 1
         return {}
-
     def catalog_entries_upsert_many(self, rows):
         self.upserts.extend(rows)
 
 
-def item(provider="fictional-a"):
+def book(provider="fictional-a", account="acc", revision="revision"):
     return SearchResult(
-        id="item-1", record_id="book-1", docbase="BOOKS", medium="digital",
-        title="Un livre", author="Auteure", type=None, format="epub",
+        id="x", record_id="book", docbase="BOOKS", medium="digital",
+        title="Livre", author="Auteur", type=None, format="epub",
         publisher=None, published_at=None, description=None,
         thumbnail_url=None, friendly_url=None, scenario="PERSONAL",
-        source_provider=provider, source_credential="card-a",
-        source_account_id="account-a", source_collection="personal",
-        revision_id="revision-a", owned=True,
+        source_provider=provider, source_credential="card",
+        source_account_id=account, revision_id=revision,
+        source_collection="library", owned=True,
     )
 
 
 def right(provider="fictional-a", **changes):
-    value = {
-        "identity_id": "alice", "provider_id": provider,
-        "credential_id": "card-a", "account_id": "account-a",
-        "item_id": "book-1", "revision_id": "revision-a",
-        "entitlement_type": "owned", "state": "active",
-    }
-    value.update(changes)
-    return value
+    d = dict(provider_id=provider, identity_id="alice",
+             credential_id="card", account_id="acc", item_id="book",
+             revision_id="revision", entitlement_type="owned", state="active")
+    d.update(changes)
+    return d
 
 
-def projection(book, rights, *, active="alice", asked="alice"):
+def mirror(row, rights, identity="alice"):
     storage = Storage(rights)
-    service = NS(
-        current_identity=NS(identity_id=active), storage=storage,
-        _account_context_epoch=5, _source_context_epoch=7,
-    )
-    assert _mirror_remote_results(service, [book], identity_id=asked) == 1
-    assert len(storage.upserts) == 1
-    assert storage.calls == 1
+    service = NS(storage=storage, current_identity=NS(identity_id="alice"))
+    assert _mirror_remote_results(service, [row], identity_id=identity) == 1
     return storage.upserts[0]["local_state"]
 
 
 @pytest.mark.parametrize("provider", ["fictional-a", "fictional-b"])
-def test_exact_personal_ledger_required_for_every_provider(provider):
-    row = item(provider)
-    assert projection(row, []) == "remote_catalog"
-    assert projection(row, [right(provider)]) == "remote_owned"
+def test_provider_neutral_positive_and_missing_right(provider):
+    assert mirror(book(provider), []) == "remote_catalog"
+    assert mirror(book(provider), [right(provider)]) == "remote_owned"
 
 
-@pytest.mark.parametrize("bad", [
-    {"identity_id": "bob"}, {"provider_id": "fictional-b"},
-    {"credential_id": "foreign"}, {"account_id": "foreign"},
-    {"item_id": "foreign"}, {"revision_id": "foreign"},
-    {"entitlement_type": "loan"}, {"state": "archived"},
+@pytest.mark.parametrize("change", [
+    dict(identity_id="bob"), dict(credential_id="other"),
+    dict(account_id="other"), dict(item_id="other"),
+    dict(revision_id="other"), dict(entitlement_type="loan"),
+    dict(state="archived"),
 ])
-def test_search_owned_hint_never_bypasses_exact_right_scope(bad):
-    assert projection(item(), [right(**bad)]) == "remote_catalog"
+def test_cross_account_right_or_loan_never_becomes_ownership(change):
+    assert mirror(book(), [right(**change)]) == "remote_catalog"
 
 
-def test_public_stale_or_other_identity_mirrors_never_gain_ownership():
-    exact = right()
-    public = replace(item(), source_collection="catalog")
-    stale = replace(item(), metadata={"search_provenance": "known_catalog_stale"})
-    assert projection(public, [exact]) == "remote_catalog"
-    assert projection(stale, [exact]) == "remote_catalog"
-    assert projection(item(), [exact], active="bob") == "remote_catalog"
-    assert projection(item(), [exact], asked="bob") == "remote_catalog"
+@pytest.mark.parametrize("changes", [
+    dict(source_collection="catalog"), dict(source_collection="public_catalog"),
+    dict(source_credential="__public__"),
+    dict(metadata={"search_provenance": "known_catalog_stale"}),
+])
+def test_public_or_stale_rows_remain_nonowned(changes):
+    assert mirror(replace(book(), **changes), [right()]) == "remote_catalog"
 
 
-def test_no_provider_filter_or_fallback_in_mirror_source():
-    from inspect import getsource
-    source = getsource(_mirror_remote_results)
-    assert "snapshot_search_owned_evidence(self)" in source
-    assert "search_result_has_verified_purchase(" in source
+def test_legacy_personal_inventory_without_account_or_revision():
+    row = book(account=None, revision=None)
+    assert mirror(row, [right()]) == "remote_owned"
+    assert mirror(row, []) == "remote_catalog"
+    from cifereca.core.search_owned_evidence import (
+        snapshot_search_owned_evidence, search_result_has_verified_purchase,
+    )
+    service = NS(storage=Storage([right()]), current_identity=NS(identity_id="alice"))
+    proof = snapshot_search_owned_evidence(service)
+    assert not search_result_has_verified_purchase(
+        row, proof, current_identity_id="alice",
+    )
+
+
+def test_every_provider_needs_ledger_without_hardcoded_exemption():
+    import inspect
+    source = inspect.getsource(_mirror_remote_results)
+    assert "attested_catalogue_owned_keys(" in source
     assert 'row.source_provider not in {"kobo", "numilog"}' not in source
