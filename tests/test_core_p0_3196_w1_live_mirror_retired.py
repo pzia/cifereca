@@ -71,11 +71,13 @@ def test_partial_patch_reuses_existing_exact_borrower_and_mirror(tmp_path):
     store = Storage(tmp_path / "library.sqlite")
     try:
         store.backup_put(_row(account="buyer", status="pending"))
-        assert len(store.acquisitions(provider_id="kobo")) == 1
+        assert store.acquisitions(provider_id="kobo") == []
         store.backup_put(_row(identity=None, account=None, status="complete"))
-        assert store.backup_get("kobo", "vault", "edition")["account_id"] == "buyer"
-        assert store.acquisitions(provider_id="kobo")[0]["status"] == "complete"
-        assert len(store.entitlements(provider_id="kobo")) == 1
+        archive = store.backup_get("kobo", "vault", "edition")
+        assert archive["account_id"] == "buyer"
+        assert archive["status"] == "complete"
+        assert store.acquisitions(provider_id="kobo") == []
+        assert store.entitlements(provider_id="kobo") == []
     finally:
         store.close()
 
@@ -86,8 +88,8 @@ def test_unbound_initial_row_can_be_bound_without_inventing_prior_right(tmp_path
         store.backup_put(_row(identity=None, account=None))
         assert store.entitlements(provider_id="kobo") == []
         store.backup_put(_row(identity="alice", account="buyer", status="acquiring"))
-        assert len(store.entitlements(provider_id="kobo")) == 1
-        assert len(store.acquisitions(provider_id="kobo")) == 1
+        assert store.entitlements(provider_id="kobo") == []
+        assert store.acquisitions(provider_id="kobo") == []
         assert store.backup_get("kobo", "vault", "edition")["account_id"] == "buyer"
     finally:
         store.close()

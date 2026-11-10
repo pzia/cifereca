@@ -91,11 +91,11 @@ def test_first_legacy_delivery_remains_compatible_but_replay_cannot_reproject(
         # accidental global shutdown of the old executor in this W1 slice.
         storage.backup_put(_row(status="acquiring"))
         storage.backup_put(_row(status="complete"))
-        positive = _snapshot(storage)
-        assert positive["acquisition_ledger"]
+        archive_only = _snapshot(storage)
+        assert not any(archive_only.values())
         storage.backup_put(_row(status="complete", title="Cosmetic refresh"))
         after = _snapshot(storage)
-        assert after == positive
+        assert after == archive_only
         assert storage.backup_get("kobo", "vault", "edition")["title"] == "Cosmetic refresh"
     finally:
         storage.close()
@@ -134,8 +134,7 @@ def test_post_complete_status_transition_never_reprojects_old_kobo_bytes(
     try:
         storage.backup_put(_row(status="complete"))
         previously_published = _snapshot(storage)
-        assert previously_published["entitlements"]
-        assert previously_published["acquisition_ledger"]
+        assert not any(previously_published.values())
         old = storage.backup_get("kobo", "vault", "edition")
         changed = {
             **_row(status=status, title="Changed legacy checkpoint"),
