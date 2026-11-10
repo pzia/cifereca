@@ -94,8 +94,33 @@ def present_cross_profile_lender_choice(
         except Exception:
             return False
 
-    def selection_current(option_id: str) -> bool:
-        if not current():
+    def worker_current() -> bool:
+        """Only scalar leases and Core identity, never GTK DetailPanel.
+
+        The loan POST worker must not dereference widgets off the GTK thread.
+        The main-thread selection and completion callbacks still use current()
+        to verify the exact rendered notice and panel.
+        """
+        try:
+            return bool(
+                not getattr(window, "_closed", False)
+                and window.service is service
+                and window.search_page is search_page
+                and service.current_identity is identity
+                and identity.identity_id == preview.requesting_identity_id
+                and service._account_context_epoch == context_epoch
+                and service._source_context_epoch == source_epoch
+                and window._identity_context_generation == ui_identity_epoch
+                and window._account_context_generation == ui_account_epoch
+                and window._selected_search_id == selection_id
+                and window._search_detail_request_generation == detail_epoch
+            )
+        except Exception:
+            return False
+
+    def selection_current(option_id: str, *, worker: bool = False) -> bool:
+        guard = worker_current if worker else current
+        if not guard():
             return False
         try:
             selection = service.revalidate_borrow_lender_choice(
@@ -104,10 +129,11 @@ def present_cross_profile_lender_choice(
                 observations=snapshot,
             )
             # Read-only. This selection is not consent and is not an
-            # executable supplier ticket.
+            # executable supplier ticket. Workers use scalar/owner leases;
+            # GTK callbacks independently validate the rendered panel.
             return bool(
                 selection.status == "current"
-                and selection.executable is False and current()
+                and selection.executable is False and guard()
             )
         except Exception:
             return False
@@ -139,7 +165,7 @@ def present_cross_profile_lender_choice(
             if (stage["value"] != "submitted"
                     or getattr(window, "_cross_profile_borrow_pending", None)
                         is not token
-                    or not selection_current(option_id)):
+                    or not selection_current(option_id, worker=True)):
                 return {"status": "blocked", "reason_code": "lender_scope_revoked"}
             return execute(
                 captured_preview=preview, selected_option_id=option_id,
