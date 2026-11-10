@@ -197,90 +197,11 @@ def test_numilog_stale_identity_never_submits_acquisition():
     assert calls == [] and submissions == []
 
 
-def test_resume_action_only_explicit_click_indexes_without_claiming_download():
+def test_retired_numilog_index_resume_target_has_no_gtk_action():
     window, actions, calls, submissions, target = setup_action('numilog', 'resume_index')
-    button = actions[0]
-    assert button._cifereca_action_id == 'resume-index-numilog'
-    assert 'indexation' in button.label and 'sans téléchargement' in button.tooltip
-    assert not calls and not submissions
-    button.click()
-    args, kwargs = submissions[0]
-    args[2](args[1]())
-    assert calls == [target] and kwargs['kind'] == 'index'
-    assert kwargs['origin'] == 'user'
-
-
-@pytest.mark.parametrize('mutation', ['identity', 'generation', 'hidden', 'detached', 'closed'])
-def test_resume_action_never_submits_stale_or_hidden_context(mutation):
-    window, actions, calls, submissions, target = setup_action('numilog', 'resume_index')
-    if mutation == 'identity':window.service.current_identity = NS(identity_id='bob')
-    if mutation == 'generation':window._identity_context_generation = 1
-    if mutation == 'hidden':actions[0].get_mapped = lambda:False
-    if mutation == 'detached':actions[0].get_root = lambda:None
-    if mutation == 'closed':window._closed = True
-    actions[0].click()
-    assert not calls and not submissions
-
-
-def test_resume_worker_preserves_cancellation_without_success_callback():
-    from cifereca.plugin_api import Cancelled
-    window, actions, calls, submissions, target = setup_action('numilog', 'resume_index')
-    def cancelled(_target):raise Cancelled()
-    window.service.obtain_owned_library_item = cancelled
-    actions[0].click()
-    with pytest.raises(Cancelled):submissions[0][0][1]()
-    assert not calls
-
-
-@pytest.mark.parametrize(("code", "label"), [
-    ("manual_receipt_missing", "Reçu d’import ACSM d’origine introuvable"),
-    ("artifact_shared_elsewhere", "Même empreinte déjà utilisée"),
-    ("catalogue_conflict", "Notice du catalogue contradictoire"),
-    ("adoption_unavailable", "Validation du placement d’origine indisponible"),
-    ("acquisition_busy", "détient le verrou"),
-    ("index_rejected", "catalogue a refusé"),
-    ("indexing_failed", "indexation locale a échoué"),
-    ("finalization_failed", "finalisation du reçu a échoué"),
-])
-def test_p0_numilog_resume_ui_shows_only_closed_sqlite_refusal(code, label):
-    from cifereca.core.numilog_materialization_checkpoint import (
-        NumilogIndexResumeRejected,
-    )
-    window, actions, calls, submissions, target = setup_action("numilog", "resume_index")
-    visible = []
-    window.show_error = lambda message, title: visible.append((message, title))
-    def denied(_target):
-        raise NumilogIndexResumeRejected(code)
-    window.service.obtain_owned_library_item = denied
-    actions[0].click()
-    args, kwargs = submissions[0]
-    with pytest.raises(NumilogIndexResumeRejected) as raised:
-        args[1]()
-    args[3](raised.value)
-    assert len(visible) == 1
-    assert label in visible[0][0]
-    assert visible[0][1] == "Reprise d’indexation Numilog"
-    assert kwargs["kind"] == "index"
-    assert calls == []
-
-
-def test_p0_numilog_resume_ui_keeps_private_errors_redacted():
-    window, actions, calls, submissions, target = setup_action("numilog", "resume_index")
-    messages = []
-    window.show_error = lambda message, title: messages.append(message)
-    def denied(_target):
-        raise ValueError("https://private.invalid/?token=PRIVATE /home/PRIVATE")
-    window.service.obtain_owned_library_item = denied
-    actions[0].click()
-    args, _kwargs = submissions[0]
-    with pytest.raises(RuntimeError) as raised:
-        args[1]()
-    args[3](raised.value)
-    assert len(messages) == 1
-    assert messages[0].startswith("Reprise d’indexation indisponible.")
-    assert "PRIVATE" not in str(raised.value) and "PRIVATE" not in messages[0]
-    assert calls == []
-
+    # A stale v1 receipt may still exist, but cannot create an executable action.
+    assert actions == []
+    assert calls == [] and submissions == []
 
 
 @pytest.mark.parametrize("change", [
