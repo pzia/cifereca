@@ -192,35 +192,15 @@ def _completed_local_purchase_verified(
 
 
 def _canonical_source_delivery_active(session: Any) -> bool:
-    """The single canonical Sync executor owns provider GET when ABI is complete.
+    """A complete canonical ABI owns this account's source GET.
 
-    A legacy auto materialization worker would otherwise race/duplicate that
-    same acquisition under a different receipt namespace. The independent
-    historical worker remains for older provider sessions without this ABI.
+    Use exactly the Core delivery-contract registry. A guarded-only v2
+    provider must never be misclassified as legacy and dispatched through
+    the separate Numilog on-start receipt/writer. Partial or mixed v1/v2
+    contracts remain unqualified, with no provider attribute evaluation.
     """
-    from inspect import getattr_static
-    # The provider-neutral downloadable_resources v2 ABI supersedes the
-    # historical rights_observation v1 trio. A v2-only Numilog session must
-    # never fall through to the legacy purchase-by-purchase startup worker:
-    # that worker has its own preflight vetoes and receipt namespace.
-    # A partial/mixed ABI is NOT sufficient to claim a canonical executor.
-    contracts = (
-        (
-            "downloadable_resource_snapshot",
-            "downloadable_selected_offer_snapshot",
-            "downloadable_selected_delivery_candidate",
-        ),
-        (
-            "rights_observation_snapshot",
-            "rights_selected_delivery_offer_snapshot",
-            "rights_selected_delivery_candidate",
-        ),
-    )
-    try:
-        return any(all(callable(getattr_static(session, method, None))
-                       for method in contract) for contract in contracts)
-    except (TypeError, AttributeError):
-        return False
+    from .canonical_delivery_abi import has_complete_delivery_abi
+    return has_complete_delivery_abi(session)
 
 
 def eligible_source_ids(broker: Any, identity_id: str) -> tuple[str, ...]:
