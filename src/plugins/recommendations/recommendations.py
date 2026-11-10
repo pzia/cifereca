@@ -818,6 +818,7 @@ class UxRecommendationsView:
         self._diagnostic_cache = 0
         self._diagnostic_network = 0
         self._refresh_started_at: float | None = None
+        self._feedback_write_pending = False
         self._init_master_detail(plugin, host, Gtk, GLib)
 
         self._refresh_button.set_tooltip_text(
@@ -945,6 +946,13 @@ class UxRecommendationsView:
         self._resetting_preference_optin = False
         self._preference_optin.connect("toggled", self._preference_optin_changed)
         controls.append(self._preference_optin)
+        self._feedback_button = Gtk.Button(label="Mes appréciations…")
+        self._feedback_button.set_tooltip_text(
+            "Choisir un livre de ce profil et enregistrer ou effacer un avis "
+            "explicite. Aucun avis n'est déduit des prêts ou achats."
+        )
+        self._feedback_button.connect("clicked", self._manage_feedback)
+        controls.append(self._feedback_button)
 
         # The configured threshold is the baseline. A later user change
         # is an active *view* filter, not a new recommendation ranking.
