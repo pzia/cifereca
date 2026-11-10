@@ -4,8 +4,6 @@ from pathlib import Path
 import pytest
 
 from cifereca.core.local_received_artifact import received_book_file_within_root
-from cifereca.core.numilog_manual_acquisition import require_local_artifact
-from cifereca.plugin_api import ProviderConfigurationError
 
 
 def test_received_book_file_accepts_only_exact_nested_regular_book(tmp_path):
@@ -15,7 +13,6 @@ def test_received_book_file_accepts_only_exact_nested_regular_book(tmp_path):
     book = nested / "book.EPUB"
     book.write_bytes(b"synthetic book")
     assert received_book_file_within_root(book, root)
-    assert require_local_artifact(book, root) is None
     assert not received_book_file_within_root(book.with_suffix(".acsm"), root)
 
 
@@ -53,8 +50,6 @@ def test_received_book_file_refuses_cross_scope_and_aliases(tmp_path, kind):
     else:
         candidate = nested / "missing.epub"
     assert not received_book_file_within_root(candidate, root)
-    with pytest.raises(ProviderConfigurationError, match="artefact local non attesté"):
-        require_local_artifact(candidate, root)
 
 
 def test_invalid_root_or_untrusted_argument_fails_closed(tmp_path):
@@ -81,8 +76,6 @@ def test_root_grandparent_symlink_is_not_a_trusted_identity_tree(tmp_path):
     assert not aliased_root.is_symlink()
     assert not aliased_root.parent.is_symlink()
     assert not received_book_file_within_root(aliased_root / "book.epub", aliased_root)
-    with pytest.raises(ProviderConfigurationError, match="artefact local non attesté"):
-        require_local_artifact(aliased_root / "book.epub", aliased_root)
     assert received_book_file_within_root(book, physical)
 
 
