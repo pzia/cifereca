@@ -648,7 +648,10 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         # runtime.kobo-adept also serves Paris, Numilog and manual imports.
         attested_provider_id = None
         if bnf_action_detail:
-            attested_provider_id = 'bnf-pret'
+            # This field passed the closed Core action-observation schema.
+            # Attribution follows its validated provenance, not a brand
+            # constant in the generic event projection.
+            attested_provider_id = bnf_action_detail["provider_id"]
         elif loan_download_detail:
             attested_provider_id = loan_download_detail["provider_id"]
         elif source_sync_detail:
