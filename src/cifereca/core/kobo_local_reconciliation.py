@@ -17,14 +17,7 @@ from ..paths import config_file, database_file
 from ..identities import Identity
 from ..storage import Storage, CURRENT_SCHEMA_VERSION
 from .profile_source_paths import _kobo_preview_paths
-
-
-class ReconciliationRejected(ValueError):
-    """A fixed public reason, never a provider exception or private target."""
-
-    def __init__(self, code):
-        self.code = code
-        super().__init__(code)
+from .local_attachment_refusal_types import ReconciliationRejected
 
 
 def _require(condition, code):
