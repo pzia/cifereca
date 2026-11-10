@@ -118,9 +118,11 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
                     and result.get("provider_verified") is True):
                 window._activity_result(f"Prêt {label} actif vérifié dans Mes emprunts")
                 window.refresh_loans(True)
-                if provider_id == "bnf-pret" and current():
-                    # Keep holdings and avoid a fresh provider GET: reproject
-                    # the exact visible notice using current Core admission.
+                if current():
+                    # A verified, exactly scoped loan can refresh the visible
+                    # notice for any provider. The panel only re-renders a
+                    # previously cached detail for the identical item object;
+                    # no provider GET, borrow retry or new right is implied.
                     panel = getattr(getattr(window, "search_page", None), "detail", None)
                     refresh = getattr(panel, "refresh_confirmed_borrow_detail", None)
                     if callable(refresh):
