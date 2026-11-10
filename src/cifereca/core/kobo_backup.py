@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from .source_context import source_context_epoch
 from .canonical_delivery_abi import has_complete_delivery_abi
+from .legacy_checkpoint_reader import _kobo_checkpoint_key, _kobo_checkpoint_for
 from .legacy_diagnostic_projection import (
     _safe_kobo_opening_decision,
     safe_kobo_backup_report,
@@ -804,19 +805,6 @@ def kobo_backup_diagnostic(self) -> dict[str, Any]:
 
 
 
-def _kobo_checkpoint_for(self, identity_id: str, credential_id: str) -> dict[str, Any] | None:
-    """One established v1 checkpoint contract, no second checkpoint store."""
-    try:
-        row = json.loads(
-            self.storage.metadata_get(_kobo_checkpoint_key(identity_id, credential_id)) or "null"
-        )
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(row, dict) or row.get("schema_version") != 1:
-        return None
-    return row
-
-
 def _kobo_source_summaries(self) -> list[dict[str, Any]]:
     """Expose only safe checkpoint counters for the local diagnostic."""
     summaries = []
@@ -1113,11 +1101,4 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
 def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False, confirmed_manifest: list | None = None, source_guard: Callable[[], None] | None = None, item_guard: Callable[[SearchResult, str, str | None], None] | None = None, on_delivery_committed: Callable[[], None] | None = None) -> dict[str, Any]:
     """Retired W2 compatibility boundary. No historical execution authority."""
     raise ProviderConfigurationError("kobo_legacy_w2_retired_use_canonical_provider")
-
-def _kobo_checkpoint_key(identity_id: str, credential_id: str) -> str:
-    digest = hashlib.sha256(
-        (identity_id + "\\x00" + credential_id).encode("utf-8")
-    ).hexdigest()[:24]
-    return "kobo_backup_checkpoint." + digest
-
 
