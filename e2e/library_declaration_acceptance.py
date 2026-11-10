@@ -47,16 +47,15 @@ def _fixture(root, provider_id, *, attested=False):
         'credential_id': account.credential_id, 'label': 'Synthetic',
     })
     if attested:
-        # Historical acquisition before a manual move. A missing OLD path
-        # is not an absent book: the exact same bytes are now at book.
-        service.storage.backup_put({
-            'identity_id': 'default', 'provider_id': 'kobo',
-            'credential_id': account.credential_id, 'account_id': account.unique_id,
-            'item_id': 'synthetic-item', 'revision_id': 'synthetic-revision',
-            'title': 'Synthetic declaration', 'format': 'epub',
-            'local_path': str(directory / 'kobo' / 'historical.epub'),
-            'status': 'reconcile_required', 'size': book.stat().st_size,
-            'sha256': digest, 'entitlement_type': 'owned',
+        # A synthetic right is seeded explicitly for the GUI's negative
+        # relink test. Historical Kobo backup_items are archive-only and
+        # must never manufacture this right or an A→B receipt.
+        service.storage.entitlement_put({
+            'entitlement_id': 'synthetic-kobo-right', 'identity_id': 'default',
+            'provider_id': 'kobo', 'credential_id': account.credential_id,
+            'account_id': account.unique_id, 'item_id': 'synthetic-item',
+            'state': 'active', 'entitlement_type': 'owned',
+            'metadata': {'source': 'synthetic.e2e_fixture'},
         })
     else:
         service.storage.entitlement_put({
