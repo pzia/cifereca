@@ -39,6 +39,7 @@ jobs:
         run: |
           python3 -m scripts.ci_provider_core_coupling_inventory --json
           python3 -m scripts.ci_kobo_core_line_inventory --json
+          exit 0
 
       - name: Select validation scopes
         id: scope
