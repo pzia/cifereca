@@ -31,7 +31,7 @@ def obtain(service, item: SearchResult):
                 or item.id != item.record_id
                 or _scoped_record_id(item.record_id, item.source_credential) is None):
             raise ValueError("untrusted_item")
-        identity, session, account_id = require_source(service, item)
+        identity, session, account_id = require_source(service, item, canonical_only=True)
         if (not has_complete_delivery_abi(session)
                 or not callable(getattr_static(
                     session, "downloadable_selected_delivery_candidate_guarded", None
