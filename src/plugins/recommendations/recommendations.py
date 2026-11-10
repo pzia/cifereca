@@ -684,6 +684,41 @@ def _library_overview_signature(row: Mapping[str, Any]) -> Any | None:
     )
 
 
+def _explicit_feedback_targets(
+    books: object, identity_id: str,
+) -> tuple[tuple[str, str], ...]:
+    """Only unique, exact Core library keys may be offered for feedback.
+
+    Labels are descriptive only. Provider record IDs, ISBN, title and origin
+    never identify the local preference target, and duplicate keys are not
+    silently resolved by choosing the first book.
+    """
+    if (type(identity_id) is not str or not identity_id
+            or type(books) not in (list, tuple) or len(books) > 20000):
+        return ()
+    rows: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for book in books:
+        try:
+            key = get_field(book, "key", None)
+            owner = get_field(book, "identity_id", None)
+            if (type(key) is not str or not 0 < len(key) <= 256
+                    or not key.isprintable() or key != key.strip()
+                    or type(owner) is not str or owner != identity_id):
+                continue
+            if key in rows:
+                ambiguous.add(key)
+                continue
+            rows[key] = _reference_label(book)
+        except Exception:
+            continue
+    return tuple(sorted(
+        ((key, label) for key, label in rows.items()
+         if key not in ambiguous),
+        key=lambda row: (row[1].casefold(), row[0]),
+    ))
+
+
 class RecommendationsPlugin:
     def __init__(self) -> None:
         self.context = None
