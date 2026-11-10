@@ -1720,16 +1720,11 @@ class LibraryService:
                             "provider=%s reason=invalid_private_rows", provider_id,
                         )
                         continue
-                # Compatibility observations remain until their canonical
-                # bibliographic projection replaces them without losing data.
-                if provider_id == "kobo":
-                    from .core.kobo_manifest_rights import mirror_kobo_manifest_rights
-                    mirror_kobo_manifest_rights(
-                        self, rows, identity_id=identity.identity_id,
-                        credential_id=credential_id,
-                        account_id=account.unique_id or None,
-                    )
-                elif provider_id == "numilog":
+                # Bibliographic mirroring is not purchase-right admission.
+                # Only typed, exact-scoped provider observations may enter
+                # canonical rights/offer workflows; never derive rights from
+                # SearchResult.owned or a private catalogue manifest.
+                if provider_id == "numilog":
                     from .core.numilog_manifest_rights import mirror_numilog_manifest_rights
                     mirror_numilog_manifest_rights(
                         self, rows, identity_id=identity.identity_id,
