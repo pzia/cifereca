@@ -18,6 +18,7 @@ def build_library_page(window, *, Gtk, MasterDetailPage):
     # Optional cross-profile *read* scope. Opening the page still displays
     # the selected profile; only an explicit click loads all Core projections.
     window._library_all_profiles = False
+    window._library_scope_generation = 0
     scope = Gtk.Button(label="Tous les profils")
     scope.set_tooltip_text(
         "Consulter les livres des profils locaux sans fusionner les droits "
@@ -30,6 +31,14 @@ def build_library_page(window, *, Gtk, MasterDetailPage):
         window._library_all_profiles = not (
             getattr(window, "_library_all_profiles", False) is True
         )
+        # Revoke retained foreign-copy actions on the GTK click itself.
+        # Merely incrementing the identity generation would be wrong: the
+        # Core reader stays B, only the Library read view changes.
+        window._library_scope_generation += 1
+        window._library_entries_cache = []
+        render = getattr(window, "_render_library", None)
+        if callable(render):
+            render([])
         set_label = getattr(scope, "set_label", None)
         if callable(set_label):
             set_label(
