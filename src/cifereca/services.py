@@ -1800,6 +1800,28 @@ class LibraryService:
         """
         return library_mutation.materialize_to_identity(self, placement_id, target_identity_id)
 
+    def send_present_placement_copy(
+        self, *, source_placement_id: str, source_identity_id: str,
+        source_artifact_id: str, requesting_identity_id: str,
+        expected_account_context_epoch: int,
+        expected_source_context_epoch: int, confirmed: bool = False,
+    ) -> dict[str, object]:
+        """#4662: explicit local A→B copy, independent of provider loan status.
+
+        Uses the exact existing "Envoyer à" physical transfer under the Core
+        lock, without deriving an entitlement, ACSM operation or a loan POST.
+        """
+        from .core.present_placement_copy import send_present_placement_copy
+        return send_present_placement_copy(
+            self, source_placement_id=source_placement_id,
+            source_identity_id=source_identity_id,
+            source_artifact_id=source_artifact_id,
+            requesting_identity_id=requesting_identity_id,
+            expected_account_context_epoch=expected_account_context_epoch,
+            expected_source_context_epoch=expected_source_context_epoch,
+            confirmed=confirmed,
+        )
+
     def enrich_numilog_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
         """User-triggered metadata-only Numilog enrichment; never auto-sync."""
         from .core.numilog_explicit_enrichment import enrich_numilog_result_once
