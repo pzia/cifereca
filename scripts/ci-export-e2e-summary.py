@@ -187,7 +187,6 @@ _BOOK_DETAIL_STAGES = frozenset({
     "library_select",
     "verify_library",
     "begin_owned_book_action",
-    "begin_numilog_index_resume",
     "owned_book_select",
     "owned_book_action_visible",
     "owned_book_action_completed",
