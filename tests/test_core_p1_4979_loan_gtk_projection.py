@@ -112,6 +112,7 @@ def test_untrusted_supplier_cover_never_prevents_exact_local_fallback():
         "https://cdn.example/covers/book.jpg?token=PRIVATE",
         "http://127.0.0.1/admin",
         "https://reader.local/book.jpg",
+        "file:///home/another-user/private/cover.jpg",
         "https://cdn.example/book.jpg#PRIVATE",
     ):
         original = a_loan(image=private)

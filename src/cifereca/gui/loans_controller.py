@@ -97,6 +97,7 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     original_url = loan.thumbnail_url
     safe_source = (
         type(original_url) is str and
+        original_url.lower().startswith(("https://", "http://")) and
         candidate(original_url, tier="catalog", source="loan-provider") is not None
     )
     if safe_source:
