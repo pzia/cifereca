@@ -420,21 +420,76 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
             "provider_dynamic_calls": sorted(dynamic_calls, key=lambda x: x["line"])}
 
 
+
+# Physical LOC is complementary to AST coupling. This category definition
+# preserves the historic Kobo scope of ci_kobo_core_line_inventory (#3196).
+_LOC_PROVIDERS = ("kobo", "numilog", "bnf", "biblioaccess")
+
+
+def _dedicated_provider(relative: Path) -> str | None:
+    parts = relative.parts
+    if len(parts) < 4 or parts[:2] != ("src", "cifereca"):
+        return None
+    name = relative.name.casefold()
+    if parts[2] == "kobo":
+        return "kobo"
+    if parts[2] == "core":
+        for provider in _LOC_PROVIDERS:
+            if provider in name:
+                return provider
+    if parts[2] == "gui" and "legacy" in name and "kobo" in name:
+        return "kobo"
+    return None
+
+
 def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, object]:
     """Inspect installed Python sources, excluding plugins, tests and build artifacts."""
     src = root / "src" / "cifereca"
     findings: dict[str, object] = {}
     parse_errors: dict[str, str] = {}
+    dedicated_lines = {provider: 0 for provider in _LOC_PROVIDERS}
+    dedicated_per_file: dict[str, dict[str, object]] = {}
+    generic_per_file: dict[str, dict[str, object]] = {}
     # All installed source modules are Core-owned unless explicitly shipped
     # as external plugins (which live outside src/cifereca).
     if src.is_dir():
         for path in sorted(src.rglob("*.py")):
-            relative = path.relative_to(root).as_posix()
+            relative_path = path.relative_to(root)
+            relative = relative_path.as_posix()
             try:
-                result = inspect_source(path.read_text(encoding="utf-8"), providers)
+                source_text = path.read_text(encoding="utf-8")
+                result = inspect_source(source_text, providers)
             except (SyntaxError, UnicodeError) as exc:
                 parse_errors[relative] = type(exc).__name__
                 continue
+            # LOC is counted only for parseable source, using exactly the
+            # same physical-line convention as the existing Kobo counter.
+            lines = source_text.splitlines()
+            dedicated = _dedicated_provider(relative_path)
+            if dedicated is not None:
+                dedicated_lines[dedicated] += len(lines)
+                dedicated_per_file[relative] = {
+                    "provider": dedicated,
+                    "lines": len(lines),
+                    "nonblank_noncomment": sum(
+                        bool(line.strip()) and not line.lstrip().startswith("#")
+                        for line in lines
+                    ),
+                }
+            else:
+                mentions = {
+                    provider: sum(provider in line.casefold() for line in lines)
+                    for provider in _LOC_PROVIDERS
+                }
+                if any(mentions.values()):
+                    generic_per_file[relative] = {
+                        "lines": len(lines),
+                        "provider_literal_lines": mentions,
+                        "mixed_provider_lines": sum(
+                            any(provider in line.casefold() for provider in _LOC_PROVIDERS)
+                            for line in lines
+                        ),
+                    }
             if any(result[category] for category in (
                 "imports", "comparisons", "dispatch_tables", "dispatch_calls",
                 "provider_method_calls", "provider_dynamic_calls",
@@ -451,6 +506,15 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
             "provider_dynamic_call_signals": sum(len(x["provider_dynamic_calls"]) for x in findings.values()),
             "findings": dict(sorted(findings.items())),
             "parse_errors": dict(sorted(parse_errors.items())),
+            "dedicated_lines": sum(dedicated_lines.values()),
+            "dedicated_files": len(dedicated_per_file),
+            "dedicated_by_provider": dedicated_lines,
+            "dedicated_per_file": dedicated_per_file,
+            "generic_files_with_provider_literal": len(generic_per_file),
+            "generic_provider_literal_lines_unique": sum(
+                row["mixed_provider_lines"] for row in generic_per_file.values()
+            ),
+            "generic_per_file": generic_per_file,
             "limitation": "AST signals, not reachability proofs; indirect dynamic dispatch may remain."}
 
 
@@ -471,7 +535,11 @@ def main(argv: list[str] | None = None) -> int:
               f"{report['dispatch_call_signals']} provider-keyed calls, "
               f"{report['provider_method_call_signals']} provider method calls, "
               f"{report['provider_dynamic_call_signals']} dynamic provider calls, "
-              f"{len(report['parse_errors'])} parse errors")
+              f"{len(report['parse_errors'])} parse errors; "
+              f"{report['dedicated_lines']} dedicated provider LOC / "
+              f"{report['dedicated_files']} files; "
+              f"{report['generic_provider_literal_lines_unique']} unique "
+              f"generic-file provider-mention lines")
     return 1 if report["parse_errors"] else 0
 
 
