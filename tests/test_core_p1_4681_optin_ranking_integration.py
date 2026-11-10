@@ -167,3 +167,42 @@ def test_explicit_preference_reader_is_optional_but_never_silently_assumed(
         assert session.private_calls == 0
     finally:
         service.close()
+
+
+def test_metadata_broker_writer_propagates_consent_cas_and_core_profile_scope(
+    tmp_path, monkeypatch,
+):
+    service, _session, metadata = _setup(tmp_path, monkeypatch, "numilog")
+    try:
+        observed = metadata.reading_preference_snapshot(identity_id="alice")
+        assert observed.revision == 0 and observed.preferences == ()
+        with pytest.raises(ValueError, match="reading_preference_confirmation_required"):
+            metadata.change_reading_preference(
+                identity_id="alice", library_key="book:0",
+                preference="liked", expected_revision=0,
+            )
+        saved = metadata.change_reading_preference(
+            identity_id="alice", library_key="book:0",
+            preference="liked", expected_revision=0, user_confirmed=True,
+        )
+        assert saved.revision == 1
+        assert saved.preferences == (("book:0", "liked"),)
+        with pytest.raises(ValueError):
+            metadata.change_reading_preference(
+                identity_id="alice", library_key="book:0",
+                preference="not_interested", expected_revision=0,
+                user_confirmed=True,
+            )
+        with pytest.raises(ValueError, match="reading_preference_identity_not_active"):
+            metadata.change_reading_preference(
+                identity_id="bob", library_key="book:0",
+                preference="liked", expected_revision=1,
+                user_confirmed=True,
+            )
+        erased = metadata.change_reading_preference(
+            identity_id="alice", expected_revision=1,
+            clear_all=True, user_confirmed=True,
+        )
+        assert erased.revision == 2 and erased.preferences == ()
+    finally:
+        service.close()

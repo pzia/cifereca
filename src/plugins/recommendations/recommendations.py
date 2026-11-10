@@ -684,6 +684,41 @@ def _library_overview_signature(row: Mapping[str, Any]) -> Any | None:
     )
 
 
+def _explicit_feedback_targets(
+    books: object, identity_id: str,
+) -> tuple[tuple[str, str], ...]:
+    """Only unique, exact Core library keys may be offered for feedback.
+
+    Labels are descriptive only. Provider record IDs, ISBN, title and origin
+    never identify the local preference target, and duplicate keys are not
+    silently resolved by choosing the first book.
+    """
+    if (type(identity_id) is not str or not identity_id
+            or type(books) not in (list, tuple) or len(books) > 20000):
+        return ()
+    rows: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for book in books:
+        try:
+            key = get_field(book, "key", None)
+            owner = get_field(book, "identity_id", None)
+            if (type(key) is not str or not 0 < len(key) <= 256
+                    or not key.isprintable() or key != key.strip()
+                    or type(owner) is not str or owner != identity_id):
+                continue
+            if key in rows:
+                ambiguous.add(key)
+                continue
+            rows[key] = _reference_label(book)
+        except Exception:
+            continue
+    return tuple(sorted(
+        ((key, label) for key, label in rows.items()
+         if key not in ambiguous),
+        key=lambda row: (row[1].casefold(), row[0]),
+    ))
+
+
 class RecommendationsPlugin:
     def __init__(self) -> None:
         self.context = None
@@ -783,6 +818,7 @@ class UxRecommendationsView:
         self._diagnostic_cache = 0
         self._diagnostic_network = 0
         self._refresh_started_at: float | None = None
+        self._feedback_write_pending = False
         self._init_master_detail(plugin, host, Gtk, GLib)
 
         self._refresh_button.set_tooltip_text(
@@ -910,6 +946,13 @@ class UxRecommendationsView:
         self._resetting_preference_optin = False
         self._preference_optin.connect("toggled", self._preference_optin_changed)
         controls.append(self._preference_optin)
+        self._feedback_button = Gtk.Button(label="Mes appréciations…")
+        self._feedback_button.set_tooltip_text(
+            "Choisir un livre de ce profil et enregistrer ou effacer un avis "
+            "explicite. Aucun avis n'est déduit des prêts ou achats."
+        )
+        self._feedback_button.connect("clicked", self._manage_feedback)
+        controls.append(self._feedback_button)
 
         # The configured threshold is the baseline. A later user change
         # is an active *view* filter, not a new recommendation ranking.
@@ -1236,6 +1279,207 @@ class UxRecommendationsView:
             # The explicit click invalidates the previous ranking. No saved
             # preference is used merely by displaying or filtering the view.
             self.refresh()
+
+    def _manage_feedback(self, *_args) -> None:
+        """#4681: explicit per-book preference, no catalogue or provider action."""
+        if (getattr(self, "_disposed", False)
+                or getattr(self, "_feedback_write_pending", False)):
+            return
+        identity_id = self.selected_identity_id()
+        if not identity_id or identity_id != self._active_identity_id:
+            self.host.toast("Sélectionnez d’abord un profil actif.")
+            return
+        context = self.plugin.context
+        broker = context.broker("metadata") if context is not None else None
+        reader = getattr(broker, "reading_preference_snapshot", None)
+        writer = getattr(broker, "change_reading_preference", None)
+        if not callable(reader) or not callable(writer):
+            self.host.toast("Cette version de Core ne permet pas de modifier les appréciations.")
+            return
+        try:
+            snapshot = reader(identity_id=identity_id)
+            revision = snapshot.revision
+            preferences = snapshot.preferences
+            if (type(revision) is not int or revision < 0
+                    or type(preferences) is not tuple or len(preferences) > 256
+                    or any(type(row) is not tuple or len(row) != 2
+                           or type(row[0]) is not str
+                           or row[1] not in ("liked", "not_interested")
+                           for row in preferences)):
+                raise ValueError("invalid preference snapshot")
+        except Exception:
+            self.host.toast("Appréciations indisponibles. Réessayez après actualisation.")
+            return
+        targets = _explicit_feedback_targets(
+            self._reference_books, identity_id,
+        )[:2048]
+        if not targets and not preferences:
+            self.host.toast("Aucun livre local à apprécier pour ce profil.")
+            return
+        try:
+            from gi.repository import Adw
+            root = self.widget.get_root()
+            if not isinstance(root, self.Gtk.Window):
+                return
+            dialog = Adw.MessageDialog.new(
+                root, "Mes appréciations",
+                "Avis volontaires, limités au profil actif. "
+                "Ces avis ne modifient ni les droits ni la bibliothèque.",
+            )
+            chooser = None
+            if targets:
+                labels = [label for _key, label in targets]
+                chooser = self.Gtk.DropDown(
+                    model=self.Gtk.StringList.new(labels),
+                )
+                chooser.set_hexpand(True)
+                chooser.set_tooltip_text("Livre de votre bibliothèque locale")
+                box = self.Gtk.Box(
+                    orientation=self.Gtk.Orientation.VERTICAL, spacing=8,
+                )
+                box.append(self.Gtk.Label(
+                    label="Livre à apprécier", xalign=0,
+                ))
+                box.append(chooser)
+                status = self.Gtk.Label(label="", xalign=0, wrap=True)
+                box.append(status)
+                saved = dict(preferences)
+
+                def update_status(*_unused):
+                    selected = chooser.get_selected()
+                    if type(selected) is not int or not 0 <= selected < len(targets):
+                        status.set_label("Sélection indisponible")
+                        return
+                    value = saved.get(targets[selected][0])
+                    status.set_label({
+                        "liked": "Avis enregistré : aimé",
+                        "not_interested": "Avis enregistré : peu intéressant",
+                    }.get(value, "Aucun avis enregistré"))
+
+                chooser.connect("notify::selected", update_status)
+                update_status()
+                dialog.set_extra_child(box)
+            dialog.add_response("cancel", "Annuler")
+            if targets:
+                dialog.add_response("liked", "J’aime")
+                dialog.add_response("not_interested", "Peu intéressant")
+                dialog.add_response("clear", "Retirer cet avis")
+            if preferences:
+                dialog.add_response("erase_all", "Tout effacer")
+
+            def answered(_dialog, response_id):
+                if (getattr(self, "_disposed", False)
+                        or self.selected_identity_id() != identity_id
+                        or self._active_identity_id != identity_id):
+                    return
+                if response_id in ("liked", "not_interested", "clear"):
+                    if chooser is None:
+                        return
+                    selected = chooser.get_selected()
+                    if (type(selected) is not int
+                            or not 0 <= selected < len(targets)):
+                        return
+                    self._submit_feedback(
+                        broker=broker, identity_id=identity_id,
+                        library_key=targets[selected][0],
+                        preference=(None if response_id == "clear"
+                                    else response_id),
+                        revision=revision, clear_all=False,
+                    )
+                elif response_id == "erase_all":
+                    confirm = Adw.MessageDialog.new(
+                        root, "Effacer toutes mes appréciations ?",
+                        "Les avis de ce profil seront retirés. "
+                        "Cette suppression ne touche aucun livre.",
+                    )
+                    confirm.add_response("cancel", "Annuler")
+                    confirm.add_response("erase", "Effacer les avis")
+
+                    def erased(_confirm, answer_id):
+                        if answer_id == "erase":
+                            self._submit_feedback(
+                                broker=broker, identity_id=identity_id,
+                                library_key=None, preference=None,
+                                revision=revision, clear_all=True,
+                            )
+
+                    confirm.connect("response", erased)
+                    confirm.present()
+
+            dialog.connect("response", answered)
+            dialog.present()
+        except Exception:
+            # Never render a storage/provider exception in GTK or diagnostics.
+            self.host.toast("L’éditeur des appréciations est indisponible.")
+
+    def _submit_feedback(
+        self, *, broker, identity_id: str, library_key: str | None,
+        preference: str | None, revision: int, clear_all: bool,
+    ) -> None:
+        if (getattr(self, "_disposed", False)
+                or getattr(self, "_feedback_write_pending", False)
+                or self.selected_identity_id() != identity_id
+                or self._active_identity_id != identity_id):
+            return
+        context = self.plugin.context
+        task_broker = context.broker("tasks") if context is not None else None
+        if task_broker is None:
+            self.host.toast("Enregistrement indisponible.")
+            return
+        generation = self._generation
+        self._feedback_write_pending = True
+        self._feedback_button.set_sensitive(False)
+
+        def write_feedback(control):
+            if control.cancelled() or generation != self._generation:
+                return None
+            # Core guards the active identity, exact library key, and CAS
+            # atomically. No stale-write retry or inferred consent is allowed.
+            return broker.change_reading_preference(
+                identity_id=identity_id, library_key=library_key,
+                preference=preference, expected_revision=revision,
+                user_confirmed=True, clear_all=clear_all,
+            )
+
+        try:
+            handle = task_broker.submit(
+                write_feedback, label="Enregistrer une appréciation",
+                kind="recommendations",
+            )
+            def completed(done_handle):
+                try:
+                    result = done_handle.result()
+                except Exception:
+                    result = None
+                self.GLib.idle_add(
+                    self._feedback_completed, generation, identity_id, result,
+                )
+            handle.add_done_callback(completed)
+        except Exception:
+            self._feedback_write_pending = False
+            self._feedback_button.set_sensitive(True)
+            self.host.toast("Enregistrement indisponible.")
+
+    def _feedback_completed(self, generation, identity_id, result):
+        self._feedback_write_pending = False
+        if getattr(self, "_disposed", False):
+            return False
+        self._feedback_button.set_sensitive(True)
+        if (generation != self._generation
+                or self.selected_identity_id() != identity_id
+                or self._active_identity_id != identity_id):
+            return False
+        if type(getattr(result, "revision", None)) is not int:
+            self.host.toast(
+                "Avis non enregistré : données modifiées ou profil changé. "
+                "Actualisez puis réessayez.",
+            )
+            return False
+        self.host.toast("Appréciations enregistrées pour ce profil.")
+        # Revision revocation protects in-flight opt-in ranks; this new
+        # calculation makes the amended preference visible immediately.
+        self.refresh()
+        return False
 
     def _reference_changed(self, *_args) -> None:
         if self._reloading_references:
