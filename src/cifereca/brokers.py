@@ -923,13 +923,6 @@ class SynchronizationBrokerImpl:
         self._notify()
         return mode
 
-    def synchronize_scheduled_numilog_materialization(
-        self, identity_id: str, trigger: str, *, control: Any = None,
-    ) -> SyncResult:
-        """Run opt-in Numilog materialization independently of source-sync."""
-        from .core.numilog_materialization_startup import execute
-        return execute(self, identity_id, trigger, control=control)
-
     def numilog_materialization_run_status(self, source_id: str) -> dict[str, Any]:
         """Passive, privacy-preserving last run and next eligible opening."""
         from .core.numilog_materialization_consent import policy_key
