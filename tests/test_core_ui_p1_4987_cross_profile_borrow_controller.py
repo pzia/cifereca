@@ -375,6 +375,18 @@ def test_confirmed_supplier_loan_does_not_mislabel_unverified_delivery_as_refuse
     message = h.logs[0][1]
     assert "Prêt confirmé" in message
     assert "Livraison non vérifiée" in message
-    assert "transfert vers ce profil bloqué" in message
-    assert "non autorisés" not in message
+    assert "envoi possible après placement" in message
+    assert "droits non vérifiés" not in message
     assert h.window._cross_profile_borrow_pending is None
+
+
+def test_loan_confirmation_explains_separate_local_send_after_placement():
+    h = setup()
+    assert h.show()
+    Dialog.made[0].respond("choice-0")
+    dialog = Dialog.made[1]
+    assert "si le livre est présent localement" in dialog.description
+    assert "confirmation" not in dialog.description.lower() or "copie" in dialog.description
+    dialog.respond("cancel")
+    assert h.window.runner.jobs == []
+    assert h.attempts == []
