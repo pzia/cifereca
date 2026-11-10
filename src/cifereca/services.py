@@ -4040,9 +4040,6 @@ class LibraryService:
             "storage_schema_version": self.storage.schema_version(),
         }
 
-    def kobo_backup_records(self) -> list[dict[str, Any]]:
-        return kobo_backup.kobo_backup_records(self)
-
     def kobo_backup_enabled(self) -> bool:
         return kobo_backup.kobo_backup_enabled(self)
 
