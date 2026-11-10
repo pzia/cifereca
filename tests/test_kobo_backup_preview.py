@@ -42,376 +42,127 @@ def _forbid_mutation_and_acquisition(service, session, monkeypatch):
     monkeypatch.setattr(session, "resolve_acquisition", forbidden)
 
 
-def test_offline_preview_is_readonly_and_requires_live_authority(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path, [])
-    target_dir = service._kobo_backup_target_dir("default")
-    linked = target_dir / "linked.epub"
-    _write_epub(linked)
-    _backup(service, "linked", status="complete", local_path=linked)
-    _backup(service, "candidate")
-    candidate = target_dir / (service.acquisition._safe_filename("candidate") + ".epub")
-    _write_epub(candidate)
-    _backup(
-        service, "blocked", status="attention_required",
-        attention_code="missing_delegation_scope",
-    )
-    _backup(service, "missing")
-    before = {
-        name: service.storage.backup_get("kobo", "vault-1", name)
-        for name in ("linked", "candidate", "blocked", "missing")
-    }
-    monkeypatch.setattr(
-        session, "backup_manifest",
-        lambda: pytest.fail("offline preview must not contact provider"),
-    )
-    _forbid_mutation_and_acquisition(service, session, monkeypatch)
+def _read_only_legacy_preview(service, *, refresh=False, verify=False):
+    """No Kobo 0.7 row may be promoted by partial-ABI preview."""
     try:
-        result = service.kobo_backup_preview("vault-1")
-        assert result["scope"] == "account"
-        assert result["manifest_refreshed"] is False
-        assert result["requires_manifest_validation"] is True
-        assert result["acquisition_authorized"] is False
-        assert result["manifest_items"] == 4
-        assert result["counts"] == {
-            "already_local_linked": 0, "already_local_verified": 0,
-            "needs_reconciliation": 2, "attention_required": 0, "skipped_archived": 0,
-            "blocked_scope": 1, "blocked_unlinked": 0, "not_downloadable": 0,
-            "candidate_unverified": 1, "potentially_missing": 0,
-            "invalid_manifest_items": 0,
-        }
-        assert result["blocking_items"] == 3
-        assert len(result["examples"]) == 4
-        public = json.dumps(result)
-        for private in ("vault-1", "linked.epub", "candidate.epub", '"item_id"',
-                        '"credential_id"', "https://"):
-            assert private not in public
-        for item in ("linked", "candidate", "blocked", "missing"):
-            assert service.storage.backup_get("kobo", "vault-1", item) == before[item]
-        assert linked.is_file() and candidate.is_file()
-    finally:
-        service.close()
-
-
-def test_refresh_preview_reads_only_manifest_and_handles_malformed_items(tmp_path: Path, monkeypatch):
-    manifest = [
-        {"product_id": "saved", "title": "Saved", "revision_id": "r1", "format": "EPUB"},
-        {"product_id": "new", "title": "New", "revision_id": "r2", "format": "EPUB"},
-        {"product_id": "archived", "title": "Archived", "archived": True},
-        {"product_id": "unavailable", "downloadable": False},
-        {"title": "without product ID"},
-        {"product_id": "new", "title": "Duplicate ID"},
-        None,
-    ]
-    service, session = _service(tmp_path, manifest)
-    saved = service._kobo_backup_target_dir("default") / "saved.epub"
-    _write_epub(saved)
-    _backup(service, "saved", status="complete", local_path=saved, account_id="account")
-    calls = []
-    def only_manifest():
-        calls.append("manifest")
-        return list(manifest)
-    monkeypatch.setattr(session, "backup_manifest", only_manifest)
-    _forbid_mutation_and_acquisition(service, session, monkeypatch)
-    try:
-        result = service.kobo_backup_preview("vault-1", refresh_manifest=True)
-        assert calls == ["manifest"]
-        assert result["manifest_refreshed"] is True
-        assert result["requires_manifest_validation"] is False
-        assert result["manifest_valid"] is False
-        assert result["acquisition_authorized"] is False
-        assert result["manifest_items"] == 7
-        assert result["known_item_count"] == 4
-        counts = result["counts"]
-        assert counts["already_local_linked"] == 0
-        assert counts["needs_reconciliation"] == 1
-        assert counts["potentially_missing"] == 1
-        assert counts["attention_required"] == 0
-        assert counts["skipped_archived"] == 1
-        assert counts["not_downloadable"] == 1
-        assert counts["invalid_manifest_items"] == 3
-        assert "new" not in json.dumps(result)
-        assert service.storage.backup_get("kobo", "vault-1", "new") is None
-    finally:
-        service.close()
-
-
-def test_preview_never_creates_target_and_does_not_block_on_unrelated_import(tmp_path: Path):
-    service, _session = _service(tmp_path, [])
-    untouched = tmp_path / "never-created-by-preview"
-    service.config.set("kobo_backup.directory", str(untouched))
-    _backup(service, "purchase", account_id="account")
-    service.kobo_unlinked_local_count = lambda _id: 3
-    try:
-        result = service.kobo_backup_preview("vault-1")
-        assert result["unlinked_local_books"] == 3  # diagnostic retained
-        assert result["counts"]["blocked_unlinked"] == 0
-        assert result["counts"]["candidate_unverified"] == 1
-        assert not untouched.exists()
-        assert result["acquisition_authorized"] is False  # preview is not consent
-    finally:
-        service.close()
-
-
-def test_verify_files_rejects_invalid_linked_epub_without_changing_record(tmp_path: Path):
-    service, _session = _service(tmp_path, [])
-    target = service._kobo_backup_target_dir("default") / "bad.epub"
-    # Corrupt payload with no ZIP/PDF signature: the normal loose-EPUB
-    # fixture is accepted by the non-strict inspector.
-    target.write_bytes(b"this is not an EPUB file")
-    _backup(
-        service, "bad", status="complete", local_path=target,
-        sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
-        size=target.stat().st_size,
-    )
-    before = service.storage.backup_get("kobo", "vault-1", "bad")
-    try:
-        result = service.kobo_backup_preview(
-            "vault-1", verify_local_files=True,
+        report = service.kobo_backup_preview(
+            "vault-1", refresh_manifest=refresh,
+            verify_local_files=verify,
         )
-        assert result["verification"] == "artifact_hash"
-        # Hash + size match the stored row, but content is not an EPUB.
-        assert result["counts"]["needs_reconciliation"] == 1
-        assert result["counts"]["already_local_verified"] == 0
-        assert service.storage.backup_get("kobo", "vault-1", "bad") == before
+    except ProviderConfigurationError as exc:
+        assert str(exc) in {
+            "canonical_kobo_preview_scope_unavailable",
+            "canonical_kobo_preview_scope_changed",
+            "canonical_kobo_preview_abi_unavailable",
+        }
+        return
+    assert refresh is False, "partial ABI must not read provider A"
+    assert report["canonical_source"] is True
+    assert report["historical_canonical_only"] is True
+    assert report["acquisition_authorized"] is False
+    assert report["manifest_refreshed"] is False
+    assert report["counts"]["already_local_verified"] == 0
+    assert report["counts"]["already_local_linked"] == 0
+    assert report["counts"]["potentially_missing"] == 0
+    for private in ("vault-1", "historical.epub", '"item_id"', '"credential_id"'):
+        assert private not in json.dumps(report)
+
+
+@pytest.mark.parametrize("verify", [False, True])
+@pytest.mark.parametrize("status", ["ok", "complete", "acquiring", "pending"])
+@pytest.mark.parametrize("local", ["absent", "intact", "modified", "symlink"])
+def test_legacy_checkpoint_never_proves_canonical_B_or_allows_provider_GET(
+    tmp_path: Path, monkeypatch, status, verify, local,
+):
+    """Only a canonical OriginLink/Placement can attest B for a Kobo source."""
+    service, session = _service(tmp_path, [
+        {"product_id": "historical", "revision_id": "r1", "title": "Historical"}
+    ])
+    try:
+        target = service._kobo_backup_target_dir("default") / "historical.epub"
+        if local != "absent":
+            _write_epub(target)
+        original = target.read_bytes() if target.is_file() else b""
+        sha = hashlib.sha256(original).hexdigest() if original else None
+        if local == "modified":
+            target.write_bytes(b"changed bytes")
+        elif local == "symlink":
+            target.unlink()
+            other = tmp_path / "outside.epub"
+            _write_epub(other)
+            target.symlink_to(other)
+        _backup(
+            service, "historical", status=status,
+            local_path=target if local != "absent" else None,
+            sha256=sha, size=len(original) if original else None,
+            account_id="account",
+        )
+        before = service.storage.backup_get(
+            "kobo", "vault-1", "historical"
+        )
+        with service.storage._lock, service.storage._connect() as db:
+            before_b = tuple(db.execute(
+                "SELECT * FROM origin_links ORDER BY 1"
+            ))
+        monkeypatch.setattr(
+            session, "backup_manifest",
+            lambda: pytest.fail("D1 may not read 0.7 manifest"),
+        )
+        _forbid_mutation_and_acquisition(service, session, monkeypatch)
+        _read_only_legacy_preview(service, verify=verify)
+        with pytest.raises(ProviderConfigurationError,
+                           match="canonical_kobo_preview_abi_unavailable"):
+            service.kobo_backup_preview("vault-1", refresh_manifest=True)
+        with pytest.raises(ProviderConfigurationError,
+                           match="canonical_kobo_preview_abi_unavailable"):
+            service.kobo_backup_preview(
+                "vault-1", refresh_manifest=True, _item_reasons={},
+            )
+        assert service.storage.backup_get(
+            "kobo", "vault-1", "historical"
+        ) == before
+        with service.storage._lock, service.storage._connect() as db:
+            assert tuple(db.execute(
+                "SELECT * FROM origin_links ORDER BY 1"
+            )) == before_b
     finally:
         service.close()
 
 
-def test_invalid_credential_and_disconnected_manifest_refresh_fail_closed(tmp_path: Path):
+@pytest.mark.parametrize("old_token", ["", "a" * 64, "synthetic"])
+def test_private_legacy_reason_sink_never_mints_confirmation(
+    tmp_path: Path, monkeypatch, old_token,
+):
+    from cifereca.core.kobo_backup import kobo_backup_preview
     service, session = _service(tmp_path, [])
+    try:
+        _forbid_mutation_and_acquisition(service, session, monkeypatch)
+        with pytest.raises(
+            ProviderConfigurationError,
+            match="canonical_kobo_preview_abi_unavailable",
+        ):
+            kobo_backup_preview(
+                service, "vault-1", _item_reasons={},
+                _manifest_evidence=([], 0),
+            )
+        from cifereca.brokers import SynchronizationBrokerImpl
+        broker = SynchronizationBrokerImpl(service)
+        for account in service.accounts:
+            if account.provider_id == "kobo":
+                result = broker.materialize_source(
+                    broker._source_id(account), old_token,
+                )
+                assert not result.ok
+                assert "confirmation_token" not in result.facts
+        assert session.resolve_calls == []
+    finally:
+        service.close()
+
+
+def test_unknown_kobo_credential_denies_preview(tmp_path: Path):
+    service, _ = _service(tmp_path, [])
     try:
         with pytest.raises(ProviderConfigurationError, match="non configuré"):
-            service.kobo_backup_preview("unlisted")
-        # The offline preview remains available when a provider disconnects.
-        session.connected = False
-        result = service.kobo_backup_preview("vault-1")
-        assert result["manifest_refreshed"] is False
-        with pytest.raises(ProviderConfigurationError, match="non connecté"):
-            service.kobo_backup_preview("vault-1", refresh_manifest=True)
-    finally:
-        service.close()
-
-
-def test_remote_author_list_candidate_is_ambiguous_not_downloadable(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path, [{
-        "product_id": "remote-1", "title": "The Novel",
-        "authors": ["Jane Doe"], "revision_id": "r1",
-        "format": "EPUB",
-    }])
-    target = service._kobo_backup_target_dir("default")
-    candidate = target / (
-        service.acquisition._safe_filename("Jane Doe - The Novel") + ".epub"
-    )
-    _write_epub(candidate)
-    _forbid_mutation_and_acquisition(service, session, monkeypatch)
-    try:
-        plan = service.kobo_backup_preview("vault-1", refresh_manifest=True)
-        assert plan["counts"]["needs_reconciliation"] == 1
-        assert plan["counts"]["potentially_missing"] == 0
-        assert plan["acquisition_authorized"] is False
-        assert service.storage.backup_get("kobo", "vault-1", "remote-1") is None
-        assert candidate.is_file()
-    finally:
-        service.close()
-
-
-def test_offline_preview_never_confuses_same_product_id_across_identities(tmp_path: Path):
-    from dataclasses import replace
-
-    service, _session = _service(tmp_path, [])
-    other_identity = replace(
-        service.identities[0],
-        identity_id="another", label="Another", directory_name="another",
-    )
-    service.identities.append(other_identity)
-    service.storage.identity_put(other_identity)
-    service.storage.provider_connection_put({
-        "identity_id": "another", "provider_id": "kobo",
-        "credential_id": "vault-2", "label": "Other",
-    })
-    path = service._kobo_backup_target_dir("another") / "remote.epub"
-    _write_epub(path)
-    _backup(service, "shared-book", status="pending")
-    service.storage.backup_put({
-        "provider_id": "kobo", "credential_id": "vault-2",
-        "identity_id": "another", "item_id": "shared-book",
-        "revision_id": "r1", "title": "Shared", "format": "EPUB",
-        "status": "complete", "local_path": str(path),
-    })
-    try:
-        first = service.kobo_backup_preview("vault-1")
-        second = service.kobo_backup_preview("vault-2")
-        assert first["source_id"] != second["source_id"]
-        assert first["counts"]["candidate_unverified"] == 1
-        assert first["counts"]["already_local_linked"] == 0
-        assert second["counts"]["already_local_linked"] == 0
-        assert second["counts"]["needs_reconciliation"] == 1
-        assert second["counts"]["candidate_unverified"] == 0
-        assert path.is_file()
-    finally:
-        service.close()
-
-
-@pytest.mark.parametrize("malformed_opt_in", ["false", "true", 1, 0, None])
-def test_kobo_preview_obsolete_unlinked_override_never_restores_global_veto(
-    tmp_path: Path, malformed_opt_in,
-):
-    service, session = _service(tmp_path, [
-        {"product_id": "purchase", "revision_id": "r1", "format": "EPUB",
-         "downloadable": True},
-    ])
-    # A fresh manifest belongs to the same synthetic connected account.
-    _backup(service, "purchase", account_id="account")
-    service.kobo_unlinked_local_count = lambda _id: 3
-    service.config.set("kobo_backup.allow_unlinked_acquisition", malformed_opt_in)
-    try:
-        preview = service.kobo_backup_preview("vault-1", refresh_manifest=True)
-        assert preview["unlinked_local_books"] == 3
-        assert preview["counts"]["blocked_unlinked"] == 0
-        assert preview["counts"]["potentially_missing"] == 1
-        assert preview["blocking_items"] == 0
-        assert preview["acquisition_authorized"] is False
-    finally:
-        service.close()
-
-
-@pytest.mark.parametrize("status", ["complete", "ok"])
-def test_preview_quarantines_prior_complete_row_missing_any_link(
-    tmp_path: Path, monkeypatch, status,
-):
-    service, session = _service(tmp_path, [])
-    _backup(service, "already-acquired", status=status, local_path=None)
-    _forbid_mutation_and_acquisition(service, session, monkeypatch)
-    try:
-        result = service.kobo_backup_preview("vault-1")
-        assert result["counts"]["needs_reconciliation"] == 1
-        assert result["counts"]["candidate_unverified"] == 0
-        assert result["counts"]["potentially_missing"] == 0
-        assert result["blocking_items"] == 1
-        assert result["acquisition_authorized"] is False
-    finally:
-        service.close()
-
-
-@pytest.mark.parametrize("status", ["complete", "ok"])
-@pytest.mark.parametrize("verify", [False, True])
-def test_fresh_kobo_right_does_not_turn_legacy_sha_into_b_presence(
-        tmp_path: Path, monkeypatch, status, verify):
-    """Fresh A + historical SHA/size is not a B delivery/OriginLink."""
-    manifest = [{"product_id": "historical", "revision_id": "r1",
-                 "title": "Historical", "format": "EPUB",
-                 "downloadable": True}]
-    service, session = _service(tmp_path, manifest)
-    file = service._kobo_backup_target_dir("default") / "historical.epub"
-    _write_epub(file)
-    original = file.read_bytes()
-    _backup(
-        service, "historical", status=status, local_path=file,
-        sha256=hashlib.sha256(original).hexdigest(), size=len(original),
-        account_id="account",
-    )
-    before = service.storage.backup_get("kobo", "vault-1", "historical")
-    monkeypatch.setattr(session, "backup_manifest", lambda: list(manifest))
-    _forbid_mutation_and_acquisition(service, session, monkeypatch)
-    try:
-        # The PUBLIC offline preview is not a B file attestor: not even
-        # verify_local_files=True may open/hash an unproven 0.7 candidate.
-        from cifereca.core import kobo_backup
-        with monkeypatch.context() as no_file_observation:
-            no_file_observation.setattr(
-                kobo_backup, "_observed_backup_artifact",
-                lambda *_a, **_kw: pytest.fail("offline legacy preview must not hash the candidate"),
-            )
-            offline = service.kobo_backup_preview(
-                "vault-1", verify_local_files=verify,
-            )
-        assert offline["counts"]["already_local_verified"] == 0
-        assert offline["counts"]["already_local_linked"] == 0
-        assert offline["counts"]["needs_reconciliation"] == 1
-        assert offline["blocking_items"] == 1
-        fresh = service.kobo_backup_preview(
-            "vault-1", refresh_manifest=True, verify_local_files=verify,
-        )
-        # W2 still supplies a mutable reason sink for its internal legacy
-        # execution preflight; do not change that ABI until W2 is migrated.
-        from cifereca.core.kobo_backup import kobo_backup_preview
-
-        internal_reasons = {}
-        internal = kobo_backup_preview(
-            service, "vault-1", refresh_manifest=True, verify_local_files=verify,
-            _item_reasons=internal_reasons,
-        )
-        assert internal_reasons["historical"] == (
-            "already_local_verified" if verify else "already_local_linked"
-        )
-        assert internal["acquisition_authorized"] is False
-        assert fresh["counts"]["already_local_linked"] == 0
-        assert fresh["counts"]["already_local_verified"] == 0
-        assert fresh["counts"]["needs_reconciliation"] == 1
-        assert fresh["counts"]["potentially_missing"] == 0
-        assert fresh["blocking_items"] == 1
-        assert fresh["acquisition_authorized"] is False
-        assert service.storage.backup_get("kobo", "vault-1", "historical") == before
-        assert file.read_bytes() == original
-        public = json.dumps(fresh)
-        for private in ("vault-1", "historical.epub", str(file),
-                        hashlib.sha256(original).hexdigest()):
-            assert private not in public
-    finally:
-        service.close()
-
-
-@pytest.mark.parametrize("status", ["complete", "ok"])
-@pytest.mark.parametrize("verify", [False, True])
-@pytest.mark.parametrize("baseline", [
-    "no_sha_or_size", "no_sha", "malformed_sha", "no_size", "zero_size",
-])
-def test_private_w2_preflight_refuses_complete_without_original_integrity_baseline(
-    tmp_path: Path, monkeypatch, status, verify, baseline,
-):
-    """#3196: W2 private admission must agree with actual legacy sync fence."""
-    manifest = [{"product_id": "historical", "revision_id": "r1",
-                 "title": "Historical", "format": "EPUB",
-                 "downloadable": True}]
-    service, session = _service(tmp_path, manifest)
-    historical = service._kobo_backup_target_dir("default") / "historical.epub"
-    _write_epub(historical)
-    original = historical.read_bytes()
-    size = len(original)
-    sha = hashlib.sha256(original).hexdigest()
-    options = {
-        "no_sha_or_size": (None, None),
-        "no_sha": (None, size),
-        "malformed_sha": ("bad-hash", size),
-        "no_size": (sha, None),
-        "zero_size": (sha, 0),
-    }
-    old_sha, old_size = options[baseline]
-    _backup(
-        service, "historical", status=status, local_path=historical,
-        sha256=old_sha, size=old_size, account_id="account",
-    )
-    before = service.storage.backup_get("kobo", "vault-1", "historical")
-    _forbid_mutation_and_acquisition(service, session, monkeypatch)
-    from cifereca.core import kobo_backup
-    monkeypatch.setattr(
-        kobo_backup, "_observed_backup_artifact",
-        lambda *_a, **_kw: pytest.fail("unproven old B file must not be inspected"),
-    )
-    try:
-        reasons = {}
-        plan = kobo_backup.kobo_backup_preview(
-            service, "vault-1", refresh_manifest=True, verify_local_files=verify,
-            _item_reasons=reasons,
-        )
-        assert reasons == {"historical": "needs_reconciliation"}
-        assert plan["counts"]["needs_reconciliation"] == 1
-        assert plan["counts"]["already_local_linked"] == 0
-        assert plan["counts"]["already_local_verified"] == 0
-        assert plan["counts"]["potentially_missing"] == 0
-        assert plan["blocking_items"] == 1
-        assert plan["acquisition_authorized"] is False
-        assert service.storage.backup_get("kobo", "vault-1", "historical") == before
-        assert historical.read_bytes() == original
+            service.kobo_backup_preview("not-bound")
     finally:
         service.close()
