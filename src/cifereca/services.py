@@ -4414,13 +4414,19 @@ class LibraryService:
             )
         is_acsm = path.suffix.casefold() == ".acsm"
         if not is_acsm and path.is_file():
-            # A provider may yield a final file directly. Publish it into the
-            # Paris-owned library only after the provider stage succeeded.
-            published = library_target_dir / path.name
-            if path.resolve() != published.resolve():
-                published.parent.mkdir(parents=True, exist_ok=True)
-                path.replace(published)
-                path = published
+            # #5225: historical direct loans have not yet migrated to the
+            # full canonical A->B receipt pipeline. At minimum never allow a
+            # supplier-chosen filename to overwrite an unrelated library
+            # artifact, or escape this Core-owned private staging directory.
+            # The common publication helper creates an exclusive destination
+            # on the library filesystem, independently of the source mount.
+            from .core.loan_direct_publication import (
+                publish_direct_loan_candidate,
+            )
+            path = publish_direct_loan_candidate(
+                path, work_dir=target_dir,
+                library_target_dir=library_target_dir,
+            )
         try:
             size = path.stat().st_size
         except OSError:
