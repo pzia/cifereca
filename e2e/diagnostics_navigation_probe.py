@@ -1569,15 +1569,14 @@ def main() -> int:
         capture("03i-sync-partial-last-success-and-offline-source")
         # #980 acceptance uses the real MainWindow/controller/widgets and
         # XTEST, with eleven synthetic broker rows; no provider/network/DRM.
-        # Eleven sources, two Numilog read-only/inventory rows and five additional rows
-        # per Kobo account: preview,
-        # audit, confirmed materialization, independent acquisition startup
-        # consent, and now the separate inventory/rights refresh consent.
+        # Eleven sources and four Kobo accounts; the retired W4 local SHA
+        # audit row was physically removed from each Kobo group. Canonical
+        # preview, confirmed materialization and consent rows remain.
         # The synthetic broker declines Kobo scheduling; those rows remain
         # inert. Numilog inventory consent is exercised separately below.
         # #1905 adds one distinct Numilog *book backup* consent row.
         # The synthetic broker has no consent APIs: the CTA must be inert.
-        assert len(rows) == 34, ("Unexpected GTK sync action-row count", len(rows))
+        assert len(rows) == 30, ("Unexpected GTK sync action-row count", len(rows))
         numilog_backup_rows = [
             row for row in rows
             if row.get_title() == "Sauvegarde automatique des achats Numilog"
