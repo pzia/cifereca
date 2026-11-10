@@ -261,7 +261,13 @@ def execute(broker: Any, identity_id: str, trigger: str, control: Any = None) ->
         def same_source() -> bool:
             # Freeze dispatch coordinates, including the preview's local root.
             # A configuration change cannot move an in-flight startup batch.
-            return _same_binding(broker, source_id, scope, session, roots)
+            # A session may gain its complete canonical v2 ABI after the
+            # source list was captured. Recheck before the legacy manifest
+            # and each acquisition: no second receipt/GET executor may
+            # inherit an earlier selection merely because the account is
+            # still the same object.
+            return (_same_binding(broker, source_id, scope, session, roots)
+                    and not _canonical_source_delivery_active(session))
         # A persisted "on_start" may be revoked and explicitly re-enabled
         # while this batch is in flight. Its new consent is NOT a grant to
         # revive this earlier job (or to reuse an already-fetched manifest).
