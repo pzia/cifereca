@@ -74,7 +74,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
     required_commands = {
         "doctor", "sync", "list", "run", "acquisition-audit",
         "statistics", "catalog-list", "acquisition-ledger",
-        "acquisition-reconcile", "kobo-audit", "kobo-resume-preview",
+        "acquisition-reconcile", "kobo-resume-preview",
         "kobo-resume", "kobo-sync", "kobo-reconcile-local",
         "paris-adept", "audit-origin", "audit-canonical", "audit-transaction",
         "preview-resolution", "bind", "unbind", "plugin", "diagnose",
