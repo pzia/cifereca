@@ -187,9 +187,37 @@ def acquire_numilog_direct(
             if reconcile_pending and not recovery_authorized():
                 raise ProviderConfigurationError('Numilog : preuves modifiées pendant la reprise')
             stage = "acquisition_delivery_failed"
+            def delivery_admission_current():
+                # A live, Core-owned lease for each provider transport hop.
+                # The selected source can be revoked during GET even when
+                # an earlier readmit was valid (identity/credential ABA,
+                # disconnect, or a revised on-start consent epoch).
+                try:
+                    owner, active, account_id = require_source(
+                        service, item, session=pinned_session,
+                    )
+                    return bool(
+                        owner.identity_id == identity.identity_id
+                        and active is pinned_session
+                        and account_id == pinned_account_id
+                        and admission_scope(item) == pinned_scope
+                        and (not automatic or startup_authorized())
+                        and (not reconcile_pending or recovery_authorized())
+                    )
+                except Exception:
+                    return False
+
+            if not delivery_admission_current():
+                raise ProviderConfigurationError(
+                    "Numilog : autorisation ciblée modifiée ou indisponible"
+                )
             try:
+                # The Numilog plugin must recheck this callback before and
+                # during its signed network traversal. Never silently retry
+                # with the unguarded legacy signature if it is absent.
                 path, _private_url = pinned_session.download_direct(
                     item, provider_target,
+                    core_admission_current=delivery_admission_current,
                 )
             except Exception as exc:
                 from ..plugin_api import Cancelled
