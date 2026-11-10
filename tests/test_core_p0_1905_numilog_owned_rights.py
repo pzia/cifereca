@@ -23,7 +23,8 @@ from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row
 from tests.test_sync_state_contract import _service
 
 
-def test_authenticated_numilog_inventory_persists_distinct_rights_offline(
+
+def test_authenticated_numilog_inventory_persists_scoped_notices_without_rights(
     tmp_path, monkeypatch,
 ):
     service = _service(tmp_path)
@@ -34,16 +35,12 @@ def test_authenticated_numilog_inventory_persists_distinct_rights_offline(
         second = service.mirror_personal_libraries()
         assert first == second == {"numilog:numilog-private": 3}
         assert calls == ["library", "library"]
-        rights = service.storage.entitlements(provider_id="numilog")
-        assert len(rights) == 3
-        assert len({right["item_id"] for right in rights}) == 3
-        assert {right["identity_id"] for right in rights} == {"default"}
-        assert {right["account_id"] for right in rights} == {account.unique_id}
-        assert all(right["entitlement_type"] == "owned"
-                   and right["state"] == "active" for right in rights)
-        assert all(right["metadata"]["source"] == "numilog.authenticated_library"
-                   for right in rights)
-        assert len(service.storage.catalog_entries(state="remote_owned")) == 3
+        assert service.storage.entitlements(provider_id="numilog") == []
+        notices = service.storage.catalog_entries()
+        assert len(notices) == 3
+        assert len({row["record_id"] for row in notices}) == 3
+        assert {row["identity_id"] for row in notices} == {"default"}
+        assert all(row["local_state"] == "remote_catalog" for row in notices)
         assert service.library_entries(identity_id="alex") == []
         assert not list((tmp_path / "EBooks").rglob("*.epub"))
         assert not list((tmp_path / "EBooks").rglob("*.acsm"))
@@ -51,38 +48,36 @@ def test_authenticated_numilog_inventory_persists_distinct_rights_offline(
         service.close()
     reopened = _service(tmp_path)
     try:
-        assert len(reopened.storage.entitlements(provider_id="numilog")) == 3
-        assert len(reopened.library_entries(identity_id="default")) == 3
+        assert reopened.storage.entitlements(provider_id="numilog") == []
+        assert len(reopened.storage.catalog_entries()) == 3
         assert reopened.library_entries(identity_id="alex") == []
     finally:
         reopened.close()
 
 
-def test_public_owned_flag_without_private_right_never_grants_purchase(tmp_path):
+
+def test_public_owned_flag_and_private_library_never_mint_pseudo_rights(tmp_path):
     service = _service(tmp_path)
     try:
         row = _row("vault-no-right", 1)
-        # Public SearchResult flags cannot prove ownership, even if a plugin
-        # incorrectly labels a catalogue row as from the personal library.
         assert service._mirror_remote_results([row], identity_id="default") == 1
         assert service.storage.entitlements(provider_id="numilog") == []
-        assert len(service.storage.catalog_entries(state="remote_owned")) == 0
         assert len(service.storage.catalog_entries(state="remote_catalog")) == 1
-
         _account, _session, _calls = _connect(
             service, credential="vault-no-right", number=2,
         )
         service.mirror_personal_libraries()
-        assert len(service.storage.entitlements(provider_id="numilog")) == 2
-        # A previously displayed item becomes owned only after the exact
-        # private record ID is confirmed. Other identities remain isolated.
+        assert service.storage.entitlements(provider_id="numilog") == []
+        assert len(service.storage.catalog_entries()) == 2
         service._mirror_remote_results([row], identity_id="default")
-        assert len(service.storage.catalog_entries(state="remote_owned")) == 2
         service._mirror_remote_results([row], identity_id="alex")
-        assert len([x for x in service.storage.catalog_entries(state="remote_owned")
-                    if x["identity_id"] == "alex"]) == 0
+        assert service.storage.entitlements(provider_id="numilog") == []
+        assert not service.storage.catalog_entries(state="remote_owned")
+        assert not [x for x in service.storage.catalog_entries()
+                    if x["identity_id"] == "alex" and x["local_state"] == "remote_owned"]
     finally:
         service.close()
+
 
 
 def test_homonymous_variants_across_two_numilog_accounts_and_three_identities(
@@ -104,28 +99,26 @@ def test_homonymous_variants_across_two_numilog_accounts_and_three_identities(
             service, identity="bob", credential="vault-b", number=2,
         )
         def two_variants(credential):
-            rows = [
+            return [
                 replace(_row(credential, 0), title="Titre commun"),
                 replace(_row(credential, 1), title="Titre commun"),
             ]
-            return rows
         session_a.library = lambda: (calls_a.append("distinct") or two_variants("vault-a"))
         session_b.library = lambda: (calls_b.append("distinct") or two_variants("vault-b"))
-        # Some provider pages may repeat the same purchase. It is one right.
         service.mirror_personal_libraries()
-        rights = service.storage.entitlements(provider_id="numilog")
-        assert len(rights) == 4
-        assert len({r["entitlement_id"] for r in rights}) == 4
-        assert {r["identity_id"] for r in rights} == {"alice", "bob"}
-        assert len([r for r in rights if r["identity_id"] == "alice"]) == 2
-        assert len([r for r in rights if r["identity_id"] == "bob"]) == 2
+        notices = service.storage.catalog_entries()
+        assert len(notices) == 4
+        assert len({(r["identity_id"], r["record_id"]) for r in notices}) == 4
+        assert {r["identity_id"] for r in notices} == {"alice", "bob"}
+        assert len([r for r in notices if r["identity_id"] == "alice"]) == 2
+        assert len([r for r in notices if r["identity_id"] == "bob"]) == 2
+        assert all(r["title"] == "Titre commun" for r in notices)
+        assert service.storage.entitlements(provider_id="numilog") == []
         assert service.library_entries(identity_id="carol") == []
-        assert all(r["metadata"]["title"] == "Titre commun" for r in rights)
         assert calls_a == calls_b == ["distinct"]
         assert not list((tmp_path / "EBooks").rglob("*.epub"))
     finally:
         service.close()
-
 
 @pytest.mark.parametrize("invalid", [
     "missing_account", "rebound", "disabled_connection",
@@ -227,18 +220,23 @@ def test_malformed_cross_source_rows_cannot_create_purchase_or_acquire(
         service.close()
 
 
-def test_absent_purchases_do_not_revoke_previous_rights(tmp_path):
+
+def test_empty_private_inventory_does_not_create_or_revoke_local_artifacts(tmp_path):
     service = _service(tmp_path)
     try:
-        account, session, _calls = _connect(service, number=1)
+        _account, session, calls = _connect(service, number=1)
         service.mirror_personal_libraries()
-        assert len(service.storage.entitlements(provider_id="numilog")) == 1
-        session.library = lambda: []
+        assert len(service.storage.catalog_entries()) == 1
+        assert service.storage.entitlements(provider_id="numilog") == []
+        session.library = lambda: (calls.append("empty") or [])
         service.mirror_personal_libraries()
-        rights = service.storage.entitlements(provider_id="numilog")
-        assert len(rights) == 1 and rights[0]["state"] == "active"
+        assert service.storage.entitlements(provider_id="numilog") == []
+        assert service.storage.acquisitions(provider_id="numilog") == []
+        assert service.storage.placements() == []
+        assert not list((tmp_path / "EBooks").rglob("*.epub"))
     finally:
         service.close()
+
 
 
 def test_signed_numilog_urls_and_private_metadata_not_persisted(
@@ -249,8 +247,7 @@ def test_signed_numilog_urls_and_private_metadata_not_persisted(
         _account, session, _calls = _connect(service, number=0)
         record = replace(
             _row("numilog-private", 0),
-            title="Livre de test",
-            author="Auteur",
+            title="Livre de test", author="Auteur",
             friendly_url="https://www.numilog.com/123/Test.ebook?auth=SECRET_SIGNATURE",
             thumbnail_url="https://storage.googleapis.com/covers/a.png?token=SECRET_SIGNATURE",
             metadata={"rights": "https://private.invalid/?auth=SECRET_SIGNATURE",
@@ -259,10 +256,7 @@ def test_signed_numilog_urls_and_private_metadata_not_persisted(
         session.library = lambda: [record]
         summary = service.mirror_personal_libraries()
         assert summary["numilog:numilog-private"] == 1
-        rights = service.storage.entitlements(provider_id="numilog")
-        assert len(rights) == 1
-        assert "SECRET_SIGNATURE" not in json.dumps(rights)
-        assert "rights" not in rights[0]["metadata"]
+        assert service.storage.entitlements(provider_id="numilog") == []
         catalogue = service.storage.catalog_entries()
         assert len(catalogue) == 1
         assert "SECRET_SIGNATURE" not in json.dumps(catalogue)
@@ -319,10 +313,8 @@ def test_numilog_entitlement_helper_is_inert_without_authenticated_owner(tmp_pat
         service.close()
 
 
-def test_numilog_owned_digital_cover_is_visible_without_local_file(tmp_path):
-    """Three private rights remain visible with the default Digital filter."""
-    from cifereca.core.search import filter_loaded_results, support_kind
 
+def test_numilog_digital_catalogue_covers_without_local_file_or_right(tmp_path):
     service = _service(tmp_path)
     try:
         account, session, calls = _connect(service, number=0)
@@ -338,28 +330,15 @@ def test_numilog_owned_digital_cover_is_visible_without_local_file(tmp_path):
         )
         assert service.mirror_personal_libraries() == {"numilog:numilog-private": 3}
         assert calls == ["library"]
-
-        rights = service.storage.entitlements(provider_id="numilog")
-        assert len(rights) == 3
-        assert {r["metadata"]["cover_url"] for r in rights} == set(covers)
-        assert all(r["metadata"]["medium"] == "digital" for r in rights)
-        assert all(r["metadata"]["media_format"] is None for r in rights)
-
-        entries = [
-            row for row in service.library_entries(identity_id="default")
-            if row["provider_id"] == "numilog"
-        ]
-        assert len(entries) == 3
-        assert len(filter_loaded_results(entries, scope="digital")) == 3
-        assert all(support_kind(row) == "digital" for row in entries)
-        assert {row["thumbnail_url"] for row in entries} == set(covers)
-        assert all(row["state"] == "remote_owned" and not row["local"]
-                   and row["media_format"] is None for row in entries)
+        notices = service.storage.catalog_entries()
+        assert len(notices) == 3
+        assert {row["metadata"]["cover_url"] for row in notices} == set(covers)
+        assert all(row["local_state"] == "remote_catalog" for row in notices)
+        assert service.storage.entitlements(provider_id="numilog") == []
         assert not list((tmp_path / "EBooks").rglob("*.epub"))
         assert not list((tmp_path / "EBooks").rglob("*.acsm"))
     finally:
         service.close()
-
 
 @pytest.mark.parametrize("untrusted_cover", [
     "https://couverture.numilog.com/9782075242028_GRANDE.jpg?auth=SECRET_SIGNATURE",
@@ -369,7 +348,8 @@ def test_numilog_owned_digital_cover_is_visible_without_local_file(tmp_path):
     "http://couverture.numilog.com/9782075242028_GRANDE.jpg",
     "https://evil.example/9782075242028_GRANDE.jpg",
 ])
-def test_numilog_untrusted_cover_never_persists_in_rights_or_catalogue(
+
+def test_numilog_untrusted_cover_never_persists_in_catalogue(
     tmp_path, untrusted_cover,
 ):
     service = _service(tmp_path)
@@ -379,13 +359,11 @@ def test_numilog_untrusted_cover_never_persists_in_rights_or_catalogue(
             replace(_row(account.credential_id, 0), thumbnail_url=untrusted_cover)
         ]
         assert service.mirror_personal_libraries() == {"numilog:numilog-private": 1}
-        rights = service.storage.entitlements(provider_id="numilog")
-        assert len(rights) == 1
-        assert rights[0]["metadata"]["cover_url"] is None
-        entries = service.library_entries(identity_id="default")
-        assert len(entries) == 1
-        assert entries[0]["thumbnail_url"] is None
-        assert untrusted_cover not in json.dumps(rights)
-        assert untrusted_cover not in json.dumps(service.storage.catalog_entries())
+        assert service.storage.entitlements(provider_id="numilog") == []
+        catalogue = service.storage.catalog_entries()
+        assert len(catalogue) == 1
+        assert catalogue[0]["metadata"]["cover_url"] is None
+        assert untrusted_cover not in json.dumps(catalogue)
     finally:
         service.close()
+
