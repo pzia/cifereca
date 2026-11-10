@@ -421,7 +421,7 @@ class SynchronizationBrokerImpl:
                 # generic explicit phase receipt below, never backup_items.
                 row = None
                 if legacy_checkpoint:
-                    from .core.kobo_backup import _kobo_checkpoint_for
+                    from .core.legacy_checkpoint_reader import _kobo_checkpoint_for
                     row = _kobo_checkpoint_for(self.service, identity, credential)
                 if row is None:
                     materialization = SyncPhaseState("materialize")
