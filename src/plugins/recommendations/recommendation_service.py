@@ -229,6 +229,7 @@ def compute_recommendations(
     exclude_owned: bool = True,
     explicit_signals: tuple[ExplicitReadingSignal, ...] | None = None,
     use_saved_explicit_preferences: bool = False,
+    documentary_source_policy: str = "neutral",
     snapshot_cache: LibrarySnapshotCache | None = None,
     progress: Callable[[int, int, str], None] | None = None,
     partial: Callable[[RecommendationPartial], None] | None = None,
@@ -298,10 +299,22 @@ def compute_recommendations(
     # purchases, loans, EPUB data or catalogue provenance.
     # Preserve the original call contract for the default path (including
     # instrumentation that wraps build_profile(books) with one positional arg).
-    profile = (build_profile(books) if explicit_signals is None
-               else build_profile(
-                   books, identity_id=identity_id, explicit_signals=explicit_signals,
-               ))
+    if (type(documentary_source_policy) is not str
+            or documentary_source_policy not in ("neutral", "attested_local")):
+        raise ValueError("invalid_documentary_source_policy")
+    if documentary_source_policy == "attested_local":
+        profile = build_profile(
+            books, identity_id=identity_id, explicit_signals=explicit_signals,
+            documentary_source_policy="attested_local",
+        )
+    else:
+        # Unchanged historical baseline, including its public mockable call
+        # contract and optional explicit-feedback arguments.
+        profile = (build_profile(books) if explicit_signals is None
+                   else build_profile(
+                       books, identity_id=identity_id,
+                       explicit_signals=explicit_signals,
+                   ))
     queries = build_queries(books, max_queries=max_queries, profile=profile)
     profile_ms = (time.perf_counter() - profile_started) * 1000.0
 

@@ -256,3 +256,177 @@ def test_controlled_corpus_optin_changes_full_rank_without_changing_sources():
         not hasattr(row, "executable")
         for rows in (baseline, preferred, disliked) for row in rows
     )
+
+
+def _attested_local(key, owner, author, *, placement_id=None):
+    placement_id = placement_id or ("placement-" + key)
+    return {
+        "key": key, "identity_id": owner, "title": "Livre " + key,
+        "author": author, "state": "local", "local": True,
+        "artifact_id": "sha256:" + key, "placement_id": placement_id,
+        "placements": [{
+            "identity_id": owner, "state": "present",
+            "placement_id": placement_id,
+        }],
+        "metadata": {"subjects": ["sciences"]},
+    }
+
+
+def test_attested_local_policy_changes_documentary_ranking_only_when_selected():
+    local = _attested_local("a", "alice", "Auteur Local")
+    remote = {
+        "key": "b", "identity_id": "alice", "title": "Livre B",
+        "author": "Auteur Distant", "state": "remote_owned",
+        "local": False, "artifact_id": None, "placement_id": None,
+        "placements": [], "entitlement_type": "owned",
+        "metadata": {"subjects": ["sciences"]},
+    }
+    books = [local, remote]
+    neutral = build_profile(books)
+    assert build_profile(books, documentary_source_policy="neutral") == neutral
+    assert neutral.authors == {"auteur local": 1, "auteur distant": 1}
+    optin = build_profile(
+        books, identity_id="alice", documentary_source_policy="attested_local",
+    )
+    assert optin.authors == {"auteur local": 1}
+    assert optin.author_book_counts == {"auteur local": 1}
+    assert optin.total_books == 2
+    assert "auteur distant" not in optin.authors
+    assert "auteur distant" in neutral.authors
+    assert content_score(
+        optin, {"title": "Nouveau", "author": "Auteur Local"},
+    )[0] > content_score(
+        optin, {"title": "Nouveau", "author": "Auteur Distant"},
+    )[0]
+    assert content_score(
+        neutral, {"title": "Nouveau", "author": "Auteur Local"},
+    )[0] == content_score(
+        neutral, {"title": "Nouveau", "author": "Auteur Distant"},
+    )[0]
+
+
+def test_foreign_or_ambiguous_physical_placement_cannot_weight_profile():
+    valid = _attested_local("valid", "alice", "Auteur Vérifié")
+    wrong_owner = _attested_local("foreign", "bob", "Auteur Étranger")
+    wrong_placement = _attested_local("wrong", "alice", "Auteur Inconnu")
+    wrong_placement["placements"][0]["identity_id"] = "bob"
+    duplicate = _attested_local("duplicate", "alice", "Auteur Ambigu")
+    duplicate["placements"].append(dict(duplicate["placements"][0]))
+    absent = _attested_local("absent", "alice", "Auteur Absent")
+    absent["placements"][0]["state"] = "archived"
+    spoofed = _attested_local("spoof", "alice", "Auteur Distant")
+    spoofed["state"] = "remote_loan_active"
+    spoofed["metadata"]["liked"] = True
+    books = [valid, wrong_owner, wrong_placement, duplicate, absent, spoofed]
+    result = build_profile(
+        books, identity_id="alice", documentary_source_policy="attested_local",
+    )
+    assert result.authors == {"auteur verifie": 1}
+    assert result.total_books == len(books)
+    assert result.existing_pairs == build_profile(books).existing_pairs
+
+
+def test_attested_local_filter_still_excludes_remote_entitlements_as_present():
+    remote = {
+        "key": "remote-b", "identity_id": "alice", "title": "Livre B",
+        "author": "Auteur Distant", "state": "remote_owned",
+        "local": False, "isbn": "9780306406157",
+        "entitlement_type": "owned", "placements": [],
+    }
+    profile = build_profile(
+        [remote], identity_id="alice",
+        documentary_source_policy="attested_local",
+    )
+    assert profile.authors == {}
+    assert "isbn:9780306406157" in profile.identifiers
+    assert is_already_present(
+        profile, {"isbn": "9780306406157", "title": "Other edition"},
+    )
+
+
+def test_explicit_feedback_takes_precedence_over_local_only_documentary_filter():
+    local = _attested_local("a", "alice", "Auteur Local")
+    remote = {
+        "key": "b", "identity_id": "alice", "title": "Livre B",
+        "author": "Auteur Distant", "state": "remote_loan_active",
+        "local": False, "placements": [],
+    }
+    profile = build_profile(
+        [local, remote], identity_id="alice",
+        documentary_source_policy="attested_local",
+        explicit_signals=[
+            _signal("a", "not_interested"),
+            _signal("b", "liked"),
+        ],
+    )
+    assert profile.authors == {"auteur distant": 2}
+    assert profile.author_book_counts == {"auteur distant": 1}
+    assert profile.total_books == 2
+    # User preferences remain a separate, affirmative consent and never
+    # emerge from local/remote entitlement/provenance fields.
+    no_feedback = build_profile(
+        [local, remote], identity_id="alice",
+        documentary_source_policy="attested_local",
+    )
+    assert no_feedback.authors == {"auteur local": 1}
+
+
+@pytest.mark.parametrize("identity,policy", [
+    (None, "attested_local"), ("", "attested_local"),
+    ("bob\x00secret", "attested_local"), ("alice", "invalid"),
+    ("alice", True), ("alice", None),
+])
+def test_invalid_documentary_scope_is_denied_before_ranking(identity, policy):
+    with pytest.raises(ValueError, match="documentary_source"):
+        build_profile(
+            [_attested_local("a", "alice", "Auteur Local")],
+            identity_id=identity, documentary_source_policy=policy,
+        )
+
+
+def test_controlled_corpus_local_scope_does_not_rebind_catalogue_editions():
+    from recommendation_engine_fast import rank_candidates_prepared
+
+    local = _attested_local("local-a", "alice", "Auteur A")
+    remote = {
+        "key": "remote-b", "identity_id": "alice", "title": "Livre B",
+        "author": "Auteur B", "state": "remote_owned", "local": False,
+        "placements": [],
+    }
+    offers = [
+        {
+            "title": "Livre C", "author": "Auteur A",
+            "source_provider": "paris", "source_credential": "credential-A",
+            "docbase": "BOOKS", "source_collection": "catalogue",
+            "record_id": "edition-A",
+        },
+        {
+            "title": "Livre D", "author": "Auteur B",
+            "source_provider": "paris", "source_credential": "credential-B",
+            "docbase": "BOOKS", "source_collection": "catalogue",
+            "record_id": "edition-B",
+        },
+    ]
+    base = rank_candidates_prepared(
+        build_profile([local, remote]), [offers, offers],
+        exploration=0, limit=2,
+    )
+    filtered = rank_candidates_prepared(
+        build_profile([local, remote], identity_id="alice",
+                      documentary_source_policy="attested_local"),
+        [offers, offers], exploration=0, limit=2,
+    )
+    assert {x.item["record_id"] for x in base} == {
+        "edition-A", "edition-B",
+    }
+    assert filtered[0].item["record_id"] == "edition-A"
+    assert {x.item["record_id"] for x in filtered} == {
+        "edition-A", "edition-B",
+    }
+    def sources(rows):
+        return {
+            (variant.source_provider, variant.source_credential,
+             variant.docbase, variant.source_collection, variant.record_id)
+            for row in rows for variant in row.notices
+        }
+    assert sources(base) == sources(filtered)

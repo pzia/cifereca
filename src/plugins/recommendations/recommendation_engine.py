@@ -365,6 +365,57 @@ def _profile_feedback_weights(
     return weights
 
 
+def _attested_local_documentary_weights(
+    books: Sequence[Any], *, identity_id: str,
+) -> list[int]:
+    """Explicit documentary scope, not a reading preference or a right.
+
+    Core's library projection already proves physical owner containment.
+    Recheck the bounded, exact Placement+Artifact coordinates that projection
+    exposes. A remote entitlement, unbound legacy path or a foreign owner
+    contributes no descriptive query terms, but remains in *presence*
+    exclusions. Never inspect an arbitrary filesystem path or provider.
+    """
+    if (type(identity_id) is not str or not 0 < len(identity_id) <= 160
+            or not identity_id.isprintable() or identity_id != identity_id.strip()):
+        raise ValueError("invalid_documentary_source_scope")
+    weights = []
+    for book in books:
+        if type(book) is not dict:
+            weights.append(0)
+            continue
+        placements = book.get("placements")
+        artifact = book.get("artifact_id")
+        placement_id = book.get("placement_id")
+        if (book.get("identity_id") != identity_id
+                or book.get("state") != "local"
+                or book.get("local") is not True
+                or type(artifact) is not str or not artifact
+                or not artifact.isprintable() or len(artifact) > 256
+                or type(placements) not in (list, tuple)
+                or not 0 < len(placements) <= 256):
+            weights.append(0)
+            continue
+        verified = [
+            row["placement_id"] for row in placements
+            if type(row) is dict
+            and row.get("identity_id") == identity_id
+            and row.get("state") == "present"
+            and type(row.get("placement_id")) is str
+            and 0 < len(row["placement_id"]) <= 256
+            and row["placement_id"].isprintable()
+        ]
+        # A row with an explicitly specified placement must match a physical
+        # placement in the same profile; ambiguous duplicates are denied.
+        if (type(placement_id) is str and placement_id
+                and (placement_id not in verified or
+                     verified.count(placement_id) != 1)):
+            weights.append(0)
+            continue
+        weights.append(int(len(verified) == len(set(verified)) and bool(verified)))
+    return weights
+
+
 @dataclass(frozen=True)
 class ProfileVector:
     authors: Counter[str]
@@ -389,10 +440,27 @@ def build_profile(
     books: Sequence[Any], *,
     identity_id: str | None = None,
     explicit_signals: Sequence[ExplicitReadingSignal] | None = None,
+    documentary_source_policy: str = "neutral",
 ) -> ProfileVector:
+    if type(documentary_source_policy) is not str or documentary_source_policy not in (
+        "neutral", "attested_local",
+    ):
+        raise ValueError("invalid_documentary_source_policy")
     weights = _profile_feedback_weights(
         books, identity_id=identity_id, explicit_signals=explicit_signals,
     )
+    if documentary_source_policy == "attested_local":
+        # This is a separately selected documentary *source* filter, not a
+        # deduction that buying/borrowing/owning is equivalent to liking.
+        # Explicitly saved "liked" overrides the filter; "not_interested"
+        # still suppresses it. No feedback means use the source presence bit.
+        local_weights = _attested_local_documentary_weights(
+            books, identity_id=identity_id,
+        )
+        weights = [
+            local_weight if feedback == 1 else feedback
+            for local_weight, feedback in zip(local_weights, weights)
+        ]
     authors: Counter[str] = Counter()
     author_book_counts: Counter[str] = Counter()
     subjects: Counter[str] = Counter()

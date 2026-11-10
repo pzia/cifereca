@@ -121,3 +121,47 @@ def test_feedback_worker_never_writes_after_profile_or_generation_change():
         preference="liked", revision=3, clear_all=False,
     )
     assert len(submitted) == 1
+
+
+def test_local_documentary_only_mode_is_separate_explicit_profile_optin():
+    assert 'label="Sources : fichiers locaux vérifiés"' in SOURCE
+    assert 'self._local_only_optin.set_active(False)' in SOURCE
+    assert 'self._local_only_optin.connect(' in SOURCE
+    assert '"toggled", self._local_only_optin_changed,' in SOURCE
+    assert 'def _clear_local_only_optin(self)' in SOURCE
+    assert 'self._resetting_local_only_optin = True' in SOURCE
+    assert 'self._clear_local_only_optin()' in SOURCE
+    assert 'documentary_source_policy": "attested_local"' in SOURCE
+    assert 'if local_only else {}' in SOURCE
+    assert 'and self.selected_identity_id() == identity_id' in SOURCE
+    assert 'documentary.set_sensitive(reference is None)' in SOURCE
+    assert 'documentary.set_sensitive(False)' in SOURCE
+
+
+def test_local_only_programmatic_reset_never_counts_as_user_consent():
+    import sys
+    from types import SimpleNamespace as NS
+    repo = Path(__file__).resolve().parents[1]
+    plugin = str(repo / "src/plugins/recommendations")
+    if plugin not in sys.path:
+        sys.path.insert(0, plugin)
+    from recommendations import UxRecommendationsView
+
+    calls = []
+    state = {"checked": True}
+    view = UxRecommendationsView.__new__(UxRecommendationsView)
+    view._resetting_local_only_optin = False
+    view.refresh = lambda: calls.append("refresh")
+    view._local_only_optin = NS(
+        get_active=lambda: state["checked"],
+        set_active=lambda value: (
+            state.__setitem__("checked", value),
+            view._local_only_optin_changed(),
+        ),
+    )
+    view._clear_local_only_optin()
+    assert state["checked"] is False
+    assert calls == []
+    assert view._resetting_local_only_optin is False
+    view._local_only_optin_changed()
+    assert calls == ["refresh"]
