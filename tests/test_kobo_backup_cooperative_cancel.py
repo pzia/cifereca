@@ -81,7 +81,7 @@ def test_expired_cancelled_checkpoint_stays_manual_only(tmp_path):
             json.dumps({"schema_version": 1, "status": "cancelled",
                         "processed": 1, "total": 3, "updated_at": now - 86400}),
         )
-        assert service._kobo_backup_account_due("vault-1") is False
+        assert not hasattr(service, "_kobo_backup_account_due")
         # A crash must behave differently from a deliberate cancellation.
         service.storage.metadata_set(
             _kobo_checkpoint_key("default", "vault-1"),
