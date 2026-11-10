@@ -254,6 +254,34 @@ def test_source_rebound_during_token_get_disposes_candidate_without_rights(
 
 
 
+def test_unexpected_token_inspector_failure_discards_private_acsm(
+    connected_core, monkeypatch,
+):
+    """An arbitrary inspection error must never leave a reusable private ACSM."""
+    service, session, account, loan, state, downloaded = connected_core
+    inspected = []
+
+    def failing_inspector(path):
+        inspected.append(Path(path))
+        raise RuntimeError("upstream-private-inspector-secret")
+
+    monkeypatch.setattr(services, "inspect_artifact", failing_inspector)
+    before_rights = service.storage.entitlements()
+    with pytest.raises(
+        ProviderConfigurationError, match="^bnf_loan_token_invalid$",
+    ) as exc:
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default",
+        )
+    assert "secret" not in str(exc.value)
+    assert len(inspected) == 1
+    assert not inspected[0].exists()
+    assert len(downloaded) == 1
+    assert service.storage.entitlements() == before_rights
+    assert not service.storage.acquisitions()
+    assert not service.storage.placements()
+
+
 def test_url_bearing_candidate_is_rejected_and_deleted(connected_core, monkeypatch):
     service, session, account, loan, state, downloaded = connected_core
     files = []

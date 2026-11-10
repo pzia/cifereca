@@ -164,6 +164,12 @@ def stage_explicit_loan_acsm(
             except ProviderConfigurationError:
                 _discard_invalid_candidate(artifact, destination)
                 raise
+            except Exception:
+                # A Core inspector or plugin-controlled candidate may raise
+                # unexpectedly. Do not leak its exception or leave a private
+                # ACSM in staging after failed validation.
+                _discard_invalid_candidate(artifact, destination)
+                _refuse(error_codes["invalid"])
             # The borrower/session may have been replaced during HTTP.
             # A valid ACSM from a stale session must never be handed to ADEPT.
             observe_phase('source_revalidation')
