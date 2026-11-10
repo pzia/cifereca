@@ -80,7 +80,7 @@ def test_legacy_checkpoint_never_proves_canonical_B_or_allows_provider_GET(
         {"product_id": "historical", "revision_id": "r1", "title": "Historical"}
     ])
     try:
-        target = service._kobo_backup_target_dir("default") / "historical.epub"
+        target = service.library_identity_provider_dir("default", "kobo") / "historical.epub"
         if local != "absent":
             _write_epub(target)
         original = target.read_bytes() if target.is_file() else b""

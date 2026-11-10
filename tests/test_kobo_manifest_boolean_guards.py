@@ -36,7 +36,7 @@ def test_ambiguous_flags_never_trigger_acquisition_or_prune(
 ):
     raw = {**_manifest_row(), **override}
     service = _service(tmp_path, manifest=[raw])
-    saved = service._kobo_backup_target_dir("default") / "old.epub"
+    saved = service.library_identity_provider_dir("default", "kobo") / "old.epub"
     _write_epub(saved)
     service.storage.backup_put({
         "provider_id": "kobo", "credential_id": "vault-1",

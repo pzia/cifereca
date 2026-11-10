@@ -234,7 +234,7 @@ def test_retired_direct_executor_never_issues_get_or_retry(
     try:
         item = _item()
         if failure == "destination_present":
-            path = service._kobo_backup_target_dir("default") / "Book One.epub"
+            path = service.library_identity_provider_dir("default", "kobo") / "Book One.epub"
             _write_epub(path)
             original = path.read_bytes()
         else:
