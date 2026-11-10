@@ -1,8 +1,7 @@
 """P0 #5054: no Numilog v1 new GET/writer remains reachable from Core.
 
-The historical receipt reader is intentionally kept for offline-only local
-reconciliation; a private manifest, on_start flag, or old link never grants
-another automatic supplier request.
+The v1 receipt reader and its writer are retired. No private manifest,
+on_start flag or old link grants another automatic supplier request.
 """
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ from cifereca.models import Account, SearchResult
 from cifereca.providers import ProviderConfigurationError
 from cifereca.core import numilog_materialization_startup as startup
 from cifereca.core import selected_owned_search as search
-from cifereca.core import numilog_materialization_checkpoint as legacy_receipts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,15 +32,10 @@ def test_legacy_direct_module_physically_removed_and_core_uses_v2():
     assert "numilog_canonical_explicit_action_required" in services
 
 
-def test_historical_numilog_receipts_have_no_delivery_writer():
-    source = _src("src/cifereca/core/numilog_materialization_checkpoint.py")
-    methods = {n.name for n in ast.parse(source).body
-               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    assert "record" not in methods
-    assert "_record" not in methods
-    assert {"index_delivered", "resume", "_checked_receipt", "target_for_entry"} <= methods
-    assert "download_direct(" not in source
-    assert "rights_selected_delivery_candidate" not in source
+def test_historical_numilog_receipt_engine_physically_removed():
+    assert not (ROOT / "src/cifereca/core/numilog_materialization_checkpoint.py").exists()
+    source = _src("src/cifereca/core/owned_library_download.py")
+    assert "numilog_materialization_checkpoint" not in source
 
 
 def test_real_gtk_book_detail_does_not_recreate_retired_v1_receipt():
