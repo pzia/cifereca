@@ -186,6 +186,26 @@ def present_cross_profile_lender_choice(
                         )
                 except Exception:
                     pass
+                # The supplier claim is spent at this point. Reusing the
+                # pre-borrow selection admission would reject it and must
+                # never cause a second loan POST. Recover only the exact
+                # clicked source, then read the local placement in a worker;
+                # native A→B send requires an entirely new GTK consent.
+                try:
+                    from .cross_profile_local_send_controller import (
+                        offer_selected_lender_local_send,
+                    )
+                    if current():
+                        offer_selected_lender_local_send(
+                            window, captured_preview=preview,
+                            selected_option_id=option_id,
+                            expected_edition_id=expected_edition_id,
+                            observations=snapshot, expected_item=expected_item,
+                            Adw=Adw, TaskPriority=TaskPriority,
+                            control=control,
+                        )
+                except Exception:
+                    pass
             elif type(result) is dict and result.get("status") == "blocked":
                 window.show_error(
                     "Ce choix de prêteur n'est plus admissible. "
