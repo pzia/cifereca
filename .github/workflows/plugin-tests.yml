@@ -13,6 +13,7 @@ on:
       - 'pyproject.toml'
       - 'VERSION'
       - 'scripts/ci-run-plugin-tests.sh'
+      - 'scripts/validate_plugin_contract.py'
       - 'scripts/ci_select_plugin_tests.py'
       - 'tests/test_ci_plugin_selection.py'
       - '.github/plugin-test-dependencies.json'
