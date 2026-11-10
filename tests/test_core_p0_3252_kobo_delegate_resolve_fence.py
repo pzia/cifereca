@@ -43,7 +43,7 @@ def test_retired_d3_cannot_use_delegated_bearer_without_canonical_abi(
     tmp_path, monkeypatch, claim, probe,
 ):
     from cifereca.providers import ProviderConfigurationError
-    service, session = _service(tmp_path)
+    service, session = _service(tmp_path, payload_factory=lambda *_args: pytest.fail("retired D3 must not resolve payload"))
     session.supports_acquisition_delegation = claim
     if probe is not None:
         def current():
