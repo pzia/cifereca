@@ -34,6 +34,7 @@ def _setup(monkeypatch, tmp_path, *, mismatch=False, rebind=False):
         if rebind:
             service._source_context_epoch += 1
         return selected
+    session.downloadable_resource_snapshot = lambda *_a, **_k: pytest.fail("unselected inventory read prohibited")
     session.downloadable_selected_offer_snapshot = offer
     session.downloadable_selected_delivery_candidate_guarded = lambda *_a, **_k: pytest.fail("candidate GET owned by canonical executor")
     session.download_direct = lambda *_a, **_k: pytest.fail("legacy direct GET prohibited")
