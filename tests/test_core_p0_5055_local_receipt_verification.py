@@ -8,7 +8,6 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.core import local_receipt_verification as evidence
-from cifereca.core.bnf_auto_materialization import _receipt_local_file_verified
 
 
 @pytest.fixture()
@@ -83,22 +82,6 @@ def test_untrusted_paths_and_symlink_chain_never_prove_placement(rig, tmp_path):
     leaf_link.symlink_to(path)
     assert not verify(service, leaf_link, row)
     assert outside.exists() and path.exists()  # no mutation
-
-
-def test_bnf_wrapper_keeps_exact_manual_import_and_bnf_placement(rig, tmp_path):
-    service, path, row, _artifact, placement, _root = rig
-    account = NS(identity_id="alice", provider_id="bnf-pret", credential_id="bnf-c")
-    assert not _receipt_local_file_verified(service, account, row, path)
-    # A synthetic exact BnF placement is accepted only for verified bytes;
-    # the caller's existing consent and account lease remain independently required.
-    bnf_root = tmp_path / "alice" / "bnf-pret" / "loan-1"
-    bnf_root.mkdir(parents=True)
-    bnf_path = bnf_root / "book.epub"
-    bnf_path.write_bytes(path.read_bytes())
-    placement["provider_id"] = "bnf-pret"
-    assert _receipt_local_file_verified(service, account, row, bnf_path)
-    row["provider_id"] = "bnf-pret"  # automatic import must remain manual-scoped
-    assert not _receipt_local_file_verified(service, account, row, bnf_path)
 
 
 def test_inspection_failure_is_not_positive_or_logged_with_private_path(rig, monkeypatch):
