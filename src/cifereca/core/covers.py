@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 
 CoverTier = Literal['embedded', 'origin', 'catalog']
@@ -58,6 +58,22 @@ def _safe_cover_url(value: object) -> str:
                 return ''
             # Accessing port validates malformed network authorities.
             _ = parts.port
+            # A cover may legitimately carry public rendering parameters,
+            # e.g. Feedbooks ?size=medium&t=..., but never bearer/signature
+            # parameters which would publish a credential in the UI model.
+            if parts.fragment:
+                return ''
+            secret_keys = {
+                'token', 'accesstoken', 'refreshtoken', 'auth', 'authorization',
+                'signature', 'sig', 'credential', 'secret', 'password',
+                'session', 'sessionid', 'sessionkey', 'ticket', 'apikey',
+                'accesskeyid', 'awsaccesskeyid', 'googleaccessid', 'jwt',
+                'code', 'key',
+            }
+            for key, _value in parse_qsl(parts.query, keep_blank_values=True):
+                normalized = ''.join(char for char in key.casefold() if char.isalnum())
+                if normalized in secret_keys or normalized.startswith('xamz'):
+                    return ''
             return url
         if parts.scheme == 'file' and parts.netloc in {'', 'localhost'}:
             if parts.path.startswith('/') and not parts.query and not parts.fragment:
