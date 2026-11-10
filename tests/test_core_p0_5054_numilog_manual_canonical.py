@@ -148,7 +148,9 @@ def test_post_get_canonical_receipt_requires_exact_offer_and_reuses_one_reader(
     assert "_stage_id(key, canonical_offer_id)" in source
     assert "acquisitions == [] or owned_stage" in source
     assert "acquisitions[0].get('status') == _STAGED" in source
-    assert "acquisitions[0]['metadata'].get('schema') == _SCHEMA" in source
+    assert "service.storage.acquisition_get(receipt_id)" in source
+    assert "staged['metadata'].get('schema') == _SCHEMA" in source
+    assert "staged['metadata'].get('offer_id') == canonical_offer_id" in source
 
     session = NS()
     target = NumilogOwnedDownloadTarget(
