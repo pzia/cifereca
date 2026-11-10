@@ -117,7 +117,7 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                     service._session_key('bnf-pret', account.credential_id),
                 ) is session
                 and session_state.get('_epoch') == provider_epoch
-                and session_state.get('provider_id') == 'bnf-pret'
+                and session_state.get('provider_id') == account.provider_id
                 and session_state.get('credential_id') == account.credential_id
                 and session_state.get('connected') is True
                 and sum(row is account for row in session_accounts) == 1
