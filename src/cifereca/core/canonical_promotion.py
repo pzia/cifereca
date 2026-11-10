@@ -151,9 +151,8 @@ def _readable_pdf_target_names(stream, *, opaque_name: str) -> tuple[str, ...]:
         stream.seek(0)
         # Bound both parsing and memory. Only standard, uncompressed PDF XMP
         # packets in the opening 4 MiB are accepted in this tranche.
-        sample = stream.read(4 * 1024 * 1024 + 1)
+        sample = stream.read(4 * 1024 * 1024)
         if (not sample.startswith(b"%PDF-")
-                or len(sample) > 4 * 1024 * 1024
                 or b"/Type /Metadata" not in sample
                 or b"/Subtype /XML" not in sample):
             return fallback
