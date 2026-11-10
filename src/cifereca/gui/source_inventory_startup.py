@@ -146,8 +146,8 @@ def dispatch_after_opening(window: Any) -> bool:
 
     def inventory_failed(_error):
         # TaskRunner already records this automatic inventory failure.
-        # Do not turn a failed startup worker into an unsolicited modal;
-        # preserve the independently consented backup and show a local hint.
+        # Do not turn a failed inventory worker into an unsolicited modal;
+        # report a local hint, without starting a second GET worker.
         # Never forward the exception: it may embed signed provider URLs.
         after_inventory()
         if getattr(window, "_closed", False) or _broker(window) is not broker:
@@ -166,5 +166,5 @@ def dispatch_after_opening(window: Any) -> bool:
         )
     except Exception:
         window._source_inventory_startup_dispatched = False
-        return materialize(window)
+        return False
     return True
