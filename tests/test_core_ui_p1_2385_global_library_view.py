@@ -145,3 +145,130 @@ def test_foreign_book_does_not_load_provider_detail_or_supplier_actions(monkeypa
     assert "provider-action" not in calls
     assert "provider-GET" not in calls
     assert "recommend" not in calls
+
+
+def test_foreign_global_library_removes_private_cover_and_raw_session_metadata():
+    private = "https://example.org/loan/cover.jpg?X-Amz-Signature=PRIVATE"
+    alice = {
+        "key": "artifact:alice", "identity_id": "alice",
+        "title": "Bibliographie partagée",
+        "author": "Autrice A",
+        "state": "remote_loan_active",
+        "thumbnail_url": private,
+        "download_url": "https://example.org/download?token=SECRET",
+        "possessions": [{"identity_id": "alice", "kind": "loan",
+                         "provider_id": "paris"}],
+        "metadata": {
+            "description": "Ouvrage sur l'histoire",
+            "subjects": ["histoire", "archives"],
+            "token": "SESSION-SECRET",
+            "private_response": {"cookie": "SECRET"},
+            "cover_resolution": {
+                "status": "selected", "tier": "origin",
+                "source": "loan", "url": private,
+            },
+            "epub_metadata": {
+                "authors": ["Autrice A"], "token": "SECRET",
+            },
+        },
+    }
+    original_metadata = dict(alice["metadata"])
+    foreign, = global_library_display_rows(
+        [{"identity_id": "alice", "entry": alice}],
+        viewing_identity_id="bob",
+    )
+    assert foreign["identity_id"] == "alice"
+    assert foreign["title"] == "Bibliographie partagée"
+    assert foreign["thumbnail_url"] is None
+    assert "download_url" not in foreign
+    assert foreign["possessions"] == alice["possessions"]
+    assert foreign["metadata"] == {
+        "description": "Ouvrage sur l'histoire",
+        "subjects": ["histoire", "archives"],
+        "epub_metadata": {"authors": ["Autrice A"]},
+    }
+    assert alice["thumbnail_url"] == private
+    assert alice["metadata"] == original_metadata
+
+    # An owner's active-profile view remains fully unchanged.
+    own, = global_library_display_rows(
+        [{"identity_id": "alice", "entry": alice}],
+        viewing_identity_id="alice",
+    )
+    assert own["thumbnail_url"] == private
+    assert own["download_url"] == alice["download_url"]
+    assert own["metadata"] is alice["metadata"]
+
+
+def test_foreign_global_library_preserves_only_proven_public_catalogue_cover():
+    url = "https://covers.example.org/catalogue/book.jpg"
+    book = {
+        "key": "artifact:alice", "identity_id": "alice",
+        "title": "Ouvrage", "thumbnail_url": url,
+        "metadata": {
+            "language": "fr", "genres": ["Histoire"],
+            "cover_resolution": {
+                "status": "selected", "url": url,
+                "tier": "catalog", "source": "catalogue",
+            },
+        },
+    }
+    def foreign(row):
+        return global_library_display_rows(
+            [{"identity_id": "alice", "entry": row}],
+            viewing_identity_id="bob",
+        )[0]
+
+    projected = foreign(book)
+    assert projected["thumbnail_url"] == url
+    assert projected["metadata"] == {
+        "language": "fr", "genres": ["Histoire"],
+    }
+
+    signed = url + "?Key-Pair-Id=private"
+    assert foreign({
+        **book, "thumbnail_url": signed, "metadata": {
+            **book["metadata"], "cover_resolution": {
+                "status": "selected", "url": signed, "tier": "catalog",
+            },
+        },
+    })["thumbnail_url"] is None
+    assert foreign({
+        **book, "metadata": {
+            **book["metadata"], "cover_resolution": {
+                "status": "selected", "url": url, "tier": "origin",
+                "source": "entitlement",
+            },
+        },
+    })["thumbnail_url"] is None
+    assert foreign({
+        **book, "thumbnail_url": "file:///home/other/secret.png",
+        "metadata": {
+            "cover_resolution": {
+                "status": "selected", "url": "file:///home/other/secret.png",
+                "tier": "embedded", "source": "epub",
+            },
+        },
+    })["thumbnail_url"] is None
+
+
+def test_foreign_metadata_malformed_and_urls_fail_closed_not_crash():
+    problematic = [
+        {"token": "bearer SECRET", "description": "https://auth.invalid/x"},
+        {"language": ["fr", "https://private.invalid/secret"]},
+        {"epub_metadata": {"authors": ["A", "Bearer PRIVATE"]}},
+        {"isbn": {"url": "https://provider.invalid/token"}},
+        ["not a mapping"],
+        None,
+    ]
+    for metadata in problematic:
+        item = {
+            "key": "local:1", "identity_id": "alice",
+            "title": "Ouvrage", "metadata": metadata,
+        }
+        rows = global_library_display_rows(
+            [{"identity_id": "alice", "entry": item}],
+            viewing_identity_id="bob",
+        )
+        assert len(rows) == 1
+        assert rows[0]["metadata"] == {}

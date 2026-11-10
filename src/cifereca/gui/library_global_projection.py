@@ -7,7 +7,67 @@ provider permission or a new physical placement.
 from __future__ import annotations
 
 
-def global_library_display_rows(rows: object) -> list[dict]:
+_FOREIGN_BIBLIOGRAPHY = frozenset({
+    "title", "author", "authors", "creator", "creators",
+    "isbn", "isbns", "language", "languages", "original_language",
+    "series", "collection", "publisher", "subjects", "subject", "tags",
+    "genres", "genre", "edition", "description", "summary", "synopsis",
+    "published_at", "publication_date", "format", "media_format",
+    "transfer_kind", "file_origin_identity_id", "materialized_from",
+})
+
+
+def _foreign_descriptive_metadata(raw: object) -> dict:
+    """Do not carry arbitrary supplier metadata into another reader's GTK.
+
+    The global Library shares business bibliographies, not technical signed
+    URLs, provider response bodies, cookies, keys, headers or nested accounts.
+    We reuse the Core's bounded, URL/credential-refusing bibliographic cleaner.
+    """
+    if type(raw) is not dict or len(raw) > 512:
+        return {}
+    from ..core.search_orchestration import _safe_public_search_text
+
+    cleaned = {}
+    for name in _FOREIGN_BIBLIOGRAPHY:
+        value = _safe_public_search_text(name, raw.get(name))
+        if value is not None:
+            cleaned[name] = value
+    nested = raw.get("epub_metadata")
+    if type(nested) is dict and len(nested) <= 128:
+        epub = {}
+        for name in _FOREIGN_BIBLIOGRAPHY:
+            value = _safe_public_search_text(name, nested.get(name))
+            if value is not None:
+                epub[name] = value
+        if epub:
+            cleaned["epub_metadata"] = epub
+    return cleaned
+
+
+def _foreign_public_cover(book: dict) -> str | None:
+    """Only a Core-selected *catalogue* image may cross the view boundary.
+
+    A loan/entitlement origin, signed URL and arbitrary file:// path are not
+    proof of a safe shared cover. The separate Core cover resolver can later
+    admit an attested local embedded cover without weakening this gate.
+    """
+    from ..core.search_orchestration import _shared_catalogue_cover_url
+
+    raw = book.get("metadata")
+    resolution = raw.get("cover_resolution") if type(raw) is dict else None
+    url = book.get("thumbnail_url")
+    if (type(resolution) is not dict
+            or resolution.get("status") != "selected"
+            or resolution.get("tier") != "catalog"
+            or resolution.get("url") != url):
+        return None
+    return _shared_catalogue_cover_url(url)
+
+
+def global_library_display_rows(
+    rows: object, *, viewing_identity_id: str | None = None,
+) -> list[dict]:
     """Return bounded independent UI rows with collision-safe display keys."""
     if type(rows) not in (list, tuple) or len(rows) > 20000:
         return []
@@ -37,6 +97,23 @@ def global_library_display_rows(rows: object) -> list[dict]:
         seen.add(identity)
         row = dict(book)
         row["identity_id"] = owner
+        # A global read is deliberately accessible between profiles, but a
+        # raw signed cover URL or provider-auth metadata is not business
+        # bibliography. Keep the profile's owned row fully intact, and pass
+        # foreign rows through the stricter read-only projection only.
+        if owner != viewing_identity_id:
+            if "thumbnail_url" in row:
+                row["thumbnail_url"] = _foreign_public_cover(book)
+            if "metadata" in row:
+                row["metadata"] = _foreign_descriptive_metadata(
+                    book.get("metadata"),
+                )
+            for unsafe_key in (
+                "download_url", "friendly_url", "session_url",
+                "authorization", "cookie", "signed_url", "access_token",
+                "refresh_token", "secret", "password",
+            ):
+                row.pop(unsafe_key, None)
         # Presentation-only list key; book["key"] remains the exact Core
         # identity for subsequent read-only library and reference operations.
         row["_library_ui_key"] = (
