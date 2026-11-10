@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from ipaddress import ip_address
 from typing import Iterable, Literal
 from urllib.parse import parse_qsl, urlsplit
 
@@ -56,6 +57,21 @@ def _safe_cover_url(value: object) -> str:
             if (not parts.hostname or parts.username is not None
                     or parts.password is not None):
                 return ''
+            # A catalogue image is an untrusted network destination. The
+            # shared UI loader must not be instructed to access local services
+            # or private IP literals by a provider cover candidate.
+            hostname = parts.hostname.rstrip(".").casefold()
+            if (not hostname or hostname == "localhost"
+                    or hostname.endswith(".localhost")
+                    or hostname.endswith(".local")):
+                return ''
+            try:
+                address = ip_address(hostname)
+            except ValueError:
+                pass  # Ordinary public DNS name; no DNS resolution here.
+            else:
+                if not address.is_global:
+                    return ''
             # Accessing port validates malformed network authorities.
             _ = parts.port
             # A cover may legitimately carry public rendering parameters,
