@@ -160,7 +160,7 @@ def present_cross_profile_lender_choice(
                     and result.get("retry_borrow") is False):
                 window._activity_result(
                     "Prêt confirmé sur le profil prêteur. "
-                    "Livraison non vérifiée ; transfert vers ce profil bloqué (droits non vérifiés)."
+                    "Livraison locale non vérifiée ; envoi possible après placement chez le prêteur et confirmation distincte."
                 )
                 # #5124: the optional renderer is inert, and accepts only
                 # the same visible Search detail plus pinned context epochs.
@@ -235,8 +235,8 @@ def present_cross_profile_lender_choice(
         dialog = Adw.MessageDialog.new(
             window, "Confirmer l'emprunt sur le profil prêteur ?",
             "Le prêt sera enregistré sur le compte prêteur choisi. "
-            "Il ne donne aucun droit de téléchargement, de copie ou "
-            "de transfert vers votre profil.",
+            "La copie vers votre profil sera proposée séparément "
+            "si le livre est présent localement chez le prêteur.",
         )
         dialog.add_response("cancel", "Annuler")
         dialog.add_response("borrow", "Emprunter sur ce profil")
