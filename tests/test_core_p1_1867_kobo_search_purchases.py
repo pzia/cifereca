@@ -60,11 +60,11 @@ def test_kobo_offers_require_active_right_exact_profile_credential_product_and_f
             service, [active, _row(product="archived", archived=True)],
             identity_id="alice", credential_id="vault-alice", account_id="account",
         ) == 2
-        assert LibraryService.can_direct_download(service, active) is True
-        lookups.assert_called_once_with("kobo", "vault-alice")
-        runtime.assert_called_once_with()
-        lookups.reset_mock()
-        runtime.reset_mock()
+        # The legacy direct GET is retired even for a persisted active right.
+        # Selected canonical A→B may still be offered through its own ABI.
+        assert LibraryService.can_direct_download(service, active) is False
+        lookups.assert_not_called()
+        runtime.assert_not_called()
         # Same title, different credential/product/account/status never inherits
         # the purchased right. A typed boolean and a verified download offer
         # remain independently necessary.
