@@ -18,6 +18,7 @@ from .owned_library_download import OwnedDownloadRejected, _require
 @dataclass(frozen=True, repr=False)
 class NumilogOwnedDownloadTarget:
     provider_id: ClassVar[str] = 'numilog'
+    branch: ClassVar[str] = 'meslivres'
     entitlement_id: str
     identity_id: str
     source_id: str
@@ -122,8 +123,8 @@ def obtain(service, target):
         # download_direct + numilog_delivered_artifact_v1 receipt namespace.
         from .canonical_delivery_abi import has_complete_delivery_abi
         if has_complete_delivery_abi(target.session):
-            from .numilog_manual_canonical import obtain_explicit_numilog
-            return obtain_explicit_numilog(service, target)
+            from .explicit_owned_canonical import obtain_explicit_owned
+            return obtain_explicit_owned(service, target, resolve=_resolve)
         from .numilog_materialization_checkpoint import index_delivered
         acquired = service.acquire_direct_item(item, _admission=admission)
         return index_delivered(service, acquired, title=item.title)
