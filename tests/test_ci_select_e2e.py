@@ -46,6 +46,16 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
 
+    def test_retired_numilog_gtk_startup_dispatch_selects_relevant_real_e2e(self):
+        selected = mod.select(["src/cifereca/gui/source_inventory_startup.py"])
+        self.assertEqual(
+            selected, tuple(name for name in mod.ALL if name in (
+                *mod.SYNC_CORE, "startup", "core-navigation",
+            )),
+        )
+        self.assertNotIn("maintenance-tools-920", selected)
+        self.assertIn("mainwindow-baseline-1366", selected)
+
     def test_p1_5178_task_busy_settings_is_an_explicit_gtk_contract(self):
         self.assertEqual(mod.BUSY_GTK, ("task-busy-settings-1366",))
         self.assertEqual(mod.select(["e2e/task_busy_settings_probe.py"]), mod.BUSY_GTK)
