@@ -72,10 +72,16 @@ def test_binding_fails_closed_without_supplier_io(tmp_path, failure):
                     ("synthetic-books", "credential-a"),
                 )
         elif failure == "rebound":
-            service.storage.provider_connection_put({
+            foreign = service.storage.provider_connection_put({
                 "identity_id": "alex", "provider_id": "synthetic-books",
                 "credential_id": "credential-a", "enabled": True,
             })
+            with service.storage._lock, service.storage._connect() as db:
+                db.execute(
+                    "UPDATE provider_accounts SET connection_id=? "
+                    "WHERE provider_id=? AND credential_id=? AND account_id=?",
+                    (foreign, "synthetic-books", "credential-a", "borrower-a"),
+                )
         elif failure == "disabled":
             service.storage.provider_connection_put({
                 "identity_id": "default", "provider_id": "synthetic-books",
