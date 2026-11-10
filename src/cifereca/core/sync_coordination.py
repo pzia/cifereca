@@ -228,16 +228,10 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             from .numilog_private_rows import private_library_rows_valid
             if not private_library_rows_valid(rows, account.credential_id):
                 raise ProviderConfigurationError("Inventaire privé Numilog non conforme")
-        if account.provider_id == "kobo":
-            # Persist attested personal rights, but never start Kobo acquisition.
-            from .kobo_manifest_rights import mirror_kobo_manifest_rights
-            with measure("rights_mirror_ms"):
-                result["owned_rights"] = mirror_kobo_manifest_rights(
-                    self, rows, identity_id=account.identity_id,
-                    credential_id=account.credential_id,
-                    account_id=account.unique_id or None,
-                )
-        elif account.provider_id == "numilog":
+        # Generic typed rights observations are independently admitted by
+        # rights_snapshot_read and canonical convergence. Never grant a
+        # purchase from personal-library SearchResult rows.
+        if account.provider_id == "numilog":
             # The private connected library is the only positive evidence of
             # purchases. Public search, even with owned=True, cannot grant
             # ownership. No signed ACSM resolution or download happens here.
