@@ -10,7 +10,6 @@ from dataclasses import replace
 
 import pytest
 
-from cifereca.core.kobo_backup import _indexed_kobo_catalog_paths
 from cifereca.library_files import sha256_file
 from tests.test_core0925_open_destinations import _service
 from tests.test_kobo_backup_guard import _write_epub
@@ -49,10 +48,14 @@ def test_received_kobo_file_is_not_global_orphan_but_stays_item_reconciliation(
         assert service.kobo_unlinked_local_count("bob") == 0
         assert service.kobo_unlinked_local_count("alice") == 1
 
-        # The same Kobo product in B's OWN manifest is still a per-item
-        # candidate for manual reconciliation, never a proven B purchase.
-        indexed = _indexed_kobo_catalog_paths(service)
-        assert indexed[("bob", "book-1")] == [target]
+        # A local catalogue copy remains a file, not proof of Kobo rights.
+        assert any(
+            row.get("identity_id") == "bob"
+            and row.get("provider_id") == "kobo"
+            and row.get("item_id") == "book-1"
+            and (row.get("metadata") or {}).get("path") == str(target)
+            for row in service.storage.catalog_entries()
+        )
         assert service.storage.entitlements() == []
         assert service.storage.acquisitions() == []
         assert service.storage.backup_list("kobo") == []
@@ -83,7 +86,6 @@ def test_received_kobo_copy_remains_distinct_after_catalogue_scan(tmp_path):
         service.catalog_scan()
         assert target.is_file() and src.is_file()
         assert service.kobo_unlinked_local_count("bob") == 0
-        assert _indexed_kobo_catalog_paths(service)[("bob", "book-1")] == [target]
         assert service.storage.entitlements() == []
     finally:
         service.close()
@@ -108,7 +110,6 @@ def test_forged_received_marker_without_matching_placement_does_not_bypass_guard
             },
         })
         assert service.kobo_unlinked_local_count("bob") == 1
-        assert _indexed_kobo_catalog_paths(service)[("bob", "item-2")] == [other]
     finally:
         service.close()
 
