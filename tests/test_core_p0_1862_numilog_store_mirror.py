@@ -100,7 +100,8 @@ def test_opening_inventory_handles_zero_one_or_many_purchases_without_acquisitio
         ]
         assert len(actual) == number
         assert all(r["identity_id"] == "default" and
-                   r["local_state"] == "remote_owned" for r in actual)
+                   r["local_state"] == "remote_catalog" for r in actual)
+        assert service.storage.entitlements(provider_id="numilog") == []
         assert list((tmp_path / "EBooks").rglob("*.epub")) == []
         assert list((tmp_path / "EBooks").rglob("*.acsm")) == []
     finally:
