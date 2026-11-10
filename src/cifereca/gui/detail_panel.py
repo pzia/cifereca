@@ -33,9 +33,8 @@ if TYPE_CHECKING:
 def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evidence=None) -> str:
     """Read-only commercial scope; a public notice never proves ownership.
 
-    For Kobo, consult only Core's persisted, identity-scoped entitlement
-    projection. No Vault lookup, account connection or remote request is
-    needed to render the detail, including while the source is offline.
+    Supplier search rows never prove download permission. Rendering is pure:
+    no Vault, provider account connection or remote request is performed.
     """
     if item.source_provider == "numilog-catalog":
         return "Catalogue commercial public · aucun achat attesté"
@@ -52,23 +51,7 @@ def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evide
         return ""
     if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
         return "Notice Kobo connue hors ligne · droits non actualisés"
-    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
-    state = None
-    if type(identity) is str and identity:
-        try:
-            reader = getattr(service, "kobo_personal_right_states", None)
-            scoped = reader(identity) if callable(reader) else {}
-            if type(scoped) is dict:
-                state = scoped.get((item.source_credential, item.record_id))
-        except Exception:
-            # A failed read is unknown, never a reason to promote a right.
-            pass
-    if state == "active":
-        return "Mes achats Kobo · droit attesté en ligne, fichier local non présumé"
-    if state == "archived":
-        return "Kobo · achat archivé, sans droit actif de sauvegarde"
-    return "Catalogue Kobo · aucun achat attesté pour ce profil"
-
+    return "Origine Kobo · disponibilité à vérifier auprès du fournisseur"
 
 class DetailPanel(Gtk.Box):
     def __init__(self, window: "MainWindow"):
