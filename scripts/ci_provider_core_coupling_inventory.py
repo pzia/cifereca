@@ -22,6 +22,10 @@ DEFAULT_PROVIDERS = (
     # underscore alias just because Python imports use different spelling.
     "biblioaccess", "biblioaccess.la-rochelle",
     "biblioaccess_la_rochelle", "provider-biblioaccess",
+    # Full IDs in the installed BiblioAccess manifest, including the public
+    # catalogue's distinct source. These are routing identities, not labels.
+    "provider.biblioaccess.la-rochelle",
+    "provider.biblioaccess-catalogue.la-rochelle",
 )
 
 
@@ -169,10 +173,95 @@ def _provider_method_name(name: str, providers: set[str]) -> list[str]:
     """
     if type(name) is not str or not name.isidentifier():
         return []
-    tokens = set(name.casefold().strip("_").split("_"))
-    # Dotted/hyphenated provider identifiers are data IDs, not Python tokens.
-    return sorted(tokens & {provider for provider in providers
-                            if provider.isidentifier() and "_" not in provider})
+    parts = name.casefold().strip("_").split("_")
+    # Match whole identifier components, including multi-token provider aliases
+    # declared by manifests (library_example), never arbitrary substrings.
+    matched = set()
+    for provider in providers:
+        if not provider.isidentifier():
+            continue
+        segments = provider.split("_")
+        if any(parts[i:i + len(segments)] == segments
+               for i in range(len(parts) - len(segments) + 1)):
+            matched.add(provider)
+    return sorted(matched)
+
+
+
+def _aliased_getattr_provider_calls(
+    tree: ast.Module, providers: set[str],
+) -> list[dict[str, object]]:
+    """Detect a unique local getattr alias later invoked as a provider action.
+
+    This deliberately ignores uninvoked introspection, reassigned variables,
+    shadowed builtins and cross-function bindings. A deferred provider
+    callable must not evade the monotone Core coupling gate merely because
+    it is assigned before execution.
+    """
+    findings: list[dict[str, object]] = []
+    scopes = [tree, *(node for node in ast.walk(tree)
+                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)))]
+    for scope in scopes:
+        # Nested function bodies are separate bindings and must not be
+        # attributed to an unrelated parent function.
+        nodes: list[ast.AST] = []
+        def visit(node: ast.AST) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.Lambda, ast.ClassDef)):
+                    continue
+                nodes.append(child)
+                visit(child)
+        for stmt in scope.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                continue
+            nodes.append(stmt)
+            visit(stmt)
+        writes = Counter(
+            node.id for node in nodes
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+        )
+        params = set()
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = scope.args
+            params = {arg.arg for arg in (
+                *args.posonlyargs, *args.args, *args.kwonlyargs,
+                *(tuple([args.vararg]) if args.vararg else ()),
+                *(tuple([args.kwarg]) if args.kwarg else ()),
+            )}
+        # An explicitly rebound getattr or a local function named getattr
+        # is not evidence of Python's built-in reflective call.
+        if "getattr" in writes or "getattr" in params:
+            continue
+        for stmt in nodes:
+            if (not isinstance(stmt, (ast.Assign, ast.AnnAssign))
+                    or not isinstance(stmt.value, ast.Call)
+                    or not isinstance(stmt.value.func, ast.Name)
+                    or stmt.value.func.id != "getattr"
+                    or len(stmt.value.args) < 2):
+                continue
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+            if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+                continue
+            variable = targets[0].id
+            if variable in params or writes[variable] != 1:
+                continue
+            attribute = stmt.value.args[1]
+            if (not isinstance(attribute, ast.Constant)
+                    or type(attribute.value) is not str):
+                continue
+            matched = set(_provider_method_name(attribute.value, providers))
+            if attribute.value.casefold() in providers:
+                matched.add(attribute.value.casefold())
+            if not matched:
+                continue
+            if any(isinstance(node, ast.Call)
+                   and isinstance(node.func, ast.Name)
+                   and node.func.id == variable
+                   and node.lineno > stmt.lineno for node in nodes):
+                findings.append({"line": stmt.lineno, "providers": sorted(matched)})
+    return findings
 
 
 def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
@@ -215,7 +304,24 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
     tables: list[dict[str, object]] = []
     calls: list[dict[str, object]] = []
     method_calls: list[dict[str, object]] = []
+    dynamic_calls: list[dict[str, object]] = []
     for node in ast.walk(tree):
+        # Immediately invoked static getattr is executable dispatch, unlike
+        # a descriptive attribute read or an uninvoked getattr result.
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Call)
+                and isinstance(node.func.func, ast.Name)
+                and node.func.func.id == "getattr"
+                and len(node.func.args) >= 2
+                and isinstance(node.func.args[1], ast.Constant)
+                and type(node.func.args[1].value) is str):
+            attribute = node.func.args[1].value
+            matched_dynamic = _provider_method_name(attribute, names)
+            if attribute.casefold() in names:
+                matched_dynamic = sorted(set(matched_dynamic) | {attribute.casefold()})
+            if matched_dynamic:
+                dynamic_calls.append({"line": node.lineno,
+                                      "providers": matched_dynamic})
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             # Examples: service.sync_kobo_backup(), service.bnf_borrow().
             # Do not treat attribute reads or descriptor metadata as calls.
@@ -305,11 +411,35 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
                 matched = sorted(_match_providers(case.pattern, names, constants))
                 if matched:
                     dispatches.append({"line": case.pattern.lineno, "providers": matched})
+    dynamic_calls.extend(_aliased_getattr_provider_calls(tree, names))
     return {"imports": sorted(imports, key=lambda x: x["line"]),
             "comparisons": sorted(dispatches, key=lambda x: x["line"]),
             "dispatch_tables": sorted(tables, key=lambda x: x["line"]),
             "dispatch_calls": sorted(calls, key=lambda x: x["line"]),
-            "provider_method_calls": sorted(method_calls, key=lambda x: x["line"])}
+            "provider_method_calls": sorted(method_calls, key=lambda x: x["line"]),
+            "provider_dynamic_calls": sorted(dynamic_calls, key=lambda x: x["line"])}
+
+
+
+# Physical LOC is complementary to AST coupling. This category definition
+# preserves the historic Kobo scope of ci_kobo_core_line_inventory (#3196).
+_LOC_PROVIDERS = ("kobo", "numilog", "bnf", "biblioaccess")
+
+
+def _dedicated_provider(relative: Path) -> str | None:
+    parts = relative.parts
+    if len(parts) < 4 or parts[:2] != ("src", "cifereca"):
+        return None
+    name = relative.name.casefold()
+    if parts[2] == "kobo":
+        return "kobo"
+    if parts[2] == "core":
+        for provider in _LOC_PROVIDERS:
+            if provider in name:
+                return provider
+    if parts[2] == "gui" and "legacy" in name and "kobo" in name:
+        return "kobo"
+    return None
 
 
 def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, object]:
@@ -317,19 +447,52 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
     src = root / "src" / "cifereca"
     findings: dict[str, object] = {}
     parse_errors: dict[str, str] = {}
+    dedicated_lines = {provider: 0 for provider in _LOC_PROVIDERS}
+    dedicated_per_file: dict[str, dict[str, object]] = {}
+    generic_per_file: dict[str, dict[str, object]] = {}
     # All installed source modules are Core-owned unless explicitly shipped
     # as external plugins (which live outside src/cifereca).
     if src.is_dir():
         for path in sorted(src.rglob("*.py")):
-            relative = path.relative_to(root).as_posix()
+            relative_path = path.relative_to(root)
+            relative = relative_path.as_posix()
             try:
-                result = inspect_source(path.read_text(encoding="utf-8"), providers)
+                source_text = path.read_text(encoding="utf-8")
+                result = inspect_source(source_text, providers)
             except (SyntaxError, UnicodeError) as exc:
                 parse_errors[relative] = type(exc).__name__
                 continue
+            # LOC is counted only for parseable source, using exactly the
+            # same physical-line convention as the existing Kobo counter.
+            lines = source_text.splitlines()
+            dedicated = _dedicated_provider(relative_path)
+            if dedicated is not None:
+                dedicated_lines[dedicated] += len(lines)
+                dedicated_per_file[relative] = {
+                    "provider": dedicated,
+                    "lines": len(lines),
+                    "nonblank_noncomment": sum(
+                        bool(line.strip()) and not line.lstrip().startswith("#")
+                        for line in lines
+                    ),
+                }
+            else:
+                mentions = {
+                    provider: sum(provider in line.casefold() for line in lines)
+                    for provider in _LOC_PROVIDERS
+                }
+                if any(mentions.values()):
+                    generic_per_file[relative] = {
+                        "lines": len(lines),
+                        "provider_literal_lines": mentions,
+                        "mixed_provider_lines": sum(
+                            any(provider in line.casefold() for provider in _LOC_PROVIDERS)
+                            for line in lines
+                        ),
+                    }
             if any(result[category] for category in (
                 "imports", "comparisons", "dispatch_tables", "dispatch_calls",
-                "provider_method_calls",
+                "provider_method_calls", "provider_dynamic_calls",
             )):
                 findings[relative] = result
     return {"metric": "core.provider.static-coupling/1",
@@ -340,8 +503,18 @@ def inventory(root: Path, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dic
             "dispatch_table_signals": sum(len(x["dispatch_tables"]) for x in findings.values()),
             "dispatch_call_signals": sum(len(x["dispatch_calls"]) for x in findings.values()),
             "provider_method_call_signals": sum(len(x["provider_method_calls"]) for x in findings.values()),
+            "provider_dynamic_call_signals": sum(len(x["provider_dynamic_calls"]) for x in findings.values()),
             "findings": dict(sorted(findings.items())),
             "parse_errors": dict(sorted(parse_errors.items())),
+            "dedicated_lines": sum(dedicated_lines.values()),
+            "dedicated_files": len(dedicated_per_file),
+            "dedicated_by_provider": dedicated_lines,
+            "dedicated_per_file": dedicated_per_file,
+            "generic_files_with_provider_literal": len(generic_per_file),
+            "generic_provider_literal_lines_unique": sum(
+                row["mixed_provider_lines"] for row in generic_per_file.values()
+            ),
+            "generic_per_file": generic_per_file,
             "limitation": "AST signals, not reachability proofs; indirect dynamic dispatch may remain."}
 
 
@@ -361,7 +534,12 @@ def main(argv: list[str] | None = None) -> int:
               f"{report['dispatch_table_signals']} dispatch tables, "
               f"{report['dispatch_call_signals']} provider-keyed calls, "
               f"{report['provider_method_call_signals']} provider method calls, "
-              f"{len(report['parse_errors'])} parse errors")
+              f"{report['provider_dynamic_call_signals']} dynamic provider calls, "
+              f"{len(report['parse_errors'])} parse errors; "
+              f"{report['dedicated_lines']} dedicated provider LOC / "
+              f"{report['dedicated_files']} files; "
+              f"{report['generic_provider_literal_lines_unique']} unique "
+              f"generic-file provider-mention lines")
     return 1 if report["parse_errors"] else 0
 
 

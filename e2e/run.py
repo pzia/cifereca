@@ -47,6 +47,22 @@ SCENARIOS = {
         "runner": "gtk-probe",
         "width": 1024, "height": 768,
     },
+    "book-detail-960": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P1 #4682 : vraie fiche GTK compacte à 960 px, reflow volet Détail sans clip.",
+        "runner": "gtk-detail",
+        "width": 960,
+        "height": 900,
+    },
+    "book-detail-1280": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P1 #4682 : vraie fiche GTK à 1280 px, en-tête et sections adaptatifs.",
+        "runner": "gtk-detail",
+        "width": 1280,
+        "height": 900,
+    },
     "book-detail-1300": {
         "plugin": "core",
         "fixture": "search-filters",
@@ -69,6 +85,14 @@ SCENARIOS = {
         "description": "P1 #1598 : même fiche partagée Recherche/Bibliothèque, auteurs multivalués et actions GTK 1600.",
         "runner": "gtk-detail",
         "width": 1600,
+    },
+    "book-detail-1700": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": "P1 #4682 : reproduire la largeur terrain ~1700 px en vraie fiche GTK.",
+        "runner": "gtk-detail",
+        "width": 1700,
+        "height": 900,
     },
     "mainwindow-baseline-1366": {
         "plugin": "core", "fixture": "search-filters",
@@ -297,6 +321,16 @@ SCENARIOS = {
         "width": 1366,
         "provider": "baen",
     },
+    "modern-light-1366": {
+        "plugin": "core", "fixture": "search-filters",
+        "description": "P1 #757 : vraie MainWindow GTK, 1366 px, pages Core, détail et bascules clair/sombre.",
+        "runner": "gtk-modern-light", "width": 1366,
+    },
+    "modern-light-1600": {
+        "plugin": "core", "fixture": "search-filters",
+        "description": "P1 #757 : même parcours GTK avec géométrie 1600 px et captures locales privées.",
+        "runner": "gtk-modern-light", "width": 1600,
+    },
 }
 
 
@@ -455,7 +489,14 @@ def main() -> int:
             stderr_path = scenario_dir / "stderr.log"
             trace_path = scenario_dir / "trace.jsonl"
             _event(trace_path, name, "scenario_start", plugin=scenario["plugin"])
-            if scenario.get("runner") == "gtk-recommendations":
+            if scenario.get("runner") == "gtk-modern-light":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x{1000 if width == 1600 else 900}x24",
+                    args.python, str(ROOT / "e2e/modern_light_theme_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
+            elif scenario.get("runner") == "gtk-recommendations":
                 width = scenario["width"]
                 height = scenario.get("height", 1000 if width == 1600 else 900)
                 scale = scenario.get("scale", 1)
@@ -611,6 +652,24 @@ def main() -> int:
             )
             output = completed.stdout or ""
             errors = completed.stderr or ""
+            if name in {"modern-light-1366", "modern-light-1600"} and completed.returncode:
+                # Only an explicit fixed checkpoint emitted by the trusted
+                # probe may leave the private GTK sandbox. Never print stderr,
+                # traceback, paths, plugin metadata or report.error.
+                import re
+                allowed = frozenset({
+                    "preflight", "core_open", "plugin_install",
+                    "plugin_activation", "constellations_setup",
+                    "fixture_storage", "gtk_activation", "route_dashboard",
+                    "route_search", "route_library", "route_loans",
+                    "route_sync", "route_plugins", "route_settings",
+                    "route_constellations", "route_finish",
+                })
+                for match in re.findall(
+                    r"(?m)^P1_757_CLOSED_FAILURE_STAGE=([a-z_]+)$", output
+                )[-1:]:
+                    if match in allowed:
+                        print("P1_757_CLOSED_FAILURE_STAGE=" + match, flush=True)
             if name in {"startup", "core-navigation"} and completed.returncode:
                 # Single Xvfb handover retry: inspect in-memory stdout only.
                 if retryable_x11_startup_failure(completed.returncode, output):
@@ -904,7 +963,7 @@ def main() -> int:
                     if type(stage) is str and stage in allowed:
                         print("P1_4664_CLOSED_FAILURE_STAGE=" + stage, flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-capture-session"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-capture-session", "gtk-modern-light"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")

@@ -52,11 +52,12 @@ def test_selected_readbook_follows_external_acsm_redirect_chain(
     staging = tmp_path / "selected-staging"
     staging.mkdir()
     try:
-        candidate = session.downloadable_selected_delivery_candidate(
+        candidate = session.downloadable_selected_delivery_candidate_guarded(
             account, edition_id=right.edition_id, resource_id=right.right_id,
             kind="purchase", branch="meslivres",
             selected_offer_id=offer.delivery_offer_id,
             target_dir=staging, explicit_user_action=True,
+            admission_current=lambda: True,  # synthetic Core lease
         )
         assert candidate.path.is_file()
         assert candidate.path.parent == staging
@@ -110,11 +111,12 @@ def test_selected_readbook_rejects_unsafe_first_external_redirect(
     staging.mkdir()
     try:
         with pytest.raises(ProviderError, match="redirection réseau inattendue"):
-            session.downloadable_selected_delivery_candidate(
+            session.downloadable_selected_delivery_candidate_guarded(
                 account, edition_id=right.edition_id, resource_id=right.right_id,
                 kind="purchase", branch="meslivres",
                 selected_offer_id=offer.delivery_offer_id,
                 target_dir=staging, explicit_user_action=True,
+                admission_current=lambda: True,  # synthetic Core lease
             )
         assert requested == [READBOOK]
         assert list(staging.iterdir()) == []
@@ -142,11 +144,12 @@ def test_readbook_owner_change_refuses_external_get(tmp_path):
     staging.mkdir()
     try:
         with pytest.raises(ProviderCapabilityError):
-            session.downloadable_selected_delivery_candidate(
+            session.downloadable_selected_delivery_candidate_guarded(
                 account, edition_id=right.edition_id, resource_id=right.right_id,
                 kind="purchase", branch="meslivres",
                 selected_offer_id=offer.delivery_offer_id,
                 target_dir=staging, explicit_user_action=True,
+                admission_current=lambda: True,  # synthetic Core lease
             )
         assert requested == [READBOOK]
         assert list(staging.iterdir()) == []

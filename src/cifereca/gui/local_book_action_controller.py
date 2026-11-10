@@ -191,6 +191,21 @@ def _add_owned_download(window, detail, item, TaskPriority):
 def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteRequest, TaskPriority, identity_has_attested_possession):
     if getattr(window, '_closed', False):
         return
+    # A foreign library row is not a borrower capability of the selected
+    # identity. Never resolve its owned-download action through B's context.
+    active_owner = getattr(
+        getattr(window.service, 'current_identity', None), 'identity_id', None,
+    )
+    foreign_owner = item.get('identity_id')
+    if (type(foreign_owner) is str and foreign_owner
+            and foreign_owner != active_owner):
+        from .foreign_placement_send_controller import (
+            add_foreign_present_placement_send,
+        )
+        add_foreign_present_placement_send(
+            window, detail, item, TaskPriority=TaskPriority,
+        )
+        return
     _add_owned_download(window, detail, item, TaskPriority)
     placement_id=str(item.get('placement_id') or '')
     identity_id=str(item.get('identity_id') or '')

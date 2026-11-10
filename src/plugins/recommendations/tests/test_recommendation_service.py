@@ -53,14 +53,34 @@ class ProgressiveCatalog:
         return SimpleNamespace(warnings=(), cancelled=False)
 
 
-def test_service_uses_public_brokers_and_returns_results():
+def test_service_uses_public_brokers_and_returns_results(caplog):
     metadata = Metadata()
-    result = compute_recommendations(metadata, Catalog(), "id-1", max_queries=3)
+    with caplog.at_level(logging.INFO, logger="cifereca.plugin.recommendations"):
+        result = compute_recommendations(metadata, Catalog(), "id-1", max_queries=3)
     assert metadata.calls == [{"identity_id": "id-1", "scan": False}]
     assert result.books_count == 2
     assert result.providers == (("opds", "OPDS test"),)
     assert result.ranked
     assert result.cache_unknown_calls == len(result.queries)
+    assert [book["title"] for book in result.profile_books] == ["Seed 1", "Seed 2"]
+
+    # Trace is produced by the very same service computation; no second scan.
+    rows = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "cifereca.plugin.recommendations"
+        and "TRACE recommendations performance" in record.getMessage()
+    ]
+    assert len(rows) == 1
+    trace = rows[0]
+    assert f"books={result.books_count}" in trace
+    assert f"queries={len(result.queries)}" in trace
+    assert f"providers={len(result.providers)}" in trace
+    for field in ("snapshot_ms=", "snapshot_cached=", "profile_ms=", "providers_ms=", "catalog_ms=", "rank_ms=", "total_ms="):
+        assert field in trace
+    assert "id-1" not in trace
+    assert "Seed 1" not in trace
+    assert "Candidate" not in trace
 
 
 def test_progressive_search_reports_cache_network_and_progress():
@@ -133,28 +153,6 @@ def test_progressive_and_final_rankings_keep_all_credential_bound_notices():
     }
 
 
-def test_performance_trace_is_sanitized_and_has_phase_timings(caplog):
-    with caplog.at_level(logging.INFO, logger="cifereca.plugin.recommendations"):
-        result = compute_recommendations(Metadata(), Catalog(), "id-1", max_queries=2)
-
-    rows = [
-        record.getMessage()
-        for record in caplog.records
-        if record.name == "cifereca.plugin.recommendations"
-        and "TRACE recommendations performance" in record.getMessage()
-    ]
-    assert len(rows) == 1
-    trace = rows[0]
-    assert f"books={result.books_count}" in trace
-    assert f"queries={len(result.queries)}" in trace
-    assert f"providers={len(result.providers)}" in trace
-    for field in ("snapshot_ms=", "snapshot_cached=", "profile_ms=", "providers_ms=", "catalog_ms=", "rank_ms=", "total_ms="):
-        assert field in trace
-    assert "id-1" not in trace
-    assert "Seed 1" not in trace
-    assert "Candidate" not in trace
-
-
 class OwnedCatalog:
     def searchable_providers(self):
         return [("opds", "OPDS test")]
@@ -180,14 +178,6 @@ def test_service_can_include_owned_books_when_filter_is_disabled():
     assert hidden.ranked == ()
     assert shown.ranked
     assert shown.ranked[0].item["title"] == "Seed 1"
-
-
-def test_service_returns_already_loaded_profile_books_without_second_snapshot():
-    metadata = Metadata()
-    result = compute_recommendations(metadata, Catalog(), "id-1", max_queries=2)
-
-    assert metadata.calls == [{"identity_id": "id-1", "scan": False}]
-    assert [book["title"] for book in result.profile_books] == ["Seed 1", "Seed 2"]
 
 
 def test_snapshot_cache_reuses_library_projection_until_invalidated():
@@ -383,3 +373,49 @@ def test_saved_preference_stable_with_no_catalogues_keeps_empty_result():
     )
     assert result.cancelled is False
     assert result.ranked == ()
+
+
+# P1 #4681: provider diagnostics are untrusted, including exception strings.
+def test_progressive_catalogue_warnings_never_publish_private_provider_payloads():
+    from types import SimpleNamespace as NS
+
+    secret = "/private/account/reader.acsm?token=DO_NOT_PUBLISH"
+
+    class PrivateWarning:
+        def __str__(self):
+            raise AssertionError("warning payload must not be stringified")
+
+    class CatalogWithPrivateWarnings(Catalog):
+        def search_progressive(self, query, *, on_batch, **kwargs):
+            on_batch(NS(
+                provider_id="opds", results=(), warnings=(secret, PrivateWarning()),
+                error_message=secret, error_code="PRIVATE", cached=False,
+            ))
+            return NS(warnings=(secret,), cancelled=False)
+
+    result = compute_recommendations(
+        Metadata(), CatalogWithPrivateWarnings(), "id-1", max_queries=1,
+    )
+    assert set(result.warnings) == {
+        "catalogue_batch_warning", "catalogue_summary_warning",
+        "catalogue_provider_failed",
+    }
+    assert secret not in repr(result.warnings)
+    assert result.catalogue_observations[0].failures == 1
+
+
+@pytest.mark.parametrize("progressive", [False, True])
+def test_catalogue_search_exception_is_a_closed_warning(progressive):
+    secret = "https://private.example/receipt?token=NEVER_PUBLIC"
+
+    class FailedCatalog(Catalog):
+        def search(self, query, **kwargs):
+            raise RuntimeError(secret)
+
+        if progressive:
+            def search_progressive(self, query, **kwargs):
+                raise RuntimeError(secret)
+
+    result = compute_recommendations(Metadata(), FailedCatalog(), "id-1", max_queries=1)
+    assert result.warnings == ("catalogue_search_failed",)
+    assert secret not in repr(result.warnings)

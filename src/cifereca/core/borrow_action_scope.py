@@ -103,6 +103,23 @@ class BorrowActionScopeLease:
                     or state.get("credential_id") != values[2]):
                 return False
             identity_id, provider, credential, _borrower = values[:4]
+            # Ownership alone survives a disabled connection and cannot
+            # authorize the lender's mutating POST. Require exactly one
+            # active binding; duplicate enabled/disabled rows fail closed.
+            connections = service.storage.provider_connections(
+                identity_id=identity_id,
+            )
+            if type(connections) is not list or len(connections) > 512:
+                return False
+            exact = [
+                row for row in connections
+                if type(row) is dict
+                and row.get("identity_id") == identity_id
+                and row.get("provider_id") == provider
+                and row.get("credential_id") == credential
+            ]
+            if len(exact) != 1 or exact[0].get("enabled") is not True:
+                return False
             identity = getattr(service, "current_identity", None)
             if (getattr(identity, "identity_id", None) != identity_id
                     or service.identity_by_id(identity_id) is None

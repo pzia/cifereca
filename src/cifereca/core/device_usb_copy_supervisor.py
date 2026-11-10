@@ -211,9 +211,10 @@ def execute_usb_copy(
             return UsbCopyExecution("completed", "usb_copy_receipt_committed", receipt=receipt)
     except LockBusyError:
         return UsbCopyExecution("blocked", "usb_copy_reader_busy")
-    except Exception as error:
+    except Exception:
+        # Journal/policy callbacks are untrusted as public diagnostic text.
         status = "recovery_required" if journal_touched else "blocked"
-        return UsbCopyExecution(status, "usb_copy_operation_failed", detail=str(error))
+        return UsbCopyExecution(status, "usb_copy_operation_failed")
     finally:
         if stage_fd is not None:
             os.close(stage_fd)

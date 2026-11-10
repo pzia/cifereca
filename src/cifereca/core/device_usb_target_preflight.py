@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import stat
 from typing import Mapping
+from unicodedata import normalize
 
 from . import device_usb_mount as linux_mount
 from .device_usb_mount import LinuxUsbMount, observe_linux_usb_mount
@@ -43,8 +44,14 @@ def _target_aliases(directory_fd: int, name: str) -> tuple[str, ...] | None:
         entries = list(islice(listing, _MAX_ENTRIES + 1))
     if len(entries) > _MAX_ENTRIES:
         return None
-    folded = name.casefold()
-    return tuple(entry.name for entry in entries if entry.name.casefold() == folded)
+    # Removable filesystems may fold Unicode spellings of an existing name
+    # differently from the host. Treat NFC/NFD and compatibility-width
+    # spellings as occupied, rather than relying on a later rename collision.
+    folded = normalize("NFKC", name).casefold()
+    return tuple(
+        entry.name for entry in entries
+        if normalize("NFKC", entry.name).casefold() == folded
+    )
 
 
 def preflight_usb_target(

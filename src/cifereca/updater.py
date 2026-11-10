@@ -503,7 +503,7 @@ def _release_installed_at(release: Path) -> float | None:
         return None
 
 
-def _gc(root: Path, keep: int) -> dict[str, int]:
+def _gc(root: Path, keep: int, *, approved_release_names: frozenset[str] | None = None) -> dict[str, int]:
     """Post-commit cleanup: retain last 24 h AND >=2 restorable generations.
 
     Core symlink targets and any incomplete transaction are fail-closed.
@@ -577,6 +577,13 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
             "unresolved_transaction_reference", "missing_transaction_snapshot",
             "unsafe_transaction_snapshot", "incomplete_reference_graph",
             "transaction_inventory_too_large", "unsafe_runtime_root",
+            # The inventory is only a source of GC authority when every
+            # release-to-transaction proof and runtime pointer is qualified.
+            # A malformed pointer must never be downgraded to "not referenced".
+            "invalid_release_transaction_pointer", "unsafe_releases_root",
+            "unsafe_release_entry", "unexpected_release_entry",
+            "release_inventory_too_large", "invalid_core_pointer",
+            "unresolved_core_pointer",
         }
         if (type(plan) is not dict or type(plan.get("objects")) is not list
                 or critical & blockers):
@@ -632,6 +639,9 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
     for release in releases:
         if release.resolve() in protected:
             continue
+        if approved_release_names is not None and release.name not in approved_release_names:
+            protected.add(release.resolve())
+            continue
         # The common inventory's owned_by_updater proof is mandatory for
         # physical GC too. An old mtime or a similarly named directory is
         # not permission to destroy a legacy/manual release.
@@ -655,6 +665,29 @@ def _gc(root: Path, keep: int) -> dict[str, int]:
                         raise UpdateError("Nettoyage différé : transaction en cours")
         if release.is_symlink() or not release.is_dir():
             raise UpdateError("Nettoyage refusé : génération devenue non sûre")
+        # Revalidate the complete rollback graph at the start of the physical
+        # deletion sweep. A newly finalized transaction may have acquired a
+        # dependency since planning. Do this before the FIRST deletion: old
+        # candidate transaction journals currently outlive their releases,
+        # so later inventories can legitimately contain dangling old refs.
+        # The updater-level OS lock must serialize cooperative writers.
+        if transactions.is_dir() and removed == 0:
+            refreshed = inspect_core_transaction_history(root, now=time.time())
+            fresh_plan = refreshed.get("plan")
+            fresh_blockers = set(refreshed.get("blockers", ()))
+            if (type(fresh_plan) is not dict
+                    or type(fresh_plan.get("objects")) is not list
+                    or critical & fresh_blockers):
+                raise UpdateError("Nettoyage différé : graphe de rétention modifié")
+            release_id = _name_id("release", release.name)
+            matching = [
+                row for row in fresh_plan["objects"]
+                if type(row) is dict and row.get("object_id") == release_id
+            ]
+            if (len(matching) != 1
+                    or matching[0].get("decision") != "candidate"
+                    or matching[0].get("reasons") != []):
+                raise UpdateError("Nettoyage différé : release désormais protégée")
         # Do not ignore deletion errors: a partial cleanup must be diagnosed.
         shutil.rmtree(release)
         removed += 1
@@ -1726,6 +1759,13 @@ def install_source(
                 row["after"] = _package_identity(package_id)
             step("transaction_finalize", _save_transaction, transaction_path, transaction, "applied")
             cleanup_result = step("cleanup", _gc, root, keep)
+            from .updater_postcommit_retention import postcommit_updater_retention
+            cleanup_result["other_stores"] = postcommit_updater_retention(
+                root,
+                _plugin_packages_root(),
+                state_dir(create=False) / "dev-updates",
+                state_dir(create=False) / "update-backups",
+            )
     except (Exception, KeyboardInterrupt) as update_exc:
         # Ctrl-C after Core activation must attempt the same safe transactional
         # restore as ordinary failures; never leave a success-looking state.
@@ -2082,6 +2122,22 @@ def main(argv: list[str] | None = None) -> int:
                    help="Inventaire read-only de rétention Core/transactions/versions plugins ; jamais d'effacement")
     p.add_argument("--retention-plan", action="store_true",
                    help="Plan synthétique de maintenance read-only ; aucune suppression autorisée")
+    p.add_argument("--maintenance-transactions", action="store_true",
+                   help="Plan ou purge supervisée des seules transactions terminées expirées")
+    p.add_argument("--maintenance-dev-backups", action="store_true",
+                   help="Plan ou purge supervisée des sauvegardes DevUpdater certifiées")
+    p.add_argument("--maintenance-core-backups", action="store_true",
+                   help="Plan ou purge supervisée des sauvegardes Core avant activation")
+    p.add_argument("--maintenance-staging", action="store_true",
+                   help="Plan ou purge des scratchs persistants abandonnés attestés")
+    p.add_argument("--maintenance-core-releases", action="store_true",
+                   help="Plan ou GC autonome supervisé des releases Core")
+    p.add_argument("--maintenance-all", action="store_true",
+                   help="Plan puis maintenance coordonnée de tous les historiques Updater")
+    p.add_argument("--maintenance-plugins", action="store_true",
+                   help="Plan ou purge supervisée des versions historiques plugins")
+    p.add_argument("--apply", action="store_true",
+                   help="Appliquer la maintenance supervisée avec --acknowledge SHA256")
     p.add_argument("--recovery-reconcile", metavar="TRANSACTION_ID",
                    help="Plan de réconciliation ciblée (lecture seule sauf --acknowledge)")
     p.add_argument("--acknowledge", metavar="SHA256",
@@ -2094,7 +2150,105 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     a = p.parse_args(argv)
     try:
-        if a.retention_inspect or a.retention_plan:
+        if a.maintenance_all:
+            if (a.maintenance_core_releases or a.maintenance_staging
+                    or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.maintenance_core_backups
+                    or a.archive or a.github is not None or a.rollback
+                    or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-all incompatible avec ces options")
+            from .updater_maintenance_all import maintenance_all
+            result = maintenance_all(
+                install_root(), _plugin_packages_root(),
+                state_dir(create=False) / "dev-updates",
+                state_dir(create=False) / "update-backups",
+                keep=a.keep, apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_core_releases:
+            if (a.maintenance_all or a.maintenance_staging or a.maintenance_transactions
+                    or a.maintenance_plugins or a.maintenance_dev_backups
+                    or a.maintenance_core_backups or a.archive
+                    or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-core-releases incompatible avec ces options")
+            from .updater_core_release_maintenance import core_release_maintenance
+            result = core_release_maintenance(
+                install_root(), keep=a.keep, apply=a.apply,
+                acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_staging:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.maintenance_core_backups
+                    or a.archive or a.github is not None or a.rollback
+                    or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-staging incompatible avec ces options")
+            from .updater_staging_maintenance import staging_maintenance
+            result = staging_maintenance(
+                install_root(), _plugin_packages_root(),
+                state_dir(create=False) / "update-backups",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_core_backups:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_transactions or a.maintenance_plugins
+                    or a.maintenance_dev_backups or a.archive
+                    or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-core-backups incompatible avec ces options")
+            from .updater_core_backup_maintenance import core_backup_maintenance
+            result = core_backup_maintenance(
+                install_root(), state_dir(create=False) / "update-backups",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_dev_backups:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_transactions
+                    or a.maintenance_plugins
+                    or a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.to or a.python or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-dev-backups incompatible avec ces options")
+            from .updater_dev_backup_maintenance import dev_backup_maintenance
+            result = dev_backup_maintenance(
+                install_root(), state_dir(create=False) / "dev-updates",
+                apply=a.apply, acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_plugins:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.maintenance_core_backups or a.maintenance_dev_backups
+                    or a.maintenance_transactions
+                    or a.archive or a.github is not None
+                    or a.rollback or a.status or a.recovery_inspect
+                    or a.recovery_reconcile is not None or a.retention_inspect
+                    or a.retention_plan or a.dry_run or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-plugins incompatible avec ces options")
+            from .updater_plugin_maintenance import plugin_history_maintenance
+            result = plugin_history_maintenance(
+                install_root(), _plugin_packages_root(), apply=a.apply,
+                acknowledge=a.acknowledge,
+            )
+        elif a.maintenance_transactions:
+            if (a.maintenance_all or a.maintenance_core_releases or a.maintenance_staging or a.archive or a.github is not None or a.rollback or a.status
+                    or a.recovery_inspect or a.recovery_reconcile is not None
+                    or a.retention_inspect or a.retention_plan or a.dry_run
+                    or a.maintenance_plugins or a.maintenance_dev_backups
+                    or a.maintenance_core_backups
+                    or a.to or a.python
+                    or (a.acknowledge and not a.apply)):
+                p.error("--maintenance-transactions incompatible avec ces options")
+            from .updater_transaction_maintenance import transaction_maintenance
+            result = transaction_maintenance(install_root(), apply=a.apply,
+                                             acknowledge=a.acknowledge)
+        elif a.retention_inspect or a.retention_plan:
             if (a.archive or a.github is not None or a.rollback or a.status
                     or a.recovery_inspect or a.recovery_reconcile is not None
                     or a.acknowledge is not None or a.dry_run or a.to or a.python
@@ -2109,6 +2263,8 @@ def main(argv: list[str] | None = None) -> int:
             if a.retention_plan:
                 from .updater_retention_maintenance import retention_maintenance_plan
                 result = retention_maintenance_plan(result)
+        elif a.apply:
+            p.error("--apply exige --maintenance-transactions")
         elif a.recovery_inspect:
             result = recovery_inspect()
         elif a.recovery_reconcile is not None:
@@ -2140,7 +2296,7 @@ def main(argv: list[str] | None = None) -> int:
         _print({"ok": False, "error": {"code": "update_error",
                "message": "Délai dépassé pour un sous-processus de mise à jour"}}, a.json)
         return 1
-    except UpdateError as exc:
+    except (UpdateError, ValueError) as exc:
         detail = {"code": "update_error", "message": str(exc)}
         if type(exc) is ReleasePluginSmokeError:
             detail["reason_code"] = exc.reason_code

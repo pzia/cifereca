@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from .source_context import source_context_epoch
-from .legacy_source_account_id import ambiguous_legacy_source_account_id
 
 import hashlib
 import logging
@@ -14,6 +13,7 @@ from ..plugin_api import Cancelled
 from .loan_acsm_token_validation import (
     discard_untrusted_staged_acsm as _discard_invalid_candidate,
     valid_loan_acsm_token as _valid_loan_token,
+    staged_loan_acsm_path_safe,
 )
 
 
@@ -26,39 +26,11 @@ def policy_key(account: Account) -> str:
 
 
 def binding_ready(service, account: Account) -> bool:
-    try:
-        if (type(account) is not Account or account.provider_id != 'bnf-pret'
-                or ambiguous_legacy_source_account_id(
-                    'bnf-pret', account.credential_id, account.unique_id
-                )
-                or not service.sync_source_enabled(account)
-                or service.identity_by_id(account.identity_id) is None
-                or service.storage.identity_for_connection(
-                    'bnf-pret', account.credential_id) != account.identity_id):
-            return False
-        # The SQLite provider_accounts registry is the durable account
-        # identity for this credential. A connected Python session may stay
-        # alive after the borrower was removed/rebound in SQLite; do not
-        # issue a private ACSM GET in that state.
-        matches = service.storage.provider_accounts(
-            identity_id=account.identity_id,
-        )
-        if sum(
-            row.get('provider_id') == 'bnf-pret'
-            and row.get('credential_id') == account.credential_id
-            and row.get('account_id') == account.unique_id
-            for row in matches
-        ) != 1:
-            return False
-        session = service._sessions.get(service._session_key('bnf-pret', account.credential_id))
-        return (getattr(session, 'connected', None) is True
-                and sum(row is account for row in getattr(session, 'accounts', ())) == 1
-                and sum(row is account for row in service.accounts) == 1
-                and sum(type(row) is Account and row.provider_id == 'bnf-pret'
-                        and row.credential_id == account.credential_id
-                        for row in service.accounts) == 1)
-    except Exception:
-        return False
+    """BnF auto materialization uses the same exact Core account fence."""
+    from .source_account_binding import source_account_binding_ready
+    return source_account_binding_ready(
+        service, account, expected_provider_id="bnf-pret",
+    )
 
 
 def enabled(service, account: Account) -> bool:
@@ -121,12 +93,22 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     session = service._sessions.get(
         service._session_key('bnf-pret', account.credential_id),
     )
-    provider_epoch = getattr(session, '_epoch', None)
+    from .loan_action_scope import _inert_session_state, _inert_session_accounts
+    initial_session_state = _inert_session_state(session)
+    provider_epoch = (
+        initial_session_state.get('_epoch')
+        if initial_session_state is not None else None
+    )
 
     def current() -> bool:
         try:
+            # A plugin getter is not evidence of a connected session.
+            session_state = _inert_session_state(session)
+            session_accounts = _inert_session_accounts(session)
             return (
-                enabled(service, account)
+                session_state is not None
+                and session_accounts is not None
+                and enabled(service, account)
                 and service.storage.metadata_get(
                     policy_key(account) + '.revision'
                 ) == consent_revision
@@ -134,9 +116,11 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                 and service._sessions.get(
                     service._session_key('bnf-pret', account.credential_id),
                 ) is session
-                and getattr(session, '_epoch', None) == provider_epoch
-                and session.connected is True
-                and sum(row is account for row in session.accounts) == 1
+                and session_state.get('_epoch') == provider_epoch
+                and session_state.get('provider_id') == account.provider_id
+                and session_state.get('credential_id') == account.credential_id
+                and session_state.get('connected') is True
+                and sum(row is account for row in session_accounts) == 1
                 and (
                     account.identity_id, account.credential_id,
                     account.unique_id, loan.id, loan.record_id,
@@ -333,22 +317,38 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         directory = service._acquisition_work_dir(account.identity_id, 'bnf-pret', loan.id)
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        # The opt-in is a durable affirmative action. The provider itself
-        # re-reads the exact account/loan and rejects missing signed actions.
-        candidate, url = session.download_digital(
-            loan, account, directory, explicit_user_action=True)
+        # The persisted opt-in is the ONLY positive Core authority. The
+        # provider owns the private offer/GET; no v1 download_digital fallback.
+        from .selected_loan_offer import select_exact_loan_offer
+        verdict, selected = select_exact_loan_offer(
+            session, account, loan, branch='bnf_html', current=current,
+        )
+        if verdict == 'unavailable':
+            return {'status': 'attention_required',
+                    'code': 'bnf_auto_acquisition_failed'}
+        if verdict != 'selected':
+            return {'status': 'attention_required',
+                    'code': 'bnf_loan_scope_unproven'}
+        observed, right, selected_candidate = selected
+        candidate, url = selected_candidate(
+            account, edition_id=loan.record_id, right_id=loan.id,
+            kind='loan', branch=observed.branch,
+            delivery_offer_id=right.delivery_offer_id,
+            target_dir=directory, explicit_user_action=True,
+            admission_current=current,
+        )
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        if (not isinstance(candidate, Path) or type(url) is not str or url
-                or candidate.is_symlink() or directory.is_symlink()
-                or candidate.parent.resolve() != directory.resolve()
+        if (type(url) is not str or url
+                or not staged_loan_acsm_path_safe(candidate, directory)
                 or not _valid_loan_token(candidate, inspect_artifact)):
             return {'status': 'attention_required', 'code': 'bnf_loan_token_invalid'}
         if control is not None:
             control.check_cancelled()
         if not current():
             return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-        from .bnf_import_provenance import observed_loan, remember_import
+        from .observed_loan_scope import observed_loan
+        from .observed_import_provenance import remember_observed_import
         display_scope = observed_loan(loan)
         handed_to_adept = True
         result = service.import_acsm(candidate, identity_id=account.identity_id,
@@ -379,7 +379,10 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                 result['acquisition_id'], 'complete', metadata={'bnf_auto_ref': ref})
             if not current():
                 return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-            remember_import(service, result, display_scope)
+            remember_observed_import(
+                service, result, display_scope, provider_id='bnf-pret',
+                provenance_field='bnf_observed_loan',
+            )
         return ({'status': result.get('status', 'attention_required')}
                 if current() else
                 {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'})

@@ -51,18 +51,6 @@ def test_detail_only_global_match_survives_selection_and_clipboard(tmp_path):
         assert response["events"][0]["event_id"] == rows[0]["event_id"]
 
 
-def test_legacy_source_search_stays_local_to_loaded_page():
-    payload = {"events": [
-        {"source": "app_log", "timestamp": "2026-10-26T09:00:00+00:00",
-         "module": "cifereca", "severity": "error", "message": "irrelevant",
-         "event_id": "legacy-a"},
-        {"source": "app_log", "timestamp": "2026-10-26T09:00:01+00:00",
-         "module": "cifereca", "severity": "error", "message": "HTTP 403",
-         "event_id": "legacy-b"},
-    ]}
-    assert [x["event_id"] for x in sanitized_rows(payload, search="403")] == ["legacy-b"]
-
-
 def test_journal_nonmatching_rows_are_not_resurrected_by_global_search(tmp_path):
     path = tmp_path / "cifereca.log"
     path.write_text(

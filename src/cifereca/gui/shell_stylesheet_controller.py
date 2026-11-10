@@ -6,7 +6,7 @@ All selectors, colors, breakpoints and precedence remain verbatim.
 from __future__ import annotations
 
 
-def install_css(window, *, Gtk, Gdk) -> None:
+def install_css(window, *, Gtk, Gdk, Adw=None) -> None:
     if getattr(window, '_closed', False):
         return
     css = b"""
@@ -20,6 +20,17 @@ def install_css(window, *, Gtk, Gdk) -> None:
     .page-title { font-weight: 750; font-size: 1.55em; }
     .detail-title { font-weight: 800; font-size: 1.7em; }
     .detail-subtitle { font-size: 1.08em; }
+    /* #4682: compact only proven detail-header facts. */
+    .detail-compact-fields row.detail-compact-value {
+        min-height: 36px; padding-top: 1px; padding-bottom: 1px;
+    }
+    .detail-compact-fields row.detail-compact-value .title { font-weight: 600; }
+    .detail-profile-card {
+        border: 1px solid @borders; border-radius: 10px;
+        padding: 8px 10px; margin-top: 4px; margin-bottom: 4px;
+    }
+    .detail-profile-card > label.heading { margin: 2px 6px 4px; }
+    .detail-profile-card row.detail-access-line { min-height: 34px; }
     .badge { border-radius: 999px; padding: 3px 8px; background: alpha(currentColor, 0.10); font-size: 0.88em; }
     .book-tag { border-radius: 10px; padding: 2px 6px; font-size: 0.88em; }
     .tag-content { background: alpha(@accent_color, 0.14); font-weight: 600; }
@@ -58,4 +69,7 @@ def install_css(window, *, Gtk, Gdk) -> None:
     display = Gdk.Display.get_default()
     if display:
         Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    if Adw is not None:
+        from .modern_light_theme import install_modern_light
+        install_modern_light(window, Gtk=Gtk, Gdk=Gdk, Adw=Adw)
 

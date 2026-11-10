@@ -215,11 +215,19 @@ def _right_bibliography(right, matches):
     # acquisition/account. When the right itself has an attested, bounded
     # description, that source takes precedence over a conflicting public
     # catalogue label. This is a *display* priority, never a file/right link.
+    # The provenance tag is bound to the right's exact source identity,
+    # not a list of built-in provider names. This affects display priority
+    # only: it cannot establish an entitlement, acquisition or local file.
+    provider_id = right.get('provider_id')
+    provenance = right.get('attested_source')
     attested_description = (
-        (right.get('provider_id') == 'numilog'
-         and right.get('attested_source') == 'numilog.authenticated_library')
-        or (right.get('provider_id') == 'kobo'
-            and right.get('attested_source') == 'kobo.personal_manifest')
+        type(provider_id) is str and bool(provider_id)
+        and provider_id == provider_id.strip()
+        and type(provenance) is str
+        and provenance in {
+            provider_id + '.authenticated_library',
+            provider_id + '.personal_manifest',
+        }
     )
 
     def field(name, label):

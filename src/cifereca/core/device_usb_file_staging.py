@@ -131,10 +131,11 @@ def stage_usb_file(
         return result
     except OSError as error:
         status = "recovery_required" if creation_attempted else "blocked"
-        return UsbFileStaging(status, "usb_stage_io_failed", errno=error.errno, detail=str(error))
-    except Exception as error:
+        return UsbFileStaging(status, "usb_stage_io_failed", errno=error.errno)
+    except Exception:
+        # A storage plugin may put private paths or credentials in exceptions.
         status = "recovery_required" if creation_attempted else "blocked"
-        return UsbFileStaging(status, "usb_stage_transport_failed", detail=str(error))
+        return UsbFileStaging(status, "usb_stage_transport_failed")
     finally:
         if fd is not None:
             os.close(fd)

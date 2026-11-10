@@ -10,6 +10,7 @@ from typing import Any
 from ..plugin_api import SyncResult
 from .numilog_local_preview import _Binding, _identity_root, _valid_binding
 from .numilog_manifest_rights import numilog_inventory_binding_valid
+from .passive_source_session import passive_direct_download_capable
 
 _PREFIX = "sync.source.numilog.materialization.consent.v1."
 _ACTIVE = "on_start:v1"
@@ -74,8 +75,7 @@ def _binding(broker: Any, source_id: str):
         or not numilog_inventory_binding_valid(
             broker.service, account, session=session,
         )
-        or getattr(getattr(session, "capabilities", None),
-                   "direct_download", None) is not True
+        or not passive_direct_download_capable(session)
     ):
         return None
     roots = _identity_root(broker.service, account.identity_id)

@@ -136,6 +136,98 @@ def _readable_epub_target_names(stream, *, opaque_name: str) -> tuple[str, ...]:
         return fallback
 
 
+def _readable_pdf_target_names(stream, *, opaque_name: str) -> tuple[str, ...]:
+    """Conservative PDF/XMP name from the *copied and hashed* bytes only.
+
+    A missing, compressed, truncated or ambiguous packet stays opaque. Do not
+    parse arbitrary PDF strings as metadata or use supplier catalogue labels.
+    The full Core receipt digest always remains in the filename, even when
+    the embedded title and author are readable.
+    """
+    fallback = (opaque_name + ".pdf",)
+    try:
+        from xml.etree import ElementTree
+
+        stream.seek(0)
+        # Bound both parsing and memory. Only standard, uncompressed PDF XMP
+        # packets in the opening 4 MiB are accepted in this tranche.
+        sample = stream.read(4 * 1024 * 1024)
+        if not sample.startswith(b"%PDF-"):
+            return fallback
+        # XMP in an unrelated PDF stream, an appended comment or a forged
+        # title is NOT evidence from the document's Metadata/XML object.
+        # Admit only one explicit, uncompressed PDF indirect-object header.
+        # The dictionary is bounded; an endstream past the 4 MiB prefix is
+        # allowed if the XMP packet itself is already complete.
+        metadata_streams = []
+        for obj in re.finditer(
+            rb"\b[0-9]{1,10}\s+[0-9]{1,10}\s+obj\s*<<(.*?)>>\s*"
+            rb"stream[ \t]*(?:\r\n|\n|\r)",
+            sample, flags=re.DOTALL,
+        ):
+            dictionary = obj.group(1)
+            if (len(dictionary) > 8192
+                    or not re.search(rb"/Type\s*/Metadata\b", dictionary)
+                    or not re.search(rb"/Subtype\s*/XML\b", dictionary)
+                    or re.search(rb"/Filter\b", dictionary)):
+                continue
+            metadata_streams.append(obj.end())
+            if len(metadata_streams) > 1:
+                return fallback
+        if len(metadata_streams) != 1:
+            return fallback
+        # Do not search the entire PDF for title/author XMP. A second
+        # non-metadata stream may intentionally contain a convincing decoy.
+        xml_stream = sample[metadata_streams[0]:]
+        stream_end = xml_stream.find(b"endstream")
+        if stream_end >= 0:
+            xml_stream = xml_stream[:stream_end]
+        starts = list(re.finditer(rb"<x:xmpmeta\b", xml_stream))
+        ends = list(re.finditer(rb"</x:xmpmeta\s*>", xml_stream))
+        if len(starts) != 1 or len(ends) != 1 or ends[0].end() <= starts[0].start():
+            return fallback
+        payload = xml_stream[starts[0].start():ends[0].end()]
+        if b"<!DOCTYPE" in payload.upper() or b"<!ENTITY" in payload.upper():
+            return fallback
+        root = ElementTree.fromstring(payload)
+        xmp_ns = "adobe:ns:meta/"
+        rdf_ns = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+        dc_ns = "http://purl.org/dc/elements/1.1/"
+        if root.tag != "{" + xmp_ns + "}xmpmeta":
+            return fallback
+        # Require one unambiguous title in the default language and exactly
+        # one creator; no preference inferred from multiple incompatible rows.
+        titles = [
+            node.text.strip() for node in root.findall(
+                ".//{" + dc_ns + "}title/{" + rdf_ns + "}Alt/{" + rdf_ns + "}li"
+            )
+            if node.get("{http://www.w3.org/XML/1998/namespace}lang") == "x-default"
+            and node.text and node.text.strip()
+        ]
+        authors = [
+            node.text.strip() for node in root.findall(
+                ".//{" + dc_ns + "}creator/{" + rdf_ns + "}Seq/{" + rdf_ns + "}li"
+            )
+            if node.text and node.text.strip()
+        ]
+        if len(titles) != 1 or len(authors) != 1:
+            return fallback
+        title, author = titles[0], authors[0]
+        if (len(title) > 512 or len(author) > 256
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in title + author)
+                or "://" in title or "://" in author):
+            return fallback
+        readable = transfer_readable_filename(
+            Path("received.pdf"), title=title, author=author,
+        )
+        prefix = _utf8_prefix(Path(readable).stem, 120)
+        if not prefix:
+            return fallback
+        return (fallback[0], prefix + " - " + opaque_name + ".pdf")
+    except (OSError, ValueError, TypeError, RuntimeError, ElementTree.ParseError):
+        return fallback
+
+
 def _profile(storage, root: Path, source: SourceKey) -> tuple[Path, Path]:
     registered = storage.identities()
     matches = [
@@ -298,7 +390,7 @@ def promote_completed_delivery(
             raise ValueError("canonical_promotion_destination_changed")
         if not physical_owner_current():
             raise ValueError("canonical_promotion_profile_rebound")
-        if suffix == ".epub":
+        if suffix in (".epub", ".pdf"):
             # Name from the exact *copied* bytes, never an unrelated provider
             # catalogue title or an unverified URL. The receipt discriminator
             # keeps crash recovery deterministic and prevents same-title
@@ -311,8 +403,10 @@ def promote_completed_delivery(
                 opened_copy = os.fstat(staged.fileno())
                 if (opened_copy.st_dev, opened_copy.st_ino) != (made.st_dev, made.st_ino):
                     raise ValueError("canonical_promotion_destination_changed")
-                names = _readable_epub_target_names(
-                    staged, opaque_name=name,
+                names = (
+                    _readable_epub_target_names(staged, opaque_name=name)
+                    if suffix == ".epub" else
+                    _readable_pdf_target_names(staged, opaque_name=name)
                 )
             for candidate in names:
                 target = destination_dir / candidate

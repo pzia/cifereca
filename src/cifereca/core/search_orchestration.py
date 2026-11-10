@@ -336,40 +336,17 @@ def _search_sessions_for_active_identity(
     self, sessions: list[ProviderSession], identity: object, *,
     paris_primary: str | None = None,
 ) -> list[ProviderSession]:
-    """Select one source per provider, preferring the active reader's account.
+    """Select exactly one catalogue session per provider.
 
-    Bibliographic catalogues are shared between local identities, but a
-    foreign credential is never a loan or purchase permission. Prefer the
-    selected identity's Paris account and project foreign fallback results
-    as catalogue-only; preserve exact provenance and independent loan guards.
+    The historical Paris primary preference is only an input hint; neutral
+    ownership ranking is performed by search_session_selection for every
+    provider and never grants access to another identity's private source.
     """
-    active = getattr(identity, "identity_id", None)
-    chosen: dict[str, ProviderSession] = {}
-    ranking: dict[str, int] = {}
-    for session in sessions:
-        provider = session.provider_id
-        # Another linked account may be the Paris primary even when an
-        # account of the same identity was connected first.
-        if ranking.get(provider) == (3 if provider == "paris" else 2):
-            continue
-        is_active = False
-        credential = getattr(session, "credential_id", None)
-        owner = None
-        if type(active) is str and active and type(credential) is str and credential:
-            try:
-                owner = self.storage.identity_for_connection(provider, credential)
-                is_active = owner == active
-            except (AttributeError, LookupError, TypeError, ValueError):
-                # Unknown owner cannot be treated as belonging to the reader.
-                pass
-        rank = 2 if is_active else 1
-        if provider == "paris" and is_active and credential == paris_primary:
-            rank = 3
-        if rank > ranking.get(provider, 0):
-            chosen[provider] = session
-            ranking[provider] = rank
-    return list(chosen.values())
-
+    from .search_session_selection import choose_search_sessions
+    hints = {"paris": paris_primary} if paris_primary is not None else None
+    return choose_search_sessions(
+        self, sessions, identity, preferred_credentials=hints,
+    )
 
 def _paris_search_owner(self, session: ProviderSession) -> str | None:
     """Inert SQLite owner check; unknown ownership never permits private data."""
@@ -471,13 +448,19 @@ def _shared_paris_catalogue_row(
     )
 
 
-def _numilog_search_owner(self, session: ProviderSession) -> str | None:
-    """Inert owner snapshot for an authenticated Numilog search session."""
+def _private_search_owner(self, session: ProviderSession) -> str | None:
+    """Inert, provider-neutral SQLite owner for one private search session.
+
+    This snapshot only determines when public-only projection is required.
+    It never confers a right to read a different account's private catalogue.
+    """
+    provider_id = getattr(session, "provider_id", None)
     credential = getattr(session, "credential_id", None)
-    if type(credential) is not str or not credential:
+    if (type(provider_id) is not str or not provider_id
+            or type(credential) is not str or not credential):
         return None
     try:
-        owner = self.storage.identity_for_connection("numilog", credential)
+        owner = self.storage.identity_for_connection(provider_id, credential)
     except (AttributeError, LookupError, TypeError, ValueError):
         return None
     return owner if type(owner) is str and owner else None
@@ -499,18 +482,6 @@ def _shared_numilog_public_row(row: SearchResult) -> SearchResult | None:
         metadata=_shared_catalogue_bibliography(row),
         document_classification=None,
     )
-
-
-def _kobo_search_owner(self, session: ProviderSession) -> str | None:
-    """Inert SQLite owner snapshot for an authenticated Kobo session."""
-    credential = getattr(session, "credential_id", None)
-    if type(credential) is not str or not credential:
-        return None
-    try:
-        owner = self.storage.identity_for_connection("kobo", credential)
-    except (AttributeError, LookupError, TypeError, ValueError):
-        return None
-    return owner if type(owner) is str and owner else None
 
 
 def _shared_kobo_public_row(
@@ -712,10 +683,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
             return False
-        if any(_numilog_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in numilog_owner_leases):
             return False
-        if any(_kobo_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in kobo_owner_leases):
             return False
         return True
@@ -763,17 +734,21 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     shared_paris_sessions = {
         id(session) for session, owner in paris_owner_leases if owner != active_id
     }
-    numilog_owner_leases = tuple(
-        (session, _numilog_search_owner(self, session))
-        for session in searchable if session.provider_id == "numilog"
+    # One exact SQL owner read per private-library session; vendor-specific
+    # catalogue projections below still preserve their own safe row grammar.
+    private_owner_leases = tuple(
+        (session, _private_search_owner(self, session))
+        for session in searchable
+        if session.provider_id in {"numilog", "kobo"}
     )
+    private_owner_groups = {"numilog": [], "kobo": []}
+    for session, owner in private_owner_leases:
+        private_owner_groups[session.provider_id].append((session, owner))
+    numilog_owner_leases = tuple(private_owner_groups["numilog"])
+    kobo_owner_leases = tuple(private_owner_groups["kobo"])
     shared_numilog_sessions = {
         id(session) for session, owner in numilog_owner_leases if owner != active_id
     }
-    kobo_owner_leases = tuple(
-        (session, _kobo_search_owner(self, session))
-        for session in searchable if session.provider_id == "kobo"
-    )
     shared_kobo_sessions = {
         id(session) for session, owner in kobo_owner_leases if owner != active_id
     }
@@ -1376,17 +1351,21 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     shared_paris_sessions = {
         id(session) for session, owner in paris_owner_leases if owner != active_id
     }
-    numilog_owner_leases = tuple(
-        (session, _numilog_search_owner(self, session))
-        for session in searchable if session.provider_id == "numilog"
+    # One exact SQL owner read per private-library session; vendor-specific
+    # catalogue projections below still preserve their own safe row grammar.
+    private_owner_leases = tuple(
+        (session, _private_search_owner(self, session))
+        for session in searchable
+        if session.provider_id in {"numilog", "kobo"}
     )
+    private_owner_groups = {"numilog": [], "kobo": []}
+    for session, owner in private_owner_leases:
+        private_owner_groups[session.provider_id].append((session, owner))
+    numilog_owner_leases = tuple(private_owner_groups["numilog"])
+    kobo_owner_leases = tuple(private_owner_groups["kobo"])
     shared_numilog_sessions = {
         id(session) for session, owner in numilog_owner_leases if owner != active_id
     }
-    kobo_owner_leases = tuple(
-        (session, _kobo_search_owner(self, session))
-        for session in searchable if session.provider_id == "kobo"
-    )
     shared_kobo_sessions = {
         id(session) for session, owner in kobo_owner_leases if owner != active_id
     }
@@ -1428,10 +1407,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         if any(_paris_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
             return False
-        if any(_numilog_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in numilog_owner_leases):
             return False
-        if any(_kobo_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in kobo_owner_leases):
             return False
         return True
@@ -1996,30 +1975,23 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     if not identity_id:
         return 0
     now = int(time.time())
-    # Neither Kobo nor Numilog public search flags are purchase evidence.
-    # A positive right from an authenticated personal library must already
-    # exist for this identity, credential and exact edition/variant (#1905).
-    verified_owned: set[tuple[str, str, str, str]] = set()
-    for provider_id in ("kobo", "numilog"):
-        if not any(row.source_provider == provider_id and row.owned is True for row in rows):
-            continue
-        verified_owned.update({
-            (provider_id, str(right.get("identity_id") or ""),
-             str(right.get("credential_id") or ""),
-             str(right.get("item_id") or ""))
-            for right in self.storage.entitlements(provider_id=provider_id, state="active")
-            if right.get("entitlement_type") == "owned"
-        })
+    # Generic exact Core ledger attestation; a legacy descriptive personal
+    # row may lack account/revision, but it never grants an actionable right.
+    # The stronger #5073 UI/action proof remains authoritative for actions.
+    from .catalogue_owned_projection import attested_catalogue_owned_keys
+    verified_owned = attested_catalogue_owned_keys(
+        self.storage, rows, identity_id=identity_id,
+    )
     keyed: list[tuple[str, SearchResult, str, bool]] = []
     for row in rows:
         owned = row.owned is True and (
-            row.source_provider not in {"kobo", "numilog"} or
-            (row.source_provider, identity_id, row.source_credential, row.record_id)
-            in verified_owned
-        )
+            row.source_provider, identity_id, row.source_credential,
+            row.source_account_id or "", row.record_id, row.revision_id or "",
+        ) in verified_owned
         state = (
             "remote_owned" if owned else
-            "available_to_buy" if row.source_provider in {"kobo", "numilog"} and row.price else
+            # This is descriptive only: a supplier price is not a purchase right.
+            "available_to_buy" if type(row.price) is str and bool(row.price.strip()) else
             "available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else
             "remote_catalog"
         )
@@ -2032,13 +2004,14 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         if existing and existing.get("local_state") == "local":
             continue
         raw_meta = dict(row.metadata or {})
-        if row.source_provider == "numilog":
-            # Signed ACSM "rights" must never be copied into the public
-            # catalogue. Ownership is the separate attested entitlement.
-            raw_meta.pop("rights", None)
+        # "rights" is an untrusted provider claim (possibly a signed
+        # token), never a public bibliographic field nor ownership evidence.
+        # The exact Core entitlement ledger alone determines remote_owned.
+        # This rule is provider-neutral: unknown plugins must not leak it.
+        raw_meta.pop("rights", None)
         allowed_meta = {
             name: raw_meta.get(name)
-            for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "rights", "dates")
+            for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "dates")
             if raw_meta.get(name) not in (None, "", [], {})
         }
         # Kobo-Vault and other providers may already expose attested awards,
@@ -2090,7 +2063,13 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                 "price": row.price, "currency": row.currency, "source_credential": row.source_credential,
                 "source_collection": row.source_collection, "publisher": row.publisher or allowed_meta.get("publisher"),
                 "published_at": row.published_at, "type": row.type, "medium": row.medium,
-                "mirrored_at": now, "description": row.description,
+                "mirrored_at": now,
+                # Descriptions are untrusted supplier text just like summaries:
+                # never persist URLs, bearer tokens or personal identifiers.
+                "description": (
+                    _safe_public_search_text("description", row.description)
+                    if type(row.description) is str else None
+                ),
                 "catalogue_scope_version": 2 if qualified else None,
             },
         })

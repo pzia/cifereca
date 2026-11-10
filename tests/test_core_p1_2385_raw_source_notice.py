@@ -194,3 +194,44 @@ def test_harmless_uppercase_or_protocol_relative_url_remains_raw():
     raw = {"links": ["HTTPS://catalogue.example/book?lang=fr",
                      "//catalogue.example/cover.jpg"]}
     assert admit(raw=raw).fields_copy() == raw
+
+
+@pytest.mark.parametrize("url", [
+    "https://cdn.example/c.jpg?access-token=SECRET",
+    "https://cdn.example/c.jpg?Access.Token=SECRET",
+    "https://cdn.example/c.jpg?api-key=SECRET",
+    "https://cdn.example/c.jpg?X-Amz-Security-Token=SECRET",
+    "https://cdn.example/c.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256",
+    "https://cdn.example/c.jpg?AWSAccessKeyId=SECRET",
+    "https://cdn.example/c.jpg?%61ccess%2Dtoken=SECRET",
+    "//cdn.example/c.jpg?authorization=SECRET",
+])
+def test_notice_source_refuses_obfuscated_query_credentials(url):
+    with pytest.raises(ValueError, match="invalid_source_notice_observation"):
+        admit(raw={"cover": url})
+
+
+def test_notice_source_keeps_public_rendering_query_without_authorization():
+    raw = {"cover": "https://cdn.example/c.jpg?size=medium&t=1717&lang=fr"}
+    assert admit(raw=raw).fields_copy() == raw
+
+
+@pytest.mark.parametrize("url", [
+    # Google Cloud Storage V4 signed URL fields are private even if only one
+    # field survived truncation of a provider's original signed URL.
+    "https://storage.googleapis.com/book/c.pdf?X-Goog-Algorithm=GOOG4-RSA-SHA256",
+    "https://storage.googleapis.com/book/c.pdf?X-Goog-Date=20261110T083000Z",
+    "https://storage.googleapis.com/book/c.pdf?x_goog_credential=SENSITIVE",
+    "https://storage.googleapis.com/book/c.pdf?X%2DGoog%2DSignedHeaders=host",
+    # CloudFront's key-pair ID can reveal a signed URL authorization context.
+    "https://cdn.example/book/c.pdf?Key-Pair-Id=SENSITIVE",
+    "//cdn.example/book/c.pdf?key%2Dpair%2Did=SENSITIVE",
+])
+def test_notice_source_rejects_signed_gcs_and_cloudfront_query_keys(url):
+    with pytest.raises(ValueError, match="invalid_source_notice_observation"):
+        admit(raw={"cover": url})
+
+
+def test_notice_source_keeps_public_non_auth_google_image_query():
+    raw = {"cover": "https://storage.googleapis.com/public/cover.jpg?size=large"}
+    assert admit(raw=raw).fields_copy() == raw

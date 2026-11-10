@@ -15,9 +15,52 @@ def build_library_page(window, *, Gtk, MasterDetailPage):
     window.library_controls = controls; window.library_filter_entry = controls.entry
     page.toolbar.append(controls)
     search = Gtk.Button(label="Recherche"); search.connect("clicked", window._library_search_online); controls.primary.append(search)
+    # Optional cross-profile *read* scope. Opening the page still displays
+    # the selected profile; only an explicit click loads all Core projections.
+    window._library_all_profiles = False
+    window._library_scope_generation = 0
+    scope = Gtk.Button(label="Tous les profils")
+    scope.set_tooltip_text(
+        "Consulter les livres des profils locaux sans fusionner les droits "
+        "ni lancer de téléchargement ou synchronisation."
+    )
+
+    def choose_scope(_button):
+        if getattr(window, "_closed", False):
+            return
+        window._library_all_profiles = not (
+            getattr(window, "_library_all_profiles", False) is True
+        )
+        # Revoke retained foreign-copy actions on the GTK click itself.
+        # Merely incrementing the identity generation would be wrong: the
+        # Core reader stays B, only the Library read view changes.
+        window._library_scope_generation += 1
+        window._library_entries_cache = []
+        render = getattr(window, "_render_library", None)
+        if callable(render):
+            render()
+        set_label = getattr(scope, "set_label", None)
+        if callable(set_label):
+            set_label(
+                "Profil courant" if window._library_all_profiles
+                else "Tous les profils"
+            )
+        refresh_button = getattr(window, "_library_refresh_button", None)
+        if refresh_button is not None:
+            refresh_button.set_tooltip_text(
+                "Actualiser la lecture des profils sans scan"
+                if window._library_all_profiles else
+                "Rescanner la bibliothèque"
+            )
+        window.refresh_library(False, scope)
+
+    scope.connect("clicked", choose_scope)
+    controls.primary.append(scope)
+    window._library_scope_button = scope
     actions = page.header_actions
     refresh = Gtk.Button.new_from_icon_name("view-refresh-symbolic")
     refresh.set_tooltip_text("Rescanner la bibliothèque")
+    window._library_refresh_button = refresh
     refresh.connect("clicked", lambda _b: window.refresh_library(True, refresh))
     actions.append(refresh)
 

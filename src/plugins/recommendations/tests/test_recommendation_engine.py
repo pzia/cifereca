@@ -315,3 +315,36 @@ def test_identifier_punctuation_is_preserved_to_avoid_false_collisions():
     assert identifier_values(dashed) == {"doi:ab-c"}
     assert identifier_values(compact) == {"doi:abc"}
     assert candidate_key(dashed) != candidate_key(compact)
+
+
+def test_partial_nested_source_coordinates_cannot_forge_cross_projection_identity():
+    source = {
+        "title": "No exact source witness",
+        "source_provider": "paris", "record_id": "record-one",
+        "identifiers": {"provider": "kobo"},
+    }
+    # A partial nested provider cannot re-label the top-level item.
+    assert identifier_values(source) == {"source:paris:record-one"}
+    other = {"source_provider": "kobo", "record_id": "record-one"}
+    assert not identifier_values(source).intersection(identifier_values(other))
+
+
+def test_conflicting_complete_legacy_source_pairs_fail_closed():
+    row = {
+        "source_provider": "paris", "record_id": "record-one",
+        "identifiers": {"provider": "kobo", "source_item_id": "record-two"},
+    }
+    assert identifier_values(row) == set()
+    assert candidate_key(row).startswith("ta:")
+
+
+def test_non_string_source_coordinates_cannot_enter_recommendation_identity():
+    row = {
+        "title": "Opaque",
+        "source_provider": {"token": "private"},
+        "record_id": "record-one",
+        "identifiers": {"provider": {"secret": "private"},
+                        "source_item_id": "record-one"},
+    }
+    assert identifier_values(row) == set()
+    assert "private" not in candidate_key(row)

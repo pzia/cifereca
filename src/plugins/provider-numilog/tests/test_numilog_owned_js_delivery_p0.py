@@ -557,7 +557,21 @@ def test_structural_diagnostics_do_not_contain_purchase_identifiers_or_tokens(tm
         assert details['js_shapes_outside_cards'] == 1
         assert details['bound_links'] == 1  # selected record only, not every purchase
         assert all(type(v) in {str, int} for v in details.values())
-        text = repr(diagnostic.events)
+        # Correlation IDs are random hexadecimal strings, not purchase
+        # identifiers. A random 12-hex ID may contain e.g. "9001" by chance.
+        # Validate its opaque shape, then exclude ONLY that field from the
+        # leak scan; all provider-derived diagnostics remain fully checked.
+        import re
+        sanitized = []
+        for event, payload in diagnostic.events:
+            clean = dict(payload)
+            detail = dict(clean.get('detail', {}))
+            if 'action' in detail:
+                assert re.fullmatch(r'[0-9a-f]{12}', detail['action'])
+                detail['action'] = '<opaque-correlation>'
+            clean['detail'] = detail
+            sanitized.append((event, clean))
+        text = repr(sanitized)
         for sensitive in (
             'SYNTHETIC_NOT_A_CREDENTIAL',
             'SECOND_NOT_A_CREDENTIAL', '9001', '9002', '9999',

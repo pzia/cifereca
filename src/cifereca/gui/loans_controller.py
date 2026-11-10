@@ -15,7 +15,8 @@ from gi.repository import Gtk, Adw
 
 from ..models import Loan
 from ..core.loan_source_identity import loan_source_key, unambiguous_loan_rows
-from ..core.loan_cover_fallback import loan_local_cover
+from ..core.covers import candidate
+from ..core.loan_cover_fallback import loan_local_cover, materialized_loan_cover_rows
 from .book_widgets import BookListItem
 from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_due_presentation, loan_medium_counts, loan_row_metadata
 from .master_detail import MasterDetailPage
@@ -91,11 +92,22 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     exact loan + Placement proof is absent, ambiguous, stale or from another
     profile, keep the supplier's thumbnail unchanged (including None).
     """
-    if loan.thumbnail_url:
+    # Trust only a URI admitted by the shared Core cover resolver.
+    # The supplier's original Loan remains untouched for all actions.
+    original_url = loan.thumbnail_url
+    safe_source = (
+        type(original_url) is str and
+        original_url.lower().startswith(("https://", "http://")) and
+        candidate(original_url, tier="catalog", source="loan-provider") is not None
+    )
+    if safe_source:
         return loan
+    safe_preview = copy(loan) if original_url else loan
+    if safe_preview is not loan:
+        safe_preview.thumbnail_url = None
     active = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
     if active is None or loan.identity_id != active:
-        return loan
+        return safe_preview
     evidence = getattr(self, "_loan_cover_projection", None)
     if (type(evidence) is tuple and len(evidence) == 3
             and evidence[0] == getattr(self.service, "_account_context_epoch", None)
@@ -105,8 +117,8 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
         cover_rows = getattr(self, "_library_entries_cache", ())
     resolved = loan_local_cover(loan, cover_rows)
     if resolved.status != "selected" or not resolved.url:
-        return loan
-    displayed = copy(loan)
+        return safe_preview
+    displayed = copy(safe_preview)
     displayed.thumbnail_url = resolved.url
     return displayed
 
@@ -209,7 +221,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         if any(type(loan) is Loan and loan.identity_id == identity_id
                and not loan.thumbnail_url for loan in rows):
             try:
-                cover_rows = tuple(
+                cover_rows = materialized_loan_cover_rows(
                     self.service.library_entries(identity_id=identity_id, scan=False)
                 )
             except (OSError, RuntimeError, ValueError):

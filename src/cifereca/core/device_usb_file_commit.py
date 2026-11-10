@@ -156,13 +156,12 @@ def publish_usb_staged_file(
     except OSError as error:
         status = "recovery_required" if rename_attempted else "blocked"
         return UsbFilePublication(status, "usb_publish_io_failed", error.errno)
-    except Exception as error:
-        # A Core revalidation callback can fail after the namespace changed.
-        # Keep its diagnostic and leave reconciliation to the pending record.
+    except Exception:
+        # A callback can fail after the namespace changed. Exception text may
+        # carry private paths or credentials: emit only the closed reason code.
+        # Preserve the pending journal for supervised reconciliation.
         status = "recovery_required" if rename_attempted else "blocked"
-        return UsbFilePublication(
-            status, "usb_publish_revalidation_failed", detail=str(error),
-        )
+        return UsbFilePublication(status, "usb_publish_revalidation_failed")
 
 
 __all__ = ["UsbFilePublication", "publish_usb_staged_file"]

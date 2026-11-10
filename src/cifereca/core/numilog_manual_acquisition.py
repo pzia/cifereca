@@ -11,6 +11,7 @@ from typing import Any
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
 from .numilog_manifest_rights import _scoped_record_id, numilog_inventory_binding_valid
+from .passive_source_session import passive_direct_download_capable
 
 
 def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any, Any, str]:
@@ -50,8 +51,7 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
                 or not numilog_inventory_binding_valid(
                     service, account, session=active,
                 )
-                or getattr(getattr(active, "capabilities", None),
-                           "direct_download", False) is not True):
+                or not passive_direct_download_capable(active)):
             raise ValueError("source_rebound")
         identity = service.identity_by_id(account.identity_id)
         if identity is None:
@@ -65,36 +65,12 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
 
 
 def require_local_artifact(path: Any, target_dir: Any) -> None:
-    """Only accept a regular file physically inside its identity/provider root.
-
-    ADEPT may return a nested `acsm-<digest>/book.epub`, but a provider or
-    altered library tree must never register someone else's path, a symlink
-    or a work/staging file outside the exact owner's identity directory.
-    """
-    from pathlib import Path
-    try:
-        if (not isinstance(path, Path) or not isinstance(target_dir, Path)
-                or target_dir.is_symlink() or target_dir.parent.is_symlink()
-                or not target_dir.is_dir()
-                or path.is_symlink() or not path.is_file()):
-            raise ValueError("not_a_local_artifact")
-        root = target_dir.resolve(strict=True)
-        current = path.parent
-        if not path.resolve(strict=True).is_relative_to(root):
-            raise ValueError("outside_identity")
-        # Reject symlinks in every intermediate directory. Resolving alone
-        # would accept an alias into a different identity's real tree.
-        while current != target_dir:
-            if current.is_symlink() or current == current.parent:
-                raise ValueError("symlink_or_outside")
-            current = current.parent
-        if path.suffix.casefold() not in {".epub", ".pdf", ".kepub"}:
-            raise ValueError("not_readable_book_format")
-    except Exception:
+    """Preserve the Numilog refusal code; the physical check is Core-neutral."""
+    from .local_received_artifact import received_book_file_within_root
+    if not received_book_file_within_root(path, target_dir):
         raise ProviderConfigurationError(
             "Numilog : artefact local non attesté ; rapprochement requis"
         ) from None
-
 
 
 def admission_scope(item: SearchResult) -> tuple:

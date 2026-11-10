@@ -974,7 +974,7 @@ class NumilogSession(ProviderSession):
     def rights_selected_delivery_candidate(
         self, account, *, edition_id, right_id, kind, branch,
         delivery_offer_id, target_dir, explicit_user_action=False,
-        core_admission_current=None,
+        core_admission_current=None, admission_current=None,
     ):
         """Execute one Core-admitted selected purchase, returning a *candidate*.
 
@@ -1000,14 +1000,22 @@ class NumilogSession(ProviderSession):
                 or account.credential_id != self.credential_id):
             raise ProviderCapabilityError('numilog_selected_delivery_scope_mismatch')
 
-        if core_admission_current is not None and not callable(core_admission_current):
+        # A Core-selected right is never itself a download grant. An
+        # absent or stale revocable Core admission must refuse even if the
+        # provider can still fetch a signed MesLivres URL. The old keyword
+        # stays accepted for explicit callers of the 2026 v2 ABI.
+        if (admission_current is not None
+                and core_admission_current is not None
+                and admission_current is not core_admission_current):
+            raise ProviderCapabilityError('numilog_candidate_admission_changed')
+        admitted = (admission_current if admission_current is not None
+                    else core_admission_current)
+        if not callable(admitted):
             raise ProviderCapabilityError('numilog_candidate_admission_changed')
 
         def core_current():
-            if core_admission_current is None:
-                return True
             try:
-                return core_admission_current() is True
+                return admitted() is True
             except Exception:
                 return False
 
@@ -1093,7 +1101,7 @@ class NumilogSession(ProviderSession):
                 expected_offer_id=delivery_offer_id,
                 expected_identity_id=pinned[0],
                 stage_acsm_only=True,
-                core_admission_current=core_admission_current,
+                core_admission_current=admitted,
             )
             # A broker rebind, disconnected session or even A→A replacement
             # after the last signed GET is not a Core receipt. Withdraw the

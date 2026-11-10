@@ -84,9 +84,17 @@ def select_text_schema(
             or len(declarations) > MAX_DECLARATIONS):
         raise ValueError("invalid_canonical_text_schema_registry")
     seen: CanonicalTextSchema | None = None
+    registered: set[tuple[str, str, str, str, str]] = set()
     for row in declarations:
         if not _valid_schema(row):
             raise ValueError("invalid_canonical_text_schema")
+        identity = (row.canonical_type, row.scope, row.plugin_id,
+                    row.plugin_version, row.schema_id)
+        # A duplicate anywhere in the installed registry is ambiguous, even
+        # when another type/scope was requested or no schema matched.
+        if identity in registered:
+            raise ValueError("ambiguous_canonical_text_schema")
+        registered.add(identity)
         if (row.canonical_type, row.scope, row.plugin_id,
                 row.plugin_version, row.schema_id) != (
                     selection.canonical_type, selection.scope,

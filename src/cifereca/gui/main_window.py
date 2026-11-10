@@ -269,7 +269,7 @@ class MainWindow(Adw.ApplicationWindow):
     # ---------- infrastructure ----------
     def _install_css(self) -> None:
         return shell_stylesheet_controller.install_css(
-            self, Gtk=Gtk, Gdk=Gdk,
+            self, Gtk=Gtk, Gdk=Gdk, Adw=Adw,
         )
 
     def _cancel_notification_hide(self) -> None:
@@ -1681,6 +1681,26 @@ class MainWindow(Adw.ApplicationWindow):
         if len({account.unique_id for account in accounts}) != len(accounts):
             return session, []
         return session, accounts
+
+    def present_cross_profile_borrow(
+        self, *, expected_item: SearchResult, expected_edition_id: str,
+        observations: object, control: Gtk.Widget | None = None,
+    ) -> bool:
+        """#4987: opt-in UI for externally verified, exact lender evidence.
+
+        This does not collect or fabricate provider eligibility: only a
+        caller with previously observed exact borrower+edition facts can
+        request the lender choice/confirmation workflow.
+        """
+        from .cross_profile_borrow_controller import (
+            present_cross_profile_lender_choice,
+        )
+        return present_cross_profile_lender_choice(
+            self, expected_item=expected_item,
+            expected_edition_id=expected_edition_id,
+            observations=observations, Adw=Adw,
+            TaskPriority=TaskPriority, control=control,
+        )
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
         # #2055: the historic session.borrow() path must NEVER be used for

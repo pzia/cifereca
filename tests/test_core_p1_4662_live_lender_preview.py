@@ -678,3 +678,149 @@ def test_held_lender_choice_revoked_after_positive_fact_refresh(harness):
     assert _click(service, next_preview, next_preview.options[0].option_id,
                   refreshed).status == "current"
     assert session.calls == 0
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_duplicate_lender_binding_never_qualifies_preview_even_when_enabled(
+    harness, monkeypatch, enabled,
+):
+    service, account, session = harness
+    real = service.storage.provider_connections
+    candidate = _candidate()
+    rows = real(identity_id="alex")
+    exact = next(
+        row for row in rows
+        if row.get("credential_id") == account.credential_id
+    )
+    # Even an enabled+disabled pair is ambiguous; an enabled+enabled
+    # pair is ambiguous too. No first-enabled or last-enabled fallback.
+    def duplicate(*, identity_id):
+        result = real(identity_id=identity_id)
+        if identity_id == "alex":
+            return [*result, {**exact, "enabled": enabled}]
+        return result
+
+    monkeypatch.setattr(service.storage, "provider_connections", duplicate)
+    snapshot = _preview(service, candidate)
+    assert snapshot.status == "none"
+    assert snapshot.options == ()
+    assert snapshot.rejection_reasons == ("lender_unavailable",)
+    assert session.calls == 0
+
+
+def test_held_lender_choice_revoked_when_binding_becomes_ambiguous(
+    harness, monkeypatch,
+):
+    service, account, session = harness
+    candidate = _candidate()
+    old = _preview(service, candidate)
+    selected = old.options[0].option_id
+    original = service.storage.provider_connections
+
+    def duplicate(*, identity_id):
+        rows = original(identity_id=identity_id)
+        if identity_id == "alex":
+            exact = next(x for x in rows
+                         if x.get("credential_id") == account.credential_id)
+            return [*rows, {**exact, "enabled": False}]
+        return rows
+
+    monkeypatch.setattr(service.storage, "provider_connections", duplicate)
+    result = _click(service, old, selected, candidate)
+    assert result.status == "revoked"
+    assert result.reason_code == "selection_stale"
+    assert result.executable is False
+    assert session.calls == 0
+
+
+@pytest.mark.parametrize("opaque_epoch", [
+    "session-uuid-opaque-0123456789abcdef", "a" * 128,
+])
+def test_opaque_provider_session_epoch_is_scoped_without_provider_io(
+    harness, opaque_epoch,
+):
+    service, account, session = harness
+    session._epoch = opaque_epoch
+    row = _candidate()
+    original = _preview(service, row)
+    assert original.status == "external"
+    assert len(original.options) == 1
+    assert opaque_epoch not in original.options[0].option_id
+    selected = original.options[0].option_id
+    assert _click(service, original, selected, row).status == "current"
+    session._epoch = "new-session-uuid"
+    assert _click(service, original, selected, row).status == "revoked"
+    assert _preview(service, row).options[0].option_id != selected
+    assert session.calls == 0
+
+
+@pytest.mark.parametrize("invalid", ["", "a" * 129, "bad\nsecret", -1, 1 << 256, True, None])
+def test_malformed_provider_session_epoch_cannot_create_lender_offer(
+    harness, invalid,
+):
+    service, account, session = harness
+    session._epoch = invalid
+    result = _preview(service, _candidate())
+    assert result.status == "none"
+    assert result.options == ()
+    assert result.rejection_reasons == ("scope_unverified",)
+    assert session.calls == 0
+
+
+def test_held_lender_click_revokes_if_another_menu_option_is_replaced(harness):
+    service, account, session = harness
+    first = _candidate(collection="branch-1")
+    before_other = _candidate(collection="branch-2")
+    after_other = _candidate(collection="branch-3")
+    original = _preview(service, first, before_other)
+    assert original.status == "choose"
+    chosen = next(
+        option for option in original.options
+        if option._source_coordinates[6] == "branch-1"
+    )
+    fresh = _preview(service, first, after_other)
+    assert fresh.status == "choose"
+    assert chosen.option_id in [option.option_id for option in fresh.options]
+    # The clicked lender is still eligible, but the menu is no longer the
+    # one for which the requester made their explicit selection.
+    result = _click(
+        service, original, chosen.option_id, first, after_other,
+    )
+    assert result.status == "revoked"
+    assert result.reason_code == "selection_stale"
+    assert result.executable is False
+    assert session.calls == 0
+
+
+def test_held_lender_click_revokes_if_unrelated_option_becomes_unavailable(harness):
+    service, account, session = harness
+    first = _candidate(collection="branch-1")
+    second = _candidate(collection="branch-2")
+    original = _preview(service, first, second)
+    chosen = next(
+        option for option in original.options
+        if option._source_coordinates[6] == "branch-1"
+    )
+    denied = replace(
+        second,
+        edition_evidence=replace(second.edition_evidence, item_offer="unavailable"),
+    )
+    assert _preview(service, first, denied).status == "external"
+    assert _click(service, original, chosen.option_id, first, denied).status == "revoked"
+    assert session.calls == 0
+
+
+def test_held_lender_click_revokes_if_unrelated_observation_is_newly_rejected(harness):
+    service, account, session = harness
+    first = _candidate(collection="branch-1")
+    original = _preview(service, first)
+    extra = replace(
+        _candidate(collection="branch-2"),
+        evidence=None,
+    )
+    fresh = _preview(service, first, extra)
+    assert fresh.options == original.options
+    assert fresh.rejected_count != original.rejected_count
+    assert _click(service, original, original.options[0].option_id,
+                  first, extra).status == "revoked"
+    assert session.calls == 0

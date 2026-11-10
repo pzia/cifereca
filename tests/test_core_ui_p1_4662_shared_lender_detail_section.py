@@ -11,7 +11,9 @@ import ast
 
 from cifereca.core.borrow_for_identity_detail import (
     cross_profile_borrow_detail_section,
+    cross_profile_borrow_progress_detail_section,
 )
+from cifereca.core.borrow_for_identity_progress import CrossProfileBorrowProgress
 from cifereca.plugin_api.models import DetailSection, DetailField
 from tests.test_core_p1_4662_cross_profile_borrow_preview import (
     project, witness,
@@ -130,3 +132,199 @@ def test_standard_search_detail_has_opt_in_no_eager_provider_observation():
     assert "holdings" not in names
     assert "borrow_paris_manual" not in names
     assert "borrow_search_item" not in names
+
+
+def test_confirmed_lender_loan_never_presents_delivery_or_copy_as_complete():
+    progress = CrossProfileBorrowProgress(
+        "confirmed", "unavailable", "blocked",
+        "lender_loan_confirmed_transfer_unverified",
+    )
+    section = cross_profile_borrow_progress_detail_section(progress)
+    assert type(section) is DetailSection
+    assert [field.label for field in section.fields] == [
+        "Prêt", "Livraison", "Transfert",
+    ]
+    assert "Prêt confirmé" in section.fields[0].value
+    assert "non vérifiée" in section.fields[1].value
+    assert "bloquée" in section.fields[2].value
+    assert "livraison locale" in section.fields[2].value
+    assert not hasattr(section, "actions")
+    assert not hasattr(section, "callback")
+
+
+def test_unknown_borrow_does_not_recommend_a_second_supplier_post():
+    progress = CrossProfileBorrowProgress(
+        "unknown", "unavailable", "blocked",
+        "loan_result_not_confirmed",
+    )
+    section = cross_profile_borrow_progress_detail_section(progress)
+    assert "ne pas recommencer" in section.fields[0].value
+    assert section.fields[2].value.endswith("bloquée")
+    assert all(field.kind == "text" for field in section.fields)
+
+
+def test_absent_loan_does_not_imply_fresh_offer_or_copy_rights():
+    progress = CrossProfileBorrowProgress(
+        "not_attempted", "unavailable", "not_attempted",
+        "loan_not_attempted",
+    )
+    section = cross_profile_borrow_progress_detail_section(progress)
+    assert "Aucun emprunt effectué" in section.fields[0].value
+    assert "Aucun transfert effectué" in section.fields[2].value
+    assert "Éligible" not in repr(section)
+
+
+def test_unverified_lender_scope_does_not_expose_foreign_loan_status():
+    progress = CrossProfileBorrowProgress(
+        "unknown", "unavailable", "blocked", "lender_scope_unverified",
+    )
+    section = cross_profile_borrow_progress_detail_section(progress)
+    assert "statut du prêt inaccessible" in section.fields[0].value
+    assert "confirmé" not in section.fields[0].value
+
+
+def test_forged_or_actionable_progress_produces_no_detail_section():
+    progress = CrossProfileBorrowProgress(
+        "confirmed", "unavailable", "blocked",
+        "lender_loan_confirmed_transfer_unverified",
+    )
+    assert cross_profile_borrow_progress_detail_section(None) is None
+    for forged in (
+        replace(progress, executable=True),
+        replace(progress, retry_borrow=True),
+        replace(progress, delivery="available"),
+        replace(progress, transfer="completed"),
+        replace(progress, reason_code="PRIVATE_LOAN_ID"),
+        replace(progress, loan="unknown"),
+    ):
+        assert cross_profile_borrow_progress_detail_section(forged) is None
+
+
+def _progress_gtk_renderer(
+    method_name="show_cross_profile_borrow_progress_detail",
+    on_group_title=None,
+):
+    """Compile the real GTK method without importing GI."""
+    from types import SimpleNamespace as NS
+
+    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    owner = next(node for node in tree.body
+                 if isinstance(node, ast.ClassDef) and node.name == "DetailPanel")
+    method = next(node for node in owner.body
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == method_name)
+    events = []
+
+    class Group:
+        def __init__(self):
+            self.rows = []
+        def set_title(self, title):
+            self.title = title
+            if on_group_title is not None:
+                on_group_title()
+        def add(self, row):
+            self.rows.append(row)
+
+    class Row:
+        def set_use_markup(self, enabled):
+            assert enabled is False
+        def set_title(self, title):
+            self.title = title
+        def set_subtitle(self, subtitle):
+            self.subtitle = subtitle
+
+    scope = {
+        "__package__": "cifereca.gui",
+        "SearchResult": __import__("cifereca.models", fromlist=["SearchResult"]).SearchResult,
+        "Adw": NS(PreferencesGroup=Group, ActionRow=Row),
+    }
+    exec(compile(ast.fix_missing_locations(
+        ast.Module(body=[method], type_ignores=[])
+    ), str(source), "exec"), scope)
+    return scope[method_name], events
+
+
+def test_gtk_progress_renders_three_nonactionable_rows_on_same_search_detail():
+    from types import SimpleNamespace as NS
+
+    render, events = _progress_gtk_renderer()
+    item = witness("alice").notice
+    identity = NS(identity_id="default")
+    service = NS(current_identity=identity, _account_context_epoch=4,
+                 _source_context_epoch=9)
+    host = NS(window=NS(service=service),
+              _rendered_search_detail=(item, object()),
+              _append_content=lambda group: events.append(group))
+    progress = CrossProfileBorrowProgress(
+        "confirmed", "unavailable", "blocked",
+        "lender_loan_confirmed_transfer_unverified",
+    )
+    assert render(host, progress, expected_item=item,
+                  requesting_identity_id="default",
+                  expected_context_epoch=4, expected_source_epoch=9)
+    assert len(events) == 1
+    assert events[0].title == "Emprunt entre profils · suivi"
+    assert [row.title for row in events[0].rows] == ["Prêt", "Livraison", "Transfert"]
+    assert "livraison locale" in events[0].rows[2].subtitle
+    assert "confirmé" in events[0].rows[0].subtitle
+    assert all(not hasattr(row, "connect") for row in events[0].rows)
+
+
+def test_gtk_progress_never_appends_stale_or_rebound_detail():
+    from types import SimpleNamespace as NS
+    from dataclasses import replace
+
+    render, events = _progress_gtk_renderer()
+    item = witness("alice").notice
+    other = replace(item, record_id="different")
+    service = NS(current_identity=NS(identity_id="default"),
+                 _account_context_epoch=4, _source_context_epoch=9)
+    host = NS(window=NS(service=service),
+              _rendered_search_detail=(item, object()),
+              _append_content=lambda group: events.append(group))
+    progress = CrossProfileBorrowProgress(
+        "unknown", "unavailable", "blocked", "loan_result_not_confirmed",
+    )
+    kwargs = dict(expected_item=item, requesting_identity_id="default",
+                  expected_context_epoch=4, expected_source_epoch=9)
+    assert render(host, progress, **{**kwargs, "expected_item": other}) is False
+    assert render(host, progress, **{**kwargs, "requesting_identity_id": "alex"}) is False
+    assert render(host, replace(progress, executable=True), **kwargs) is False
+    service._source_context_epoch += 1
+    assert render(host, progress, **kwargs) is False
+    service._source_context_epoch -= 1
+    service.current_identity = NS(identity_id="alex")
+    assert render(host, progress, **kwargs) is False
+    assert events == []
+
+
+def test_gtk_lender_preview_refuses_same_id_context_rebind_mid_render():
+    from types import SimpleNamespace as NS
+
+    item = witness("alice").notice
+    preview = project(witness("alice"))
+    identity = NS(identity_id="bob")
+    service = NS(current_identity=identity, _account_context_epoch=4,
+                 _source_context_epoch=9)
+    rendered = []
+    host = NS(window=NS(service=service),
+              _rendered_search_detail=(item, object()),
+              _append_content=lambda group: rendered.append(group))
+
+    def change_context_during_gtk_build():
+        # The ID and both Core epochs stay unchanged. The context object
+        # itself was replaced after the first guard and before append.
+        service.current_identity = NS(identity_id=identity.identity_id)
+
+    render, _ = _progress_gtk_renderer(
+        "show_cross_profile_borrow_detail",
+        on_group_title=change_context_during_gtk_build,
+    )
+    assert render(
+        host, preview, expected_item=item, expected_edition_id="edition-1",
+        expected_context_epoch=4, expected_source_epoch=9,
+    ) is False
+    assert rendered == []
+    assert service.current_identity.identity_id == identity.identity_id
+    assert service.current_identity is not identity

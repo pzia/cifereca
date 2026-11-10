@@ -232,11 +232,12 @@ def test_selected_dwld_v2_real_mock_transport_stages_acsm_without_adopting_right
     import cifereca_numilog as provider
     core_clients = mock_selected_public_client_from_session(monkeypatch, provider, session)
     try:
-        candidate = session.downloadable_selected_delivery_candidate(
+        candidate = session.downloadable_selected_delivery_candidate_guarded(
             account, edition_id=row.edition_id, resource_id=row.right_id,
             kind="purchase", branch="meslivres",
             selected_offer_id=offer_id, target_dir=target_dir,
             explicit_user_action=True,
+            admission_current=lambda: True,  # synthetic Core lease
         )
         assert requests == [expected, SIGNED]
         assert len(core_clients) == 1

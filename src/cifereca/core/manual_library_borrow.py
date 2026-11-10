@@ -123,6 +123,12 @@ def manual_borrow(
     """
     if confirmed is not True:
         return _result("blocked", "borrow_confirmation_required")
+    # A provider session may be replaced/rebound without changing either the
+    # selected profile or the account epoch. Pin this Core-wide source epoch
+    # before provider inspection and revoke at every later mutating boundary.
+    source_epoch = getattr(service, "_source_context_epoch", None)
+    if type(source_epoch) is not int or source_epoch < 0:
+        return _result("blocked", "borrow_scope_unverified")
     # #3121: no mandatory visual check or additional confirmation. Retain
     # the old keyword for external callers only; it must not change admission.
     if (expected_context_epoch is not None
@@ -174,7 +180,8 @@ def manual_borrow(
         if lease is None or key is None:
             return _result("blocked", "borrow_scope_unverified")
         def current():
-            return (lease.current(service) and (
+            return (getattr(service, "_source_context_epoch", None)
+                    == source_epoch and lease.current(service) and (
                 expected_context_epoch is None
                 or service._account_context_epoch == expected_context_epoch)
                 and (additional_scope_current is None

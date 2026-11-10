@@ -155,7 +155,7 @@ def test_checkpoint_failure_leaves_stage_and_blocks_rename(copy):
         pending_is_current=lambda pin: pytest.fail("checkpoint was never committed"),
     )
     assert (result.status, result.reason, result.detail) == (
-        "blocked", "usb_recovery_checkpoint_failed", "journal unavailable",
+        "blocked", "usb_recovery_checkpoint_failed", None,
     )
     assert (directory / TEMP).read_bytes() == PAYLOAD
     assert not (directory / FINAL).exists()

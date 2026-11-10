@@ -166,15 +166,19 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         connections = service.storage.provider_connections(
             identity_id=evidence.identity_id,
         )
-        if (type(connections) is not list or len(connections) > 512
-                or sum(
-                    type(conn) is dict
-                    and conn.get("provider_id") == evidence.provider_id
-                    and conn.get("credential_id") == evidence.credential_id
-                    and conn.get("identity_id") == evidence.identity_id
-                    and conn.get("enabled") is True
-                    for conn in connections
-                ) != 1):
+        if type(connections) is not list or len(connections) > 512:
+            return "lender_unavailable"
+        exact = [
+            conn for conn in connections
+            if type(conn) is dict
+            and conn.get("provider_id") == evidence.provider_id
+            and conn.get("credential_id") == evidence.credential_id
+            and conn.get("identity_id") == evidence.identity_id
+        ]
+        # One enabled plus one disabled row is *not* a unique binding.
+        # Align the preview with the durable claim and progress admission:
+        # never choose the convenient enabled row and hide the other one.
+        if len(exact) != 1 or exact[0].get("enabled") is not True:
             return "lender_unavailable"
 
         accounts = service.accounts
@@ -265,15 +269,28 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         # This avoids publishing even a non-executable stale option after
         # an ABA switch or a credential/session replacement.
         session_epoch = state.get("_epoch", source_epoch)
-        if type(session_epoch) is not int or session_epoch < 0:
+        # ProviderSession implementations legitimately use opaque strings
+        # (for example a UUID) or no local epoch at all. Do not interpret
+        # a session token as a numeric counter, and never echo its value in
+        # the choice ID. Invalid/unbounded tokens are not proof of freshness.
+        if type(session_epoch) is int and 0 <= session_epoch < (1 << 64):
+            epoch_number = session_epoch
+        elif (type(session_epoch) is str
+              and 0 < len(session_epoch) <= 128
+              and session_epoch.isascii() and session_epoch.isprintable()):
+            from hashlib import sha256
+            epoch_number = int.from_bytes(
+                sha256(b"borrow-session-epoch.v1:" +
+                       session_epoch.encode("ascii")).digest(), "big",
+            )
+        else:
             return "scope_unverified"
-        # A reconnected session may reuse an identical local _epoch and
-        # credential. Include the Core's independent source-generation in
-        # the option ID: Cantor pairing is injective for nonnegative ints,
-        # unlike addition, and never exposes the two underlying counters.
+        # Cantor pairing binds this token to the independent Core source
+        # generation. Changing either value revokes the held click; this
+        # does not authorize any supplier request.
         pinned_epoch = (
-            (source_epoch + session_epoch) *
-            (source_epoch + session_epoch + 1) // 2 + session_epoch
+            (source_epoch + epoch_number) *
+            (source_epoch + epoch_number + 1) // 2 + epoch_number
         )
         if (service._sessions.get(session_key) is not session
                 or _inert_session_state(session) is not state
@@ -403,11 +420,11 @@ def revalidate_live_borrow_lender_selection(
             service, expected_edition_id=expected_edition_id,
             observations=observations, now=now,
         )
-        if (fresh.requesting_identity_id != captured_preview.requesting_identity_id
-                or fresh.executable is not False
-                or fresh.status != captured_preview.status
-                or fresh.requires_explicit_choice !=
-                    captured_preview.requires_explicit_choice):
+        # A held menu is one consent context, not merely the clicked row.
+        # If any other lender/collection is added, removed or rebound, the
+        # exact selection snapshot is stale even when its clicked row is
+        # unchanged. Never silently reuse an old choice under a new menu.
+        if fresh != captured_preview:
             return stale
         matching = [
             option for option in fresh.options

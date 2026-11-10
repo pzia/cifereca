@@ -77,6 +77,8 @@ def test_root_capture_is_installed_before_gtk_outer_scroll_window():
     assert "if not moved:" in source
     assert "release_guard()" in source
     assert "return page_root" in source
+    assert "_scroll_report_adjustment(\n                    page_adjustment, dy, unit, Gdk," in source
+    assert "outer_scroll.get_hadjustment(), dx, unit, Gdk," in source
 
 def test_nested_wheel_at_bottom_moves_outer_if_inner_is_clamped():
     # Mirror the explicit fallback's adjustment contract without GTK or X11.
@@ -104,12 +106,3 @@ def test_nested_wheel_routes_only_to_inner_when_it_can_move():
     assert outer.get_value() == 1383.0
     assert not outer.writes
 
-
-def test_1276_nested_capture_has_explicit_outer_fallback_not_implicit_gtk_chain():
-    from pathlib import Path
-    source = (Path(__file__).resolve().parents[1] / "cifereca_diagnostics_page.py").read_text(
-        encoding="utf-8"
-    )
-    assert "release_guard()" in source
-    assert "_scroll_report_adjustment(\n                    page_adjustment, dy, unit, Gdk," in source
-    assert "outer_scroll.get_hadjustment(), dx, unit, Gdk," in source

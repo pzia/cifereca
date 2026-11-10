@@ -31,9 +31,27 @@ def selected(right, target_dir, **changes):
         kind="purchase", branch="meslivres",
         delivery_offer_id=right.delivery_offer_id,
         target_dir=target_dir, explicit_user_action=True,
+        admission_current=lambda: True,  # synthetic Core admission lease
     )
     request.update(changes)
     return request
+
+
+def test_selected_numilog_requires_live_core_admission_before_any_private_get(tmp_path):
+    session, account, broker, reads, right = setup()
+    try:
+        before = list(reads)
+        bad = selected(right, tmp_path)
+        bad.pop("admission_current")
+        for changes in ({}, {"admission_current": None},
+                        {"admission_current": lambda: False},
+                        {"admission_current": lambda: 0},
+                        {"admission_current": lambda: (_ for _ in ()).throw(RuntimeError("private"))}):
+            with pytest.raises(ProviderCapabilityError, match="numilog_candidate_admission_changed"):
+                session.rights_selected_delivery_candidate(account, **{**bad, **changes})
+        assert reads == before
+    finally:
+        session.close()
 
 
 def test_selected_numilog_executes_existing_offer_guard_once(tmp_path):

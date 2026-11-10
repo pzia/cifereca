@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from types import SimpleNamespace as NS
 import uuid
@@ -23,11 +24,16 @@ def _publish(tmp_path, *, repair, fail_replace, monkeypatch):
     old.write_bytes(b"PRIOR-LEDGER-ARTIFACT")
     real_replace = Path.replace
     if fail_replace:
-        def rejected_replace(self, target):
-            if self == produced and Path(target) == destination:
+        if repair:
+            def rejected_replace(self, target):
+                if self == produced and Path(target) == destination:
+                    raise OSError("synthetic: rename denied")
+                return real_replace(self, target)
+            monkeypatch.setattr(Path, "replace", rejected_replace)
+        else:
+            def rejected_link(*_args, **_kw):
                 raise OSError("synthetic: rename denied")
-            return real_replace(self, target)
-        monkeypatch.setattr(Path, "replace", rejected_replace)
+            monkeypatch.setattr(os, "link", rejected_link)
     inspection = lambda path, *_args: NS(
         valid=True, media_format="epub", protected=False,
     )
@@ -71,8 +77,14 @@ def test_atomic_replace_commits_new_bytes_without_unlink_first(
         tmp_path, repair=repair, fail_replace=False, monkeypatch=monkeypatch,
     )
     final_path, *_rest = run()
-    assert final_path == destination
-    assert destination.read_bytes() == new
+    if repair:
+        assert final_path == destination
+        assert destination.read_bytes() == new
+    else:
+        assert final_path != destination
+        assert final_path.name.startswith("existing.reacquired-")
+        assert final_path.read_bytes() == new
+        assert destination.read_bytes() == previous
     assert not produced.exists()
     # No premature cleanup before completed index+SQLite receipt.
     assert old.exists()
@@ -146,3 +158,210 @@ def test_services_invokes_cleanup_only_after_index_and_completed_ledger():
     cleanup = routine.index("adept_artifact_publication.cleanup_after_commit(")
     assert indexed < receipt < cleanup
     assert routine.index("if acquisition.kind == \"acsm\":", receipt) < cleanup
+
+
+@pytest.mark.parametrize("target", ["produced", "destination"])
+def test_symlinked_adept_input_or_target_never_replaces_valid_bytes(
+    tmp_path, monkeypatch, target,
+):
+    run, produced, destination, old, new, previous = _publish(
+        tmp_path, repair=True, fail_replace=False, monkeypatch=monkeypatch,
+    )
+    external = tmp_path / "unrelated.epub"
+    external.write_bytes(b"UNRELATED-VALID-ARTIFACT")
+    selected = produced if target == "produced" else destination
+    selected.unlink()
+    selected.symlink_to(external)
+    with pytest.raises(ProviderConfigurationError, match="Chemin d"):
+        run()
+    assert selected.is_symlink()
+    assert external.read_bytes() == b"UNRELATED-VALID-ARTIFACT"
+    assert old.read_bytes() == b"PRIOR-LEDGER-ARTIFACT"
+    if target == "produced":
+        assert destination.read_bytes() == previous
+    else:
+        assert produced.read_bytes() == new
+
+
+def test_adept_publisher_rejects_symlinked_staging_directory(
+    tmp_path, monkeypatch,
+):
+    source_dir = tmp_path / "actual-staging"
+    source_dir.mkdir()
+    actual = source_dir / "new.epub"
+    actual.write_bytes(b"NEW")
+    alias_dir = tmp_path / "stage-alias"
+    alias_dir.symlink_to(source_dir, target_is_directory=True)
+    alias = alias_dir / "new.epub"
+    destination = tmp_path / "existing.epub"
+    destination.write_bytes(b"OLD")
+
+    with pytest.raises(ProviderConfigurationError, match="Chemin d"):
+        adept_artifact_publication.publish(
+            result={"artifact": {"path": str(alias), "format": "epub"}},
+            adept_destination=alias, acsm_format="epub",
+            loan=NS(id="synthetic", identity_id="A", source_provider="test"),
+            repair_mode=False, destination=destination, previous_path=None,
+            Path=Path, ProviderConfigurationError=ProviderConfigurationError,
+            inspect_artifact=lambda *_a, **_k: pytest.fail("no inspection"),
+            adept_acsm_plan=adept_acsm_plan, uuid=uuid,
+            _TRACE_LOG=logging.getLogger("synthetic"),
+        )
+    assert actual.read_bytes() == b"NEW"
+    assert destination.read_bytes() == b"OLD"
+
+
+def test_nonrepair_adept_new_destination_is_published_at_exact_name(
+    tmp_path, monkeypatch,
+):
+    run, produced, target, old, fresh, previous = _publish(
+        tmp_path, repair=False, fail_replace=False, monkeypatch=monkeypatch,
+    )
+    target.unlink()  # no prior publication
+    result, *_rest = run()
+    assert result == target
+    assert result.read_bytes() == fresh
+    assert not produced.exists()
+    assert old.is_file()
+
+
+def test_nonrepair_adept_collision_exhaustion_keeps_old_bytes(
+    tmp_path, monkeypatch,
+):
+    run, produced, target, old, fresh, previous = _publish(
+        tmp_path, repair=False, fail_replace=False, monkeypatch=monkeypatch,
+    )
+    # A stable nonce collides across retries. Never overwrite either file
+    # or infer ownership from a matching title/digest or source provider.
+    alternate = target.with_name("existing.reacquired-stable.epub")
+    alternate.write_bytes(b"OTHER RIGHT")
+    monkeypatch.setattr(
+        uuid, "uuid4", lambda: NS(hex="stable"),
+    )
+    with pytest.raises(ProviderConfigurationError, match="occupée"):
+        run()
+    assert target.read_bytes() == previous
+    assert alternate.read_bytes() == b"OTHER RIGHT"
+    assert produced.read_bytes() == fresh
+    assert old.read_bytes() == b"PRIOR-LEDGER-ARTIFACT"
+
+
+def test_nonrepair_adept_symlink_swap_during_commit_refuses_source(
+    tmp_path, monkeypatch,
+):
+    run, produced, destination, old, fresh, previous = _publish(
+        tmp_path, repair=False, fail_replace=False, monkeypatch=monkeypatch,
+    )
+    outside = tmp_path / "foreign.epub"
+    outside.write_bytes(b"FOREIGN")
+    real_link = os.link
+
+    def swapped_source(src, dst, **kwargs):
+        # The sole producer stage is replaced *after* the inspector and
+        # initial stat, but before exclusive hardlink creation.
+        produced.unlink()
+        produced.symlink_to(outside)
+        return real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "link", swapped_source)
+    with pytest.raises(ProviderConfigurationError, match="modifié"):
+        run()
+    assert destination.read_bytes() == previous
+    assert outside.read_bytes() == b"FOREIGN"
+    assert produced.is_symlink()
+    assert not list(tmp_path.glob("existing.reacquired-*"))
+    assert old.read_bytes() == b"PRIOR-LEDGER-ARTIFACT"
+
+
+def test_adept_nonrepair_cross_filesystem_stage_is_never_hardlinked(
+    tmp_path, monkeypatch,
+):
+    """Simulate EXDEV for stage→library; only library-local links are allowed."""
+    import errno
+
+    stage = tmp_path / "other-volume"
+    stage.mkdir()
+    library = tmp_path / "identity" / "Acquisitions"
+    library.mkdir(parents=True)
+    produced = stage / "new.epub"
+    produced.write_bytes(b"NEW FROM OTHER MOUNT")
+    destination = library / "book.epub"
+    destination.write_bytes(b"OLD VALID LOAN")
+    real_link = os.link
+    calls = []
+
+    def across_mount_is_invalid(src, dst, **kwargs):
+        src, dst = Path(src), Path(dst)
+        calls.append((src, dst))
+        if src.parent != dst.parent:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "link", across_mount_is_invalid)
+    published = adept_artifact_publication._publish_new_adept_without_clobber(
+        produced, destination, uuid=uuid,
+        ProviderConfigurationError=ProviderConfigurationError,
+    )
+    assert published != destination
+    assert published.parent == library
+    assert published.read_bytes() == b"NEW FROM OTHER MOUNT"
+    assert destination.read_bytes() == b"OLD VALID LOAN"
+    assert not produced.exists()
+    assert calls
+    assert all(src.parent == library for src, dst in calls)
+    assert not list(library.glob(".adept-publish-*"))
+
+
+def test_adept_nonrepair_failed_link_preserves_stage_and_cleans_private_temp(
+    tmp_path, monkeypatch,
+):
+    stage = tmp_path / "other-volume"
+    stage.mkdir()
+    library = tmp_path / "library"
+    library.mkdir()
+    produced = stage / "new.epub"
+    produced.write_bytes(b"NEW FROM OTHER MOUNT")
+    destination = library / "existing.epub"
+    destination.write_bytes(b"OLD VALID LOAN")
+    def denied(*_args, **_kwargs):
+        raise OSError("synthetic publication denied")
+    monkeypatch.setattr(os, "link", denied)
+
+    with pytest.raises(OSError, match="publication denied"):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            produced, destination, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert produced.read_bytes() == b"NEW FROM OTHER MOUNT"
+    assert destination.read_bytes() == b"OLD VALID LOAN"
+    assert not list(library.glob(".adept-publish-*"))
+
+
+def test_adept_nonrepair_copy_fails_closed_if_staged_inode_changes_while_reading(
+    tmp_path, monkeypatch,
+):
+    """The staging copy is not a licence to adopt a swapped file."""
+    stage = tmp_path / "other-volume"
+    stage.mkdir()
+    library = tmp_path / "library"
+    library.mkdir()
+    produced = stage / "new.epub"
+    produced.write_bytes(b"OLD STAGE")
+    foreign = stage / "foreign.epub"
+    foreign.write_bytes(b"UNRELATED")
+    destination = library / "published.epub"
+    real_open = os.open
+    def swap_at_open(path, *args, **kwargs):
+        if Path(path) == produced:
+            produced.unlink()
+            produced.symlink_to(foreign)
+        return real_open(path, *args, **kwargs)
+    monkeypatch.setattr(os, "open", swap_at_open)
+    with pytest.raises((OSError, ProviderConfigurationError)):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            produced, destination, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert not destination.exists()
+    assert foreign.read_bytes() == b"UNRELATED"
+    assert not list(library.glob(".adept-publish-*"))

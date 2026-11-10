@@ -98,11 +98,11 @@ class DetailPanel(Gtk.Box):
         self.body_scroll.set_min_content_width(240)
         self.body_scroll.set_vexpand(True); self.body_scroll.set_hexpand(True)
         self.append(self.body_scroll)
-        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        self.content.set_margin_top(20)
-        self.content.set_margin_bottom(20)
-        self.content.set_margin_start(20)
-        self.content.set_margin_end(20)
+        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.content.set_margin_top(14)
+        self.content.set_margin_bottom(14)
+        self.content.set_margin_start(16)
+        self.content.set_margin_end(16)
         self.body_scroll.set_child(self.content)
         self.empty("Sélectionnez un livre", "Les détails et actions apparaîtront ici.")
 
@@ -201,8 +201,8 @@ class DetailPanel(Gtk.Box):
                 header.set_orientation(orientation)
             if essential_grid is not None and len(essential) > 1:
                 # Budget for the full cover even if its placeholder is smaller.
-                text_width = width - 120 if side_by_side else width
-                columns = 2 if text_width >= 370 else 1
+                text_width = width - 128 if side_by_side else width
+                columns = 3 if text_width >= 690 else 2 if text_width >= 400 else 1
                 if essential_grid.get_min_children_per_line() != columns:
                     essential_grid.set_min_children_per_line(columns)
 
@@ -242,6 +242,39 @@ class DetailPanel(Gtk.Box):
         widget.connect("unmap", unmapped)
 
     def _group(self, title: str, rows: list[tuple[str, str]], *, fields=(), parent=None):
+        if title == "Bibliothèques et accès":
+            # #4682 / mockup #566: the projection already groups exact
+            # placements, source references and rights by profile. Present
+            # each attested line separately, not as one raw paragraph.
+            group = Adw.PreferencesGroup()
+            group.set_title(title)
+            for profile, description in rows:
+                if not description:
+                    continue
+                card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                card.add_css_class("detail-profile-card")
+                heading = Gtk.Label(label=str(profile), xalign=0)
+                heading.add_css_class("heading")
+                card.append(heading)
+                for line in str(description).splitlines():
+                    if not line.strip():
+                        continue
+                    kind, marker, value = line.partition(": ")
+                    record = Adw.ActionRow()
+                    record.set_use_markup(False)
+                    record.set_title(kind.strip() if marker else "Information")
+                    compact = value if marker else line
+                    record.set_subtitle(compact)
+                    record.set_subtitle_lines(1)
+                    record.set_tooltip_text(line)
+                    record.add_css_class("detail-access-line")
+                    card.append(record)
+                group.add(card)
+            if parent is None:
+                self._append_content(group)
+            else:
+                parent.append(group)
+            return
         if title == "Détail":
             # Explicit and local-only. Per-element actions; no network on display.
             group = Adw.PreferencesGroup()
@@ -306,8 +339,11 @@ class DetailPanel(Gtk.Box):
         grid = None
         if title in {"Essentiel","Notice","Catalogue","Notice EPUB","Bibliothèque","Catalogue connu","Récupération","Historique","Prêt","Réservation"}:
             grid = Gtk.FlowBox(); grid.set_selection_mode(Gtk.SelectionMode.NONE)
-            grid.set_min_children_per_line(1); grid.set_max_children_per_line(2)
-            grid.set_homogeneous(True); grid.set_column_spacing(8); grid.set_row_spacing(4)
+            grid.set_min_children_per_line(1)
+            grid.set_max_children_per_line(3 if title == "Essentiel" else 2)
+            grid.set_homogeneous(True); grid.set_column_spacing(6); grid.set_row_spacing(2)
+            if title == "Essentiel":
+                grid.add_css_class("detail-compact-fields")
             group.add(grid)
         for index, (label, value) in enumerate(rows):
             row = Adw.ActionRow()
@@ -324,7 +360,10 @@ class DetailPanel(Gtk.Box):
             row.set_subtitle_lines(detail_subtitle_lines(title, display_value) if grid is not None else 0)
             row.set_tooltip_text(label+' : '+tooltip_value)
             if grid is not None:
-                row.set_size_request(160, -1); grid.insert(row, -1)
+                row.set_size_request(185 if title == "Essentiel" else 160, -1)
+                if title == "Essentiel":
+                    row.add_css_class("detail-compact-value")
+                grid.insert(row, -1)
             else:
                 group.add(row)
         if parent is None:
@@ -1167,6 +1206,15 @@ class DetailPanel(Gtk.Box):
             group.add(row)
         self._append_content(group)
         self._rendered_search_detail = (item, detail)
+        # Shared Search and Recommendations: already confirmed local lender
+        # claims only, no provider I/O or implicit send consent.
+        try:
+            from .cross_profile_existing_loan_detail import (
+                append_existing_lender_loan_summary,
+            )
+            append_existing_lender_loan_summary(self, item)
+        except Exception:
+            pass
 
     def show_cross_profile_borrow_detail(
         self, preview, *, expected_item: SearchResult,
@@ -1194,16 +1242,79 @@ class DetailPanel(Gtk.Box):
                        for option in preview.options)):
             return False
 
+        try:
+            service = self.window.service
+            requester = service.current_identity
+        except Exception:
+            return False
+
         def current() -> bool:
             try:
-                service = self.window.service
                 rendered = self._rendered_search_detail
                 return bool(
                     type(rendered) is tuple and len(rendered) == 2
                     and rendered[0] is expected_item
-                    and service.current_identity is not None
-                    and service.current_identity.identity_id ==
+                    and service.current_identity is requester
+                    and getattr(requester, "identity_id", None) ==
                         preview.requesting_identity_id
+                    and service._account_context_epoch == expected_context_epoch
+                    and service._source_context_epoch == expected_source_epoch
+                )
+            except Exception:
+                return False
+
+        if not current():
+            return False
+        group = Adw.PreferencesGroup()
+        group.set_title(section.title)
+        for field in section.fields:
+            row = Adw.ActionRow()
+            row.set_use_markup(False)
+            row.set_title(field.label)
+            row.set_subtitle(str(field.value))
+            group.add(row)
+        if not current():
+            return False
+        self._append_content(group)
+        return True
+
+    def show_cross_profile_borrow_progress_detail(
+        self, progress, *, expected_item: SearchResult,
+        requesting_identity_id: str, expected_context_epoch: int,
+        expected_source_epoch: int,
+    ) -> bool:
+        """#4988: show read-only loan/delivery/transfer status for one detail.
+
+        Never fetch a lender's receipt or create buttons here. The caller
+        separately obtains a privacy-scoped Core progress DTO; this renderer
+        rejects stale Search panes and ABA context/source replacements.
+        """
+        from ..core.borrow_for_identity_detail import (
+            cross_profile_borrow_progress_detail_section,
+        )
+        section = cross_profile_borrow_progress_detail_section(progress)
+        if (section is None
+                or type(expected_item) is not SearchResult
+                or type(requesting_identity_id) is not str
+                or not requesting_identity_id
+                or type(expected_context_epoch) is not int
+                or type(expected_source_epoch) is not int
+                or expected_context_epoch < 0 or expected_source_epoch < 0):
+            return False
+        try:
+            service = self.window.service
+            identity = service.current_identity
+        except Exception:
+            return False
+
+        def current() -> bool:
+            try:
+                rendered = self._rendered_search_detail
+                return bool(
+                    type(rendered) is tuple and len(rendered) == 2
+                    and rendered[0] is expected_item
+                    and service.current_identity is identity
+                    and identity.identity_id == requesting_identity_id
                     and service._account_context_epoch == expected_context_epoch
                     and service._source_context_epoch == expected_source_epoch
                 )

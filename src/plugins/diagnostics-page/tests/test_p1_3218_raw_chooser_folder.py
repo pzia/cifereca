@@ -56,3 +56,47 @@ def test_real_save_chooser_is_modal_uses_verified_folder_and_tracks_its_lifetime
     assert "broker.export_raw_journal()" in code
     assert "os.open(destination, flags, 0o600)" in code
     assert "handle.write(content)" in code
+
+    # The native chooser must receive the verified GTK toplevel, never _UiHost.
+    chooser_calls = [
+        node for node in ast.walk(callback)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "new"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "FileChooserNative"
+    ]
+    assert len(chooser_calls) == 1
+    assert isinstance(chooser_calls[0].args[1], ast.Name)
+    assert chooser_calls[0].args[1].id == "parent"
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get_root"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "_button"
+        for node in ast.walk(callback)
+    )
+    assignments = [
+        node for node in ast.walk(callback)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "parent"
+                for target in node.targets)
+    ]
+    assert len(assignments) == 1
+    conditional = assignments[0].value
+    assert isinstance(conditional, ast.IfExp)
+    assert isinstance(conditional.test, ast.Call)
+    assert isinstance(conditional.test.func, ast.Name)
+    assert conditional.test.func.id == "isinstance"
+    assert isinstance(conditional.orelse, ast.Constant)
+    assert conditional.orelse.value is None
+    assert ast.unparse(conditional.body) == "root"
+    assert ast.unparse(conditional.test.args[1]) == "Gtk.Window"
+
+    # Reuse the parsed callback for the raw-export approval and safe file mode.
+    assert "raw_export_armed" in code
+    assert "Confirmer l’export brut non masqué" in code
+    assert "Gtk.FileChooserAction.SAVE" in code
+    assert "Gtk.ResponseType.ACCEPT" in code
+    assert 'getattr(os, "O_NOFOLLOW", 0)' in code
+    assert "os.fchmod(handle.fileno(), 0o600)" in code

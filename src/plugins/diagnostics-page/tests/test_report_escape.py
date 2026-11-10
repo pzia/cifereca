@@ -1,8 +1,6 @@
 """Report Escape leaves unrelated keys and the collapsed state untouched."""
 from types import SimpleNamespace
 
-import pytest
-
 from cifereca_diagnostics_page import _install_report_escape
 
 
@@ -51,18 +49,19 @@ def test_escape_reduces_expanded_report_once_without_closing_it():
     assert sizes == [(-1, 320)]
 
 
-@pytest.mark.parametrize("key,state", [
-    (99, 4),  # Ctrl+C is still handled by TextView.
-    (97, 4),  # Ctrl+A selection remains available.
-    (65289, 0), (65289, 1),  # Tab / Shift+Tab navigation.
-    (65293, 0), (32, 0),  # Enter / Space button activation.
-    (65307, 4), (65307, 8), (65307, 64), (65307, 128),
-])
-def test_unrelated_and_modified_keys_propagate(key, state):
+def test_unrelated_and_modified_keys_propagate():
+    # All keys share the same state; constructing GTK stand-ins per key adds no coverage.
     controller, sizes, resize = report()
-    assert controller.callback(controller, key, 0, state) is False
-    assert sizes == []
-    assert resize.label == "Réduire"
+    for key, state in (
+        (99, 4),  # Ctrl+C is still handled by TextView.
+        (97, 4),  # Ctrl+A selection remains available.
+        (65289, 0), (65289, 1),  # Tab / Shift+Tab navigation.
+        (65293, 0), (32, 0),  # Enter / Space button activation.
+        (65307, 4), (65307, 8), (65307, 64), (65307, 128),
+    ):
+        assert controller.callback(controller, key, 0, state) is False, (key, state)
+        assert sizes == []
+        assert resize.label == "Réduire"
 
 
 def test_escape_on_already_reduced_report_propagates():

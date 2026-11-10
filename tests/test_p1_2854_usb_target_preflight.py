@@ -211,3 +211,34 @@ def test_replaced_managed_path_invalidates_target_preflight(tmp_path, monkeypatc
 
     monkeypatch.setattr(mod, "observe_linux_usb_mount", observe)
     assert mod.preflight_usb_target(**args).reason == "target_directory_changed"
+
+
+@pytest.mark.parametrize("variant", ["fullwidth", "casefold"])
+def test_unicode_equivalent_existing_target_blocks_usb_publication(
+    tmp_path, monkeypatch, variant,
+):
+    from unicodedata import normalize
+
+    args, directory, _, _ = case(tmp_path, monkeypatch)
+    original_name = SHA + ".epub"
+    alias = (
+        normalize("NFKC", original_name).translate(
+            str.maketrans("abcdefghijklmnopqrstuvwxyz",
+                          "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ"))
+        if variant == "fullwidth" else SHA.upper() + ".EPUB"
+    )
+    assert alias != original_name
+    existing = directory / alias
+    existing.write_bytes(b"other-reader-data")
+    result = mod.preflight_usb_target(**args)
+    assert (result.status, result.reason) == ("blocked", "target_occupied")
+    assert result.executable is False
+    assert existing.read_bytes() == b"other-reader-data"
+
+
+def test_target_alias_scanner_refuses_unicode_conflict_without_write(tmp_path, monkeypatch):
+    args, directory, _, _ = case(tmp_path, monkeypatch)
+    existing = directory / (SHA + ".ｅｐｕｂ")
+    existing.write_bytes(b"foreign")
+    assert mod.preflight_usb_target(**args).reason == "target_occupied"
+    assert existing.read_bytes() == b"foreign"

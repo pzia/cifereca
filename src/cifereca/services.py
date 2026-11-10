@@ -288,8 +288,10 @@ class LibraryService:
 
     def can_borrow_bnf(self, item: SearchResult) -> bool:
         """Inert BnF action visibility, never a borrower permission."""
-        from .core.manual_bnf_borrow import manual_bnf_borrow_available
-        return manual_bnf_borrow_available(self, item)
+        from .core.manual_library_borrow import manual_borrow_available
+        return manual_borrow_available(
+            self, item, provider_id="bnf-pret", docbase="BNF_PRET",
+        )
 
     def bnf_borrow_claim_observation(
         self, item: SearchResult, *, expected_identity_id: str,
@@ -300,11 +302,11 @@ class LibraryService:
         checkpoint does not enable a POST; a consumed checkpoint is never
         cleared. No provider call, session refresh or account fallback.
         """
-        from .core.bnf_borrow_claim_observation import (
-            BnfBorrowClaimObservation, observe_bnf_borrow_claim,
+        from .core.borrow_claim_observation import (
+            BorrowClaimObservation, observe_borrow_claim,
         )
 
-        unavailable = BnfBorrowClaimObservation(
+        unavailable = BorrowClaimObservation(
             "scope_unverified", None, False,
         )
         if (type(item) is not SearchResult
@@ -326,9 +328,10 @@ class LibraryService:
         ]
         if len(accounts) != 1:
             return unavailable
-        return observe_bnf_borrow_claim(
+        return observe_borrow_claim(
             storage=self.storage, account=accounts[0], item=item,
             expected_identity_id=expected_identity_id,
+            provider_id="bnf-pret", docbase="BNF_PRET",
         )
 
     def borrow_bnf_manual(
@@ -338,13 +341,86 @@ class LibraryService:
         expected_account: Account | None = None,
     ) -> dict[str, object]:
         """Core-owned explicit BnF action; never use the legacy borrow()."""
-        from .core.manual_bnf_borrow import manual_bnf_borrow
-        return manual_bnf_borrow(
-            self, item, expected_identity_id=expected_identity_id,
+        from .core.manual_library_borrow import manual_borrow
+        return manual_borrow(
+            self, item, provider_id="bnf-pret", docbase="BNF_PRET",
+            expected_identity_id=expected_identity_id,
             confirmed=confirmed, site_checked=site_checked,
             expected_context_epoch=expected_context_epoch,
             expected_account=expected_account,
         )
+
+    def resolve_cross_profile_lender_placement(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+    ):
+        """#4987: read-only exact completed placement owned by lender A."""
+        from .core.borrow_for_identity_placement_resolution import (
+            resolve_cross_profile_lender_placement,
+        )
+        return resolve_cross_profile_lender_placement(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+        )
+
+    def send_confirmed_lender_local_copy(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+        confirmed: bool = False,
+    ) -> dict[str, object]:
+        """#4987: explicit A-to-B copy from an attested completed local loan."""
+        from .core.borrow_for_identity_send_composition import (
+            send_confirmed_lender_local_copy,
+        )
+        return send_confirmed_lender_local_copy(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+            confirmed=confirmed,
+        )
+
+    def preflight_cross_profile_loan_transfer(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+        lender_placement_id: str,
+    ):
+        """#4987: read-only local placement check for explicit 'Envoyer à'."""
+        from .core.borrow_for_identity_transfer_preflight import (
+            preflight_cross_profile_loan_transfer,
+        )
+        return preflight_cross_profile_loan_transfer(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+            lender_placement_id=lender_placement_id,
+        )
+
+    def send_cross_profile_borrowed_placement(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+        lender_placement_id: str, confirmed: bool = False,
+    ) -> dict[str, object]:
+        """#4987: consented A-to-B copy through canonical 'Envoyer à'."""
+        from .core.borrow_for_identity_transfer_executor import (
+            send_cross_profile_borrowed_placement,
+        )
+        return send_cross_profile_borrowed_placement(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+            lender_placement_id=lender_placement_id, confirmed=confirmed,
+        )
+
+    def existing_lender_loan_candidates(
+        self, *, exact_notice: SearchResult,
+    ):
+        """#4988: previous exact lender loans, no fresh borrow/GET/POST.
+
+        A confirmed loan can finish delivery later. An already-spent loan
+        claim is NOT a new borrower-eligibility offer; this read-only view
+        exposes no source path, private account identifier or permission.
+        """
+        from .core.borrow_for_identity_existing_loan import (
+            existing_lender_loan_candidates,
+        )
+        return existing_lender_loan_candidates(self, exact_notice=exact_notice)
 
     def cross_profile_borrow_progress(
         self, *, requesting_identity_id: str,
@@ -398,6 +474,42 @@ class LibraryService:
             selected_option_id=selected_option_id,
             expected_edition_id=expected_edition_id,
             observations=observations, now=now,
+        )
+
+    def prepare_cross_profile_lender_action_plan(
+        self, *, captured_preview, selected_option_id: str,
+        expected_edition_id: str, observations: object,
+        now: int | None = None,
+    ):
+        """#4987: prepare an exact *inert* lender plan for a later consent.
+
+        The plan cannot borrow, transfer, switch identities or authorize a
+        copy. Never treat its status as sufficient authority for a POST.
+        """
+        from .core.borrow_for_identity_action_plan import (
+            prepare_cross_profile_lender_action_plan,
+        )
+        return prepare_cross_profile_lender_action_plan(
+            self, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id,
+            observations=observations, now=now,
+        )
+
+    def execute_cross_profile_borrow(
+        self, *, captured_preview, selected_option_id: str,
+        expected_edition_id: str, observations: object,
+        confirmed: bool = False, now: int | None = None,
+    ) -> dict[str, object]:
+        """#4987: exact one-shot lender loan; no implicit identity switch/copy."""
+        from .core.borrow_for_identity_executor import (
+            execute_cross_profile_borrow,
+        )
+        return execute_cross_profile_borrow(
+            self, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id,
+            observations=observations, confirmed=confirmed, now=now,
         )
 
     def can_borrow_paris(self, item: SearchResult) -> bool:
@@ -533,13 +645,17 @@ class LibraryService:
                 raise
             except Exception:
                 raise BnfLoanActionError('bnf_loan_scope_unproven') from None
-            from .core.bnf_import_provenance import observed_loan, remember_import
+            from .core.observed_loan_scope import observed_loan
+            from .core.observed_import_provenance import remember_observed_import
             display_scope = observed_loan(loan)
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
                                       provider_id='manual', title=title,
                                       placement_provider_id='bnf-pret')
-            remember_import(self, result, display_scope)
+            remember_observed_import(
+                self, result, display_scope, provider_id='bnf-pret',
+                provenance_field='bnf_observed_loan',
+            )
         except BnfLoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
@@ -1654,17 +1770,6 @@ class LibraryService:
                 )
         return result
 
-    def _acquire_personal_library_item(self, session, row, identity_id: str) -> dict[str, Any]:
-        """Deprecated fail-closed backup shim; never called by mirroring.
-
-        The old method passed Numilog SearchResult dictionaries to the
-        unsupported ProviderSession.download_library_item contract, then
-        swallowed errors as if opening acquisition had succeeded. A per-book
-        user action must instead use the existing direct acquisition broker,
-        which validates the provider, account and ACSM/ADEPT path.
-        """
-        return {"status": "blocked", "reason": "explicit_acquisition_required"}
-
     def recent_acquisitions(self, *, identity_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         """Return recent local materializations, newest first.
 
@@ -1695,6 +1800,28 @@ class LibraryService:
         """
         return library_mutation.materialize_to_identity(self, placement_id, target_identity_id)
 
+    def send_present_placement_copy(
+        self, *, source_placement_id: str, source_identity_id: str,
+        source_artifact_id: str, requesting_identity_id: str,
+        expected_account_context_epoch: int,
+        expected_source_context_epoch: int, confirmed: bool = False,
+    ) -> dict[str, object]:
+        """#4662: explicit local A→B copy, independent of provider loan status.
+
+        Uses the exact existing "Envoyer à" physical transfer under the Core
+        lock, without deriving an entitlement, ACSM operation or a loan POST.
+        """
+        from .core.present_placement_copy import send_present_placement_copy
+        return send_present_placement_copy(
+            self, source_placement_id=source_placement_id,
+            source_identity_id=source_identity_id,
+            source_artifact_id=source_artifact_id,
+            requesting_identity_id=requesting_identity_id,
+            expected_account_context_epoch=expected_account_context_epoch,
+            expected_source_context_epoch=expected_source_context_epoch,
+            confirmed=confirmed,
+        )
+
     def enrich_numilog_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
         """User-triggered metadata-only Numilog enrichment; never auto-sync."""
         from .core.numilog_explicit_enrichment import enrich_numilog_result_once
@@ -1703,35 +1830,31 @@ class LibraryService:
         )
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
-        if (item.source_provider == "numilog"
-                and item.source_credential == "__public__"
-                and item.scenario == "NUMILOG_PUBLIC"
-                and item.source_collection == "public_catalog"):
-            # The public listing is already descriptive and has no borrower
-            # session. Never re-route a public record to B's MesLivres.
+        # Catalogue-only projections do not attest borrower rights. The
+        # source's public sentinel or an explicitly read-only projection
+        # precludes a private holdings GET, regardless of provider name.
+        # Never promote these rows to a purchase/loan or resolve a private URL.
+        public_catalogue = (
+            item.source_credential == "__public__"
+            and item.source_collection == "public_catalog"
+        )
+        shared_catalogue = (
+            type(item.metadata) is dict
+            and item.metadata.get("catalogue_access") == "shared_read_only"
+        )
+        if public_catalogue or shared_catalogue:
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
                 type=item.type, year=item.published_at,
                 thumbnail_url=item.thumbnail_url,
                 availability_status="unknown",
-                availability_label="Catalogue public · achat non attesté",
-                holdings=[], source_provider="numilog",
-                source_credential="__public__",
-            )
-        if (item.source_provider == "kobo"
-                and type(item.metadata) is dict
-                and item.metadata.get("catalogue_access") == "shared_read_only"):
-            # Public-only Kobo discovery does not license a foreign-account
-            # holdings or delivery GET, even when the same session is online.
-            return ItemDetail(
-                record_id=item.record_id, docbase=item.docbase,
-                title=item.title, author=item.author,
-                type=item.type, year=item.published_at,
-                thumbnail_url=item.thumbnail_url,
-                availability_status="unknown",
-                availability_label="Catalogue Kobo partagé · droits non consultés",
-                holdings=[], source_provider="kobo",
+                availability_label=(
+                    "Catalogue public · achat non attesté"
+                    if public_catalogue else
+                    "Catalogue partagé · droits non consultés"
+                ),
+                holdings=[], source_provider=item.source_provider,
                 source_credential=item.source_credential,
             )
         # An authenticated Paris catalogue may be browsed from another local
@@ -2720,20 +2843,6 @@ class LibraryService:
             raise ProviderConfigurationError(str(exc)) from exc
 
     @staticmethod
-    def _kobo_canonical_drm(value: Any) -> str:
-        raw = str(value or "").strip()
-        key = re.sub(r"[^a-z0-9]", "", raw.lower())
-        if key in {"signednodrm", "nodrm", "none"}:
-            return "SignedNoDrm"
-        if key in {"kdrm", "kobo"}:
-            return "KDRM"
-        if key in {"adobedrm", "adept", "adobeadept"}:
-            return "AdobeDrm"
-        if key == "kobokdrm":
-            return "KDRM"
-        return raw or "unknown"
-
-    @staticmethod
     def _kobo_url_format(candidate: dict[str, Any]) -> str | None:
         value = (
             candidate.get("url_format")
@@ -3152,6 +3261,25 @@ class LibraryService:
         can bind them to a local Artifact.
         """
         return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
+
+    def library_entries_all_profiles(self) -> list[dict[str, Any]]:
+        """Read the shared Library without conflating placements across owners.
+
+        A profile is an optional view filter, not a confidentiality boundary.
+        Each per-profile projection retains its existing exact Placement and
+        entitlement checks. Never merge rows solely by SHA across profiles,
+        rewrite an owner, scan the filesystem, or refresh a supplier here.
+        """
+        result: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for identity in self.identities:
+            identity_id = getattr(identity, "identity_id", None)
+            if type(identity_id) is not str or not identity_id or identity_id in seen:
+                continue
+            seen.add(identity_id)
+            for entry in self.library_entries(identity_id=identity_id, scan=False):
+                result.append({"identity_id": identity_id, "entry": entry})
+        return result
 
     def reading_preference_snapshot(self, *, identity_id: str):
         """Read only explicitly stored local feedback for the active identity.
@@ -4308,13 +4436,19 @@ class LibraryService:
             )
         is_acsm = path.suffix.casefold() == ".acsm"
         if not is_acsm and path.is_file():
-            # A provider may yield a final file directly. Publish it into the
-            # Paris-owned library only after the provider stage succeeded.
-            published = library_target_dir / path.name
-            if path.resolve() != published.resolve():
-                published.parent.mkdir(parents=True, exist_ok=True)
-                path.replace(published)
-                path = published
+            # #5225: historical direct loans have not yet migrated to the
+            # full canonical A->B receipt pipeline. At minimum never allow a
+            # supplier-chosen filename to overwrite an unrelated library
+            # artifact, or escape this Core-owned private staging directory.
+            # The common publication helper creates an exclusive destination
+            # on the library filesystem, independently of the source mount.
+            from .core.loan_direct_publication import (
+                publish_direct_loan_candidate,
+            )
+            path = publish_direct_loan_candidate(
+                path, work_dir=target_dir,
+                library_target_dir=library_target_dir,
+            )
         try:
             size = path.stat().st_size
         except OSError:

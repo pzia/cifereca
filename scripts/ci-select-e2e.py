@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+THEME = ("modern-light-1366", "modern-light-1600")
 LLM = ("llm-settings-1366", "llm-settings-1600")
 MAINT = ("maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728")
 # P0 source operations affect the real Synchronisation page even when no
@@ -22,7 +23,7 @@ SYNC_PRODUCERS = frozenset((
 ))
 CAPTURE_GTK = ("capture-session-gtk-1366",)
 BUSY_GTK = ("task-busy-settings-1366",)
-BOOK_DETAIL = ("book-detail-1300", "book-detail-1366", "book-detail-1600")
+BOOK_DETAIL = ("book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700")
 BNF_COVERS = ("bnf-covers-1366",)
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 SEARCH_GTK = ("search-filter-p0", "search-filter-1024")
@@ -40,14 +41,14 @@ CONSTELLATIONS = DETAIL + CONSTELLATIONS_GTK
 RECOMMENDATIONS_GTK = ("recommendations-detail-1024-hidpi", "recommendations-detail-1024", "recommendations-detail-1366", "recommendations-detail-1600")
 RECOMMENDATIONS = DETAIL + RECOMMENDATIONS_GTK
 OPTIMIZER_GTK = ("optimizer-handoff-1366", "optimizer-handoff-1600")
-ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK + BNF_COVERS + BUSY_GTK
+ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK + BNF_COVERS + BUSY_GTK + THEME
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          *CAPTURE_GTK, "startup", "core-navigation", "diagnostics-navigation-1366",
          "diagnostics-navigation-slow-1366")
 # MainWindow changes affect core/detail and Diagnostics navigation probes.
 MAINWINDOW = tuple(dict.fromkeys(
     CORE + ("diagnostics-navigation-1366", "diagnostics-navigation-slow-1366")
-    + RECOMMENDATIONS_GTK + BNF_COVERS
+    + RECOMMENDATIONS_GTK + BNF_COVERS + THEME
 ))
 # The Diagnostics common probe is imported by every other Diagnostics probe;
 # navigation probes also implement both MainWindow baseline scenarios.
@@ -57,6 +58,8 @@ DIAG_STATES = ("diagnostics-states-1366", "diagnostics-navigation-1366",
                "mainwindow-baseline-1366", "mainwindow-baseline-1600")
 
 LOCAL_GUI = {
+    "modern_light_theme.py": THEME,
+    "shell_stylesheet_controller.py": THEME,
     "action_layout.py": BOOK_DETAIL,
     "action_widgets.py": BOOK_DETAIL + RECOMMENDATIONS_GTK,
     "book_facets.py": SEARCH_GTK + BOOK_DETAIL,
@@ -77,12 +80,13 @@ LOCAL_GUI = {
     "maintenance_line_widgets.py": MAINT,
 }
 PROBES = {
+    "e2e/modern_light_theme_probe.py": THEME,
     "e2e/task_busy_settings_probe.py": BUSY_GTK,
     "e2e/capture_session_gtk_probe.py": CAPTURE_GTK,
     "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366"),
     "e2e/book_detail_probe.py": BOOK_DETAIL,
     "e2e/bnf_cover_probe.py": BNF_COVERS,
-    "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK,
+    "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK + THEME,
     "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
     "e2e/optimizer_handoff_probe.py": OPTIMIZER_GTK,
     "e2e/llm_settings_probe.py": LLM,

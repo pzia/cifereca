@@ -229,6 +229,7 @@ def compute_recommendations(
     exclude_owned: bool = True,
     explicit_signals: tuple[ExplicitReadingSignal, ...] | None = None,
     use_saved_explicit_preferences: bool = False,
+    documentary_source_policy: str = "neutral",
     snapshot_cache: LibrarySnapshotCache | None = None,
     progress: Callable[[int, int, str], None] | None = None,
     partial: Callable[[RecommendationPartial], None] | None = None,
@@ -298,10 +299,22 @@ def compute_recommendations(
     # purchases, loans, EPUB data or catalogue provenance.
     # Preserve the original call contract for the default path (including
     # instrumentation that wraps build_profile(books) with one positional arg).
-    profile = (build_profile(books) if explicit_signals is None
-               else build_profile(
-                   books, identity_id=identity_id, explicit_signals=explicit_signals,
-               ))
+    if (type(documentary_source_policy) is not str
+            or documentary_source_policy not in ("neutral", "attested_local")):
+        raise ValueError("invalid_documentary_source_policy")
+    if documentary_source_policy == "attested_local":
+        profile = build_profile(
+            books, identity_id=identity_id, explicit_signals=explicit_signals,
+            documentary_source_policy="attested_local",
+        )
+    else:
+        # Unchanged historical baseline, including its public mockable call
+        # contract and optional explicit-feedback arguments.
+        profile = (build_profile(books) if explicit_signals is None
+                   else build_profile(
+                       books, identity_id=identity_id,
+                       explicit_signals=explicit_signals,
+                   ))
     queries = build_queries(books, max_queries=max_queries, profile=profile)
     profile_ms = (time.perf_counter() - profile_started) * 1000.0
 
@@ -449,16 +462,16 @@ def compute_recommendations(
                     cache_batches += 1
                 else:
                     network_batches += 1
-                warnings.extend(str(x) for x in tuple(getattr(batch, "warnings", ()) or ()))
-                error = str(getattr(batch, "error_message", "") or "").strip()
+                warnings.extend("catalogue_batch_warning" for _ in tuple(getattr(batch, "warnings", ()) or ()))
+                error_reported = bool(getattr(batch, "error_message", None))
                 failure_code = getattr(batch, "error_code", None)
                 if provider_id in observed:
                     counters = observed[provider_id]
                     counters[0] += 1
                     counters[1] += len(rows)
-                    counters[2] += int(bool(error or failure_code))
-                if error:
-                    warnings.append(f"{provider_id}: {error}")
+                    counters[2] += int(bool(error_reported or failure_code))
+                if error_reported:
+                    warnings.append("catalogue_provider_failed")
                 if progress:
                     done = (query_index - 1) * provider_total + min(provider_done, provider_total)
                     progress(
@@ -477,14 +490,14 @@ def compute_recommendations(
                     on_batch=on_batch,
                     control=control,
                 )
-                warnings.extend(str(x) for x in tuple(getattr(summary, "warnings", ()) or ()))
+                warnings.extend("catalogue_summary_warning" for _ in tuple(getattr(summary, "warnings", ()) or ()))
                 if bool(getattr(summary, "cancelled", False)):
                     was_cancelled = True
-            except Exception as exc:
+            except Exception:
                 if cancelled_or_revoked():
                     was_cancelled = True
                 else:
-                    warnings.append(f"{query}: {exc}")
+                    warnings.append("catalogue_search_failed")
             batches.append(_merge_provider_rows(grouped, providers)[: max(10, int(per_query))])
         else:
             try:
@@ -494,11 +507,11 @@ def compute_recommendations(
                 ingest_provisional(rows)
                 batches.append(rows[: max(10, int(per_query))])
                 emit_partial(query_index, provider_total)
-            except Exception as exc:
+            except Exception:
                 if cancelled_or_revoked():
                     was_cancelled = True
                 else:
-                    warnings.append(f"{query}: {exc}")
+                    warnings.append("catalogue_search_failed")
                 batches.append([])
 
         if progress and not was_cancelled:
