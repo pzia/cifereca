@@ -6,6 +6,7 @@ from copy import copy
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+from cifereca.core.covers import candidate
 from cifereca.core.loan_cover_fallback import loan_local_cover
 from cifereca.core.loan_source_identity import loan_source_key
 from cifereca.models import Loan
@@ -20,7 +21,8 @@ def ui_method():
         node for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "_loan_display_cover"
     )
-    namespace = {"Loan": Loan, "copy": copy, "loan_local_cover": loan_local_cover}
+    namespace = {"Loan": Loan, "copy": copy, "loan_local_cover": loan_local_cover,
+                 "candidate": candidate}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[owner], type_ignores=[])),
                  str(PATH), "exec"), namespace)
     return namespace["_loan_display_cover"]
@@ -102,3 +104,33 @@ def test_no_provider_io_or_mutation_in_loan_render_adapter():
     assert "loan_local_cover(" in method
     assert "show_loan(_loan_display_cover(self, loan))" in source
     assert "show_loan(_loan_display_cover(self, fresh))" in source
+
+
+def test_untrusted_supplier_cover_never_prevents_exact_local_fallback():
+    adapt = ui_method()
+    for private in (
+        "https://cdn.example/covers/book.jpg?token=PRIVATE",
+        "http://127.0.0.1/admin",
+        "https://reader.local/book.jpg",
+        "file:///home/another-user/private/cover.jpg",
+        "https://cdn.example/book.jpg#PRIVATE",
+    ):
+        original = a_loan(image=private)
+        host = NS(service=NS(current_identity=NS(identity_id="alice")),
+                  _library_entries_cache=[a_row(original)])
+        visible = adapt(host, original)
+        assert visible is not original
+        assert visible.thumbnail_url == "file:///home/alice/.cache/cifereca/cover.png"
+        assert original.thumbnail_url == private
+        assert visible.id == original.id
+
+
+def test_untrusted_supplier_url_without_attested_fallback_is_hidden():
+    adapt = ui_method()
+    original = a_loan(image="https://cdn.example/cover.jpg?access_token=PRIVATE")
+    host = NS(service=NS(current_identity=NS(identity_id="alice")),
+              _library_entries_cache=[])
+    visible = adapt(host, original)
+    assert visible is not original
+    assert visible.thumbnail_url is None
+    assert original.thumbnail_url.endswith("PRIVATE")

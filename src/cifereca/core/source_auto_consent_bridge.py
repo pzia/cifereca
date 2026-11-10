@@ -50,15 +50,22 @@ def toggle_state(db, source: SourceKey):
     """
     if type(source) is not SourceKey:
         return "off"
-    generic = policy_in_transaction(db, source.scope)
-    if generic.configured:
-        from .source_enablement import source_enabled
-        enabled = db.execute(
-            "SELECT value FROM metadata WHERE key=?",
-            ("sync.source.enabled." + _source_id(source.scope),),
-        ).fetchone()
-        return ("on" if generic.mode == "on"
-                and source_enabled(enabled[0] if enabled else None) else "off")
+    try:
+        generic = policy_in_transaction(db, source.scope)
+        if generic.configured:
+            from .source_enablement import source_enabled
+            from .source_sync_consent import source_enablement_key
+            enabled = db.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                (source_enablement_key(source.scope),),
+            ).fetchone()
+            return ("on" if generic.mode == "on"
+                    and source_enabled(enabled[0] if enabled else None) else "off")
+    except Exception:
+        # Failed CAS or enablement reads are not proof that there is no
+        # policy. Falling back to an older ON after an unreadable CAS row
+        # would resurrect a revoked or unverified automatic acquisition.
+        return "off"
     spec = _POLICIES.get((source.scope.provider_id, source.kind))
     if spec is None:
         return None

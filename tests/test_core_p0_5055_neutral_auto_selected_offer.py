@@ -90,3 +90,55 @@ def test_incomplete_abi_refuses_before_any_snapshot(missing):
     )
     assert (status, facts) == ("unavailable", None)
     assert trace == []
+
+
+@pytest.mark.parametrize("name", [
+    "rights_selected_delivery_offer_snapshot",
+    "rights_selected_delivery_candidate",
+])
+def test_loan_offer_preflight_refuses_property_without_calling_getter(name):
+    _session, account, loan, _selected, _right, trace = _rig()
+    observed = []
+
+    def private_getter(_session):
+        observed.append("private-network-call")
+        raise RuntimeError("PRIVATE_CREDENTIAL")
+
+    class Dynamic:
+        pass
+
+    setattr(Dynamic, name, property(private_getter))
+    dynamic = Dynamic()
+    for field in (
+        "rights_selected_delivery_offer_snapshot",
+        "rights_selected_delivery_candidate",
+    ):
+        if field != name:
+            setattr(dynamic, field, lambda *_a, **_k: None)
+    assert select_exact_loan_offer(
+        dynamic, account, loan, branch="private-loans",
+        current=lambda: True,
+    ) == ("unavailable", None)
+    assert observed == [] and trace == []
+
+
+def test_loan_offer_preflight_refuses_dynamic_getattribute_without_invocation():
+    _session, account, loan, _selected, _right, trace = _rig()
+    observed = []
+
+    class Proxy:
+        def __getattribute__(self, name):
+            observed.append(name)
+            raise RuntimeError("PRIVATE_SESSION")
+
+        def rights_selected_delivery_offer_snapshot(self, *_a, **_k):
+            raise AssertionError("not admitted")
+
+        def rights_selected_delivery_candidate(self, *_a, **_k):
+            raise AssertionError("not admitted")
+
+    assert select_exact_loan_offer(
+        Proxy(), account, loan, branch="private-loans",
+        current=lambda: True,
+    ) == ("unavailable", None)
+    assert observed == [] and trace == []
