@@ -76,6 +76,9 @@ def _setup(monkeypatch, tmp_path, *, mismatch=False, rebind=False, borrower_rebi
             next(iter(kwargs["persisted_consent"]))
         )
         assert kwargs.get("expected_source_policy_revision") is None
+        assert kwargs["explicitly_confirmed_once"] is True
+        assert kwargs["explicit_entitlement_id"] == "right"
+        assert callable(kwargs["publication_guard"])
         return [NS(source=next(iter(kwargs["persisted_consent"])),
                    status="downloaded", artifact_id="sha256:result")]
     monkeypatch.setattr(manual, "execute_admitted_convergence", execute)
