@@ -14,7 +14,18 @@ from .numilog_manifest_rights import _scoped_record_id, numilog_inventory_bindin
 from .passive_source_session import passive_direct_download_capable
 
 
-def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any, Any, str]:
+def _canonical_guarded_source(session: Any) -> bool:
+    """Provider-neutral, passive v2 acceptance; never demands legacy direct_download."""
+    from inspect import getattr_static
+    from .canonical_delivery_abi import has_complete_delivery_abi
+    return (has_complete_delivery_abi(session)
+            and callable(getattr_static(
+                session, "downloadable_selected_delivery_candidate_guarded", None,
+            )))
+
+
+def require_source(service: Any, item: Any, *, session: Any = None,
+                   canonical_only: bool = False) -> tuple[Any, Any, str]:
     """Recheck provider, source and live session before/after the download."""
     refused = "Numilog : offre téléchargeable ou compte non attesté ; actualiser le fournisseur"
     try:
@@ -51,7 +62,12 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
                 or not numilog_inventory_binding_valid(
                     service, account, session=active,
                 )
-                or not passive_direct_download_capable(active)):
+                or not (
+                    canonical_only is True
+                    and _canonical_guarded_source(active)
+                    or canonical_only is False
+                    and passive_direct_download_capable(active)
+                )):
             raise ValueError("source_rebound")
         identity = service.identity_by_id(account.identity_id)
         if identity is None:
