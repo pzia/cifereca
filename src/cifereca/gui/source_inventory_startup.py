@@ -90,23 +90,20 @@ def due_startup_identities(window: Any, broker: Any) -> tuple[str, ...]:
 
 
 def dispatch_after_opening(window: Any) -> bool:
-    """Queue separate bounded inventory and consented backup workers."""
+    """Queue the bounded inventory refresh; no provider-specific GET worker."""
     if getattr(window, "_closed", False):
         return False
-    # Both automatic jobs are independent consents, but their Core paths
-    # share the *non-blocking* acquisition lock. Never submit both in
-    # parallel: a same-startup inventory sync can consume the global lock
-    # and permanently spend the one-hour Numilog materialization claim.
-    # If there is no due inventory, the consented backup still starts.
-    from .numilog_materialization_startup import dispatch_after_opening as materialize
+    # Provider download is owned exclusively by canonical source-sync A→B.
+    # A legacy startup consent may be read/revoked, but must not queue a
+    # second provider-specific acquisition worker.
     if getattr(window, "_source_inventory_startup_dispatched", False):
         return False
     broker = _broker(window)
     if broker is None:
-        return materialize(window)
+        return False
     identities = due_startup_identities(window, broker)
     if not identities:
-        return materialize(window)
+        return False
     window._source_inventory_startup_dispatched = True
 
     def work():
@@ -142,17 +139,15 @@ def dispatch_after_opening(window: Any) -> bool:
         return SyncResult(ok=True) if completed else None
 
     def after_inventory(_result=None):
-        # The lock has been released when TaskRunner calls the GTK terminal
-        # callback. The source materialization worker rechecks consent and
-        # binding on execution; this callback grants no acquisition itself.
+        # Scheduled inventory never grants an acquisition or starts a
+        # second Numilog-specific downloader after source Sync.
         if getattr(window, "_closed", False) or _broker(window) is not broker:
             return
-        materialize(window)
 
     def inventory_failed(_error):
         # TaskRunner already records this automatic inventory failure.
-        # Do not turn a failed startup worker into an unsolicited modal;
-        # preserve the independently consented backup and show a local hint.
+        # Do not turn a failed inventory worker into an unsolicited modal;
+        # report a local hint, without starting a second GET worker.
         # Never forward the exception: it may embed signed provider URLs.
         after_inventory()
         if getattr(window, "_closed", False) or _broker(window) is not broker:
@@ -171,5 +166,5 @@ def dispatch_after_opening(window: Any) -> bool:
         )
     except Exception:
         window._source_inventory_startup_dispatched = False
-        return materialize(window)
+        return False
     return True
