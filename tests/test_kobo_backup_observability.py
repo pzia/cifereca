@@ -177,38 +177,33 @@ def _service(tmp_path: Path, *, manifest, unauthorized=False):
     return service, session
 
 
-def test_backup_diagnostic_aggregates_persisted_errors_without_network(tmp_path: Path):
+def test_backup_diagnostic_ignores_archived_w2_errors_without_network(tmp_path: Path):
     service, _session = _service(tmp_path, manifest=[])
     try:
         for index, message in enumerate([
-            "Kobo-Vault : Bearer token invalide",
-            "Kobo-Vault : Bearer token invalide",
-            "Kobo-Vault ne fournit pas de candidat EPUB/PDF HTTP direct compatible",
+            "Bearer PRIVATE_TOKEN",
+            "Bearer PRIVATE_TOKEN",
+            "https://private.example/?signature=SECRET",
         ]):
             service.storage.backup_put({
-                "provider_id": "kobo",
-                "credential_id": "vault-1",
-                "item_id": f"book-{index}",
-                "revision_id": f"rev-{index}",
-                "title": f"Book {index}",
-                "author": "Author",
-                "format": "EPUB",
-                "status": "error",
-                "error": message,
+                "provider_id": "kobo", "credential_id": "vault-1",
+                "item_id": f"book-{index}", "title": f"Private {index}",
+                "status": "error", "error": message,
             })
-
+        before = service.storage.backup_list("kobo")
         service._sessions = {}
-        service.kobo_adept_state = lambda **kwargs: (_ for _ in ()).throw(AssertionError("diagnostic must stay offline"))
-
+        service.kobo_adept_state = lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("diagnostic must stay offline")
+        )
         report = service.kobo_backup_diagnostic()
-
-        assert report["items"] == 3
-        assert report["statuses"] == {"error": 3}
-        assert report["error_summary"][0] == {
-            "message": "Kobo-Vault : Bearer token invalide",
-            "count": 2,
-        }
-        assert len(report["error_examples"]) == 2
+        assert report["items"] == 0
+        assert report["statuses"] == {}
+        assert report["error_summary"] == []
+        assert report["error_examples"] == []
+        assert report["sources"] == []
+        assert service.storage.backup_list("kobo") == before
+        assert "PRIVATE_TOKEN" not in json.dumps(report)
+        assert "private.example" not in json.dumps(report)
     finally:
         service.close()
 
