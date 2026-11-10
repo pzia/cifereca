@@ -127,3 +127,35 @@ def test_contradictory_cached_metadata_is_not_admission(case, key, value):
     case.service.storage.entitlement_put({**case.right, 'metadata':{**case.right['metadata'],key:value}})
     assert case.service.owned_library_download_target(case.entry) is None
     assert case.calls == []
+
+
+@pytest.mark.parametrize("boundary", ["provider_get", "post_download"])
+def test_source_epoch_aba_rebound_cannot_publish_numilog_receipt(case, monkeypatch, boundary):
+    """Even a restored exact session/account cannot revive a stale GET."""
+    from cifereca.providers import ProviderConfigurationError
+    from cifereca.core.source_context import source_context_epoch
+
+    service = case.service
+    service._source_context_epoch = 31
+    original_download = case.session.download_direct
+    original_hook = service.acquisition.run_post_download
+    if boundary == "provider_get":
+        def changed_during_get(*args, **kwargs):
+            result = original_download(*args, **kwargs)
+            service._source_context_epoch += 2  # source A -> B -> A
+            return result
+        case.session.download_direct = changed_during_get
+    else:
+        def changed_during_hook(*args, **kwargs):
+            service._source_context_epoch += 2
+            return original_hook(*args, **kwargs)
+        monkeypatch.setattr(service.acquisition, "run_post_download", changed_during_hook)
+
+    assert source_context_epoch(service) == 31
+    with pytest.raises(ProviderConfigurationError):
+        service.acquire_direct_item(case.item)
+    assert source_context_epoch(service) == 33
+    assert case.calls == [case.item.record_id]
+    assert service.storage.acquisitions(provider_id="numilog") == []
+    # The first uncertain GET must never be retried implicitly.
+    assert len(case.calls) == 1
