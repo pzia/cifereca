@@ -69,6 +69,14 @@ def test_confirmation_revalidates_exact_borrower_after_preview(
     rig = request.getfixturevalue("canonical" if mode == "canonical" else "case")
     case = rig.case if mode == "canonical" else rig
     preview = case.broker.prepare_local_materialization(case.source)
+    if mode == "legacy":
+        # Retired W2 cannot issue any token, regardless of future account
+        # rebound; no provider manifest, GET or receipt may be touched.
+        assert not preview.ok
+        assert preview.facts["status"] == "canonical_delivery_unavailable"
+        assert "confirmation_token" not in preview.facts
+        assert not case.downloaded and not any(case.calls.values())
+        return
     assert preview.ok
     original = case.target.accounts[0]
     case.target._accounts = [replace(original, **{mutation: value})]
@@ -105,5 +113,5 @@ def test_kobo_default_adapter_label_remains_valid_for_named_core_owner(
         assert rig.calls == []
     else:
         assert not preview.ok
-        assert preview.facts["status"] == "reconciliation_required"
+        assert preview.facts["status"] == "canonical_delivery_unavailable"
     assert not case.downloaded
