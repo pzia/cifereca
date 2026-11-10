@@ -9,6 +9,7 @@ from typing import ClassVar
 
 from ..models import SearchResult
 from ..plugin_api import Cancelled
+from .source_context import source_context_epoch
 from .numilog_manifest_rights import _scoped_record_id
 from .numilog_manual_acquisition import require_source
 from .numilog_local_preview import _identity_root
@@ -26,6 +27,7 @@ class NumilogOwnedDownloadTarget:
     item_id: str
     configuration: tuple
     session_id: int
+    context_epoch: int
     session: object = field(compare=False, repr=False)
 
 
@@ -78,7 +80,7 @@ def _resolve(service, entitlement_id, identity_id, item_id):
     target = NumilogOwnedDownloadTarget(
         entitlement_id, identity_id, sid, account.credential_id, account_id, item_id,
         (service.config.get('library.directory', '~/EBooks'), tuple(str(p) for p in roots)),
-        id(session), session,
+        id(session), source_context_epoch(service), session,
     )
     return target, item
 
@@ -111,6 +113,11 @@ def obtain(service, target):
     try:
         _require(type(target) is NumilogOwnedDownloadTarget)
         def admission():
+            # An A→B→A profile/session rebind must not revive a target
+            # captured before the intervening configuration revision.
+            # Fail before any private provider GET; equality of the final
+            # identity and session pointers alone is insufficient.
+            _require(source_context_epoch(service) == target.context_epoch)
             fresh, item = _resolve(service, target.entitlement_id, target.identity_id, target.item_id)
             _require(fresh == target and fresh.session is target.session)
             return item
