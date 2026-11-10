@@ -50,6 +50,7 @@ def setup(*, with_core=True, item=None):
     window.service._source_context_epoch = 7
     window._identity_context_generation = 4
     window._account_context_generation = 8
+    window._library_scope_generation = 2
     called = []
     if with_core:
         def send(**kw):
@@ -172,5 +173,19 @@ def test_changed_profile_during_confirmation_does_not_start_copy():
     )
     actions[0].click()
     window.service.current_identity = NS(identity_id="alice")
+    dialog.respond("send")
+    assert not queued and not calls
+
+
+def test_library_scope_toggle_revokes_old_copy_even_if_identity_is_unchanged():
+    window, row, detail, actions, _events, queued, calls, deps = setup()
+    dialog = Dialog()
+    assert add_foreign_present_placement_send(
+        window, detail, row, TaskPriority=deps["TaskPriority"],
+        dialog_factory=lambda _window: dialog,
+    )
+    actions[0].click()
+    assert dialog.shown
+    window._library_scope_generation += 1
     dialog.respond("send")
     assert not queued and not calls
