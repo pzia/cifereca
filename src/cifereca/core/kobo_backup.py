@@ -47,21 +47,6 @@ def kobo_backup_interval_minutes(self) -> int:
         return 60
 
 
-def _kobo_backup_target_dir(self, identity_id: str | None=None) -> Path:
-    identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else "default")
-    configured = os.path.expandvars(os.path.expanduser(str(self.config.get("kobo_backup.directory", "") or "").strip()))
-    if configured:
-        base = Path(configured)
-        if not base.is_absolute():
-            base = self.library_dir() / base
-        identity = self.identity_by_id(identity_id)
-        directory_name = identity.directory_name if identity and identity.directory_name else identity_id
-        path = base / safe_library_component(directory_name, "default") / "kobo"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    return self.library_identity_provider_dir(identity_id, "kobo")
-
-
 def _kobo_preview_paths(self, identity_id: str) -> tuple[Path, Path]:
     """Derive Kobo paths without creating a directory or touching metadata."""
     configured_root = os.path.expandvars(os.path.expanduser(
