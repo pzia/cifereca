@@ -1,7 +1,7 @@
 """#4858 W2: route a selected legacy Kobo resume through canonical A→B.
 
 This adapter exists only at the PUBLIC, *unlocked* LibraryService boundary.
-The 0.7 backup worker still owns incomplete-ABI sessions; its internal entry
+The 0.7 backup worker still owns sessions with *no* canonical ABI; its internal entry
 points remain closed to complete-ABI sessions. A canonical Sync owns the global
 lock itself, validates fresh provider A/offers/consent and publishes B.
 """
@@ -13,7 +13,7 @@ from typing import Any
 from ..models import Account
 from ..plugin_api import Cancelled
 from ..providers import ProviderConfigurationError
-from .canonical_delivery_abi import has_complete_delivery_abi
+from .canonical_delivery_abi import (has_complete_delivery_abi, has_incomplete_delivery_abi)
 from .source_context import source_context_epoch
 from .source_sync_consent import read_policy, scope_for_account
 
@@ -50,7 +50,7 @@ def _valid_id(value):
 
 
 def _account_and_session(service, credential_id):
-    # Legacy dispatch is permissible ONLY when the provider ABI is partial.
+    # Legacy dispatch is permissible ONLY when no canonical ABI is declared.
     # The probe does not fetch any inventory, resolve a candidate or touch SQL.
     sessions = [
         session for session in service._sessions.values()
@@ -59,6 +59,8 @@ def _account_and_session(service, credential_id):
         and getattr(session, "connected", None) is True
     ]
     if not any(has_complete_delivery_abi(session) for session in sessions):
+        if any(has_incomplete_delivery_abi(session) for session in sessions):
+            raise ProviderConfigurationError("kobo_canonical_abi_partial_no_legacy_fallback")
         return None
     if len(sessions) != 1:
         raise ProviderConfigurationError("kobo_canonical_source_ambiguous")
