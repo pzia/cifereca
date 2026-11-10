@@ -1,4 +1,4 @@
-"""Public Diagnostics boundary: useful Numilog causes without private payloads."""
+"""Provider Numilog diagnostics integration: bounded public events, no private payloads."""
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,7 +26,7 @@ def test_real_delivery_producer_to_canonical_journal_keeps_cause_correlation_and
     import logging
 
     monkeypatch.syspath_prepend(
-        str(Path(__file__).resolve().parents[1] / 'src/plugins/provider-numilog')
+        str(Path(__file__).resolve().parents[1])
     )
     from cifereca_numilog_delivery_trace import DeliveryTrace
     from cifereca.logging_utils import CanonicalEventFormatter
