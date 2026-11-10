@@ -201,10 +201,9 @@ def acquire_numilog_direct(
                     )
                     return bool(
                         owner.identity_id == identity.identity_id
-                        and getattr(
-                            getattr(service, "current_identity", None),
-                            "identity_id", None,
-                        ) == identity.identity_id
+                        # A background on-start worker follows its bound
+                        # source; the currently selected GTK profile is not
+                        # its authority and may be unrelated or absent.
                         and source_context_epoch(service) == source_epoch
                         and active is pinned_session
                         and account_id == pinned_account_id
