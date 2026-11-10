@@ -62,6 +62,16 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      - name: Temporary provider Core LOC inventory (Paris included)
+        run: |
+          python scripts/ci_provider_core_coupling_inventory.py --json > /tmp/provider-core-loc.json
+          python - <<'PY'
+          import json
+          report = json.load(open('/tmp/provider-core-loc.json'))
+          keys = ('dedicated_lines', 'dedicated_files', 'dedicated_by_provider', 'generic_files_with_provider_literal', 'generic_provider_literal_lines_unique', 'parse_errors')
+          print('PROVIDER_CORE_LOC_RESULT=' + json.dumps({key: report[key] for key in keys}, sort_keys=True))
+          PY
+
       - name: Install packaging prerequisites
         run: |
           python -m pip install --disable-pip-version-check "setuptools>=69" wheel "packaging>=24,<26" "httpx>=0.28.1,<0.29"
