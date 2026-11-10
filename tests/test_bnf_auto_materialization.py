@@ -41,6 +41,27 @@ def test_bnf_auto_default_denies_get_then_imports_once(connected_core, tmp_path,
     assert materialize(service, account, loan)['status'] == 'skipped'
 
 
+def test_auto_bnf_hostile_session_getter_never_runs_or_gets(
+    connected_core, monkeypatch,
+):
+    """The consent and action lease must not evaluate plugin accessors."""
+    service, session, account, loan, state, downloaded = connected_core
+    broker = SynchronizationBrokerImpl(service)
+    assert broker.set_bnf_auto_download(broker._source_id(account), True)
+    reads = []
+
+    def hostile(_session):
+        reads.append("provider-getter-executed")
+        raise RuntimeError("unexpected provider side effect")
+
+    monkeypatch.setattr(type(session), "accounts", property(hostile))
+    result = materialize(service, account, loan)
+    assert result["status"] in {"skipped", "attention_required"}
+    assert reads == []
+    assert downloaded == []
+    assert service.storage.acquisitions() == []
+
+
 def test_bnf_auto_rejects_changed_account_before_http(connected_core):
     service, session, account, loan, state, downloaded = connected_core
     broker = SynchronizationBrokerImpl(service)

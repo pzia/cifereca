@@ -93,12 +93,22 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
     session = service._sessions.get(
         service._session_key('bnf-pret', account.credential_id),
     )
-    provider_epoch = getattr(session, '_epoch', None)
+    from .loan_action_scope import _inert_session_state, _inert_session_accounts
+    initial_session_state = _inert_session_state(session)
+    provider_epoch = (
+        initial_session_state.get('_epoch')
+        if initial_session_state is not None else None
+    )
 
     def current() -> bool:
         try:
+            # A plugin getter is not evidence of a connected session.
+            session_state = _inert_session_state(session)
+            session_accounts = _inert_session_accounts(session)
             return (
-                enabled(service, account)
+                session_state is not None
+                and session_accounts is not None
+                and enabled(service, account)
                 and service.storage.metadata_get(
                     policy_key(account) + '.revision'
                 ) == consent_revision
@@ -106,9 +116,11 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
                 and service._sessions.get(
                     service._session_key('bnf-pret', account.credential_id),
                 ) is session
-                and getattr(session, '_epoch', None) == provider_epoch
-                and session.connected is True
-                and sum(row is account for row in session.accounts) == 1
+                and session_state.get('_epoch') == provider_epoch
+                and session_state.get('provider_id') == account.provider_id
+                and session_state.get('credential_id') == account.credential_id
+                and session_state.get('connected') is True
+                and sum(row is account for row in session_accounts) == 1
                 and (
                     account.identity_id, account.credential_id,
                     account.unique_id, loan.id, loan.record_id,
