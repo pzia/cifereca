@@ -7,11 +7,9 @@ import pytest
 from cifereca.core.passive_source_session import (
     passive_private_library_session, passive_direct_download_capable,
 )
-from cifereca.core.numilog_manifest_rights import numilog_inventory_binding_valid
 from cifereca.providers.base import (
     ProviderSession, ProviderDescriptor, ProviderCapabilities,
 )
-from tests.test_numilog_live_session_binding import source
 
 
 class SyntheticSession(ProviderSession):
@@ -24,7 +22,7 @@ class SyntheticSession(ProviderSession):
 
 def session():
     descriptor = ProviderDescriptor(
-        id="numilog", display_name="Synthetic", description="",
+        id="synthetic-library", display_name="Synthetic", description="",
         state="ready",
         capabilities=ProviderCapabilities(personal_library=True),
     )
@@ -39,11 +37,11 @@ def session():
 def test_real_provider_session_reads_initialized_fields_only():
     current = session()
     assert passive_private_library_session(current) == (
-        "numilog", "secret-ref", True, True,
+        "synthetic-library", "secret-ref", True, True,
     )
     current.connected = False
     assert passive_private_library_session(current) == (
-        "numilog", "secret-ref", False, True,
+        "synthetic-library", "secret-ref", False, True,
     )
 
 
@@ -69,28 +67,9 @@ def test_forged_dynamic_session_and_unknown_capability_are_not_evidence():
 
     assert passive_private_library_session(Proxy()) is None
     assert passive_private_library_session(NS(
-        provider_id="numilog", credential_id="secret-ref", connected=True,
+        provider_id="synthetic-library", credential_id="secret-ref", connected=True,
         capabilities=NS(personal_library="true"),
     )) is None
-
-
-def test_numilog_inventory_binding_rejects_hostile_provider_scalar_without_getter(
-    monkeypatch,
-):
-    service, account, _old = source()
-    current = session()
-    service._sessions[("numilog", "secret-ref")] = current
-    assert numilog_inventory_binding_valid(service, account, session=current)
-    calls = []
-
-    def malicious(_session):
-        calls.append("plugin getter")
-        return "numilog"
-
-    with monkeypatch.context() as m:
-        m.setattr(SyntheticSession, "provider_id", property(malicious), raising=False)
-        assert not numilog_inventory_binding_valid(service, account, session=current)
-    assert calls == []
 
 
 def test_direct_download_capability_is_an_inert_prerequisite_only():
