@@ -1114,139 +1114,17 @@ class SynchronizationBrokerImpl:
         )
 
     def audit_local_reconciliation(self, source_id: str) -> SyncResult:
-        """Run the bounded offline Kobo SHA audit for exactly one source (#1345).
+        """Retired W4 archive audit: never open old backup rows or local files.
 
-        Unlike a refresh/materialization request, this read-only operation is
-        available even while the source is disabled or disconnected. No
-        provider, session, manifest, network or acquisition API is called.
-        Return only allowlisted totals: original audit cases/paths/identifiers
-        must never become a public plugin or GTK payload.
+        Use canonical source rights and verified B instead. The old SHA
+        reconciliation report was not an acquisition or ownership proof.
         """
-        def rejected(reason: str) -> SyncResult:
-            return SyncResult(
-                ok=False, changed=0, warnings=(reason,),
-                facts={"phase": "reconcile", "status": reason,
-                       "read_only": True, "acquisition_authorized": False},
-            )
-
-        try:
-            account = self._find_account(source_id)
-        except (ValueError, TypeError):
-            return rejected("unknown_source")
-        if getattr(account, "provider_id", None) != "kobo":
-            return rejected("not_supported")
-        credential = getattr(account, "credential_id", None)
-        identity = getattr(account, "identity_id", None)
-        if type(credential) is not str or not credential or type(identity) is not str or not identity:
-            return rejected("invalid_source")
-        try:
-            if self.service.storage.identity_for_connection("kobo", credential) != identity:
-                return rejected("invalid_source")
-        except (AttributeError, KeyError, ValueError, TypeError):
-            return rejected("invalid_source")
-
-        try:
-            from .core.kobo_local_audit import (
-                kobo_local_reconciliation_audit, _TRUNCATION_REASONS,
-            )
-            raw = kobo_local_reconciliation_audit(
-                self.service, credential_id=credential,
-            )
-        except ValueError as exc:
-            # Ambiguous/stale account ownership must be a public fixed code,
-            # never a credential or path echoed from a provider or database.
-            if str(exc) == "ambiguous_kobo_audit_scope":
-                return rejected("ambiguous_source")
-            return rejected("audit_unavailable")
-        except Exception:
-            return rejected("audit_unavailable")
-
-        allowed = (
-            "backup_rows", "linked_files_verified", "unverified_placements",
-            "missing_or_unlinked", "stored_hash_mismatch",
-            "unproven_catalogue_links", "same_product_different_bytes",
-            "binary_match_groups", "active_entitlements_unmaterialized",
-            "unindexed_regular_file_candidates", "identity_flat_file_candidates",
-        )
-        counts = raw.get("counts") if isinstance(raw, dict) else None
-        accounts = raw.get("accounts") if isinstance(raw, dict) else None
-        # #2498: the new shared limits are benign only if the *complete*
-        # Core-owned numeric tuple is validated. Older persisted/mock audits
-        # have no budget fields and must remain backward compatible.
-        budget_keys = (
-            "files_hashed_limit", "directory_entries_limit",
-            "total_hash_bytes_limit", "total_hash_bytes_read",
-        )
-        present = [key in raw for key in budget_keys] if isinstance(raw, dict) else []
-        budget = {}
-        if present and any(present):
-            values = tuple(raw.get(key) for key in budget_keys)
-            if (
-                not all(present)
-                or not all(type(value) is int for value in values)
-                or not 1 <= values[0] <= 100_000
-                or not 1 <= values[1] <= 1_000_000
-                or not 1 <= values[2] <= (1 << 40)
-                or not 0 <= values[3] <= values[2]
-            ):
-                return rejected("audit_unavailable")
-            budget = dict(zip(budget_keys, values))
-        # The new diagnostic is all-or-nothing: old v1 audit fixtures lacking
-        # these fields remain valid, but an incomplete/hostile reason list is
-        # never interpolated by a consumer. Causes are Core-owned fixed codes,
-        # and measured attempts are NOT the count of successful SHA digests.
-        reason_keys = (
-            "truncation_reasons", "hash_attempts_used",
-            "directory_entries_inspected",
-        )
-        reason_present = [key in raw for key in reason_keys] if isinstance(raw, dict) else []
-        reason_facts = {}
-        if reason_present and any(reason_present):
-            codes, attempts, inspected = (raw.get(key) for key in reason_keys)
-            if (
-                not all(reason_present) or not budget
-                or type(codes) is not list or len(codes) > len(_TRUNCATION_REASONS)
-                or any(type(code) is not str or code not in _TRUNCATION_REASONS
-                       for code in codes)
-                or codes != sorted(set(codes))
-                or type(raw.get("truncated")) is not bool
-                or bool(codes) != raw["truncated"]
-                or type(attempts) is not int
-                or not 0 <= attempts <= budget["files_hashed_limit"]
-                or type(inspected) is not int
-                or not 0 <= inspected <= budget["directory_entries_limit"]
-            ):
-                return rejected("audit_unavailable")
-            reason_facts = {
-                "truncation_reasons": list(codes),
-                "hash_attempts_used": attempts,
-                "directory_entries_inspected": inspected,
-            }
-        if (
-            not isinstance(raw, dict)
-            or raw.get("schema") != "kobo.local.reconciliation.audit/1"
-            or raw.get("scope") != "single_account"
-            or raw.get("offline") is not True
-            or raw.get("read_only") is not True
-            or raw.get("dry_run") is not True
-            or raw.get("downloads_authorized") is not False
-            or raw.get("mutations_authorized") is not False
-            or type(raw.get("truncated")) is not bool
-            or not isinstance(accounts, list) or len(accounts) != 1
-            or not isinstance(accounts[0], dict) or accounts[0].get("account") != "account-1"
-            or not isinstance(counts, dict) or set(counts) != set(allowed)
-            or any(type(counts[name]) is not int or not 0 <= counts[name] <= 1_000_000
-                   for name in allowed)
-        ):
-            return rejected("audit_unavailable")
         return SyncResult(
-            ok=True, changed=0,
+            ok=False, changed=0, warnings=("legacy_reconciliation_retired",),
             facts={
-                "phase": "reconcile", "status": "audit_only",
+                "phase": "reconcile", "status": "legacy_reconciliation_retired",
                 "read_only": True, "acquisition_authorized": False,
-                "offline": True, "truncated": raw["truncated"],
-                "counts": {name: counts[name] for name in allowed},
-                **budget, **reason_facts,
+                "offline": True,
             },
         )
 
