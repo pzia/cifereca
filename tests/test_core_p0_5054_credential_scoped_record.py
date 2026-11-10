@@ -1,4 +1,7 @@
-"""P0 #5054: exact credential record scope is structural, not rights proof."""
+"""P0 #5054: provider-neutral record scoping is structural, not rights proof.
+
+No vendor implementation, fixture or legacy wrapper may be imported here.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -6,7 +9,6 @@ import hashlib
 import pytest
 
 from cifereca.core.credential_scoped_record import exact_credential_scoped_record
-from cifereca.core.numilog_manifest_rights import _scoped_record_id
 
 
 def make(provider="future-store", credential="cred-a", lid="edition-1",
@@ -15,7 +17,7 @@ def make(provider="future-store", credential="cred-a", lid="edition-1",
     return f"{provider}:{digest}:{lid}:{variant}"
 
 
-@pytest.mark.parametrize("provider", ["numilog", "future-store", "catalogue"])
+@pytest.mark.parametrize("provider", ["library-a", "future-store", "catalogue"])
 def test_unknown_providers_can_share_format_but_not_credentials(provider):
     record = make(provider=provider)
     assert exact_credential_scoped_record(
@@ -46,22 +48,13 @@ def test_hostile_record_ids_cannot_cross_source_scope(corrupt):
 
 
 @pytest.mark.parametrize(("credential", "provider"), [
-    ("", "numilog"), (None, "numilog"), (1, "numilog"),
-    ("cred", ""), ("cred", "NUMILOG"), ("cred", "provider/name"),
+    ("", "library-a"), (None, "library-a"), (1, "library-a"),
+    ("cred", ""), ("cred", "LIBRARY-A"), ("cred", "provider/name"),
 ])
 def test_invalid_source_identity_fails_closed(credential, provider):
     assert exact_credential_scoped_record(
         make(), provider_id=provider, credential_id=credential,
     ) is None
-
-
-def test_numilog_legacy_record_validator_has_identical_strict_scope():
-    valid = make(provider="numilog", credential="borrower-a")
-    assert _scoped_record_id(valid, "borrower-a") == valid
-    assert _scoped_record_id(valid, "borrower-b") is None
-    assert _scoped_record_id(make(provider="future-store"), "cred-a") is None
-    assert _scoped_record_id("", "borrower-a") is None
-    assert _scoped_record_id("x" * 513, "borrower-a") is None
 
 
 def test_scoped_record_is_not_a_loan_or_purchase_proof():
