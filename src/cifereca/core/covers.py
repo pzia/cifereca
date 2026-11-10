@@ -112,25 +112,50 @@ def _safe_cover_url(value: object) -> str:
     return ''
 
 
+def _validated_cover_candidate(raw: object) -> CoverCandidate | None:
+    """Admit bounded scalar provenance; never coerce plugin-owned objects.
+
+    A malformed candidate must not abort the resolution of independent,
+    already-attested covers or leak an arbitrary __str__/repr payload.
+    """
+    if type(raw) is not CoverCandidate:
+        return None
+    if type(raw.tier) is not str or raw.tier not in _TIER_PRIORITY:
+        return None
+    url = _safe_cover_url(raw.url)
+    if not url or (url.startswith('file:') and raw.tier != 'embedded'):
+        return None
+    if raw.source is None:
+        source = raw.tier
+    elif type(raw.source) is str:
+        source = raw.source or raw.tier
+    else:
+        return None
+    if raw.evidence_id is None:
+        evidence_id = ''
+    elif type(raw.evidence_id) is str:
+        evidence_id = raw.evidence_id
+    else:
+        return None
+    if (len(source) > 128 or not source.isprintable()
+            or len(evidence_id) > 512 or not evidence_id.isprintable()):
+        return None
+    strength = raw.evidence_strength
+    if strength is None:
+        strength = 0
+    if type(strength) is not int or not 0 <= strength <= 1000:
+        return None
+    return CoverCandidate(url, raw.tier, source, evidence_id, strength)
+
+
 def resolve_cover(candidates: Iterable[CoverCandidate]) -> CoverResolution:
-    """Resolve a cover by explicit provenance only."""
+    """Resolve covers independently, rejecting malformed or private inputs."""
     dedup: dict[str, CoverCandidate] = {}
-    for candidate in candidates:
-        if candidate.tier not in _TIER_PRIORITY:
+    for raw in candidates:
+        normalized = _validated_cover_candidate(raw)
+        if normalized is None:
             continue
-        url = _safe_cover_url(candidate.url)
-        if not url or (url.startswith('file:') and candidate.tier != 'embedded'):
-            # file:// is an embedded Core-local resource only. A remote
-            # catalogue, entitlement or direct CoverCandidate cannot turn a
-            # private local path into a selected external image.
-            continue
-        normalized = CoverCandidate(
-            url=url,
-            tier=candidate.tier,
-            source=str(candidate.source or candidate.tier),
-            evidence_id=str(candidate.evidence_id or ''),
-            evidence_strength=max(0, int(candidate.evidence_strength or 0)),
-        )
+        url = normalized.url
         current = dedup.get(url)
         if current is None or (
             _TIER_PRIORITY[normalized.tier], normalized.evidence_strength
@@ -166,10 +191,9 @@ def resolve_cover(candidates: Iterable[CoverCandidate]) -> CoverResolution:
 def candidate(
     url: object, *, tier: CoverTier, source: str, evidence_id: str = '', evidence_strength: int = 0
 ) -> CoverCandidate | None:
-    safe = _safe_cover_url(url)
-    if not safe or (safe.startswith('file:') and tier != 'embedded'):
-        return None
-    return CoverCandidate(safe, tier, source, evidence_id, evidence_strength)
+    return _validated_cover_candidate(CoverCandidate(
+        url, tier, source, evidence_id, evidence_strength,
+    ))
 
 
 __all__ = ['CoverCandidate', 'CoverResolution', 'candidate', 'resolve_cover']
