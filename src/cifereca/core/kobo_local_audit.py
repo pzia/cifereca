@@ -16,7 +16,7 @@ import stat
 from typing import Any
 
 from ..library_files import safe_library_component
-from .kobo_backup import _kobo_preview_paths
+from .profile_source_paths import _kobo_preview_paths
 
 _MAX_RECORDS = 4096
 # Covers a Kobo account with >522 recorded books without assuming that
