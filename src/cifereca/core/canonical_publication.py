@@ -93,6 +93,8 @@ def publish_completed_acquisition(
     context_current: Callable[[], bool] | None = None,
     transaction_guard: Callable[[sqlite3.Connection], bool] | None = None,
     expected_source_policy_revision: str | None = None,
+    explicitly_confirmed_once: bool = False,
+    explicit_entitlement_id: str | None = None,
 ) -> PublicationResult:
     """Publish an *already completed* authorized acquisition into schema v14.
 
@@ -137,6 +139,19 @@ def publish_completed_acquisition(
         raise ValueError("canonical_invalid_epoch_guard")
     if transaction_guard is not None and not callable(transaction_guard):
         raise ValueError("canonical_invalid_transaction_guard")
+    # A Core-confirmed explicit click may use a one-shot, exact-right SQL
+    # guard instead of a persisted source-wide ON policy. Never let the
+    # flag alone grant B, nor weaken the default Sync contract.
+    if (type(explicitly_confirmed_once) is not bool
+            or (not explicitly_confirmed_once and explicit_entitlement_id is not None)
+            or (explicitly_confirmed_once and (
+                transaction_guard is None
+                or expected_source_policy_revision is not None
+                or type(explicit_entitlement_id) is not str
+                or not explicit_entitlement_id
+                or len(explicit_entitlement_id) > 256
+                or any(ord(c) < 32 for c in explicit_entitlement_id)))):
+        raise ValueError("canonical_explicit_transaction_guard_required")
 
     # This is non-authoritative preliminary I/O. The authoritative owner
     # binding and file identity are rechecked *inside* the SQL transaction.
@@ -208,7 +223,8 @@ def publish_completed_acquisition(
         # Only an entirely unset policy may use the historical route.
         policy = policy_in_transaction(db, scope)
         if policy.configured and expected_source_policy_revision is None:
-            raise ValueError("canonical_source_policy_revision_required")
+            if (not explicitly_confirmed_once or policy.mode == "invalid"):
+                raise ValueError("canonical_source_policy_revision_required")
         if expected_source_policy_revision is not None:
             if (type(expected_source_policy_revision) is not str
                     or len(expected_source_policy_revision) != 32
@@ -218,6 +234,21 @@ def publish_completed_acquisition(
             if (policy.mode != "on"
                     or policy.revision != expected_source_policy_revision):
                 raise ValueError("canonical_source_policy_revoked")
+        if explicitly_confirmed_once:
+            # A callable claiming True is not evidence of a user-owned right.
+            # Independently attest the exact persisted purchase in the very
+            # same SQLite transaction as the provider OriginLink/Placement.
+            rows = db.execute(
+                "SELECT 1 FROM entitlements WHERE entitlement_id=? "
+                "AND identity_id=? AND provider_id=? AND credential_id=? "
+                "AND account_id=? AND item_id=? "
+                "AND entitlement_type='owned' AND state='active' "
+                "AND loan_id IS NULL AND expires_at IS NULL LIMIT 2",
+                (explicit_entitlement_id, scope.identity_id, scope.provider_id,
+                 scope.credential_id, scope.account_id, source.edition_id),
+            ).fetchall()
+            if len(rows) != 1 or source.kind != "purchase":
+                raise ValueError("canonical_explicit_right_unproven")
         if transaction_guard is not None and transaction_guard(db) is not True:
             raise ValueError("canonical_publication_policy_changed")
         # Do not rely on a caller's old account-to-credential binding.

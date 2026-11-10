@@ -14,10 +14,14 @@ from .numilog_manual_acquisition import require_source
 from .numilog_local_preview import _identity_root
 from .owned_library_download import OwnedDownloadRejected, _require
 
+_ATTESTED_OWNED_RIGHT_SOURCE = "numilog.authenticated_library"
+
 
 @dataclass(frozen=True, repr=False)
 class NumilogOwnedDownloadTarget:
     provider_id: ClassVar[str] = 'numilog'
+    branch: ClassVar[str] = 'meslivres'
+    attested_source: ClassVar[str] = _ATTESTED_OWNED_RIGHT_SOURCE
     entitlement_id: str
     identity_id: str
     source_id: str
@@ -29,7 +33,7 @@ class NumilogOwnedDownloadTarget:
     session: object = field(compare=False, repr=False)
 
 
-def _resolve(service, entitlement_id, identity_id, item_id):
+def _resolve(service, entitlement_id, identity_id, item_id, *, canonical_offer_id=None):
     from ..brokers import SynchronizationBrokerImpl
     _require(getattr(service.current_identity, 'identity_id', None) == identity_id)
     _require(type(entitlement_id) is str and bool(entitlement_id))
@@ -45,10 +49,58 @@ def _resolve(service, entitlement_id, identity_id, item_id):
         account_id=account.unique_id, item_id=item_id,
     )
     rights, acquisitions = evidence.get('entitlements'), evidence.get('acquisitions')
-    _require(type(rights) is list and len(rights) == 1 and acquisitions == [])
+    # Before GET, absolutely no acquisition receipt may exist. Once the
+    # canonical executor has received its *own* completed bytes, it records
+    # a stage in the shared ledger before publishing OriginLink. Admit ONLY
+    # that exact staged receipt; never ignore a competing or legacy entry.
+    owned_stage = False
+    if canonical_offer_id is not None:
+        from ..plugin_api.provider_rights_observation import ProviderRightsScope
+        from .source_convergence import SourceKey
+        from .canonical_recovery import _stage_id, _SCHEMA, _STAGED
+        from .canonical_delivery_abi import has_complete_delivery_abi
+        _require(type(canonical_offer_id) is str and canonical_offer_id
+                 and len(canonical_offer_id) <= 256)
+        _require(has_complete_delivery_abi(
+            service._sessions.get(service._session_key('numilog', account.credential_id))
+        ))
+        key = SourceKey(
+            ProviderRightsScope(identity_id, account.provider_id,
+                                account.credential_id, account.unique_id),
+            item_id, item_id, 'purchase', NumilogOwnedDownloadTarget.branch,
+        )
+        receipt_id = _stage_id(key, canonical_offer_id)
+        # The bounded preflight deliberately does not expose metadata_json.
+        # Read ONLY this candidate receipt from the neutral ledger API,
+        # after its exact ID and all public coordinates have matched.
+        candidate = acquisitions[0] if (
+            type(acquisitions) is list and len(acquisitions) == 1
+            and type(acquisitions[0]) is dict
+            and acquisitions[0].get('acquisition_id') == receipt_id
+            and acquisitions[0].get('status') == _STAGED
+            and acquisitions[0].get('identity_id') == identity_id
+            and acquisitions[0].get('account_id') == account.unique_id
+            and acquisitions[0].get('item_id') == item_id
+        ) else None
+        staged = service.storage.acquisition_get(receipt_id) if candidate else None
+        owned_stage = (
+            type(staged) is dict
+            and staged.get('acquisition_id') == receipt_id
+            and staged.get('status') == _STAGED
+            and staged.get('identity_id') == identity_id
+            and staged.get('provider_id') == account.provider_id
+            and staged.get('credential_id') == account.credential_id
+            and staged.get('account_id') == account.unique_id
+            and staged.get('item_id') == item_id
+            and type(staged.get('metadata')) is dict
+            and staged['metadata'].get('schema') == _SCHEMA
+            and staged['metadata'].get('offer_id') == canonical_offer_id
+        )
+    _require(type(rights) is list and len(rights) == 1
+             and (acquisitions == [] or owned_stage))
     right = rights[0]
     metadata = right.get('metadata')
-    _require(type(metadata) is dict and metadata.get('source') == 'numilog.authenticated_library'
+    _require(type(metadata) is dict and metadata.get('source') == _ATTESTED_OWNED_RIGHT_SOURCE
              and right.get('entitlement_id') == entitlement_id
              and right.get('identity_id') == identity_id
              and right.get('credential_id') == account.credential_id
@@ -59,7 +111,10 @@ def _resolve(service, entitlement_id, identity_id, item_id):
              and (metadata.get('downloadable') is None or metadata.get('downloadable') is True)
              and (metadata.get('owned') is None or metadata.get('owned') is True)
              and (metadata.get('archived') is None or metadata.get('archived') is False))
-    _require(not service.storage.numilog_purchase_has_local_conflict(
+    # The single Core-owned staged journal is not another local Placement.
+    # Every other collision is still a veto, including another receipt for
+    # the same edition with a different offer ID.
+    _require(owned_stage or not service.storage.numilog_purchase_has_local_conflict(
         credential_id=account.credential_id, item_id=item_id,
     ))
     scalar = lambda key: metadata.get(key) if type(metadata.get(key)) is str else None
@@ -106,6 +161,19 @@ def target_for_entry(service, entry):
         return None
 
 
+def _selected_owned_right_current(service, target, *, selected_offer_id=None) -> bool:
+    """Live right and source check, permitting only Core's own staged receipt."""
+    try:
+        if type(target) is not NumilogOwnedDownloadTarget:
+            return False
+        fresh, _ = _resolve(
+            service, target.entitlement_id, target.identity_id, target.item_id,
+            canonical_offer_id=selected_offer_id,
+        )
+        return fresh == target and fresh.session is target.session
+    except Exception:
+        return False
+
 def obtain(service, target):
     """Revalidate the exact target throughout the locked manual executor."""
     try:
@@ -117,6 +185,16 @@ def obtain(service, target):
         item = admission()
         owner = service.identity_by_id(target.identity_id)
         _require(owner is not None)
+        # Installed Numilog v2 sessions use the sole canonical A→B writer.
+        # Never route a complete guarded producer back into the historical
+        # download_direct + numilog_delivered_artifact_v1 receipt namespace.
+        from .canonical_delivery_abi import has_complete_delivery_abi
+        if has_complete_delivery_abi(target.session):
+            from .explicit_owned_canonical import obtain_explicit_owned
+            return obtain_explicit_owned(
+                service, target, resolve=_resolve,
+                right_current=_selected_owned_right_current,
+            )
         from .numilog_materialization_checkpoint import index_delivered
         acquired = service.acquire_direct_item(item, _admission=admission)
         return index_delivered(service, acquired, title=item.title)

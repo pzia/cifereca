@@ -208,3 +208,54 @@ def test_matching_revision_remains_idempotent_after_policy_gate(
                      expected_source_policy_revision=revision)
     assert first.changed and not second.changed
     assert rows(store) == (1, 1, 1, 1)
+
+
+@pytest.mark.parametrize("policy_on", (False, True))
+def test_explicit_click_publishes_exact_owned_right_even_when_auto_off(
+    store, tmp_path, policy_on,
+):
+    key, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    _policy(store, key.scope, policy_on)
+    store.entitlement_put({
+        "entitlement_id": "exact-owned", "identity_id": "A",
+        "provider_id": "seller", "credential_id": "card-A",
+        "account_id": "buyer-A", "item_id": "edition",
+        "entitlement_type": "owned", "state": "active",
+        "metadata": {"source": "synthetic-authenticated"},
+    })
+    result = publish(
+        store, tmp_path / "EBooks", path, key, snapshot,
+        explicitly_confirmed_once=True, explicit_entitlement_id="exact-owned",
+        transaction_guard=lambda _db: True,
+    )
+    assert result.changed is True
+    assert rows(store) == (1, 1, 1, 1)
+
+
+@pytest.mark.parametrize("proof", ("absent_right", "wrong_right", "no_guard", "guard_revoked"))
+def test_explicit_click_never_turns_a_flag_into_owned_proof(
+    store, tmp_path, proof,
+):
+    key, snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    path = target(tmp_path, "A")
+    _policy(store, key.scope, False)
+    if proof != "absent_right":
+        store.entitlement_put({
+            "entitlement_id": "actual", "identity_id": "A",
+            "provider_id": "seller", "credential_id": "card-A",
+            "account_id": "buyer-A", "item_id": "edition",
+            "entitlement_type": "owned", "state": "active",
+            "metadata": {"source": "synthetic-authenticated"},
+        })
+    options = {
+        "explicitly_confirmed_once": True,
+        "explicit_entitlement_id": "wrong" if proof == "wrong_right" else "actual",
+        "transaction_guard": None if proof == "no_guard"
+                             else lambda _db: proof != "guard_revoked",
+    }
+    with pytest.raises(ValueError, match="canonical_explicit_|canonical_publication_policy_changed"):
+        publish(store, tmp_path / "EBooks", path, key, snapshot, **options)
+    assert rows(store) == (0, 0, 0, 0)
