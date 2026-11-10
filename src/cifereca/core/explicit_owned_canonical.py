@@ -215,6 +215,7 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                 persisted_consent=frozenset({key}),
                 consent_still_current=live_permission,
                 explicitly_confirmed_once=True,
+                explicit_entitlement_id=target.entitlement_id,
                 publication_guard=publication_guard,
                 deliver=lambda source, chosen: complete_selected_delivery(
                     service, account, session, source, chosen,
