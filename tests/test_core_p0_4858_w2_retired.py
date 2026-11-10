@@ -106,3 +106,38 @@ def test_d1_partial_abi_cannot_refresh_legacy_manifest(tmp_path, monkeypatch):
         assert service.storage.backup_list("kobo") == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("account_index", [0, 1, 2])
+@pytest.mark.parametrize("legacy_token", ["", "a" * 64, "not-a-token"])
+def test_all_bound_profiles_refuse_legacy_w2_confirmation_and_get(
+    case, monkeypatch, account_index, legacy_token,
+):
+    """Old W2 tokens are not transferable or executable for any borrower.
+
+    Three independent connected sessions, with distinct credentials and
+    identities, must all fail closed. No provider manifest, acquisition,
+    backup writer or checkpoint is contacted by a mere confirmation attempt.
+    """
+    from cifereca.core import source_materialization as materialize
+
+    session = case.sessions[account_index]
+    source_id = case.broker._source_id(session.accounts[0])
+    monkeypatch.setattr(
+        session, "backup_manifest",
+        lambda: pytest.fail("retired W2 must not GET provider inventory"),
+    )
+    monkeypatch.setattr(
+        case.service.storage, "backup_put",
+        lambda *_a, **_k: pytest.fail("retired W2 must not write backup_items"),
+    )
+    before_calls = dict(case.calls)
+    preview = materialize.prepare(case.broker, source_id)
+    assert not preview.ok
+    assert preview.facts["status"] == "canonical_delivery_unavailable"
+    assert "confirmation_token" not in preview.facts
+    replay = materialize.execute(case.broker, source_id, legacy_token)
+    assert not replay.ok
+    assert replay.facts["status"] == "canonical_delivery_unavailable"
+    assert case.calls == before_calls
+    assert not case.downloaded
