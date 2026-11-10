@@ -16,7 +16,9 @@ def _sha(path):
 
 
 @pytest.mark.parametrize("placement", [None, "bnf-pret"])
-@pytest.mark.parametrize("damage", ["none", "changed", "invalid", "symlink"])
+@pytest.mark.parametrize("damage", [
+    "none", "changed", "invalid", "symlink", "dangling_symlink", "missing", "directory",
+])
 def test_completed_acsm_reuse_requires_exact_artifact_for_every_provider(
     tmp_path, placement, damage,
 ):
@@ -27,11 +29,17 @@ def test_completed_acsm_reuse_requires_exact_artifact_for_every_provider(
     original_sha = _sha(artifact)
     if damage == "changed":
         artifact.write_bytes(b"modified epub")
-    if damage == "symlink":
+    if damage in {"symlink", "dangling_symlink"}:
         target = tmp_path / "target.epub"
-        target.write_bytes(b"synthetic epub")
+        if damage == "symlink":
+            target.write_bytes(b"synthetic epub")
         artifact.unlink()
         artifact.symlink_to(target)
+    if damage == "missing":
+        artifact.unlink()
+    if damage == "directory":
+        artifact.unlink()
+        artifact.mkdir()
 
     class Storage:
         def acquisition_get(self, acquisition_id):
