@@ -350,6 +350,34 @@ class LibraryService:
             expected_account=expected_account,
         )
 
+    def resolve_cross_profile_lender_placement(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+    ):
+        """#4987: read-only exact completed placement owned by lender A."""
+        from .core.borrow_for_identity_placement_resolution import (
+            resolve_cross_profile_lender_placement,
+        )
+        return resolve_cross_profile_lender_placement(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+        )
+
+    def send_confirmed_lender_local_copy(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+        confirmed: bool = False,
+    ) -> dict[str, object]:
+        """#4987: explicit A-to-B copy from an attested completed local loan."""
+        from .core.borrow_for_identity_send_composition import (
+            send_confirmed_lender_local_copy,
+        )
+        return send_confirmed_lender_local_copy(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+            confirmed=confirmed,
+        )
+
     def preflight_cross_profile_loan_transfer(
         self, *, requesting_identity_id: str,
         borrowing_account: Account, exact_notice: SearchResult,

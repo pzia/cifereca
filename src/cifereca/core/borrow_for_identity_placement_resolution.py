@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from ..models import Account, SearchResult
 from .borrow_for_identity_progress import observed_cross_profile_borrow_progress
+from .library_projection import local_placement_for_source
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -67,7 +68,10 @@ def resolve_cross_profile_lender_placement(
                 loan=progress.loan if progress.loan in
                      ("confirmed", "unknown", "not_attempted") else "unknown",
             )
-        row = service.local_placement_for_source(
+        # The public LibraryService facade has a frozen four-coordinate ABI.
+        # Use the existing internal exact-account reader, not that facade.
+        row = local_placement_for_source(
+            service,
             provider_id=account.provider_id,
             credential_id=account.credential_id,
             item_id=notice.record_id,
