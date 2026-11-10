@@ -35,7 +35,7 @@ def received_book_file_within_root(path: Any, root_dir: Any) -> bool:
         if (not isinstance(path, Path) or not trusted_local_directory(root_dir)
                 or path.is_symlink() or not path.is_file()):
             return False
-         root = root_dir.resolve(strict=True)
+        root = root_dir.resolve(strict=True)
         current = path.parent
         if not path.resolve(strict=True).is_relative_to(root):
             return False
