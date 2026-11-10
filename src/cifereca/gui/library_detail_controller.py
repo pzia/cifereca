@@ -76,9 +76,11 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         trace.record("projection", projection_started)
     detail.show_presentation(presentation, description=description)
     window._add_local_book_actions(detail,item)
+    if not foreign:
+        # Preserve original action ordering for current-profile details.
+        window._add_book_recommendation_action(detail, item)
     window._add_facets(window.library_page.detail, item, window.library_controls)
     if not foreign:
-        window._add_book_recommendation_action(detail, item)
         # Descriptive foreign metadata must not trigger provider-bound
         # details or plugin actions with B's selected credentials.
         window._add_plugin_book_actions(detail, item)
