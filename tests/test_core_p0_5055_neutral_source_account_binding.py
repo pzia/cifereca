@@ -62,3 +62,42 @@ def test_rebound_provider_account_refuses_even_if_session_still_connected(connec
     assert not source_account_binding_ready(
         service, account, expected_provider_id=account.provider_id,
     )
+
+
+def test_live_session_getter_is_never_read_at_binding_boundary(
+    connected_core, monkeypatch,
+):
+    """An untrusted plugin property may not execute while proving identity."""
+    service, session, account, _loan, _state, downloaded = connected_core
+    assert source_account_binding_ready(
+        service, account, expected_provider_id="bnf-pret",
+    )
+    reads = []
+
+    def hostile(_session):
+        reads.append("untrusted-provider-getter")
+        raise RuntimeError("private provider side effect")
+
+    monkeypatch.setattr(type(session), "accounts", property(hostile))
+    assert not source_account_binding_ready(
+        service, account, expected_provider_id="bnf-pret",
+    )
+    assert reads == []
+    assert downloaded == []
+
+
+def test_live_session_scalar_property_cannot_forge_connected(
+    connected_core, monkeypatch,
+):
+    service, session, account, _loan, _state, downloaded = connected_core
+    reads = []
+
+    def hostile(_session):
+        reads.append("unexpected")
+        return True
+
+    monkeypatch.setattr(type(session), "connected", property(hostile))
+    assert not source_account_binding_ready(
+        service, account, expected_provider_id="bnf-pret",
+    )
+    assert reads == [] and downloaded == []
