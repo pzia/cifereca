@@ -9,7 +9,7 @@ from pathlib import Path
 from cifereca.core.canonical_promotion import _readable_pdf_target_names
 from cifereca.core.sync_coordination import synchronize_account_source
 from tests.test_core_p0_3171_selected_candidate_finalization import (
-    rig, _prepare,
+    rig, _prepare, _isolate_delivery_lock,
 )
 
 
