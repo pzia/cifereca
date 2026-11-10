@@ -72,6 +72,7 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
         )
         key = SourceKey(scope, target.item_id, target.item_id, "purchase", target.branch)
         live = [True]
+        selected_offer_id = [None]
 
         def context_current() -> bool:
             """Pure in-memory guard: safe in Core's BEGIN IMMEDIATE."""
@@ -116,7 +117,9 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                 # writes its own durable pending receipt. Re-running resolve()
                 # after that receipt would reject its own successful GET as a
                 # competing acquisition and prevent canonical publication.
-                return right_current(service, target) is True
+                return right_current(
+                    service, target, selected_offer_id=selected_offer_id[0],
+                ) is True
             except Exception:
                 return False
 
@@ -143,6 +146,7 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                         key.edition_id, key.right_id, key.kind)
                     or not offer.can_propose_delivery):
                 raise ValueError("explicit_canonical_offer_mismatch")
+            selected_offer_id[0] = offer.capability.offer_id
             if not live_permission(key):
                 raise ValueError("explicit_canonical_permission_revoked")
             # The strict target resolver (including no competing receipt)
