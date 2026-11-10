@@ -423,7 +423,7 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
 
 # Physical LOC is complementary to AST coupling. This category definition
 # preserves the historic Kobo scope of ci_kobo_core_line_inventory (#3196).
-_LOC_PROVIDERS = ("kobo", "numilog", "bnf", "biblioaccess")
+_LOC_PROVIDERS = ("kobo", "numilog", "bnf", "biblioaccess", "paris")
 
 
 def _dedicated_provider(relative: Path) -> str | None:
