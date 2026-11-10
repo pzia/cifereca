@@ -5,6 +5,7 @@ from cifereca.core.borrow_for_identity_placement_resolution import (
     LenderLocalPlacement,
 )
 from tests.test_core_ui_p1_4987_composed_gtk_executor import setup
+from tests.test_core_p1_4662_live_lender_preview import harness
 from tests.test_core_ui_p1_4987_cross_profile_borrow_controller import Dialog
 
 
