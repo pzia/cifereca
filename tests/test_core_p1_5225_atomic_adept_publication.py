@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from types import SimpleNamespace as NS
 import uuid
@@ -23,11 +24,16 @@ def _publish(tmp_path, *, repair, fail_replace, monkeypatch):
     old.write_bytes(b"PRIOR-LEDGER-ARTIFACT")
     real_replace = Path.replace
     if fail_replace:
-        def rejected_replace(self, target):
-            if self == produced and Path(target) == destination:
+        if repair:
+            def rejected_replace(self, target):
+                if self == produced and Path(target) == destination:
+                    raise OSError("synthetic: rename denied")
+                return real_replace(self, target)
+            monkeypatch.setattr(Path, "replace", rejected_replace)
+        else:
+            def rejected_link(*_args, **_kw):
                 raise OSError("synthetic: rename denied")
-            return real_replace(self, target)
-        monkeypatch.setattr(Path, "replace", rejected_replace)
+            monkeypatch.setattr(os, "link", rejected_link)
     inspection = lambda path, *_args: NS(
         valid=True, media_format="epub", protected=False,
     )
@@ -71,8 +77,14 @@ def test_atomic_replace_commits_new_bytes_without_unlink_first(
         tmp_path, repair=repair, fail_replace=False, monkeypatch=monkeypatch,
     )
     final_path, *_rest = run()
-    assert final_path == destination
-    assert destination.read_bytes() == new
+    if repair:
+        assert final_path == destination
+        assert destination.read_bytes() == new
+    else:
+        assert final_path != destination
+        assert final_path.name.startswith("existing.reacquired-")
+        assert final_path.read_bytes() == new
+        assert destination.read_bytes() == previous
     assert not produced.exists()
     # No premature cleanup before completed index+SQLite receipt.
     assert old.exists()
@@ -197,3 +209,65 @@ def test_adept_publisher_rejects_symlinked_staging_directory(
         )
     assert actual.read_bytes() == b"NEW"
     assert destination.read_bytes() == b"OLD"
+
+
+def test_nonrepair_adept_new_destination_is_published_at_exact_name(
+    tmp_path, monkeypatch,
+):
+    run, produced, target, old, fresh, previous = _publish(
+        tmp_path, repair=False, fail_replace=False, monkeypatch=monkeypatch,
+    )
+    target.unlink()  # no prior publication
+    result, *_rest = run()
+    assert result == target
+    assert result.read_bytes() == fresh
+    assert not produced.exists()
+    assert old.is_file()
+
+
+def test_nonrepair_adept_collision_exhaustion_keeps_old_bytes(
+    tmp_path, monkeypatch,
+):
+    run, produced, target, old, fresh, previous = _publish(
+        tmp_path, repair=False, fail_replace=False, monkeypatch=monkeypatch,
+    )
+    # A stable nonce collides across retries. Never overwrite either file
+    # or infer ownership from a matching title/digest or source provider.
+    alternate = target.with_name("existing.reacquired-stable.epub")
+    alternate.write_bytes(b"OTHER RIGHT")
+    monkeypatch.setattr(
+        uuid, "uuid4", lambda: NS(hex="stable"),
+    )
+    with pytest.raises(ProviderConfigurationError, match="occupée"):
+        run()
+    assert target.read_bytes() == previous
+    assert alternate.read_bytes() == b"OTHER RIGHT"
+    assert produced.read_bytes() == fresh
+    assert old.read_bytes() == b"PRIOR-LEDGER-ARTIFACT"
+
+
+def test_nonrepair_adept_symlink_swap_during_commit_refuses_source(
+    tmp_path, monkeypatch,
+):
+    run, produced, destination, old, fresh, previous = _publish(
+        tmp_path, repair=False, fail_replace=False, monkeypatch=monkeypatch,
+    )
+    outside = tmp_path / "foreign.epub"
+    outside.write_bytes(b"FOREIGN")
+    real_link = os.link
+
+    def swapped_source(src, dst, **kwargs):
+        # The sole producer stage is replaced *after* the inspector and
+        # initial stat, but before exclusive hardlink creation.
+        produced.unlink()
+        produced.symlink_to(outside)
+        return real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "link", swapped_source)
+    with pytest.raises(ProviderConfigurationError, match="modifié"):
+        run()
+    assert destination.read_bytes() == previous
+    assert outside.read_bytes() == b"FOREIGN"
+    assert produced.is_symlink()
+    assert not list(tmp_path.glob("existing.reacquired-*"))
+    assert old.read_bytes() == b"PRIOR-LEDGER-ARTIFACT"
