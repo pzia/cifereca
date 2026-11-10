@@ -122,20 +122,6 @@ def test_invalid_toplevel_coordinate_never_attempts_xtest(local_point):
         device.window_point(_TopLevel(), *local_point)
 
 
-def test_kobo_audit_still_uses_real_x11_and_fails_on_missing_clicked_signal():
-    root = Path(__file__).resolve().parents[1]
-    source = (root / "e2e/diagnostics_navigation_probe.py").read_text()
-    assert 'picked = w.pick(point_x, point_y, Gtk.PickFlags.DEFAULT)' in source
-    assert 'screen_x, screen_y = device[0].window_point(w, point_x, point_y)' in source
-    assert 'device[0].move(screen_x, screen_y)' in source
-    assert 'device[0].click(sx, sy)' in source
-    assert 'loan_sync_audit_after_motion' in source
-    assert 'assert attempts <= 5' in source
-    assert 'f["audit_click_signal_seen"] = False' in source
-    assert 'f["audit_deadline"] = monotonic() + 6' in source
-    assert 'device[0].click_widget(audit)' not in source
-
-
 def test_xtest_move_sends_only_motion_and_synchronizes_before_button_press():
     device = object.__new__(_x11_class())
     calls = []

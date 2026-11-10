@@ -189,12 +189,6 @@ def main(argv: list[str] | None = None) -> int:
     kb.add_argument("--quiet", action="store_true", help="N’affiche pas la progression sur stderr")
     sub.add_parser("kobo-sync-errors", help="Diagnostic local de la synchronisation Kobo")
     sub.add_parser("kobo-backup-errors", help="Alias historique de kobo-sync-errors")
-    kobo_audit = sub.add_parser(
-        "kobo-audit", help="Audit Kobo local SHA-256, lecture seule, JSON expurgé"
-    )
-    kobo_audit.add_argument(
-        "--credential", help="Limiter l'audit à un compte Kobo (non affiché dans le rapport)"
-    )
     reconcile = sub.add_parser(
         "kobo-reconcile-local", help="Commande legacy retirée : relink canonique attesté uniquement"
     )
@@ -1080,7 +1074,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         local_adept_commands = {
-            "kobo-sync-errors", "kobo-backup-errors", "kobo-resume-preview", "kobo-resume", "kobo-audit",
+            "kobo-sync-errors", "kobo-backup-errors", "kobo-resume-preview", "kobo-resume",
             "statistics", "catalog-scan", "catalog-list", "acquisition-ledger", "acquisition-reconcile",
         }
         if a.cmd not in local_adept_commands:
@@ -1176,14 +1170,6 @@ def main(argv: list[str] | None = None) -> int:
             # users may copy into an issue or support ticket.
             result = _kobo_legacy_report_view(
                 safe_kobo_backup_report(service.kobo_backup_diagnostic()),
-            )
-        elif a.cmd == "kobo-audit":
-            from .core.kobo_local_audit import kobo_local_reconciliation_audit
-
-            # Offline and read-only, including no provider connector or
-            # implicit scan / content download. Output never reflects IDs.
-            result = kobo_local_reconciliation_audit(
-                service, credential_id=a.credential,
             )
         elif a.cmd == "kobo-resume-preview":
             try:

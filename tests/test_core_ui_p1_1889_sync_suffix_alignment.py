@@ -35,13 +35,13 @@ def test_kobo_actions_are_centered_even_with_multiline_subtitles(monkeypatch):
     window, _broker, calls, _build, _page = harness._fixture(sources=[source])
     group = window._sync_sources_box.children[0]
 
-    # Source switch, refresh, preview and audit all stay on the same row.
-    assert len(group.children[0].suffixes) == 4
+    # Source switch, refresh and canonical preview remain aligned; W4 audit retired.
+    assert len(group.children[0].suffixes) == 3
     # Explicit local acquisition, cancel, and both independent policy controls.
-    assert len(group.children[3].suffixes) == 2
+    assert len(group.children[2].suffixes) == 2
+    assert len(group.children[3].suffixes) == 1
     assert len(group.children[4].suffixes) == 1
-    assert len(group.children[5].suffixes) == 1
-    assert len(_check_all_suffixes(window)) == 8
+    assert len(_check_all_suffixes(window)) == 7
     assert window.runner.tasks == []
     assert not any(call[0] in {"sync-source", "acquire", "prepare"} for call in calls)
 
@@ -87,7 +87,7 @@ def test_refresh_recreates_centered_controls_without_changing_actions(monkeypatc
     window._refresh_sync_page()
     labels = _check_all_suffixes(window)
     assert "Aperçu local…" in labels
-    assert "Vérifier les fichiers…" in labels
+    assert "Vérifier les fichiers…" not in labels
     assert window.runner.tasks == []
     old_refresh.click()
     assert window.runner.tasks == []

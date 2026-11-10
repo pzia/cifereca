@@ -653,45 +653,6 @@ def test_2027_numilog_consent_e2e_failures_have_stage_and_geometry_evidence():
     assert 'report["pointer_actions"].append(device[0].click_widget(button))' in probe
 
 
-def test_2095_kobo_audit_xtest_requires_stable_real_gtk_hit_target():
-    """No programmatic click or retry can mask a lost audit XTEST event."""
-    probe = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(encoding="utf-8")
-    assert "w.pick(point_x, point_y, Gtk.PickFlags.DEFAULT)" in probe
-    assert "f.get(\"audit_stable_geometry\") != geometry" in probe
-    assert "assert attempt <= 8, \"Kobo audit physical hit target did not settle\"" in probe
-    assert probe.count("device[0].click_widget(audit)") == 0
-    assert probe.count("device[0].window_point(w, point_x, point_y)") == 1
-    assert probe.count("device[0].click(sx, sy)") == 1
-    assert probe.count("device[0].move(screen_x, screen_y)") == 1
-    assert 'motion.connect("enter"' in probe
-    assert 'motion.connect("motion"' in probe
-    assert 'assert attempts <= 5, "Kobo audit XTEST pointer could not hit GTK button"' in probe
-    assert 'f["audit_deadline"] = monotonic() + 6' in probe
-    assert 'f["audit_click_signal_seen"] = False' in probe
-    assert 'report["kobo_audit_observation"]' in probe
-
-def test_2141_kobo_audit_result_is_scoped_to_offline_account_after_sort():
-    """The E2E must inspect the account targeted by the genuine XTEST click."""
-    probe = (ROOT / "e2e/diagnostics_navigation_probe.py").read_text(encoding="utf-8")
-    tree = ast.parse(probe)
-    methods = {node.name: node for node in ast.walk(tree)
-               if isinstance(node, ast.FunctionDef)}
-    assert "kobo_offline_audit_row" in methods
-    helper = ast.get_source_segment(probe, methods["kobo_offline_audit_row"])
-    assert '"Kobo audit hors ligne"' in helper
-    assert '"Vérification des fichiers et rapprochements"' in helper
-    for method, expected in (
-        ("loan_sync_audit_click", "account_group, _ = kobo_offline_audit_row()"),
-        ("loan_sync_audit_after_motion", 'f["audit_row_at_click"] = kobo_offline_audit_row()[1]'),
-        ("loan_sync_audit_result", "audit_row = kobo_offline_audit_row()[1]"),
-    ):
-        body = ast.get_source_segment(probe, methods[method])
-        assert expected in body
-    assert "row for row in walk(w._sync_sources_box)" not in (
-        ast.get_source_segment(probe, methods["loan_sync_audit_result"])
-    )
-
-
 def test_771_real_gtk_public_fault_search_is_registered_and_selected():
     runner = _module()
     scenario = runner.SCENARIOS["public-fault-search-1366"]

@@ -45,9 +45,9 @@ def fixture(monkeypatch, *, sources=None, inventory=None):
 def controls(w, idx=0):
     group = w._sync_sources_box.children[idx]
     # Existing download actions and their separate consent row are stable.
-    assert group.children[3].title == "Téléchargement local · confirmation obligatoire"
-    assert group.children[4].title == "Téléchargement automatique de ce compte"
-    row = group.children[5]
+    assert group.children[2].title == "Téléchargement local · confirmation obligatoire"
+    assert group.children[3].title == "Téléchargement automatique de ce compte"
+    row = group.children[4]
     assert row.title == "Actualisation automatique des notices Kobo"
     assert len(row.suffixes) == 1
     return row.suffixes[0], row
