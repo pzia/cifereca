@@ -695,10 +695,6 @@
     "kind": "method",
     "signature": "(self) -> 'int'"
   },
-  "_kobo_backup_target_dir": {
-    "kind": "method",
-    "signature": "(self, identity_id: 'str | None' = None) -> 'Path'"
-  },
   "kobo_backup_diagnostic": {
     "kind": "method",
     "signature": "(self) -> 'dict[str, Any]'"
