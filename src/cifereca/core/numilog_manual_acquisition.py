@@ -11,7 +11,6 @@ from typing import Any
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
 from .numilog_manifest_rights import _scoped_record_id, numilog_inventory_binding_valid
-from .passive_source_session import passive_direct_download_capable
 
 
 def _canonical_guarded_source(session: Any) -> bool:
@@ -24,8 +23,7 @@ def _canonical_guarded_source(session: Any) -> bool:
             )))
 
 
-def require_source(service: Any, item: Any, *, session: Any = None,
-                   canonical_only: bool = False) -> tuple[Any, Any, str]:
+def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any, Any, str]:
     """Recheck provider, source and live session before/after the download."""
     refused = "Numilog : offre téléchargeable ou compte non attesté ; actualiser le fournisseur"
     try:
@@ -62,12 +60,7 @@ def require_source(service: Any, item: Any, *, session: Any = None,
                 or not numilog_inventory_binding_valid(
                     service, account, session=active,
                 )
-                or not (
-                    canonical_only is True
-                    and _canonical_guarded_source(active)
-                    or canonical_only is False
-                    and passive_direct_download_capable(active)
-                )):
+                or not _canonical_guarded_source(active)):
             raise ValueError("source_rebound")
         identity = service.identity_by_id(account.identity_id)
         if identity is None:

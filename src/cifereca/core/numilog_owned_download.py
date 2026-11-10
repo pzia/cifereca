@@ -127,7 +127,7 @@ def _resolve(service, entitlement_id, identity_id, item_id, *, canonical_offer_i
         source_credential=account.credential_id, source_collection='library',
         owned=True, downloadable=True, content_type='ebook', metadata={},
     )
-    owner, session, account_id = require_source(service, item, canonical_only=True)
+    owner, session, account_id = require_source(service, item)
     from inspect import getattr_static
     from .canonical_delivery_abi import has_complete_delivery_abi
     _require(owner.identity_id == identity_id and account_id == account.unique_id)
