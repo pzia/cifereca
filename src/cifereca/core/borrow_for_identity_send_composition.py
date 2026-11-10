@@ -24,6 +24,8 @@ def send_confirmed_lender_local_copy(
     }
     if confirmed is not True:
         return {**blocked, "reason_code": "transfer_confirmation_required"}
+    observed_loan = "unknown"
+    observed_delivery = "unavailable"
     try:
         reader = service.current_identity
         context_epoch = service._account_context_epoch
@@ -36,6 +38,8 @@ def send_confirmed_lender_local_copy(
             service, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
         )
+        if type(resolution) is LenderLocalPlacement and resolution.loan == "confirmed":
+            observed_loan = "confirmed"
         if (type(resolution) is not LenderLocalPlacement
                 or resolution.status != "present"
                 or resolution.loan != "confirmed"
@@ -53,6 +57,7 @@ def send_confirmed_lender_local_copy(
                 or service._source_context_epoch != source_epoch):
             return {**blocked, "loan": "confirmed",
                     "reason_code": "transfer_context_revoked"}
+        observed_delivery = "present"
         # This executor independently revalidates the claim and placement;
         # the resolver's DTO never authorizes bypassing its checks.
         outcome = service.send_cross_profile_borrowed_placement(
@@ -84,7 +89,11 @@ def send_confirmed_lender_local_copy(
             "reason_code": "transfer_result_unverified",
         }
     except Exception:
-        return {**blocked, "reason_code": "transfer_result_unverified"}
+        return {
+            **blocked, "loan": observed_loan,
+            "delivery": observed_delivery,
+            "reason_code": "transfer_result_unverified",
+        }
 
 
 __all__ = ["send_confirmed_lender_local_copy"]
