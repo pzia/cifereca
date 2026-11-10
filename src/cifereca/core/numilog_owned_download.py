@@ -69,13 +69,31 @@ def _resolve(service, entitlement_id, identity_id, item_id, *, canonical_offer_i
             item_id, item_id, 'purchase', NumilogOwnedDownloadTarget.branch,
         )
         receipt_id = _stage_id(key, canonical_offer_id)
-        owned_stage = (
+        # The bounded preflight deliberately does not expose metadata_json.
+        # Read ONLY this candidate receipt from the neutral ledger API,
+        # after its exact ID and all public coordinates have matched.
+        candidate = acquisitions[0] if (
             type(acquisitions) is list and len(acquisitions) == 1
             and type(acquisitions[0]) is dict
             and acquisitions[0].get('acquisition_id') == receipt_id
             and acquisitions[0].get('status') == _STAGED
-            and type(acquisitions[0].get('metadata')) is dict
-            and acquisitions[0]['metadata'].get('schema') == _SCHEMA
+            and acquisitions[0].get('identity_id') == identity_id
+            and acquisitions[0].get('account_id') == account.unique_id
+            and acquisitions[0].get('item_id') == item_id
+        ) else None
+        staged = service.storage.acquisition_get(receipt_id) if candidate else None
+        owned_stage = (
+            type(staged) is dict
+            and staged.get('acquisition_id') == receipt_id
+            and staged.get('status') == _STAGED
+            and staged.get('identity_id') == identity_id
+            and staged.get('provider_id') == account.provider_id
+            and staged.get('credential_id') == account.credential_id
+            and staged.get('account_id') == account.unique_id
+            and staged.get('item_id') == item_id
+            and type(staged.get('metadata')) is dict
+            and staged['metadata'].get('schema') == _SCHEMA
+            and staged['metadata'].get('offer_id') == canonical_offer_id
         )
     _require(type(rights) is list and len(rights) == 1
              and (acquisitions == [] or owned_stage))
