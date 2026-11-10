@@ -35,43 +35,6 @@ def _coordinate(value: object, *, allow_empty: bool = False) -> bool:
 
 
 
-def scoped_purchase_states(
-    service: Any, *, identity_id: str, provider_id: str,
-) -> dict[tuple[str, str], str]:
-    """Read-only provider-neutral ledger projection for historical UI states.
-
-    This never reads a provider manifest and never authorizes a GET, a grant,
-    a placement or a negative reconciliation. Unknown scope fails closed.
-    Callers needing exact account or revision should use SearchOwnedEvidence.
-    """
-    if not _coordinate(identity_id) or not _coordinate(provider_id):
-        return {}
-    reader = getattr(getattr(service, "storage", None), "entitlements", None)
-    if not callable(reader):
-        return {}
-    try:
-        rows = reader(provider_id=provider_id)
-        if type(rows) is not list or len(rows) > _MAX_RIGHTS:
-            return {}
-        states: dict[tuple[str, str], str] = {}
-        for row in rows:
-            if type(row) is not dict:
-                return {}
-            if (row.get("identity_id") != identity_id
-                    or row.get("provider_id") != provider_id
-                    or row.get("entitlement_type") != "owned"
-                    or row.get("state") not in ("active", "archived")):
-                continue
-            credential, edition = row.get("credential_id"), row.get("item_id")
-            if not _coordinate(credential) or not _coordinate(edition):
-                continue
-            key = (credential, edition)
-            if key not in states or row["state"] == "active":
-                states[key] = row["state"]
-        return states
-    except Exception:
-        return {}
-
 
 def snapshot_search_owned_evidence(service: Any) -> SearchOwnedEvidence | None:
     """Atomically project only known active owned rights, or refuse entirely.

@@ -15,7 +15,7 @@ def ready(tmp_path):
     return service, account, session, calls
 
 
-def test_manual_kobo_refresh_projects_rights_with_valid_binding(tmp_path):
+def test_manual_kobo_refresh_projects_observation_without_pseudo_rights(tmp_path):
     service, account, session, calls = ready(tmp_path)
     try:
         result = service._synchronize_account_source_impl(account)

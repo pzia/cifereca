@@ -1632,11 +1632,6 @@ class LibraryService:
         """Persist progressively discovered remote catalog metadata (0.8.3)."""
         return search_orchestration._mirror_remote_results(self, rows, identity_id=identity_id)
 
-    def kobo_personal_right_states(self, identity_id: str) -> dict[tuple[str, str], str]:
-        """Compatibility read of persisted rights; no Kobo manifest authority."""
-        from .core.search_owned_evidence import scoped_purchase_states
-        return scoped_purchase_states(self, identity_id=identity_id, provider_id="kobo")
-
     def mirror_personal_libraries(self) -> dict[str, int]:
         """Refresh private metadata with the same pinned binding as source Sync.
 

@@ -64,7 +64,6 @@ def test_legacy_source_keeps_direct_download_wording_without_v2_claim():
     ("provider-reference", "Vérifier et télécharger"),
     ("paris", "Vérifier et télécharger"),
     ("bnf-pret", "Vérifier et télécharger"),
-    ("kobo", "Vérifier et sauvegarder"),
 ])
 def test_search_labels_and_offer_notice_are_generic_for_all_v2_sources(
     provider, expected_label,
@@ -74,8 +73,6 @@ def test_search_labels_and_offer_notice_are_generic_for_all_v2_sources(
     host.service._session_for_source = Mock(return_value=session)
     host.service.can_direct_download = Mock(return_value=True)
     item = replace(_book(provider), downloadable=True, owned=True)
-    if provider == "kobo":
-        host.service.kobo_personal_right_states = lambda _: {("credential", "same"): "active"}
     host._remote_search_results = [item]
 
     host._populate_search([item], announce=False)
@@ -132,3 +129,19 @@ def test_detail_does_not_promote_unknown_public_numilog_notice():
     service.can_direct_download.assert_not_called()
     service._session_for_source.assert_not_called()
     window.action_button.assert_not_called()
+
+
+def test_kobo_legacy_search_action_is_never_promoted_by_owned_flag_or_v2_hint():
+    host = _host()
+    session = _V2Session()
+    host.service._session_for_source = Mock(return_value=session)
+    host.service.can_direct_download = Mock(return_value=True)
+    item = replace(_book("kobo"), downloadable=True, owned=True)
+    host._remote_search_results = [item]
+    host._populate_search([item], announce=False)
+    row = host.search_page.show_rows.call_args.args[0][0]
+    assert row.options["action_label"] is None
+    assert "vérifier auprès du fournisseur" in row.meta
+    host.service.can_direct_download.assert_not_called()
+    session.snapshot.assert_not_called()
+    session.selected.assert_not_called()
