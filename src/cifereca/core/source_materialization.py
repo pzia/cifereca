@@ -20,7 +20,8 @@ from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..plugin_api import SyncResult
 from .canonical_delivery_abi import has_complete_delivery_abi
-from .kobo_local_reconciliation import _roots
+from .kobo_backup import _kobo_preview_paths
+from .local_profile_root_guards import checked_profile_roots, ProfileRootRejected
 
 _TTL = 600
 _PROCESS_NONCE = secrets.token_hex(16)
@@ -162,7 +163,16 @@ def _source(broker, source_id, *, allow_canonical=False):
             legacy_unset = False
         _require(legacy_unset, "canonical_source_policy_configured")
     _require(not service.storage.metadata_get("identity-directory-migration-v1"), "directory_migration_pending")
-    roots = _roots(service, account.identity_id)
+    # A canonical preview must not depend on the retired W4 reconciliation
+    # facade. Root selection remains provider-specific until plugin cutover;
+    # owner/overlap validation is Core-neutral and cannot attest A or B.
+    try:
+        roots = checked_profile_roots(
+            service, account.identity_id,
+            roots_for_identity=_kobo_preview_paths,
+        )
+    except ProfileRootRejected as exc:
+        raise _Rejected(str(exc)) from None
     for root in roots:
         _require(root.is_absolute() and ".." not in root.parts, "invalid_directory")
         for component in (root, *root.parents):
