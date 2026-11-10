@@ -80,6 +80,7 @@ def offer_cross_profile_local_send(
             return bool(
                 not getattr(window, "_closed", False)
                 and window.service is service
+                and window.search_page is search_page
                 and service.current_identity is identity
                 and identity.identity_id == requester
                 and service._account_context_epoch == account_epoch
