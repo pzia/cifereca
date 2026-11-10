@@ -257,7 +257,7 @@ def test_source_rebound_during_token_get_disposes_candidate_without_rights(
 def test_unexpected_token_inspector_failure_discards_private_acsm(
     connected_core, monkeypatch,
 ):
-    """An arbitrary inspection error must never leave a reusable ACSM."""
+    """An arbitrary inspection error must never leave a reusable private ACSM."""
     service, session, account, loan, state, downloaded = connected_core
     inspected = []
 
