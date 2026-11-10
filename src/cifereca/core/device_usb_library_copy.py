@@ -57,8 +57,9 @@ def execute_usb_library_copy(
     directory = mountpoint / PurePosixPath(consent.target_relative_path).parent
     try:
         fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
-    except (OSError, AttributeError) as error:
-        return UsbCopyExecution("blocked", "usb_copy_directory_unavailable", detail=str(error))
+    except (OSError, AttributeError):
+        # Do not expose a private volume path through an OSError string.
+        return UsbCopyExecution("blocked", "usb_copy_directory_unavailable")
     try:
         return execute_usb_copy(
             journal=journal, lock_root=lock_root, mount=source.mount, directory_fd=fd,
