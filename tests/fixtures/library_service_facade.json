@@ -695,10 +695,6 @@
     "kind": "method",
     "signature": "(self) -> 'dict[str, Any]'"
   },
-  "_kobo_backup_due": {
-    "kind": "method",
-    "signature": "(self) -> 'bool'"
-  },
   "sync_kobo_backup": {
     "kind": "method",
     "signature": "(self, progress: 'Callable[[dict[str, Any]], None] | None' = None) -> 'dict[str, Any]'"

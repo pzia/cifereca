@@ -40,7 +40,7 @@ def test_corrupt_checkpoint_stays_private_and_does_not_crash_report_or_preview(t
         assert "downloaded" not in row
         assert "remaining" not in row
         assert leak not in json.dumps(diagnostic["sources"])
-        assert service._kobo_backup_account_due("vault-1")
+        assert not hasattr(service, "_kobo_backup_account_due")
 
         # A malformed archive must never authorize an ABI-incomplete preview.
         from cifereca.providers import ProviderConfigurationError
@@ -78,6 +78,6 @@ def test_checkpoint_numeric_bounds_and_position_never_exceed_total(tmp_path):
         assert row["status"] == "manifest_fetch"
         assert row["total"] == row["position"] == 0
         assert row["updated_at"] == 1_800_000_000
-        assert service._kobo_backup_account_due("vault-1")
+        assert not hasattr(service, "_kobo_backup_account_due")
     finally:
         service.close()
