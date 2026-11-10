@@ -86,6 +86,17 @@ def obtain_explicit_owned(service, target, *, resolve) -> MaterializationResult:
                     ) is session
                     and session.connected is True
                     and getattr(session, "_closed", False) is False
+                    and session.provider_id == scope.provider_id
+                    and session.credential_id == scope.credential_id
+                    and isinstance(session.accounts, (list, tuple))
+                    and sum(
+                        type(candidate) is Account
+                        and (candidate.identity_id, candidate.provider_id,
+                             candidate.credential_id, candidate.unique_id)
+                        == (scope.identity_id, scope.provider_id,
+                            scope.credential_id, scope.account_id)
+                        for candidate in session.accounts
+                    ) == 1
                     and sum(a is account for a in registry) == 1
                     and (account.identity_id, account.provider_id,
                          account.credential_id, account.unique_id)
