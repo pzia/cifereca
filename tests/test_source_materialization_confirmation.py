@@ -72,6 +72,11 @@ def case(tmp_path, monkeypatch):
 
 
 
+def _dump(case):
+    with case.service.storage._lock:
+        return "\\n".join(case.service.storage._connect().iterdump())
+
+
 @pytest.mark.parametrize("contract", ["downloadable_v2", "rights_v1"])
 def test_typed_core_delivery_abi_blocks_legacy_confirmation_before_any_io(
     case, monkeypatch, contract,
