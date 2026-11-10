@@ -273,7 +273,8 @@ def test_explicit_sync_reuses_one_shot_kobo_personal_manifest(tmp_path, monkeypa
     service._sessions[service._session_key("kobo", account.credential_id)] = session
     try:
         result = service._synchronize_account_source_impl(account)
-        assert result["owned_rights"] == 1
+        assert "owned_rights" not in result
+        assert service.storage.entitlements(provider_id="kobo") == []
         assert result["library"] == 1
         assert calls == ["library"]
         assert len(service.storage.catalog_entries()) == 1
