@@ -32,6 +32,7 @@ def test_named_implementation_files_counted_without_plugins_or_tests(tmp_path):
     assert report["generic_provider_literal_lines_unique"] == 3
     assert report["generic_per_file"]["src/cifereca/core/generic.py"]["provider_literal_lines"] == {
         "kobo": 2, "numilog": 1, "bnf": 1, "biblioaccess": 0,
+        "paris": 0,
     }
     assert report["dedicated_files"] == 5
 

@@ -329,12 +329,6 @@ def _kobo_preview_paths(self, identity_id: str) -> tuple[Path, Path]:
     return library_root, target_dir
 
 
-def _kobo_manifest_rejection_count(session: Any) -> int:
-    """Sanitized count of provider-discarded source rows; no plugin imports."""
-    raw = getattr(session, "backup_manifest_rejection_count", 0)
-    return raw if type(raw) is int and 0 <= raw <= 1_000_000 else 0
-
-
 _KOBO_CHECKPOINT_STATUSES = frozenset({
     "complete", "partial", "failed", "aborted", "cancelled",
     "attention_required", "running", "interrupted", "manifest_fetch",
@@ -351,63 +345,6 @@ def _kobo_checkpoint_number(value: Any, *, limit: int = 1_000_000) -> int:
     """Fail closed on malformed local SQLite metadata rather than raising."""
     return value if type(value) is int and 0 <= value <= limit else 0
 
-
-
-def _kobo_manifest_flags_invalid(raw: dict[str, Any]) -> bool:
-    """Reject explicit ambiguous permission flags in an owned-book manifest.
-
-    Only boolean JSON flags are admissible. A personal-library manifest may
-    omit ownership/downloadability (Vault legacy contract); an explicitly
-    false ownership claim or malformed flag can NEVER authorize acquisition.
-    """
-    if raw.get("owned") is False:
-        return True
-    for key in ("owned", "downloadable", "archived"):
-        value = raw.get(key)
-        if value is not None and type(value) is not bool:
-            return True
-    return False
-
-
-
-def _kobo_legacy_manifest_claim_invalid(
-    raw: dict[str, Any], *, credential_id: str, account_id: str,
-) -> bool:
-    """Reject a foreign or loan-like W2 row before 0.7 rights are mirrored.
-
-    The old compatibility writer *always* labels a manifest item 'owned'.
-    A provider row with explicit contradictory coordinates or a loan marker
-    cannot be rewritten as a purchase merely because it arrived inside a
-    previously pinned Kobo session. Missing optional fields remain valid for
-    the legacy Vault 2.x manifest.
-    """
-    for key, expected in (
-        ("provider_id", "kobo"), ("credential_id", credential_id),
-        ("account_id", account_id),
-    ):
-        if key in raw and (type(raw[key]) is not str or raw[key] != expected):
-            return True
-    # Never stringify, trim or silently substitute an invalid edition key:
-    # W2's backup PK and the canonical SourceKey must refer to the *same*
-    # provider edition. Otherwise a malformed provider row can mint a new
-    # positive W1 entitlement under a different identifier.
-    for key in ("product_id", "id"):
-        if key not in raw:
-            continue
-        value = raw[key]
-        if (type(value) is not str or not value or value != value.strip()
-                or len(value) > 1024
-                or any(char in value for char in "\x00\r\n")):
-            return True
-    if ("product_id" in raw and "id" in raw
-            and raw["product_id"] != raw["id"]):
-        return True
-    if raw.get("loan_id") is not None or raw.get("expires_at") is not None:
-        return True
-    kind = raw.get("entitlement_type")
-    if kind is not None and (type(kind) is not str or kind != "owned"):
-        return True
-    return False
 
 
 def _canonical_kobo_backup_offline_preview(
@@ -1385,14 +1322,3 @@ def _safe_kobo_backup_diagnostic_detail(summary: dict[str, Any]) -> dict[str, An
     if abort is not None:
         result["abort_reason"] = abort
     return result
-
-
-def _manifest_archived(raw, current):
-    # A fresh explicit unarchive can supersede a prior 409; omission cannot.
-    return raw.get("archived") is True or (
-        raw.get("archived") is not False and current is not None
-        and (current.get("status") == "skipped_archived"
-             or current.get("attention_code") == "archived_book")
-    )
-
-
