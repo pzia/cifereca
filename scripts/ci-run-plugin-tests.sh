@@ -62,10 +62,11 @@ for p in "${targets[@]}"; do
       status=0
       # Preserve the historical per-package contract gate after removing
       # duplicate local test modules. Synthetic runner fixtures are not migrated.
-      if [[ -f "$p/cifereca-plugin.json" ]] && grep -Fxq "${p##*/}" <(printf '%s\
-' baen home-page provider-kobo epub_optimizer provider-paris ebooksgratuits provider-gallica provider-numilog runtime-kobo-adept provider-gutenberg provider-bnf-catalogue); then
-        python3 "$(dirname "${BASH_SOURCE[0]}")/validate_plugin_contract.py" "$p" || status=$?
-      fi
+      case "${p##*/}" in
+        baen|home-page|provider-kobo|epub_optimizer|provider-paris|ebooksgratuits|provider-gallica|provider-numilog|runtime-kobo-adept|provider-gutenberg|provider-bnf-catalogue)
+          python3 "$(dirname "${BASH_SOURCE[0]}")/validate_plugin_contract.py" "$p" || status=$?
+          ;;
+      esac
       if (( status == 0 )); then
         (cd "$p" && python -m pytest -q) || status=$?
       fi
