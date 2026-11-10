@@ -60,7 +60,15 @@ for p in "${targets[@]}"; do
     logs[count]="$log"
     (
       status=0
-      (cd "$p" && python -m pytest -q) || status=$?
+      # Preserve the historical per-package contract gate after removing
+      # duplicate local test modules. Synthetic runner fixtures are not migrated.
+      if [[ -f "$p/cifereca-plugin.json" ]] && grep -Fxq "${p##*/}" <(printf '%s\
+' baen home-page provider-kobo epub_optimizer provider-paris ebooksgratuits provider-gallica provider-numilog runtime-kobo-adept provider-gutenberg provider-bnf-catalogue); then
+        python3 "$(dirname "${BASH_SOURCE[0]}")/validate_plugin_contract.py" "$p" || status=$?
+      fi
+      if (( status == 0 )); then
+        (cd "$p" && python -m pytest -q) || status=$?
+      fi
       printf '%s %s\n' "$count" "$status" >&3
       exit "$status"
     ) >"$log" 2>&1 &
