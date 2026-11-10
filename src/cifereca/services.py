@@ -3214,11 +3214,6 @@ class LibraryService:
         from .core.owned_library_download import obtain_owned_library_item
         return obtain_owned_library_item(self, target)
 
-    def resume_numilog_materialization(self, acquisition_id: str):
-        """Explicitly resume indexing a delivered Numilog file, with zero HTTP."""
-        from .core.numilog_materialization_checkpoint import resume
-        return resume(self, acquisition_id)
-
     def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
         """Compatibility wrapper around the normalized direct acquisition."""
         result = self.acquire_direct_item(item)
