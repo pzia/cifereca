@@ -124,6 +124,19 @@ def source_sync_consent(service, account):
             'valid': state.mode != 'invalid'}
 
 
+def source_enablement_key(scope):
+    """Stable read-only inventory toggle key; never acquisition permission.
+
+    The exact historical source digest is retained for persisted source
+    enablement, independently from the retired acquisition-consent bridge.
+    """
+    from .legacy_source_identifier import legacy_source_id
+    return "sync.source.enabled." + legacy_source_id(
+        scope.identity_id, scope.provider_id,
+        scope.credential_id, scope.account_id,
+    )
+
+
 def set_source_sync_consent(service, account, *, enabled, expected_revision):
     """Explicit source action, CAS, no provider I/O, no SourceReference prerequisite.
 
@@ -143,10 +156,9 @@ def set_source_sync_consent(service, account, *, enabled, expected_revision):
         if not current() or not _bound(db, coords, enabled=enabled):
             raise ValueError('source_sync_consent_scope_changed')
         if enabled:
-            from .source_auto_consent_bridge import _source_id
             from .source_enablement import source_enabled
             row = db.execute('SELECT value FROM metadata WHERE key=?',
-                             ('sync.source.enabled.' + _source_id(scope),)).fetchone()
+                             (source_enablement_key(scope),)).fetchone()
             if not source_enabled(row[0] if row else None):
                 raise ValueError('source_sync_consent_source_disabled')
         state = policy_in_transaction(db, scope)
@@ -175,9 +187,8 @@ def set_source_enabled(service, account, enabled, preference_key):
     # belonging to another borrower, credential or identity.
     if type(enabled) is not bool or type(preference_key) is not str:
         raise ValueError('invalid_source_sync_toggle')
-    from .source_auto_consent_bridge import _source_id
     scope = scope_for_account(account)
-    if preference_key != 'sync.source.enabled.' + _source_id(scope):
+    if preference_key != source_enablement_key(scope):
         raise ValueError('source_sync_toggle_scope_mismatch')
     from .source_acquisition_consent import _context, _bound
     from .source_enablement import source_enabled
