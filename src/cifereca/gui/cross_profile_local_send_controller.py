@@ -211,4 +211,31 @@ def offer_cross_profile_local_send(
         return False
 
 
-__all__ = ["offer_cross_profile_local_send"]
+def offer_selected_lender_local_send(
+    window, *, captured_preview, selected_option_id: str,
+    expected_edition_id: str, observations: object,
+    expected_item: SearchResult, Adw, TaskPriority, control=None,
+) -> bool:
+    """Use the already-selected exact A source, without re-running loan POST."""
+    from .cross_profile_local_send_scope import selected_lender_local_scope
+
+    try:
+        selected = selected_lender_local_scope(
+            window.service, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id,
+            observations=observations,
+        )
+        if selected is None or selected.executable is not False:
+            return False
+        return offer_cross_profile_local_send(
+            window, borrowing_account=selected.account,
+            exact_notice=selected.notice,
+            expected_item=expected_item,
+            Adw=Adw, TaskPriority=TaskPriority, control=control,
+        )
+    except Exception:
+        return False
+
+
+__all__ = ["offer_cross_profile_local_send", "offer_selected_lender_local_send"]
