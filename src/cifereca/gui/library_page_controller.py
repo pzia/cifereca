@@ -38,7 +38,7 @@ def build_library_page(window, *, Gtk, MasterDetailPage):
         window._library_entries_cache = []
         render = getattr(window, "_render_library", None)
         if callable(render):
-            render([])
+            render()
         set_label = getattr(scope, "set_label", None)
         if callable(set_label):
             set_label(
