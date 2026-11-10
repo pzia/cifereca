@@ -9,6 +9,65 @@ from __future__ import annotations
 from .loan_safe_trace import loan_trace_ref
 
 
+def _publish_new_adept_without_clobber(
+    produced_path, destination, *, uuid, ProviderConfigurationError,
+):
+    """Exclusive publication; a supplier filename is never authority to replace.
+
+    Non-repair loans must not replace a valid older loan, even when ADEPT
+    produced the *same* file format and plan_publish_format_path returned the
+    preexisting name. Hardlink is an atomic no-clobber commit on the target
+    filesystem (as in the direct-loan publisher). No matching-by-content
+    adoption, account deduction or provider retry is permitted.
+    """
+    import os
+    import stat
+
+    if produced_path.resolve() == destination.resolve():
+        return destination
+    if (produced_path.is_symlink() or produced_path.parent.is_symlink()
+            or destination.is_symlink() or destination.parent.is_symlink()):
+        raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Pin the source before the exclusive commit. A stage substitution
+    # cannot turn a symlink or another inode into a delivered artifact.
+    before = produced_path.stat(follow_symlinks=False)
+    if not stat.S_ISREG(before.st_mode) or before.st_size <= 0:
+        raise ProviderConfigurationError("Artefact final invalide")
+    initial = destination
+    for attempt in range(32):
+        try:
+            os.link(produced_path, destination, follow_symlinks=False)
+        except FileExistsError:
+            destination = initial.with_name(
+                initial.stem + ".reacquired-" + uuid.uuid4().hex
+                + initial.suffix
+            )
+            continue
+        else:
+            after = destination.stat(follow_symlinks=False)
+            if (not stat.S_ISREG(after.st_mode)
+                    or (after.st_dev, after.st_ino, after.st_size) !=
+                       (before.st_dev, before.st_ino, before.st_size)):
+                destination.unlink()
+                raise ProviderConfigurationError("Artefact final modifié")
+            # Staging cleanup follows physical publication, never before.
+            # Avoid deleting a different file if the path was re-bound.
+            try:
+                current = produced_path.stat(follow_symlinks=False)
+            except OSError:
+                current = None
+            if (current is not None
+                    and (current.st_dev, current.st_ino) ==
+                        (before.st_dev, before.st_ino)):
+                try:
+                    produced_path.unlink()
+                except OSError:
+                    pass
+            return destination
+    raise ProviderConfigurationError("Destination ADEPT déjà occupée")
+
+
 def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
             destination, previous_path, Path, ProviderConfigurationError,
             inspect_artifact, adept_acsm_plan, uuid, _TRACE_LOG, identity_id=None):
@@ -75,13 +134,10 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
         # last recorded artifact. The caller invokes cleanup_after_commit().
         _TRACE_LOG.info("TRACE download adept repair-replace loan_ref=%s", trace_ref)
     else:
-        if produced_path.resolve() != destination.resolve():
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            # Replacing the existing file is already atomic. Unlink-first
-            # creates an avoidable window where an earlier valid loan is lost
-            # if publication fails before the SQLite receipt is committed.
-            produced_path.replace(destination)
-        final_path = destination
+        final_path = _publish_new_adept_without_clobber(
+            produced_path, destination, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
     return final_path, artifact_drm, artifact_format, artifact_protected, hook_info
 
 
