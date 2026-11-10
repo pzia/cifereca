@@ -25,6 +25,8 @@ def test_active_components_trigger_real_gtk_e2e():
         "src/cifereca/core/loan_provider_delivery.py",
         "src/cifereca/core/manual_acsm_import.py",
         "src/cifereca/core/numilog_direct_acquisition.py",
+        "src/cifereca/core/numilog_owned_download.py",
+        "src/cifereca/core/numilog_manual_canonical.py",
         "src/cifereca/core/sync_coordination.py",
         "src/plugins/constellations/constellations_page.py",
         "src/plugins/home-page/cifereca_home.py",
