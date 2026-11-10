@@ -8,6 +8,7 @@ A staged ACSM is never CompletedDelivery, Artifact or entitlement.
 from __future__ import annotations
 
 from pathlib import Path
+from inspect import getattr_static, isfunction
 from ..models import Loan
 from ..plugin_api import ProviderConfigurationError
 from .loan_action_scope import capture_loan_action_scope
@@ -97,11 +98,21 @@ def stage_explicit_loan_acsm(
                 _refuse(error_codes["scope"])
             # The provider owns the private loan/offer interpretation and
             # signed GET. No legacy download_digital fallback is authorized.
+            # A property or dynamic descriptor here may itself perform I/O
+            # before provider activity is admitted. Only regular class
+            # methods are callable entrypoints on an already-pinned lease.
+            method_names = (
+                "rights_selected_delivery_offer_snapshot",
+                "rights_selected_delivery_candidate",
+            )
+            if any(not isfunction(getattr_static(session, name, None))
+                   for name in method_names):
+                _refuse(error_codes["unavailable"])
             offer_snapshot = getattr(
-                session, "rights_selected_delivery_offer_snapshot", None,
+                session, method_names[0], None,
             )
             deliver_selected = getattr(
-                session, "rights_selected_delivery_candidate", None,
+                session, method_names[1], None,
             )
             if not callable(offer_snapshot) or not callable(deliver_selected):
                 _refuse(error_codes["unavailable"])
