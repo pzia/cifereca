@@ -244,6 +244,7 @@ def test_legacy_w2_never_downloads_or_mutates_hostile_local_candidates(
             ) if path.is_file()
         }
         session = service._sessions[service._session_key("kobo", "vault-1")]
+        placements_before = service.storage.placements()
         monkeypatch.setattr(
             session, "backup_manifest",
             lambda: pytest.fail("retired W2 must not fetch manifest"),
@@ -263,7 +264,7 @@ def test_legacy_w2_never_downloads_or_mutates_hostile_local_candidates(
             ):
                 service.sync_kobo_backup()
         assert service.storage.backup_get("kobo", "vault-1", "book-1") == before
-        assert service.storage.placements() == []
+        assert service.storage.placements() == placements_before
         assert all(path.read_bytes() == content
                    for path, content in observed.items())
         if local == "dangling_symlink":
