@@ -93,3 +93,75 @@ def test_link_failure_keeps_staging_and_cleans_private_temporary(tmp_path, monke
     assert staged.read_bytes() == b"synthetic provider bytes"
     assert library.is_dir()
     assert list(library.iterdir()) == []
+
+
+def test_direct_loan_replaced_staging_path_is_not_deleted_after_publish(
+    tmp_path, monkeypatch,
+):
+    staged, work, library = _stage(tmp_path, data=b"ORIGINAL LOAN")
+    original_link = os.link
+    swapped = []
+
+    def rebind_staging_at_commit(src, dst, **kw):
+        if not swapped:
+            staged.unlink()
+            staged.write_bytes(b"OTHER NEW STAGE")
+            swapped.append(True)
+        return original_link(src, dst, **kw)
+
+    monkeypatch.setattr(os, "link", rebind_staging_at_commit)
+    result = publish(
+        staged, work_dir=work, library_target_dir=library,
+    )
+    assert result.read_bytes() == b"ORIGINAL LOAN"
+    assert staged.read_bytes() == b"OTHER NEW STAGE"
+    assert not list(library.glob(".loan-publish-*"))
+
+
+def test_direct_loan_symlink_swap_of_temp_at_link_time_is_not_delivered(
+    tmp_path, monkeypatch,
+):
+    staged, work, library = _stage(tmp_path, data=b"ORIGINAL LOAN")
+    external = tmp_path / "secret-user.epub"
+    external.write_bytes(b"PRIVATE OTHER USER")
+    original_link = os.link
+
+    def swap_temp_at_commit(src, dst, **kw):
+        private = Path(src)
+        private.unlink()
+        private.symlink_to(external)
+        return original_link(src, dst, **kw)
+
+    monkeypatch.setattr(os, "link", swap_temp_at_commit)
+    with pytest.raises(
+        DirectLoanPublicationRefused, match="loan_direct_temp_changed",
+    ):
+        publish(staged, work_dir=work, library_target_dir=library)
+    assert external.read_bytes() == b"PRIVATE OTHER USER"
+    assert staged.read_bytes() == b"ORIGINAL LOAN"
+    assert not list(library.iterdir())
+
+
+def test_direct_loan_same_size_new_stage_inode_before_open_is_refused(
+    tmp_path, monkeypatch,
+):
+    staged, work, library = _stage(tmp_path, data=b"PAYLOAD A")
+    original_open = os.open
+    did_replace = []
+
+    def swap_source_before_open(path, flags, *args, **kwargs):
+        if Path(path) == staged and not did_replace:
+            old = work / "old.epub"
+            staged.rename(old)
+            staged.write_bytes(b"PAYLOAD B")
+            did_replace.append(True)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_source_before_open)
+    with pytest.raises(
+        DirectLoanPublicationRefused, match="loan_direct_stage_changed",
+    ):
+        publish(staged, work_dir=work, library_target_dir=library)
+    assert staged.read_bytes() == b"PAYLOAD B"
+    assert (work / "old.epub").read_bytes() == b"PAYLOAD A"
+    assert not library.exists() or list(library.iterdir()) == []
