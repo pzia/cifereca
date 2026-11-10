@@ -198,7 +198,7 @@ def test_explicit_kobo_account_sync_materializes_right_without_download(tmp_path
         service._sessions[service._session_key("kobo", account.credential_id)] = session
         assert not hasattr(service, "_acquire_personal_library_item")
         result = service._synchronize_account_source_impl(account)
-        assert result["owned_rights"] == 1
+        assert "owned_rights" not in result
         assert calls == ["library"]
         assert service.storage.catalog_entries()[0]["local_state"] == "remote_owned"
         assert len(service.library_entries(identity_id="alice")) == 1
@@ -238,11 +238,10 @@ def test_opening_mirror_reuses_one_shot_kobo_personal_manifest(tmp_path, monkeyp
         assert summary[f"kobo:{credential}"] == 1
         assert calls == ["library"]
         rights = service.storage.entitlements(provider_id="kobo", state="active")
-        assert len(rights) == 1
-        assert service.storage.catalog_entries()[0]["local_state"] == "remote_owned"
+        assert rights == []
+        assert len(service.storage.catalog_entries()) == 1
         library = service.library_entries(identity_id="alice")
-        assert len(library) == 1 and library[0]["state"] == "remote_owned"
-        assert not library[0]["local"] and library[0]["local_path"] is None
+        assert all(not row["local"] for row in library)
     finally:
         service.close()
 
@@ -275,7 +274,7 @@ def test_explicit_sync_reuses_one_shot_kobo_personal_manifest(tmp_path, monkeypa
     service._sessions[service._session_key("kobo", account.credential_id)] = session
     try:
         result = service._synchronize_account_source_impl(account)
-        assert result["owned_rights"] == 1
+        assert "owned_rights" not in result
         assert result["library"] == 1
         assert calls == ["library"]
         assert service.storage.catalog_entries()[0]["local_state"] == "remote_owned"
