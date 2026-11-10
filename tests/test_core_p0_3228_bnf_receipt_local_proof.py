@@ -193,3 +193,24 @@ def test_duplicate_exact_bnf_manual_receipts_never_pick_first_or_issue_get(
     assert not called and not downloaded
     assert service.storage.acquisitions() == before
     assert target.read_bytes() == PDF
+
+
+# BnF legacy wrapper contract belongs to the provider-specific regression suite.
+from cifereca.core.bnf_auto_materialization import _receipt_local_file_verified
+from tests.test_core_p0_5055_local_receipt_verification import rig
+
+def test_bnf_wrapper_keeps_exact_manual_import_and_bnf_placement(rig, tmp_path):
+    service, path, row, _artifact, placement, _root = rig
+    account = NS(identity_id="alice", provider_id="bnf-pret", credential_id="bnf-c")
+    assert not _receipt_local_file_verified(service, account, row, path)
+    # A synthetic exact BnF placement is accepted only for verified bytes;
+    # the caller's existing consent and account lease remain independently required.
+    bnf_root = tmp_path / "alice" / "bnf-pret" / "loan-1"
+    bnf_root.mkdir(parents=True)
+    bnf_path = bnf_root / "book.epub"
+    bnf_path.write_bytes(path.read_bytes())
+    placement["provider_id"] = "bnf-pret"
+    assert _receipt_local_file_verified(service, account, row, bnf_path)
+    row["provider_id"] = "bnf-pret"  # automatic import must remain manual-scoped
+    assert not _receipt_local_file_verified(service, account, row, bnf_path)
+
