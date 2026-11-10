@@ -8,6 +8,7 @@ is reachable on this path.
 from __future__ import annotations
 
 from inspect import getattr_static
+import json
 from pathlib import Path
 
 from ..acquisition import Acquisition
@@ -164,12 +165,57 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
             )
             if not live_permission(key):
                 raise ValueError("explicit_canonical_permission_revoked")
+            def publication_guard(db, source: SourceKey) -> bool:
+                """One exact positive right under publisher's BEGIN IMMEDIATE.
+
+                No Storage call, remote GET, plugin callback or source-wide
+                consent write occurs while the SQL transaction is held.
+                The click itself is the ephemeral right-level permission;
+                all borrower/credential and final bytes checks remain Core's.
+                """
+                if source != key or not context_current():
+                    return False
+                try:
+                    rows = db.execute(
+                        "SELECT entitlement_type,state,loan_id,expires_at,"
+                        "metadata_json FROM entitlements "
+                        "WHERE entitlement_id=? AND identity_id=? "
+                        "AND provider_id=? AND credential_id=? "
+                        "AND account_id=? AND item_id=? LIMIT 2",
+                        (target.entitlement_id, target.identity_id,
+                         target.provider_id, target.credential_id,
+                         target.account_id, target.item_id),
+                    ).fetchall()
+                    if len(rows) != 1:
+                        return False
+                    kind, state, loan, expiry, metadata_json = rows[0]
+                    if (kind != "owned" or state != "active"
+                            or loan is not None or expiry is not None):
+                        return False
+                    metadata = json.loads(metadata_json)
+                    return (
+                        type(metadata) is dict
+                        and metadata.get("source") == target.attested_source
+                        and metadata.get("downloadable") is not False
+                        and metadata.get("owned") is not False
+                        and metadata.get("archived") is not True
+                        and all(
+                            metadata.get(name) is None
+                            or type(metadata[name]) is bool
+                            for name in ("downloadable", "owned", "archived")
+                        )
+                    )
+                except Exception:
+                    return False
+
             result = execute_admitted_convergence(
                 service, account, session, snapshot,
                 admitted_epoch=epoch, shared_lock=lease,
                 library_root=Path(service.library_dir()),
                 persisted_consent=frozenset({key}),
                 consent_still_current=live_permission,
+                explicitly_confirmed_once=True,
+                publication_guard=publication_guard,
                 deliver=lambda source, chosen: complete_selected_delivery(
                     service, account, session, source, chosen,
                     library_root=Path(service.library_dir()),
