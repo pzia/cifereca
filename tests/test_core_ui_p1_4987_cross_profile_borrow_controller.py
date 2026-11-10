@@ -362,3 +362,19 @@ def test_incomplete_or_contradictory_positive_result_never_publishes_a_loan(wron
     assert shown == []
     assert h.logs and h.logs[0][0] == "error"
     assert h.window._cross_profile_borrow_pending is None
+
+
+def test_confirmed_supplier_loan_does_not_mislabel_unverified_delivery_as_refused():
+    h = setup()
+    assert h.show()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    _title, work, done, _failed, _kw = h.window.runner.jobs[0]
+    done(work())
+    assert h.logs and h.logs[0][0] == "info"
+    message = h.logs[0][1]
+    assert "Prêt confirmé" in message
+    assert "Livraison non vérifiée" in message
+    assert "transfert vers ce profil bloqué" in message
+    assert "non autorisés" not in message
+    assert h.window._cross_profile_borrow_pending is None
