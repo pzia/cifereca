@@ -40,6 +40,7 @@ def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any)
             and getattr(item, "credential_id", None) == credential
         ]
         if (len(matches) != 1
+                or matches[0] is not account
                 or matches[0].identity_id != identity
                 or matches[0].unique_id != account_id
                 or not service.sync_source_enabled(account)
@@ -67,6 +68,17 @@ def numilog_inventory_binding_valid(service: Any, account: Any, *, session: Any)
         if len(current_sessions) != 1 or current_sessions[0] is not session:
             return False
         coordinates = passive_private_library_session(session)
+        # Real plugin sessions carry the exact account objects returned by
+        # their own connect(); a detached or duplicate object is not proof
+        # of private inventory authority. Inert historical test doubles
+        # have no initialized provider account roster.
+        from ..providers.base import ProviderSession
+        from .loan_action_scope import _inert_session_accounts
+        if isinstance(session, ProviderSession):
+            session_accounts = _inert_session_accounts(session)
+            if (session_accounts is None
+                    or sum(row is account for row in session_accounts) != 1):
+                return False
         return (
             coordinates is not None
             and coordinates[0] == account.provider_id
