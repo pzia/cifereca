@@ -39,6 +39,28 @@ def _persistent(service):
         )
 
 
+def _no_legacy_preview_authority(service, *, refresh=False, verify=False):
+    """D1 can refuse or return canonical-B-only history, never a 0.7 claim."""
+    try:
+        result = service.kobo_backup_preview(
+            "vault-1", refresh_manifest=refresh, verify_local_files=verify,
+        )
+    except ProviderConfigurationError as exc:
+        assert str(exc) in {
+            "canonical_kobo_preview_scope_unavailable",
+            "canonical_kobo_preview_scope_changed",
+            "canonical_kobo_preview_abi_unavailable",
+        }
+        return
+    assert not refresh, "partial ABI cannot refresh provider A"
+    assert result["acquisition_authorized"] is False
+    assert result["canonical_source"] is True
+    assert result["historical_canonical_only"] is True
+    assert result["manifest_refreshed"] is False
+    for key in ("already_local_linked", "already_local_verified", "potentially_missing"):
+        assert result["counts"][key] == 0
+
+
 @pytest.mark.parametrize("fresh,verify", [
     (False, False), (False, True), (True, False), (True, True),
 ])
@@ -74,13 +96,7 @@ def test_typed_source_never_gains_local_presence_from_backup_row(
             service, "_execute_kobo_acquisition",
             lambda *_a, **_kw: pytest.fail("no legacy GET"),
         )
-        with pytest.raises(
-            ProviderConfigurationError,
-            match=r"canonical_kobo_preview_(scope|abi)_unavailable",
-        ):
-            service.kobo_backup_preview(
-                "vault-1", refresh_manifest=fresh, verify_local_files=verify,
-            )
+        _no_legacy_preview_authority(service, refresh=fresh, verify=verify)
         assert _persistent(service) == before
         assert file.read_bytes() == raw
     finally:
@@ -99,11 +115,7 @@ def test_unrelated_source_cannot_promote_legacy_offline_local_claim(tmp_path, ot
         _backup(service, "book-a", status="complete", local_path=file)
         _typed(service, **other)
         before = _persistent(service)
-        with pytest.raises(
-            ProviderConfigurationError,
-            match=r"canonical_kobo_preview_(scope|abi)_unavailable",
-        ):
-            service.kobo_backup_preview("vault-1")
+        _no_legacy_preview_authority(service)
         assert _persistent(service) == before
         assert file.is_file()
     finally:
@@ -119,11 +131,7 @@ def test_mixed_typed_and_untyped_legacy_receipts_never_prove_b(tmp_path):
             _backup(service, item, status="complete", local_path=file)
         _typed(service)
         before = _persistent(service)
-        with pytest.raises(
-            ProviderConfigurationError,
-            match=r"canonical_kobo_preview_(scope|abi)_unavailable",
-        ):
-            service.kobo_backup_preview("vault-1")
+        _no_legacy_preview_authority(service)
         assert _persistent(service) == before
     finally:
         service.close()
@@ -137,11 +145,7 @@ def test_archived_typed_right_cannot_become_legacy_presence(tmp_path):
     try:
         _typed(service)
         before = _persistent(service)
-        with pytest.raises(
-            ProviderConfigurationError,
-            match=r"canonical_kobo_preview_(scope|abi)_unavailable",
-        ):
-            service.kobo_backup_preview("vault-1", refresh_manifest=True)
+        _no_legacy_preview_authority(service, refresh=True)
         assert _persistent(service) == before
     finally:
         service.close()
@@ -157,11 +161,7 @@ def test_historical_archive_flag_cannot_hide_typed_edition(tmp_path, fresh):
         _backup(service, "book-a", status="skipped_archived")
         _typed(service)
         before = _persistent(service)
-        with pytest.raises(
-            ProviderConfigurationError,
-            match=r"canonical_kobo_preview_(scope|abi)_unavailable",
-        ):
-            service.kobo_backup_preview("vault-1", refresh_manifest=fresh)
+        _no_legacy_preview_authority(service, refresh=fresh)
         assert _persistent(service) == before
     finally:
         service.close()
