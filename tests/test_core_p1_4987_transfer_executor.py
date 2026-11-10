@@ -108,6 +108,8 @@ def test_native_send_exception_keeps_loan_without_retry(setup_send):
     service.materialize_to_identity.side_effect = RuntimeError("private-secret")
     result = execute(service, w)
     assert result["transfer"] == "blocked"
+    assert result["loan"] == "confirmed"
+    assert result["delivery"] == "present"
     assert "private-secret" not in repr(result)
     assert result["retry_borrow"] is False
 
