@@ -707,14 +707,6 @@
     "kind": "method",
     "signature": "(self, identity_id: 'str | None' = None) -> 'Path'"
   },
-  "_manifest_author": {
-    "kind": "staticmethod",
-    "signature": "(item: 'dict[str, Any]') -> 'str | None'"
-  },
-  "_kobo_backup_error_info": {
-    "kind": "staticmethod",
-    "signature": "(exc: 'Exception') -> 'dict[str, Any]'"
-  },
   "kobo_backup_diagnostic": {
     "kind": "method",
     "signature": "(self) -> 'dict[str, Any]'"
