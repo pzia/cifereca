@@ -15,7 +15,7 @@ from cifereca.core.source_materialization_schedule import (
     can_enable_kobo_on_start, kobo_on_start_sessions, policy_key,
 )
 from tests.test_kobo_sync_modes import (
-    _service, _enable_on_start, _neutralize_unrelated_sync_work,
+    _service, _neutralize_unrelated_sync_work,
 )
 
 
@@ -30,11 +30,12 @@ def test_old_primary_on_start_cannot_authorize_empty_secondary_borrower(
         service.accounts = [first]
         session.accounts = [first]
         _neutralize_unrelated_sync_work(service, monkeypatch)
-        _enable_on_start(service)
         sid = SynchronizationBrokerImpl._source_id(first)
+        # Preexisting 0.7 ON stays as history; no new opt-in is admissible.
+        service.storage.metadata_set(policy_key(sid), "1")
         clock = "sync.source.materialization.last_attempt." + sid
-        assert can_enable_kobo_on_start(service, first)
-        assert kobo_on_start_sessions(service) == (session,)
+        assert not can_enable_kobo_on_start(service, first)
+        assert kobo_on_start_sessions(service) == ()
         assert service.storage.metadata_get(policy_key(sid)) == "1"
         assert service.storage.metadata_get(clock) is None
 
@@ -70,7 +71,7 @@ def test_old_primary_on_start_cannot_authorize_empty_secondary_borrower(
         # only after the real primary owner is restored.
         service.accounts = [first]
         session.accounts = [first]
-        assert kobo_on_start_sessions(service) == (session,)
+        assert kobo_on_start_sessions(service) == ()
     finally:
         service.close()
 
