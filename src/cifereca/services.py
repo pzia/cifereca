@@ -1702,7 +1702,8 @@ class LibraryService:
                 continue
             identity = self.identity_by_id(scope[0])
             try:
-                # Consume a one-shot iterable once for both metadata mirrors.
+                # Consume a one-shot iterable once for the scoped catalogue
+                # observation, without projecting historical ownership.
                 rows = list(session.library())
                 if not source_current():
                     result.blocked_sources += 1
@@ -1720,17 +1721,9 @@ class LibraryService:
                             "provider=%s reason=invalid_private_rows", provider_id,
                         )
                         continue
-                # Bibliographic mirroring is not purchase-right admission.
-                # Only typed, exact-scoped provider observations may enter
-                # canonical rights/offer workflows; never derive rights from
-                # SearchResult.owned or a private catalogue manifest.
-                if provider_id == "numilog":
-                    from .core.numilog_manifest_rights import mirror_numilog_manifest_rights
-                    mirror_numilog_manifest_rights(
-                        self, rows, identity_id=identity.identity_id,
-                        credential_id=credential_id,
-                        account_id=account.unique_id or None,
-                    )
+                # Observed supplier rows are metadata only. Delivery requires
+                # a fresh, independently validated provider offer; neither
+                # SearchResult.owned nor an old local record grants access.
                 if not source_current():
                     result.blocked_sources += 1
                     _TRACE_LOG.warning(
