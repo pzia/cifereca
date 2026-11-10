@@ -9,6 +9,22 @@ from pathlib import Path
 from typing import Any
 
 
+def trusted_local_directory(root_dir: Any) -> bool:
+    """Pre-I/O check: refuse any symlink alias in an existing directory root."""
+    try:
+        if not isinstance(root_dir, Path) or not root_dir.is_dir():
+            return False
+        ancestor = root_dir
+        while True:
+            if ancestor.is_symlink():
+                return False
+            if ancestor == ancestor.parent:
+                return True
+            ancestor = ancestor.parent
+    except Exception:
+        return False
+
+
 def received_book_file_within_root(path: Any, root_dir: Any) -> bool:
     """Accept only an existing regular book file below a real, symlink-free root.
 
@@ -16,18 +32,9 @@ def received_book_file_within_root(path: Any, root_dir: Any) -> bool:
     proof of the same acquisition. Intermediate aliases must not escape scope.
     """
     try:
-        if (not isinstance(path, Path) or not isinstance(root_dir, Path)
-                or root_dir.is_symlink() or root_dir.parent.is_symlink()
-                or not root_dir.is_dir()
+        if (not isinstance(path, Path) or not trusted_local_directory(root_dir)
                 or path.is_symlink() or not path.is_file()):
             return False
-        # A symlink higher than the immediate parent is also an alias to
-        # another identity tree. Do not accept a root through that alias.
-        ancestor = root_dir
-        while ancestor != ancestor.parent:
-            if ancestor.is_symlink():
-                return False
-            ancestor = ancestor.parent
         root = root_dir.resolve(strict=True)
         current = path.parent
         if not path.resolve(strict=True).is_relative_to(root):
@@ -41,4 +48,4 @@ def received_book_file_within_root(path: Any, root_dir: Any) -> bool:
         return False
 
 
-__all__ = ["received_book_file_within_root"]
+__all__ = ["received_book_file_within_root", "trusted_local_directory"]
