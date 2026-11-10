@@ -54,7 +54,7 @@ def test_retired_w2_never_retries_or_rewrites_historical_checkpoint(
                 "SELECT * FROM origin_links ORDER BY 1"
             ).fetchall()
             deliveries_before = db.execute(
-                "SELECT * FROM completed_deliveries ORDER BY 1"
+                "SELECT * FROM acquisition_ledger ORDER BY 1"
             ).fetchall()
 
         def forbidden(*_args, **_kwargs):
@@ -79,7 +79,7 @@ def test_retired_w2_never_retries_or_rewrites_historical_checkpoint(
                 "SELECT * FROM origin_links ORDER BY 1"
             ).fetchall() == links_before
             assert db.execute(
-                "SELECT * FROM completed_deliveries ORDER BY 1"
+                "SELECT * FROM acquisition_ledger ORDER BY 1"
             ).fetchall() == deliveries_before
         assert service.storage.placements() == []
     finally:
