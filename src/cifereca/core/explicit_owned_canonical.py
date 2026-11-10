@@ -27,9 +27,10 @@ from .source_context import source_context_epoch
 from .source_convergence import SourceKey
 
 
-def obtain_explicit_owned(service, target, *, resolve) -> MaterializationResult:
+def obtain_explicit_owned(service, target, *, resolve, right_current) -> MaterializationResult:
     """Exact, one-shot Core permission; never implicit source-wide Sync consent."""
-    if (not callable(resolve) or type(getattr(target, "provider_id", None)) is not str
+    if (not callable(resolve) or not callable(right_current)
+            or type(getattr(target, "provider_id", None)) is not str
             or not target.provider_id or type(getattr(target, "branch", None)) is not str
             or not target.branch):
         raise ValueError("explicit_canonical_target_invalid")
@@ -110,11 +111,12 @@ def obtain_explicit_owned(service, target, *, resolve) -> MaterializationResult:
             if source != key or not context_current():
                 return False
             try:
-                fresh, _ = resolve(
-                    service, target.entitlement_id,
-                    target.identity_id, target.item_id,
-                )
-                return fresh == target and fresh.session is session
+                # The exact target was admitted by resolve() before any GET.
+                # This separate right-only predicate stays valid after Core
+                # writes its own durable pending receipt. Re-running resolve()
+                # after that receipt would reject its own successful GET as a
+                # competing acquisition and prevent canonical publication.
+                return right_current(service, target) is True
             except Exception:
                 return False
 
@@ -143,6 +145,15 @@ def obtain_explicit_owned(service, target, *, resolve) -> MaterializationResult:
                 raise ValueError("explicit_canonical_offer_mismatch")
             if not live_permission(key):
                 raise ValueError("explicit_canonical_permission_revoked")
+            # The strict target resolver (including no competing receipt)
+            # is replayed just before Core A is written. Only the explicit
+            # right-only lease is used *after* a canonical receipt exists.
+            refreshed, _ = resolve(
+                service, target.entitlement_id,
+                target.identity_id, target.item_id,
+            )
+            if refreshed != target or refreshed.session is not session:
+                raise ValueError("explicit_canonical_target_changed")
             snapshot = as_legacy_rights_snapshot(observed)
             persist_attested_source_references(
                 storage, snapshot, context_current=context_current,
