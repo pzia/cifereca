@@ -1551,6 +1551,23 @@ class MetadataBrokerImpl:
         """
         return self.service.reading_preference_snapshot(identity_id=identity_id)
 
+    def change_reading_preference(
+        self, *, identity_id: str, library_key: str | None = None,
+        preference: str | None = None, expected_revision: int,
+        user_confirmed: bool = False, clear_all: bool = False,
+    ):
+        """#4681: explicit feedback writer; Core enforces identity, exact key and CAS.
+
+        Optional additive broker method. A plugin cannot bypass the live
+        identity owner, claim a preference from provider metadata, or recover
+        from a stale revision by silently retrying.
+        """
+        return self.service.change_reading_preference(
+            identity_id=identity_id, library_key=library_key,
+            preference=preference, expected_revision=expected_revision,
+            user_confirmed=user_confirmed, clear_all=clear_all,
+        )
+
 
 @dataclass(slots=True)
 class ReconciliationBrokerImpl:
