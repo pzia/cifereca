@@ -321,3 +321,22 @@ def test_synthetic_kobo_epub_has_stable_bytes_across_zip_clock(tmp_path, monkeyp
         assert archive.read("content.xhtml") == b"synthetic Kobo A book"
         assert all(member.date_time == (1980, 1, 1, 0, 0, 0)
                    for member in archive.infolist())
+
+
+def test_synthetic_kobo_epub_has_stable_bytes_across_zip_clock(tmp_path, monkeypatch):
+    """The two independent lender/receiver witnesses share an exact SHA."""
+    first = tmp_path / "first.epub"
+    second = tmp_path / "second.epub"
+    monkeypatch.setattr(
+        zipfile.time, "localtime", lambda *_: (2020, 1, 1, 0, 0, 0, 0, 1, -1),
+    )
+    _write_epub(first, b"synthetic Kobo A book")
+    monkeypatch.setattr(
+        zipfile.time, "localtime", lambda *_: (2026, 11, 10, 23, 59, 58, 1, 315, -1),
+    )
+    _write_epub(second, b"synthetic Kobo A book")
+    assert first.read_bytes() == second.read_bytes()
+    with zipfile.ZipFile(first) as archive:
+        assert archive.read("content.xhtml") == b"synthetic Kobo A book"
+        assert all(member.date_time == (1980, 1, 1, 0, 0, 0)
+                   for member in archive.infolist())
