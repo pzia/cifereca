@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from cifereca.core.kobo_canonical_relink import (
+from cifereca.core.canonical_relink import (
     CanonicalRelinkRejected, relink_verified_canonical_kobo,
 )
 from tests.test_core_p0_3171_atomic_publication_v14 import (

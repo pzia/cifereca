@@ -133,7 +133,7 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
                                   _connect=lambda: connection, _stable_id=Storage._stable_id)
         service = SimpleNamespace(storage=storage, config=SimpleNamespace(get=get), identity_by_id=identity)
         if canonical_relink:
-            from .kobo_canonical_relink import relink_verified_canonical_kobo
+            from .canonical_relink import relink_verified_canonical_kobo
             # This offline path deliberately reads Config/SQLite, not any
             # connected provider. The CURRENT on-disk profile mapping must
             # match the exact identity's canonical SQLite directory.
