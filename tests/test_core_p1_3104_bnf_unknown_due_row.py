@@ -12,6 +12,7 @@ from cifereca.gui.loan_view import (
     loan_medium_counts, loan_row_metadata,
 )
 from cifereca.models import Loan
+from cifereca.core.covers import candidate
 from cifereca.core.loan_cover_fallback import loan_local_cover
 
 
@@ -33,6 +34,7 @@ def _render_actual(loans):
         "Loan": Loan,
         "copy": copy,
         "loan_local_cover": loan_local_cover,
+        "candidate": candidate,
         "BookListItem": Row,
         "loan_source_key": loan_source_key,
         "loan_due_presentation": loan_due_presentation,
