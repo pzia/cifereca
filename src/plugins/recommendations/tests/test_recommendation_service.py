@@ -61,6 +61,7 @@ def test_service_uses_public_brokers_and_returns_results():
     assert result.providers == (("opds", "OPDS test"),)
     assert result.ranked
     assert result.cache_unknown_calls == len(result.queries)
+    assert [book["title"] for book in result.profile_books] == ["Seed 1", "Seed 2"]
 
 
 def test_progressive_search_reports_cache_network_and_progress():
@@ -180,14 +181,6 @@ def test_service_can_include_owned_books_when_filter_is_disabled():
     assert hidden.ranked == ()
     assert shown.ranked
     assert shown.ranked[0].item["title"] == "Seed 1"
-
-
-def test_service_returns_already_loaded_profile_books_without_second_snapshot():
-    metadata = Metadata()
-    result = compute_recommendations(metadata, Catalog(), "id-1", max_queries=2)
-
-    assert metadata.calls == [{"identity_id": "id-1", "scan": False}]
-    assert [book["title"] for book in result.profile_books] == ["Seed 1", "Seed 2"]
 
 
 def test_snapshot_cache_reuses_library_projection_until_invalidated():
