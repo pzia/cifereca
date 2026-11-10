@@ -3168,6 +3168,25 @@ class LibraryService:
         """
         return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
 
+    def library_entries_all_profiles(self) -> list[dict[str, Any]]:
+        """Read the shared Library without conflating placements across owners.
+
+        A profile is an optional view filter, not a confidentiality boundary.
+        Each per-profile projection retains its existing exact Placement and
+        entitlement checks. Never merge rows solely by SHA across profiles,
+        rewrite an owner, scan the filesystem, or refresh a supplier here.
+        """
+        result: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for identity in self.identities:
+            identity_id = getattr(identity, "identity_id", None)
+            if type(identity_id) is not str or not identity_id or identity_id in seen:
+                continue
+            seen.add(identity_id)
+            for entry in self.library_entries(identity_id=identity_id, scan=False):
+                result.append({"identity_id": identity_id, "entry": entry})
+        return result
+
     def reading_preference_snapshot(self, *, identity_id: str):
         """Read only explicitly stored local feedback for the active identity.
 
