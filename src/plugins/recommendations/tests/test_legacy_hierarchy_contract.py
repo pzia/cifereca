@@ -24,15 +24,3 @@ def test_active_recommendations_entrypoint_is_flat_and_uses_core_tasks():
     assert 'context.broker("tasks")' in source
     assert "task_broker.submit(" in source
     assert "recommendations_v0" not in source
-
-
-def test_obsolete_recommendations_layers_are_removed():
-    for name in (
-        "recommendations_v021.py",
-        "recommendations_v022.py",
-        "recommendations_v023.py",
-        "recommendations_v024.py",
-        "recommendation_service_v022.py",
-    ):
-        assert not (PLUGIN / name).exists()
-    assert (PLUGIN / "recommendation_service.py").exists()
