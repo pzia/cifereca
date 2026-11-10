@@ -96,5 +96,5 @@ def test_kobo_mirror_preserves_healthy_source_inventory_only():
     assert result == {"kobo:credential": 2}
     assert result.blocked_sources == 0
     assert result.failed_sources == 0
-    rights.assert_called_once()
+    rights.assert_not_called()
     service._mirror_remote_results.assert_called_once()
