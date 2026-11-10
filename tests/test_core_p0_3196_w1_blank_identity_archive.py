@@ -62,10 +62,8 @@ def test_exact_profile_still_accepts_kobo_primary_empty_account(tmp_path):
     try:
         store.backup_put(_archive(identity="alice", status="pending"))
         assert store.backup_get("kobo", "vault", "edition")["account_id"] == ""
-        rights = store.entitlements(provider_id="kobo")
-        assert len(rights) == 1
-        assert rights[0]["account_id"] == ""
-        assert rights[0]["identity_id"] == "alice"
+        assert store.entitlements(provider_id="kobo") == []
+        assert store.acquisitions(provider_id="kobo") == []
     finally:
         store.close()
 

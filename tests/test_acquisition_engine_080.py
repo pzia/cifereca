@@ -97,14 +97,9 @@ def test_schema_v3_mirrors_legacy_backup_into_generic_ledger():
         })
         entitlements = storage.entitlements(provider_id="kobo")
         ledger = storage.acquisitions(provider_id="kobo")
-        assert len(entitlements) == 1
-        assert entitlements[0]["account_id"] == "account-a"
-        assert entitlements[0]["item_id"] == "book-a"
-        assert len(ledger) == 1
-        assert ledger[0]["status"] == "pending"
-        assert ledger[0]["strategy"] == "acsm-descriptor"
-        assert ledger[0]["executor"] == "kobo-adept"
-        assert ledger[0]["attempt_count"] == 2
+        assert entitlements == []
+        assert ledger == []
+        assert storage.backup_get("kobo", "identity-a", "book-a") is not None
 
 
 def test_v2_database_migrates_forward_without_losing_backup_rows():

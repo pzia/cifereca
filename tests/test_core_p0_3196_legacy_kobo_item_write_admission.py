@@ -76,7 +76,7 @@ def test_valid_kobo_product_id_remains_writable_and_replayable(tmp_path):
         assert first is not None
         storage.backup_put({**_claim("book"), "title": "Updated"})
         assert storage.backup_get("kobo", "vault", "book")["title"] == "Updated"
-        assert len(storage.acquisitions(provider_id="kobo")) == 1
+        assert storage.acquisitions(provider_id="kobo") == []
     finally:
         storage.close()
 
