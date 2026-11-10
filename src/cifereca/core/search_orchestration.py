@@ -2003,13 +2003,14 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         if existing and existing.get("local_state") == "local":
             continue
         raw_meta = dict(row.metadata or {})
-        if row.source_provider == "numilog":
-            # Signed ACSM "rights" must never be copied into the public
-            # catalogue. Ownership is the separate attested entitlement.
-            raw_meta.pop("rights", None)
+        # "rights" is an untrusted provider claim (possibly a signed
+        # token), never a public bibliographic field nor ownership evidence.
+        # The exact Core entitlement ledger alone determines remote_owned.
+        # This rule is provider-neutral: unknown plugins must not leak it.
+        raw_meta.pop("rights", None)
         allowed_meta = {
             name: raw_meta.get(name)
-            for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "rights", "dates")
+            for name in ("subjects", "subject", "series", "collection", "publisher", "languages", "isbn", "isbns", "original_language", "authors", "contributors", "identifiers", "edition", "edition_statement", "series_index", "collection_index", "genre", "genres", "categories", "audience", "target_age", "dates")
             if raw_meta.get(name) not in (None, "", [], {})
         }
         # Kobo-Vault and other providers may already expose attested awards,
