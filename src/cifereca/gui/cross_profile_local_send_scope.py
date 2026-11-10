@@ -10,6 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..models import Account, SearchResult
+from ..plugin_api.lending_capabilities import (
+    BorrowerOperationEvidence as AccountBorrowerEvidence,
+)
+from ..plugin_api.lending_borrower_eligibility import (
+    BorrowerOperationEvidence as EditionBorrowerEvidence,
+)
 from ..core.borrow_for_identity_live import ObservedBorrowOffer
 from ..core.borrow_for_identity_preview import (
     BorrowForIdentityOption, BorrowForIdentityPreview,
@@ -73,14 +79,14 @@ def selected_lender_local_scope(
             and row.notice.medium == "digital"
             and (row.notice.source_provider, row.notice.source_credential)
                 == (account.provider_id, account.credential_id)
-            and row.evidence is not None
+            and type(row.evidence) is AccountBorrowerEvidence
             and (row.evidence.identity_id, row.evidence.provider_id,
                  row.evidence.credential_id, row.evidence.account_id,
                  row.evidence.branch) == (
                     account.identity_id, account.provider_id,
                     account.credential_id, account.unique_id, row.notice.docbase,
                  )
-            and row.edition_evidence is not None
+            and type(row.edition_evidence) is EditionBorrowerEvidence
             and (row.edition_evidence.identity_id,
                  row.edition_evidence.provider_id,
                  row.edition_evidence.credential_id,
