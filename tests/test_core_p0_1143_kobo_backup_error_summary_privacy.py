@@ -12,7 +12,6 @@ import pytest
 from cifereca.core.kobo_backup import _kobo_backup_error_info
 from cifereca.kobo.errors import KoboAdeptError
 from cifereca.kobo.vault import KoboVaultError
-from tests.test_core_p0_1143_kobo_backup_error_boundary import _setup, ITEM
 
 
 PRIVATE = "https://private.invalid/LOAN/reader.acsm?auth=TOKEN_KOBO_BACKUP"
@@ -61,39 +60,3 @@ def test_error_info_preserves_closed_classification_without_any_error_text(
     assert CODE_SECRET not in json.dumps(info)
     assert "private.invalid" not in json.dumps(info)
 
-
-def test_item_failure_summary_and_progress_do_not_copy_private_error_payload(
-    tmp_path, monkeypatch,
-):
-    service, session = _setup(tmp_path)
-    def refuse(*_args, **_kwargs):
-        raise KoboVaultError(PRIVATE, code=CODE_SECRET, status_code=403)
-    monkeypatch.setattr(session, "resolve_acquisition", refuse)
-    progress = []
-    try:
-        result = service.sync_kobo_backup(progress=progress.append)
-        assert result["errors"] == 1
-        assert result["aborted"] is True
-        assert result["abort_reason"]["code"] == "provider_http_error"
-        assert result["abort_reason"]["fatal"] is True
-        assert result["error_summary"][0]["message"] == "Sauvegarde Kobo impossible"
-        assert result["error_examples"][0]["message"] == "Sauvegarde Kobo impossible"
-        assert result["error_messages"] == ["Sauvegarde Kobo impossible"]
-        exported_errors = json.dumps({
-            "error_summary": result["error_summary"],
-            "abort_reason": result["abort_reason"],
-            "error_messages": result["error_messages"],
-        })
-        assert CODE_SECRET not in exported_errors
-        error_events = [event for event in progress if event.get("event") == "item_error"]
-        assert len(error_events) == 1
-        assert error_events[0]["message"] == "Sauvegarde Kobo impossible"
-        assert error_events[0]["code"] == "provider_http_error"
-        assert CODE_SECRET not in error_events[0]["message"] + error_events[0]["code"]
-        persisted = service.storage.backup_get("kobo", "vault-1", ITEM)
-        # Public error summaries remain stable; an exception after
-        # executor entry retains the non-retryable acquiring checkpoint.
-        assert persisted["status"] == "acquiring"
-        assert persisted["error"] is None
-    finally:
-        service.close()

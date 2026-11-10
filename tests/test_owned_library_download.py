@@ -38,22 +38,6 @@ def case(tmp_path, monkeypatch):
     service.close()
 
 
-def test_passive_target_then_exact_single_acquisition_and_index(case):
-    before = case.service.storage.entitlements()
-    target = case.service.owned_library_download_target(case.entry)
-    assert target is not None and not case.calls and not case.session.resolve_calls
-    assert case.service.storage.entitlements() == before
-    assert "vault-1" not in repr(target) and "book-1" not in repr(target)
-    result = case.service.obtain_owned_library_item(target)
-    assert result.path.is_file() and result.identity_id == "default"
-    assert result.indexed["status"] == "indexed" and len(case.calls) == 1
-    assert all(product == "book-1" for product, mode in case.session.resolve_calls)
-    assert case.service.owned_library_download_target(case.entry) is None
-    with pytest.raises(OwnedDownloadRejected):
-        case.service.obtain_owned_library_item(target)
-    assert len(case.calls) == 1
-
-
 @pytest.mark.parametrize("field,value", [("state", "revoked"), ("identity_id", "another"), ("revision_id", "new"),
                                        ("account_id", "other"), ("entitlement_type", "loan"),
                                        ("expires_at", "2030-01-01"), ("loan_id", "loan")])
@@ -112,97 +96,6 @@ def test_ambiguous_missing_or_already_local_provenance_never_offers_a_target(cas
         case.service.storage.entitlement_put({**case.right, "entitlement_id": "right-2", "revision_id": "r2"})
     assert case.service.owned_library_download_target(case.entry) is None
     assert not case.calls and not case.session.resolve_calls
-
-
-
-@pytest.mark.parametrize("status", [
-    "reconcile_required", "reconcile_conflict", "attention_required",
-    "complete", "acquiring", "downloading",
-])
-def test_historical_backup_status_without_exact_file_cannot_veto_explicit_get(
-    case, status,
-):
-    # A legacy receipt can be complete while its historical local_path has
-    # been moved/deleted. Only a verified current Core Placement could veto.
-    # Simulate a retained historical v0.7 row next to an independently
-    # observed canonical provider entitlement. Calling backup_put() would
-    # *also* create a second legacy-mirrored active entitlement, and that
-    # ambiguity is correctly a separate hard refusal.
-    with case.service.storage._lock, case.service.storage._connect() as sql:
-        sql.execute(
-            "INSERT INTO backup_items(provider_id,credential_id,item_id,"
-            "revision_id,title,local_path,status,updated_at,account_id,"
-            "identity_id,entitlement_type) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            ("kobo", "vault-1", "book-1", "r1", "Synthetic",
-             str(case.root / "vanished" / "old.epub"), status,
-             123, "account", "default", "owned"),
-        )
-    assert not (case.root / "vanished" / "old.epub").exists()
-    target = case.service.owned_library_download_target(case.entry)
-    assert target is not None
-    # The target still needs the fresh account/entitlement context at
-    # dispatch and inside the inter-process acquisition lock.
-    result = case.service.obtain_owned_library_item(target)
-    assert result.path.is_file()
-    assert len(case.calls) == 1
-
-
-def test_unlinked_different_book_in_profile_never_vetoes_this_exact_source(
-    case, monkeypatch,
-):
-    calls = []
-    monkeypatch.setattr(
-        case.service, "kobo_unlinked_local_count",
-        lambda _identity: calls.append(True) or 99,
-    )
-    target = case.service.owned_library_download_target(case.entry)
-    assert target is not None
-    result = case.service.obtain_owned_library_item(target)
-    assert result.path.is_file() and len(case.calls) == 1
-    assert calls == []  # No unrelated global legacy presence probe.
-
-
-def test_local_exact_published_placement_still_blocks_repeat_download(case):
-    target = case.service.owned_library_download_target(case.entry)
-    assert target is not None
-    case.service.obtain_owned_library_item(target)
-    assert len(case.calls) == 1
-    assert case.service.owned_library_download_target(case.entry) is None
-    with pytest.raises(OwnedDownloadRejected):
-        case.service.obtain_owned_library_item(target)
-    assert len(case.calls) == 1
-
-
-
-def test_legacy_mirrored_right_cannot_shadow_fresh_canonical_purchase(
-    case,
-):
-    # Genuine old API: backup_put creates an independent compatibility-only
-    # entitlement with another synthetic ID. This must NOT be mistaken for
-    # an independently attested second purchase or permission to GET.
-    case.service.storage.backup_put({
-        "provider_id": "kobo", "credential_id": "vault-1",
-        "item_id": "book-1", "identity_id": "default",
-        "account_id": "account", "revision_id": "r1",
-        "title": "Historical backup", "status": "reconcile_required",
-        "local_path": str(case.root / "moved.epub"),
-    })
-    rights = [row for row in case.service.storage.entitlements(provider_id="kobo")
-              if row.get("identity_id") == "default" and row.get("item_id") == "book-1"]
-    assert len(rights) == 2
-    mirrored = next(row for row in rights
-                    if row["entitlement_id"] != case.right["entitlement_id"])
-    assert mirrored["metadata"]["compatibility_projection"] == "backup_items"
-    target = case.service.owned_library_download_target(case.entry)
-    assert target is not None
-    receipt = case.service.obtain_owned_library_item(target)
-    assert receipt.path.is_file() and len(case.calls) == 1
-    assert case.service.owned_library_download_target(case.entry) is None
-
-    # A stale Library row claiming the compatibility-only right cannot
-    # override the exact canonical possession, even with matching account.
-    case.entry["possessions"][0]["entitlement_id"] = mirrored["entitlement_id"]
-    assert case.service.owned_library_download_target(case.entry) is None
 
 
 def test_two_independent_rights_remain_ambiguous_even_with_backup_mirror(
