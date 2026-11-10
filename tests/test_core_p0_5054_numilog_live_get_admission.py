@@ -37,7 +37,7 @@ def test_direct_get_receives_current_core_admission_without_unguarded_fallback()
     assert "session=pinned_session" in lease_text
     assert "admission_scope(item) == pinned_scope" in lease_text
     assert "source_context_epoch(service) == source_epoch" in lease_text
-    assert "current_identity" in lease_text
+    assert "current_identity" not in lease_text
     assert "startup_authorized()" in lease_text
     assert "recovery_authorized()" in lease_text
     assert "return False" in lease_text
@@ -60,7 +60,7 @@ def test_provider_checks_admission_during_download():
 
 @pytest.mark.parametrize("revocation", [
     "none", "account", "session", "identity", "scope", "startup", "recovery",
-    "binding_error", "context_epoch", "selected_identity",
+    "binding_error", "context_epoch", "ui_selection",
 ])
 def test_numilog_live_lease_refuses_changed_source_or_consent(revocation):
     method = _function("delivery_admission_current")
@@ -96,7 +96,7 @@ def test_numilog_live_lease_refuses_changed_source_or_consent(revocation):
         gates["recovery"] = False
     if revocation == "context_epoch":
         service._source_context_epoch = 9
-    if revocation == "selected_identity":
+    if revocation == "ui_selection":
         service.current_identity.identity_id = "bob"
 
     namespace = dict(
@@ -113,4 +113,6 @@ def test_numilog_live_lease_refuses_changed_source_or_consent(revocation):
     namespace["identity"] = NS(identity_id="alice")
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[method], type_ignores=[])), str(SOURCE), "exec"), namespace)
-    assert namespace["delivery_admission_current"]() is (revocation == "none")
+    assert namespace["delivery_admission_current"]() is (
+        revocation in {"none", "ui_selection"}
+    )
