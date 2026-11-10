@@ -84,8 +84,11 @@ def test_no_local_placement_never_opens_consent_or_sends():
     _, work, done, _failed, _kw = h.window.runner.jobs[0]
     done(work())
     lookup.assert_called_once()
-    assert Dialog.made == []
+    assert len(Dialog.made) == 1
+    assert "retry" in Dialog.made[0].responses
+    assert "send" not in Dialog.made[0].responses
     native.assert_not_called()
+    Dialog.made[0].respond("close")
     assert h.window._cross_profile_send_pending is None
 
 
@@ -165,3 +168,80 @@ def test_failed_native_copy_preserves_loan_message_without_private_details():
     assert h.logs[-1][0] == "error"
     assert "prêt reste" in h.logs[-1][1].lower()
     assert "SECRET" not in repr(h.logs)
+
+
+
+def test_confirmed_loan_missing_delivery_has_manual_read_only_retry():
+    h, _, lookup, native, display = prepared(present=False)
+    assert display() is True
+    _, work, done, _, _ = h.window.runner.jobs[0]
+    done(work())
+    assert len(Dialog.made) == 1
+    dialog = Dialog.made[0]
+    assert "encore disponible" in dialog.title
+    assert "retry" in dialog.responses
+    assert len(h.window.runner.jobs) == 1
+    assert "nouvel emprunt" in dialog.description
+    native.assert_not_called()
+
+    # Delivery reaches A after its one-shot supplier claim. This is a
+    # *second local read*, never a provider POST nor a local copy yet.
+    lookup.return_value = LenderLocalPlacement(
+        "present", "lender_exact_local_placement_present",
+        _placement_id="placement-a", loan="confirmed",
+    )
+    dialog.respond("retry")
+    dialog.respond("retry")
+    assert len(h.window.runner.jobs) == 2
+    assert lookup.call_count == 1
+    assert native.call_count == 0
+    _, work2, done2, _, _ = h.window.runner.jobs[1]
+    done2(work2())
+    assert lookup.call_count == 2
+    assert len(Dialog.made) == 2
+    assert "send" in Dialog.made[1].responses
+    native.assert_not_called()
+    Dialog.made[1].respond("send")
+    _, send_work, send_done, _, _ = h.window.runner.jobs[2]
+    send_done(send_work())
+    assert native.call_count == 1
+    assert h.window._cross_profile_send_pending is None
+
+
+def test_missing_delivery_dialog_close_releases_without_reborrow_or_send():
+    h, _, lookup, native, display = prepared(present=False)
+    assert display()
+    _, work, done, _, _ = h.window.runner.jobs[0]
+    done(work())
+    Dialog.made[0].respond("close")
+    Dialog.made[0].respond("retry")
+    assert len(h.window.runner.jobs) == 1
+    lookup.assert_called_once()
+    native.assert_not_called()
+    assert h.window._cross_profile_send_pending is None
+
+
+def test_missing_delivery_recheck_after_profile_change_is_revoked():
+    h, _, lookup, native, display = prepared(present=False)
+    assert display()
+    _, work, done, _, _ = h.window.runner.jobs[0]
+    done(work())
+    h.service._account_context_epoch += 1
+    Dialog.made[0].respond("retry")
+    assert len(h.window.runner.jobs) == 1
+    lookup.assert_called_once()
+    native.assert_not_called()
+    assert h.window._cross_profile_send_pending is None
+
+
+def test_uncertain_loan_never_offers_local_recheck():
+    h, _, lookup, native, display = prepared(present=False)
+    lookup.return_value = LenderLocalPlacement(
+        "unavailable", "lender_loan_not_confirmed", loan="unknown",
+    )
+    assert display()
+    _, work, done, _, _ = h.window.runner.jobs[0]
+    done(work())
+    assert Dialog.made == []
+    assert h.window._cross_profile_send_pending is None
+    native.assert_not_called()

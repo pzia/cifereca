@@ -150,6 +150,43 @@ def offer_cross_profile_local_send(
         if not current():
             release()
             return
+        if (type(result) is LenderLocalPlacement
+                and result.status == "unavailable"
+                and result.loan == "confirmed"
+                and result.reason_code == "lender_delivery_unverified"
+                and result.executable is False
+                and result.retry_borrow is False):
+            # Delivery can finish after the one-shot supplier claim.
+            # Offer a *manual*, read-only local recheck, never re-borrow.
+            state["stage"] = "awaiting_delivery"
+            try:
+                dialog = Adw.MessageDialog.new(
+                    window, "Livre pas encore disponible chez le prêteur",
+                    "Le prêt reste confirmé sur le profil prêteur, mais "
+                    "son fichier local n'est pas encore vérifié. "
+                    "Vérifiez à nouveau après la synchronisation du prêteur. "
+                    "Aucun nouvel emprunt ne sera effectué.",
+                )
+                dialog.add_response("close", "Fermer")
+                dialog.add_response("retry", "Vérifier à nouveau")
+
+                def answer(_dialog, response_id):
+                    if state["stage"] != "awaiting_delivery" or not owns_token():
+                        return
+                    if response_id != "retry" or not current():
+                        release()
+                        return
+                    state["stage"] = "checking"
+                    schedule_check()
+
+                dialog.connect("response", answer)
+                if not current() or not owns_token():
+                    release()
+                    return
+                dialog.present()
+            except Exception:
+                release()
+            return
         if (type(result) is not LenderLocalPlacement
                 or result.status != "present"
                 or result.loan != "confirmed"
@@ -157,8 +194,7 @@ def offer_cross_profile_local_send(
                 or result.retry_borrow is not False
                 or type(result._placement_id) is not str
                 or not result._placement_id):
-            # The loan may have completed before its physical delivery.
-            # Never offer a copy from the supplier receipt alone.
+            # Unknown or revoked loan never offers either copy or retry.
             release()
             return
         state["stage"] = "confirm"
@@ -200,17 +236,23 @@ def offer_cross_profile_local_send(
             exact_notice=exact_notice,
         )
 
-    try:
-        window.runner.submit(
-            "Vérification de la livraison locale…",
-            check, ready, missing,
-            control=control, priority=TaskPriority.USER_ACTION,
-            kind="borrow",
-        )
-        return True
-    except Exception:
-        release()
-        return False
+    def schedule_check() -> bool:
+        if state["stage"] != "checking" or not owns_token() or not current():
+            release()
+            return False
+        try:
+            window.runner.submit(
+                "Vérification de la livraison locale…",
+                check, ready, missing,
+                control=control, priority=TaskPriority.USER_ACTION,
+                kind="borrow",
+            )
+            return True
+        except Exception:
+            release()
+            return False
+
+    return schedule_check()
 
 
 def offer_selected_lender_local_send(
