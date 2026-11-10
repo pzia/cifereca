@@ -38,8 +38,16 @@ def acquire_numilog_direct(
             # cannot switch credential, purchase, variant or revision.
             from .numilog_manual_acquisition import admission_scope, require_admission
             pinned_scope = admission_scope(item)
+            from .source_context import source_context_epoch
+            pinned_source_epoch = source_context_epoch(service)
 
             def readmit():
+                # A source A -> B -> A rebound must not revive the same
+                # selected account and session for an in-flight GET.
+                if source_context_epoch(service) != pinned_source_epoch:
+                    raise ProviderConfigurationError(
+                        "Numilog : contexte source modifié ; rapprochement requis"
+                    )
                 return require_admission(
                     service, item, _admission, pinned_scope=pinned_scope,
                     session=pinned_session, identity_id=identity.identity_id,
