@@ -101,3 +101,21 @@ def test_live_session_scalar_property_cannot_forge_connected(
         service, account, expected_provider_id="bnf-pret",
     )
     assert reads == [] and downloaded == []
+
+
+def test_closed_provider_session_cannot_retain_source_binding(connected_core):
+    service, session, account, _loan, _state, downloaded = connected_core
+    assert source_account_binding_ready(
+        service, account, expected_provider_id="bnf-pret",
+    )
+    original_closed = session._closed
+    try:
+        # A stale connected scalar must not revive a closed provider session.
+        session._closed = True
+        session.connected = True
+        assert not source_account_binding_ready(
+            service, account, expected_provider_id="bnf-pret",
+        )
+        assert downloaded == []
+    finally:
+        session._closed = original_closed
