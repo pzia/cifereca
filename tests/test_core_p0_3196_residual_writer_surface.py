@@ -1,8 +1,7 @@
-"""P0 #3196: freeze direct, active 0.7 writer call sites until cutover.
+"""P0 #3196: forbid direct 0.7 backup writer calls after Kobo W2 cutover.
 
-Static architectural regression, not evidence that the legacy writer has
-already been retired. In particular dynamic SQL updates and confirmed repair
-are listed separately in the residual-writers contract document.
+This static fence checks the installed Core and plugin sources; archival SQL
+and generic storage compatibility APIs are tested independently.
 """
 from __future__ import annotations
 
@@ -37,10 +36,10 @@ def _production_legacy_calls() -> dict[str, set[str]]:
 
 
 def test_only_reviewed_kobo_compatibility_pipeline_calls_legacy_writer():
-    # The Kobo W3 caller has been retired: any new direct prune call is a
-    # cutover regression. W2 backup_put remains until migration #3196.
+    # No installed source is allowed to call the old 0.7 writer.
+    # Archival APIs remain available for rollback/reconciliation.
     assert _production_legacy_calls() == {
-        "backup_put": {"core/kobo_backup.py"},
+        "backup_put": set(),
         "backup_prune_missing": set(),
     }
 
