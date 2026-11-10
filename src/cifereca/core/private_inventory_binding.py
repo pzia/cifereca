@@ -88,13 +88,14 @@ def private_inventory_binding_current(service, account, session, *, scope, epoch
 def exact_private_inventory_binding_valid(
     service: Any, account: Any, *, session: Any, provider_id: str,
 ) -> bool:
-    """Refuse ambiguous, detached or disabled owned-store source requests.
+    """Validate a pinned private inventory source without granting any right.
 
-    Check persisted connection AND in-memory account before accessing library().
-    Do not fall back to current_identity or infer access from a connected
-    session or public SearchResult.
+    Match the exact in-memory account, SQLite borrower binding and passive
+    session coordinates. Never authorize a GET or infer a purchase.
     """
     try:
+        if type(provider_id) is not str or not provider_id:
+            return False
         if getattr(account, "provider_id", None) != provider_id:
             return False
         identity = getattr(account, "identity_id", None)
@@ -114,11 +115,8 @@ def exact_private_inventory_binding_valid(
                 or not service.sync_source_enabled(account)
                 or service.identity_by_id(identity) is None):
             return False
-        # The previous check enumerated every provider connection and
-        # omitted the SQLite borrower account entirely. A disconnected or
-        # reassigned borrower must not attest a fresh private Numilog manifest
-        # or even enter a legacy selected purchase preflight. Use the exact,
-        # bounded Core snapshot check; it includes the connection_id join.
+        # Pin the exact SQLite borrower/connection join. An identity-level
+        # connection alone cannot attest a detached account.
         if service.storage.provider_scope_account_bound(
             identity_id=identity, provider_id=provider_id,
             credential_id=credential, account_id=account_id,
