@@ -90,3 +90,38 @@ def test_canonical_pdf_sync_uses_readable_acquisitions_and_no_repeat_get(rig):
     assert replay["canonical_execution"]["present_attested"] == 1
     assert gets == ["GET"]
     assert Path(db.placements()[0]["path"]) == final
+
+
+
+def test_large_pdf_with_early_xmp_is_named_without_unbounded_read():
+    """An ordinary PDF larger than 4 MiB can still have XMP at its start."""
+    digest = "c" * 64
+    # Keep the well-formed XMP packet near the header; the stream's trailing
+    # padding makes the final PDF larger than the metadata inspection budget.
+    payload = pdf().replace(
+        b"\nendstream", b"\n" + b" " * (4 * 1024 * 1024) + b"\nendstream",
+    )
+    assert len(payload) > 4 * 1024 * 1024
+
+    class BoundedBytesIO(BytesIO):
+        def read(self, size=-1):
+            assert 0 <= size <= 4 * 1024 * 1024
+            return super().read(size)
+
+    names = _readable_pdf_target_names(
+        BoundedBytesIO(payload), opaque_name=digest,
+    )
+    assert names[-1].startswith("Auteure Test - Titre PDF vérifié - ")
+    assert names[-1].endswith(" - " + digest + ".pdf")
+
+
+def test_late_xmp_outside_prefix_stays_opaque():
+    """A packet beyond the bounded prefix must not trigger a full-file scan."""
+    digest = "d" * 64
+    payload = pdf().replace(
+        b"<x:xmpmeta", b" " * (4 * 1024 * 1024) + b"<x:xmpmeta",
+    )
+    assert len(payload) > 4 * 1024 * 1024
+    assert _readable_pdf_target_names(
+        BytesIO(payload), opaque_name=digest,
+    ) == (digest + ".pdf",)
