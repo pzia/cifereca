@@ -37,8 +37,14 @@ def test_loan_confirmed_but_not_delivered_only_checks_placement_without_copy(
     resolution = check()
     assert resolution.status == "unavailable"
     done(resolution)
-    assert len(Dialog.made) == 2
+    # The confirmed loan now offers a *local-only* manual recheck.
+    # It must not trigger another supplier POST or an unconfirmed send.
+    assert len(Dialog.made) == 3
+    assert "retry" in Dialog.made[2].responses
+    assert "send" not in Dialog.made[2].responses
     assert session.actions == 1
+    assert len(window.runner.jobs) == 2
+    Dialog.made[2].respond("close")
     assert window._cross_profile_send_pending is None
     assert len(messages) == 1
     assert "non vérifiée" in messages[0][1]
