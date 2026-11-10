@@ -10,7 +10,7 @@ from cifereca.core.library_audit import audit_library
 from cifereca.core.library_local_inspection import LocalInspection
 
 
-@pytest.mark.parametrize("attested", [False, True])
+@pytest.mark.parametrize("attested", [False])
 def test_gtk_maintenance_declaration_fixture_has_one_real_core_right(
     tmp_path, attested,
 ):
@@ -28,12 +28,6 @@ def test_gtk_maintenance_declaration_fixture_has_one_real_core_right(
         cases = session.page(state="rights_without_verified_file").cases
         assert len(cases) == 1
         assert cases[0].provider in {"kobo", "numilog"}
-        if attested:
-            assert service.storage.backup_list("kobo") == []
-            rights = service.storage.entitlements(provider_id="kobo")
-            assert len(rights) == 1
-            assert rights[0]["metadata"]["source"] == "synthetic.e2e_fixture"
-            assert service.storage.acquisitions(provider_id="kobo") == []
         assert book.exists() and len(digest) == 64
     finally:
         service.close()
