@@ -19,6 +19,7 @@ SYNC_PRODUCERS = frozenset((
     "src/cifereca/core/numilog_direct_acquisition.py",
     "src/cifereca/core/loan_local_preparation.py",
     "src/cifereca/core/loan_provider_delivery.py",
+    "src/cifereca/core/manual_acsm_import.py",
     "src/cifereca/core/sync_coordination.py",
 ))
 CAPTURE_GTK = ("capture-session-gtk-1366",)
