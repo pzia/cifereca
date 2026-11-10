@@ -1430,7 +1430,7 @@ class UxRecommendationsView:
         self._feedback_write_pending = True
         self._feedback_button.set_sensitive(False)
 
-        def operation(control):
+        def write_feedback(control):
             if control.cancelled() or generation != self._generation:
                 return None
             # Core guards the active identity, exact library key, and CAS
@@ -1443,7 +1443,7 @@ class UxRecommendationsView:
 
         try:
             handle = task_broker.submit(
-                operation, label="Enregistrer une appréciation",
+                write_feedback, label="Enregistrer une appréciation",
                 kind="recommendations",
             )
             def completed(done_handle):
