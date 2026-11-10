@@ -33,13 +33,9 @@ def test_invalid_legacy_digest_is_retained_only_in_backup_history(
         backup = store.backup_get("kobo", "vault-synthetic", "edition")
         assert backup["sha256"] == bad_sha  # no destructive history rewrite
         assert store.artifacts() == []
-        receipt = store.acquisitions(provider_id="kobo")
-        assert len(receipt) == 1
-        assert receipt[0]["artifact_id"] is None
-        placements = store.placements()
-        assert len(placements) == 1
-        assert placements[0]["artifact_id"] is None
-        assert placements[0]["state"] == "unverified"
+        assert store.acquisitions(provider_id="kobo") == []
+        assert store.entitlements(provider_id="kobo") == []
+        assert store.placements() == []
         with store._lock, store._connect() as db:
             assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
             assert db.execute("SELECT COUNT(*) FROM source_references").fetchone()[0] == 0
@@ -59,12 +55,11 @@ def test_compatible_exact_legacy_digest_remains_unverified_only(
     store = Storage(tmp_path / "history.sqlite3")
     try:
         store.backup_put(_legacy(valid_sha))
-        artifact = store.artifact_get("sha256:" + canonical)
-        assert artifact is not None
-        assert artifact["metadata"] == {"imported_from": "backup_items"}
-        assert store.acquisitions(provider_id="kobo")[0]["artifact_id"] == (
-            "sha256:" + canonical
-        )
+        # A syntactically valid legacy SHA is still not independent B.
+        assert store.artifact_get("sha256:" + canonical) is None
+        assert store.acquisitions(provider_id="kobo") == []
+        assert store.entitlements(provider_id="kobo") == []
+        assert store.placements() == []
         assert store.backup_get("kobo", "vault-synthetic", "edition")["sha256"] == valid_sha
         with store._lock, store._connect() as db:
             assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0

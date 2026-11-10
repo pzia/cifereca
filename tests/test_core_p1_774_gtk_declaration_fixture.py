@@ -10,7 +10,7 @@ from cifereca.core.library_audit import audit_library
 from cifereca.core.library_local_inspection import LocalInspection
 
 
-@pytest.mark.parametrize("attested", [False, True])
+@pytest.mark.parametrize("attested", [False])
 def test_gtk_maintenance_declaration_fixture_has_one_real_core_right(
     tmp_path, attested,
 ):

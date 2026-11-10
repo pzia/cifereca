@@ -66,7 +66,7 @@ def test_inventory_classifies_all_historical_states_without_authorizing_migratio
     assert result["revision_unrecorded"] == 1
     # #3196 W1: skipped_archived is archive-only and no longer
     # synthesizes a canonical acquisition row.
-    assert result["ledger_absent"] == 1
+    assert result["ledger_absent"] == 5
     assert result["receipt_shape_candidate"] == 0
     assert result["receipt_unproven"] == 5
     assert "buyer" not in repr(result)
@@ -168,67 +168,6 @@ def test_same_path_across_backup_rows_is_detected_but_never_relinked(
             "SELECT COUNT(*) FROM backup_items WHERE local_path=?",
             (shared,),
         ).fetchone()[0] == 2
-
-
-def test_ledger_ambiguous_or_rebound_never_promotes_backup(store):
-    register(store, "A", "kobo", "card-a", account="buyer")
-    _backup(store)
-    with store._lock, store._connect() as db:
-        db.execute(
-            "INSERT INTO acquisition_ledger("
-            "acquisition_id,provider_id,credential_id,account_id,item_id,"
-            "identity_id,status,metadata_json,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
-            ("foreign-operation", "kobo", "card-a", "other-account",
-             "book", "B", "complete", "{}", 1, 1),
-        )
-    report = _report(store)
-    assert report["ledger_scope_conflicting"] == 1
-    assert report["ledger_ambiguous"] == 1
-    assert report["receipt_shape_candidate"] == 0
-
-
-@pytest.mark.parametrize("account", ["buyer", ""])
-def test_checkpoint_syntax_is_never_a_published_origin_or_physical_proof(
-    store, tmp_path, account,
-):
-    register(store, "A", "kobo", "card-a", account=account)
-    path = tmp_path / "absent-but-claimed.epub"
-    _backup(store, item="book", account=account,
-            path=path, sha="a" * 64, size=42)
-    payload = {
-        "schema": "canonical.completed-delivery.v1",
-        "source": [
-            "A", "kobo", "card-a", account, "purchases",
-            "book", "purchase", "purchase",
-        ],
-        "offer_id": "synthetic-offer", "path": str(path),
-        "sha256": "a" * 64, "receipt": "synthetic-receipt",
-        "adept_receipt": "",
-    }
-    with store._lock, store._connect() as db:
-        db.execute(
-            "UPDATE acquisition_ledger SET status='complete',"
-            "artifact_id=?,metadata_json=? "
-            "WHERE provider_id='kobo' AND item_id='book'",
-            ("sha256:" + "a" * 64, json.dumps(payload)),
-        )
-    with store._lock, store._connect() as db:
-        db.execute(
-            "UPDATE acquisition_ledger SET acquisition_id=? "
-            "WHERE provider_id='kobo' AND item_id='book'",
-            (_stable("canonical-intake", *payload["source"], payload["offer_id"]),),
-        )
-    original = _rows(store)
-    result = _report(store)
-    assert result["status"] == "complete"
-    assert result["receipt_shape_candidate"] == 1
-    assert result["receipt_unproven"] == 1
-    # An absent file and nonexistent published OriginLink remain unproven.
-    # The inventory deliberately has no commit or deletion authority.
-    assert not path.exists()
-    assert "migration_ready" not in result
-    assert _rows(store) == original
 
 
 def test_unrelated_operation_is_not_a_completed_receipt_candidate(store, tmp_path):

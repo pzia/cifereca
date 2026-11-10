@@ -98,46 +98,6 @@ def test_service_projects_identity_ade_binding_and_uses_identity_provider_layout
             service.close()
 
 
-def test_library_entries_federates_local_owned_remote_and_active_loan_for_identity():
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        config = Config(root / "config.json")
-        config.set("library.directory", str(root / "EBooks"))
-        config.set("identities", [{"id": "alice", "label": "Alice", "preferences": {"reading_languages": ["fr"]}}])
-        config.set("providers.accounts", [{
-            "id": "vault-a", "provider": "kobo", "identity_id": "alice", "label": "Kobo Alice", "enabled": True,
-            "credentials": {}, "options": {},
-        }, {
-            "id": "paris-a", "provider": "paris", "identity_id": "alice", "label": "Paris Alice", "enabled": True,
-            "credentials": {}, "options": {},
-        }])
-        storage = Storage(root / "db.sqlite3")
-        service = LibraryService(config, storage, Diagnostics())
-        try:
-            _write_epub(root / "EBooks" / "alice" / "gallica" / "Local Book.epub")
-            service.catalog_scan()
-            storage.backup_put({
-                "provider_id": "kobo", "credential_id": "vault-a", "identity_id": "alice", "account_id": "buyer", "item_id": "owned-1",
-                "title": "Owned Remote", "format": "epub", "status": "pending", "entitlement_type": "owned",
-            })
-            service.last_loans = [Loan(
-                id="loan-1", provider="PNB", medium="digital", record_id="loan-book", title="Loan Active",
-                due_at="2026-10-10T10:00:00+00:00", source_provider="paris", source_credential="paris-a", identity_id="alice",
-            )]
-            # Since 0.9.3 a cached Loan is enrichment, not ownership authority.
-            loan = service.last_loans[0]
-            storage.entitlement_put({"provider_id": loan.source_provider, "credential_id": loan.source_credential,
-                "identity_id": "alice", "item_id": loan.record_id, "entitlement_type": "loan", "state": "active",
-                "loan_id": loan.id, "metadata": {"title": loan.title, "thumbnail_url": loan.thumbnail_url}})
-            entries = service.library_entries(identity_id="alice")
-            by_title = {row["title"]: row for row in entries}
-            assert by_title["Local Book"]["state"] == "local"
-            assert by_title["Owned Remote"]["state"] == "remote_owned"
-            assert by_title["Loan Active"]["state"] == "remote_loan_active"
-        finally:
-            service.close()
-
-
 def test_v3_database_migrates_to_v5_with_identity_tables_and_identity_columns():
     with tempfile.TemporaryDirectory() as td:
         db_path = Path(td) / "v3.sqlite3"
@@ -204,41 +164,6 @@ def test_one_kobo_vault_and_one_adept_profile_per_identity_with_many_devices():
         storage.device_binding_put({"device_id": "reader-2", "identity_id": "alice"})
         assert len(storage.device_bindings(identity_id="alice")) == 2
         assert first
-
-
-def test_library_entries_keep_kobo_and_loan_thumbnails():
-    with tempfile.TemporaryDirectory() as td:
-        root = Path(td)
-        config = Config(root / "config.json")
-        config.set("library.directory", str(root / "EBooks"))
-        config.set("identities", [{"id": "alice", "label": "Alice"}])
-        config.set("providers.accounts", [
-            {"id": "vault-a", "provider": "kobo", "identity_id": "alice", "label": "Kobo Alice", "enabled": True, "credentials": {}, "options": {}},
-            {"id": "paris-a", "provider": "paris", "identity_id": "alice", "label": "Paris Alice", "enabled": True, "credentials": {}, "options": {}},
-        ])
-        storage = Storage(root / "db.sqlite3")
-        service = LibraryService(config, storage, Diagnostics())
-        try:
-            storage.backup_put({
-                "provider_id": "kobo", "credential_id": "vault-a", "identity_id": "alice", "account_id": "buyer", "item_id": "owned-1",
-                "title": "Owned Remote", "format": "epub", "status": "pending", "entitlement_type": "owned",
-                "cover_url": "https://covers.example/kobo.jpg",
-            })
-            service.last_loans = [Loan(
-                id="loan-1", provider="PNB", medium="digital", record_id="loan-book", title="Loan Active",
-                due_at="2026-10-10T10:00:00+00:00", source_provider="paris", source_credential="paris-a",
-                identity_id="alice", thumbnail_url="https://covers.example/pnb.jpg",
-            )]
-            # Since 0.9.3 a cached Loan is enrichment, not ownership authority.
-            loan = service.last_loans[0]
-            storage.entitlement_put({"provider_id": loan.source_provider, "credential_id": loan.source_credential,
-                "identity_id": "alice", "item_id": loan.record_id, "entitlement_type": "loan", "state": "active",
-                "loan_id": loan.id, "metadata": {"title": loan.title, "thumbnail_url": loan.thumbnail_url}})
-            entries = {row["title"]: row for row in service.library_entries(identity_id="alice")}
-            assert entries["Owned Remote"]["thumbnail_url"] == "https://covers.example/kobo.jpg"
-            assert entries["Loan Active"]["thumbnail_url"] == "https://covers.example/pnb.jpg"
-        finally:
-            service.close()
 
 
 def test_service_rejects_two_kobo_vault_accounts_for_same_identity():

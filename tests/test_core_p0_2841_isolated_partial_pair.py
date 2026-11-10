@@ -15,8 +15,6 @@ import pytest
 from cifereca.core.library_audit import audit_library
 from cifereca.core.library_local_inspection import LocalInspection
 from tests.test_core_p0_2714_numilog_manual_transaction import rig, _rows
-from tests.test_core_1345_confirmed_local_reconciliation import case as kobo_case
-from tests.test_core_p0_2797_kobo_shared_link import selected as kobo_selected
 from tests.test_library_reconciliation import epub, filesystem
 
 
@@ -267,37 +265,3 @@ def test_live_account_conflict_after_safe_preview_blocks_commit(rig):
     finally:
         session.close()
 
-
-def test_kobo_requires_historical_backup_but_ignores_other_invalid_epub(kobo_selected):
-    case, original, _right, _file = kobo_selected
-    root = case.target.parent
-    _bad_files(root)
-    scan = audit_library(case.storage.path, {'default': (root,)})
-    assert scan.redacted()['status'] == 'incomplete_scan'
-    session = LocalInspection(
-        scan, lambda: True, 'default', roots=(root,), service=case.service,
-    )
-    try:
-        rights = session.page(provider='kobo', state='rights_without_verified_file').cases
-        files = session.unconfirmed_files(query='PRIVATE-copy', limit=10)
-        assert len(rights) == 1 and files.total == 1
-        right, file = rights[0].key, files.cases[0].key
-        report = session.preflight_manual_link(right, file)
-        assert report.status == 'eligible_for_fresh_validation'
-        assert 'global_partial_pair_reviewable' in report.codes
-        before = filesystem(root)
-        # The partial unrelated EPUB does not block the *inspection*, but
-        # historical Kobo 0.7 receipts never permit a positive Core B write.
-        assert session.preview_manual_attachment(right, file) == {
-            'status': 'blocked', 'read_only': True,
-            'reason_code': 'kobo_canonical_evidence_required',
-        }
-        assert session.confirm_manual_attachment(
-            right, file, user_confirmed=False,
-        )['status'] == 'unavailable'
-        assert filesystem(root) == before
-        assert 'PRIVATE' not in json.dumps({
-            'status': report.status, 'codes': report.codes,
-        })
-    finally:
-        session.close()

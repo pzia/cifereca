@@ -2194,128 +2194,24 @@ class Storage:
             # with omitted owner/account must not demote an earlier exact
             # owner in the backup projection.
             merged = dict(zip(keys, persisted))
-            # Once a Kobo v0.7 archive was complete, *any* subsequent
-            # status transition is only historical recovery metadata. In
-            # particular, complete -> acquiring/error/reconcile_required
-            # cannot republish or demote canonical rights/receipts on the
-            # authority of this old row. Fresh canonical A/B independently
-            # owns any new delivery; preserve the 0.7 row for rollback.
-            # Keep every exact-owner/canonical-checkpoint refusal even when
-            # publication is suppressed.
-            if item.get("provider_id") == "kobo" and was_complete_kobo_archive:
+            # #3196 W1 final cutover: Kobo 0.7 backup_items is an archive,
+            # never an independent supplier entitlement or completed delivery.
+            # Preserve the raw checkpoint, monotone archive marker, exact
+            # owner collisions and bounded canonical-receipt validation, but
+            # do not publish entitlements, acquisition_ledger, Artifact,
+            # Placement or local-presence facts from any Kobo backup status.
+            # This also covers legacy rows with no typed SourceReference:
+            # absence of canonical A is NOT authorization to mint it from W1.
+            if item.get("provider_id") == "kobo":
                 self._check_kobo_legacy_canonical_owner(db, merged)
-                # Do not bypass the canonical checkpoint validation embedded
-                # in the W1 mirror (malformed/duplicate JSON, inconsistent
-                # CompletedDelivery status, cross-credential stage). Run its
-                # read-only half for every post-complete status, skipping
-                # only the downstream positive SQL.
                 self._mirror_backup_row(
                     db, merged, now=now, migration=False, archive_only=True,
                 )
                 return
-            if (item.get("provider_id") == "kobo"
-                    and (merged.get("identity_id") is None
-                         # A missing/blank profile label (including whitespace)
-                         # is not an exact Core identity. Keep the 0.7 archive
-                         # but never project a positive right or local content.
-                         # Kobo's empty PRIMARY account_id is valid and must
-                         # remain eligible with an independently scoped owner.
-                         or type(merged.get("identity_id")) is not str
-                         or not merged["identity_id"].strip()
-                         or merged["identity_id"] != merged["identity_id"].strip()
-                         or merged.get("account_id") is None
-                         # The empty Kobo PRIMARY account is a valid exact
-                         # borrower, unlike whitespace-only, padded or
-                         # control-tainted historical borrower labels. Preserve
-                         # these rows as archives only: a 0.7 account label
-                         # cannot substitute for the canonical SourceKey.
-                         or type(merged.get("account_id")) is not str
-                         or (merged["account_id"] != ""
-                             and (merged["account_id"] != merged["account_id"].strip()
-                                  or any(c in merged["account_id"] for c in "\x00\r\n")))
-                         # #3196 W1: a provider-archived Kobo edition is
-                         # not an active acquisition. Keep the 0.7 archive
-                         # and transactional owner veto, but never mint a
-                         # generic right, receipt or local content from it.
-                         # Reconciliation statuses still require the 0.8
-                         # mirror for W4 confirmation/undo until migrated.
-                         or merged.get("status") == "skipped_archived"
-                         # A provider 409, delegation-scope veto or
-                         # interrupted-GET quarantine is NOT evidence of
-                         # an active Kobo right or of locally delivered B.
-                         # Preserve these exact denial/recovery receipts in
-                         # backup_items, including when the credential is
-                         # still enabled, but never project their old
-                         # status/SHA into a fresh 0.8 acquisition.
-                         or merged.get("attention_code") in {
-                             "archived_book", "missing_delegation_scope",
-                             "interrupted_acquisition_review",
-                         }
-                         # An explicitly disabled Kobo connection is not a
-                         # live source of provider rights. Historical complete,
-                         # pending, acquiring or error rows cannot reactivate
-                         # its generic entitlement/ledger/Artifact projection.
-                         # A missing connection is left to the W2 cutover;
-                         # exact credential scope avoids affecting other
-                         # providers or unrelated Kobo accounts.
-                         or db.execute(
-                             "SELECT 1 FROM provider_connections "
-                             "WHERE provider_id='kobo' AND credential_id=? "
-                             "AND enabled<>1 LIMIT 1",
-                             (merged.get("credential_id"),),
-                         ).fetchone() is not None
-                         # An enabled connection can be rebound from
-                         # historical owner A to B. A stale 0.7 receipt for
-                         # A then remains an archive, never a fresh right.
-                         or db.execute(
-                             "SELECT 1 FROM provider_connections "
-                             "WHERE provider_id='kobo' AND credential_id=? "
-                             "AND identity_id<>? LIMIT 1",
-                             (merged.get("credential_id"),
-                              merged.get("identity_id")),
-                         ).fetchone() is not None
-                         # An exact Kobo borrower mapping, when present,
-                         # supersedes the unscoped 0.7 account claim. Do not
-                         # reclassify a foreign account as an acquisition;
-                         # historical rows without a mapping remain readable.
-                         or (db.execute(
-                             "SELECT 1 FROM provider_accounts "
-                             "WHERE provider_id='kobo' AND credential_id=? "
-                             "LIMIT 1",
-                             (merged.get("credential_id"),),
-                         ).fetchone() is not None
-                             and db.execute(
-                                 "SELECT 1 FROM provider_accounts "
-                                 "WHERE provider_id='kobo' AND credential_id=? "
-                                 "AND identity_id=? AND account_id=? LIMIT 1",
-                                 (merged.get("credential_id"),
-                                  merged.get("identity_id"),
-                                  merged.get("account_id")),
-                             ).fetchone() is None)
-                         # #3196 W1 after W4 retirement: a
-                         # reconcile_required/conflict 0.7 checkpoint is
-                         # never independent provider A evidence, even with
-                         # syntactically valid SHA/size or a stale local path.
-                         # When the credential is no longer enabled AND
-                         # owned by the recorded identity, keep the raw
-                         # archive only; do not mint entitlement, B, ledger
-                         # or catalogue. An enabled, exact Kobo connection
-                         # retains temporary W2 discovery compatibility
-                         # until typed source-rights publication is complete.
-                         or (merged.get("status") in
-                             {"reconcile_required", "reconcile_conflict"}
-                             and db.execute(
-                                 "SELECT 1 FROM provider_connections "
-                                 "WHERE provider_id='kobo' AND enabled=1 AND "
-                                 "credential_id=? AND identity_id=? LIMIT 1",
-                                 (merged.get("credential_id"),
-                                  merged.get("identity_id")),
-                             ).fetchone() is None))):
-                self._check_kobo_legacy_canonical_owner(db, merged)
-            else:
-                self._mirror_backup_row(
-                    db, merged, now=now, migration=False,
-                )
+            # Other providers keep their existing compatibility projection.
+            self._mirror_backup_row(
+                db, merged, now=now, migration=False,
+            )
 
     def backup_prune_missing(
         self, provider_id: str, credential_id: str, seen_item_ids: set[str] | list[str] | tuple[str, ...]
