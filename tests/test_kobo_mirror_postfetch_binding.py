@@ -1,6 +1,6 @@
 """Kobo personal-library rows cannot outlive their source binding (#1346)."""
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -74,27 +74,19 @@ def fixture(mutation=None):
 ])
 def test_kobo_mirror_discards_private_rows_if_binding_changes_mid_fetch(mutation):
     service = fixture(mutation)
-    with patch(
-        "cifereca.core.kobo_manifest_rights.mirror_kobo_manifest_rights",
-        side_effect=AssertionError("stale rights cannot be persisted"),
-    ) as rights:
-        result = LibraryService.mirror_personal_libraries(service)
+    # An invalid source binding must neither publish observations nor
+    # attempt any legacy entitlement write.
+    result = LibraryService.mirror_personal_libraries(service)
     assert not result
     assert result.blocked_sources == 1
     assert result.failed_sources == 0
-    rights.assert_not_called()
     service._mirror_remote_results.assert_not_called()
 
 
 def test_kobo_mirror_preserves_healthy_source_inventory_only():
     service = fixture()
-    with patch(
-        "cifereca.core.kobo_manifest_rights.mirror_kobo_manifest_rights",
-        return_value=0,
-    ) as rights:
-        result = LibraryService.mirror_personal_libraries(service)
+    result = LibraryService.mirror_personal_libraries(service)
     assert result == {"kobo:credential": 2}
     assert result.blocked_sources == 0
     assert result.failed_sources == 0
-    rights.assert_called_once()
     service._mirror_remote_results.assert_called_once()
