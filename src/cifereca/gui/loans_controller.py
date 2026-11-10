@@ -102,12 +102,12 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     )
     if safe_source:
         return loan
-    display_loan = copy(loan) if original_url else loan
-    if display_loan is not loan:
-        display_loan.thumbnail_url = None
+    safe_preview = copy(loan) if original_url else loan
+    if safe_preview is not loan:
+        safe_preview.thumbnail_url = None
     active = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
     if active is None or loan.identity_id != active:
-        return display_loan
+        return safe_preview
     evidence = getattr(self, "_loan_cover_projection", None)
     if (type(evidence) is tuple and len(evidence) == 3
             and evidence[0] == getattr(self.service, "_account_context_epoch", None)
@@ -117,8 +117,8 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
         cover_rows = getattr(self, "_library_entries_cache", ())
     resolved = loan_local_cover(loan, cover_rows)
     if resolved.status != "selected" or not resolved.url:
-        return display_loan
-    displayed = copy(display_loan)
+        return safe_preview
+    displayed = copy(safe_preview)
     displayed.thumbnail_url = resolved.url
     return displayed
 
