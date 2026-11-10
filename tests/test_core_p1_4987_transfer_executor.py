@@ -53,6 +53,17 @@ def test_explicit_confirmed_copy_uses_only_existing_native_send(setup_send):
     assert preflight.call_count == 1
 
 
+def test_idempotent_native_unchanged_receipt_is_completed_copy(setup_send):
+    service, w, _ = setup_send
+    service.materialize_to_identity.return_value = {
+        "status": "unchanged", "path": "/synthetic/bob/book.epub",
+    }
+    result = execute(service, w)
+    assert result["status"] == "complete"
+    assert result["transfer"] == "completed"
+    service.materialize_to_identity.assert_called_once_with("placement-a", "bob")
+
+
 def test_missing_copy_confirmation_never_inspects_or_sends(setup_send):
     service, w, preflight = setup_send
     result = execute(service, w, confirmed=False)
