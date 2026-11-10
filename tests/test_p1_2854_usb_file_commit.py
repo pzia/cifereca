@@ -181,7 +181,7 @@ def test_error_reported_after_native_rename_is_uncertain_and_never_rolled_back(s
     assert final.read_bytes() == PAYLOAD
 
 
-def test_failed_pending_read_after_rename_reports_recovery_and_exact_error(stage):
+def test_failed_pending_read_after_rename_reports_recovery_without_private_error(stage):
     args, temporary, final = stage
 
     class PendingUnavailable(Exception):
@@ -195,6 +195,5 @@ def test_failed_pending_read_after_rename_reports_recovery_and_exact_error(stage
     result = commit.publish_usb_staged_file(**(args | {"pending_is_current": current}))
     assert result == commit.UsbFilePublication(
         "recovery_required", "usb_publish_revalidation_failed",
-        detail="receipt backend unavailable",
     )
     assert final.read_bytes() == PAYLOAD
