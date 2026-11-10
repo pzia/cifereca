@@ -2947,10 +2947,6 @@ class LibraryService:
                         return direct
         return None
 
-    @staticmethod
-    def _observed_backup_artifact(path: Path) -> dict[str, Any]:
-        return kobo_backup._observed_backup_artifact(path)
-
     def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
         """Compatibility façade; Kobo execution lives in the provider adapter."""
         return kobo_backup._execute_kobo_acquisition(self, item, target_dir)

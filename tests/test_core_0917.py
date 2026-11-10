@@ -10,6 +10,7 @@ from cifereca.gui.search_intent import SearchEnterSequence
 from cifereca.adept_binding import capture_binding
 from cifereca.plugin_api import AttentionRequired
 from cifereca.providers import ProviderConfigurationError
+from cifereca.artifact_inspection import inspect_artifact
 from . import test_core_0915 as fixture
 from . import test_core_ui_095 as coordinator_fixture
 
@@ -63,18 +64,22 @@ class Core0917(unittest.TestCase):
     def test_audio_multiformats_and_unknown(self):
         self.assertEqual(available_formats({'metadata':{'audio_formats':['audio/mpeg','ogg']}}),('mp3','ogg'))
         self.assertEqual(available_formats({'format':'EXTL'}),())
-    def test_observed_backup_pdf_with_epub_suffix(self):
-        path=self.base/'misnamed.epub';path.write_bytes(b'%PDF-1.4\n%%EOF\n')
-        observed=self.service._observed_backup_artifact(path)
-        self.assertEqual(observed['format'],'PDF');self.assertEqual(observed['sha256'],hashlib.sha256(path.read_bytes()).hexdigest())
-    def test_backup_does_not_trust_extension(self):
-        path=self.base/'wrong.epub';path.write_bytes(b'PK\x03\x04invalid')
-        with self.assertRaises(ProviderConfigurationError):self.service._observed_backup_artifact(path)
-    def test_backup_rejects_remaining_content_encryption(self):
+    def test_generic_inspector_detects_pdf_despite_epub_suffix(self):
+        path=self.base/'misnamed.epub';path.write_bytes(b'%PDF-1.4\\n%%EOF\\n')
+        observed=inspect_artifact(path)
+        self.assertTrue(observed.valid)
+        self.assertEqual(observed.media_format,'pdf')
+        self.assertFalse(observed.protected)
+    def test_generic_inspector_rejects_invalid_archive(self):
+        path=self.base/'wrong.epub';path.write_bytes(b'PK\\x03\\x04invalid')
+        observed=inspect_artifact(path)
+        self.assertFalse(observed.valid)
+    def test_generic_inspector_rejects_remaining_content_encryption(self):
         import zipfile
         path=self.book('old')
         with zipfile.ZipFile(path,'a') as z:z.writestr('META-INF/encryption.xml','<aes xmlns="http://www.w3.org/2001/04/xmlenc#"/>')
-        with self.assertRaises(ProviderConfigurationError):self.service._observed_backup_artifact(path)
+        observed=inspect_artifact(path)
+        self.assertTrue(observed.protected or not observed.valid)
     def http(self,source,extra=None):
         self.service._plugin_manager=object();transport=NS(fetch=Mock(),matches=Mock(return_value=True))
         self.service._required_plugin_service=Mock(return_value=transport)
