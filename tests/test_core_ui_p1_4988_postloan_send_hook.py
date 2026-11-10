@@ -73,7 +73,18 @@ def test_real_lender_loan_and_local_placement_trigger_second_send_consent(
     done(check())
     assert len(Dialog.made) == 3
     assert native.call_count == 0
-    Dialog.made[2].respond("cancel")
+    Dialog.made[2].respond("send")
+    assert len(window.runner.jobs) == 3
     assert native.call_count == 0
+    _title, send_work, send_done, _failed, _kw = window.runner.jobs[2]
+    sent = send_work()
+    assert sent["status"] == "complete"
+    native.assert_called_once_with(
+        requesting_identity_id="default",
+        borrowing_account=account, exact_notice=item, confirmed=True,
+    )
+    send_done(sent)
     assert session.actions == 1
     assert window._cross_profile_send_pending is None
+    assert len(messages) == 2
+    assert "Copie indépendante" in messages[-1][1]
