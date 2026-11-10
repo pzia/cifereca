@@ -212,3 +212,94 @@ def test_library_service_facade_composes_native_send_and_idempotent_replay(
         ]) == 1
     finally:
         service.close()
+
+
+def test_paris_synthetic_http_borrow_then_exact_local_delivery_and_send(
+    tmp_path,
+):
+    """Real Paris HTTP adapter plus real Core/SQLite native copy; no live lender."""
+    import hashlib
+    import os
+    from pathlib import Path
+
+    from tests.test_core_p1_4987_cross_profile_paris_http import (
+        _cross_profile_fixture, _execute,
+    )
+    from cifereca.core.borrow_action_scope import borrow_claim_key
+
+    service, account, notice, offer, preview, http = _cross_profile_fixture(
+        tmp_path, result="no-acsm",
+    )
+    try:
+        first_loan = _execute(service, offer, preview)
+        assert first_loan["status"] == "confirmed", first_loan
+        assert http["mutations"] == 1
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, notice),
+        )["status"] == "confirmed"
+        # The supplier's delivery is deliberately simulated here. This test
+        # does not claim real Paris content, an ADEPT licence or DRM bypass.
+        payload = b"%PDF-1.7\\nSynthetic previously delivered library copy\\n"
+        digest = hashlib.sha256(payload).hexdigest()
+        source_path = tmp_path / "EBooks" / "alex" / "paris" / "Synthetic.pdf"
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_bytes(payload)
+        artifact = "sha256:" + digest
+        service.storage.artifact_put({
+            "artifact_id": artifact, "sha256": digest,
+            "size": len(payload), "media_format": "pdf",
+        })
+        placement = service.storage.placement_put({
+            "identity_id": "alex", "provider_id": "paris",
+            "source_item_id": notice.record_id,
+            "artifact_id": artifact, "path": str(source_path),
+            "state": "present", "metadata": {},
+        })
+        service.storage.acquisition_put({
+            "acquisition_id": "synthetic-confirmed-paris-delivery",
+            "identity_id": "alex", "provider_id": "paris",
+            "credential_id": account.credential_id,
+            "account_id": account.unique_id, "item_id": notice.record_id,
+            "status": "complete", "artifact_id": artifact,
+            "metadata": {"provider_loan_id": "loan-exact"},
+        })
+        resolved = service.resolve_cross_profile_lender_placement(
+            requesting_identity_id="default", borrowing_account=account,
+            exact_notice=notice,
+        )
+        assert resolved.status == "present", resolved
+        assert resolved._placement_id == placement
+        no_consent = service.send_confirmed_lender_local_copy(
+            requesting_identity_id="default", borrowing_account=account,
+            exact_notice=notice, confirmed=False,
+        )
+        assert no_consent["status"] == "blocked"
+        first_copy = service.send_confirmed_lender_local_copy(
+            requesting_identity_id="default", borrowing_account=account,
+            exact_notice=notice, confirmed=True,
+        )
+        assert first_copy["status"] == "complete", first_copy
+        assert first_copy["loan"] == "confirmed"
+        assert first_copy["transfer"] == "completed"
+        copied = [
+            row for row in service.storage.placements()
+            if row.get("identity_id") == "default"
+            and (row.get("metadata") or {}).get("materialized_from")
+                == placement
+        ]
+        assert len(copied) == 1
+        target = Path(copied[0]["path"])
+        assert target.read_bytes() == payload
+        assert os.stat(target).st_ino != os.stat(source_path).st_ino
+        assert service.current_identity.identity_id == "default"
+        again = service.send_confirmed_lender_local_copy(
+            requesting_identity_id="default", borrowing_account=account,
+            exact_notice=notice, confirmed=True,
+        )
+        assert again["status"] == "complete"
+        assert again["transfer"] == "completed"
+        assert http["mutations"] == 1
+        assert _execute(service, offer, preview)["status"] == "blocked"
+        assert http["mutations"] == 1
+    finally:
+        service.close()
