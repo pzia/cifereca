@@ -1206,6 +1206,15 @@ class DetailPanel(Gtk.Box):
             group.add(row)
         self._append_content(group)
         self._rendered_search_detail = (item, detail)
+        # Shared Search and Recommendations: already confirmed local lender
+        # claims only, no provider I/O or implicit send consent.
+        try:
+            from .cross_profile_existing_loan_detail import (
+                append_existing_lender_loan_summary,
+            )
+            append_existing_lender_loan_summary(self, item)
+        except Exception:
+            pass
 
     def show_cross_profile_borrow_detail(
         self, preview, *, expected_item: SearchResult,
