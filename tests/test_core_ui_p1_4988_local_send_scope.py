@@ -103,3 +103,38 @@ def test_wrong_option_never_defaults_to_first_lender():
         expected_edition_id="edition-1",
         observations=(observation,),
     ) is None
+
+
+def test_selected_lender_bridge_only_checks_local_placement_without_loan_post():
+    from unittest.mock import Mock
+    from cifereca.gui.cross_profile_local_send_controller import (
+        offer_selected_lender_local_send,
+    )
+    from tests.test_core_ui_p1_4987_cross_profile_borrow_controller import (
+        setup, Dialog,
+    )
+
+    service, account, observation, preview, option = scope()
+    h = setup()
+    h.service.accounts = [account]
+    lender_placement = Mock(return_value=None)
+    native_send = Mock(side_effect=AssertionError("no send without local placement"))
+    h.service.resolve_cross_profile_lender_placement = lender_placement
+    h.service.send_confirmed_lender_local_copy = native_send
+    assert offer_selected_lender_local_send(
+        h.window, captured_preview=preview,
+        selected_option_id=option.option_id,
+        expected_edition_id="edition-1",
+        observations=(observation,), expected_item=h.item,
+        Adw=NS(MessageDialog=Dialog),
+        TaskPriority=NS(USER_ACTION=1),
+    )
+    assert h.window.runner.jobs and lender_placement.call_count == 0
+    _, work, completed, _fail, _kw = h.window.runner.jobs[0]
+    assert work() is None
+    lender_placement.assert_called_once()
+    completed(None)
+    assert Dialog.made == []
+    assert h.window._cross_profile_send_pending is None
+    native_send.assert_not_called()
+    assert h.attempts == []
