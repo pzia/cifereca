@@ -66,9 +66,11 @@ def publish_direct_loan_candidate(
         src_fd = os.open(staged_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(src_fd, "rb") as src:
             current = os.fstat(src.fileno())
-            if (not stat.S_ISREG(current.st_mode)
-                    or (current.st_dev, current.st_ino, current.st_size)
-                       != (work_stat.st_dev, work_stat.st_ino, work_stat.st_size)):
+            if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
+                    or (current.st_dev, current.st_ino, current.st_size,
+                        current.st_mtime_ns)
+                       != (work_stat.st_dev, work_stat.st_ino,
+                           work_stat.st_size, work_stat.st_mtime_ns)):
                 raise DirectLoanPublicationRefused("loan_direct_stage_changed")
             fd, temp_name = tempfile.mkstemp(
                 prefix=".loan-publish-", dir=library_target_dir,
@@ -84,11 +86,22 @@ def publish_direct_loan_candidate(
                     out.write(part)
                 out.flush()
                 os.fsync(out.fileno())
+                published_inode = os.fstat(out.fileno())
             after = os.fstat(src.fileno())
             if ((after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
                     != (current.st_dev, current.st_ino, current.st_size,
                         current.st_mtime_ns)):
                 raise DirectLoanPublicationRefused("loan_direct_stage_changed")
+        try:
+            stage_now = staged_path.stat(follow_symlinks=False)
+        except OSError:
+            raise DirectLoanPublicationRefused("loan_direct_stage_changed") from None
+        if (not stat.S_ISREG(stage_now.st_mode)
+                or (stage_now.st_dev, stage_now.st_ino, stage_now.st_size,
+                    stage_now.st_mtime_ns)
+                   != (work_stat.st_dev, work_stat.st_ino,
+                       work_stat.st_size, work_stat.st_mtime_ns)):
+            raise DirectLoanPublicationRefused("loan_direct_stage_changed")
 
         hashed = digest.hexdigest()
         stem, suffix = _bounded_stem(staged_path), staged_path.suffix
@@ -103,16 +116,51 @@ def publish_direct_loan_candidate(
             name = (choices[index] if index < len(choices)
                     else f"{stem} - {hashed[:16]}-{index - 2}{suffix}")
             target = library_target_dir / name
+            # A private temp pathname can itself be replaced after its fd is
+            # closed. Verify the exact inode written above, not merely a
+            # plausible file with identical size or content.
+            temp_now = temporary.stat(follow_symlinks=False)
+            if (not stat.S_ISREG(temp_now.st_mode)
+                    or (temp_now.st_dev, temp_now.st_ino, temp_now.st_size)
+                       != (published_inode.st_dev, published_inode.st_ino,
+                           published_inode.st_size)):
+                raise DirectLoanPublicationRefused("loan_direct_temp_changed")
             try:
                 os.link(temporary, target, follow_symlinks=False)
             except FileExistsError:
                 continue
             else:
+                # Re-check the exclusive link before returning a completed
+                # path. A symlink swapped into the temp at link-time must
+                # never become a published loan.
+                published = target.stat(follow_symlinks=False)
+                if (not stat.S_ISREG(published.st_mode)
+                        or (published.st_dev, published.st_ino,
+                            published.st_size)
+                           != (published_inode.st_dev, published_inode.st_ino,
+                               published_inode.st_size)):
+                    # Only unlink a path that we just hardlinked, and never
+                    # overwrite or adopt an unrelated preexisting artifact.
+                    current_target = target.stat(follow_symlinks=False)
+                    if ((current_target.st_dev, current_target.st_ino)
+                            == (published.st_dev, published.st_ino)):
+                        target.unlink()
+                    raise DirectLoanPublicationRefused("loan_direct_temp_changed")
                 try:
-                    staged_path.unlink()
+                    stage_now = staged_path.stat(follow_symlinks=False)
                 except OSError:
-                    # Post-publish staging cleanup is not a failed delivery.
-                    pass
+                    stage_now = None
+                if (stage_now is not None
+                        and stat.S_ISREG(stage_now.st_mode)
+                        and (stage_now.st_dev, stage_now.st_ino,
+                             stage_now.st_size, stage_now.st_mtime_ns)
+                            == (work_stat.st_dev, work_stat.st_ino,
+                                work_stat.st_size, work_stat.st_mtime_ns)):
+                    try:
+                        staged_path.unlink()
+                    except OSError:
+                        # Post-publish staging cleanup is not a failed delivery.
+                        pass
                 return target
         raise DirectLoanPublicationRefused("loan_direct_destination_collisions")
     except DirectLoanPublicationRefused:
