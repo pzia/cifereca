@@ -200,9 +200,9 @@ def test_legacy_w2_never_downloads_or_mutates_hostile_local_candidates(
     """
     service = _service(tmp_path)
     try:
-        root = service._kobo_backup_target_dir("alice")
+        root = service.library_identity_provider_dir("alice", "kobo")
         target = root / "Book One.epub"
-        foreign = service._kobo_backup_target_dir("bob") / "Book One.epub"
+        foreign = service.library_identity_provider_dir("bob", "kobo") / "Book One.epub"
         if local in {"unlinked", "two_candidates", "matching_title_only",
                      "different_revision"}:
             _write_epub(target)
@@ -288,7 +288,7 @@ def test_retired_direct_executor_cannot_overwrite_or_acquire(
     from cifereca.core.kobo_backup import _execute_kobo_acquisition
     service = _service(tmp_path)
     try:
-        target = service._kobo_backup_target_dir("alice") / "Book One.epub"
+        target = service.library_identity_provider_dir("alice", "kobo") / "Book One.epub"
         if existing:
             _write_epub(target)
         before = target.read_bytes() if existing else None
