@@ -45,6 +45,18 @@ def test_historical_numilog_receipts_have_no_delivery_writer():
     assert "rights_selected_delivery_candidate" not in source
 
 
+def test_real_gtk_book_detail_does_not_recreate_retired_v1_receipt():
+    # The GTK probe must exercise the targeted canonical action, not seed a
+    # synthetic receipt through the v1 writer removed by #5054.
+    source = _src("e2e/book_detail_probe.py")
+    module = ast.parse(source)
+    names = {node.name for node in ast.walk(module)
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert "begin_numilog_index_resume" not in names
+    assert "from cifereca.core.numilog_materialization_checkpoint import record" not in source
+    assert "P0_2024_owned_numilog_XTEST_exact_single_target" in source
+
+
 def test_historical_startup_is_passive_and_never_performs_supplier_io():
     session = NS(
         library=lambda: pytest.fail("legacy private library must never run"),
