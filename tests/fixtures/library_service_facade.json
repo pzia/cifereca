@@ -691,10 +691,6 @@
     "kind": "method",
     "signature": "(self) -> 'dict[str, Any]'"
   },
-  "kobo_backup_records": {
-    "kind": "method",
-    "signature": "(self) -> 'list[dict[str, Any]]'"
-  },
   "kobo_backup_enabled": {
     "kind": "method",
     "signature": "(self) -> 'bool'"
