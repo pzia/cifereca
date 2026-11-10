@@ -375,7 +375,7 @@ def test_confirmed_supplier_loan_does_not_mislabel_unverified_delivery_as_refuse
     message = h.logs[0][1]
     assert "Prêt confirmé" in message
     assert "Livraison non vérifiée" in message
-    assert "envoi possible après placement" in message
+    assert "copie possible après placement" in message
     assert "droits non vérifiés" not in message
     assert h.window._cross_profile_borrow_pending is None
 
