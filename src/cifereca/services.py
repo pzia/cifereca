@@ -408,6 +408,20 @@ class LibraryService:
             lender_placement_id=lender_placement_id, confirmed=confirmed,
         )
 
+    def existing_lender_loan_candidates(
+        self, *, exact_notice: SearchResult,
+    ):
+        """#4988: previous exact lender loans, no fresh borrow/GET/POST.
+
+        A confirmed loan can finish delivery later. An already-spent loan
+        claim is NOT a new borrower-eligibility offer; this read-only view
+        exposes no source path, private account identifier or permission.
+        """
+        from .core.borrow_for_identity_existing_loan import (
+            existing_lender_loan_candidates,
+        )
+        return existing_lender_loan_candidates(self, exact_notice=exact_notice)
+
     def cross_profile_borrow_progress(
         self, *, requesting_identity_id: str,
         borrowing_account: Account, exact_notice: SearchResult,
