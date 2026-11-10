@@ -149,6 +149,7 @@ def execute_admitted_convergence(
     publication_guard: Callable[[sqlite3.Connection, SourceKey], bool] | None = None,
     expected_source_policy_revision: str | None = None,
     explicitly_confirmed_once: bool = False,
+    explicit_entitlement_id: str | None = None,
 ) -> tuple[ConvergenceOutcome, ...]:
     """Execute the authorized part of the same Sync; no second remote read.
 
@@ -174,7 +175,12 @@ def execute_admitted_convergence(
                  or any(ch not in "0123456789abcdef"
                         for ch in expected_source_policy_revision)))
         or type(explicitly_confirmed_once) is not bool
+        or ((not explicitly_confirmed_once) and explicit_entitlement_id is not None)
         or (explicitly_confirmed_once and (
+            type(explicit_entitlement_id) is not str
+            or not explicit_entitlement_id
+            or len(explicit_entitlement_id) > 256
+            or any(c in explicit_entitlement_id for c in "\\x00\\r\\n")
             persisted_consent is None
             or len(persisted_consent) != 1
             or publication_guard is None
@@ -620,6 +626,7 @@ def execute_admitted_convergence(
                 context_current=current_memory,
                 expected_source_policy_revision=expected_source_policy_revision,
                 explicitly_confirmed_once=explicitly_confirmed_once,
+                explicit_entitlement_id=explicit_entitlement_id,
                 transaction_guard=(
                     (lambda db: publication_guard(db, key))
                     if publication_guard is not None else None
