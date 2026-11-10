@@ -383,3 +383,49 @@ def test_saved_preference_stable_with_no_catalogues_keeps_empty_result():
     )
     assert result.cancelled is False
     assert result.ranked == ()
+
+
+# P1 #4681: provider diagnostics are untrusted, including exception strings.
+def test_progressive_catalogue_warnings_never_publish_private_provider_payloads():
+    from types import SimpleNamespace as NS
+
+    secret = "/private/account/reader.acsm?token=DO_NOT_PUBLISH"
+
+    class PrivateWarning:
+        def __str__(self):
+            raise AssertionError("warning payload must not be stringified")
+
+    class CatalogWithPrivateWarnings(Catalog):
+        def search_progressive(self, query, *, on_batch, **kwargs):
+            on_batch(NS(
+                provider_id="opds", results=(), warnings=(secret, PrivateWarning()),
+                error_message=secret, error_code="PRIVATE", cached=False,
+            ))
+            return NS(warnings=(secret,), cancelled=False)
+
+    result = compute_recommendations(
+        Metadata(), CatalogWithPrivateWarnings(), "id-1", max_queries=1,
+    )
+    assert set(result.warnings) == {
+        "catalogue_batch_warning", "catalogue_summary_warning",
+        "catalogue_provider_failed",
+    }
+    assert secret not in repr(result.warnings)
+    assert result.catalogue_observations[0].failures == 1
+
+
+@pytest.mark.parametrize("progressive", [False, True])
+def test_catalogue_search_exception_is_a_closed_warning(progressive):
+    secret = "https://private.example/receipt?token=NEVER_PUBLIC"
+
+    class FailedCatalog(Catalog):
+        def search(self, query, **kwargs):
+            raise RuntimeError(secret)
+
+        if progressive:
+            def search_progressive(self, query, **kwargs):
+                raise RuntimeError(secret)
+
+    result = compute_recommendations(Metadata(), FailedCatalog(), "id-1", max_queries=1)
+    assert result.warnings == ("catalogue_search_failed",)
+    assert secret not in repr(result.warnings)

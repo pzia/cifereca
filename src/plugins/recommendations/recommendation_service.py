@@ -449,16 +449,16 @@ def compute_recommendations(
                     cache_batches += 1
                 else:
                     network_batches += 1
-                warnings.extend(str(x) for x in tuple(getattr(batch, "warnings", ()) or ()))
-                error = str(getattr(batch, "error_message", "") or "").strip()
+                warnings.extend("catalogue_batch_warning" for _ in tuple(getattr(batch, "warnings", ()) or ()))
+                error_reported = bool(getattr(batch, "error_message", None))
                 failure_code = getattr(batch, "error_code", None)
                 if provider_id in observed:
                     counters = observed[provider_id]
                     counters[0] += 1
                     counters[1] += len(rows)
-                    counters[2] += int(bool(error or failure_code))
-                if error:
-                    warnings.append(f"{provider_id}: {error}")
+                    counters[2] += int(bool(error_reported or failure_code))
+                if error_reported:
+                    warnings.append("catalogue_provider_failed")
                 if progress:
                     done = (query_index - 1) * provider_total + min(provider_done, provider_total)
                     progress(
@@ -477,14 +477,14 @@ def compute_recommendations(
                     on_batch=on_batch,
                     control=control,
                 )
-                warnings.extend(str(x) for x in tuple(getattr(summary, "warnings", ()) or ()))
+                warnings.extend("catalogue_summary_warning" for _ in tuple(getattr(summary, "warnings", ()) or ()))
                 if bool(getattr(summary, "cancelled", False)):
                     was_cancelled = True
-            except Exception as exc:
+            except Exception:
                 if cancelled_or_revoked():
                     was_cancelled = True
                 else:
-                    warnings.append(f"{query}: {exc}")
+                    warnings.append("catalogue_search_failed")
             batches.append(_merge_provider_rows(grouped, providers)[: max(10, int(per_query))])
         else:
             try:
@@ -494,11 +494,11 @@ def compute_recommendations(
                 ingest_provisional(rows)
                 batches.append(rows[: max(10, int(per_query))])
                 emit_partial(query_index, provider_total)
-            except Exception as exc:
+            except Exception:
                 if cancelled_or_revoked():
                     was_cancelled = True
                 else:
-                    warnings.append(f"{query}: {exc}")
+                    warnings.append("catalogue_search_failed")
                 batches.append([])
 
         if progress and not was_cancelled:
