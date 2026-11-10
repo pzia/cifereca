@@ -57,8 +57,7 @@ def test_kobo_bound_owner_can_mirror_rights_without_acquisition(tmp_path):
         assert result.blocked_sources == result.failed_sources == 0
         assert calls == ["library"]
         rights = service.storage.entitlements(provider_id="kobo")
-        assert len(rights) == 1
-        assert rights[0]["identity_id"] == account.identity_id
+        assert rights == []  # Private catalogue metadata is not a grant.
         assert not list((tmp_path / "EBooks").rglob("*.epub"))
     finally:
         service.close()
@@ -141,7 +140,7 @@ def test_bad_kobo_binding_does_not_block_other_valid_personal_source(tmp_path):
         assert result.blocked_sources == 1
         assert broken_calls == []
         assert valid_calls == ["library"]
-        assert len(service.storage.entitlements(provider_id="kobo")) == 1
-        assert service.storage.entitlements(provider_id="kobo")[0]["identity_id"] == "bob"
+        assert service.storage.entitlements(provider_id="kobo") == []
+        assert service.storage.catalog_entries()  # Good source still mirrors metadata.
     finally:
         service.close()
