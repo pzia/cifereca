@@ -350,6 +350,36 @@ class LibraryService:
             expected_account=expected_account,
         )
 
+    def preflight_cross_profile_loan_transfer(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+        lender_placement_id: str,
+    ):
+        """#4987: read-only local placement check for explicit 'Envoyer à'."""
+        from .core.borrow_for_identity_transfer_preflight import (
+            preflight_cross_profile_loan_transfer,
+        )
+        return preflight_cross_profile_loan_transfer(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+            lender_placement_id=lender_placement_id,
+        )
+
+    def send_cross_profile_borrowed_placement(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+        lender_placement_id: str, confirmed: bool = False,
+    ) -> dict[str, object]:
+        """#4987: consented A-to-B copy through canonical 'Envoyer à'."""
+        from .core.borrow_for_identity_transfer_executor import (
+            send_cross_profile_borrowed_placement,
+        )
+        return send_cross_profile_borrowed_placement(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+            lender_placement_id=lender_placement_id, confirmed=confirmed,
+        )
+
     def cross_profile_borrow_progress(
         self, *, requesting_identity_id: str,
         borrowing_account: Account, exact_notice: SearchResult,
