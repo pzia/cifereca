@@ -1847,7 +1847,9 @@ class LocalInspection:
         # #5054: the historic Numilog file/receipt reconciliation writer is
         # retired. Re-download through a currently attested canonical provider
         # entitlement instead; never attach by matching old local metadata.
-        if case is not None and right_key in self._manual_right_scopes:
+        if (case is not None and right_key in self._manual_right_scopes
+                and self.preflight_manual_link(right_key, file_key).status
+                == 'eligible_for_fresh_validation'):
             return {
                 'status': 'blocked', 'read_only': True,
                 'reason_code': 'numilog_canonical_redownload_required',
@@ -1875,7 +1877,9 @@ class LocalInspection:
         # #5054: the historic Numilog file/receipt reconciliation writer is
         # retired. Re-download through a currently attested canonical provider
         # entitlement instead; never attach by matching old local metadata.
-        if case is not None and right_key in self._manual_right_scopes:
+        if (case is not None and right_key in self._manual_right_scopes
+                and self.preflight_manual_link(right_key, file_key).status
+                == 'eligible_for_fresh_validation'):
             return {
                 'status': 'blocked', 'read_only': True,
                 'reason_code': 'numilog_canonical_redownload_required',
@@ -1903,7 +1907,9 @@ class LocalInspection:
         # #5054: the historic Numilog file/receipt reconciliation writer is
         # retired. Re-download through a currently attested canonical provider
         # entitlement instead; never attach by matching old local metadata.
-        if case is not None and right_key in self._manual_right_scopes:
+        if (case is not None and right_key in self._manual_right_scopes
+                and self.preflight_manual_link(right_key, file_key).status
+                == 'eligible_for_fresh_validation'):
             return {
                 'status': 'blocked', 'read_only': True,
                 'reason_code': 'numilog_canonical_redownload_required',
@@ -1932,7 +1938,9 @@ class LocalInspection:
         # #5054: the historic Numilog file/receipt reconciliation writer is
         # retired. Re-download through a currently attested canonical provider
         # entitlement instead; never attach by matching old local metadata.
-        if case is not None and right_key in self._manual_right_scopes:
+        if (case is not None and right_key in self._manual_right_scopes
+                and self.preflight_manual_link(right_key, file_key).status
+                == 'eligible_for_fresh_validation'):
             return {
                 'status': 'blocked', 'read_only': True,
                 'reason_code': 'numilog_canonical_redownload_required',
