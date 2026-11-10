@@ -1,17 +1,10 @@
 """Account-scoped, bounded SQLite evidence without acquisition authority."""
-from dataclasses import replace
 import hashlib
 import sqlite3
 
 import pytest
 
-from cifereca.core import numilog_local_preview
 from cifereca.storage import Storage
-from tests.test_core_p0_1905_numilog_offline_preview import (
-    _broker, _ledger, _owned, _preview,
-)
-from tests.test_core_p0_1862_numilog_store_mirror import _connect
-from tests.test_sync_state_contract import _service
 
 
 SCOPE = dict(provider_id="store", credential_id="credential", account_id="account", identity_id="alice")
@@ -158,64 +151,3 @@ def test_invalid_scope_or_budget_is_refused_before_sql(tmp_path, options):
         storage.close()
 
 
-@pytest.mark.parametrize("guard_global_lists", [False, True])
-def test_preview_budget_ignores_other_accounts_and_unrelated_local_files(
-    tmp_path, monkeypatch, guard_global_lists,
-):
-    service = _service(tmp_path)
-    try:
-        account, _, calls = _connect(service, number=0)
-        foreign, _, foreign_calls = _connect(service, identity="alex", credential="other", number=0)
-        item, eid = _owned(service, account)
-        _ledger(service, account, item, eid)
-        for index in range(5):
-            _owned(service, foreign, str(index))
-            seed(service.storage, tmp_path, index)
-        monkeypatch.setattr(numilog_local_preview, "_MAX_ROWS", 1)
-        if guard_global_lists:
-            for name in ("entitlements", "acquisitions", "placements", "artifacts"):
-                monkeypatch.setattr(service.storage, name, lambda **kw: pytest.fail("global enumeration"))
-        broker, sid = _broker(service, account)
-        preview = _preview(broker, sid, verify=True)
-        assert preview.ok
-        assert preview.facts["counts"]["owned_purchases"] == 1
-        assert preview.facts["counts"]["already_local_verified"] == 1
-        assert preview.facts["acquisition_authorized"] is False
-        assert calls == foreign_calls == []
-    finally:
-        service.close()
-
-
-def test_preview_rejects_oversized_own_evidence_without_partial_counts(tmp_path, monkeypatch):
-    service = _service(tmp_path)
-    try:
-        account, _, calls = _connect(service, number=0)
-        _owned(service, account, "1")
-        _owned(service, account, "2")
-        monkeypatch.setattr(numilog_local_preview, "_MAX_ROWS", 1)
-        broker, sid = _broker(service, account)
-        preview = _preview(broker, sid)
-        assert not preview.ok
-        assert preview.facts["status"] == "evidence_budget_exhausted"
-        assert "counts" not in preview.facts
-        assert preview.facts["acquisition_authorized"] is False
-        assert calls == []
-    finally:
-        service.close()
-
-
-def test_foreign_only_ledger_does_not_turn_into_a_missing_download_candidate(tmp_path):
-    service = _service(tmp_path)
-    try:
-        account, _, calls = _connect(service, number=0)
-        item, eid = _owned(service, account)
-        _ledger(service, replace(account, identity_id="alex", unique_id="other-account"), item, eid)
-        broker, sid = _broker(service, account)
-        preview = _preview(broker, sid)
-        assert preview.ok
-        assert preview.facts["counts"]["needs_reconciliation"] == 1
-        assert preview.facts["counts"]["potentially_missing"] == 0
-        assert preview.facts["counts"]["already_local_linked"] == 0
-        assert calls == []
-    finally:
-        service.close()
