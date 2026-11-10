@@ -61,7 +61,7 @@ def send_cross_profile_borrowed_placement(
             lender_placement_id, requesting_identity_id,
         )
         if (type(receipt) is not dict
-                or receipt.get("status") != "complete"):
+                or receipt.get("status") not in ("complete", "unchanged")):
             return {
                 **blocked, "loan": "confirmed", "delivery": "present",
                 "reason_code": "transfer_result_unverified",
