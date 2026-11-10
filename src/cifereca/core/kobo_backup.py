@@ -1295,6 +1295,23 @@ def _kobo_checkpoint_key(identity_id: str, credential_id: str) -> str:
     return "kobo_backup_checkpoint." + digest
 
 
+_KOBO_DIAGNOSTIC_METRICS = frozenset({
+    "sessions", "manifests_fetched", "manifest_items", "scanned", "attempted",
+    "downloaded", "unchanged", "completed", "pending", "attention_required",
+    "errors", "remaining", "skipped", "skipped_archived", "metadata_refreshed",
+    "malformed_manifest_items", "duplicate_manifest_items",
+    "provider_rejected_manifest_items", "reconcile_pending", "reconcile_conflicts", "reconcile_skipped",
+    "items_blocked_by_scope", "blocked_non_retryable", "attempts_saved",
+    "recovered_interrupted", "recovered_unparsed", "legacy_pruned",
+    "legacy_local_preserved", "legacy_entitlements_inactivated",
+    "vault_errors", "adept_errors", "integration_errors", "cancelled_sources",
+})
+_KOBO_DIAGNOSTIC_STATUSES = frozenset({
+    "complete", "partial", "failed", "aborted", "cancelled",
+    "attention_required", "skipped_fresh",
+})
+
+
 def _safe_kobo_backup_diagnostic_detail(summary: dict[str, Any]) -> dict[str, Any]:
     """Export only stable, non-identifying batch metrics.
 
