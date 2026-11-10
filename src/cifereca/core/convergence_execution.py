@@ -625,8 +625,12 @@ def execute_admitted_convergence(
                 adept_receipt_ref=completed.adept_receipt_ref,
                 context_current=current_memory,
                 expected_source_policy_revision=expected_source_policy_revision,
-                explicitly_confirmed_once=explicitly_confirmed_once,
-                explicit_entitlement_id=explicit_entitlement_id,
+                # Keep historical Core Sync call signatures identical:
+                # only a genuinely explicit click supplies the new grant.
+                **({
+                    "explicitly_confirmed_once": True,
+                    "explicit_entitlement_id": explicit_entitlement_id,
+                } if explicitly_confirmed_once else {}),
                 transaction_guard=(
                     (lambda db: publication_guard(db, key))
                     if publication_guard is not None else None
