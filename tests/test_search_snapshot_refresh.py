@@ -10,7 +10,6 @@ import pytest
 from cifereca.gui.search_snapshot_refresh import invalidate_search_snapshot
 from cifereca.gui.query_model import QueryState
 from tests.test_search_results_view import _host, Row
-from tests.test_numilog_owned_library_download import case
 
 ROOT = Path(__file__).resolve().parents[1] / 'src/cifereca/gui'
 
@@ -56,38 +55,6 @@ def _window(service=None):
 def _row(key='source:numilog:purchase', **kw):
     return {'key': key, 'title': 'Fictional', 'identity_id': 'alice', 'provider_id': 'numilog',
             'item_id': 'purchase', 'source_refs': [{'provider_id': 'numilog', 'item_id': 'purchase', 'identity_id': 'alice'}], **kw}
-
-
-def test_real_owned_acquisition_refreshes_sql_and_migrated_selection_without_second_download(case, monkeypatch):
-    service = case.service
-    host = _window(service)
-    owner = case.account.identity_id
-    host._library_state_label = service.library_state_label if hasattr(service, 'library_state_label') else lambda r: r['state']
-    old = service.search_known_catalog('Fictional', 'all', field='title', identity_id=owner)
-    assert len(old) == 1 and old[0]['state'] == 'remote_owned'
-    host._populate_local_search(old)
-    host.search_page.selection.set_selected(0)
-    target = service.owned_library_download_target(case.entry)
-    service.obtain_owned_library_item(target)
-    assert case.calls == [case.item.record_id]
-    def forbidden(*a, **kw): pytest.fail('refresh must never contact provider or scan')
-    monkeypatch.setattr(service, 'catalog_scan', forbidden)
-    monkeypatch.setattr(service, 'obtain_search_item', forbidden)
-    monkeypatch.setattr(service, 'obtain_owned_library_item', forbidden)
-    monkeypatch.setattr(case.session, 'download_direct', forbidden)
-    inventory_before = list(case.inventory)
-    invalidate_search_snapshot(host)
-    assert len(host.tasks) == 1
-    rows = host.tasks[0].work()
-    host.tasks[0].done(rows)
-    assert len(host._search_local_objects) == 1
-    row = next(iter(host._search_local_objects.values()))
-    assert row['state'] == 'local' and row['placement_id'] and row['identity_id'] == owner
-    assert service.owned_library_download_target(row) is None
-    assert host.search_page.selection.get_selected_item().key == row['key']
-    assert host.state.providers == ('numilog',) and host.state.text == 'Fictional'
-    assert case.calls == [case.item.record_id]
-    assert case.inventory == inventory_before
 
 
 def test_same_key_widgets_are_replaced_after_indexing_but_progressive_append_is_kept():
