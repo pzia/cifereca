@@ -53,9 +53,13 @@ def _publish_new_adept_without_clobber(
                 raise ProviderConfigurationError("Artefact final modifié")
             # Staging cleanup follows physical publication, never before.
             # Avoid deleting a different file if the path was re-bound.
-            current = produced_path.stat(follow_symlinks=False)
-            if ((current.st_dev, current.st_ino) ==
-                    (before.st_dev, before.st_ino)):
+            try:
+                current = produced_path.stat(follow_symlinks=False)
+            except OSError:
+                current = None
+            if (current is not None
+                    and (current.st_dev, current.st_ino) ==
+                        (before.st_dev, before.st_ino)):
                 try:
                     produced_path.unlink()
                 except OSError:
