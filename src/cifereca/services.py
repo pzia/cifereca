@@ -3198,8 +3198,8 @@ class LibraryService:
         from .core.materialization import MaterializationCoordinator
 
         if item.source_provider == "numilog":
-            from .core.numilog_search_canonical import obtain
-            return obtain(self, item)
+            from .core.selected_owned_search import obtain_selected_owned
+            return obtain_selected_owned(self, item)
         return MaterializationCoordinator(
             acquire=self.acquire_direct_item,
             index_path=self.catalog_index_path,
