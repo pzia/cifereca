@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from scripts.ci_kobo_core_line_inventory import inventory as kobo_inventory
-from scripts.ci_provider_core_line_inventory import inventory, main
+from scripts.ci_provider_core_coupling_inventory import inventory, main
 
 
 def _write(root, name, content):
@@ -26,9 +26,9 @@ def test_named_implementation_files_counted_without_plugins_or_tests(tmp_path):
     _write(tmp_path, "tests/test_kobo.py", "assert True\n")
     report = inventory(tmp_path)
     assert report["dedicated_lines"] == 8
-    assert report["by_provider"]["kobo"] == 5
-    assert report["by_provider"]["numilog"] == 2
-    assert report["by_provider"]["bnf"] == 1
+    assert report["dedicated_by_provider"]["kobo"] == 5
+    assert report["dedicated_by_provider"]["numilog"] == 2
+    assert report["dedicated_by_provider"]["bnf"] == 1
     assert report["generic_provider_literal_lines_unique"] == 3
     assert report["generic_per_file"]["src/cifereca/core/generic.py"]["provider_literal_lines"] == {
         "kobo": 2, "numilog": 1, "bnf": 1, "biblioaccess": 0,
