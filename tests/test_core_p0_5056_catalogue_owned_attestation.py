@@ -1,95 +1,102 @@
-"""#5056: unknown providers cannot mint 'remote_owned' from search flags.
+"""P0 #5056: catalogue-owned flags never create rights for any provider.
 
-No network, provider session, or write: rights must be independent, exact
-Core ledger witnesses. This gate covers arbitrary new provider IDs, not just
-historical Kobo/Numilog.
+Integration against the real remote-mirror projection and the already
+reviewed Core purchase witness (#5073). All providers are synthetic.
+No network, account activation or new personal ledger writes.
 """
+from dataclasses import replace
 from types import SimpleNamespace as NS
-from unittest.mock import Mock
 
 import pytest
 
-from cifereca.core.catalogue_owned_projection import attested_catalogue_owned_keys
+from cifereca.core.search_orchestration import _mirror_remote_results
 from cifereca.models import SearchResult
 
 
-def row(provider, credential, edition, owned=True):
-    return SearchResult(
-        id=edition, record_id=edition, docbase="BOOKS", medium="digital",
-        title="Synthetic title", author=None, type=None, format=None,
-        publisher=None, published_at=None, description=None,
-        thumbnail_url=None, friendly_url=None, scenario="CATALOGUE",
-        source_provider=provider, source_credential=credential, owned=owned,
-    )
+class Storage:
+    def __init__(self, rights):
+        self.rights = rights
+        self.upserts = []
+        self.calls = 0
 
-
-def test_unknown_provider_claim_requires_exact_existing_owned_entitlement():
-    storage = NS(entitlements=Mock(return_value=[
-        {"identity_id": "alice", "credential_id": "card-a",
-         "item_id": "book-a", "entitlement_type": "owned"},
-    ]))
-    a = row("provider-future", "card-a", "book-a")
-    assert attested_catalogue_owned_keys(storage, [a], identity_id="alice") == {
-        ("provider-future", "alice", "card-a", "book-a"),
-    }
-    storage.entitlements.assert_called_once_with(
-        provider_id="provider-future", state="active",
-    )
-
-
-@pytest.mark.parametrize("wrong", [
-    {"identity_id": "bob", "credential_id": "card-a", "item_id": "book-a",
-     "entitlement_type": "owned"},
-    {"identity_id": "alice", "credential_id": "card-b", "item_id": "book-a",
-     "entitlement_type": "owned"},
-    {"identity_id": "alice", "credential_id": "card-a", "item_id": "book-b",
-     "entitlement_type": "owned"},
-    {"identity_id": "alice", "credential_id": "card-a", "item_id": "book-a",
-     "entitlement_type": "loan"},
-    {"identity_id": "alice", "credential_id": "card-a", "item_id": "book-a",
-     "entitlement_type": "unknown"},
-    {"identity_id": "alice", "credential_id": None, "item_id": "book-a",
-     "entitlement_type": "owned"},
-])
-def test_foreign_or_unverified_entitlement_cannot_promote_a_catalogue_row(wrong):
-    storage = NS(entitlements=Mock(return_value=[wrong]))
-    assert not attested_catalogue_owned_keys(
-        storage, [row("new-plugin", "card-a", "book-a")], identity_id="alice",
-    )
-
-
-def test_public_results_and_entitlement_read_failure_are_non_authorizing():
-    storage = NS(entitlements=Mock(side_effect=RuntimeError("private token")))
-    assert not attested_catalogue_owned_keys(
-        storage, [row("new-plugin", "card-a", "book-a")], identity_id="alice",
-    )
-    storage.entitlements.reset_mock()
-    assert not attested_catalogue_owned_keys(
-        storage, [row("new-plugin", "public", "book-a", owned=False)],
-        identity_id="alice",
-    )
-    storage.entitlements.assert_not_called()
-
-
-def test_provider_ledger_lookup_cannot_splice_rights_across_providers():
-    def entitlements(*, provider_id, state):
+    def entitlements(self, *, state):
         assert state == "active"
-        if provider_id == "provider-a":
-            return [{"identity_id": "alice", "credential_id": "card",
-                     "item_id": "book", "entitlement_type": "owned"}]
-        return []
-    storage = NS(entitlements=entitlements)
-    assert attested_catalogue_owned_keys(storage, [
-        row("provider-a", "card", "book"),
-        row("provider-b", "card", "book"),
-    ], identity_id="alice") == {("provider-a", "alice", "card", "book")}
+        self.calls += 1
+        return self.rights
+
+    def catalog_entries_by_ids(self, ids):
+        assert len(ids) == 1
+        return {}
+
+    def catalog_entries_upsert_many(self, rows):
+        self.upserts.extend(rows)
 
 
-def test_search_orchestration_must_verify_every_vendor_not_bypass_unknowns():
-    from pathlib import Path
-    source = (Path(__file__).resolve().parents[1] /
-              "src/cifereca/core/search_orchestration.py").read_text()
-    method = source.split("def _mirror_remote_results(", 1)[1].split("\ndef ", 1)[0]
-    assert "attested_catalogue_owned_keys(" in method
-    assert 'row.source_provider not in {"kobo", "numilog"}' not in method
-    assert "row.owned is True" in method
+def item(provider="fictional-a"):
+    return SearchResult(
+        id="item-1", record_id="book-1", docbase="BOOKS", medium="digital",
+        title="Un livre", author="Auteure", type=None, format="epub",
+        publisher=None, published_at=None, description=None,
+        thumbnail_url=None, friendly_url=None, scenario="PERSONAL",
+        source_provider=provider, source_credential="card-a",
+        source_account_id="account-a", source_collection="personal",
+        revision_id="revision-a", owned=True,
+    )
+
+
+def right(provider="fictional-a", **changes):
+    value = {
+        "identity_id": "alice", "provider_id": provider,
+        "credential_id": "card-a", "account_id": "account-a",
+        "item_id": "book-1", "revision_id": "revision-a",
+        "entitlement_type": "owned", "state": "active",
+    }
+    value.update(changes)
+    return value
+
+
+def projection(book, rights, *, active="alice", asked="alice"):
+    storage = Storage(rights)
+    service = NS(
+        current_identity=NS(identity_id=active), storage=storage,
+        _account_context_epoch=5, _source_context_epoch=7,
+    )
+    assert _mirror_remote_results(service, [book], identity_id=asked) == 1
+    assert len(storage.upserts) == 1
+    assert storage.calls == 1
+    return storage.upserts[0]["local_state"]
+
+
+@pytest.mark.parametrize("provider", ["fictional-a", "fictional-b"])
+def test_exact_personal_ledger_required_for_every_provider(provider):
+    row = item(provider)
+    assert projection(row, []) == "remote_catalog"
+    assert projection(row, [right(provider)]) == "remote_owned"
+
+
+@pytest.mark.parametrize("bad", [
+    {"identity_id": "bob"}, {"provider_id": "fictional-b"},
+    {"credential_id": "foreign"}, {"account_id": "foreign"},
+    {"item_id": "foreign"}, {"revision_id": "foreign"},
+    {"entitlement_type": "loan"}, {"state": "archived"},
+])
+def test_search_owned_hint_never_bypasses_exact_right_scope(bad):
+    assert projection(item(), [right(**bad)]) == "remote_catalog"
+
+
+def test_public_stale_or_other_identity_mirrors_never_gain_ownership():
+    exact = right()
+    public = replace(item(), source_collection="catalog")
+    stale = replace(item(), metadata={"search_provenance": "known_catalog_stale"})
+    assert projection(public, [exact]) == "remote_catalog"
+    assert projection(stale, [exact]) == "remote_catalog"
+    assert projection(item(), [exact], active="bob") == "remote_catalog"
+    assert projection(item(), [exact], asked="bob") == "remote_catalog"
+
+
+def test_no_provider_filter_or_fallback_in_mirror_source():
+    from inspect import getsource
+    source = getsource(_mirror_remote_results)
+    assert "snapshot_search_owned_evidence(self)" in source
+    assert "search_result_has_verified_purchase(" in source
+    assert 'row.source_provider not in {"kobo", "numilog"}' not in source

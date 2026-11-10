@@ -1975,19 +1975,21 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     if not identity_id:
         return 0
     now = int(time.time())
-    # Search is descriptive for EVERY provider. In particular, an unknown
-    # plugin may report owned=True without any personal entitlement witness.
-    # Exact provider/identity/credential/edition rights are independently
-    # confirmed from Core's already-stored personal ledger, with no GET.
-    from .catalogue_owned_projection import attested_catalogue_owned_keys
-    verified_owned = attested_catalogue_owned_keys(
-        self.storage, rows, identity_id=identity_id,
+    # Search is descriptive for EVERY provider. Reuse the established,
+    # account/edition/revision-scoped Core purchase witness (#5073), never
+    # interpret an unknown provider's owned=True as a confirmed entitlement.
+    # The witness also rejects public/stale catalogue rows and identity epochs.
+    from .search_owned_evidence import (
+        snapshot_search_owned_evidence, search_result_has_verified_purchase,
     )
+    owned_evidence = snapshot_search_owned_evidence(self)
     keyed: list[tuple[str, SearchResult, str, bool]] = []
     for row in rows:
-        owned = row.owned is True and (
-            row.source_provider, identity_id, row.source_credential, row.record_id,
-        ) in verified_owned
+        owned = row.owned is True and search_result_has_verified_purchase(
+            row, owned_evidence, current_identity_id=identity_id,
+            current_account_epoch=getattr(self, "_account_context_epoch", None),
+            current_source_epoch=getattr(self, "_source_context_epoch", None),
+        )
         state = (
             "remote_owned" if owned else
             "available_to_buy" if row.source_provider in {"kobo", "numilog"} and row.price else
