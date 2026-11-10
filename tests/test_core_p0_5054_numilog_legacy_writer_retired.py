@@ -54,7 +54,9 @@ def test_real_gtk_book_detail_does_not_recreate_retired_v1_receipt():
              if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     assert "begin_numilog_index_resume" not in names
     assert "from cifereca.core.numilog_materialization_checkpoint import record" not in source
-    assert "P0_2024_owned_numilog_XTEST_exact_single_target" in source
+    # Retired synthetic direct_download cannot be a positive GTK path.
+    assert 'begin_owned_book_action("numilog")' not in source
+    assert "P0_1347_owned_library_XTEST_exact_single_target" in source
 
 
 def test_historical_startup_is_passive_and_never_performs_supplier_io():
