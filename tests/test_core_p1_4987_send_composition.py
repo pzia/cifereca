@@ -130,3 +130,85 @@ def test_native_exception_never_leaks_secret_or_reborrows(environment):
     assert result["status"] == "blocked"
     assert "account-private-barcode" not in repr(result)
     service.execute_cross_profile_borrow.assert_not_called()
+
+
+def test_library_service_facade_composes_native_send_and_idempotent_replay(
+    tmp_path, monkeypatch,
+):
+    """Real Core facade, source and destination bytes; synthetic loan claim."""
+    import os
+    from dataclasses import replace
+    from pathlib import Path
+
+    from tests.test_core0925_open_destinations import _service
+    from tests.test_core_p1_3275_safe_transfer import _source
+    from cifereca.core.borrow_for_identity_progress import CrossProfileBorrowProgress
+
+    service = _service(tmp_path)
+    donor_path, donor_placement = _source(service, tmp_path)
+    service.current_identity = service.identity_by_id("bob")
+    original = witness("alice", record="book")
+    account = replace(original.account, provider_id="local")
+    notice = replace(
+        original.notice, source_provider="local", record_id="book",
+    )
+    progress = lambda *args, **kw: CrossProfileBorrowProgress(
+        "confirmed", "unavailable", "blocked",
+        "lender_loan_confirmed_transfer_unverified",
+    )
+    monkeypatch.setattr(
+        "cifereca.core.borrow_for_identity_placement_resolution."
+        "observed_cross_profile_borrow_progress", progress,
+    )
+    monkeypatch.setattr(
+        "cifereca.core.borrow_for_identity_transfer_preflight."
+        "observed_cross_profile_borrow_progress", progress,
+    )
+    observed = []
+    def complete_local_placement(**scope):
+        observed.append(scope)
+        return service.storage.placement_get(donor_placement)
+    service.local_placement_for_source = complete_local_placement
+    try:
+        missing_consent = service.send_confirmed_lender_local_copy(
+            requesting_identity_id="bob", borrowing_account=account,
+            exact_notice=notice, confirmed=False,
+        )
+        assert missing_consent["status"] == "blocked"
+        assert observed == []
+        first = service.send_confirmed_lender_local_copy(
+            requesting_identity_id="bob", borrowing_account=account,
+            exact_notice=notice, confirmed=True,
+        )
+        assert first["status"] == "complete", first
+        assert first["transfer"] == "completed"
+        assert observed == [{
+            "provider_id": "local", "credential_id": account.credential_id,
+            "item_id": "book", "identity_id": "alice",
+            "account_id": account.unique_id,
+        }]
+        received = [
+            row for row in service.storage.placements()
+            if row.get("identity_id") == "bob"
+            and (row.get("metadata") or {}).get("materialized_from")
+                == donor_placement
+        ]
+        assert len(received) == 1
+        target_path = Path(received[0]["path"])
+        assert target_path.read_bytes() == donor_path.read_bytes()
+        assert os.stat(target_path).st_ino != os.stat(donor_path).st_ino
+        assert service.storage.entitlements() == []
+        again = service.send_confirmed_lender_local_copy(
+            requesting_identity_id="bob", borrowing_account=account,
+            exact_notice=notice, confirmed=True,
+        )
+        assert again["status"] == "complete"
+        assert again["transfer"] == "completed"
+        assert len([
+            row for row in service.storage.placements()
+            if row.get("identity_id") == "bob"
+            and (row.get("metadata") or {}).get("materialized_from")
+                == donor_placement
+        ]) == 1
+    finally:
+        service.close()
