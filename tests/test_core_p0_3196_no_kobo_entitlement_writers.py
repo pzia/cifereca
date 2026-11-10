@@ -16,15 +16,11 @@ def test_core_inventory_does_not_dispatch_kobo_entitlement_mirror():
 def test_kobo_legacy_direct_download_is_inert_even_with_owned_flag():
     from types import SimpleNamespace as NS
     from unittest.mock import Mock
-    from cifereca.models import SearchResult
+    from tests.test_core_1337_kobo_personal_manifest_rights import _row
     from cifereca.services import LibraryService
 
     service = NS(_session_for_source=Mock(side_effect=AssertionError("legacy GET")),
                  current_identity=NS(identity_id="alice"))
-    item = SearchResult(
-        source_provider="kobo", source_credential="alice-vault",
-        record_id="book", title="Synthetic", owned=True,
-        downloadable=True,
-    )
+    item = _row(product="book", credential="alice-vault")
     assert LibraryService.can_direct_download(service, item) is False
     service._session_for_source.assert_not_called()
