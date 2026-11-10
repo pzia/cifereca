@@ -35,13 +35,14 @@ def import_acsm(
     existing = self.storage.acquisition_get(acquisition_id)
     if existing and existing.get("status") == "complete":
         path = Path(str(dict(existing.get("metadata") or {}).get("path") or ""))
-        if path.is_file():
-            # The canonical artifact identity is provider-neutral: no ACSM
-            # import may reuse a modified or unverified completed delivery.
-            if (path.is_symlink() or not inspect_artifact(path).valid
-                    or existing.get('artifact_id') != 'sha256:' + sha256_file(path)):
-                raise ProviderConfigurationError("Artefact ACSM importé modifié ; réconciliation nécessaire")
-            return {"status": "unchanged", "path": str(path), "acquisition_id": acquisition_id}
+        # A complete receipt is never a retry permit. Missing, replaced,
+        # dangling-symlink or uninspectable output requires explicit
+        # reconciliation before another DRM fulfillment or ledger write.
+        if (path.is_symlink() or not path.is_file()
+                or not inspect_artifact(path).valid
+                or existing.get('artifact_id') != 'sha256:' + sha256_file(path)):
+            raise ProviderConfigurationError("Artefact ACSM importé modifié ; réconciliation nécessaire")
+        return {"status": "unchanged", "path": str(path), "acquisition_id": acquisition_id}
 
     work = data_dir() / "acquisition-work" / identity.identity_id / "manual" / source_sha[:16]
     work.mkdir(parents=True, exist_ok=True)
