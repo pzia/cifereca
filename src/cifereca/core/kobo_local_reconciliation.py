@@ -16,7 +16,7 @@ from ..library_files import safe_library_component
 from ..paths import config_file, database_file
 from ..identities import Identity
 from ..storage import Storage, CURRENT_SCHEMA_VERSION
-from .kobo_backup import _kobo_preview_paths
+from .profile_source_paths import _kobo_preview_paths
 
 
 class ReconciliationRejected(ValueError):

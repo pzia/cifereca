@@ -20,7 +20,7 @@ from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..plugin_api import SyncResult
 from .canonical_delivery_abi import has_complete_delivery_abi
-from .kobo_backup import _kobo_preview_paths
+from .profile_source_paths import _kobo_preview_paths
 from .local_profile_root_guards import checked_profile_roots, ProfileRootRejected
 
 _TTL = 600
