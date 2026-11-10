@@ -187,6 +187,83 @@ def _provider_method_name(name: str, providers: set[str]) -> list[str]:
     return sorted(matched)
 
 
+
+def _aliased_getattr_provider_calls(
+    tree: ast.Module, providers: set[str],
+) -> list[dict[str, object]]:
+    """Detect a unique local getattr alias later invoked as a provider action.
+
+    This deliberately ignores uninvoked introspection, reassigned variables,
+    shadowed builtins and cross-function bindings. A deferred provider
+    callable must not evade the monotone Core coupling gate merely because
+    it is assigned before execution.
+    """
+    findings: list[dict[str, object]] = []
+    scopes = [tree, *(node for node in ast.walk(tree)
+                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)))]
+    for scope in scopes:
+        # Nested function bodies are separate bindings and must not be
+        # attributed to an unrelated parent function.
+        nodes: list[ast.AST] = []
+        def visit(node: ast.AST) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                      ast.Lambda, ast.ClassDef)):
+                    continue
+                nodes.append(child)
+                visit(child)
+        for stmt in scope.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                continue
+            nodes.append(stmt)
+            visit(stmt)
+        writes = Counter(
+            node.id for node in nodes
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+        )
+        params = set()
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = scope.args
+            params = {arg.arg for arg in (
+                *args.posonlyargs, *args.args, *args.kwonlyargs,
+                *(tuple([args.vararg]) if args.vararg else ()),
+                *(tuple([args.kwarg]) if args.kwarg else ()),
+            )}
+        # An explicitly rebound getattr or a local function named getattr
+        # is not evidence of Python's built-in reflective call.
+        if "getattr" in writes or "getattr" in params:
+            continue
+        for stmt in nodes:
+            if (not isinstance(stmt, (ast.Assign, ast.AnnAssign))
+                    or not isinstance(stmt.value, ast.Call)
+                    or not isinstance(stmt.value.func, ast.Name)
+                    or stmt.value.func.id != "getattr"
+                    or len(stmt.value.args) < 2):
+                continue
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+            if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+                continue
+            variable = targets[0].id
+            if variable in params or writes[variable] != 1:
+                continue
+            attribute = stmt.value.args[1]
+            if (not isinstance(attribute, ast.Constant)
+                    or type(attribute.value) is not str):
+                continue
+            matched = set(_provider_method_name(attribute.value, providers))
+            if attribute.value.casefold() in providers:
+                matched.add(attribute.value.casefold())
+            if not matched:
+                continue
+            if any(isinstance(node, ast.Call)
+                   and isinstance(node.func, ast.Name)
+                   and node.func.id == variable
+                   and node.lineno > stmt.lineno for node in nodes):
+                findings.append({"line": stmt.lineno, "providers": sorted(matched)})
+    return findings
+
+
 def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, list[dict[str, object]]]:
     """Inventory imports, provider comparisons and executable dispatch maps."""
     tree = ast.parse(content)
@@ -334,6 +411,7 @@ def inspect_source(content: str, providers: tuple[str, ...] = DEFAULT_PROVIDERS)
                 matched = sorted(_match_providers(case.pattern, names, constants))
                 if matched:
                     dispatches.append({"line": case.pattern.lineno, "providers": matched})
+    dynamic_calls.extend(_aliased_getattr_provider_calls(tree, names))
     return {"imports": sorted(imports, key=lambda x: x["line"]),
             "comparisons": sorted(dispatches, key=lambda x: x["line"]),
             "dispatch_tables": sorted(tables, key=lambda x: x["line"]),
