@@ -66,6 +66,7 @@ def test_controller_refresh_requires_confirmed_bnf_and_current_scope():
     text = ast.get_source_segment(CONTROLLER.read_text(encoding="utf-8"), method)
     assert 'result.get("status") == "confirmed"' in text
     assert 'result.get("provider_verified") is True' in text
-    assert 'provider_id == "bnf-pret" and current()' in text
+    assert 'if current():' in text
+    assert 'provider_id == "bnf-pret" and current()' not in text
     assert 'refresh(item)' in text
     assert 'window.refresh_loans(True)' in text
