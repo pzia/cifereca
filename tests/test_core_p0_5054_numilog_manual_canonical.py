@@ -84,7 +84,8 @@ def _setup(monkeypatch, tmp_path, *, mismatch=False, rebind=False, borrower_rebi
 
 def test_one_click_uses_one_selected_offer_and_canonical_executor(monkeypatch, tmp_path):
     service, target, calls = _setup(monkeypatch, tmp_path)
-    result = manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')))
+    result = manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')),
+                                     right_current=lambda *_a: True)
     assert result.artifact_id == "sha256:result"
     assert result.identity_id == "owner"
     assert result.path == tmp_path / "book.epub"
@@ -105,7 +106,8 @@ def test_no_canonical_writer_after_unattested_offer_or_context_change(
         borrower_rebind=damage == "borrower_rebound",
     )
     with pytest.raises(ValueError, match="explicit_canonical"):
-        manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')))
+        manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')),
+                                     right_current=lambda *_a: True)
     assert [x[0] for x in calls] == ["offer"]
 
 
@@ -113,7 +115,8 @@ def test_no_legacy_fallback_when_guarded_abi_unavailable(monkeypatch, tmp_path):
     service, target, calls = _setup(monkeypatch, tmp_path)
     monkeypatch.setattr(manual, "has_complete_delivery_abi", lambda *_a: False)
     with pytest.raises(ValueError, match="explicit_canonical_abi_unavailable"):
-        manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')))
+        manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')),
+                                     right_current=lambda *_a: True)
     assert calls == []
 
 
@@ -127,7 +130,7 @@ def test_real_library_obtain_routes_complete_v2_away_from_legacy_writer(
                         pytest.fail("source already captured by exact target"))
     monkeypatch.setattr(
         manual, "obtain_explicit_owned",
-        lambda _service, _target, *, resolve: (
+        lambda _service, _target, *, resolve, right_current: (
             calls.append(("canonical", resolve)) or "canonical_result"
         ),
     )
