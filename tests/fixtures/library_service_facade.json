@@ -59,10 +59,6 @@
     "kind": "method",
     "signature": "(self, identity_id: 'str', provider_id: 'str') -> 'Path'"
   },
-  "_migrate_legacy_flat_kobo_files": {
-    "kind": "method",
-    "signature": "(self, default_identity: 'Identity') -> 'None'"
-  },
   "adept_profile_choices": {
     "kind": "method",
     "signature": "(self) -> 'list[dict[str, str]]'"
