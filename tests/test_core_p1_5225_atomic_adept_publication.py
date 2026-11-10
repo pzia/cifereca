@@ -146,3 +146,54 @@ def test_services_invokes_cleanup_only_after_index_and_completed_ledger():
     cleanup = routine.index("adept_artifact_publication.cleanup_after_commit(")
     assert indexed < receipt < cleanup
     assert routine.index("if acquisition.kind == \"acsm\":", receipt) < cleanup
+
+
+@pytest.mark.parametrize("target", ["produced", "destination"])
+def test_symlinked_adept_input_or_target_never_replaces_valid_bytes(
+    tmp_path, monkeypatch, target,
+):
+    run, produced, destination, old, new, previous = _publish(
+        tmp_path, repair=True, fail_replace=False, monkeypatch=monkeypatch,
+    )
+    external = tmp_path / "unrelated.epub"
+    external.write_bytes(b"UNRELATED-VALID-ARTIFACT")
+    selected = produced if target == "produced" else destination
+    selected.unlink()
+    selected.symlink_to(external)
+    with pytest.raises(ProviderConfigurationError, match="Chemin d"):
+        run()
+    assert selected.is_symlink()
+    assert external.read_bytes() == b"UNRELATED-VALID-ARTIFACT"
+    assert old.read_bytes() == b"PRIOR-LEDGER-ARTIFACT"
+    if target == "produced":
+        assert destination.read_bytes() == previous
+    else:
+        assert produced.read_bytes() == new
+
+
+def test_adept_publisher_rejects_symlinked_staging_directory(
+    tmp_path, monkeypatch,
+):
+    source_dir = tmp_path / "actual-staging"
+    source_dir.mkdir()
+    actual = source_dir / "new.epub"
+    actual.write_bytes(b"NEW")
+    alias_dir = tmp_path / "stage-alias"
+    alias_dir.symlink_to(source_dir, target_is_directory=True)
+    alias = alias_dir / "new.epub"
+    destination = tmp_path / "existing.epub"
+    destination.write_bytes(b"OLD")
+
+    with pytest.raises(ProviderConfigurationError, match="Chemin d"):
+        adept_artifact_publication.publish(
+            result={"artifact": {"path": str(alias), "format": "epub"}},
+            adept_destination=alias, acsm_format="epub",
+            loan=NS(id="synthetic", identity_id="A", source_provider="test"),
+            repair_mode=False, destination=destination, previous_path=None,
+            Path=Path, ProviderConfigurationError=ProviderConfigurationError,
+            inspect_artifact=lambda *_a, **_k: pytest.fail("no inspection"),
+            adept_acsm_plan=adept_acsm_plan, uuid=uuid,
+            _TRACE_LOG=logging.getLogger("synthetic"),
+        )
+    assert actual.read_bytes() == b"NEW"
+    assert destination.read_bytes() == b"OLD"
