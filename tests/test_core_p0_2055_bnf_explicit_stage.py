@@ -137,6 +137,35 @@ def test_untrusted_session_accounts_property_is_never_invoked_before_get(
     assert not service.storage.placements()
 
 
+@pytest.mark.parametrize("method_name", [
+    "rights_selected_delivery_offer_snapshot",
+    "rights_selected_delivery_candidate",
+])
+def test_selected_offer_property_getter_cannot_execute_during_preflight(
+    connected_core, monkeypatch, method_name,
+):
+    """An untrusted method descriptor is not a permission to perform I/O."""
+    service, session, account, loan, state, downloaded = connected_core
+    observed = []
+
+    def hostile_getter(_session):
+        observed.append("unexpected private provider getter")
+        raise RuntimeError("PRIVATE_URL_WITH_TOKEN")
+
+    monkeypatch.setattr(type(session), method_name, property(hostile_getter))
+    with pytest.raises(
+        ProviderConfigurationError, match="^bnf_loan_token_unavailable$",
+    ) as exc:
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default",
+        )
+    assert "PRIVATE_URL_WITH_TOKEN" not in str(exc.value)
+    assert observed == []
+    assert downloaded == []
+    assert not service.storage.acquisitions()
+    assert not service.storage.placements()
+
+
 def test_duplicate_live_borrower_object_refuses_before_selected_offer_or_get(connected_core):
     """A session with two references to the same account is not a unique binding."""
     service, session, account, loan, state, downloaded = connected_core
