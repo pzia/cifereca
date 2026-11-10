@@ -17,9 +17,16 @@ from cifereca.storage import Storage
 def _write_epub(path: Path, marker: bytes = b"book") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("mimetype", "application/epub+zip")
-        archive.writestr("META-INF/container.xml", "<container/>")
-        archive.writestr("content.xhtml", marker)
+        # Independent copies of this synthetic edition must be byte-identical
+        # even when tests run across ZIP's two-second DOS clock boundary.
+        # Otherwise a cross-profile SHA equality test fails at random.
+        for name, payload in (
+            ("mimetype", "application/epub+zip"),
+            ("META-INF/container.xml", "<container/>"),
+            ("content.xhtml", marker),
+        ):
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            archive.writestr(info, payload)
 
 
 class KoboSession(ProviderSession):
@@ -771,3 +778,21 @@ def test_obsolete_unlinked_override_does_not_gate_unrelated_books(
     finally:
         service.close()
 
+
+def test_synthetic_kobo_epub_has_stable_bytes_across_zip_clock(tmp_path, monkeypatch):
+    """The two independent lender/receiver witnesses share an exact SHA."""
+    first = tmp_path / "first.epub"
+    second = tmp_path / "second.epub"
+    monkeypatch.setattr(
+        zipfile.time, "localtime", lambda *_: (2020, 1, 1, 0, 0, 0, 0, 1, -1),
+    )
+    _write_epub(first, b"synthetic Kobo A book")
+    monkeypatch.setattr(
+        zipfile.time, "localtime", lambda *_: (2026, 11, 10, 23, 59, 58, 1, 315, -1),
+    )
+    _write_epub(second, b"synthetic Kobo A book")
+    assert first.read_bytes() == second.read_bytes()
+    with zipfile.ZipFile(first) as archive:
+        assert archive.read("content.xhtml") == b"synthetic Kobo A book"
+        assert all(member.date_time == (1980, 1, 1, 0, 0, 0)
+                   for member in archive.infolist())
