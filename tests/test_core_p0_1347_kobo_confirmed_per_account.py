@@ -98,10 +98,10 @@ def controls(window, idx=0, *, source_id=None):
         assert len(matched) == 1, "Kobo controls must belong to exactly one account"
         group = matched[0]
     source_row = group.children[0]
-    acquisition_row = group.children[3]
+    acquisition_row = group.children[2]
     # Keep the new mutating controls on their *own* row. Otherwise the
     # crowded source row becomes thousands of pixels tall in real GTK.
-    assert len(source_row.suffixes) == 4
+    assert len(source_row.suffixes) == 3
     assert len(acquisition_row.suffixes) == 2
     return acquisition_row.suffixes[0], acquisition_row.suffixes[1], acquisition_row
 
