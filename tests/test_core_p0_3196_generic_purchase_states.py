@@ -31,16 +31,6 @@ def test_generic_purchase_states_is_read_only_and_identity_scoped():
     assert calls == ["kobo"]
 
 
-def test_service_rights_reader_does_not_import_legacy_manifest_projector():
-    from pathlib import Path
-    path = Path(__file__).resolve().parents[1] / "src/cifereca/services.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef)
-               and n.name == "LibraryService")
-    method = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
-                  and n.name == "kobo_personal_right_states")
-    assert not any(
-        isinstance(node, ast.ImportFrom)
-        and node.module == "core.kobo_manifest_rights"
-        for node in ast.walk(method)
-    )
+def test_kobo_legacy_rights_reader_is_absent_from_service():
+    from cifereca.services import LibraryService
+    assert not hasattr(LibraryService, "kobo_personal_right_states")
