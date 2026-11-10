@@ -1,4 +1,4 @@
-"""P1 #1867 — store/catalogue display cannot change source routing or permissions.
+"""P0 #5054 / P1 #1867 — generic source display cannot change routing or permissions.
 
 No GTK, provider connection, network, acquisition, rights or config mutation.
 """
@@ -7,9 +7,6 @@ from __future__ import annotations
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
-from pathlib import Path
-
-from cifereca.plugins.manifest import load_manifest
 from cifereca.gui.query_widget_factory_controller import (
     _provider_choices, build_query_controls, refresh_query_providers,
 )
@@ -27,9 +24,9 @@ def _window(connected, *, historical=()):
         searchable_providers=searchable,
         catalog_entries=entries,
         provider_display_name=lambda provider: {
-            "kobo": "Kobo",
-            "numilog": "Numilog",
-            "numilog-catalog": "Numilog — Catalogue public",
+            "source-a": "Source A",
+            "source-b": "Source B",
+            "source-b-public": "Source B — Catalogue public",
         }.get(provider, "other"),
         provider_search_capabilities=lambda: {},
     )
@@ -41,9 +38,9 @@ def _window(connected, *, historical=()):
 
 def test_search_labels_are_taken_from_plugin_discovery_not_brand_overrides():
     supplied = [
-        ("kobo", "Librairie Kobo (plugin)"),
-        ("numilog", "Achats privés (plugin)"),
-        ("numilog-catalog", "Catalogue public (plugin)"),
+        ("source-a", "Source A (plugin)"),
+        ("source-b", "Bibliothèque B (plugin)"),
+        ("source-b-public", "Catalogue public (plugin)"),
         ("new-provider", "Nouvelle source (plugin)"),
     ]
     window, events = _window(supplied)
@@ -54,46 +51,46 @@ def test_search_labels_are_taken_from_plugin_discovery_not_brand_overrides():
     assert events == ["searchable"]
 
 
-def test_kobo_filter_exposes_one_route_not_a_second_catalogue_provider():
-    window, events = _window([("kobo", "Kobo")])
+def test_one_connected_source_does_not_invent_a_second_catalogue_provider():
+    window, events = _window([("source-a", "Source A")])
     choices = _provider_choices(window)
     assert dict(choices) == {
-        "kobo": "Kobo",
+        "source-a": "Source A",
         "local": "Local",
     }
-    assert "kobo-catalog" not in dict(choices)
+    assert "source-a-public" not in dict(choices)
     assert events == ["searchable"]
 
 
-def test_numilog_public_is_absent_until_it_is_a_real_active_source():
-    connected = [("numilog", "Numilog")]
+def test_optional_public_source_is_absent_until_explicitly_active():
+    connected = [("source-b", "Source B")]
     window, events = _window(connected)
-    assert list(dict(_provider_choices(window))) == ["local", "numilog"]
-    connected.append(("numilog-catalog", "Numilog — Catalogue public"))
+    assert list(dict(_provider_choices(window))) == ["local", "source-b"]
+    connected.append(("source-b-public", "Source B — Catalogue public"))
     values = dict(_provider_choices(window))
-    assert set(values) == {"local", "numilog", "numilog-catalog"}
-    assert values["numilog"] != values["numilog-catalog"]
+    assert set(values) == {"local", "source-b", "source-b-public"}
+    assert values["source-b"] != values["source-b-public"]
     assert events == ["searchable", "searchable"]  # no inventory or login calls
 
 
 def test_library_historical_provider_labels_do_not_enable_online_search():
     window, events = _window(
-        [("kobo", "Kobo")], historical=("numilog", "numilog-catalog"),
+        [("source-a", "Source A")], historical=("source-b", "source-b-public"),
     )
-    assert "numilog" not in dict(_provider_choices(window, library=False))
+    assert "source-b" not in dict(_provider_choices(window, library=False))
     library = dict(_provider_choices(window, library=True))
-    assert library["numilog"] == "Numilog"
-    assert library["numilog-catalog"] == "Numilog — Catalogue public"
-    assert "numilog-catalog" not in dict(_provider_choices(window, library=False))
+    assert library["source-b"] == "Source B"
+    assert library["source-b-public"] == "Source B — Catalogue public"
+    assert "source-b-public" not in dict(_provider_choices(window, library=False))
     assert events == ["searchable", "searchable", "historical", "searchable"]
 
 
 def test_real_factory_hands_stable_id_label_pairs_to_plugin_without_remapping():
     connected = [
-        ("kobo", "Kobo"),
-        ("numilog", "Numilog"),
-        ("numilog-catalog", "Numilog — Catalogue public"),
-        ("paris", "Bibliothèques de Paris"),
+        ("source-a", "Source A"),
+        ("source-b", "Source B"),
+        ("source-b-public", "Source B — Catalogue public"),
+        ("source-c", "Source C"),
     ]
     window, events = _window(connected)
     calls = []
@@ -108,53 +105,32 @@ def test_real_factory_hands_stable_id_label_pairs_to_plugin_without_remapping():
     assert output is widget
     choices, library = calls[0]
     assert library is False
-    assert set(dict(choices)) == {"kobo", "numilog", "numilog-catalog", "paris", "local"}
+    assert set(dict(choices)) == {"source-a", "source-b", "source-b-public", "source-c", "local"}
     assert len(choices) == len(set(provider_id for provider_id, _ in choices))
     assert all(credential not in repr(choices) for credential in ("token=", "account-id", "password"))
     assert widget.set_provider_search_capabilities.call_count == 1
     assert events == ["searchable"]
 
 
-def test_refresh_between_profiles_never_keeps_disabled_numilog_public_selection():
-    connected = [("numilog", "Numilog"), ("numilog-catalog", "Numilog")]
+def test_refresh_between_profiles_drops_disabled_public_source():
+    connected = [("source-b", "Source B"), ("source-b-public", "Source B")]
     window, events = _window(connected)
     window.search_controls = NS(set_provider_choices=Mock(), set_provider_search_capabilities=Mock())
     window.library_controls = NS(set_provider_choices=Mock())
     refresh_query_providers(window)
     choices = dict(window.search_controls.set_provider_choices.call_args.args[0])
-    assert "numilog-catalog" in choices
+    assert "source-b-public" in choices
 
     # Source is disabled for the next profile by Core discovery. The
     # presentation layer must not create it as a synthetic alternative.
-    connected[:] = [("numilog", "Numilog")]
+    connected[:] = [("source-b", "Source B")]
     refresh_query_providers(window)
     choices = dict(window.search_controls.set_provider_choices.call_args.args[0])
-    assert "numilog-catalog" not in choices
-    assert choices["numilog"] == "Numilog"
+    assert "source-b-public" not in choices
+    assert choices["source-b"] == "Source B"
     assert window.search_controls.set_provider_choices.call_count == 2
     assert window.search_controls.set_provider_search_capabilities.call_count == 2
     assert events.count("historical") == 2
-
-
-def test_plugin_manager_wording_comes_from_versioned_plugin_manifests():
-    root = Path(__file__).resolve().parents[1] / "src" / "plugins"
-    rows = {}
-    for package in ("provider-kobo", "provider-numilog"):
-        manifest = load_manifest(root / package / "cifereca-plugin.json")
-        rows.update({plugin.id: plugin.ui_usage_hint for plugin in manifest.plugins})
-    kobo = rows["provider.kobo"]
-    assert "aucun second compte" in kobo and "Mes achats" in kobo
-    assert "aucun droit d’achat" in rows["provider.kobo.catalog"]
-    private = rows["provider.numilog"]
-    public = rows["provider.numilog.catalog"]
-    assert "Mes achats" in private and "source optionnelle distincte" in private
-    assert "sans compte" in public and "sans téléchargement" in public
-    assert "indépendante" in public
-    # Read-only hints are not a permission, route or acquisition proof.
-    for value in rows.values():
-        assert len(value) <= 384
-        assert "https://" not in value
-        assert "credential_id" not in value
 
 
 def test_plugin_manager_uses_the_vocabulary_in_read_only_rendering():
@@ -169,7 +145,6 @@ def test_plugin_manager_uses_the_vocabulary_in_read_only_rendering():
     render_source = ast.unparse(node)
     assert "ui_usage_hint" in render_source
     assert "store_plugin_usage_hint" not in render_source
-    assert "if d.id == 'provider.numilog.catalog'" not in render_source
     assert "cette activation ne confère aucun droit" in render_source
     assert 'if d.instantiation == \'singleton_public\'' in render_source
     assert "activation.set_active(self.manager.enabled_for_identity" in render_source
