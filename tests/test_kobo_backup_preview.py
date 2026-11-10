@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from cifereca.providers import ProviderConfigurationError
+from cifereca.core.kobo_backup import kobo_backup_preview
 from tests.test_kobo_backup_fault_isolation import _service, _write_epub
 
 
@@ -115,8 +116,9 @@ def test_legacy_checkpoint_never_proves_canonical_B_or_allows_provider_GET(
             service.kobo_backup_preview("vault-1", refresh_manifest=True)
         with pytest.raises(ProviderConfigurationError,
                            match="canonical_kobo_preview_abi_unavailable"):
-            service.kobo_backup_preview(
-                "vault-1", refresh_manifest=True, _item_reasons={},
+            kobo_backup_preview(
+                service, "vault-1", refresh_manifest=True,
+                _item_reasons={},
             )
         assert service.storage.backup_get(
             "kobo", "vault-1", "historical"
