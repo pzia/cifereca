@@ -21,8 +21,8 @@ def _service(tmp_path):
     cfg = Config(tmp_path / "config.json")
     cfg.set("library.directory", str(tmp_path / "EBooks"))
     cfg.set("identities", [
-        {"id": "default", "label": "Default", "directory_name": "default"},
-        {"id": "alex", "label": "Alex", "directory_name": "alex"},
+        {"id": "default", "label": "Hugues", "directory_name": "hugues", "preferences": {"reading_languages": ["fr"]}},
+        {"id": "alex", "label": "Alex", "directory_name": "alex", "preferences": {"reading_languages": ["fr"]}},
     ])
     cfg.set("providers.accounts", [])
     return LibraryService(cfg, Storage(tmp_path / "db.sqlite3"), Diagnostics())
