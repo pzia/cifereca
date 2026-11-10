@@ -62,6 +62,7 @@ def test_only_chosen_account_and_exact_edition_can_feed_separate_send():
 @pytest.mark.parametrize("mutation", [
     "account", "account_duplicate", "edition", "collection", "record",
     "borrower", "edition_borrower", "provider", "duplicate_offer",
+    "forged_account_evidence", "forged_edition_evidence",
 ])
 def test_stale_or_ambiguous_selection_rejected_without_network(mutation):
     service, account, observation, preview, option = scope()
@@ -83,6 +84,10 @@ def test_stale_or_ambiguous_selection_rejected_without_network(mutation):
     elif mutation == "edition_borrower":
         observation = replace(observation, edition_evidence=replace(
             observation.edition_evidence, borrower_id="different"))
+    elif mutation == "forged_account_evidence":
+        observation = replace(observation, evidence=object())
+    elif mutation == "forged_edition_evidence":
+        observation = replace(observation, edition_evidence=object())
     elif mutation == "provider":
         observation = replace(observation, notice=replace(
             observation.notice, source_provider="different"))
