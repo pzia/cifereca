@@ -36,7 +36,7 @@ def scope():
         label="Emprunter avec Alex", options=(option,),
         rejected_count=0, requires_explicit_choice=False,
     )
-    service = NS(accounts=[account],
+    service = NS(accounts=[account], current_identity=NS(identity_id="default"),
                  execute_cross_profile_borrow=lambda **kw: pytest.fail("no POST"),
                  materialize_to_identity=lambda *a: pytest.fail("no copy"))
     return service, account, observation, preview, option
@@ -122,6 +122,7 @@ def test_selected_lender_bridge_only_checks_local_placement_without_loan_post():
     service, account, observation, preview, option = scope()
     h = setup()
     h.service.accounts = [account]
+    preview = replace(preview, requesting_identity_id="bob")
     lender_placement = Mock(return_value=None)
     native_send = Mock(side_effect=AssertionError("no send without local placement"))
     h.service.resolve_cross_profile_lender_placement = lender_placement
@@ -143,3 +144,9 @@ def test_selected_lender_bridge_only_checks_local_placement_without_loan_post():
     assert h.window._cross_profile_send_pending is None
     native_send.assert_not_called()
     assert h.attempts == []
+
+
+def test_lender_snapshot_from_another_requester_cannot_cross_identity_aba():
+    service, _, observation, preview, option = scope()
+    service.current_identity = NS(identity_id="bob")
+    assert chosen(service, observation, preview, option) is None
