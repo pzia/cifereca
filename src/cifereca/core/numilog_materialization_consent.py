@@ -8,15 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 from ..plugin_api import SyncResult
-from .numilog_local_preview import _Binding, _identity_root, _valid_binding
-from .numilog_manifest_rights import numilog_inventory_binding_valid
-from .passive_source_session import passive_direct_download_capable
 
 _PREFIX = "sync.source.numilog.materialization.consent.v1."
 _ACTIVE = "on_start:v1"
 _MANUAL = "manual"
-_MAX_ITEMS_PER_OPENING = 8
-_MIN_SECONDS_BETWEEN_STARTS = 3600
 
 
 def policy_key(source_id: str) -> str:
@@ -26,9 +21,8 @@ def policy_key(source_id: str) -> str:
 def _source_accounts(broker: Any, source_id: str) -> list[Any]:
     """Isolate malformed *other* account rows before source-specific actions.
 
-    The matched account still goes through _valid_binding and persistent
-    credential/session ownership checks. Never use this as an authorization
-    shortcut or infer identity from the selected GUI profile.
+    This remains a revocation-only account lookup; it cannot authorize
+    delivery or infer identity from the selected GUI profile.
     """
     import re
     if (type(source_id) is not str
@@ -56,49 +50,10 @@ def _source_accounts(broker: Any, source_id: str) -> list[Any]:
         return []
 
 
-def _binding(broker: Any, source_id: str):
-    rows = _source_accounts(broker, source_id)
-    if len(rows) != 1:
-        return None
-    account = rows[0]
-    scoped = _Binding(
-        account.provider_id, account.identity_id,
-        account.credential_id, account.unique_id,
-    )
-    if not _valid_binding(broker, scoped, source_id):
-        return None
-    session = broker.service._sessions.get(
-        broker.service._session_key("numilog", account.credential_id),
-    )
-    if (
-        session is None
-        or not numilog_inventory_binding_valid(
-            broker.service, account, session=session,
-        )
-        or not passive_direct_download_capable(session)
-    ):
-        return None
-    roots = _identity_root(broker.service, account.identity_id)
-    if roots is None or len(roots) != 1:
-        return None
-    return account, session, roots
-
-
-def _same_binding(broker: Any, source_id: str, scope: tuple, session: Any, roots: tuple) -> bool:
-    """Re-admit the exact pre-preview source, session object and directory."""
-    current = _binding(broker, source_id)
-    if current is None:
-        return False
-    account, active, current_roots = current
-    return (active is session
-            and (source_id, account.identity_id, account.credential_id, account.unique_id) == scope
-            and tuple(current_roots) == tuple(roots))
-
-
 def mode(broker: Any, source_id: str) -> str:
     try:
         # The configured consent must remain visible and revocable while
-        # disconnected. Eligibility for I/O separately requires _binding().
+        # disconnected. Eligibility for I/O is managed by the canonical source-sync gate.
         return ("on_start" if broker.service.storage.metadata_get(
             policy_key(source_id),
         ) == _ACTIVE else "manual")
