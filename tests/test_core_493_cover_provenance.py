@@ -142,3 +142,78 @@ def test_invalid_high_strength_cover_does_not_hide_verified_independent_candidat
     assert result.status == "selected"
     assert result.url == "https://covers.example/public.jpg"
     assert "secret" not in repr(result)
+
+
+class ExplosiveProvenance:
+    def __str__(self):
+        raise AssertionError("untrusted provenance must never be coerced")
+
+    def __repr__(self):
+        raise AssertionError("private provider state must not leak")
+
+
+@pytest.mark.parametrize("broken", [
+    None,
+    {},
+    object(),
+    CoverCandidate("https://bad.example/cover.jpg", [], "provider"),
+    CoverCandidate("https://bad.example/cover.jpg", "catalog",
+                   ExplosiveProvenance()),
+    CoverCandidate("https://bad.example/cover.jpg", "catalog", "provider",
+                   evidence_id=ExplosiveProvenance()),
+    CoverCandidate("https://bad.example/cover.jpg", "catalog", "provider",
+                   evidence_strength=ExplosiveProvenance()),
+    CoverCandidate("https://bad.example/cover.jpg", "catalog", "provider",
+                   evidence_strength="9999999999"),
+    CoverCandidate("https://bad.example/cover.jpg", "catalog", "provider",
+                   evidence_strength=True),
+    CoverCandidate("https://bad.example/cover.jpg", "catalog", "provider",
+                   evidence_strength=1001),
+    CoverCandidate("https://bad.example/cover.jpg", "catalog",
+                   "provider\nsecret"),
+    CoverCandidate("https://bad.example/cover.jpg", "catalog", "provider",
+                   evidence_id="x" * 513),
+])
+def test_malformed_cover_candidate_never_blocks_independent_valid_cover(broken):
+    good = CoverCandidate(
+        "https://covers.example.org/valid.jpg",
+        "catalog", "attested", "source:exact", 80,
+    )
+    result = resolve_cover([broken, good])
+    assert result.status == "selected"
+    assert result.url == good.url
+    assert result.metadata()["source"] == "attested"
+
+
+def test_malformed_source_and_strength_are_rejected_at_constructor_boundary():
+    assert candidate(
+        "https://covers.example.org/book.jpg",
+        tier="catalog", source=ExplosiveProvenance(),
+    ) is None
+    assert candidate(
+        "https://covers.example.org/book.jpg",
+        tier="catalog", source="catalogue",
+        evidence_strength="100",
+    ) is None
+    assert candidate(
+        "https://covers.example.org/book.jpg",
+        tier="catalog", source="catalogue",
+        evidence_strength=0,
+    ) is not None
+    assert candidate(
+        "https://covers.example.org/book.jpg",
+        tier="catalog", source="catalogue",
+        evidence_strength=1000,
+    ) is not None
+
+
+def test_two_attested_equal_covers_remain_ambiguous_after_bad_candidates():
+    result = resolve_cover([
+        CoverCandidate("https://covers.example/a.png", "origin", "source-a", "edition:a", 90),
+        CoverCandidate("https://covers.example/b.png", "origin", "source-b", "edition:b", 90),
+        CoverCandidate("https://bad.example/c.png", "embedded", "untrusted",
+                       evidence_strength=float("nan")),
+    ])
+    assert result.status == "ambiguous"
+    assert not result.url
+    assert len(result.candidates) == 2
