@@ -43,10 +43,6 @@ def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acq
     raise ProviderConfigurationError("kobo_legacy_direct_get_retired_use_canonical_provider")
 
 
-def kobo_backup_records(self) -> list[dict[str, Any]]:
-    return self.storage.backup_list("kobo")
-
-
 def kobo_backup_enabled(self) -> bool:
     # Fail closed for a manually edited/migrated malformed config:
     # bool("false") would otherwise trigger implicit local downloads.
