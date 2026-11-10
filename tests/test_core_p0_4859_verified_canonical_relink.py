@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from cifereca.core.kobo_canonical_relink import (
+from cifereca.core.canonical_relink import (
     relink_verified_canonical_kobo as relink,
     CanonicalRelinkRejected,
 )
