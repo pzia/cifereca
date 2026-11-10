@@ -27,9 +27,16 @@ def case(monkeypatch):
     service = NS(
         current_identity=NS(identity_id="bob"),
         _account_context_epoch=7, _source_context_epoch=9,
-        local_placement_for_source=mock,
+        local_placement_for_source=Mock(
+            side_effect=AssertionError("public facade ABI is four-argument"),
+        ),
+        _exact_local_reader=mock,
         execute_cross_profile_borrow=Mock(side_effect=AssertionError("no borrow")),
         materialize_to_identity=Mock(side_effect=AssertionError("no send")),
+    )
+    monkeypatch.setattr(
+        "cifereca.core.borrow_for_identity_placement_resolution."
+        "local_placement_for_source", mock,
     )
     loan_state = Mock(return_value=loan)
     monkeypatch.setattr(
@@ -53,8 +60,8 @@ def test_completed_unique_lender_acquisition_yields_only_inert_placement(case):
         "present", "confirmed", "placed-A",
     )
     assert result.executable is result.retry_borrow is False
-    service.local_placement_for_source.assert_called_once_with(
-        provider_id="paris", credential_id=w.account.credential_id,
+    service._exact_local_reader.assert_called_once_with(
+        service, provider_id="paris", credential_id=w.account.credential_id,
         item_id=w.notice.record_id, identity_id="alice",
         account_id=w.account.unique_id,
     )
@@ -69,9 +76,9 @@ def test_completed_unique_lender_acquisition_yields_only_inert_placement(case):
 ])
 def test_other_or_incomplete_placement_never_yields_send_candidate(case, change):
     service, w, _ = case
-    bad = service.local_placement_for_source.return_value.copy()
+    bad = service._exact_local_reader.return_value.copy()
     bad.update(change)
-    service.local_placement_for_source.return_value = bad
+    service._exact_local_reader.return_value = bad
     result = inspect(service, w)
     assert result.status == "unavailable"
     assert result._placement_id is None and result.loan == "confirmed"
@@ -86,13 +93,13 @@ def test_no_positive_claim_never_queries_acquisitions(case, loan_status):
     )
     result = inspect(service, w)
     assert result.status == "unavailable" and result.loan == loan_status
-    service.local_placement_for_source.assert_not_called()
+    service._exact_local_reader.assert_not_called()
     service.materialize_to_identity.assert_not_called()
 
 
 def test_missing_or_ambiguous_local_receipt_is_not_a_placement(case):
     service, w, _ = case
-    service.local_placement_for_source.return_value = None
+    service._exact_local_reader.return_value = None
     result = inspect(service, w)
     assert result.status == "unavailable" and result._placement_id is None
     service.materialize_to_identity.assert_not_called()
@@ -100,11 +107,11 @@ def test_missing_or_ambiguous_local_receipt_is_not_a_placement(case):
 
 def test_source_context_change_inside_local_reader_revokes_result(case):
     service, w, _ = case
-    row = service.local_placement_for_source.return_value
+    row = service._exact_local_reader.return_value
     def mutate(**kw):
         service._source_context_epoch += 1
         return row
-    service.local_placement_for_source.side_effect = mutate
+    service._exact_local_reader.side_effect = mutate
     result = inspect(service, w)
     assert result.status == "unavailable"
     assert result._placement_id is None
@@ -119,4 +126,4 @@ def test_wrong_reader_or_notice_provider_rejected_without_local_reads(case):
         w, notice=replace(w.notice, source_provider="other"),
     )).status == "unavailable"
     progress.assert_not_called()
-    service.local_placement_for_source.assert_not_called()
+    service._exact_local_reader.assert_not_called()
