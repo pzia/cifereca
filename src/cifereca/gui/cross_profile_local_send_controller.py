@@ -69,6 +69,29 @@ def offer_cross_profile_local_send(
         except Exception:
             return False
 
+    def worker_current() -> bool:
+        """Check only captured Core state and scalar UI generations.
+
+        TaskQueue invokes check/work off the GTK main thread. In particular,
+        never dereference search_page, DetailPanel or any GTK widget here.
+        Full rendered-detail equality is rechecked by current() on delivery.
+        """
+        try:
+            return bool(
+                not getattr(window, "_closed", False)
+                and window.service is service
+                and service.current_identity is identity
+                and identity.identity_id == requester
+                and service._account_context_epoch == account_epoch
+                and service._source_context_epoch == source_epoch
+                and window._identity_context_generation == identity_epoch
+                and window._account_context_generation == ui_account_epoch
+                and window._selected_search_id == selection
+                and window._search_detail_request_generation == detail_epoch
+            )
+        except Exception:
+            return False
+
     if not current():
         return False
     token = object()
@@ -92,7 +115,7 @@ def offer_cross_profile_local_send(
             return
 
         def work():
-            if not owns_token() or not current() or state["stage"] != "submitted":
+            if not owns_token() or not worker_current() or state["stage"] != "submitted":
                 return {"status": "blocked"}
             return service.send_confirmed_lender_local_copy(
                 requesting_identity_id=requester,
@@ -228,7 +251,7 @@ def offer_cross_profile_local_send(
         release()
 
     def check():
-        if state["stage"] != "checking" or not current() or not owns_token():
+        if state["stage"] != "checking" or not worker_current() or not owns_token():
             return None
         return service.resolve_cross_profile_lender_placement(
             requesting_identity_id=requester,
