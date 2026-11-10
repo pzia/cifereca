@@ -297,3 +297,42 @@ def test_immutable_provider_module_literal_not_used_for_import_is_inert():
         "module_description = PROVIDER_MODULE\n"
     )
     assert added_signals("pass\n", source) == {}
+
+
+def test_full_biblioaccess_manifest_ids_cannot_hide_core_provider_dispatch():
+    # Both real IDs come from src/plugins/provider-biblioaccess/cifereca-plugin.json.
+    ids = (
+        "provider.biblioaccess.la-rochelle",
+        "provider.biblioaccess-catalogue.la-rochelle",
+    )
+    for provider_id in ids:
+        assert added_signals(
+            "pass\n", f"if source.provider_id == {provider_id!r}:\n    pass\n",
+        ) == {("comparisons", provider_id): 1}
+        assert added_signals(
+            "pass\n", f"LABELS = {{ {provider_id!r}: 'Bibliothèque' }}\n",
+        ) == {}  # Metadata alone is not executable dispatch.
+        source = (
+            "def handler(): return 1\n"
+            f"HANDLERS = {{{provider_id!r}: handler}}\n"
+        )
+        assert added_signals("pass\n", source) == {
+            ("dispatch_tables", provider_id): 1,
+        }
+
+
+def test_manifest_source_id_coupling_is_rejected_at_exact_git_head(tmp_path):
+    root = tmp_path / "repo"
+    base = _repo(root)
+    full_id = "provider.biblioaccess-catalogue.la-rochelle"
+    head = _commit(
+        root, "src/cifereca/core/example.py",
+        f"if source.provider_id == {full_id!r}:\n    pass\n",
+    )
+    report = gate(root, base, head)
+    assert report["pass"] is False
+    assert report["violations"] == {
+        "src/cifereca/core/example.py": {
+            f"comparisons:{full_id}": 1,
+        },
+    }
