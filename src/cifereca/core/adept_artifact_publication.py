@@ -16,6 +16,13 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
     artifact = result.get("artifact") if isinstance(result, dict) else None
     artifact_path = str((artifact or {}).get("path") or adept_destination)
     produced_path = Path(artifact_path)
+    # #5225: never interpret a symlinked file or a swapped staging/profile
+    # directory as ADEPT's newly produced bytes. Equality after resolve()
+    # alone would accept a symlink to an unrelated existing artifact.
+    if (produced_path.is_symlink() or adept_destination.is_symlink()
+            or produced_path.parent.is_symlink()
+            or destination.is_symlink() or destination.parent.is_symlink()):
+        raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
     if produced_path.resolve() != adept_destination.resolve():
         raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
     artifact_drm = str((artifact or {}).get("drm") or "unknown")
