@@ -98,4 +98,4 @@ def test_no_historical_w4_execution_entry_in_installed_core():
     # Runtime lookup, not only a source-level name test.
     from cifereca.core import kobo_local_reconciliation as repair
     assert not hasattr(repair, "_historical_reconcile_kobo_local")
-    assert callable(repair.reconcile_kobo_local)
+    assert not hasattr(repair, "reconcile_kobo_local")
