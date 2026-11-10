@@ -74,6 +74,8 @@ def fixture(mutation=None):
 ])
 def test_kobo_mirror_discards_private_rows_if_binding_changes_mid_fetch(mutation):
     service = fixture(mutation)
+    # An invalid source binding must neither publish observations nor
+    # attempt any legacy entitlement write.
     result = LibraryService.mirror_personal_libraries(service)
     assert not result
     assert result.blocked_sources == 1
