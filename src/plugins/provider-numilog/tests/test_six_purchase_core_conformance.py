@@ -287,16 +287,9 @@ def test_source_wide_auto_switch_replaces_six_individual_consents(
         source_id=sid, activate=enabled, expected_revision=None,
     ) is True
     assert broker.canonical_acquisition_choices(sid) == ()
-    from cifereca.core.numilog_materialization_startup import (
-        eligible_source_ids, execute as legacy_execute,
-    )
-    # The live Numilog adapter has the full canonical ABI. The legacy worker
-    # must NOT create a second acquisition queue for this consented account.
-    assert sid not in eligible_source_ids(broker, account.identity_id)
-    retired = legacy_execute(broker, account.identity_id, "startup")
-    assert retired.facts["status"] == ("migration_required" if enabled else "not_due")
-    assert retired.facts["acquisition_authorized"] is False
-    assert retired.changed == 0
+    # The retired startup acquisition API no longer exists. Legacy consent
+    # is not an authority to create a second provider-specific GET queue.
+    assert not hasattr(broker, "synchronize_scheduled_numilog_materialization")
     assert content_gets(gets, urls) == []
     result = synchronize(service, account)
     assert result["present_attested"] == 3
