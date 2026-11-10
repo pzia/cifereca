@@ -253,19 +253,24 @@ def test_cross_owner_ambiguous_or_disabled_source_rejected_before_provider(rig, 
     assert calls == []
 
 
-def test_partial_abi_retains_only_preexisting_guarded_legacy_compatibility(
+def test_partial_abi_rejects_without_invoking_legacy_w2(
     tmp_path, monkeypatch,
 ):
     service = _service(tmp_path)
-    # No invented rights or implicit canonical conversion on incomplete ABI.
+    # A partial ABI cannot revive W2 even when a legacy function is patched.
     calls = []
     def legacy(_service, progress=None, **kwargs):
-        calls.append((_service, kwargs["credential_id"]))
-        return {"status": "legacy-only"}
+        calls.append((_service, kwargs))
+        raise AssertionError("legacy W2 must remain unreachable")
     monkeypatch.setattr(kobo_backup, "sync_kobo_backup", legacy)
     try:
-        result = service.sync_kobo_backup_account("vault-1")
-        assert result["status"] == "legacy-only"
-        assert calls == [(service, "vault-1")]
+        with pytest.raises(
+            ProviderConfigurationError,
+            match="kobo_legacy_w2_retired_use_canonical_provider",
+        ):
+            service.sync_kobo_backup_account("vault-1")
+        assert calls == []
+        assert service.storage.placements() == []
+        assert service.storage.acquisitions() == []
     finally:
         service.close()
