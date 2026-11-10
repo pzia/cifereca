@@ -33,6 +33,19 @@ def acquire_numilog_direct(
             identity, pinned_session, pinned_account_id = require_source(
                 service, item, session=session,
             )
+            from .canonical_delivery_abi import has_complete_delivery_abi
+
+            def legacy_writer_allowed() -> None:
+                # A complete canonical provider owns the selected GET and
+                # v14 publication. It must never fall through to the old
+                # direct download + v1 receipt writer, including after a
+                # same-session ABI upgrade.
+                if has_complete_delivery_abi(pinned_session):
+                    raise ProviderConfigurationError(
+                        "numilog_canonical_source_delivery_active"
+                    )
+
+            legacy_writer_allowed()
             # The caller's exact immutable purchase target is checked
             # before I/O and again before/after hooks. A refreshed item
             # cannot switch credential, purchase, variant or revision.
@@ -42,17 +55,20 @@ def acquire_numilog_direct(
             pinned_source_epoch = source_context_epoch(service)
 
             def readmit():
-                # A source A -> B -> A rebound must not revive the same
-                # selected account and session for an in-flight GET.
+                # Both dispatch authority and exact source generation remain
+                # revocable across preflight, network I/O and post-GET hooks.
+                legacy_writer_allowed()
                 if source_context_epoch(service) != pinned_source_epoch:
                     raise ProviderConfigurationError(
                         "Numilog : contexte source modifié ; rapprochement requis"
                     )
-                return require_admission(
+                admitted = require_admission(
                     service, item, _admission, pinned_scope=pinned_scope,
                     session=pinned_session, identity_id=identity.identity_id,
                     account_id=pinned_account_id,
                 )
+                legacy_writer_allowed()
+                return admitted
 
             stage = "acquisition_local_conflict"
             automatic = automatic_delivery_requested() and callable(_admission)
@@ -208,6 +224,9 @@ def acquire_numilog_direct(
                 raise ProviderConfigurationError(
                     "Numilog : livraison indisponible ; réessayer manuellement"
                 ) from None
+            # A source session that switched to canonical authority during
+            # the GET cannot publish via the historical Numilog v1 writer.
+            legacy_writer_allowed()
             # The provider may release its per-session lock before
             # returning. A reconnect/rebind or revoked recovery opt-in during
             # HTTP/ADEPT cannot be committed under a different identity.
