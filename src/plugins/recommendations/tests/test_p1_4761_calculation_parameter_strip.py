@@ -17,7 +17,7 @@ def method(name):
     return ast.unparse(node)
 
 
-def test_computation_parameters_occupy_one_independent_horizontal_scroll_row():
+def test_computation_parameters_and_opt_in_llm_share_one_scroll_row():
     init = method("_init_master_detail")
     assert "Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=7)" in init
     assert "controls_scroll.set_name('recommendations-parameters-scroll')" in init
@@ -30,9 +30,7 @@ def test_computation_parameters_occupy_one_independent_horizontal_scroll_row():
     assert "Gtk.FlowBox()" not in init
     assert "controls.set_max_children_per_line" not in init
 
-
-def test_all_calculation_settings_and_opt_in_llm_remain_in_the_same_row():
-    init = method("_init_master_detail")
+    # The settings below belong to the same controls row established above.
     # No independent profile selector: global Core selection is authoritative.
     assert "controls.append(self._labeled('Profil', self._identity))" not in init
     assert "self._identity.connect('notify::selected', self._identity_changed)" not in init

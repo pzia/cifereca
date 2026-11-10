@@ -27,6 +27,10 @@ class Diagnostics:
                 "Kobo-Adept",
                 {"contract_version": 8, "resolved_executable": True},
             ),
+            HealthCheckResult(
+                "core.providers.loaded", "provider.library", "ok",
+                "Providers chargés", {"count": 1}, "core",
+            ),
         )
 
 
@@ -39,3 +43,5 @@ def test_active_checks_are_presentation_only():
     assert rows[0]["detail"]["provider_id"] == "paris"
     assert rows[1]["component"] == "runtime.kobo-adept"
     assert rows[1]["detail"]["resolved_executable"] is True
+    assert rows[2]["message"] == "Providers chargés"
+    assert rows[2]["status"] == "ok"

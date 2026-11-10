@@ -6,6 +6,8 @@ includes private remote error messages or Search provenance rights.
 from dataclasses import replace
 from types import SimpleNamespace as NS
 
+import pytest
+
 from recommendation_service import (
     CatalogueSearchObservation,
     RecommendationResult,
@@ -56,11 +58,17 @@ class Catalog:
         return NS(cancelled=False, warnings=())
 
 
-def test_catalogue_responses_are_distinct_from_ranking_and_empty_results():
-    result = compute_recommendations(
+@pytest.fixture(scope="module")
+def catalogue_result():
+    # Both projection scenarios start from the same immutable synthetic result.
+    return compute_recommendations(
         Metadata(), Catalog(), "alice",
         max_queries=1, exclude_owned=False, exploration=0,
     )
+
+
+def test_catalogue_responses_are_distinct_from_ranking_and_empty_results(catalogue_result):
+    result = catalogue_result
     assert not result.cancelled
     assert set(row.sources[0] for row in result.ranked) == {"a"}
     assert tuple(
@@ -85,11 +93,8 @@ def test_catalogue_responses_are_distinct_from_ranking_and_empty_results():
     assert "SECRET" not in summary + detail
 
 
-def test_unreported_provider_is_not_mislabelled_as_empty_and_sync_is_unknown():
-    result = compute_recommendations(
-        Metadata(), Catalog(), "alice",
-        max_queries=1, exclude_owned=False,
-    )
+def test_unreported_provider_is_not_mislabelled_as_empty_and_sync_is_unknown(catalogue_result):
+    result = catalogue_result
     observations = tuple(row for row in result.catalogue_observations
                          if row.provider_id != "c")
     degraded = replace(result, catalogue_observations=observations)
