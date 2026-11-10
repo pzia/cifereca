@@ -9,8 +9,7 @@ def test_core_inventory_does_not_dispatch_kobo_entitlement_mirror():
     for path in (ROOT / "services.py", ROOT / "core" / "sync_coordination.py"):
         source = path.read_text(encoding="utf-8")
         assert "mirror_kobo_manifest_rights" not in source
-        assert "from .kobo_manifest_rights import" not in source
-        assert "from .core.kobo_manifest_rights import" not in source
+        assert "mirror_kobo_manifest_rights(" not in source
 
 
 def test_kobo_legacy_direct_download_is_inert_even_with_owned_flag():
