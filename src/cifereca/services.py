@@ -3132,16 +3132,13 @@ class LibraryService:
                 ) from exc
 
         if item.source_provider == "numilog":
-            from .core.numilog_direct_acquisition import acquire_numilog_direct
-            from .core.numilog_recovery import recovery_requested
-            return acquire_numilog_direct(
-                self, item, _admission=_admission, session=session,
-                reconcile_pending=recovery_requested(),
-                InterProcessLock=InterProcessLock,
-                acquisition_lock_file=acquisition_lock_file,
-                LockBusyError=LockBusyError,
-                ProviderConfigurationError=ProviderConfigurationError,
-                hashlib=hashlib,
+            # The historical direct method returns an Acquisition *before*
+            # canonical A→B publication. It can never provide the typed
+            # selected-offer consent or the no-retry recovery journal.
+            # Explicit user actions instead call obtain_search_item(), which
+            # returns the Core-published canonical MaterializationResult.
+            raise ProviderConfigurationError(
+                "numilog_canonical_explicit_action_required"
             )
 
         identity = self.identity_for_connection(item.source_provider, item.source_credential)
@@ -3201,8 +3198,8 @@ class LibraryService:
         from .core.materialization import MaterializationCoordinator
 
         if item.source_provider == "numilog":
-            from .core.numilog_materialization_checkpoint import index_delivered
-            return index_delivered(self, self.acquire_direct_item(item), title=item.title)
+            from .core.numilog_search_canonical import obtain
+            return obtain(self, item)
         return MaterializationCoordinator(
             acquire=self.acquire_direct_item,
             index_path=self.catalog_index_path,
