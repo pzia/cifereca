@@ -59,7 +59,7 @@ def test_canonical_kobo_does_not_fall_through_to_legacy_get(
             "partial" if canonical_pending else "complete"
         )
         assert result["kobo"]["canonical_sources"] == 1
-        assert result["kobo"]["synced_accounts"] == 0
+        assert result["kobo"]["synced_accounts"] == 1
         assert calls == [("canonical", account.identity_id, account.credential_id)]
         assert service.storage.metadata_get(
             "sync.source.materialization.last_attempt." +
