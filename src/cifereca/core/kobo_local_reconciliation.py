@@ -33,26 +33,21 @@ def _require(condition, code):
 
 
 def _roots(service, identity):
-    _require(type(identity) is str and 0 < len(identity) <= 1024
-             and not any(char in identity for char in ("\0", "\n", "\r")), "unknown_identity")
-    profile = service.identity_by_id(identity)
-    _require(profile is not None, "unknown_identity")
-    library, target = _kobo_preview_paths(service, identity)
-    folder = safe_library_component(profile.directory_name or identity, "default")
-    _require(not any(other.identity_id != identity
-                     and safe_library_component(other.directory_name or other.identity_id, "default") == folder
-                     for other in getattr(service, "identities", ())), "ambiguous_identity_directory")
-    return (target, library / folder)
+    """W2 compatibility alias; Core-neutral implementation is independent."""
+    from .local_profile_root_guards import checked_profile_roots
+    try:
+        return checked_profile_roots(
+            service, identity, roots_for_identity=_kobo_preview_paths,
+        )
+    except ValueError as exc:
+        # Preserve the existing finite W2 error vocabulary.
+        raise ReconciliationRejected(str(exc)) from None
 
 
 def _within(path, roots):
-    if type(path) is not str or not path or "\0" in path:
-        return False
-    value = Path(path)
-    if not value.is_absolute() or ".." in value.parts:
-        return False
-    value = Path(os.path.abspath(value))
-    return any(value != root and value.is_relative_to(root) for root in roots)
+    """W2 compatibility alias, not a source-right or acquisition proof."""
+    from .local_profile_root_guards import path_within_roots
+    return path_within_roots(path, roots)
 
 
 def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expected_sha256,
