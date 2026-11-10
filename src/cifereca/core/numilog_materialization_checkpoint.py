@@ -348,9 +348,14 @@ def target_for_entry(service, entry):
         owner = getattr(service.current_identity, 'identity_id', None)
         possessions = entry.get('possessions')
         _require(type(possessions) in (list, tuple) and owner is not None)
+        # All active owned providers compete for the same local action.
+        # Unknown or future providers are not invisible merely because
+        # this historical Numilog selector does not recognize their brand.
+        # Ignore foreign identities and inactive/non-owned declarations,
+        # but refuse two active candidates before any receipt read.
         candidates = [p for p in possessions if type(p) is dict
                       and p.get('identity_id') == owner and p.get('kind') == 'owned'
-                      and p.get('state') == 'active' and p.get('provider_id') in {'kobo', 'numilog'}]
+                      and p.get('state') == 'active']
         _require(len(candidates) == 1 and candidates[0].get('provider_id') == 'numilog')
         possession = candidates[0]
         rights = service.storage.numilog_possession_rights(
