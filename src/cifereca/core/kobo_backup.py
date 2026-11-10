@@ -41,48 +41,6 @@ def _observed_backup_artifact(path: Path) -> dict[str, Any]:
     return {"format": inspection.media_format.upper(), "size": path.stat().st_size, "sha256": sha256_file(path)}
 
 
-def _kobo_artifact_plausible(path: Path, fmt: str) -> bool:
-    """Perform a conservative local sanity check without interpreting DRM."""
-    try:
-        if not path.is_file() or path.stat().st_size < 4:
-            return False
-        with path.open("rb") as handle:
-            head = handle.read(8)
-    except OSError:
-        return False
-    if str(fmt).lower() == "pdf":
-        return head.startswith(b"%PDF-")
-    return head.startswith(b"PK\x03\x04")
-
-
-def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path) -> list[Path]:
-    """Find filename candidates without trusting reported format or opening files.
-
-    A manifest may switch EPUB/PDF between syncs. A Kobo-enhanced EPUB
-    can also be named .kepub.epub: it is a real local candidate even though
-    the suffix is compound. Any such candidate blocks a duplicate download.
-    """
-    author = str(record.get("author") or "").strip()
-    title = str(record.get("title") or record.get("item_id") or "Kobo").strip()
-    stem = f"{author} - {title}" if author else title
-    safe = self.acquisition._safe_filename(stem or str(record.get("item_id") or "kobo"))
-    suffix = re.sub(r"[^A-Za-z0-9]", "", str(record.get("item_id") or ""))[-8:] or "kobo"
-    paths: list[Path] = []
-    for ext in (".epub", ".pdf", ".kepub.epub"):
-        for path in (target_dir / f"{safe}{ext}", target_dir / f"{safe} [{suffix}]{ext}"):
-            # Even an invalid file or dangling symlink occupies the destination:
-            # never overwrite it automatically as part of reconciliation.
-            if path not in paths and (path.is_file() or path.is_symlink()):
-                paths.append(path)
-    return paths
-
-
-
-def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> Path:
-    """Retired 0.7 placement decision; canonical Core owns file placement."""
-    raise ProviderConfigurationError("kobo_legacy_destination_retired")
-
-
 def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
     """Retired D3 direct Kobo executor: use the selected canonical delivery API."""
     raise ProviderConfigurationError("kobo_legacy_direct_get_retired_use_canonical_provider")

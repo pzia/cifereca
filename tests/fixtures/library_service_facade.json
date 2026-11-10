@@ -555,18 +555,6 @@
     "kind": "staticmethod",
     "signature": "(path: 'Path') -> 'dict[str, Any]'"
   },
-  "_kobo_artifact_plausible": {
-    "kind": "staticmethod",
-    "signature": "(path: 'Path', fmt: 'str') -> 'bool'"
-  },
-  "_kobo_record_candidate_paths": {
-    "kind": "method",
-    "signature": "(self, record: 'dict[str, Any]', target_dir: 'Path') -> 'list[Path]'"
-  },
-  "_kobo_destination": {
-    "kind": "method",
-    "signature": "(self, item: 'SearchResult', target_dir: 'Path', fmt: 'str') -> 'Path'"
-  },
   "_execute_kobo_acquisition": {
     "kind": "method",
     "signature": "(self, item: 'SearchResult', target_dir: 'Path') -> 'Acquisition'"

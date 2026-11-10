@@ -2951,17 +2951,6 @@ class LibraryService:
     def _observed_backup_artifact(path: Path) -> dict[str, Any]:
         return kobo_backup._observed_backup_artifact(path)
 
-    @staticmethod
-    def _kobo_artifact_plausible(path: Path, fmt: str) -> bool:
-        """Perform a conservative local sanity check without interpreting DRM."""
-        return kobo_backup._kobo_artifact_plausible(path, fmt)
-
-    def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path) -> list[Path]:
-        return kobo_backup._kobo_record_candidate_paths(self, record, target_dir)
-
-    def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> Path:
-        return kobo_backup._kobo_destination(self, item, target_dir, fmt)
-
     def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
         """Compatibility façade; Kobo execution lives in the provider adapter."""
         return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
