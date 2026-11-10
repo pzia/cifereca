@@ -446,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
         from .core.kobo_local_reconciliation import (
             ReconciliationRejected, reconcile_existing_profile,
         )
-        from .core.kobo_canonical_relink import CanonicalRelinkRejected
+        from .core.canonical_relink import CanonicalRelinkRejected
         try:
             if a.account and a.account != a.credential:
                 raise ReconciliationRejected("source_scope_mismatch")
