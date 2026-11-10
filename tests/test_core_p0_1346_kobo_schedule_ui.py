@@ -39,9 +39,9 @@ def fixture(monkeypatch, *, sources=None, schedule=None):
 def controls(window, idx=0):
     group = window._sync_sources_box.children[idx]
     # Preserve the narrow GTK source/acquisition rows for 1366px displays.
-    assert len(group.children[0].suffixes) == 4
-    assert len(group.children[3].suffixes) == 2
-    row = group.children[4]
+    assert len(group.children[0].suffixes) == 3
+    assert len(group.children[2].suffixes) == 2
+    row = group.children[3]
     assert len(row.suffixes) == 1
     return row.suffixes[0], row
 
