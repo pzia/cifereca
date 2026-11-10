@@ -102,9 +102,20 @@ def project_library_rows(
             else provider_display_name(provider)
         )
         state = availability_label(item)
-        key = str(item.get("key") or f"library:{len(objects)}")
+        # The global read view can show the same canonical book key under
+        # separate profile owners. Keep Core's book key unchanged for actions;
+        # only the GTK list/mapping key is namespaced by the read adapter.
+        display_key = item.get("_library_ui_key")
+        key = (
+            display_key if type(display_key) is str
+            and 0 < len(display_key) <= 1300
+            else str(item.get("key") or f"library:{len(objects)}")
+        )
         objects[key] = item
         meta_parts = [state] if state else []
+        owner = item.get("_library_view_owner")
+        if type(owner) is str and 0 < len(owner) <= 160:
+            meta_parts.append("Profil : " + owner)
         received = _received_local_file_label(item)
         if received:
             meta_parts.append(received)

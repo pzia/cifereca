@@ -54,6 +54,7 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     request_generation = self._library_refresh_generation
     identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
     generation = self._identity_context_generation
+    all_profiles = getattr(self, "_library_all_profiles", False) is True
     def work() -> list[dict[str, Any]]:
         # A request can remain queued while navigation switches identity or
         # a newer manual refresh supersedes it. Avoid expensive filesystem
@@ -63,6 +64,13 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
                 or request_generation != self._library_refresh_generation
                 or not self._identity_request_current(identity_id, generation)):
             return []
+        if all_profiles:
+            # Read every per-profile Core projection as independent owner
+            # rows; never scan or call a supplier in this browse mode.
+            from .library_global_projection import global_library_display_rows
+            return global_library_display_rows(
+                self.service.library_entries_all_profiles()
+            )
         if refresh_covers:
             self.service.catalog_scan(force_covers=True)
         return self.service.library_entries(identity_id=identity_id, scan=scan and not refresh_covers)
@@ -83,7 +91,13 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         # The same scoped snapshot drives the Library provider selector:
         # no provider I/O, no filesystem scan and no cross-profile hint.
         from .query_widget_factory_controller import refresh_library_origin_choices
-        refresh_library_origin_choices(self, entries, identity_id=identity_id)
+        if all_profiles:
+            refresh_library_origin_choices(
+                self, entries, identity_id=identity_id, all_profiles=True,
+            )
+        else:
+            # Retain the exact legacy identity-scoped call and its ABI.
+            refresh_library_origin_choices(self, entries, identity_id=identity_id)
         # A successful *empty* response is still a loaded snapshot for the
         # selected identity. Do not resubmit work on every return to Library.
         self._library_loaded_generation = generation

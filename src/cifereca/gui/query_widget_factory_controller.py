@@ -35,7 +35,7 @@ def _provider_choices(window, *, library=False):
 
 
 
-def _origin_ids_for_library_snapshot(entries, identity_id):
+def _origin_ids_for_library_snapshot(entries, identity_id, *, all_profiles=False):
     """Bounded, exact-identity source IDs from a validated local Core snapshot.
 
     Ignore metadata hints, titles, SHA, foreign identities, and arbitrary
@@ -47,7 +47,8 @@ def _origin_ids_for_library_snapshot(entries, identity_id):
         return ()
     ids = set()
     for row in entries:
-        if type(row) is not dict or row.get("identity_id") != identity_id:
+        if (type(row) is not dict
+                or (not all_profiles and row.get("identity_id") != identity_id)):
             continue
         origins = row.get("providers")
         if type(origins) not in (list, tuple) or len(origins) > 32:
@@ -58,7 +59,9 @@ def _origin_ids_for_library_snapshot(entries, identity_id):
     return tuple(sorted(ids))
 
 
-def refresh_library_origin_choices(window, entries, *, identity_id):
+def refresh_library_origin_choices(
+    window, entries, *, identity_id, all_profiles=False,
+):
     """One GTK-side update after the scoped async Library snapshot completed.
 
     Uses only provided in-memory rows. On profile switch old choices are
@@ -68,7 +71,9 @@ def refresh_library_origin_choices(window, entries, *, identity_id):
     if (getattr(window, "_closed", False) or type(identity_id) is not str
             or not identity_id or identity_id != current):
         return
-    choices = _origin_ids_for_library_snapshot(entries, identity_id)
+    choices = _origin_ids_for_library_snapshot(
+        entries, identity_id, all_profiles=all_profiles is True,
+    )
     window._library_origin_identity_id = identity_id
     window._library_origin_provider_ids = choices
     controls = getattr(window, "library_controls", None)
