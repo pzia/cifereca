@@ -78,32 +78,6 @@ def _kobo_record_candidate_paths(self, record: dict[str, Any], target_dir: Path)
 
 
 
-def _indexed_kobo_catalog_paths(self) -> dict[tuple[str, str], list[Path]]:
-    """Index only explicit local Kobo product-ID links within one identity.
-
-    Titles, ISBNs and filenames are not proof of a Kobo entitlement.
-    A matching local catalog entry is a reason to stop, never to
-    automatically adopt its artifact as a complete Kobo backup.
-    """
-    default_identity_id = self.identities[0].identity_id if self.identities else None
-    indexed: dict[tuple[str, str], list[Path]] = {}
-    for row in self.storage.catalog_entries():
-        if row.get("local_state") != "local" or row.get("provider_id") != "kobo":
-            continue
-        identity = str(row.get("identity_id") or default_identity_id or "")
-        item_id = str(row.get("item_id") or "").strip()
-        metadata = row.get("metadata")
-        path_text = metadata.get("path") if isinstance(metadata, dict) else None
-        if not identity or not item_id or not isinstance(path_text, str) or not path_text.strip():
-            continue
-        path = Path(path_text)
-        if path.is_file() or path.is_symlink():
-            bucket = indexed.setdefault((identity, item_id), [])
-            if path not in bucket:
-                bucket.append(path)
-    return indexed
-
-
 def _kobo_destination(self, item: SearchResult, target_dir: Path, fmt: str) -> Path:
     """Retired 0.7 placement decision; canonical Core owns file placement."""
     raise ProviderConfigurationError("kobo_legacy_destination_retired")
