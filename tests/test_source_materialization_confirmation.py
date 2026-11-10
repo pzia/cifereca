@@ -5,7 +5,6 @@ I/O/SQLite mutation. Canonical A→B admission is covered by its own suites.
 """
 from dataclasses import replace
 import hashlib
-from dataclasses import replace
 import json
 import os
 import sqlite3
@@ -28,10 +27,6 @@ def case(tmp_path, monkeypatch):
     manifest = [{"product_id": "PRIVATE-book-1", "revision_id": "r1", "title": "PRIVATE title", "format": "EPUB"},
                 {"product_id": "PRIVATE-book-2", "revision_id": "r2", "title": "PRIVATE second", "format": "EPUB"}]
     service, session = _service(tmp_path, manifest)
-    session.descriptor = replace(session.descriptor, capabilities=replace(
-        session.capabilities, local_materialization=True,
-        legacy_materialization_checkpoint=True,
-    ))
     # Keep main's capability fixture addition needed by canonical broker.
     session.descriptor = replace(session.descriptor, capabilities=replace(
         session.capabilities, local_materialization=True,

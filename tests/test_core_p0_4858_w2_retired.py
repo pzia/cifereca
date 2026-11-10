@@ -141,3 +141,17 @@ def test_all_bound_profiles_refuse_legacy_w2_confirmation_and_get(
     assert replay.facts["status"] == "canonical_delivery_unavailable"
     assert case.calls == before_calls
     assert not case.downloaded
+
+
+def test_direct_imported_kobo_executor_is_also_retired_before_any_io():
+    """Reject even a caller bypassing the LibraryService façade entirely."""
+    from cifereca.kobo import executor as legacy
+
+    with pytest.raises(
+        ProviderConfigurationError,
+        match="kobo_legacy_direct_get_retired_use_canonical_provider",
+    ):
+        legacy.execute_kobo_acquisition(
+            _NoLegacyAccess(), _NoLegacyAccess(), _NoLegacyAccess(),
+        )
+    assert not hasattr(legacy, "_execute_kobo_acquisition_impl")

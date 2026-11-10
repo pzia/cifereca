@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+
+import pytest
 from pathlib import Path
 import zipfile
 
@@ -127,345 +129,53 @@ def _manifest_row(item_id="book-1", title="Book One", revision_id="rev-1"):
     }
 
 
-def test_interrupted_row_absent_from_manifest_keeps_recovery_checkpoint(tmp_path: Path):
-    service = _service(tmp_path, manifest=[])
-    try:
-        service.storage.backup_put({
-            "provider_id": "kobo",
-            "credential_id": "vault-1",
-            "identity_id": "default",
-            "item_id": "orphan",
-            "revision_id": "r0",
-            "title": "Interrupted",
-            "author": "Author",
-            "format": "EPUB",
-            "status": "acquiring",
-            "local_path": None,
-            "error": None,
-        })
-
-        summary = service.sync_kobo_backup()
-
-        assert summary["recovered_interrupted"] == 1
-        assert summary["legacy_pruned"] == 0
-        checkpoint = service.storage.backup_get("kobo", "vault-1", "orphan")
-        assert checkpoint is not None
-        assert checkpoint["status"] == "pending_acquisition"
-        assert checkpoint["local_path"] is None
-        # The next manifest still cannot close/erase this interrupted
-        # checkpoint or silently turn it into a second download.
-        repeat = service.sync_kobo_backup()
-        assert repeat["recovered_interrupted"] == 0
-        assert repeat["legacy_pruned"] == 0
-        assert service.storage.backup_get("kobo", "vault-1", "orphan") == checkpoint
-    finally:
-        service.close()
-
-
-def test_single_local_candidate_is_quarantined_as_reconcile_required(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("status", [
+    "acquiring", "error", "complete", "pending_acquisition",
+    "attention_required", "reconcile_conflict", "reconcile_required",
+])
+@pytest.mark.parametrize("candidate", ["absent", "intact", "outside", "symlink"])
+def test_retired_w2_does_not_reconcile_or_prune_legacy_receipts(
+    tmp_path: Path, monkeypatch, status, candidate,
+):
+    from cifereca.providers import ProviderConfigurationError
     service = _service(tmp_path, manifest=[_manifest_row()])
     try:
-        target = service._kobo_backup_target_dir("default") / "Author - Book One.epub"
-        _write_epub(target, b"already-downloaded")
-        service.storage.backup_put({
-            "provider_id": "kobo",
-            "credential_id": "vault-1",
-            "identity_id": "default",
-            "item_id": "book-1",
-            "revision_id": "rev-1",
-            "title": "Book One",
-            "author": "Author",
-            "format": "EPUB",
-            "status": "error",
-            "local_path": None,
-            "error": "Kobo-Adept : réponse JSON invalide",
-        })
-        monkeypatch.setattr(
-            service,
-            "_execute_kobo_acquisition",
-            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("reconcile item must not redownload")),
-        )
-
-        summary = service.sync_kobo_backup()
-        record = service.storage.backup_get("kobo", "vault-1", "book-1")
-
-        assert summary["downloaded"] == 0
-        assert summary["recovered_unparsed"] == 1
-        assert summary["reconcile_pending"] == 1
-        assert summary["reconcile_skipped"] == 1
-        assert record is not None
-        assert record["status"] == "reconcile_required"
-        assert record["local_path"] == str(target)
-        # #3196 W2: an old JSON/ADEPT error + one filename is not a
-        # provider delivery receipt; do not synthesize a byte baseline.
-        assert record["sha256"] is None
-        assert record["size"] is None
-        assert target.is_file()
-        # Catalog scan may independently index these bytes, but no Kobo
-        # acquisition Artifact may be projected from the missing 0.7 hash.
-        assert not [
-            artifact for artifact in service.storage.artifacts()
-            if artifact["metadata"].get("imported_from") == "backup_items"
-        ]
-        repeated = service.sync_kobo_backup()
-        after = service.storage.backup_get("kobo", "vault-1", "book-1")
-        assert repeated["attempted"] == repeated["downloaded"] == 0
-        assert after["sha256"] is None and after["size"] is None
-        assert after["local_path"] == str(target)
-        assert target.is_file()
-    finally:
-        service.close()
-
-
-def test_multiple_local_candidates_become_conflict_without_deletion(tmp_path: Path, monkeypatch):
-    service = _service(tmp_path, manifest=[_manifest_row()])
-    try:
-        target_dir = service._kobo_backup_target_dir("default")
-        base = target_dir / "Author - Book One.epub"
-        suffixed = target_dir / "Author - Book One [book1].epub"
-        _write_epub(base, b"base")
-        _write_epub(suffixed, b"duplicate")
-        service.storage.backup_put({
-            "provider_id": "kobo",
-            "credential_id": "vault-1",
-            "identity_id": "default",
-            "item_id": "book-1",
-            "revision_id": "rev-1",
-            "title": "Book One",
-            "author": "Author",
-            "format": "EPUB",
-            "status": "error",
-            "local_path": None,
-            "error": "Kobo-Adept : réponse JSON invalide",
-        })
-        monkeypatch.setattr(
-            service,
-            "_execute_kobo_acquisition",
-            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("conflicted item must not redownload")),
-        )
-
-        summary = service.sync_kobo_backup()
-        record = service.storage.backup_get("kobo", "vault-1", "book-1")
-
-        assert summary["downloaded"] == 0
-        assert summary["reconcile_conflicts"] == 1
-        assert record is not None
-        assert record["status"] == "reconcile_conflict"
-        assert record["sha256"] is None
-        # A freshly connected OWN manifest independently reports this exact
-        # account's right; two ambiguous local files cannot erase discovery.
-        # A right is NOT a proof of which (if either) local file was delivered.
-        rights = [
-            row for row in service.storage.entitlements(provider_id="kobo")
-            if row["credential_id"] == "vault-1"
-            and row["item_id"] == "book-1" and row["identity_id"] == "default"
-        ]
-        assert len(rights) == 1
-        assert rights[0]["entitlement_type"] == "owned"
-        assert rights[0]["state"] == "active"
-        receipts = [
-            row for row in service.storage.acquisitions(provider_id="kobo")
-            if row["credential_id"] == "vault-1" and row["item_id"] == "book-1"
-        ]
-        assert len(receipts) == 1
-        assert receipts[0]["status"] == "discovered"
-        assert receipts[0]["artifact_id"] is None
-        assert receipts[0]["attempt_count"] == 0
-        assert base.is_file()
-        assert suffixed.is_file()
-    finally:
-        service.close()
-
-
-def test_successful_manifest_prune_preserves_local_artifact_and_history(tmp_path: Path):
-    service = _service(tmp_path, manifest=[])
-    try:
-        # Even a fully registered credential and borrower do not turn a
-        # v0.7 manifest into a typed, negative provider-right attestation.
-        current = next(c for c in service.storage.provider_connections()
-                       if c["provider_id"] == "kobo" and c["credential_id"] == "vault-1")
-        service.storage.provider_account_put({
-            "connection_id": current["connection_id"],
-            "identity_id": "default", "provider_id": "kobo",
-            "credential_id": "vault-1", "account_id": "account",
-        })
-        local = service._kobo_backup_target_dir("default") / "Old Local.epub"
-        _write_epub(local, b"old-local")
-        service.catalog_index_path(
-            local,
-            title="Old Local",
-            item_id="old-local",
-            identity_id="default",
-            provider_id="kobo",
-        )
-
-        service.storage.backup_put({
-            "provider_id": "kobo",
-            "credential_id": "vault-1",
-            "identity_id": "default",
-            "account_id": "account",
-            "item_id": "old-local",
-            "revision_id": "old-r1",
-            "title": "Old Local",
-            "author": "Author",
-            "format": "EPUB",
-            "status": "complete",
-            "local_path": str(local),
-            "size": local.stat().st_size,
-            "sha256": hashlib.sha256(local.read_bytes()).hexdigest(),
-        })
-        service.storage.backup_put({
-            "provider_id": "kobo",
-            "credential_id": "vault-1",
-            "identity_id": "default",
-            "account_id": "account",
-            "item_id": "old-remote",
-            "revision_id": "old-r2",
-            "title": "Old Remote",
-            "author": "Author",
-            "format": "EPUB",
-            "status": "complete",
-        })
-
-        before_rights = [
-            row for row in service.storage.entitlements(provider_id="kobo")
-            if row.get("item_id") in {"old-local", "old-remote"}
-        ]
-        assert len(before_rights) == 2
-        local_history = service.storage.backup_get("kobo", "vault-1", "old-local")
-
-        summary = service.sync_kobo_backup()
-
-        assert summary["errors"] == 0
-        assert summary["legacy_entitlements_inactivated"] == 0
-        # #3196 W3: neither file locator nor no-path archive is pruned;
-        # only independently attested migration may retire a legacy row.
-        assert summary["legacy_pruned"] == 0
-        assert summary["legacy_local_preserved"] == 0
-        assert service.storage.backup_get("kobo", "vault-1", "old-local") == local_history
-        assert service.storage.backup_get("kobo", "vault-1", "old-remote") is not None
-        assert local.is_file()
-
-        stale_entitlements = [
-            row
-            for row in service.storage.entitlements(provider_id="kobo")
-            if row.get("item_id") in {"old-local", "old-remote"}
-        ]
-        assert stale_entitlements == before_rights
-        assert {row["state"] for row in stale_entitlements} == {"active"}
-
-        entries = [
-            row
-            for row in service.storage.catalog_entries(state="local")
-            if row.get("item_id") == "old-local"
-        ]
-        assert entries
-        assert Path(entries[0]["metadata"]["path"]).resolve() == local.resolve()
-    finally:
-        service.close()
-
-
-def test_failed_manifest_run_never_prunes_stale_projection(tmp_path: Path):
-    service = _service(
-        tmp_path,
-        manifest_error=KoboVaultError(
-            "manifest indisponible",
-            code="temporary",
-            status_code=503,
-        ),
-    )
-    try:
-        service.storage.backup_put({
-            "provider_id": "kobo",
-            "credential_id": "vault-1",
-            "identity_id": "default",
-            "item_id": "stale",
-            "revision_id": "r0",
-            "title": "Stale",
-            "format": "EPUB",
-            "status": "complete",
-        })
-
-        summary = service.sync_kobo_backup()
-
-        assert summary["errors"] == 1
-        assert summary["legacy_pruned"] == 0
-        assert service.storage.backup_get("kobo", "vault-1", "stale") is not None
-    finally:
-        service.close()
-
-
-def test_legacy_remnant_outside_own_profile_is_never_hashed_or_adopted(
-        tmp_path: Path, monkeypatch):
-    """W3 keeps the historical locator but never reads an external candidate."""
-    import cifereca.core.kobo_backup as backup_module
-
-    service = _service(tmp_path, manifest=[])
-    try:
-        foreign = tmp_path / "foreign" / "outside.epub"
-        _write_epub(foreign, b"private other profile")
-        original_digest = "a" * 64
+        target = service._kobo_backup_target_dir("default") / "Book One.epub"
+        outside = tmp_path / "outside" / "foreign.epub"
+        if candidate == "intact":
+            _write_epub(target, b"existing")
+        elif candidate in {"outside", "symlink"}:
+            _write_epub(outside, b"foreign identity bytes")
+            if candidate == "symlink":
+                target.symlink_to(outside)
+        location = (str(outside) if candidate == "outside" else
+                    str(target) if candidate in {"intact", "symlink"} else None)
         service.storage.backup_put({
             "provider_id": "kobo", "credential_id": "vault-1",
-            "identity_id": "default", "item_id": "foreign-remnant",
-            "revision_id": "original-rev", "title": "Foreign",
-            "author": "Owner", "format": "EPUB", "status": "acquiring",
-            "local_path": str(foreign), "sha256": original_digest,
-            "size": 12345,
+            "identity_id": "default", "account_id": "account",
+            "item_id": "book-1", "revision_id": "rev-1",
+            "title": "Book One", "format": "EPUB", "status": status,
+            "local_path": location,
         })
-
-        def forbidden_hash(*args, **kwargs):
-            raise AssertionError("unscoped legacy bytes must never be hashed")
-
-        monkeypatch.setattr(backup_module, "sha256_file", forbidden_hash)
-        before_bytes = foreign.read_bytes()
-        report = service.sync_kobo_backup()
-        row = service.storage.backup_get(
-            "kobo", "vault-1", "foreign-remnant")
-        assert report["downloaded"] == 0
-        assert row["status"] == "reconcile_required"
-        assert row["local_path"] == str(foreign)
-        assert row["sha256"] == original_digest
-        assert row["size"] == 12345
-        assert row["revision_id"] == "original-rev"
-        assert foreign.read_bytes() == before_bytes
-    finally:
-        service.close()
-
-
-def test_legacy_remnant_symlink_ancestor_is_quarantined_without_hash(
-        tmp_path: Path, monkeypatch):
-    """A symlinked Kobo parent cannot transfer another identity's bytes."""
-    import cifereca.core.kobo_backup as backup_module
-
-    service = _service(tmp_path, manifest=[])
-    try:
-        foreign = tmp_path / "outside" / "book.epub"
-        _write_epub(foreign, b"private foreign bytes")
-        own = service._kobo_backup_target_dir("default")
-        linked = own / "linked"
-        linked.symlink_to(foreign.parent, target_is_directory=True)
-        candidate = linked / foreign.name
-        service.storage.backup_put({
-            "provider_id": "kobo", "credential_id": "vault-1",
-            "identity_id": "default", "item_id": "symlink-remnant",
-            "revision_id": "r0", "title": "Unverified",
-            "format": "EPUB", "status": "acquiring",
-            "local_path": str(candidate), "sha256": None,
-        })
-
-        monkeypatch.setattr(
-            backup_module, "sha256_file",
-            lambda *_a, **_kw: (_ for _ in ()).throw(
-                AssertionError("never hash through a linked ancestor")),
-        )
-        report = service.sync_kobo_backup()
-        row = service.storage.backup_get(
-            "kobo", "vault-1", "symlink-remnant")
-        assert report["downloaded"] == 0
-        assert row["status"] == "reconcile_required"
-        assert row["local_path"] == str(candidate)
-        assert row["sha256"] is None
-        assert foreign.is_file()
+        before = service.storage.backup_get("kobo", "vault-1", "book-1")
+        previous = service.storage.placements()
+        prior_bytes = outside.read_bytes() if outside.exists() else None
+        session = service._sessions[service._session_key("kobo", "vault-1")]
+        def forbidden(*_a, **_kw):
+            pytest.fail("retired W2 cannot read provider or mutate legacy")
+        monkeypatch.setattr(session, "backup_manifest", forbidden)
+        monkeypatch.setattr(service, "_execute_kobo_acquisition", forbidden)
+        monkeypatch.setattr(service.storage, "backup_put", forbidden)
+        monkeypatch.setattr(service.storage, "backup_prune_missing", forbidden)
+        for _ in range(2):
+            with pytest.raises(ProviderConfigurationError,
+                               match="kobo_legacy_w2_retired_use_canonical_provider"):
+                service.sync_kobo_backup()
+            assert service.storage.backup_get("kobo", "vault-1", "book-1") == before
+        assert service.storage.placements() == previous
+        if prior_bytes is not None:
+            assert outside.read_bytes() == prior_bytes
+        if candidate == "symlink":
+            assert target.is_symlink() and target.resolve() == outside
     finally:
         service.close()

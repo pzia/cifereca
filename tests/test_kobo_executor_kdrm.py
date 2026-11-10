@@ -236,133 +236,31 @@ def _item() -> SearchResult:
     )
 
 
-def test_delegated_kdrm_builds_content_access_recipe_with_context(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path)
-    service.kobo_adept_state = lambda **kwargs: _state()
-    requests: list[dict] = []
-    monkeypatch.setattr(
-        service,
-        "execute_acquisition_request",
-        lambda request: requests.append(request) or _artifact_result(request),
-    )
-    try:
-        result = service.acquire_direct_item(_item())
-
-        assert result.path and result.path.is_file()
-        assert session.acquisition_modes == ["descriptor", "delegated"]
-        request = requests[0]
-        assert request["schema_version"] == 2
-        assert request["source"]["type"] == "kobo"
-        assert request["source"]["provider"] == "kobo"
-        assert request["source"]["request"]["url"].endswith("/products/books/book-1/access")
-        assert request["source"]["request"]["headers"] == {"Authorization": "Bearer delegated-secret"}
-        assert request["source"]["request"]["query"] == {"DisplayProfile": "Android"}
-        assert request["source"]["selection"] == {"drm_type": "KDRM", "url_format": "KEPUB"}
-        assert request["source"]["kdrm"] == {"device_id": "device-123", "user_id": "user-456"}
-        assert "ContentKeys" not in str(request)
-        assert result.metadata["acquisition_mode"] == "delegated-kobo"
-    finally:
-        service.close()
-
-
-def test_library_sync_kdrm_builds_pinned_delivery_candidate_recipe(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path, delivery_source="library_sync")
-    service.kobo_adept_state = lambda **kwargs: _state(
-        pinned=True,
-        separate_keys=True,
-        kdrm=True,
-    )
-    requests: list[dict] = []
-    monkeypatch.setattr(
-        service,
-        "execute_acquisition_request",
-        lambda request: requests.append(request) or _artifact_result(request),
-    )
-    try:
-        result = service.acquire_direct_item(_item())
-
-        assert result.path and result.path.is_file()
-        assert session.acquisition_modes == ["descriptor", "delegated"]
-        request = requests[0]
-        source = request["source"]
-        assert source["type"] == "kobo"
-        assert source["provider"] == "kobo-vault"
-        assert source["kdrm"] == {"device_id": "device-123", "user_id": "user-456"}
-        assert "selection" not in source
-        assert source["candidate"] == {
-            "url": "https://storedownloads.kobo.com/book-payload",
-            "headers": {"x-amz-request-payer": "requester"},
-            "drm_type": "KDRM",
-            "media_format": "unknown",
-            "source_format": "FLEPUB",
-            "delivery_source": "library_sync",
-            "platform": "Generic",
-        }
-        assert request["format"] == "epub"
-        assert result.metadata["acquisition_mode"] == "delegated-kobo"
-    finally:
-        service.close()
-
-
-@pytest.mark.parametrize(
-    ("pinned", "separate_keys", "kdrm", "missing"),
-    [
-        (False, True, True, "pinned_delivery_candidate"),
-        (True, False, True, "separate_content_keys_replay"),
-        (True, True, False, "KDRM"),
-    ],
-)
-def test_library_sync_kdrm_requires_explicit_runtime_capabilities(
-    tmp_path: Path,
-    monkeypatch,
-    pinned: bool,
-    separate_keys: bool,
-    kdrm: bool,
-    missing: str,
+@pytest.mark.parametrize("delivery_source", ["content_access_book", "library_sync"])
+@pytest.mark.parametrize("capabilities", [
+    (False, False, False), (True, False, False),
+    (True, True, False), (True, True, True),
+])
+def test_retired_d3_never_builds_kdrm_get_recipe_without_canonical_abi(
+    tmp_path: Path, monkeypatch, delivery_source, capabilities,
 ):
-    service, session = _service(tmp_path, delivery_source="library_sync")
-    service.kobo_adept_state = lambda **kwargs: _state(
-        pinned=pinned,
-        separate_keys=separate_keys,
-        kdrm=kdrm,
+    service, session = _service(tmp_path, delivery_source=delivery_source)
+    service.kobo_adept_state = lambda **_kw: _state(
+        pinned=capabilities[0], separate_keys=capabilities[1],
+        kdrm=capabilities[2],
     )
-    called = {"runtime": False}
-
-    def execute(_request):
-        called["runtime"] = True
-        raise AssertionError("runtime must not run when a pinned KDRM capability is missing")
-
-    monkeypatch.setattr(service, "execute_acquisition_request", execute)
+    requests = []
+    def forbidden(*_a, **_kw):
+        pytest.fail("no legacy Kobo descriptor or runtime KDRM GET")
+    monkeypatch.setattr(session, "resolve_acquisition", forbidden)
+    monkeypatch.setattr(service, "execute_acquisition_request",
+                        lambda x: requests.append(x) or forbidden())
     try:
-        with pytest.raises(ProviderConfigurationError, match=missing):
+        with pytest.raises(ProviderConfigurationError,
+                           match="kobo_legacy_direct_get_retired"):
             service.acquire_direct_item(_item())
-
-        assert session.acquisition_modes == ["descriptor", "delegated"]
-        assert called["runtime"] is False
-    finally:
-        service.close()
-
-
-def test_kdrm_without_delegated_capability_never_falls_back_to_http(tmp_path: Path, monkeypatch):
-    service, session = _service(tmp_path)
-    service.kobo_adept_state = lambda **kwargs: _state(
-        delegated=False,
-        pinned=False,
-        separate_keys=False,
-        kdrm=False,
-    )
-    called = {"runtime": False}
-
-    def execute(_request):
-        called["runtime"] = True
-        raise AssertionError("KDRM must never be flattened to direct HTTP")
-
-    monkeypatch.setattr(service, "execute_acquisition_request", execute)
-    try:
-        with pytest.raises(ProviderConfigurationError, match="HTTP direct"):
-            service.acquire_direct_item(_item())
-
-        assert session.acquisition_modes == ["descriptor", "delegated"]
-        assert called["runtime"] is False
+        assert requests == []
+        assert session.acquisition_modes == []
+        assert service.storage.acquisitions(provider_id="kobo") == []
     finally:
         service.close()
