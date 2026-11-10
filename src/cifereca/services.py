@@ -4042,12 +4042,6 @@ class LibraryService:
     def kobo_backup_interval_minutes(self) -> int:
         return kobo_backup.kobo_backup_interval_minutes(self)
 
-    def _kobo_backup_target_dir(self, identity_id: str | None = None) -> Path:
-        # 0.8.1 makes the visible layout identity/provider mandatory for new
-        # materializations. The historical Kobo override remains a base root;
-        # existing flat files are never moved automatically.
-        return kobo_backup._kobo_backup_target_dir(self, identity_id)
-
     def kobo_backup_diagnostic(self) -> dict[str, Any]:
         """Summarise the persisted Kobo backup state without network access."""
         return kobo_backup.kobo_backup_diagnostic(self)
