@@ -82,3 +82,27 @@ def test_mirror_disposes_of_inflight_numilog_rows_after_session_change():
     assert summary.failed_sources == 0
     rights.assert_not_called()
     service._mirror_remote_results.assert_not_called()
+
+
+def test_equal_coordinates_on_detached_account_do_not_attest_private_inventory():
+    from copy import copy
+
+    service, account, session = source()
+    detached = copy(account)
+    assert detached is not account
+    assert (detached.provider_id, detached.credential_id, detached.unique_id) == (
+        account.provider_id, account.credential_id, account.unique_id,
+    )
+    assert not numilog_inventory_binding_valid(
+        service, detached, session=session,
+    )
+    service.storage.entitlements.assert_not_called()
+
+
+def test_duplicate_exact_core_account_reference_is_not_a_unique_private_binding():
+    service, account, session = source()
+    service.accounts.append(account)
+    assert not numilog_inventory_binding_valid(
+        service, account, session=session,
+    )
+    service.storage.entitlements.assert_not_called()
