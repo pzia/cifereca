@@ -24,14 +24,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 from ..acquisition import Acquisition
-from ..kobo import KoboAdeptError
-from ..kobo.vault import KoboVaultError
 from ..library_files import safe_library_component, sha256_file
 from ..artifact_inspection import inspect_artifact
 from ..paths import acquisition_lock_file
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
-from ..plugin_api import UserFacingError, ProviderError
 
 
 def _observed_backup_artifact(path: Path) -> dict[str, Any]:
@@ -76,88 +73,6 @@ def _kobo_backup_target_dir(self, identity_id: str | None=None) -> Path:
         path.mkdir(parents=True, exist_ok=True)
         return path
     return self.library_identity_provider_dir(identity_id, "kobo")
-
-
-def _manifest_author(item: dict[str, Any]) -> str | None:
-    authors = item.get("authors")
-    if isinstance(authors, list):
-        text = ", ".join(str(x) for x in authors if str(x).strip())
-        return text or None
-    text = str(item.get("author") or "").strip()
-    return text or None
-
-
-# The provider/runtime chooses exception.code and even its class name.
-# Identifier-like strings are NOT necessarily safe (an account can be one).
-_KOBO_BACKUP_CODES = frozenset({
-    "missing_delegation_scope", "missing_token", "invalid_token",
-    "invalid_bearer", "unauthorized", "forbidden", "insufficient_scope",
-    "invalid_api_token", "archived_book", "temporary", "network_error",
-    "http_error", "redirect_denied", "invalid_response",
-    "invalid_pagination", "no_downloadable_artifact",
-    "no_compatible_http_candidate", "missing_pinned_delivery_capability",
-    "result_unparseable_artifact_present",
-    "result_unparseable_artifact_missing", "invalid_epub",
-})
-
-
-def _kobo_backup_error_info(exc: Exception) -> dict[str, Any]:
-    """Only bounded, closed diagnostic facts cross the backup/error boundary."""
-    code: str | None = None
-    status_code: int | None = None
-    phase = "integration"
-    fatal = False
-
-    if isinstance(exc, KoboVaultError) or (
-        isinstance(exc, ProviderError)
-        and type(getattr(exc, "status_code", None)) is int
-    ):
-        phase = "vault"
-        raw_code = getattr(exc, "code", None)
-        code = (raw_code if type(raw_code) is str
-                and raw_code in _KOBO_BACKUP_CODES else "provider_http_error")
-        raw_status = getattr(exc, "status_code", None)
-        status_code = (raw_status if type(raw_status) is int
-                       and 100 <= raw_status <= 599 else None)
-        # Delegated-only 403 does not invalidate a previously authenticated
-        # account, and must not starve other owned Kobo purchases.
-        fatal = code != "missing_delegation_scope" and (
-            status_code in {401, 403} or code in {
-                "missing_token", "invalid_token", "invalid_bearer",
-                "unauthorized", "forbidden", "insufficient_scope",
-                "invalid_api_token",
-            }
-        )
-    elif isinstance(exc, (KoboAdeptError, UserFacingError)):
-        phase = "adept"
-        raw_code = getattr(exc, "code", None)
-        code = (raw_code if type(raw_code) is str
-                and raw_code in _KOBO_BACKUP_CODES else "adept_error")
-    else:
-        # Legacy untyped exceptions retain the historical coarse auth/scope
-        # classification. Their text is NEVER copied to a receipt or event.
-        try:
-            hint = str(exc)[:512].lower()
-        except Exception:
-            hint = ""
-        if "bearer token invalide" in hint or "token api refus" in hint:
-            phase, code, fatal = "vault", "invalid_token", True
-        elif "scope insuffisant" in hint:
-            phase, code, fatal = "vault", "insufficient_scope", True
-        elif "candidat epub/pdf http direct" in hint or "candidat http epub/pdf" in hint:
-            code = "no_compatible_http_candidate"
-        elif "aucun artefact téléchargeable compatible" in hint:
-            phase, code = "vault", "no_downloadable_artifact"
-        elif "library_sync/kdrm exige" in hint:
-            code = "missing_pinned_delivery_capability"
-
-    return {
-        "phase": phase,
-        "code": code or "backup_item_failed",
-        "status_code": status_code,
-        "message": "Sauvegarde Kobo impossible",
-        "fatal": fatal,
-    }
 
 
 def _kobo_preview_paths(self, identity_id: str) -> tuple[Path, Path]:
