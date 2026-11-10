@@ -104,7 +104,7 @@ def cross_profile_borrow_progress_detail_section(
          "lender_loan_confirmed_transfer_unverified"): (
             "Prêt confirmé sur le profil prêteur",
             "Livraison non vérifiée",
-            "Copie en attente · livraison locale chez le prêteur non vérifiée",
+            "Copie bloquée tant que la livraison locale chez le prêteur n'est pas vérifiée",
         ),
         ("unknown", "unavailable", "blocked",
          "loan_result_not_confirmed"): (
