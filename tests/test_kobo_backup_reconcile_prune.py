@@ -140,7 +140,7 @@ def test_retired_w2_does_not_reconcile_or_prune_legacy_receipts(
     from cifereca.providers import ProviderConfigurationError
     service = _service(tmp_path, manifest=[_manifest_row()])
     try:
-        target = service._kobo_backup_target_dir("default") / "Book One.epub"
+        target = service.library_identity_provider_dir("default", "kobo") / "Book One.epub"
         outside = tmp_path / "outside" / "foreign.epub"
         if candidate == "intact":
             _write_epub(target, b"existing")
