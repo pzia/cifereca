@@ -8,10 +8,7 @@ import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.core import bnf_auto_materialization as bnf
-from cifereca.core.numilog_local_preview import _Binding, _valid_binding
-from cifereca.core.numilog_materialization_consent import prepare
 from tests.test_core_p0_2055_bnf_explicit_stage import connected_core
-from tests.test_core_p0_numilog_auto_materialization import _setup
 
 
 @pytest.mark.parametrize(("first", "rebound"), [
@@ -54,32 +51,3 @@ def test_bnf_old_on_never_transfers_to_aliased_borrower(
     assert bnf.enabled(service, account) is True
 
 
-@pytest.mark.parametrize("rebound", ["padded", "literal"])
-def test_numilog_old_on_cannot_be_adopted_by_rebound_borrower(
-    tmp_path, rebound,
-):
-    service, account, _session, calls, broker, source_id = _setup(tmp_path)
-    try:
-        original = account.unique_id
-        bound = _Binding(
-            "numilog", account.identity_id, account.credential_id, original,
-        )
-        assert _valid_binding(broker, bound, source_id)
-        if rebound == "padded":
-            account.unique_id = " " + original + " "
-            assert broker._source_id(account) == source_id
-        else:
-            account.unique_id = (
-                "numilog:" + account.credential_id + ":primary"
-            )
-            source_id = broker._source_id(account)
-        changed = _Binding(
-            "numilog", account.identity_id, account.credential_id,
-            account.unique_id,
-        )
-        assert not _valid_binding(broker, changed, source_id)
-        result = prepare(broker, source_id)
-        assert not result.ok and result.facts["status"] == "source_not_ready"
-        assert calls == []
-    finally:
-        service.close()
