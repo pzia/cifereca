@@ -10,7 +10,8 @@ from typing import Any
 
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
-from .numilog_manifest_rights import _scoped_record_id, numilog_inventory_binding_valid
+from .numilog_manifest_rights import numilog_inventory_binding_valid
+from .credential_scoped_record import exact_credential_scoped_record
 
 
 def _canonical_guarded_source(session: Any) -> bool:
@@ -39,7 +40,9 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
             or item.downloadable is not True
             or type(item.record_id) is not str
             or item.id != item.record_id
-            or _scoped_record_id(item.record_id, item.source_credential) is None
+            or exact_credential_scoped_record(
+                item.record_id, provider_id="numilog", credential_id=item.source_credential,
+            ) is None
             or (type(item.metadata) is dict
                 and item.metadata.get("search_provenance") == "known_catalog_stale")
         ):
