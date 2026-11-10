@@ -271,3 +271,97 @@ def test_nonrepair_adept_symlink_swap_during_commit_refuses_source(
     assert produced.is_symlink()
     assert not list(tmp_path.glob("existing.reacquired-*"))
     assert old.read_bytes() == b"PRIOR-LEDGER-ARTIFACT"
+
+
+def test_adept_nonrepair_cross_filesystem_stage_is_never_hardlinked(
+    tmp_path, monkeypatch,
+):
+    """Simulate EXDEV for stage→library; only library-local links are allowed."""
+    import errno
+
+    stage = tmp_path / "other-volume"
+    stage.mkdir()
+    library = tmp_path / "identity" / "Acquisitions"
+    library.mkdir(parents=True)
+    produced = stage / "new.epub"
+    produced.write_bytes(b"NEW FROM OTHER MOUNT")
+    destination = library / "book.epub"
+    destination.write_bytes(b"OLD VALID LOAN")
+    real_link = os.link
+    calls = []
+
+    def across_mount_is_invalid(src, dst, **kwargs):
+        src, dst = Path(src), Path(dst)
+        calls.append((src, dst))
+        if src.parent != dst.parent:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "link", across_mount_is_invalid)
+    published = adept_artifact_publication._publish_new_adept_without_clobber(
+        produced, destination, uuid=uuid,
+        ProviderConfigurationError=ProviderConfigurationError,
+    )
+    assert published != destination
+    assert published.parent == library
+    assert published.read_bytes() == b"NEW FROM OTHER MOUNT"
+    assert destination.read_bytes() == b"OLD VALID LOAN"
+    assert not produced.exists()
+    assert calls
+    assert all(src.parent == library for src, dst in calls)
+    assert not list(library.glob(".adept-publish-*"))
+
+
+def test_adept_nonrepair_failed_link_preserves_stage_and_cleans_private_temp(
+    tmp_path, monkeypatch,
+):
+    stage = tmp_path / "other-volume"
+    stage.mkdir()
+    library = tmp_path / "library"
+    library.mkdir()
+    produced = stage / "new.epub"
+    produced.write_bytes(b"NEW FROM OTHER MOUNT")
+    destination = library / "existing.epub"
+    destination.write_bytes(b"OLD VALID LOAN")
+    def denied(*_args, **_kwargs):
+        raise OSError("synthetic publication denied")
+    monkeypatch.setattr(os, "link", denied)
+
+    with pytest.raises(OSError, match="publication denied"):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            produced, destination, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert produced.read_bytes() == b"NEW FROM OTHER MOUNT"
+    assert destination.read_bytes() == b"OLD VALID LOAN"
+    assert not list(library.glob(".adept-publish-*"))
+
+
+def test_adept_nonrepair_copy_fails_closed_if_staged_inode_changes_while_reading(
+    tmp_path, monkeypatch,
+):
+    """The staging copy is not a licence to adopt a swapped file."""
+    stage = tmp_path / "other-volume"
+    stage.mkdir()
+    library = tmp_path / "library"
+    library.mkdir()
+    produced = stage / "new.epub"
+    produced.write_bytes(b"OLD STAGE")
+    foreign = stage / "foreign.epub"
+    foreign.write_bytes(b"UNRELATED")
+    destination = library / "published.epub"
+    real_open = os.open
+    def swap_at_open(path, *args, **kwargs):
+        if Path(path) == produced:
+            produced.unlink()
+            produced.symlink_to(foreign)
+        return real_open(path, *args, **kwargs)
+    monkeypatch.setattr(os, "open", swap_at_open)
+    with pytest.raises((OSError, ProviderConfigurationError)):
+        adept_artifact_publication._publish_new_adept_without_clobber(
+            produced, destination, uuid=uuid,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert not destination.exists()
+    assert foreign.read_bytes() == b"UNRELATED"
+    assert not list(library.glob(".adept-publish-*"))
