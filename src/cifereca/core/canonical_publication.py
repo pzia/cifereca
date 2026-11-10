@@ -93,6 +93,7 @@ def publish_completed_acquisition(
     context_current: Callable[[], bool] | None = None,
     transaction_guard: Callable[[sqlite3.Connection], bool] | None = None,
     expected_source_policy_revision: str | None = None,
+    explicitly_confirmed_once: bool = False,
 ) -> PublicationResult:
     """Publish an *already completed* authorized acquisition into schema v14.
 
@@ -137,6 +138,14 @@ def publish_completed_acquisition(
         raise ValueError("canonical_invalid_epoch_guard")
     if transaction_guard is not None and not callable(transaction_guard):
         raise ValueError("canonical_invalid_transaction_guard")
+    # A Core-confirmed explicit click may use a one-shot, exact-right SQL
+    # guard instead of a persisted source-wide ON policy. Never let the
+    # flag alone grant B, nor weaken the default Sync contract.
+    if (type(explicitly_confirmed_once) is not bool
+            or (explicitly_confirmed_once and (
+                transaction_guard is None
+                or expected_source_policy_revision is not None))):
+        raise ValueError("canonical_explicit_transaction_guard_required")
 
     # This is non-authoritative preliminary I/O. The authoritative owner
     # binding and file identity are rechecked *inside* the SQL transaction.
@@ -208,7 +217,8 @@ def publish_completed_acquisition(
         # Only an entirely unset policy may use the historical route.
         policy = policy_in_transaction(db, scope)
         if policy.configured and expected_source_policy_revision is None:
-            raise ValueError("canonical_source_policy_revision_required")
+            if (not explicitly_confirmed_once or policy.mode == "invalid"):
+                raise ValueError("canonical_source_policy_revision_required")
         if expected_source_policy_revision is not None:
             if (type(expected_source_policy_revision) is not str
                     or len(expected_source_policy_revision) != 32
