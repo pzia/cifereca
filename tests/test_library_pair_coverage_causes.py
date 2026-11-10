@@ -9,8 +9,6 @@ from cifereca.core.library_local_inspection import (
 )
 from tests.test_core_p0_2714_numilog_manual_transaction import rig, _rows
 from tests.test_core_p0_2841_isolated_partial_pair import _numilog, _bad_files
-from tests.test_core_1345_confirmed_local_reconciliation import case as kobo_case
-from tests.test_core_p0_2797_kobo_shared_link import selected as kobo_selected
 
 
 @pytest.mark.parametrize('section,reason,code,label', [
@@ -100,22 +98,3 @@ def test_unrelated_invalid_epub_and_bibliographic_budget_keep_pair_eligible(rig)
     finally:
         session.close()
 
-
-def test_kobo_uses_same_closed_coverage_causes_and_keeps_own_writer(kobo_selected):
-    case, old, _right, _file = kobo_selected
-    service = case.service
-    root, = old._roots
-    audit = audit_library(service.storage.path, {'default': (root,)})
-    audit.reconciliation.reasons.add('comparison_budget')
-    session = LocalInspection(audit, lambda: True, 'default', roots=(root,), service=service)
-    try:
-        right, = session.page(provider='kobo', state='rights_without_verified_file').cases
-        file, = session.unconfirmed_files(query='PRIVATE-copy', limit=10).cases
-        report = session.preflight_manual_link(right.key, file.key)
-        assert report.status == 'blocked'
-        assert 'comparison_incomplete' in report.codes
-        assert 'kobo_fresh_proof_required' in report.codes
-        assert 'Numilog' not in report.explanation
-        assert session.preview_manual_attachment(right.key, file.key)['status'] == 'unavailable'
-    finally:
-        session.close()

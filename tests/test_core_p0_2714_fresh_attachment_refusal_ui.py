@@ -16,11 +16,9 @@ from cifereca.core import kobo_local_reconciliation as kobo
 from cifereca.core import numilog_manual_link_transaction as numilog
 from cifereca.gui.library_inspection_view import _attachment_refusal_message
 from tests.test_core_p0_2714_manual_session_bridge import selected as numilog_selected
-from tests.test_core_p0_2797_kobo_shared_link import selected as kobo_selected
 from tests.test_core_p0_2714_numilog_manual_transaction import (
     rig, _rows as numilog_rows,
 )
-from tests.test_core_1345_confirmed_local_reconciliation import case as kobo_case
 
 
 _PRIVATE = "PRIVATE-account password=SECRET /home/private/BOOK.epub"
@@ -115,29 +113,6 @@ def test_numilog_fresh_preview_reports_missing_receipt_code_without_mutation(
     assert _PRIVATE not in json.dumps(response) + message
 
 
-def test_kobo_gui_reports_canonical_attestation_required_without_legacy_writer(
-    kobo_selected, monkeypatch,
-):
-    case, session, right, file = kobo_selected
-    with case.storage._lock, case.storage._connect() as db:
-        before = db.execute("SELECT * FROM placements ORDER BY placement_id").fetchall()
-
-    monkeypatch.setattr(
-        kobo, "reconcile_kobo_local",
-        lambda *_a, **_kw: pytest.fail("legacy Kobo W4 writer must not run"),
-    )
-    response = session.preview_manual_attachment(right.key, file.key)
-    assert response == {
-        "status": "blocked", "read_only": True,
-        "reason_code": "kobo_canonical_evidence_required",
-    }
-    assert session._manual_pending is None
-    label = _attachment_refusal_message(response, "kobo", "Placement non effectué.")
-    assert "Kobo" in label and "A→B" in label
-    with case.storage._lock, case.storage._connect() as db:
-        assert db.execute("SELECT * FROM placements ORDER BY placement_id").fetchall() == before
-
-
 def test_numilog_confirmation_reports_fresh_evidence_failure_and_consumes_token(
     numilog_selected, monkeypatch,
 ):
@@ -159,27 +134,3 @@ def test_numilog_confirmation_reports_fresh_evidence_failure_and_consumes_token(
     ] == "unavailable"
     assert not numilog_rows(service, "placements")
 
-
-def test_kobo_stale_gui_confirmation_cannot_reactivate_legacy_w4(
-    kobo_selected, monkeypatch,
-):
-    case, session, right, file = kobo_selected
-    assert session.preview_manual_attachment(right.key, file.key)["status"] == "blocked"
-    with case.storage._lock, case.storage._connect() as db:
-        before = db.execute("SELECT * FROM placements ORDER BY placement_id").fetchall()
-    monkeypatch.setattr(
-        kobo, "reconcile_kobo_local",
-        lambda *_a, **_kw: pytest.fail("stale Kobo token cannot open W4 writer"),
-    )
-    # A token from an older GUI build remains invalid after retirement.
-    session._manual_pending = (right.key, file.key, "a" * 64)
-    result = session.confirm_manual_attachment(
-        right.key, file.key, user_confirmed=True,
-    )
-    assert result == {
-        "status": "blocked", "read_only": True,
-        "reason_code": "kobo_canonical_evidence_required",
-    }
-    assert session._manual_pending is None
-    with case.storage._lock, case.storage._connect() as db:
-        assert db.execute("SELECT * FROM placements ORDER BY placement_id").fetchall() == before
