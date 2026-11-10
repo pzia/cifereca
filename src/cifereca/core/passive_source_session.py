@@ -58,4 +58,34 @@ def passive_private_library_session(session: Any) -> tuple[str, str, bool, bool]
     return provider, credential, connected, personal_library
 
 
-__all__ = ["passive_private_library_session"]
+def passive_direct_download_capable(session: Any) -> bool:
+    """Inspect declared direct_download without invoking plugin properties.
+
+    This is a necessary capability prerequisite for an existing private
+    acquisition route, not consent, an attested entitlement or a GET grant.
+    """
+    klass = type(session)
+    if issubclass(klass, ProviderSession):
+        state = _inert_session_state(session)
+        if (state is None or getattr_static(klass, "capabilities", None)
+                is not ProviderSession.__dict__["capabilities"]):
+            return False
+        descriptor = state.get("descriptor")
+        if type(descriptor) is not ProviderDescriptor:
+            return False
+        caps = descriptor.capabilities
+        return (type(caps) is ProviderCapabilities
+                and caps.direct_download is True)
+    if klass is SimpleNamespace:
+        state = object.__getattribute__(session, "__dict__")
+        if type(state) is not dict:
+            return False
+        caps = state.get("capabilities")
+        return (type(caps) is SimpleNamespace
+                and object.__getattribute__(caps, "__dict__").get(
+                    "direct_download"
+                ) is True)
+    return False
+
+
+__all__ = ["passive_private_library_session", "passive_direct_download_capable"]

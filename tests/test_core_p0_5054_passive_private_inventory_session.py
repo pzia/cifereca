@@ -1,9 +1,12 @@
 """P0 #5054: private inventory does not authorize plugin property execution."""
 from types import SimpleNamespace as NS
+from dataclasses import replace
 
 import pytest
 
-from cifereca.core.passive_source_session import passive_private_library_session
+from cifereca.core.passive_source_session import (
+    passive_private_library_session, passive_direct_download_capable,
+)
 from cifereca.core.numilog_manifest_rights import numilog_inventory_binding_valid
 from cifereca.providers.base import (
     ProviderSession, ProviderDescriptor, ProviderCapabilities,
@@ -87,4 +90,56 @@ def test_numilog_inventory_binding_rejects_hostile_provider_scalar_without_gette
     with monkeypatch.context() as m:
         m.setattr(SyntheticSession, "provider_id", property(malicious), raising=False)
         assert not numilog_inventory_binding_valid(service, account, session=current)
+    assert calls == []
+
+
+def test_direct_download_capability_is_an_inert_prerequisite_only():
+    current = session()
+    assert passive_direct_download_capable(current) is False
+    current.descriptor = replace(
+        current.descriptor,
+        capabilities=ProviderCapabilities(
+            personal_library=True, direct_download=True,
+        ),
+    )
+    assert passive_direct_download_capable(current) is True
+    assert passive_direct_download_capable(NS(
+        capabilities=NS(direct_download=True),
+    )) is True
+    assert passive_direct_download_capable(NS(
+        capabilities=NS(direct_download="true"),
+    )) is False
+
+
+@pytest.mark.parametrize("field", ["capabilities", "direct_download"])
+def test_dynamic_download_capability_never_executes_provider_getter(
+    monkeypatch, field,
+):
+    current = session()
+    current.descriptor = replace(
+        current.descriptor,
+        capabilities=ProviderCapabilities(
+            personal_library=True, direct_download=True,
+        ),
+    )
+    calls = []
+
+    def malicious(_instance):
+        calls.append("PRIVATE_GETTER")
+        raise RuntimeError("PRIVATE_DOWNLOAD_URL")
+
+    with monkeypatch.context() as m:
+        if field == "capabilities":
+            m.setattr(SyntheticSession, field, property(malicious), raising=False)
+            assert passive_direct_download_capable(current) is False
+        else:
+            # A noncanonical capabilities object cannot impersonate the
+            # typed ProviderCapabilities contract with executable fields.
+            class Hostile:
+                direct_download = property(malicious)
+            current.descriptor = replace(
+                current.descriptor,
+                capabilities=Hostile(),
+            )
+            assert passive_direct_download_capable(current) is False
     assert calls == []

@@ -11,6 +11,7 @@ from typing import Any
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
 from .numilog_manifest_rights import _scoped_record_id, numilog_inventory_binding_valid
+from .passive_source_session import passive_direct_download_capable
 
 
 def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any, Any, str]:
@@ -50,8 +51,7 @@ def require_source(service: Any, item: Any, *, session: Any = None) -> tuple[Any
                 or not numilog_inventory_binding_valid(
                     service, account, session=active,
                 )
-                or getattr(getattr(active, "capabilities", None),
-                           "direct_download", False) is not True):
+                or not passive_direct_download_capable(active)):
             raise ValueError("source_rebound")
         identity = service.identity_by_id(account.identity_id)
         if identity is None:
