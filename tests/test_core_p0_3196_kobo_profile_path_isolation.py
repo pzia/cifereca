@@ -56,3 +56,22 @@ def test_root_selector_keeps_missing_identity_read_only(tmp_path):
         library, library / "unknown" / "kobo",
     )
     assert not library.exists()
+
+
+def test_gtk_maintenance_no_longer_replays_retired_kobo_w4():
+    source = (
+        Path(__file__).resolve().parents[1] / "e2e/library_declaration_acceptance.py"
+    ).read_text(encoding="utf-8")
+    # The second native W4 playback was obsolete after the 0.7 cutover.
+    # The generic, independent declaration pass must still call done().
+    import ast
+    tree = ast.parse(source)
+    recursive_calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exercise"
+        and any(kw.arg == "attested" and isinstance(kw.value, ast.Constant)
+                and kw.value.value is True for kw in node.keywords)
+    ]
+    assert recursive_calls == []
