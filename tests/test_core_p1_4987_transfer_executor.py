@@ -131,3 +131,64 @@ def test_wrong_reader_context_does_not_send(setup_send):
     assert result["status"] == "blocked"
     preflight.assert_not_called()
     service.materialize_to_identity.assert_not_called()
+
+
+def test_native_core_send_produces_independent_copy_and_idempotent_replay(
+    tmp_path, monkeypatch,
+):
+    """Exercise the real LibraryService and native send, not a mocked copy."""
+    import os
+    from dataclasses import replace
+    from pathlib import Path
+
+    from tests.test_core0925_open_destinations import _service
+    from tests.test_core_p1_3275_safe_transfer import _source
+    from cifereca.core.borrow_for_identity_progress import CrossProfileBorrowProgress
+
+    service = _service(tmp_path)
+    source, placement = _source(service, tmp_path)
+    service.current_identity = service.identity_by_id("bob")
+    original = witness("alice", record="book")
+    account = replace(original.account, provider_id="local")
+    notice = replace(
+        original.notice, source_provider="local", record_id="book",
+    )
+    monkeypatch.setattr(
+        "cifereca.core.borrow_for_identity_transfer_preflight."
+        "observed_cross_profile_borrow_progress",
+        lambda *args, **kw: CrossProfileBorrowProgress(
+            "confirmed", "unavailable", "blocked",
+            "lender_loan_confirmed_transfer_unverified",
+        ),
+    )
+    try:
+        first = service.send_cross_profile_borrowed_placement(
+            requesting_identity_id="bob", borrowing_account=account,
+            exact_notice=notice, lender_placement_id=placement, confirmed=True,
+        )
+        assert first["status"] == "complete", first
+        assert first["transfer"] == "completed"
+        received = [
+            row for row in service.storage.placements()
+            if row.get("identity_id") == "bob"
+            and (row.get("metadata") or {}).get("materialized_from") == placement
+        ]
+        assert len(received) == 1
+        target = Path(received[0]["path"])
+        assert target.read_bytes() == source.read_bytes()
+        assert os.stat(target).st_ino != os.stat(source).st_ino
+        assert service.storage.entitlements() == []
+        again = service.send_cross_profile_borrowed_placement(
+            requesting_identity_id="bob", borrowing_account=account,
+            exact_notice=notice, lender_placement_id=placement, confirmed=True,
+        )
+        assert again["status"] == "complete"
+        assert again["transfer"] == "completed"
+        received_again = [
+            row for row in service.storage.placements()
+            if row.get("identity_id") == "bob"
+            and (row.get("metadata") or {}).get("materialized_from") == placement
+        ]
+        assert len(received_again) == 1
+    finally:
+        service.close()
