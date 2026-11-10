@@ -191,6 +191,21 @@ def _add_owned_download(window, detail, item, TaskPriority):
 def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteRequest, TaskPriority, identity_has_attested_possession):
     if getattr(window, '_closed', False):
         return
+    # A foreign library row is not a borrower capability of the selected
+    # identity. Never resolve its owned-download action through B's context.
+    active_owner = getattr(
+        getattr(window.service, 'current_identity', None), 'identity_id', None,
+    )
+    foreign_owner = item.get('identity_id')
+    if (type(foreign_owner) is str and foreign_owner
+            and foreign_owner != active_owner):
+        from .foreign_placement_send_controller import (
+            add_foreign_present_placement_send,
+        )
+        add_foreign_present_placement_send(
+            window, detail, item, TaskPriority=TaskPriority,
+        )
+        return
     _add_owned_download(window, detail, item, TaskPriority)
     placement_id=str(item.get('placement_id') or '')
     identity_id=str(item.get('identity_id') or '')
@@ -211,20 +226,6 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
         placement_id=placement['placement_id'];identity_id=current.identity_id
     if not identity_id:
         window._add_catalogue_action(detail, item); return
-    active = getattr(getattr(window.service, 'current_identity', None),
-                     'identity_id', None)
-    if active != identity_id:
-        # Global Library may display a physical A placement while the reader
-        # is B. Do not expose A's local open, route or provider actions.
-        # An independent B copy is offered only by the optional Core #4662
-        # exact-placement admission and a separate explicit GTK consent.
-        from .foreign_placement_send_controller import (
-            add_foreign_present_placement_send,
-        )
-        add_foreign_present_placement_send(
-            window, detail, item, TaskPriority=TaskPriority,
-        )
-        return
     # A Search/Recommendations detail action may outlive its GTK selection,
     # the active profile or a provider disconnect/reconnect (A -> B -> A).
     # Capture both identity and Core source leases before creating callbacks.
