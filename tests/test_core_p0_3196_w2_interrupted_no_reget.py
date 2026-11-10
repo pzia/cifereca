@@ -98,7 +98,7 @@ def test_interrupted_locator_does_not_mint_sha_or_canonical_origin(
 
     service = _service(tmp_path, manifest=[_manifest_row()])
     try:
-        path = service._kobo_backup_target_dir("default") / "Book One.epub"
+        path = service.library_identity_provider_dir("default", "kobo") / "Book One.epub"
         _write_epub(path)
         original = path.read_bytes()
         service.storage.backup_put({
