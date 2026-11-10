@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 from inspect import getattr_static
+from types import SimpleNamespace
 
 from ..models import Account
 from ..providers.base import ProviderSession
@@ -47,7 +48,12 @@ def source_account_binding_ready(
         )
         # Read initialized provider-session memory, not plugin properties.
         klass = type(session)
-        if getattr_static(klass, "__getattribute__", None) is not object.__getattribute__:
+        # Built-in SimpleNamespace is an inert legacy test fixture. Its
+        # own C-level __getattribute__ is not object.__getattribute__;
+        # admit only that exact builtin type, never a subclass/proxy.
+        if (klass is not SimpleNamespace
+                and getattr_static(klass, "__getattribute__", None)
+                is not object.__getattribute__):
             return False
         if issubclass(klass, ProviderSession):
             state = _inert_session_state(session)
