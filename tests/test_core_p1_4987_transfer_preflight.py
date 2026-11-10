@@ -45,14 +45,14 @@ def checked(service, w, **overrides):
     )
 
 
-def test_matching_local_lender_placement_is_not_copy_permission(scope):
+def test_matching_local_lender_placement_admits_explicit_send(scope):
     service, w = scope
     result = checked(service, w)
     assert (result.loan, result.delivery, result.transfer) == (
-        "confirmed", "unavailable", "blocked",
+        "confirmed", "present", "ready_for_send",
     )
-    assert result.reason_code == "lender_placement_observed_copy_rights_unverified"
-    assert result.executable is result.retry_borrow is False
+    assert result.reason_code == "lender_placement_present_send_available"
+    assert result.executable is True and result.retry_borrow is False
     service.storage.placement_get.assert_called_once_with("placement-a")
     service.materialize_to_identity.assert_not_called()
 
