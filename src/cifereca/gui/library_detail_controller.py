@@ -30,7 +30,10 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         getattr(window.service, "current_identity", None), "identity_id", None,
     )
     owner = item.get("identity_id")
-    foreign = type(owner) is str and owner and owner != active
+    foreign = (
+        item.get("_library_view_owner") == owner
+        and type(owner) is str and bool(owner) and owner != active
+    )
     if not foreign and item.get("source") == "loan" and item.get("loan_id"):
         # A merged catalogue notice may not identify the exact borrower.
         # In that case never expose an action for an arbitrary loan source.
