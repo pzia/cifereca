@@ -9,7 +9,7 @@ from typing import ClassVar
 
 from ..models import SearchResult
 from ..plugin_api import Cancelled
-from .numilog_manifest_rights import _scoped_record_id
+from .credential_scoped_record import exact_credential_scoped_record
 from .numilog_manual_acquisition import require_source
 from .numilog_local_preview import _identity_root
 from .owned_library_download import OwnedDownloadRejected, _require
@@ -39,7 +39,9 @@ def _resolve(service, entitlement_id, identity_id, item_id, *, canonical_offer_i
     _require(type(entitlement_id) is str and bool(entitlement_id))
     accounts = [a for a in service.accounts if a.provider_id == 'numilog'
                 and a.identity_id == identity_id
-                and _scoped_record_id(item_id, a.credential_id) is not None]
+                and exact_credential_scoped_record(
+                    item_id, provider_id="numilog", credential_id=a.credential_id,
+                ) is not None]
     _require(len(accounts) == 1)
     account = accounts[0]
     roots = _identity_root(service, identity_id)
