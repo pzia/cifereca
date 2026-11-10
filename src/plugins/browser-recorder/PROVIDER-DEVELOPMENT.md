@@ -1,6 +1,25 @@
 # Développer un provider Cifereca — contrat d'autonomie et d'isolation
 
-> Guide de référence, 07/11/2026. Source canonique dans `docs/PROVIDER-DEVELOPMENT.md`, copie **strictement identique** livrée avec Browser Recorder. Le ZIP d'une capture inclut cette copie sous `plugin-dev-kit/PROVIDER-DEVELOPMENT.md`. Les signatures de `cifereca.plugin_api` du Core réellement installé, exportées sous `plugin-dev-kit/contracts/`, **prévalent** sur les exemples et toute ancienne note. Contrats directeurs : [ARCHITECTURE](ARCHITECTURE.md), [PLUGIN-BOUNDARIES](PLUGIN-BOUNDARIES.md), #3171, #3719, #2385 et #4552.
+> Guide de référence, mis à jour le 10/11/2026. Source canonique dans `docs/PROVIDER-DEVELOPMENT.md`, copie **strictement identique** livrée avec Browser Recorder. Le ZIP d'une capture inclut cette copie sous `plugin-dev-kit/PROVIDER-DEVELOPMENT.md`. Les signatures de `cifereca.plugin_api` du Core réellement installé, exportées sous `plugin-dev-kit/contracts/`, **prévalent** sur les exemples et toute ancienne note. Contrats directeurs : [ARCHITECTURE](ARCHITECTURE.md), [PLUGIN-BOUNDARIES](PLUGIN-BOUNDARIES.md), #3171, #3719, #2385 et #4552.
+
+## Contrat commun cible : origine, offres et acquisitions (10/11/2026)
+
+**Règle commune à tous les providers : le Core ne conserve pas de « droit fournisseur » historique.** Il connaît l'origine exacte d'un livre, ses artefacts finaux vérifiés et leurs placements. Le provider observe une offre et sa **capacité actuelle de téléchargement** pour le compte exact ; il ne publie aucun pseudo-droit durable. Les champs `right`/`owned`/`Entitlement` de certaines ABI existantes sont des détails de compatibilité temporaire, **pas** une autorité métier cible.
+
+La synchronisation rapproche l'origine observée avec la chaîne locale `OriginLink → Artifact/SHA → Placement` vérifiée : artefact présent = pas de nouveau téléchargement ; artefact manquant = interroger l'offre actuelle, télécharger si permis et consenti, vérifier les octets finaux, publier puis dédoublonner. Les origines demeurent distinctes même pour un SHA identique. Aucun fichier local n'est supprimé automatiquement pour cause d'indisponibilité distante. **Aucun besoin de préserver les anciens historiques de pseudo-droits : on peut retélécharger, puis dédoublonner, lorsque le provider le permet.**
+
+| | Fournisseurs d'achat | Fournisseurs de prêt |
+| --- | --- | --- |
+| Inventaire | Ressources du compte et offres téléchargeables observées | Emprunts existants, occurrences de prêt, couverture et offres de livraison |
+| Absence d'inventaire | Ne révoque jamais l'origine ou le fichier local | Fin du prêt déductible uniquement d'une observation suffisamment complète du compte/branche exacts ; BnF `partial` n'atteste aucune fin |
+| Fichier manquant | Retélécharger si l'offre actuelle le permet | Retélécharger **l'emprunt existant** si disponible ; ne jamais créer un emprunt pour restaurer un fichier |
+| Opération mutatrice | Pas d'achat implicite en recherche ou Sync | Création d'emprunt par action explicite uniquement ; protéger également les GET de confirmation potentiellement mutateurs et les POST contre tout retry ambigu |
+
+**HTTP(S) :** le Core expose `HTTPX_TRANSPORT` et le téléchargement HTTPS générique attesté ; le plugin construit et contrôle ses appels métier, sa session, ses cookies/SSO, en utilisant ces primitives partagées. Il n'a pas à dupliquer une pile HTTP ni à déléguer tous les GET authentifiés à la seule API de livraison publique. Le Core orchestre consentement, admission, staging, inspection, traitements ADEPT/LCP autorisés, publication et déduplication ; un ACSM seul n'est pas un EPUB.
+
+**Tests/contrats :** les tests du Core utilisent des providers synthétiques, non des fixtures ou imports métier Kobo/Numilog/BnF ; les tests de règles d'achat et de prêt spécifiques restent dans leurs packages. Ne pas réécrire les interfaces existantes avant d'en vérifier les signatures réelles et les consommateurs ; ne pas reconstruire une base d'ownership sous un autre nom.
+
+Cette section et [ARCHITECTURE.md](ARCHITECTURE.md) font foi pour toutes les règles transversales. Les README des plugins décrivent uniquement les particularités réellement attestées de leur fournisseur (authentification, routes, statuts, limites, formats et workflow d'emprunt), sans dupliquer le contrat général.
 
 ## 1. Frontière impérative : plugin = faits, Core = décisions
 
@@ -9,7 +28,7 @@
 | Authentification/SSO | Formulaires, redirections, CSRF, cookies et renouvellement de session propres à la source, sous consentement et contraintes d'accès | Identité Cifereca, liaison de compte, portée du credential, révocation du contexte |
 | Catalogue / notice C | Recherche publique/privée, pagination, filtres **réellement disponibles**, détails et valeurs sourcées | Cache/projection génériques, consolidation persistante des notices et provenances par champ (chantier #4552), vues Recherche |
 | Inventaire personnel A | Prêts/achats/ressources positivement observés avec source, compte, branche, édition, révision et **couverture de lecture** | `SourceReference`, qualification des preuves, politiques d'absence, convergence |
-| Livraison B | Offre de fichier et capacité de téléchargement attestées, octets/ACSM/LCPL via protocole autorisé, staging confié par Core | Consentement ON/OFF par source, verrou/epoch, admission, SHA, Artifact, OriginLink, Placement, transaction et reprise |
+| Livraison B | Offre de livraison et capacité actuelle attestées ; protocole et requêtes métier via transport commun, octets/ACSM/LCPL en staging confié par Core | Consentement ON/OFF par source, verrou/epoch, admission, SHA, Artifact, OriginLink, Placement, transaction et reprise |
 | Erreur/quota | Codes fournisseur, état de session, quota effectivement observé, échéances, 401/403/429 | Sémantique de résultat, annulation, UI, métriques/Diagnostics, protection interprofils |
 | Fichiers et DRM | Déclarer le type de contenu et la méthode effectivement supportée ; déléguer aux runtimes publics | Chemins contrôlés, ADEPT/LCP supportés explicitement, publication/reçus ; pas de conversion de droits supposée |
 
@@ -22,7 +41,7 @@
 - `catalog.enrichment` : catégorie déclarée mais **pas d'API opérationnelle universelle à présumer** ; vérifier l'état du contrat #4552 avant de coder un consolidateur.
 - `provider.collection` : découverte versionnée de fournisseurs virtuels **si** le besoin de découverte dynamique est démontré ; ce n'est pas une obligation pour deux providers statiques. `ui.page`, `drm.handler`, `runtime.adapter`, `storage.target` sont des catégories distinctes, jamais des permissions implicites.
 - **Bundle multi-établissements** : un package `provider-biblioaccess` avec moteur partagé et plusieurs descripteurs `plugins[]` de type `provider.library`. Ex. `provider.biblioaccess.place-des-arts` (tenant confirmé 1717) et `provider.biblioaccess.la-rochelle` (tenant inconnu tant que non capturé). Chaque entrypoint crée une façade session/configuration spécifique, **pas un clone du moteur**. Un `requires` entre plugins est un lien déclaré, pas une licence d'importer les modules d'un autre ZIP : préférer le même package ou un contrat public dédié.
-- Les **identifiants du plugin, package, tenant, credential et compte** sont distincts. Un même domaine HTTPS, moteur ou opérateur commercial n'implique jamais une session partagée. Le provider achats `provider.numilog` ne partage ni cookies ni droits avec BiblioAccess prêt.
+- Les **identifiants du plugin, package, tenant, credential et compte** sont distincts. Un même domaine HTTPS, moteur ou opérateur commercial n'implique jamais une session partagée. Le provider achats `provider.numilog` ne partage ni cookies, comptes ni origines avec BiblioAccess prêt.
 
 Exemple **schématique** de manifeste (adapter versions, entrypoints, brokers, capacités et `config_schema` à l'API vérifiée ; aucune capacité acquise par simple déclaration) :
 
@@ -94,7 +113,7 @@ Chaque façade d'établissement fixe son propre `ProviderDescriptor.id`, son `te
 ## 4. Contrats d'acquisition, emprunt et DRM
 
 - **Ressources téléchargeables :** `cifereca.downloadable-resource/2` dans l'API publique ; `downloadable_resource_snapshot`, `downloadable_selected_offer_snapshot`, `downloadable_selected_delivery_candidate` et variantes runtime/guarded disponibles **seulement si leurs vraies signatures sont respectées**. Le Core qualifie les offres, le scope, le consentement par source et l'état de session avant la livraison ; le plugin ne crée pas de reçu B final.
-- **Droit descriptif facultatif :** une capacité de téléchargement positive, autorisée et spécifique au compte peut être exploitable avec `right=unknown` ou absent ; l'inverse est faux : `right=active` sans offre de fichier ne permet pas de GET. Un refus explicite du fournisseur reste opposable. Ne jamais inférer une route de téléchargement à partir d'un ISBN, titre, SHA ou lien d'une autre identité.
+- **Aucune permission historique nécessaire :** une capacité de téléchargement actuelle, positive et spécifique au compte est admissible même avec l'ancien champ `right` inconnu ou absent ; `right=active` sans offre n'autorise jamais de GET. Un refus explicite du fournisseur reste opposable. Ne jamais inférer une route de téléchargement à partir d'un ISBN, titre, SHA ou lien d'une autre identité.
 - **Prêts :** le support statique d'une action et la connexion active ne sont ni disponibilité d'une offre ni permission d'emprunter. Le quota réellement annoncé par le compte, les dates d'échéance, les limitations de branche et l'état de prêt sont des observations distinctes. Création d'un prêt : **action explicite et permission actuelle**, jamais à la recherche, dans `connect()`, à l'ouverture de la fiche ou lors de Sync. Ne pas définir une opération de restitution automatique hors contrat produit.
 - **ACSM/Adobe** et **LCPL/Readium LCP** sont deux parcours de licence différents ; aucun renommage ni déchiffrement supposé. Le plugin décrit `format`, `media_type`, `drm`, les candidats et preuves ; le runtime public approprié traite ce qui est autorisé. Livres audio/streaming : pas d'Artifact EPUB fictif.
 - **Relance :** un reçu interrompu ou un ancien chemin ne vaut pas autorisation d'un second GET. Garder la cohérence du compte et des révisions pendant les callbacks/SSO et jusqu'au commit, signaler une tentative ambiguë, permettre la reprise supervisée. Le Core décide idempotence/dédup, écrit les reçus et contrôle SHA/FS/SQLite.
