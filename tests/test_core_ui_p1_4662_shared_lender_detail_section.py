@@ -147,7 +147,7 @@ def test_confirmed_lender_loan_never_presents_delivery_or_copy_as_complete():
     assert "Prêt confirmé" in section.fields[0].value
     assert "non vérifiée" in section.fields[1].value
     assert "bloquée" in section.fields[2].value
-    assert "droits non vérifiés" in section.fields[2].value
+    assert "livraison locale" in section.fields[2].value
     assert not hasattr(section, "actions")
     assert not hasattr(section, "callback")
 
@@ -266,7 +266,7 @@ def test_gtk_progress_renders_three_nonactionable_rows_on_same_search_detail():
     assert len(events) == 1
     assert events[0].title == "Emprunt entre profils · suivi"
     assert [row.title for row in events[0].rows] == ["Prêt", "Livraison", "Transfert"]
-    assert "droits non vérifiés" in events[0].rows[2].subtitle
+    assert "livraison locale" in events[0].rows[2].subtitle
     assert "confirmé" in events[0].rows[0].subtitle
     assert all(not hasattr(row, "connect") for row in events[0].rows)
 
