@@ -56,6 +56,14 @@ def _confine() -> None:
     lib.seccomp_release.argtypes = (ctypes.c_void_p,)
     lib.seccomp_release.restype = None
 
+    # Required for unprivileged Linux processes to load seccomp filters.
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.prctl.argtypes = (ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
+                           ctypes.c_ulong, ctypes.c_ulong)
+    libc.prctl.restype = ctypes.c_int
+    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
+        raise RuntimeError("consolidator_sandbox_unavailable")
+
     context = lib.seccomp_init(0x7FFF0000)  # SCMP_ACT_ALLOW
     if not context:
         raise RuntimeError("consolidator_sandbox_unavailable")
