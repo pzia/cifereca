@@ -32,7 +32,7 @@ class NumilogOwnedDownloadTarget:
     session: object = field(compare=False, repr=False)
 
 
-def _resolve(service, entitlement_id, identity_id, item_id):
+def _resolve(service, entitlement_id, identity_id, item_id, *, canonical_offer_id=None):
     from ..brokers import SynchronizationBrokerImpl
     _require(getattr(service.current_identity, 'identity_id', None) == identity_id)
     _require(type(entitlement_id) is str and bool(entitlement_id))
@@ -48,7 +48,37 @@ def _resolve(service, entitlement_id, identity_id, item_id):
         account_id=account.unique_id, item_id=item_id,
     )
     rights, acquisitions = evidence.get('entitlements'), evidence.get('acquisitions')
-    _require(type(rights) is list and len(rights) == 1 and acquisitions == [])
+    # Before GET, absolutely no acquisition receipt may exist. Once the
+    # canonical executor has received its *own* completed bytes, it records
+    # a stage in the shared ledger before publishing OriginLink. Admit ONLY
+    # that exact staged receipt; never ignore a competing or legacy entry.
+    owned_stage = False
+    if canonical_offer_id is not None:
+        from ..plugin_api.provider_rights_observation import ProviderRightsScope
+        from .source_convergence import SourceKey
+        from .canonical_recovery import _stage_id, _SCHEMA, _STAGED
+        from .canonical_delivery_abi import has_complete_delivery_abi
+        _require(type(canonical_offer_id) is str and canonical_offer_id
+                 and len(canonical_offer_id) <= 256)
+        _require(has_complete_delivery_abi(
+            service._sessions.get(service._session_key('numilog', account.credential_id))
+        ))
+        key = SourceKey(
+            ProviderRightsScope(identity_id, account.provider_id,
+                                account.credential_id, account.unique_id),
+            item_id, item_id, 'purchase', NumilogOwnedDownloadTarget.branch,
+        )
+        receipt_id = _stage_id(key, canonical_offer_id)
+        owned_stage = (
+            type(acquisitions) is list and len(acquisitions) == 1
+            and type(acquisitions[0]) is dict
+            and acquisitions[0].get('acquisition_id') == receipt_id
+            and acquisitions[0].get('status') == _STAGED
+            and type(acquisitions[0].get('metadata')) is dict
+            and acquisitions[0]['metadata'].get('schema') == _SCHEMA
+        )
+    _require(type(rights) is list and len(rights) == 1
+             and (acquisitions == [] or owned_stage))
     right = rights[0]
     metadata = right.get('metadata')
     _require(type(metadata) is dict and metadata.get('source') == _ATTESTED_OWNED_RIGHT_SOURCE
@@ -62,7 +92,10 @@ def _resolve(service, entitlement_id, identity_id, item_id):
              and (metadata.get('downloadable') is None or metadata.get('downloadable') is True)
              and (metadata.get('owned') is None or metadata.get('owned') is True)
              and (metadata.get('archived') is None or metadata.get('archived') is False))
-    _require(not service.storage.numilog_purchase_has_local_conflict(
+    # The single Core-owned staged journal is not another local Placement.
+    # Every other collision is still a veto, including another receipt for
+    # the same edition with a different offer ID.
+    _require(owned_stage or not service.storage.numilog_purchase_has_local_conflict(
         credential_id=account.credential_id, item_id=item_id,
     ))
     scalar = lambda key: metadata.get(key) if type(metadata.get(key)) is str else None
@@ -109,63 +142,18 @@ def target_for_entry(service, entry):
         return None
 
 
-def _selected_owned_right_current(service, target) -> bool:
-    """Readmit a manual right *after* its own canonical receipt was journaled.
-
-    Unlike _resolve(), this must not require acquisitions == []: the shared
-    canonical executor writes its own pending recovery receipt between GET
-    and OriginLink publication. This read checks ONLY the one still-active
-    supplier right and exact selected owner/session/configuration. Core's
-    canonical publisher separately rejects competing final publications.
-    """
+def _selected_owned_right_current(service, target, *, selected_offer_id=None) -> bool:
+    """Live right and source check, permitting only Core's own staged receipt."""
     try:
-        if (type(target) is not NumilogOwnedDownloadTarget
-                or getattr(service.current_identity, "identity_id", None)
-                   != target.identity_id
-                or service._sessions.get(
-                    service._session_key(target.provider_id, target.credential_id)
-                ) is not target.session
-                or id(target.session) != target.session_id
-                or service.storage.metadata_get("identity-directory-migration-v1")):
+        if type(target) is not NumilogOwnedDownloadTarget:
             return False
-        roots = _identity_root(service, target.identity_id)
-        if roots is None or (
-            service.config.get("library.directory", "~/EBooks"),
-            tuple(str(path) for path in roots),
-        ) != target.configuration:
-            return False
-        evidence = service.storage.numilog_purchase_preflight_evidence(
-            identity_id=target.identity_id, credential_id=target.credential_id,
-            account_id=target.account_id, item_id=target.item_id,
+        fresh, _ = _resolve(
+            service, target.entitlement_id, target.identity_id, target.item_id,
+            canonical_offer_id=selected_offer_id,
         )
-        rights = evidence.get("entitlements")
-        if type(rights) is not list or len(rights) != 1:
-            return False
-        right = rights[0]
-        metadata = right.get("metadata")
-        return (
-            type(metadata) is dict
-            and metadata.get("source") == _ATTESTED_OWNED_RIGHT_SOURCE
-            and right.get("entitlement_id") == target.entitlement_id
-            and right.get("identity_id") == target.identity_id
-            and right.get("provider_id") == target.provider_id
-            and right.get("credential_id") == target.credential_id
-            and right.get("account_id") == target.account_id
-            and right.get("item_id") == target.item_id
-            and right.get("entitlement_type") == "owned"
-            and right.get("state") == "active"
-            and right.get("loan_id") is None
-            and right.get("expires_at") is None
-            and (metadata.get("downloadable") is None
-                 or metadata.get("downloadable") is True)
-            and (metadata.get("owned") is None
-                 or metadata.get("owned") is True)
-            and (metadata.get("archived") is None
-                 or metadata.get("archived") is False)
-        )
+        return fresh == target and fresh.session is target.session
     except Exception:
         return False
-
 
 def obtain(service, target):
     """Revalidate the exact target throughout the locked manual executor."""
