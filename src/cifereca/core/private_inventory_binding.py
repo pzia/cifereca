@@ -6,6 +6,9 @@ resource admission and publication keep their independent stronger guards.
 from __future__ import annotations
 
 from inspect import getattr_static
+from typing import Any
+
+from .passive_source_session import passive_private_library_session
 
 from .source_context import source_context_epoch
 
@@ -80,3 +83,67 @@ def private_inventory_binding_current(service, account, session, *, scope, epoch
         )
     except Exception:
         return False
+
+
+def exact_private_inventory_binding_valid(
+    service: Any, account: Any, *, session: Any, provider_id: str,
+) -> bool:
+    """Refuse ambiguous, detached or disabled owned-store source requests.
+
+    Check persisted connection AND in-memory account before accessing library().
+    Do not fall back to current_identity or infer access from a connected
+    session or public SearchResult.
+    """
+    try:
+        if getattr(account, "provider_id", None) != provider_id:
+            return False
+        identity = getattr(account, "identity_id", None)
+        credential = getattr(account, "credential_id", None)
+        account_id = getattr(account, "unique_id", None)
+        if not all(type(x) is str and x and "\x00" not in x
+                   for x in (identity, credential, account_id)):
+            return False
+        matches = [
+            item for item in service.accounts
+            if getattr(item, "provider_id", None) == provider_id
+            and getattr(item, "credential_id", None) == credential
+        ]
+        if (len(matches) != 1
+                or matches[0].identity_id != identity
+                or matches[0].unique_id != account_id
+                or not service.sync_source_enabled(account)
+                or service.identity_by_id(identity) is None):
+            return False
+        # The previous check enumerated every provider connection and
+        # omitted the SQLite borrower account entirely. A disconnected or
+        # reassigned borrower must not attest a fresh private Numilog manifest
+        # or even enter a legacy selected purchase preflight. Use the exact,
+        # bounded Core snapshot check; it includes the connection_id join.
+        if service.storage.provider_scope_account_bound(
+            identity_id=identity, provider_id=provider_id,
+            credential_id=credential, account_id=account_id,
+        ) is not True:
+            return False
+        # A login/reconnect can replace a session while library() is
+        # retrieving pages. Never accept an old in-flight session as the
+        # current authority, even if its credential and connected flag match.
+        current_sessions = [
+            active for active in getattr(service, "_sessions", {}).values()
+            if (coordinates := passive_private_library_session(active)) is not None
+            and coordinates[0] == account.provider_id
+            and coordinates[1] == credential
+        ]
+        if len(current_sessions) != 1 or current_sessions[0] is not session:
+            return False
+        coordinates = passive_private_library_session(session)
+        return (
+            coordinates is not None
+            and coordinates[0] == account.provider_id
+            and coordinates[1] == credential
+            and coordinates[2] is True
+            and coordinates[3] is True
+        )
+    except Exception:
+        # A corrupt binding is never permission for a private provider call.
+        return False
+
