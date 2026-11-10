@@ -965,20 +965,6 @@ class LibraryService:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _migrate_legacy_flat_kobo_files(self, default_identity: Identity) -> None:
-        """Retired #3196 W5: never move files on v0.7 backup authority.
-
-        The former private helper copied a legacy flat-path file to the
-        identity's Kobo directory, rewrote backup_items/placements, then
-        unlinked the original. A backup row does not attest canonical source
-        ownership or permission to move bytes. No production caller remains;
-        preserve this facade signature as an explicit, side-effect-free veto
-        for older integrations rather than silently allowing unsafe I/O.
-        Use the attested, journaled identity-directory migration for actual
-        filesystem moves, or the exact Core relink operator for references.
-        """
-        raise RuntimeError("legacy_kobo_flat_migration_retired")
-
     def adept_profile_choices(self) -> list[dict[str, str]]:
         """Fetch only usable profile references; choosing/persisting stays explicit."""
         choices = []
