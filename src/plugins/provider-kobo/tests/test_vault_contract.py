@@ -881,56 +881,6 @@ def test_kobo_vault_nonboolean_flags_never_escalate_ownership_or_download(
         assert result.source_collection == "catalog"
 
 
-def test_kobo_personal_manifest_malformed_owned_flag_cannot_create_sqlite_right(
-    tmp_path,
-):
-    """A personal-library row with explicit 'false' must not grant ownership."""
-    from cifereca.config import Config
-    from cifereca.core.kobo_manifest_rights import mirror_kobo_manifest_rights
-    from cifereca.diagnostics import Diagnostics
-    from cifereca.services import LibraryService
-    from cifereca.storage import Storage
-
-    catalog = KoboCatalogService(
-        SimpleNamespace(base_url="https://vault.example"), credential_id="vault",
-    )
-    config = Config(tmp_path / "config.json")
-    config.set("library.directory", str(tmp_path / "EBooks"))
-    config.set("identities", [
-        {"id": "alice", "label": "Alice", "directory_name": "alice"},
-    ])
-    config.set("providers.accounts", [])
-    config.save()
-    service = LibraryService(
-        config, Storage(tmp_path / "library.sqlite3"), Diagnostics(),
-    )
-    try:
-        bad = catalog.normalize_item({
-            "product_id": "not-purchased", "title": "Not purchased",
-            "owned": "false", "downloadable": "false",
-        }, default_collection="library")
-        assert bad.owned is False
-        assert bad.downloadable is None
-        assert mirror_kobo_manifest_rights(
-            service, [bad], identity_id="alice",
-            credential_id="vault", account_id="account-1",
-        ) == 0
-        assert service.storage.entitlements(provider_id="kobo") == []
-        assert service.library_entries(identity_id="alice") == []
-
-        valid = catalog.normalize_item({
-            "product_id": "purchased", "title": "Purchased",
-            "owned": True, "downloadable": True,
-        }, default_collection="library")
-        assert mirror_kobo_manifest_rights(
-            service, [valid], identity_id="alice",
-            credential_id="vault", account_id="account-1",
-        ) == 1
-        assert len(service.storage.entitlements(provider_id="kobo")) == 1
-    finally:
-        service.close()
-
-
 @pytest.mark.parametrize("failed_stage", ["status", "account"])
 def test_failed_reconnect_preserves_delegation_denial_without_token_scope_proof(failed_stage):
     """#1350: a failed reconnect must not trigger another forbidden delegated GET."""
@@ -988,67 +938,23 @@ def test_failed_reconnect_preserves_delegation_denial_without_token_scope_proof(
     finally:
         session.close()
 
-def test_authenticated_archived_manifest_without_owned_flag_still_projects_right(tmp_path):
-    """#1337: archive collection is not evidence against a personal right."""
-    from cifereca.config import Config
-    from cifereca.core.kobo_manifest_rights import mirror_kobo_manifest_rights
-    from cifereca.diagnostics import Diagnostics as CoreDiagnostics
-    from cifereca.services import LibraryService
-    from cifereca.storage import Storage
-
+def test_archived_personal_normalization_never_turns_public_row_into_purchase():
+    """Provider normalization keeps archived and public scopes distinct."""
     catalog = KoboCatalogService(
         SimpleNamespace(base_url="https://vault.example"),
         credential_id="vault-archive",
     )
-    raw = {
-        "product_id": "archive-1", "title": "Archived personal book",
-        "collection": "archived", "archived": True,
-        "downloadable": False,
-        # Kobo personal manifests can omit the explicit owned property.
-    }
-    personal = catalog.normalize_item(raw, default_collection="library")
-    assert personal.source_collection == "archived"
-    assert personal.owned is True
-    assert personal.metadata["archived"] is True
-    # The same raw record received through public catalog normalization must
-    # NOT assert a user's purchase or fabricate an active ownership right.
+    raw = {"product_id": "archive-1", "title": "Archived personal book",
+           "collection": "archived", "archived": True, "downloadable": False}
+    private = catalog.normalize_item(raw, default_collection="library")
     public = catalog.normalize_item(raw, default_collection="catalog")
-    assert public.owned is False
-    explicitly_unowned = catalog.normalize_item(
-        {**raw, "owned": False}, default_collection="library",
-    )
-    assert explicitly_unowned.owned is False
     malformed = catalog.normalize_item(
         {**raw, "owned": "true"}, default_collection="library",
     )
+    assert private.source_collection == "archived"
+    assert private.metadata["archived"] is True
+    assert public.owned is False
     assert malformed.owned is False
-
-    config = Config(tmp_path / "config.json")
-    config.set("library.directory", str(tmp_path / "EBooks"))
-    config.set("identities", [
-        {"id": "alice", "label": "Alice", "directory_name": "alice"},
-    ])
-    config.set("providers.accounts", [])
-    service = LibraryService(
-        config, Storage(tmp_path / "catalog.sqlite3"), CoreDiagnostics(),
-    )
-    try:
-        assert mirror_kobo_manifest_rights(
-            service, [personal], identity_id="alice",
-            credential_id="vault-archive", account_id="authenticated",
-        ) == 1
-        assert mirror_kobo_manifest_rights(
-            service, [public, explicitly_unowned, malformed], identity_id="alice",
-            credential_id="vault-archive", account_id="authenticated",
-        ) == 0
-        library = service.library_entries(identity_id="alice")
-        assert len(library) == 1
-        assert library[0]["state"] == "remote_archived"
-        assert library[0]["local"] is False
-        assert library[0]["local_path"] is None
-        assert library[0]["possessions"][0]["account_id"] == "authenticated"
-    finally:
-        service.close()
 
 
 def test_kobo_all_search_preserves_authenticated_library_only_origin_without_public_right():

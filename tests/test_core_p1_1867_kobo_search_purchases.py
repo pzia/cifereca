@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
-from cifereca.core.kobo_manifest_rights import mirror_kobo_manifest_rights
+from tests.kobo_persisted_right_fixture import seed_persisted_purchase
 from cifereca.gui.query_model import result_row
 from cifereca.services import LibraryService
 from tests.test_core_1337_kobo_personal_manifest_rights import _row, _service
@@ -56,10 +56,14 @@ def test_kobo_offers_require_active_right_exact_profile_credential_product_and_f
         lookups, runtime = _install_fake_vault(service, monkeypatch)
         active = _offer()
         archived = _offer(product="archived")
-        assert mirror_kobo_manifest_rights(
-            service, [active, _row(product="archived", archived=True)],
-            identity_id="alice", credential_id="vault-alice", account_id="account",
-        ) == 2
+        seed_persisted_purchase(
+            service, identity_id="alice", credential_id="vault-alice",
+            account_id="account", edition_id="active",
+        )
+        seed_persisted_purchase(
+            service, identity_id="alice", credential_id="vault-alice",
+            account_id="account", edition_id="archived", state="archived",
+        )
         # The legacy direct GET is retired even for a persisted active right.
         # Selected canonical A→B may still be offered through its own ABI.
         assert LibraryService.can_direct_download(service, active) is False
@@ -95,9 +99,9 @@ def test_stale_kobo_notice_is_never_promoted_by_existing_right(tmp_path, monkeyp
     try:
         lookups, runtime = _install_fake_vault(service, monkeypatch)
         active = _offer()
-        mirror_kobo_manifest_rights(
-            service, [active], identity_id="alice",
-            credential_id="vault-alice", account_id="account",
+        seed_persisted_purchase(
+            service, identity_id="alice", credential_id="vault-alice",
+            account_id="account", edition_id="active",
         )
         stale = replace(active, metadata={
             "search_provenance": "known_catalog_stale",

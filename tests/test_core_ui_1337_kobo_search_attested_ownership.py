@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
 
-from cifereca.core.kobo_manifest_rights import mirror_kobo_manifest_rights
+from tests.kobo_persisted_right_fixture import seed_persisted_purchase
 from tests.test_core_1337_kobo_personal_manifest_rights import _row, _service
 
 
@@ -83,10 +83,14 @@ def test_search_ownership_and_archive_labels_require_personal_rights(tmp_path):
     archived = _row(product="archive-1", credential="vault-alice", archived=True)
     catalog_claim = _row(product="catalog-claim", credential="vault-alice")
     try:
-        assert mirror_kobo_manifest_rights(
-            service, [active, archived], identity_id="alice",
-            credential_id="vault-alice", account_id="personal",
-        ) == 2
+        seed_persisted_purchase(
+            service, identity_id="alice", credential_id="vault-alice",
+            account_id="personal", edition_id="active-1",
+        )
+        seed_persisted_purchase(
+            service, identity_id="alice", credential_id="vault-alice",
+            account_id="personal", edition_id="archive-1", state="archived",
+        )
         states = service.kobo_personal_right_states("alice")
         assert states == {
             ("vault-alice", "active-1"): "active",
@@ -116,9 +120,9 @@ def test_search_cannot_reuse_other_identity_kobo_rights(tmp_path):
     service = _service(tmp_path)
     purchased = _row(product="alice-private", credential="vault-alice")
     try:
-        mirror_kobo_manifest_rights(
-            service, [purchased], identity_id="alice",
-            credential_id="vault-alice", account_id="personal",
+        seed_persisted_purchase(
+            service, identity_id="alice", credential_id="vault-alice",
+            account_id="personal", edition_id="alice-private",
         )
         host, shown = _fake_host(
             [purchased], service.kobo_personal_right_states("bob"),
