@@ -14,6 +14,8 @@ from .numilog_manual_acquisition import require_source
 from .numilog_local_preview import _identity_root
 from .owned_library_download import OwnedDownloadRejected, _require
 
+_ATTESTED_OWNED_RIGHT_SOURCE = "numilog.authenticated_library"
+
 
 @dataclass(frozen=True, repr=False)
 class NumilogOwnedDownloadTarget:
@@ -49,7 +51,7 @@ def _resolve(service, entitlement_id, identity_id, item_id):
     _require(type(rights) is list and len(rights) == 1 and acquisitions == [])
     right = rights[0]
     metadata = right.get('metadata')
-    _require(type(metadata) is dict and metadata.get('source') == 'numilog.authenticated_library'
+    _require(type(metadata) is dict and metadata.get('source') == _ATTESTED_OWNED_RIGHT_SOURCE
              and right.get('entitlement_id') == entitlement_id
              and right.get('identity_id') == identity_id
              and right.get('credential_id') == account.credential_id
@@ -143,7 +145,7 @@ def _selected_owned_right_current(service, target) -> bool:
         metadata = right.get("metadata")
         return (
             type(metadata) is dict
-            and metadata.get("source") == "numilog.authenticated_library"
+            and metadata.get("source") == _ATTESTED_OWNED_RIGHT_SOURCE
             and right.get("entitlement_id") == target.entitlement_id
             and right.get("identity_id") == target.identity_id
             and right.get("provider_id") == target.provider_id
