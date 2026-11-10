@@ -114,7 +114,7 @@ def test_double_dialog_callback_schedules_one_native_copy():
     native.assert_called_once()
 
 
-@pytest.mark.parametrize("rebind", ["reader", "source", "selection", "detail"])
+@pytest.mark.parametrize("rebind", ["reader", "source", "selection", "detail", "search_page"])
 def test_stale_ui_after_placement_check_never_shows_send_dialog(rebind):
     h, _, _, native, display = prepared()
     assert display()
@@ -126,6 +126,8 @@ def test_stale_ui_after_placement_check_never_shows_send_dialog(rebind):
         h.service._source_context_epoch += 1
     elif rebind == "selection":
         h.window._selected_search_id = "another"
+    elif rebind == "search_page":
+        h.window.search_page = NS(detail=h.window.search_page.detail)
     else:
         h.window.search_page.detail._rendered_search_detail = (
             replace(h.item), object(),
