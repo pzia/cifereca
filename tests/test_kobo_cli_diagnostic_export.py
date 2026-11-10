@@ -51,12 +51,16 @@ def test_cli_redacts_persisted_private_book_and_provider_details(
         "failure_streak": 2,
     }))
 
-    # Detailed data must remain available to local reconciliation, but must
-    # not be printed through the CLI or exported to support tickets.
+    # Retired W2 archives remain on disk, but cannot enter current diagnostics.
+    archived = service.storage.backup_list("kobo")
     detailed = service.kobo_backup_diagnostic()
-    assert detailed["error_summary"][0]["message"] == error
-    assert detailed["error_examples"][0]["item_id"] == item_id
-    assert detailed["reconcile_examples"][0]["local_path"] == path
+    assert detailed["items"] == 0
+    assert detailed["statuses"] == {}
+    assert detailed["error_summary"] == []
+    assert detailed["error_examples"] == []
+    assert detailed["reconcile_examples"] == []
+    assert detailed["attention_examples"] == []
+    assert service.storage.backup_list("kobo") == archived
 
     def no_network(*_args, **_kwargs):
         pytest.fail("a local diagnostic must never connect to providers")
@@ -78,14 +82,12 @@ def test_cli_redacts_persisted_private_book_and_provider_details(
         assert data["legacy_checkpoint_freshness"] == [
             {"source_index": 1, "age_known": False},
         ]
-        assert data["items"] == 3
-        assert data["statuses"] == {
-            "error": 1, "reconcile_required": 1, "attention_required": 1,
-        }
-        assert data["error_count"] == 1
-        assert data["reconcile_count"] == 1
-        assert data["attention_count"] == 1
-        assert data["items_blocked_by_scope"] == 1
+        assert data["items"] == 0
+        assert data["statuses"] == {}
+        assert data["error_count"] == 0
+        assert data["reconcile_count"] == 0
+        assert data["attention_count"] == 0
+        assert data["items_blocked_by_scope"] == 0
         assert len(data["sources"]) == 1
         assert data["sources"][0]["status"] == "partial"
         assert data["sources"][0]["remaining"] == 1
@@ -98,8 +100,8 @@ def test_cli_redacts_persisted_private_book_and_provider_details(
             "reconcile_examples", "attention_examples",
         ):
             assert private not in output
-        # In-memory diagnostic is not mutated by creating a shareable view.
-        assert service.kobo_backup_diagnostic()["error_summary"][0]["message"] == error
+        assert service.kobo_backup_diagnostic() == detailed
+        assert service.storage.backup_list("kobo") == archived
     finally:
         service.close()
 
