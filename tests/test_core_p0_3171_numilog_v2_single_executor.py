@@ -102,12 +102,13 @@ def test_guarded_only_source_does_not_enter_legacy_startup_or_get(monkeypatch):
         service=SimpleNamespace(accounts=[account]),
         _source_id=lambda _account: "sync:exact",
     )
-    monkeypatch.setattr(startup, "_binding", lambda *_a: (account, session, ()))
-    monkeypatch.setattr(startup, "mode", lambda *_a: "on_start")
+    # The retired worker has no binding/GET callbacks to monkeypatch.
+    # Its only output is a passive not-due or historical migration receipt.
     assert startup.eligible_source_ids(broker, "owner") == ()
     result = startup.execute(broker, "owner", "startup")
     assert result.ok is True and result.facts["status"] == "not_due"
-    assert result.facts["attempted"] == 0
+    assert result.changed == 0
+    assert result.facts["legacy_writer_active"] is False
 
 
 @pytest.mark.parametrize("missing", _V2_GUARDED)
@@ -116,33 +117,12 @@ def test_partial_guarded_abi_cannot_claim_single_executor(missing):
     assert startup._canonical_source_delivery_active(_session(members)) is False
 
 
-def test_inflight_legacy_admission_revoked_when_canonical_abi_appears():
-    """Same-session ABI upgrade between queue and GET cannot retain legacy grant."""
-    import ast
-    from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[1]
-              / "src/cifereca/core/numilog_materialization_startup.py")
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    execute = next(node for node in tree.body
-                   if isinstance(node, ast.FunctionDef) and node.name == "execute")
-    same_source = next(node for node in ast.walk(execute)
-                       if isinstance(node, ast.FunctionDef)
-                       and node.name == "same_source")
-    session = _session(())
-    captured = {
-        "_same_binding": lambda *_args: True,
-        "_canonical_source_delivery_active": startup._canonical_source_delivery_active,
-        "broker": object(), "source_id": "source", "scope": ("source",),
-        "session": session, "roots": (),
-    }
-    module = ast.fix_missing_locations(ast.Module(body=[same_source], type_ignores=[]))
-    exec(compile(module, str(source), "exec"), captured)
-    current = captured["same_source"]
-    assert current() is True
-    for name in _V2_GUARDED:
-        setattr(session, name, lambda *_a, **_k: None)
-    assert current() is False
-    # Removing one required method cannot qualify a partial ABI as canonical.
-    delattr(session, _V2_GUARDED[-1])
-    assert current() is True
+def test_retired_startup_physically_contains_no_direct_get_or_manifest():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/core/numilog_materialization_startup.py").read_text()
+    assert "download_direct(" not in source
+    assert ".library(" not in source
+    assert "def same_source(" not in source
+    assert "numilog_materialization_claim_startup" not in source
