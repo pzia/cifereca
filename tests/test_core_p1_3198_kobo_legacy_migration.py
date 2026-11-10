@@ -13,7 +13,6 @@ import pytest
 
 from cifereca.config import Config
 from cifereca.core import source_materialization_schedule as schedule
-from cifereca.core.kobo_backup import _kobo_checkpoint_for
 
 
 class Metadata:
@@ -35,16 +34,6 @@ def _account(source_id, identity):
         source_id=source_id, identity_id=identity, credential_id="credential-" + identity,
         provider_id="kobo", unique_id="borrower-" + identity,
     )
-
-
-@pytest.fixture
-def clock(monkeypatch):
-    now = [100_000]
-    monkeypatch.setattr(schedule, "_account_id", lambda account: account.source_id)
-    monkeypatch.setattr(schedule.time, "time", lambda: now[0])
-    # A real empty local backup checkpoint permits a first explicit attempt.
-    monkeypatch.setattr("cifereca.core.kobo_backup._kobo_checkpoint_for", lambda *_: None)
-    return now
 
 
 def _legacy_config(path, *, enabled=True):
@@ -136,142 +125,36 @@ def test_invalid_or_existing_migration_metadata_is_never_overwritten(tmp_path):
     assert Config(path).get("migration_history") == "legacy-extension"
 
 
-def test_scoped_attempt_freezes_legacy_retry_without_granting_consent(
-    clock, monkeypatch,
-):
+@pytest.mark.parametrize("account_id", ["source-alice", "source-bob"])
+def test_retired_w2_startup_never_dispatches_or_mutates(account_id):
+    """Previously allowed retry scheduling is now intentionally disabled."""
     storage = Metadata()
-    old = [180]
-    service = NS(
-        storage=storage, kobo_backup_interval_minutes=lambda: old[0],
-        _kobo_backup_account_due=lambda _credential: True,
-    )
-    alice = _account("source-alice", "alice")
-    bob = _account("source-bob", "bob")
-    # First attempt never depends on the legacy ENABLE flag or another
-    # source's clock. Only the existing caller's source-policy gate dispatches.
-    assert schedule.on_start_due(service, alice)
-    assert schedule.on_start_due(service, bob)
-    assert schedule.mark_on_start_attempt(service, alice)
-    assert storage.rows[schedule.retry_interval_key("source-alice")] == "180"
-    assert storage.rows["sync.source.materialization.last_attempt.source-alice"] == "100000"
-    assert schedule.retry_interval_key("source-bob") not in storage.rows
-
-    # Editing the retired global value does not shorten Alice's saved clock,
-    # and Bob independently gets the new conservative 60-minute baseline.
-    old[0] = 15
-    assert schedule.mark_on_start_attempt(service, bob)
-    assert storage.rows[schedule.retry_interval_key("source-bob")] == "60"
-    clock[0] += 90 * 60
-    assert schedule.on_start_due(service, alice) is False
-    assert schedule.on_start_due(service, bob) is True
-    clock[0] += 91 * 60
-    assert schedule.on_start_due(service, alice) is True
-
-
-@pytest.mark.parametrize("corrupt", [
-    "0", "15", "59", "60000", "-60", "+60", "0x60", "60 ", "",
-    "１２0", True, 60, None,
-])
-def test_malformed_scoped_cadence_never_weakens_retry_admission(
-    clock, corrupt,
-):
-    storage = Metadata()
-    account = _account("source", "alice")
-    service = NS(
-        storage=storage, kobo_backup_interval_minutes=lambda: 60,
-        _kobo_backup_account_due=lambda *_: True,
-    )
-    if corrupt is not None:
-        storage.rows[schedule.retry_interval_key("source")] = corrupt
-        assert schedule.on_start_due(service, account) is False
-        assert schedule.mark_on_start_attempt(service, account) is False
-        assert "sync.source.materialization.last_attempt.source" not in storage.rows
-    else:
-        # A missing exact-source cadence is a safe first-use migration, not
-        # a malformed explicit value.
-        assert schedule.on_start_due(service, account)
-
-
-@pytest.mark.parametrize("fail_kind", ["retry", "clock"])
-def test_failed_metadata_commit_refuses_startup_dispatch(
-    clock, fail_kind,
-):
-    storage = Metadata()
-    account = _account("source", "alice")
-    service = NS(
-        storage=storage, kobo_backup_interval_minutes=lambda: 120,
-        _kobo_backup_account_due=lambda *_: True,
-    )
-    storage.fail = (
-        schedule.retry_interval_key("source") if fail_kind == "retry"
-        else "sync.source.materialization.last_attempt.source"
-    )
-    assert schedule.mark_on_start_attempt(service, account) is False
-    assert storage.metadata_get("sync.source.materialization.last_attempt.source") is None
-
-
-def test_resumed_checkpoint_uses_pinned_scoped_window_not_global(
-    clock, monkeypatch,
-):
-    from cifereca.core.kobo_backup import _kobo_backup_due
-
-    storage = Metadata()
-    legacy = [180]
-    account = _account("source-alice", "alice")
-    checkpoint = {"status": "complete", "updated_at": clock[0]}
-    monkeypatch.setattr(
-        "cifereca.core.kobo_backup._kobo_checkpoint_for",
-        lambda *_args: checkpoint,
-    )
-    service = NS(
-        storage=storage,
-        config=NS(get=lambda key, default=None: legacy[0]),
-        kobo_backup_interval_minutes=lambda: legacy[0],
-        identity_for_connection=lambda provider, credential: NS(identity_id="alice"),
-    )
-    service._kobo_backup_account_due = lambda credential, *, interval_minutes=None: (
-        _kobo_backup_due(
-            service, credential_id=credential, interval_minutes=interval_minutes,
-        )
-    )
-    assert schedule.mark_on_start_attempt(service, account)
-    assert storage.metadata_get(schedule.retry_interval_key("source-alice")) == "180"
-
-    # Both thresholds matter: 200 min since the scoped attempt but only
-    # 80 min since a completed checkpoint. The retired global value of 15
-    # would admit this old checkpoint; the source-pinned 180 must not.
-    clock[0] += 200 * 60
-    checkpoint["updated_at"] = clock[0] - 80 * 60
-    legacy[0] = 15
-    assert service._kobo_backup_account_due("credential-alice") is True
-    assert schedule.on_start_due(service, account) is False
-    checkpoint["updated_at"] = clock[0] - 190 * 60
-    assert schedule.on_start_due(service, account) is True
-
-
-def test_invalid_explicit_checkpoint_interval_is_never_due(clock, monkeypatch):
-    from cifereca.core.kobo_backup import _kobo_backup_due
-
-    checkpoint = {"status": "complete", "updated_at": 1}
-    monkeypatch.setattr(
-        "cifereca.core.kobo_backup._kobo_checkpoint_for",
-        lambda *_args: checkpoint,
-    )
-    service = NS(
-        config=NS(get=lambda *_: 1),
-        identity_for_connection=lambda *_: NS(identity_id="alice"),
-    )
-    for invalid in (0, 15, True, "60", 999999):
-        assert _kobo_backup_due(
-            service, credential_id="credential-alice", interval_minutes=invalid,
-        ) is False
-
-
-def test_oversized_legacy_cadence_fails_closed_without_truncation(clock):
-    account = _account("source", "alice")
-    service = NS(
-        storage=Metadata(), kobo_backup_interval_minutes=lambda: 99999999,
-        _kobo_backup_account_due=lambda *_: True,
-    )
+    storage.rows[schedule.policy_key(account_id)] = "1"
+    storage.rows[schedule.retry_interval_key(account_id)] = "60"
+    before = deepcopy(storage.rows)
+    service = NS(storage=storage)
+    account = _account(account_id, "alice")
+    assert schedule.can_enable_kobo_on_start(service, account) is False
     assert schedule.on_start_due(service, account) is False
     assert schedule.mark_on_start_attempt(service, account) is False
+    assert schedule.kobo_on_start_sessions(service) == ()
+    assert storage.rows == before
+
+
+@pytest.mark.parametrize("invalid", [None, "", "0", "15", "59", "60000",
+                                     "-60", "+60", True, 60, "120"])
+def test_legacy_retry_metadata_cannot_authorize_retired_w2(invalid):
+    storage = Metadata()
+    account = _account("source", "alice")
+    if invalid is not None:
+        storage.rows[schedule.retry_interval_key("source")] = invalid
+    before = deepcopy(storage.rows)
+    service = NS(storage=storage)
+    assert schedule.on_start_due(service, account) is False
+    assert schedule.mark_on_start_attempt(service, account) is False
+    assert storage.rows == before
+
+
+def test_retired_w2_legacy_keys_still_address_historical_values():
+    assert schedule.policy_key("source") == "sync.source.materialization.on_start.source"
+    assert schedule.retry_interval_key("source") == "sync.source.materialization.retry_minutes.source"
