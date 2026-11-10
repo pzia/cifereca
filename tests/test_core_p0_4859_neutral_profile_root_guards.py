@@ -7,9 +7,6 @@ import pytest
 from cifereca.core.local_profile_root_guards import (
     ProfileRootRejected, checked_profile_roots, path_within_roots,
 )
-from cifereca.core.kobo_local_reconciliation import (
-    ReconciliationRejected, _roots, _within,
-)
 
 
 def service(tmp_path):
@@ -70,23 +67,7 @@ def test_colliding_profile_directory_refuses(tmp_path):
         )
 
 
-def test_legacy_w2_alias_preserves_codes_without_catching_provider_exception(
-    tmp_path, monkeypatch,
-):
+def test_retired_kobo_w2_root_aliases_are_absent():
     from cifereca.core import kobo_local_reconciliation as adapter
-
-    host, library = service(tmp_path)
-    monkeypatch.setattr(
-        adapter, "_kobo_preview_paths", lambda *_: (library, library),
-    )
-    assert _roots(host, "alice") == (library, library / "Alice")
-    assert _within(str(library / "Alice" / "book.epub"), (library,))
-    with pytest.raises(ReconciliationRejected, match="unknown_identity"):
-        _roots(host, "missing")
-
-    def provider_error(*_):
-        raise ValueError("upstream-data-unavailable")
-
-    monkeypatch.setattr(adapter, "_kobo_preview_paths", provider_error)
-    with pytest.raises(ValueError, match="upstream-data-unavailable"):
-        _roots(host, "alice")
+    assert not hasattr(adapter, "_roots")
+    assert not hasattr(adapter, "_within")

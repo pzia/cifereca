@@ -16,42 +16,12 @@ from ..library_files import safe_library_component
 from ..paths import config_file, database_file
 from ..identities import Identity
 from ..storage import Storage, CURRENT_SCHEMA_VERSION
-from .profile_source_paths import _kobo_preview_paths
 from .local_attachment_refusal_types import ReconciliationRejected
 
 
 def _require(condition, code):
     if not condition:
         raise ReconciliationRejected(code)
-
-
-def _roots(service, identity):
-    """W2 compatibility alias; Core-neutral implementation is independent."""
-    from .local_profile_root_guards import checked_profile_roots, ProfileRootRejected
-    try:
-        return checked_profile_roots(
-            service, identity, roots_for_identity=_kobo_preview_paths,
-        )
-    except ProfileRootRejected as exc:
-        # Preserve the existing finite W2 error vocabulary.
-        raise ReconciliationRejected(str(exc)) from None
-
-
-def _within(path, roots):
-    """W2 compatibility alias, not a source-right or acquisition proof."""
-    from .local_profile_root_guards import path_within_roots
-    return path_within_roots(path, roots)
-
-
-def reconcile_kobo_local(service, *, credential_id, account_id, item_id, expected_sha256,
-                         path=None, confirmation=None, undo_operation=None, identity_id=None,
-                         cancelled=lambda: False, on_committed=None):
-    """Retired W4 entry: historical receipts never grant positive Core B."""
-    # Public direct callers must not reach SQL, filesystem or the old writer
-    # for preview/confirm/undo, even with a formerly valid plan token.
-    raise ReconciliationRejected("legacy_reconciliation_retired")
-
-
 
 
 def reconcile_existing_profile(*, config_path=None, database_path=None, **options):

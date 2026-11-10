@@ -37,4 +37,4 @@ def test_legacy_w4_positive_engine_is_not_shipped_in_core():
     assert not (declared & _RETIRED_CONSTANTS)
     assert "observe_kobo_local_file_only" not in functions
     assert "reconcile_existing_profile" in functions
-    assert "reconcile_kobo_local" in functions
+    assert "reconcile_kobo_local" not in functions
