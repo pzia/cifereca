@@ -25,17 +25,9 @@ from pathlib import Path
 from typing import Any, Callable
 from ..acquisition import Acquisition
 from ..library_files import safe_library_component, sha256_file
-from ..artifact_inspection import inspect_artifact
 from ..paths import acquisition_lock_file
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
-
-
-def _observed_backup_artifact(path: Path) -> dict[str, Any]:
-    inspection = inspect_artifact(path)
-    if not inspection.valid or not inspection.media_format or inspection.protected is True:
-        raise ProviderConfigurationError("Artefact de sauvegarde invalide ou encore protégé")
-    return {"format": inspection.media_format.upper(), "size": path.stat().st_size, "sha256": sha256_file(path)}
 
 
 def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
