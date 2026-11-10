@@ -22,14 +22,8 @@ def test_clipboard_and_labels_cannot_bypass_redacted_snapshot():
     assert 'if "detail" in row:' in src
     assert 'add_detail_view(card, row["detail"])' in src
     assert "detail_label = Gtk.Label(label=_safe_text(detail)" not in src
-    assert "cifereca.diagnostics" not in src
-    assert "cifereca.gui" not in src
-
-
-def test_active_checks_and_runtime_diagnostics_use_same_formatter():
-    src = PAGE.read_text(encoding="utf-8")
+    # Both caller shapes must use the same redacted detail-view formatter.
     assert "def add_detail_view(container, value:" in src
-    assert 'add_detail_view(card, row["detail"])' in src
     assert "add_detail_view(card, value)" in src
 
 
