@@ -1975,27 +1975,19 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     if not identity_id:
         return 0
     now = int(time.time())
-    # Neither Kobo nor Numilog public search flags are purchase evidence.
-    # A positive right from an authenticated personal library must already
-    # exist for this identity, credential and exact edition/variant (#1905).
-    verified_owned: set[tuple[str, str, str, str]] = set()
-    for provider_id in ("kobo", "numilog"):
-        if not any(row.source_provider == provider_id and row.owned is True for row in rows):
-            continue
-        verified_owned.update({
-            (provider_id, str(right.get("identity_id") or ""),
-             str(right.get("credential_id") or ""),
-             str(right.get("item_id") or ""))
-            for right in self.storage.entitlements(provider_id=provider_id, state="active")
-            if right.get("entitlement_type") == "owned"
-        })
+    # Search is descriptive for EVERY provider. In particular, an unknown
+    # plugin may report owned=True without any personal entitlement witness.
+    # Exact provider/identity/credential/edition rights are independently
+    # confirmed from Core's already-stored personal ledger, with no GET.
+    from .catalogue_owned_projection import attested_catalogue_owned_keys
+    verified_owned = attested_catalogue_owned_keys(
+        self.storage, rows, identity_id=identity_id,
+    )
     keyed: list[tuple[str, SearchResult, str, bool]] = []
     for row in rows:
         owned = row.owned is True and (
-            row.source_provider not in {"kobo", "numilog"} or
-            (row.source_provider, identity_id, row.source_credential, row.record_id)
-            in verified_owned
-        )
+            row.source_provider, identity_id, row.source_credential, row.record_id,
+        ) in verified_owned
         state = (
             "remote_owned" if owned else
             "available_to_buy" if row.source_provider in {"kobo", "numilog"} and row.price else
