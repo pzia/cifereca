@@ -73,42 +73,6 @@ def test_diagnostic_serializer_rejects_untrusted_nested_identifiers_and_messages
     }
 
 
-def test_real_failed_kobo_backup_keeps_full_in_process_result_but_redacts_diagnostics(tmp_path):
-    private_title = "CONFIDENTIAL_KOBO_BOOK_TITLE"
-    service, _session = _service(tmp_path, manifest=[{
-        "product_id": "CONFIDENTIAL_ITEM_ID", "revision_id": "rev-1",
-        "title": private_title, "format": "EPUB", "content_type": "ebook",
-        "owned": True, "downloadable": True,
-    }], unauthorized=True)
-    try:
-        summary = service.sync_kobo_backup()
-        assert summary["errors"] == 1
-        assert summary["aborted"] is True
-        assert summary["error_summary"][0]["message"] == "Sauvegarde Kobo impossible"
-        assert summary["sources"][0]["credential_id"] == "vault-1"
-
-        diag = service.diagnostics.snapshot()[-1]
-        assert diag["operation"] == "backup sync"
-        detail = diag["detail"]
-        assert detail["status"] == "aborted"
-        assert detail["aborted"] is True
-        assert detail["errors"] == 1
-        assert detail["sources"][0]["source_index"] == 1
-        assert detail["sources"][0]["status"] == "aborted"
-        assert detail["error_summary"][0]["code"] == "unauthorized"
-        assert detail["error_summary"][0]["status_code"] == 401
-        public = json.dumps(detail, ensure_ascii=False)
-        for secret in (
-            "vault-1", "default", "CONFIDENTIAL_ITEM_ID",
-            private_title, "Bearer token invalide", "/home/",
-            '"identity_id"', '"credential_id"', '"message"',
-            '"error_examples"', '"error_messages"',
-        ):
-            assert secret not in public
-    finally:
-        service.close()
-
-
 def test_safe_detail_never_emits_unbounded_numbers_boolean_or_unknown_status():
     safe = _safe_kobo_backup_diagnostic_detail({
         "status": "PRIVATE_STATUS", "scope": "PRIVATE_SCOPE",

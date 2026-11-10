@@ -122,7 +122,8 @@ def test_policy_and_generation_commit_or_rollback_as_one_sqlite_unit(rig):
             conn.execute("DROP TRIGGER refuse_toggle")
 
 
-def test_public_kobo_schedule_setter_increments_epoch_for_every_transition(tmp_path):
+
+def test_retired_kobo_on_start_does_not_grant_legacy_consent(tmp_path):
     from cifereca.brokers import SynchronizationBrokerImpl
     from tests.test_kobo_backup_guard import _service
 
@@ -134,15 +135,9 @@ def test_public_kobo_schedule_setter_increments_epoch_for_every_transition(tmp_p
         broker = SynchronizationBrokerImpl(service)
         sid = broker._source_id(account)
         policy = "sync.source.materialization.on_start." + sid
-        assert broker.set_local_materialization_schedule(sid, "on_start") == "on_start"
-        first = service.storage.metadata_get(policy + ".revision")
-        assert len(first) == 32
-        assert broker.set_local_materialization_schedule(sid, "manual") == "manual"
-        second = service.storage.metadata_get(policy + ".revision")
-        assert second != first
-        assert broker.set_local_materialization_schedule(sid, "on_start") == "on_start"
-        third = service.storage.metadata_get(policy + ".revision")
-        assert len({first, second, third}) == 3
-        assert service.storage.metadata_get(policy) == "1"
+        with pytest.raises(ValueError, match="source not eligible"):
+            broker.set_local_materialization_schedule(sid, "on_start")
+        assert service.storage.metadata_get(policy) is None
+        assert service.storage.metadata_get(policy + ".revision") is None
     finally:
         service.close()

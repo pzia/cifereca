@@ -42,12 +42,11 @@ def test_corrupt_checkpoint_stays_private_and_does_not_crash_report_or_preview(t
         assert leak not in json.dumps(diagnostic["sources"])
         assert service._kobo_backup_account_due("vault-1")
 
-        # Default preview remains offline and cannot leak malicious local data.
-        preview = service.kobo_backup_preview("vault-1")
-        assert preview["checkpoint_status"] == "unknown"
-        assert preview["manifest_refreshed"] is False
-        assert preview["acquisition_authorized"] is False
-        assert leak not in json.dumps(preview)
+        # A malformed archive must never authorize an ABI-incomplete preview.
+        from cifereca.providers import ProviderConfigurationError
+        import pytest
+        with pytest.raises(ProviderConfigurationError, match="canonical_kobo_preview"):
+            service.kobo_backup_preview("vault-1")
     finally:
         service.close()
 

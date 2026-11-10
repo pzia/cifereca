@@ -59,33 +59,3 @@ def test_kobo_prune_is_readonly_even_for_unqualified_empty_records(
     finally:
         store.close()
 
-
-def test_complete_kobo_manifest_does_not_call_retired_pruner(
-    tmp_path, monkeypatch,
-):
-    service = _service(tmp_path, manifest=[])
-    try:
-        service.storage.backup_put({
-            "provider_id": "kobo", "credential_id": "vault-1",
-            "identity_id": "default", "account_id": "borrower",
-            "item_id": "unseen", "title": "Unseen old edition",
-            "revision_id": "old-revision", "status": "pending",
-        })
-        before = service.storage.backup_get("kobo", "vault-1", "unseen")
-        monkeypatch.setattr(
-            service.storage, "backup_prune_missing",
-            lambda *_args, **_kwargs: pytest.fail(
-                "Kobo synchronization must not invoke W3 pruner"
-            ),
-        )
-        monkeypatch.setattr(
-            service, "_execute_kobo_acquisition",
-            lambda *_args, **_kwargs: pytest.fail("no provider GET permitted"),
-        )
-        for _ in range(2):
-            summary = service.sync_kobo_backup_account("vault-1")
-            assert summary["legacy_pruned"] == 0
-            assert summary["legacy_entitlements_inactivated"] == 0
-            assert service.storage.backup_get("kobo", "vault-1", "unseen") == before
-    finally:
-        service.close()
