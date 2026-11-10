@@ -84,3 +84,20 @@ def test_root_grandparent_symlink_is_not_a_trusted_identity_tree(tmp_path):
     with pytest.raises(ProviderConfigurationError, match="artefact local non attesté"):
         require_local_artifact(aliased_root / "book.epub", aliased_root)
     assert received_book_file_within_root(book, physical)
+
+
+def test_pre_get_root_guard_rejects_alias_at_any_ancestor(tmp_path):
+    from cifereca.core.local_received_artifact import trusted_local_directory
+
+    physical = tmp_path / "physical" / "alice" / "numilog"
+    physical.mkdir(parents=True)
+    assert trusted_local_directory(physical)
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path / "physical", target_is_directory=True)
+    alias_root = alias / "alice" / "numilog"
+    assert alias_root.is_dir()
+    assert not alias_root.is_symlink() and not alias_root.parent.is_symlink()
+    assert not trusted_local_directory(alias_root)
+    assert not trusted_local_directory(alias)
+    assert not trusted_local_directory(tmp_path / "missing")
+    assert not trusted_local_directory(str(physical))
