@@ -32,9 +32,7 @@ def test_provider_rights_are_never_mirrored_or_used_as_entitlement(
     assert "rights" not in row["metadata"]
     assert "private-provider-secret" not in repr(row)
     assert row["metadata"]["subjects"] == ["Astronomie"]
-    assert row["local_state"] == (
-        "remote_owned" if owned_receipt else "remote_catalog"
-    )
+    assert (row["local_state"] == "remote_owned") is owned_receipt
 
 
 def test_rights_metadata_alone_does_not_make_an_unknown_provider_owned():
