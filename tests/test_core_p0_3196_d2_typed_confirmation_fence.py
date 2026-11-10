@@ -1,13 +1,14 @@
-"""#3196 D2: exact typed SourceReference vetoes legacy Kobo confirmation.
+"""#3196 D2: typed SourceReference cannot authorize retired Kobo W2.
 
-Real broker/SQLite, synthetic provider. This cannot confer a new right or
-trigger a second legacy GET on an edition handled by Core A->B.
+The 0.7 confirmation path is retired even without an existing typed source.
+Keep independent exact-source guards and the proof that no legacy provider
+manifest/GET or backup_items writer is entered.
 """
 from __future__ import annotations
 
 import pytest
 
-from tests.test_source_materialization_confirmation import case, _prepare, _dump
+from tests.test_source_materialization_confirmation import case, _dump
 
 
 def _typed(case, *, edition="PRIVATE-book-1", credential="vault-2",
@@ -28,41 +29,34 @@ def _typed(case, *, edition="PRIVATE-book-1", credential="vault-2",
     ("reader-2", "other-borrower", "unknown"),
     ("reader-3", "other-borrower", "inactive"),
 ])
-def test_partial_abi_preview_refuses_batch_containing_typed_edition(
-    case, owner, buyer, state,
-):
+def test_typed_source_cannot_revive_w2_confirmation(case, owner, buyer, state):
     _typed(case, owner=owner, buyer=buyer, state=state)
     before = _dump(case)
     result = case.broker.prepare_local_materialization(case.source)
     assert not result.ok
-    assert result.facts["status"] == "canonical_source_delivery_active"
+    assert result.facts["status"] in {
+        "canonical_source_delivery_active", "canonical_delivery_unavailable",
+    }
     assert "confirmation_token" not in result.facts
     assert not case.downloaded
-    assert case.calls == {"vault-1": 0, "vault-2": 1, "vault-3": 0}
+    assert not any(case.calls.values())
     assert _dump(case) == before
-
-
-def test_typed_source_added_between_preview_and_confirm_invalidates_token(case):
-    token = _prepare(case)
-    _typed(case, owner="reader-3", buyer="other-borrower")
-    before = _dump(case)
-    result = case.broker.materialize_source(case.source, token)
-    assert not result.ok and result.facts["status"] == "canonical_source_delivery_active"
-    assert not case.downloaded
-    assert _dump(case) == before
-    assert case.calls == {"vault-1": 0, "vault-2": 2, "vault-3": 0}
-    assert case.broker.materialize_source(case.source, token).facts[
-        "status"
-    ] == "confirmation_unavailable"
 
 
 @pytest.mark.parametrize("other_scope", [
     {"edition": "unrelated-edition"},
     {"credential": "vault-3"},
 ])
-def test_other_typed_source_does_not_block_legacy_confirmation(case, other_scope):
+def test_unrelated_typed_source_grants_no_w2_authority(case, other_scope):
     _typed(case, **other_scope)
-    token = _prepare(case)
-    result = case.broker.materialize_source(case.source, token)
-    assert result.ok and result.changed == 2
-    assert len(case.downloaded) == 2
+    before = _dump(case)
+    prepared = case.broker.prepare_local_materialization(case.source)
+    assert not prepared.ok
+    assert prepared.facts["status"] == "canonical_delivery_unavailable"
+    assert "confirmation_token" not in prepared.facts
+    executed = case.broker.materialize_source(case.source, "a" * 64)
+    assert not executed.ok
+    assert executed.facts["status"] == "canonical_delivery_unavailable"
+    assert not case.downloaded
+    assert not any(case.calls.values())
+    assert _dump(case) == before
