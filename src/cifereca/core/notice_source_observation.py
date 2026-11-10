@@ -31,20 +31,21 @@ _RESTRICTED_FIELD = re.compile(
 )
 # Compare normalized query *names*, never raw spellings: provider URLs may use
 # hyphens, underscores, periods or percent-encoding for the same secret field.
-# Signed AWS request fields are all authority-bearing even when their value is
-# an algorithm, timestamp, credential scope or signed header list.
+# Signed AWS and Google Cloud Storage request fields are authority-bearing,
+# even when their value is an algorithm, date, or signed header list.
 _RESTRICTED_QUERY_KEYS = frozenset((
     "token", "accesstoken", "refreshtoken", "securitytoken",
     "signature", "sig", "credential", "credentials", "secret",
     "key", "apikey", "auth", "authorization", "session",
     "sessionid", "sessionkey", "expires", "policy",
-    "awsaccesskeyid", "googleaccessid", "jwt", "code",
+    "awsaccesskeyid", "googleaccessid", "keypairid", "jwt", "code",
 ))
 
 
 def _restricted_query_key(value: str) -> bool:
     normalized = "".join(ch for ch in value.casefold() if ch.isalnum())
-    return normalized in _RESTRICTED_QUERY_KEYS or normalized.startswith("xamz")
+    return (normalized in _RESTRICTED_QUERY_KEYS
+            or normalized.startswith(("xamz", "xgoog")))
 
 
 @dataclass(frozen=True, slots=True, repr=False)
