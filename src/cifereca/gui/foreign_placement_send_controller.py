@@ -31,6 +31,11 @@ def add_foreign_present_placement_send(
         source_epoch = service._source_context_epoch
         ui_identity_epoch = window._identity_context_generation
         ui_account_epoch = window._account_context_generation
+        # A Library view-scope toggle is a separate cancellation boundary:
+        # B may remain selected while A's old detail is still on screen.
+        library_scope_generation = getattr(
+            window, "_library_scope_generation", None,
+        )
     except Exception:
         return False
     if (any(type(x) is not str or not 0 < len(x) <= 256
@@ -64,6 +69,8 @@ def add_foreign_present_placement_send(
                     or service._source_context_epoch != source_epoch
                     or window._identity_context_generation != ui_identity_epoch
                     or window._account_context_generation != ui_account_epoch
+                    or getattr(window, "_library_scope_generation", None)
+                       != library_scope_generation
                     or getattr(button, "_cifereca_action_context_revoked", False)):
                 return False
             if mapped:
