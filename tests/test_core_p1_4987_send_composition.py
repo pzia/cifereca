@@ -128,6 +128,9 @@ def test_native_exception_never_leaks_secret_or_reborrows(environment):
     )
     result = execute(service, w)
     assert result["status"] == "blocked"
+    assert result["loan"] == "confirmed"
+    assert result["delivery"] == "present"
+    assert result["retry_borrow"] is False
     assert "account-private-barcode" not in repr(result)
     service.execute_cross_profile_borrow.assert_not_called()
 
