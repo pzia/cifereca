@@ -136,3 +136,45 @@ def test_real_library_obtain_routes_complete_v2_away_from_legacy_writer(
     )
     assert facade.obtain(service, target) == "canonical_result"
     assert [x[0] for x in calls] == ["canonical"]
+
+
+def test_post_get_canonical_receipt_does_not_revoke_the_same_selected_right(
+    monkeypatch, tmp_path,
+):
+    from cifereca.core import numilog_owned_download as facade
+    account = Account(provider_id="numilog", credential_id="credential",
+                      unique_id="account", identity_id="owner")
+    session = NS()
+    target = NumilogOwnedDownloadTarget(
+        "right", "owner", "source", "credential", "account", "edition",
+        ("/lib", (str(tmp_path),)), id(session), session,
+    )
+    right = dict(
+        entitlement_id="right", provider_id="numilog", identity_id="owner",
+        credential_id="credential", account_id="account", item_id="edition",
+        entitlement_type="owned", state="active", loan_id=None, expires_at=None,
+        metadata={"source": "numilog.authenticated_library"},
+    )
+    evidence = {"entitlements": [right], "acquisitions": [
+        {"status": "attention_required", "metadata": {
+            "schema": "canonical-intake", "phase": "staged"
+        }},
+    ]}
+    storage = NS(
+        metadata_get=lambda *_a: None,
+        numilog_purchase_preflight_evidence=lambda **_k: evidence,
+    )
+    service = NS(
+        current_identity=NS(identity_id="owner"),
+        _sessions={("numilog", "credential"): session},
+        _session_key=lambda *x: tuple(x), storage=storage,
+        config=NS(get=lambda *_a: "/lib"),
+    )
+    monkeypatch.setattr(facade, "_identity_root",
+                        lambda *_a, **_k: (tmp_path,))
+    assert facade._selected_owned_right_current(service, target) is True
+    right["state"] = "revoked"
+    assert facade._selected_owned_right_current(service, target) is False
+    right["state"] = "active"
+    service._sessions.clear()
+    assert facade._selected_owned_right_current(service, target) is False
