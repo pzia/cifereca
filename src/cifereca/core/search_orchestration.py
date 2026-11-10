@@ -336,40 +336,17 @@ def _search_sessions_for_active_identity(
     self, sessions: list[ProviderSession], identity: object, *,
     paris_primary: str | None = None,
 ) -> list[ProviderSession]:
-    """Select one source per provider, preferring the active reader's account.
+    """Select exactly one catalogue session per provider.
 
-    Bibliographic catalogues are shared between local identities, but a
-    foreign credential is never a loan or purchase permission. Prefer the
-    selected identity's Paris account and project foreign fallback results
-    as catalogue-only; preserve exact provenance and independent loan guards.
+    The historical Paris primary preference is only an input hint; neutral
+    ownership ranking is performed by search_session_selection for every
+    provider and never grants access to another identity's private source.
     """
-    active = getattr(identity, "identity_id", None)
-    chosen: dict[str, ProviderSession] = {}
-    ranking: dict[str, int] = {}
-    for session in sessions:
-        provider = session.provider_id
-        # Another linked account may be the Paris primary even when an
-        # account of the same identity was connected first.
-        if ranking.get(provider) == (3 if provider == "paris" else 2):
-            continue
-        is_active = False
-        credential = getattr(session, "credential_id", None)
-        owner = None
-        if type(active) is str and active and type(credential) is str and credential:
-            try:
-                owner = self.storage.identity_for_connection(provider, credential)
-                is_active = owner == active
-            except (AttributeError, LookupError, TypeError, ValueError):
-                # Unknown owner cannot be treated as belonging to the reader.
-                pass
-        rank = 2 if is_active else 1
-        if provider == "paris" and is_active and credential == paris_primary:
-            rank = 3
-        if rank > ranking.get(provider, 0):
-            chosen[provider] = session
-            ranking[provider] = rank
-    return list(chosen.values())
-
+    from .search_session_selection import choose_search_sessions
+    hints = {"paris": paris_primary} if paris_primary is not None else None
+    return choose_search_sessions(
+        self, sessions, identity, preferred_credentials=hints,
+    )
 
 def _paris_search_owner(self, session: ProviderSession) -> str | None:
     """Inert SQLite owner check; unknown ownership never permits private data."""
