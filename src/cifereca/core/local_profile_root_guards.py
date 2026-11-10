@@ -12,15 +12,19 @@ from collections.abc import Callable
 from ..library_files import safe_library_component
 
 
+class ProfileRootRejected(ValueError):
+    """Stable rejection that a legacy adapter may translate without secrets."""
+
+
 def checked_profile_roots(service, identity: str, *,
                           roots_for_identity: Callable) -> tuple[Path, Path]:
     """Refuse unknown or overlapping profile directories before local scan."""
     if (type(identity) is not str or not 0 < len(identity) <= 1024
             or any(char in identity for char in ("\0", "\n", "\r"))):
-        raise ValueError("unknown_identity")
+        raise ProfileRootRejected("unknown_identity")
     profile = service.identity_by_id(identity)
     if profile is None:
-        raise ValueError("unknown_identity")
+        raise ProfileRootRejected("unknown_identity")
     library, target = roots_for_identity(service, identity)
     folder = safe_library_component(profile.directory_name or identity, "default")
     if any(
@@ -30,7 +34,7 @@ def checked_profile_roots(service, identity: str, *,
         ) == folder
         for other in getattr(service, "identities", ())
     ):
-        raise ValueError("ambiguous_identity_directory")
+        raise ProfileRootRejected("ambiguous_identity_directory")
     return (target, library / folder)
 
 
@@ -45,4 +49,4 @@ def path_within_roots(path: object, roots: object) -> bool:
     return any(value != root and value.is_relative_to(root) for root in roots)
 
 
-__all__ = ["checked_profile_roots", "path_within_roots"]
+__all__ = ["ProfileRootRejected", "checked_profile_roots", "path_within_roots"]
