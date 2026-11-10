@@ -2065,7 +2065,10 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                 "mirrored_at": now,
                 # Descriptions are untrusted supplier text just like summaries:
                 # never persist URLs, bearer tokens or personal identifiers.
-                "description": _safe_public_search_text("description", row.description),
+                "description": (
+                    _safe_public_search_text("description", row.description)
+                    if type(row.description) is str else None
+                ),
                 "catalogue_scope_version": 2 if qualified else None,
             },
         })
