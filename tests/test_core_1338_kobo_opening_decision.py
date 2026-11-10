@@ -65,39 +65,30 @@ def test_last_kobo_success_is_projected_as_bounded_age_only(tmp_path, monkeypatc
         service.close()
 
 
-def test_opening_records_one_sanitized_summary_on_partial(tmp_path, monkeypatch):
+def test_opening_never_executes_retired_w2_or_leaks_summary(tmp_path, monkeypatch):
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
         _enable_on_start(service)
         service.config.set("kobo_backup.enabled", True)
-        monkeypatch.setattr(service, "_kobo_backup_due", lambda: True)
-        called = []
-        def summary(progress=None):
-            called.append(True)
-            return {"errors": 2, "downloaded": 1, "attempted": 3,
-                    "secret": "token-VERY-PRIVATE", "item_id": "sensitive-book"}
         monkeypatch.setattr(
             service, "_sync_kobo_backup_locked",
             lambda **_kwargs: pytest.fail("global batch is forbidden"),
         )
         monkeypatch.setattr(
             service, "_sync_kobo_backup_account_locked",
-            lambda credential_id, progress=None: summary(progress=progress),
+            lambda *_args, **_kwargs: pytest.fail("retired W2 must not run"),
         )
         result = service._opening_sync_locked(deep=False)
-        assert len(called) == 1
         decision = result["kobo_decision"]
-        assert decision["status"] == "partial"
+        assert decision["status"] == "manual_only"
+        assert decision["scheduled_kobo"] == 0
         assert decision["persisted_enabled"] is True
-        assert decision["downloaded"] == 1 and decision["attempted"] == 3
         assert "secret" not in decision and "item_id" not in decision
         entries = [row for row in service.diagnostics.snapshot()
                    if row["operation"] == "automatic backup decision"]
         assert len(entries) == 1
-        assert entries[0]["detail"]["status"] == "partial"
-        assert "VERY-PRIVATE" not in json.dumps(entries)
-        assert "sensitive-book" not in json.dumps(entries)
+        assert entries[0]["detail"]["status"] == "manual_only"
     finally:
         service.close()
 
@@ -199,8 +190,8 @@ def test_kobo_autobackup_opt_in_must_be_literal_boolean(tmp_path, monkeypatch, m
         service.close()
 
 
-def test_kobo_reported_batch_error_is_persisted_as_error(tmp_path, monkeypatch):
-    """Returning status=error must not masquerade as a successful start."""
+def test_retired_w2_cannot_report_synthetic_provider_success(tmp_path, monkeypatch):
+    """An old ON bit cannot transform a nonexistent W2 run into success."""
     from cifereca.core.kobo_backup import safe_kobo_backup_report
 
     service = _service(tmp_path)
@@ -208,15 +199,15 @@ def test_kobo_reported_batch_error_is_persisted_as_error(tmp_path, monkeypatch):
         _neutralize_unrelated_sync_work(service, monkeypatch)
         _enable_on_start(service)
         service.config.set("kobo_backup.enabled", True)
-        monkeypatch.setattr(service, "_kobo_backup_due", lambda: True)
-        monkeypatch.setattr(service, "_sync_kobo_backup_account_locked",
-                            lambda credential_id, progress=None: {"status": "error", "errors": 0})
+        monkeypatch.setattr(
+            service, "_sync_kobo_backup_account_locked",
+            lambda *_a, **_kw: pytest.fail("no legacy account GET"),
+        )
         result = service._opening_sync_locked(deep=False)
-        assert result["kobo_decision"]["status"] == "error"
+        assert result["kobo_decision"]["status"] == "manual_only"
+        assert result["kobo_decision"]["scheduled_kobo"] == 0
         report = safe_kobo_backup_report(service.kobo_backup_diagnostic())
-        assert report["opening_decision"]["status"] == "error"
+        assert report["opening_decision"]["status"] == "manual_only"
         assert report["items"] == 0
     finally:
         service.close()
-
-
