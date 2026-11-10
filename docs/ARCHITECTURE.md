@@ -1,11 +1,28 @@
-# Architecture CIFERECA — référence normative actualisée le 1er novembre 2026
+# Architecture CIFERECA — référence normative (modèle cible du 10 novembre 2026)
 
 **Contrat directeur : [#3171](https://github.com/pzia/cifereca/issues/3171), décisions du propriétaire des 28–30/10 et du 01/11/2026.** Cette page définit **la cible**, et non un moteur déjà intégralement livré. Les opérations legacy et leurs gardes métier restent actives jusqu'à migration démontrée. Contrat indépendant des logs : [LOGGING-CONTRACT.md](LOGGING-CONTRACT.md).
+
+## Décision normative — origine, offre de livraison et artefact (10/11/2026)
+
+La cible **ne comporte aucun modèle métier de droit fournisseur persistant**. Le Core conserve **l'origine** exacte (provider, identité, credential, compte, branche, édition, et occurrence de prêt si applicable), les **artefacts finaux vérifiés** et leurs **placements**. Le plugin observe à l'instant utile si une **offre de livraison** est disponible pour cette origine et ce compte. Cette capacité actuelle n'est pas une permission ou un ownership historique à stocker dans le Core.
+
+**Synchronisation canonique :** rapprocher les origines observées de `SourceReference → OriginLink → Artifact (SHA) → Placement` physiquement vérifiés. Si l'artefact exact existe, éviter un GET ; s'il manque, solliciter une nouvelle offre téléchargeable et, sous consentement valable, acquérir via l'infrastructure HTTP(S) commune et les contrats publics. Après traitement ACSM/ADEPT/LCP et validation du contenu final, publier l'origine et l'artefact, puis dédoublonner les copies compatibles sans confondre les comptes, les origines ni les placements de profils distincts. **Retélécharger si nécessaire et permis, puis dédoublonner** : aucun historique de pseudo-droits ou de récupération legacy n'est requis. Ne jamais effacer automatiquement un fichier utilisateur.
+
+| Branche | Achat | Emprunt |
+| --- | --- | --- |
+| Observation | Inventaire personnel et offres de livraison actuelles | Occurrence exacte de prêt existant et offres de livraison actuelles |
+| Absence distante | Ne supprime ni origine ni artefact | Conclure à la fin d'un prêt seulement si le scope exact a été lu avec une couverture suffisante ; inventaire BnF intrinsèquement partiel = aucune conclusion négative |
+| Artefact manquant | Retéléchargement si le provider le permet | Retéléchargement du **prêt existant** si disponible ; aucun nouvel emprunt automatique |
+| Mutation | Aucun achat par simple Sync | Nouvel emprunt uniquement par action explicite, avec claim durable et sans retry incertain ; un GET de confirmation peut déjà être mutateur |
+
+La session fournisseur emploie le transport mutualisé `HTTPX_TRANSPORT` pour son authentification et ses requêtes métier ; le Core expose aussi un service générique de livraison HTTPS attestée. **Il ne faut ni déplacer le SSO/protocole métier dans le Core, ni dupliquer la pile réseau dans les plugins.** Les contrôles exacts identité/compte/credential, session/epoch, consentement, intégrité, atomicité et opérations non répétables restent obligatoires.
+
+**Compatibilité :** les champs/ABI `right`, `rights`, `Entitlement`, `owned` et les tables legacy mentionnés plus bas sont des éléments **encore présents dans certaines implémentations**, non le modèle cible. Leur retrait exige un audit des appelants et une migration d'interface maîtrisée, sans créer un nouveau miroir de permissions ou de pseudo-capacités. Les preuves transactionnelles indispensables à un emprunt non répétable sont conservées.
 
 ## 1. Parcours nominal : UNE synchronisation automatique A → B
 
 La synchronisation d'un achat ou prêt numérique est un seul parcours métier :
-1. **A : observer** les ressources du compte authentifié et leurs capacités de livraison, en distinguant identité, provider, credential, compte, **branche**, édition/item, achat/prêt, époque/session et couverture de lecture. Le droit et son état sont des métadonnées facultatives : absents ou inconnus, ils ne bloquent pas une capacité de livraison positivement attestée. Une capacité inconnue n’est pas une permission ; les refus explicites restent opposables. Une lecture échouée, annulée ou non réalisée n'autorise aucune conclusion négative. **Achats et prêts obéissent à des règles distinctes d'absence**, précisées ci-dessous.
+1. **A : observer** les ressources du compte authentifié et leurs capacités de livraison, en distinguant identité, provider, credential, compte, **branche**, édition/item, achat/prêt, époque/session et couverture de lecture. Aucun droit historique n'est requis : une capacité actuelle de livraison positivement attestée suffit pour envisager une acquisition. Une capacité inconnue n’est pas une permission ; les refus explicites restent opposables. Une lecture échouée, annulée ou non réalisée n'autorise aucune conclusion négative. **Achats et prêts obéissent à des règles distinctes d'absence**, précisées ci-dessous.
 2. **B : constater la présence** à travers la chaîne SourceReference → OriginLink(provider) attesté → SHA du fichier final → Placement **physiquement revalidé dans le profil cible**. Un même titre, ISBN, édition bibliographique, chemin ou SHA dans un autre profil n'identifie ni la provenance ni un droit.
 3. **Acquérir si non satisfait** : sans preuve exacte et actuelle d’une copie locale adéquate, télécharger si l’offre est disponible et le consentement source ON, dans les contraintes de session, de licence ADEPT et de sécurité applicables. Le consentement persistant et révocable porte sur le profil/fournisseur/connexion/compte, jamais sur un fichier ou un droit individuel ; il est revérifié avant/après livraison et au commit. L'existence d'un livre local similaire n'impose pas de dialogue de réconciliation avant le téléchargement. Un scan incomplet ne prouve pas l'absence, **mais ne doit pas devenir un veto définitif** : une admission indépendante et ses contrôles locaux frais peuvent conduire à l'acquisition autorisée, ou à un refus explicite.
 4. **Publier après traitement** : après téléchargement, ACSM/ADEPT et validation du contenu final, calculer son SHA-256, réutiliser le même Artifact global si SHA égal, puis publier de façon atomique Placement physique et OriginLink fournisseur et, lorsque attesté, ADEPT. La réponse HTTP, un ACSM ou un statut de ledger seuls ne valent pas livre acquis. La réception et son placement précèdent toute déduplication physique : ensuite seulement, vérifier les copies de même SHA **dans le même profil**, fusionner toutes leurs origines et références, puis retirer les copies redondantes de manière transactionnelle et réparable. Un échec de déduplication conserve les fichiers reçus et leurs origines pour une maintenance différée ; il ne fait pas échouer la réception ni retélécharger un fichier attesté. Aucun placement physique n’est partagé entre profils. Reprise après crash et deuxième Sync idempotente obligatoires.
@@ -16,7 +33,7 @@ La synchronisation d'un achat ou prêt numérique est un seul parcours métier :
 
 La fin du prêt est **une transition locale d'état métier**, jamais un retour distant : **ne supprimer ni EPUB/PDF, ni Artifact, Placement, OriginLink fournisseur, SourceReference historique, Notice ou provenance ADEPT** ; aucun unlink, retour au fournisseur, révocation de licence ni transfert de permission entre comptes ou profils.
 
-**Achats (Kobo, Numilog et futurs vendeurs).** L'absence d'un achat dans l'inventaire personnel courant **ne révoque ni le droit historique, ni le fichier, ni sa provenance**, même si la lecture est réussie. La concordance du catalogue personnel est **relative uniquement aux fichiers locaux présents et vérifiés de cette source exacte** :
+**Achats (Kobo, Numilog et futurs vendeurs).** L'absence d'un achat dans l'inventaire personnel courant **ne supprime ni l'origine historique, ni le fichier, ni sa provenance**, même si la lecture est réussie. La concordance du catalogue personnel est **relative uniquement aux fichiers locaux présents et vérifiés de cette source exacte** :
 
 - **L** = références amont des fichiers locaux dont la chaîne **Placement present → Artifact → OriginLink(provider, attesté) → SourceReference** est établie dans la même identité, connexion, credential et compte, avec octets et placement vérifiés ; ni dossier, ni titre, ni ISBN, ni SHA seul ne suffit.
 - **R** = références exactes renvoyées positivement par le **catalogue personnel authentifié** lors de la lecture courante, pour ce même scope.
@@ -31,7 +48,7 @@ La fin du prêt est **une transition locale d'état métier**, jamais un retour 
 | Entité | Autorité et cardinalité | Ne prouve pas |
 | --- | --- | --- |
 | **Notice (C)** | Métadonnées descriptives d'œuvre/édition, plusieurs notices et provenance **par valeur**. « Fiche Livre » est une vue, pas une sixième autorité. | Droit, possession, provenance de fichier, présence. |
-| **SourceReference (A)** | Référence exacte : provider, credential, compte, identité, **branche**, item/édition, achat/prêt et preuve amont. Le fournisseur fait autorité sur le droit et son état. | Octets disponibles ni licence d'un autre compte. |
+| **SourceReference (A)** | Référence exacte : provider, credential, compte, identité, **branche**, item/édition, achat/prêt et preuve amont. Le fournisseur fait autorité sur les offres actuelles de livraison, sans permission persistante dans le Core. | Octets disponibles ni licence d'un autre compte. |
 | **Artifact (B)** | **SHA-256 global des octets finaux**, taille, format, validation ; plusieurs profils, copies et origines peuvent le viser. | Un droit ni une copie accessible dans un profil particulier. |
 | **Placement (B)** | Copie physique validée, profil et chemin ; deux profils gardent des Placements distincts, même pour SHA égal. | Origine fournisseur par nom de dossier ou droit transmis. |
 | **OriginLink** | Relation persistante, multiple, idempotente, **source/preuve/contexte → SHA** : provider, manual, transfer, cifereca, adept, derived. Garde scope/profil/compte, identifiants attestés, preuve, timestamps et parent pour dérivation. | Autorisation de restauration, droit ou présence actuelle. |
@@ -43,13 +60,13 @@ Une SourceReference interne Cifereca issue d'un transfert est **ponctuelle par d
 
 - A achète L puis le traite avec ADEPT : un Artifact SHA S, un Placement A, deux liens provider A et adept A.
 - A envoie une **copie physique indépendante** à B : Placement B, deux liens contextualisés chez B, transfer A→B et cifereca A→B. Aucun droit A n'est transmis.
-- B achète indépendamment L ; après ADEPT B, SHA final identique S : **un** Artifact global et deux liens supplémentaires provider B et adept B, associés à son propre droit.
+- B achète indépendamment L ; après ADEPT B, SHA final identique S : **un** Artifact global et deux liens supplémentaires provider B et adept B, associés à sa propre origine d'achat.
 - B envoie à C : Placement C + liens transfer B→C et cifereca B→C.
 - Total attendu : **1 Artifact, 3 Placements, 8 OriginLink distincts** (2 provider, 2 adept, 2 transfer, 2 cifereca). Rejouer ces étapes ne crée pas de doubles liens.
-- Après suppression locale B/C, retirer ou invalider seulement leurs Placements, jamais les huit liens ni le droit B. B peut réacquérir au titre de son achat ; C n'est pas restauré depuis le seul transfert ponctuel.
-- Une conversion EPUB changeant le SHA donne un nouvel Artifact et un lien derived vers le parent (convertisseur, version, paramètres), sans création de droit.
+- Après suppression locale B/C, retirer ou invalider seulement leurs Placements, jamais les huit liens ni l'origine B. B peut retélécharger si le fournisseur propose toujours une livraison ; C n'est pas restauré depuis le seul transfert ponctuel.
+- Une conversion EPUB changeant le SHA donne un nouvel Artifact et un lien derived vers le parent (convertisseur, version, paramètres), sans création de pseudo-droit.
 
-Les huit liens exigent **tests de persistance SQLite, crash-recovery et droits isolés**. Huit objets Python en mémoire ne prouvent pas cette livraison. Un même titre peut recouvrir plusieurs éditions et plusieurs SHA ; un SHA commun n'implique aucune licence ni déduplication de copie inter-profils.
+Les huit liens exigent **tests de persistance SQLite, crash-recovery et origines isolées**. Huit objets Python en mémoire ne prouvent pas cette livraison. Un même titre peut recouvrir plusieurs éditions et plusieurs SHA ; un SHA commun n'implique aucune licence ni déduplication de copie inter-profils.
 
 ## 3. Responsabilités
 
@@ -63,7 +80,7 @@ Pour qualifier un refus Numilog legacy, chercher `local_presence_check` et l'`it
 
 **Plugins** : inventaires/SourceReference et preuves fournisseur/branche, offres et protocoles d'acquisition, prérequis ADEPT propres, adaptations exactes via cifereca.plugin_api uniquement ; transport HTTPX Core partagé sauf exceptions explicites. Pas d'import de Storage privé ni de droit fabriqué depuis une Notice.
 
-**CoreUI** : afficher séparément état inventaire/droits (A), notices (C), copie vérifiée/liaison (B) et acquisition. Le succès de lecture distante ne prétend jamais « fichier présent » ; une erreur d'acquisition ne doit pas être présentée comme une absence de droits.
+**CoreUI** : afficher séparément état inventaire/offres disponibles (A), notices (C), copie vérifiée/liaison (B) et acquisition. Le succès de lecture distante ne prétend jamais « fichier présent » ; une erreur d'acquisition ne doit pas être présentée comme une absence de droits.
 
 Le catalogue public fournit des Notice descriptives et éventuellement un cache, **jamais une bibliothèque possédée**. Un fichier dans manual/, acsm-import/ ou other/ n'acquiert pas une origine fournisseur par son répertoire. Contrats : [PLUGIN-BOUNDARIES.md](PLUGIN-BOUNDARIES.md), [#2385](https://github.com/pzia/cifereca/issues/2385).
 
