@@ -112,6 +112,8 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/core/numilog_materialization_startup.py",
             "src/cifereca/core/numilog_materialization_checkpoint.py",
             "src/cifereca/core/numilog_direct_acquisition.py",
+            "src/cifereca/core/numilog_owned_download.py",
+            "src/cifereca/core/numilog_manual_canonical.py",
             "src/cifereca/core/loan_local_preparation.py",
             "src/cifereca/core/loan_provider_delivery.py",
             "src/cifereca/core/manual_acsm_import.py",
