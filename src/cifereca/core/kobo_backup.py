@@ -20,7 +20,6 @@ import os
 import re
 import hashlib
 import json
-from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 from ..acquisition import Acquisition
@@ -481,78 +480,29 @@ def kobo_backup_preview(
 
 
 def kobo_backup_diagnostic(self) -> dict[str, Any]:
-    """Summarise the persisted Kobo backup state without network access."""
-    rows = self.storage.backup_list(provider_id="kobo")
+    """Read-only, source-scoped diagnostic; archived W2 receipts are inert.
+
+    Legacy backup_items remain on disk for the user but are never read as
+    current progress, rights, errors or reconcilable acquisitions.
+    """
     try:
         opening_raw = json.loads(
             self.storage.metadata_get("kobo_backup_opening_decision_v1") or "null"
         )
     except (TypeError, ValueError):
         opening_raw = None
-    opening_decision = _safe_kobo_opening_decision(opening_raw)
-    statuses = Counter(str(row.get("status") or "unknown") for row in rows)
-    errors = Counter(
-        str(row.get("error") or "").strip()
-        for row in rows
-        if str(row.get("status") or "") == "error" and str(row.get("error") or "").strip()
-    )
-    examples: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in rows:
-        message = str(row.get("error") or "").strip()
-        if str(row.get("status") or "") != "error" or not message or message in seen:
-            continue
-        seen.add(message)
-        examples.append({
-            "item_id": row.get("item_id"),
-            "title": row.get("title"),
-            "error": message,
-        })
-        if len(examples) >= 10:
-            break
-    reconcile_examples = [
-        {
-            "item_id": row.get("item_id"),
-            "title": row.get("title"),
-            "status": row.get("status"),
-            "local_path": row.get("local_path"),
-            "message": row.get("error"),
-        }
-        for row in rows
-        if str(row.get("status") or "") in {"reconcile_required", "reconcile_conflict"}
-    ][:20]
-    attention_examples = [
-        {
-            "item_id": row.get("item_id"),
-            "title": row.get("title"),
-            "attention_code": row.get("attention_code"),
-            "message": row.get("error"),
-        }
-        for row in rows
-        if str(row.get("status") or "") == "attention_required"
-    ][:20]
     return {
-        "items": len(rows),
-        # Aggregate permissions without exposing book metadata or bearer data.
-        "items_blocked_by_scope": sum(
-            1 for row in rows
-            if row.get("status") == "attention_required"
-            and row.get("attention_code") == "missing_delegation_scope"
-        ),
-        "statuses": dict(statuses),
-        "opening_decision": opening_decision,
+        "items": 0,
+        "items_blocked_by_scope": 0,
+        "statuses": {},
+        "opening_decision": _safe_kobo_opening_decision(opening_raw),
         "sources": _kobo_source_summaries(self),
-        "error_summary": [
-            {"message": message, "count": count}
-            for message, count in errors.most_common(10)
-        ],
-        "error_examples": examples,
-        "reconcile_examples": reconcile_examples,
-        "attention_examples": attention_examples,
+        "error_summary": [],
+        "error_examples": [],
+        "reconcile_examples": [],
+        "attention_examples": [],
         "storage_schema_version": self.storage.schema_version(),
     }
-
-
 
 
 def _kobo_source_summaries(self) -> list[dict[str, Any]]:
