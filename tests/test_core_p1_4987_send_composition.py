@@ -168,10 +168,14 @@ def test_library_service_facade_composes_native_send_and_idempotent_replay(
         "observed_cross_profile_borrow_progress", progress,
     )
     observed = []
-    def complete_local_placement(**scope):
+    def complete_local_placement(actual_service, **scope):
+        assert actual_service is service
         observed.append(scope)
         return service.storage.placement_get(donor_placement)
-    service.local_placement_for_source = complete_local_placement
+    monkeypatch.setattr(
+        "cifereca.core.borrow_for_identity_placement_resolution."
+        "local_placement_for_source", complete_local_placement,
+    )
     try:
         missing_consent = service.send_confirmed_lender_local_copy(
             requesting_identity_id="bob", borrowing_account=account,
