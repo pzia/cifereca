@@ -77,7 +77,7 @@ def test_typed_source_never_gains_local_presence_from_backup_row(
                     "title": "Synthetic", "format": "EPUB"}],
     )
     try:
-        file = service._kobo_backup_target_dir("default") / "saved.epub"
+        file = service.library_identity_provider_dir("default", "kobo") / "saved.epub"
         _write_epub(file)
         raw = file.read_bytes()
         _backup(service, "book-a", status="complete", local_path=file,
@@ -110,7 +110,7 @@ def test_typed_source_never_gains_local_presence_from_backup_row(
 def test_unrelated_source_cannot_promote_legacy_offline_local_claim(tmp_path, other):
     service, session = _service(tmp_path, [])
     try:
-        file = service._kobo_backup_target_dir("default") / "legacy.epub"
+        file = service.library_identity_provider_dir("default", "kobo") / "legacy.epub"
         _write_epub(file)
         _backup(service, "book-a", status="complete", local_path=file)
         _typed(service, **other)
@@ -126,7 +126,7 @@ def test_mixed_typed_and_untyped_legacy_receipts_never_prove_b(tmp_path):
     service, session = _service(tmp_path, [])
     try:
         for item in ("book-a", "book-b"):
-            file = service._kobo_backup_target_dir("default") / f"{item}.epub"
+            file = service.library_identity_provider_dir("default", "kobo") / f"{item}.epub"
             _write_epub(file)
             _backup(service, item, status="complete", local_path=file)
         _typed(service)
