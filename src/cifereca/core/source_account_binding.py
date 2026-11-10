@@ -6,8 +6,11 @@ Callers must separately verify consent and the selected delivery offer.
 from __future__ import annotations
 
 from typing import Any
+from inspect import getattr_static
 
 from ..models import Account
+from ..providers.base import ProviderSession
+from .loan_action_scope import _inert_session_accounts, _inert_session_state
 from .legacy_source_account_id import ambiguous_legacy_source_account_id
 
 
@@ -42,11 +45,34 @@ def source_account_binding_ready(
         session = service._sessions.get(
             service._session_key(expected_provider_id, account.credential_id),
         )
+        # Read initialized provider-session memory, not plugin properties.
+        klass = type(session)
+        if getattr_static(klass, "__getattribute__", None) is not object.__getattribute__:
+            return False
+        if issubclass(klass, ProviderSession):
+            state = _inert_session_state(session)
+            session_accounts = _inert_session_accounts(session)
+            if (state is None or session_accounts is None
+                    or state.get("provider_id") != expected_provider_id
+                    or state.get("credential_id") != account.credential_id):
+                return False
+            connected = state.get("connected")
+        else:
+            # Inert legacy test doubles have plain initialized fields only.
+            for name in ("connected", "accounts"):
+                descriptor = getattr_static(klass, name, None)
+                if getattr_static(type(descriptor), "__get__", None) is not None:
+                    return False
+            state = object.__getattribute__(session, "__dict__")
+            if type(state) is not dict:
+                return False
+            connected = state.get("connected")
+            session_accounts = state.get("accounts")
         return (
-            getattr(session, "connected", None) is True
-            and sum(
-                row is account for row in getattr(session, "accounts", ())
-            ) == 1
+            connected is True
+            and type(session_accounts) in (list, tuple)
+            and len(session_accounts) <= 512
+            and sum(row is account for row in session_accounts) == 1
             and sum(row is account for row in service.accounts) == 1
             and sum(
                 type(row) is Account
