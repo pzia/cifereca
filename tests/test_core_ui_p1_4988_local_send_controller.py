@@ -84,8 +84,11 @@ def test_no_local_placement_never_opens_consent_or_sends():
     _, work, done, _failed, _kw = h.window.runner.jobs[0]
     done(work())
     lookup.assert_called_once()
-    assert Dialog.made == []
+    assert len(Dialog.made) == 1
+    assert "retry" in Dialog.made[0].responses
+    assert "send" not in Dialog.made[0].responses
     native.assert_not_called()
+    Dialog.made[0].respond("close")
     assert h.window._cross_profile_send_pending is None
 
 
