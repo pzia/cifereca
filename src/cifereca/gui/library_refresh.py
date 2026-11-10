@@ -91,10 +91,13 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         # The same scoped snapshot drives the Library provider selector:
         # no provider I/O, no filesystem scan and no cross-profile hint.
         from .query_widget_factory_controller import refresh_library_origin_choices
-        refresh_library_origin_choices(
-            self, entries, identity_id=identity_id,
-            all_profiles=all_profiles,
-        )
+        if all_profiles:
+            refresh_library_origin_choices(
+                self, entries, identity_id=identity_id, all_profiles=True,
+            )
+        else:
+            # Retain the exact legacy identity-scoped call and its ABI.
+            refresh_library_origin_choices(self, entries, identity_id=identity_id)
         # A successful *empty* response is still a loaded snapshot for the
         # selected identity. Do not resubmit work on every return to Library.
         self._library_loaded_generation = generation
