@@ -6,6 +6,7 @@ from cifereca.core.numilog_manifest_rights import (
     numilog_inventory_binding_valid,
 )
 from cifereca.services import LibraryService
+from cifereca.providers.base import ProviderSession, ProviderDescriptor, ProviderCapabilities
 
 
 def source():
@@ -82,3 +83,36 @@ def test_mirror_disposes_of_inflight_numilog_rows_after_session_change():
     assert summary.failed_sources == 0
     rights.assert_not_called()
     service._mirror_remote_results.assert_not_called()
+
+
+def test_inventory_binding_rejects_hostile_provider_scalar_without_getter(monkeypatch):
+    """Numilog-only legacy binding cannot execute a plugin descriptor property."""
+    service, account, _old = source()
+
+    class SyntheticNumilogSession(ProviderSession):
+        def connect(self):
+            return []
+
+        def close(self):
+            return None
+
+    current = SyntheticNumilogSession(
+        descriptor=ProviderDescriptor(
+            id="numilog", display_name="Synthetic", description="",
+            state="ready", capabilities=ProviderCapabilities(personal_library=True),
+        ),
+        credential_id="secret-ref", label="Synthetic", credentials={}, options={},
+    )
+    current.connected = True
+    service._sessions[("numilog", "secret-ref")] = current
+    assert numilog_inventory_binding_valid(service, account, session=current)
+    calls = []
+
+    def malicious(_session):
+        calls.append("plugin getter")
+        return "numilog"
+
+    with monkeypatch.context() as m:
+        m.setattr(SyntheticNumilogSession, "provider_id", property(malicious), raising=False)
+        assert not numilog_inventory_binding_valid(service, account, session=current)
+    assert calls == []
