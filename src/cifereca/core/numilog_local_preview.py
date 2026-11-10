@@ -16,7 +16,7 @@ from typing import Any
 
 from ..library_files import safe_library_component
 from ..plugin_api import Cancelled, SyncResult
-from .kobo_local_audit import _read_hash_within
+from .local_bounded_hash import _read_hash_within
 from .numilog_startup_diagnostics import local_proof
 
 _MAX_ROWS = 100_000
