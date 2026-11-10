@@ -30,7 +30,6 @@ def test_decision_distinguishes_reasons_without_provider_request(
         session.capabilities.backup = capable
         service.config.set("kobo_backup.enabled", enabled)
         monkeypatch.setattr(service, "sync_source_enabled", lambda _account: source_enabled)
-        monkeypatch.setattr(service, "_kobo_backup_due", lambda: due)
         # A decision must never use provider/manifest/backup.
         session.library = lambda: (_ for _ in ()).throw(AssertionError("network"))
         session.backup_manifest = session.library
