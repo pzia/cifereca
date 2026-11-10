@@ -55,7 +55,7 @@ def _safe_kobo_progress_count(value: Any) -> int:
 
 def _safe_kobo_sync_receipt(summary: dict[str, Any]) -> dict[str, Any]:
     """Copyable Kobo sync output without private per-book or provider data."""
-    from .core.kobo_backup import _safe_kobo_backup_diagnostic_detail
+    from .core.legacy_diagnostic_projection import _safe_kobo_backup_diagnostic_detail
 
     # This serializer is also used by Diagnostics.add; it rejects all free
     # text, account identifiers, titles, signed URLs, local paths and tokens.
@@ -1169,7 +1169,7 @@ def main(argv: list[str] | None = None) -> int:
             # external schedulers would otherwise mark missing books as done.
             exit_code = 0 if result["status"] == "complete" else 2
         elif a.cmd in {"kobo-sync-errors", "kobo-backup-errors"}:
-            from .core.kobo_backup import safe_kobo_backup_report
+            from .core.legacy_diagnostic_projection import safe_kobo_backup_report
 
             # Never emit raw provider errors, book titles, product IDs,
             # local file paths or credential identifiers into a JSON report
