@@ -22,7 +22,7 @@ import uuid
 from cifereca.library_files import safe_library_component
 from cifereca.locking import InterProcessLock, LockBusyError
 from cifereca.paths import acquisition_lock_file
-from cifereca.core.kobo_backup import _kobo_preview_paths
+from cifereca.core.profile_source_paths import _kobo_preview_paths
 from cifereca.core.kobo_local_audit import _read_hash_within
 
 from cifereca.core import kobo_local_reconciliation as _runtime
