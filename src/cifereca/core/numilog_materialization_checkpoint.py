@@ -16,7 +16,7 @@ from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..providers import ProviderConfigurationError
 from ..plugin_api import Cancelled
-from .kobo_local_audit import _read_hash_within
+from .local_bounded_hash import _read_hash_within
 from .materialization import MaterializationResult
 from .numilog_local_preview import _identity_root
 from .numilog_manifest_rights import _scoped_record_id
