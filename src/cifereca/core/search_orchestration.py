@@ -2062,7 +2062,10 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                 "price": row.price, "currency": row.currency, "source_credential": row.source_credential,
                 "source_collection": row.source_collection, "publisher": row.publisher or allowed_meta.get("publisher"),
                 "published_at": row.published_at, "type": row.type, "medium": row.medium,
-                "mirrored_at": now, "description": row.description,
+                "mirrored_at": now,
+                # Descriptions are untrusted supplier text just like summaries:
+                # never persist URLs, bearer tokens or personal identifiers.
+                "description": _safe_public_search_text("description", row.description),
                 "catalogue_scope_version": 2 if qualified else None,
             },
         })
