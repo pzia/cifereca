@@ -1,6 +1,6 @@
-"""#3913: production Core ZIP producer interoperates with Numilog offline reader.
+"""#3913: Numilog plugin ZIP reader interoperates with generic Core export.
 
-This is a cross-component *Core export contract* test. The plugin consumer is
+This is a provider-owned cross-component integration test. The plugin consumer is
 loaded without an installed provider or network; no acquisitions occur.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from cifereca.core.diagnostic_journal_zip import export_daily_journal_zip
 
 _READER = (
     Path(__file__).resolve().parents[1]
-    / "src/plugins/provider-numilog/numilog_delivery_diagnose.py"
+    / "numilog_delivery_diagnose.py"
 )
 
 
