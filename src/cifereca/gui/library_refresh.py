@@ -69,7 +69,8 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
             # rows; never scan or call a supplier in this browse mode.
             from .library_global_projection import global_library_display_rows
             return global_library_display_rows(
-                self.service.library_entries_all_profiles()
+                self.service.library_entries_all_profiles(),
+                viewing_identity_id=identity_id,
             )
         if refresh_covers:
             self.service.catalog_scan(force_covers=True)
