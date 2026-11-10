@@ -252,7 +252,7 @@ class _GtkDetailOffWorker:
     """Every GTK detail read outside the main-thread callback is forbidden."""
 
     @property
-    def detail(self):
+    def _rendered_search_detail(self):
         raise AssertionError("worker touched GTK DetailPanel")
 
 
@@ -260,12 +260,12 @@ def test_local_placement_worker_never_reads_gtk_detail():
     h, _, lookup, native, display = prepared()
     assert display()
     _, work, completed, _failed, _kwargs = h.window.runner.jobs[0]
-    original_page = h.window.search_page
-    h.window.search_page = _GtkDetailOffWorker()
+    original_detail = h.window.search_page.detail
+    h.window.search_page.detail = _GtkDetailOffWorker()
     result = work()
     lookup.assert_called_once()
     native.assert_not_called()
-    h.window.search_page = original_page
+    h.window.search_page.detail = original_detail
     completed(result)
     assert len(Dialog.made) == 1
     assert "send" in Dialog.made[0].responses
@@ -278,11 +278,11 @@ def test_local_send_worker_never_reads_gtk_detail():
     ready(check())
     Dialog.made[0].respond("send")
     _, work, completed, _failed, _kwargs = h.window.runner.jobs[1]
-    original_page = h.window.search_page
-    h.window.search_page = _GtkDetailOffWorker()
+    original_detail = h.window.search_page.detail
+    h.window.search_page.detail = _GtkDetailOffWorker()
     assert work()["status"] == "complete"
     native.assert_called_once()
-    h.window.search_page = original_page
+    h.window.search_page.detail = original_detail
     completed(native.return_value)
     assert h.logs[-1][0] == "info"
 
@@ -303,5 +303,19 @@ def test_local_send_worker_rejects_scalar_context_rebound_before_copy(kind):
         h.window._selected_search_id = "other"
     else:
         h.window._search_detail_request_generation += 1
+    assert work()["status"] == "blocked"
+    native.assert_not_called()
+
+
+
+def test_new_search_page_without_generation_bump_blocks_send_worker():
+    h, _, _lookup, native, display = prepared()
+    assert display()
+    _, check, ready, _failed, _kw = h.window.runner.jobs[0]
+    ready(check())
+    Dialog.made[0].respond("send")
+    _, work, _completed, _failed, _kw = h.window.runner.jobs[1]
+    # The top-level page may be recreated without touching search selection.
+    h.window.search_page = NS(detail=h.window.search_page.detail)
     assert work()["status"] == "blocked"
     native.assert_not_called()
