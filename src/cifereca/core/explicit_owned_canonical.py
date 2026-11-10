@@ -183,8 +183,9 @@ def obtain_explicit_owned(service, target, *, resolve) -> MaterializationResult:
                 metadata={"identity_id": target.identity_id},
             )
             return MaterializationResult(
-                acquired, {"status": "indexed", "artifact_id": artifact_id},
-                artifact_id, target.identity_id,
+                # The canonical publisher attests B; its optional catalogue
+                # projection is advisory. Never fabricate an indexed receipt.
+                acquired, None, artifact_id, target.identity_id,
             )
         finally:
             # A retained callback is never a perpetual acquisition grant.
