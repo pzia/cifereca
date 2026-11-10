@@ -117,6 +117,13 @@ def obtain(service, target):
         item = admission()
         owner = service.identity_by_id(target.identity_id)
         _require(owner is not None)
+        # Installed Numilog v2 sessions use the sole canonical A→B writer.
+        # Never route a complete guarded producer back into the historical
+        # download_direct + numilog_delivered_artifact_v1 receipt namespace.
+        from .canonical_delivery_abi import has_complete_delivery_abi
+        if has_complete_delivery_abi(target.session):
+            from .numilog_manual_canonical import obtain_explicit_numilog
+            return obtain_explicit_numilog(service, target)
         from .numilog_materialization_checkpoint import index_delivered
         acquired = service.acquire_direct_item(item, _admission=admission)
         return index_delivered(service, acquired, title=item.title)
