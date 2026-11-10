@@ -276,6 +276,7 @@ def _render_search_results(self) -> int:
         # delivery with the exact account and explicit consent.
         if item.source_provider == "kobo" and not stale_known:
             extras.append("Origine Kobo · téléchargement à vérifier auprès du fournisseur")
+        meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
         # An offline public result is never evidence of a current entitlement,
         # a download offer or a verified local placement.
         placement_key = (item.source_provider, item.source_credential, item.record_id)
