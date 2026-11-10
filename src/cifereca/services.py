@@ -4055,15 +4055,6 @@ class LibraryService:
         # existing flat files are never moved automatically.
         return kobo_backup._kobo_backup_target_dir(self, identity_id)
 
-    @staticmethod
-    def _manifest_author(item: dict[str, Any]) -> str | None:
-        return kobo_backup._manifest_author(item)
-
-    @staticmethod
-    def _kobo_backup_error_info(exc: Exception) -> dict[str, Any]:
-        """Return a compact, non-secret diagnostic classification for a backup error."""
-        return kobo_backup._kobo_backup_error_info(exc)
-
     def kobo_backup_diagnostic(self) -> dict[str, Any]:
         """Summarise the persisted Kobo backup state without network access."""
         return kobo_backup.kobo_backup_diagnostic(self)
