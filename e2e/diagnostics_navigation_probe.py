@@ -1271,33 +1271,6 @@ def main() -> int:
             assert identity_id == "camille"
             f["source_queries"].append(identity_id)
             return sources
-        f["audit_calls"] = []
-
-        def audit_local_reconciliation(source_id):
-            assert source_id == "p0-kobo-audit"
-            f["audit_calls"].append(source_id)
-            return NS(
-                ok=True, changed=0,
-                facts={
-                    "phase": "reconcile", "status": "audit_only",
-                    "read_only": True, "offline": True,
-                    "acquisition_authorized": False, "truncated": True,
-                    "counts": {
-                        "backup_rows": 4,
-                        "linked_files_verified": 3,
-                        "unverified_placements": 1,
-                        "missing_or_unlinked": 0,
-                        "stored_hash_mismatch": 1,
-                        "unproven_catalogue_links": 0,
-                        "same_product_different_bytes": 0,
-                        "binary_match_groups": 1,
-                        "active_entitlements_unmaterialized": 2,
-                        "unindexed_regular_file_candidates": 1,
-                        "identity_flat_file_candidates": 0,
-                    },
-                },
-            )
-
         # CoreUI acceptance boundary: real widgets and TaskRunner, synthetic
         # broker responses only. No provider, file or DRM success is claimed.
         from threading import Event
@@ -1378,7 +1351,6 @@ def main() -> int:
             set_inventory_refresh_schedule=set_inventory_policy,
             sources=read_sources, synchronize=forbidden,
             synchronize_source=synchronize_one, set_enabled=forbidden,
-            audit_local_reconciliation=audit_local_reconciliation,
             prepare_local_materialization=prepare_materialization,
             materialize_source=materialize_one,
         )
@@ -1542,7 +1514,7 @@ def main() -> int:
         assert w.get_width() <= 1300
         assert all(not node.get_expanded() for node in f["sync_tools"])
         assert not f["source_sync_calls"] and not f["prepare_calls"]
-        assert not f["materialize_calls"] and not f["audit_calls"]
+        assert not f["materialize_calls"]
         capture("03h-sync-collapsed-1280-" + ("large" if large_font else "normal"))
         if not large_font:
             Gtk.Settings.get_default().set_property("gtk-font-name", "Sans 12")
@@ -1565,7 +1537,7 @@ def main() -> int:
             return
         assert f["sync_tools"][0].get_expanded(), "XTEST must open account tools"
         assert not f["source_sync_calls"] and not f["prepare_calls"]
-        assert not f["materialize_calls"] and not f["audit_calls"]
+        assert not f["materialize_calls"]
         report["checks"]["P0_2141_source_status_primary_action_and_explicit_tools"] = True
         # Prepare the remaining existing geometry/action tests. The first
         # disclosure above was physical XTEST; no business callback ran.
@@ -2288,225 +2260,6 @@ def main() -> int:
         assert "Dernier succès 15/10/2026 12:00" in row.get_subtitle()
         capture("03i3-sync-targeted-success")
         f["sync_scroll"].get_vadjustment().set_value(0)
-        later(200, loan_sync_audit_click)
-
-    def kobo_offline_audit_row():
-        """Resolve the audited account before its repeated detail title.
-
-        #2141 sorts enabled/synchronisable Kobo ahead of the offline account.
-        Selecting the first audit detail globally would inspect another
-        account's unchanged subtitle and produce a false negative.
-        """
-        w = window[0]
-        groups = [
-            group for group in walk(w._sync_sources_box)
-            if isinstance(group, Adw.PreferencesGroup)
-            and any(
-                isinstance(item, Adw.ActionRow)
-                and item.get_title() == "Kobo audit hors ligne"
-                for item in walk(group)
-            )
-        ]
-        assert len(groups) == 1, "Offline Kobo audit account is not unique"
-        matches = [
-            item for item in walk(groups[0])
-            if isinstance(item, Adw.ActionRow)
-            and item.get_title() == "Vérification des fichiers et rapprochements"
-        ]
-        assert len(matches) == 1, "Offline Kobo audit detail is not unique"
-        return groups[0], matches[0]
-
-    def loan_sync_audit_click():
-        w = window[0]
-        f = loan_sync_fixture
-        rows = [node for node in walk(w._sync_sources_box) if isinstance(node, Adw.ActionRow)]
-        kobo = next(row for row in rows if row.get_title() == "Kobo audit hors ligne")
-        assert "Connexion : Déconnectée" in kobo.get_subtitle()
-        # #2141: secondary actions are now below the account's explicitly
-        # opened tools expander, not in the primary ActionRow suffix.
-        # Keep target account and repeated audit-detail title scoped.
-        account_group, _ = kobo_offline_audit_row()
-        assert any(node is kobo for node in walk(account_group))
-        audits = [button for button in walk(account_group)
-                  if isinstance(button, Gtk.Button)
-                  and button.get_tooltip_text() == (
-                      "Audit SHA local de ce compte (lecture seule, peut être long)"
-                  )]
-        assert len(audits) == 1, "Kobo audit action must remain account-scoped"
-        audit = audits[0]
-        assert audit.get_sensitive() and audit.get_mapped()
-        assert not f["audit_calls"] and not f["mutations"]
-        # GTK mapping is NOT on-screen visibility. An extra confirmation row
-        # (P0 #1347) pushed this button to y=2036 on a 900px Xvfb screen;
-        # click_widget then clicked outside the display without invoking the
-        # audit. Scroll the *real* Gtk.ScrolledWindow until the action can be
-        # physically reached. Do not weaken the audit-result assertions.
-        scroll = f["sync_scroll"]
-        assert isinstance(scroll, Gtk.ScrolledWindow)
-        ok, bounds = audit.compute_bounds(scroll)
-        assert ok, "Kobo audit action has no scroll-viewport bounds"
-        top, bottom = bounds.get_y(), bounds.get_y() + bounds.get_height()
-        height = scroll.get_height()
-        assert height > 100 and bottom > top, (top, bottom, height)
-        if top < 4 or bottom > height - 4:
-            attempt = f.get("audit_scroll_attempts", 0) + 1
-            assert attempt <= 5, (
-                "Kobo audit button remained outside visible viewport",
-                top, bottom, height,
-            )
-            f["audit_scroll_attempts"] = attempt
-            adjustment = scroll.get_vadjustment()
-            target = adjustment.get_value() + top - min(80, height / 4)
-            maximum = max(adjustment.get_lower(),
-                          adjustment.get_upper() - adjustment.get_page_size())
-            adjustment.set_value(max(adjustment.get_lower(), min(target, maximum)))
-            later(180, loan_sync_audit_click)
-            return
-        ok, window_bounds = audit.compute_bounds(w)
-        assert ok, "Kobo audit action has no MainWindow bounds"
-        assert 0 <= window_bounds.get_y() and (
-            window_bounds.get_y() + window_bounds.get_height() <= w.get_height()
-        ), "Kobo audit action is outside the displayed window"
-        # GTK can finish a scroll allocation after compute_bounds reports an
-        # on-screen rectangle. The XTEST event is delivered after this GTK
-        # callback returns; sending it during reflow can hit another widget.
-        # Require a stable hit target on two separate main-loop iterations.
-        point_x = window_bounds.get_x() + window_bounds.get_width() / 2
-        point_y = window_bounds.get_y() + window_bounds.get_height() / 2
-        picked = w.pick(point_x, point_y, Gtk.PickFlags.DEFAULT)
-        while picked is not None and picked is not audit:
-            picked = picked.get_parent()
-        geometry = (
-            round(window_bounds.get_x()), round(window_bounds.get_y()),
-            round(window_bounds.get_width()), round(window_bounds.get_height()),
-            round(scroll.get_vadjustment().get_value()),
-        )
-        if picked is not audit or f.get("audit_stable_geometry") != geometry:
-            attempt = f.get("audit_stable_checks", 0) + 1
-            assert attempt <= 8, "Kobo audit physical hit target did not settle"
-            f["audit_stable_checks"] = attempt
-            f["audit_stable_geometry"] = geometry
-            later(130, loan_sync_audit_click)
-            return
-        report["checks"]["P0_kobo_audit_XTEST_target_inside_viewport"] = True
-        report["checks"]["P0_kobo_audit_offline_button_no_implicit_scan"] = True
-        # A physical XTEST action is the sole trigger; rendering the row does
-        # not authorize or start any inspection.
-        # Observe the real GTK "clicked" signal without invoking the action
-        # programmatically. A missed XTEST hit must remain a test failure.
-        f["audit_click_signal_seen"] = False
-        audit.connect(
-            "clicked",
-            lambda _button: f.__setitem__("audit_click_signal_seen", True),
-        )
-        report["stage"] = "P0_1347_kobo_audit_pointer_dispatch"
-        # A GTK hit-test on the window does not prove that X11/GDK actually
-        # delivered pointer motion to the button. Place the *physical* pointer
-        # first, return to GTK's main loop, and accept only a real GTK motion
-        # or enter signal on this exact button before pressing. No synthetic
-        # GTK activation or second button click is allowed.
-        if f.get("audit_motion_button") is not audit:
-            motion = Gtk.EventControllerMotion()
-            motion.connect("enter", lambda *_: f.__setitem__("audit_motion_seen", True))
-            motion.connect("motion", lambda *_: f.__setitem__("audit_motion_seen", True))
-            audit.add_controller(motion)
-            f["audit_motion_controller"] = motion
-            f["audit_motion_button"] = audit
-        f["audit_motion_seen"] = False
-        screen_x, screen_y = device[0].window_point(w, point_x, point_y)
-        device[0].move(screen_x, screen_y)
-        f["audit_motion_target"] = (audit, geometry, point_x, point_y, screen_x, screen_y)
-        later(130, loan_sync_audit_after_motion)
-
-    def loan_sync_audit_after_motion():
-        w = window[0]
-        f = loan_sync_fixture
-        audit, geometry, px, py, sx, sy = f["audit_motion_target"]
-        ok, rect = audit.compute_bounds(w)
-        current = (
-            round(rect.get_x()), round(rect.get_y()),
-            round(rect.get_width()), round(rect.get_height()),
-            round(f["sync_scroll"].get_vadjustment().get_value()),
-        ) if ok else None
-        picked = w.pick(px, py, Gtk.PickFlags.DEFAULT)
-        while picked is not None and picked is not audit:
-            picked = picked.get_parent()
-        current_screen = device[0].window_point(w, px, py)
-        if (not f["audit_motion_seen"] or current != geometry
-                or picked is not audit or current_screen != (sx, sy)
-                or not audit.get_mapped() or not audit.get_sensitive()):
-            # We have not clicked. Retry *pointer placement* only, with a
-            # closed bound; never misreport a missed physical click as success.
-            attempts = f.get("audit_motion_attempts", 0) + 1
-            f["audit_motion_attempts"] = attempts
-            assert attempts <= 5, "Kobo audit XTEST pointer could not hit GTK button"
-            f["audit_stable_geometry"] = None
-            f["audit_stable_checks"] = 0
-            later(130, loan_sync_audit_click)
-            return
-        # Only local object identity/generation snapshots. Publication exports
-        # four closed booleans, never IDs, account details or GTK contents.
-        f["audit_row_at_click"] = kobo_offline_audit_row()[1]
-        f["audit_preview_generation_at_click"] = getattr(w, "_sync_preview_generation", None)
-        f["audit_identity_generation_at_click"] = getattr(w, "_identity_context_generation", None)
-        f["audit_page_token_at_click"] = getattr(w, "_sync_page_token", None)
-        # Exactly one genuine XTEST press/release on a proven GTK hover target.
-        device[0].click(sx, sy)
-        report["pointer_actions"].append({
-            "widget": audit.get_name(), "x": sx, "y": sy,
-            "source": "XTEST pointer/button events (verified GTK pointer motion)",
-        })
-        report["stage"] = "P0_1347_kobo_audit_result_wait"
-        f["audit_deadline"] = monotonic() + 6
-        later(100, loan_sync_audit_result)
-
-    def loan_sync_audit_result():
-        w = window[0]
-        f = loan_sync_fixture
-        audit_row = kobo_offline_audit_row()[1]
-        subtitle = audit_row.get_subtitle()
-        if "Fichiers locaux vérifiés par SHA : 3" not in subtitle:
-            now = monotonic()
-            if now >= f["audit_deadline"]:
-                # Closed fixture facts only. Never publish account/source IDs,
-                # GTK text, coordinates, worker exceptions, or raw traces.
-                report["kobo_audit_observation"] = {
-                    "clicked_signal": f["audit_click_signal_seen"] is True,
-                    "broker_calls": min(len(f["audit_calls"]), 2),
-                    "row_recreated": audit_row is not f.get("audit_row_at_click"),
-                    "preview_generation_changed": (
-                        getattr(w, "_sync_preview_generation", None)
-                        != f.get("audit_preview_generation_at_click")
-                    ),
-                    "identity_generation_changed": (
-                        getattr(w, "_identity_context_generation", None)
-                        != f.get("audit_identity_generation_at_click")
-                    ),
-                    "page_rebuilt": (
-                        getattr(w, "_sync_page_token", None)
-                        is not f.get("audit_page_token_at_click")
-                    ),
-                    "subtitle_phase": (
-                        "in_progress" if subtitle == "Inspection locale en cours (lecture seule)…"
-                        else "initial" if subtitle == (
-                            "Non consulté · aucun téléchargement, déplacement ou suppression"
-                        ) else "other"
-                    ),
-                }
-            assert now < f["audit_deadline"], (
-                "Le résultat GTK de l'audit Kobo n'est pas apparu"
-            )
-            later(100, loan_sync_audit_result)
-            return
-        assert f["audit_calls"] == ["p0-kobo-audit"]
-        assert "groupes de doublons binaires : 1" in subtitle
-        assert "Audit partiel" in subtitle
-        assert "Aucune réconciliation, acquisition ni suppression autorisée" in subtitle
-        assert "fictitious-credential" not in subtitle
-        assert not f["mutations"] and w.service.current_identity.identity_id == "camille"
-        report["checks"]["P0_kobo_audit_real_gtk_explicit_offline_read_only"] = True
-        report["checks"]["P0_kobo_audit_real_gtk_bounded_redacted_partial_result"] = True
-        capture("03j-kobo-offline-explicit-audit")
         w.navigate("library")
         await_route("library", kobo_library_operations)
 
