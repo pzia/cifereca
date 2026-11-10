@@ -31,7 +31,7 @@ def test_neutral_scope_is_not_source_right_or_file_proof(tmp_path):
     host, library = service(tmp_path)
     roots = checked_profile_roots(
         host, "alice", roots_for_identity=lambda *_: (
-            library / "incoming", library,
+            library, library / "incoming",
         ),
     )
     assert roots == (library / "incoming", library / "Alice")
