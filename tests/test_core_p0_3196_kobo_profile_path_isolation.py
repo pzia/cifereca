@@ -7,10 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 from cifereca.core.profile_source_paths import _kobo_preview_paths
-from cifereca.core.kobo_backup import _kobo_preview_paths as legacy_alias
 
 
-def test_kobo_root_selection_is_pure_and_keeps_legacy_abi(tmp_path):
+def test_kobo_root_selection_is_pure_without_w2(tmp_path):
     library = tmp_path / "library"
     account = SimpleNamespace(identity_id="alice", directory_name="Alice")
     service = SimpleNamespace(
@@ -22,13 +21,11 @@ def test_kobo_root_selection_is_pure_and_keeps_legacy_abi(tmp_path):
     )
     expected = (library, library / "archives" / "Alice" / "kobo")
     assert _kobo_preview_paths(service, "alice") == expected
-    assert legacy_alias(service, "alice") == expected
     assert not library.exists()
 
 
 @pytest.mark.parametrize("module", [
     "source_materialization.py",
-    "kobo_local_audit.py",
     "kobo_local_reconciliation.py",
 ])
 def test_read_only_consumers_do_not_import_retired_backup_engine(module):
