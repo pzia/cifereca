@@ -191,7 +191,13 @@ def test_generic_diagnostic_cannot_attest_action_or_enter_domain(tmp_path):
     diagnostic.add('LOAN','bnf_loan_action','failed',detail=fields)
     assert not events(NS(diagnostics=diagnostic),tmp_path)
     diagnostic.add_core_bnf_loan_action(fields)
-    assert len(events(NS(diagnostics=diagnostic),tmp_path))==1
+    observed, = events(NS(diagnostics=diagnostic), tmp_path)
+    # Core event attribution comes only from the closed, validated payload.
+    assert observed['provider_id'] == fields['provider_id']
+    assert not query_diagnostic_events(
+        diagnostic, log_path=tmp_path/'empty-log',
+        domain='loan_download', provider_id='unknown-provider',
+    )['events']
     for mutation in ({'reason_code':'SECRET'},{'status':'success'},{'task_ref':'profile-name'}, {'loan_id':'private'}, {'action':'borrow'}, {'provider_id':'paris'}):
         bad=dict(fields,**mutation)
         assert not public_fields(bad) and log_message(bad) is None
