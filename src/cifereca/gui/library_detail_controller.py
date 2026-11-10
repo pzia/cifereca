@@ -23,7 +23,15 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     item = window._library_objects.get(row.key)
     if not item:
         return
-    if item.get("source") == "loan" and item.get("loan_id"):
+    # Global Library is a read scope, not permission to use A's provider
+    # account under active B. Only the separate local-send Core admission
+    # may offer a consented copy of an exact physical foreign placement.
+    active = getattr(
+        getattr(window.service, "current_identity", None), "identity_id", None,
+    )
+    owner = item.get("identity_id")
+    foreign = type(owner) is str and owner and owner != active
+    if not foreign and item.get("source") == "loan" and item.get("loan_id"):
         # A merged catalogue notice may not identify the exact borrower.
         # In that case never expose an action for an arbitrary loan source.
         loan = unique_library_loan(window.loan_objects.values(), item)
@@ -58,16 +66,17 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
             sync_status_label=window._kobo_backup_status_label,
             language_label=detail_language,
         ),
-        links=document_links(item),
+        links=() if foreign else document_links(item),
         metadata=item.get('metadata'),
     )
     if trace is not None:
         trace.record("projection", projection_started)
     detail.show_presentation(presentation, description=description)
     window._add_local_book_actions(detail,item)
-    window._add_book_recommendation_action(detail, item)
     window._add_facets(window.library_page.detail, item, window.library_controls)
-    # show_presentation does not decorate dataclass books like show_loan does.
-    # Route plugin book actions through the same public registry exactly once.
-    window._add_plugin_book_actions(detail, item)
-    window._request_cached_book_details("library", row.key, item)
+    if not foreign:
+        window._add_book_recommendation_action(detail, item)
+        # Descriptive foreign metadata must not trigger provider-bound
+        # details or plugin actions with B's selected credentials.
+        window._add_plugin_book_actions(detail, item)
+        window._request_cached_book_details("library", row.key, item)
