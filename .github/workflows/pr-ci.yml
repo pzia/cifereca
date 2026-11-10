@@ -35,6 +35,11 @@ jobs:
           python3 -m scripts.ci_provider_coupling_delta_gate \
             --base-ref "$BASE_SHA" --head-ref "$HEAD_SHA"
 
+      - name: Temporary read-only Core provider LOC inventory
+        run: |
+          python3 -m scripts.ci_provider_core_coupling_inventory --json
+          python3 -m scripts.ci_kobo_core_line_inventory --json
+
       - name: Select validation scopes
         id: scope
         shell: bash
