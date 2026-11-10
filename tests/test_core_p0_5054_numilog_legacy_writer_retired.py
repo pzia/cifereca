@@ -15,7 +15,7 @@ import pytest
 from cifereca.models import Account, SearchResult
 from cifereca.providers import ProviderConfigurationError
 from cifereca.core import numilog_materialization_startup as startup
-from cifereca.core import numilog_search_canonical as search
+from cifereca.core import selected_owned_search as search
 from cifereca.core import numilog_materialization_checkpoint as legacy_receipts
 
 
@@ -30,7 +30,7 @@ def test_legacy_direct_module_physically_removed_and_core_uses_v2():
     assert not (ROOT / "src/cifereca/core/numilog_direct_acquisition.py").exists()
     services = _src("src/cifereca/services.py")
     assert "from .core.numilog_direct_acquisition import" not in services
-    assert "from .core.numilog_search_canonical import obtain" in services
+    assert "from .core.selected_owned_search import obtain_selected_owned" in services
     assert "numilog_canonical_explicit_action_required" in services
 
 
@@ -101,39 +101,43 @@ def _item():
     )
 
 
-def test_explicit_search_requires_one_right_and_guarded_v2(monkeypatch):
+def test_exact_owned_search_delegates_to_same_canonical_library_target(monkeypatch):
     item = _item()
-    session = NS(downloadable_selected_delivery_candidate_guarded=lambda **_k: None)
-    monkeypatch.setattr(search, "_scoped_record_id", lambda *_a: "exact")
-    monkeypatch.setattr(search, "has_complete_delivery_abi", lambda *_a: True)
-    monkeypatch.setattr(
-        search, "require_source",
-        lambda *_a, **_kw: (NS(identity_id="owner"), session, "borrower"),
-    )
-    evidence = {"entitlements": [{
+    account = Account(provider_id="numilog", credential_id="card",
+                      unique_id="borrower", identity_id="owner")
+    right = {
         "entitlement_id": "owned-right", "identity_id": "owner",
-        "credential_id": "card", "account_id": "borrower", "item_id": "edition",
-        "entitlement_type": "owned", "state": "active",
-        "loan_id": None, "expires_at": None,
-        "metadata": {"source": "numilog.authenticated_library"},
-    }], "acquisitions": [], "placement_conflict": False}
-    service = NS(storage=NS(
-        numilog_purchase_preflight_evidence=lambda **_kw: evidence,
-    ))
-    from cifereca.core import numilog_owned_download as owned
-    target = NS(
-        session=session, account_id="borrower", credential_id="card",
-        item_id="edition",
+        "credential_id": "card", "account_id": "borrower",
+        "item_id": "edition", "entitlement_type": "owned",
+        "state": "active", "loan_id": None, "expires_at": None,
+    }
+    target = NS(provider_id="numilog", identity_id="owner",
+                item_id="edition")
+    store = NS(
+        provider_scope_account_bound=lambda **_kw: True,
+        entitlements=lambda **_kw: [right],
     )
-    monkeypatch.setattr(owned, "_resolve", lambda *_a: (target, item))
-    monkeypatch.setattr(owned, "obtain", lambda *_a: "canonical-result")
-    assert search.obtain(service, item) == "canonical-result"
-    for changed in (
-        {"acquisitions": [{"acquisition_id": "legacy"}]},
-        {"entitlements": []},
-        {"placement_conflict": True},
-    ):
-        altered = dict(evidence, **changed)
-        service.storage.numilog_purchase_preflight_evidence = lambda **_kw: altered
-        with pytest.raises(ProviderConfigurationError, match="numilog_canonical"):
-            search.obtain(service, item)
+    service = NS(
+        current_identity=NS(identity_id="owner"),
+        accounts=[account], storage=store,
+    )
+    from cifereca.core import owned_library_download as owned
+    selections = []
+    monkeypatch.setattr(owned, "owned_library_download_target",
+                        lambda _service, entry: selections.append(entry) or target)
+    monkeypatch.setattr(owned, "obtain_owned_library_item",
+                        lambda _service, selected: (
+                            "canonical-result" if selected is target else
+                            pytest.fail("retargeted owned action")
+                        ))
+    assert search.obtain_selected_owned(service, item) == "canonical-result"
+    assert len(selections) == 1
+    assert selections[0]["possessions"][0]["entitlement_id"] == "owned-right"
+
+    store.entitlements = lambda **_kw: [right, {**right, "entitlement_id": "other"}]
+    with pytest.raises(ProviderConfigurationError, match="canonical_owned"):
+        search.obtain_selected_owned(service, item)
+    store.entitlements = lambda **_kw: [right]
+    target.operation = "resume_index"
+    with pytest.raises(ProviderConfigurationError, match="canonical_owned"):
+        search.obtain_selected_owned(service, item)
