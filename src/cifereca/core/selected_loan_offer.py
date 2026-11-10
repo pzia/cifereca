@@ -6,6 +6,9 @@ bridge only checks the typed, exact owner and selected delivery evidence.
 """
 from __future__ import annotations
 
+from inspect import getattr_static, isfunction
+from types import SimpleNamespace
+
 from .selected_offer_scope import selected_offer_scope_matches
 
 
@@ -15,12 +18,23 @@ def select_exact_loan_offer(session, account, loan, *, branch: str, current):
     'unavailable' is a partial/missing ABI; 'scope_unproven' is an unmatched
     selected observation or revoked lease. Neither result may trigger GET.
     """
-    offer_snapshot = getattr(
-        session, "rights_selected_delivery_offer_snapshot", None,
+    # A provider-defined property or __getattribute__ is executable code,
+    # not proof of an installed selected-offer API. Reject such descriptors
+    # *before* dynamic access; this preflight must never issue private I/O.
+    klass = type(session)
+    if (klass is not SimpleNamespace
+            and getattr_static(klass, "__getattribute__", None)
+            is not object.__getattribute__):
+        return "unavailable", None
+    names = (
+        "rights_selected_delivery_offer_snapshot",
+        "rights_selected_delivery_candidate",
     )
-    selected_candidate = getattr(
-        session, "rights_selected_delivery_candidate", None,
-    )
+    if any(not isfunction(getattr_static(session, name, None))
+           for name in names):
+        return "unavailable", None
+    offer_snapshot = getattr(session, names[0], None)
+    selected_candidate = getattr(session, names[1], None)
     if not callable(offer_snapshot) or not callable(selected_candidate):
         return "unavailable", None
     observed = offer_snapshot(
