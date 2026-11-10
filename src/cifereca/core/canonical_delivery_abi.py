@@ -46,4 +46,26 @@ def has_complete_delivery_abi(session: object) -> bool:
         return False
 
 
-__all__ = ["has_complete_delivery_abi"]
+def has_incomplete_delivery_abi(session: object) -> bool:
+    """Detect any statically declared canonical method without a full trio.
+
+    A partial/broken v2 ABI must never silently authorize a legacy provider
+    GET. No descriptor/property/session callback is invoked during probing.
+    An entirely old session with zero v2 declarations is not classified here.
+    """
+    if has_complete_delivery_abi(session):
+        return False
+    marker = object()
+    try:
+        return any(
+            getattr_static(session, method, marker) is not marker
+            for methods in _CANONICAL_DELIVERY_CONTRACTS
+            for method in methods
+        )
+    except (TypeError, AttributeError):
+        # Failure to inspect an ostensibly modern session is not proof that
+        # fallback to the historical downloader is safe.
+        return True
+
+
+__all__ = ["has_complete_delivery_abi", "has_incomplete_delivery_abi"]
