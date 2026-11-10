@@ -197,13 +197,6 @@ def _render_search_results(self) -> int:
             source_context_epoch=getattr(self.service, "_source_context_epoch", None),
         )
     linked = self.service.local_placements_for_sources(identity.identity_id) if identity else {}
-    # A public Kobo catalog 'owned' flag is not an authenticated entitlement.
-    # Read the Core's identity-scoped rights once per render, not per book.
-    kobo_rights = (
-        self.service.kobo_personal_right_states(identity.identity_id)
-        if identity and any(item.source_provider == "kobo" for item in self._remote_search_results)
-        else {}
-    )
     remote_keys = {
         (item.source_provider, item.source_credential, item.record_id)
         for item in self._remote_search_results
@@ -278,26 +271,11 @@ def _render_search_results(self) -> int:
         elif item.source_provider == "numilog" and project(item)["state"] == "remote_owned":
             # Private inventory, NOT a locally available EPUB/ACSM.
             extras.append("Mes achats Numilog · fichier local non présumé")
-        # Core's exact identity/credential/product entitlement is the only
-        # purchase authority, not the provider's raw catalogue owned flag.
-        right_state = (
-            kobo_rights.get((item.source_credential, item.record_id))
-            if item.source_provider == "kobo" and not stale_known else None
-        )
-        kobo_download_ready = False
+        # A supplier notice is not a right or an executable selected offer.
+        # The provider-only canonical acquisition flow must re-attest any
+        # delivery with the exact account and explicit consent.
         if item.source_provider == "kobo" and not stale_known:
-            if right_state == "active":
-                extras.append("Possédé sur Kobo · Mes achats (droit attesté)")
-                kobo_download_ready = self.service.can_direct_download(item)
-                if not kobo_download_ready:
-                    extras.append("Sauvegarde Kobo indisponible")
-            elif right_state == "archived":
-                extras.append("Archivé sur Kobo · droit non actif")
-            else:
-                extras.append("Catalogue Kobo · aucun achat attesté pour ce profil")
-                if item.price:
-                    extras.append(f"{item.price} {item.currency or ''}".strip())
-        meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
+            extras.append("Origine Kobo · téléchargement à vérifier auprès du fournisseur")
         # An offline public result is never evidence of a current entitlement,
         # a download offer or a verified local placement.
         placement_key = (item.source_provider, item.source_credential, item.record_id)
@@ -308,8 +286,7 @@ def _render_search_results(self) -> int:
         # nor an acquisition action. Never consult the direct-download broker
         # for this source, including malformed remote flags.
         direct = (
-            kobo_download_ready if item.source_provider == "kobo"
-            else False if (stale_known or item.source_provider == "numilog-catalog"
+            False if (stale_known or item.source_provider in {"kobo", "numilog-catalog"}
                            or (item.source_provider == "numilog"
                                and project(item)["state"] != "remote_owned"))
             else self.service.can_direct_download(item)
