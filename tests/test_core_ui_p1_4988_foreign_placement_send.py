@@ -66,6 +66,9 @@ def setup(*, with_core=True, item=None):
 
 def test_foreign_placement_shows_one_action_without_loan_or_provider_call():
     window, row, detail, actions, events, queued, calls, deps = setup()
+    def forbidden_owned_lookup(_item):
+        raise AssertionError("foreign rights must not be queried from B")
+    window.service.owned_library_download_target = forbidden_owned_lookup
     add_local_book_actions(window, detail, row, **deps)
     assert [b._cifereca_action_id for b in actions] == [
         "send-present-foreign-placement",
