@@ -12,16 +12,17 @@ from .loan_safe_trace import loan_trace_ref
 def _publish_new_adept_without_clobber(
     produced_path, destination, *, uuid, ProviderConfigurationError,
 ):
-    """Exclusive publication; a supplier filename is never authority to replace.
+    """No-clobber ADEPT publication even across separate source mounts.
 
-    Non-repair loans must not replace a valid older loan, even when ADEPT
-    produced the *same* file format and plan_publish_format_path returned the
-    preexisting name. Hardlink is an atomic no-clobber commit on the target
-    filesystem (as in the direct-loan publisher). No matching-by-content
-    adoption, account deduction or provider retry is permitted.
+    The Core-owned staging directory may be on another filesystem. Never
+    hardlink the staged file directly into Acquisitions (EXDEV); copy and
+    fsync first into a private temporary file ON the destination filesystem,
+    then atomically publish using an exclusive hardlink. Source cleanup is
+    best-effort after physical publication, not an extra provider request.
     """
     import os
     import stat
+    import tempfile
 
     if produced_path.resolve() == destination.resolve():
         return destination
@@ -29,44 +30,95 @@ def _publish_new_adept_without_clobber(
             or destination.is_symlink() or destination.parent.is_symlink()):
         raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    # Pin the source before the exclusive commit. A stage substitution
-    # cannot turn a symlink or another inode into a delivered artifact.
+    if destination.parent.is_symlink():
+        raise ProviderConfigurationError("Chemin d’artefact ADEPT inattendu")
+
     before = produced_path.stat(follow_symlinks=False)
     if not stat.S_ISREG(before.st_mode) or before.st_size <= 0:
         raise ProviderConfigurationError("Artefact final invalide")
-    initial = destination
-    for attempt in range(32):
-        try:
-            os.link(produced_path, destination, follow_symlinks=False)
-        except FileExistsError:
-            destination = initial.with_name(
-                initial.stem + ".reacquired-" + uuid.uuid4().hex
-                + initial.suffix
-            )
-            continue
-        else:
-            after = destination.stat(follow_symlinks=False)
-            if (not stat.S_ISREG(after.st_mode)
-                    or (after.st_dev, after.st_ino, after.st_size) !=
-                       (before.st_dev, before.st_ino, before.st_size)):
-                destination.unlink()
+
+    def same_stage(stat_result):
+        return (stat_result is not None
+                and stat.S_ISREG(stat_result.st_mode)
+                and (stat_result.st_dev, stat_result.st_ino,
+                     stat_result.st_size, stat_result.st_mtime_ns)
+                    == (before.st_dev, before.st_ino,
+                        before.st_size, before.st_mtime_ns))
+
+    temporary = None
+    try:
+        # No symlink following, and pin the exact previously inspected inode.
+        source_fd = os.open(
+            produced_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        with os.fdopen(source_fd, "rb") as source:
+            if not same_stage(os.fstat(source.fileno())):
                 raise ProviderConfigurationError("Artefact final modifié")
-            # Staging cleanup follows physical publication, never before.
-            # Avoid deleting a different file if the path was re-bound.
+            out_fd, temp_name = tempfile.mkstemp(
+                prefix=".adept-publish-", dir=destination.parent,
+            )
+            temporary = type(destination)(temp_name)
+            with os.fdopen(out_fd, "wb") as out:
+                while True:
+                    part = source.read(1024 * 1024)
+                    if not part:
+                        break
+                    out.write(part)
+                out.flush()
+                os.fsync(out.fileno())
+            if not same_stage(os.fstat(source.fileno())):
+                raise ProviderConfigurationError("Artefact final modifié")
+
+        if temporary.stat(follow_symlinks=False).st_size != before.st_size:
+            raise ProviderConfigurationError("Artefact final modifié")
+        if (produced_path.is_symlink()
+                or not same_stage(produced_path.stat(follow_symlinks=False))):
+            raise ProviderConfigurationError("Artefact final modifié")
+
+        initial = destination
+        temp_stat = temporary.stat(follow_symlinks=False)
+        for _attempt in range(32):
+            try:
+                os.link(temporary, destination, follow_symlinks=False)
+            except FileExistsError:
+                destination = initial.with_name(
+                    initial.stem + ".reacquired-" + uuid.uuid4().hex
+                    + initial.suffix
+                )
+                continue
+
+            # The same-filesystem hardlink must refer to our private
+            # temporary inode. Never unlink a path already replaced by a
+            # different concurrent operation.
+            published = destination.stat(follow_symlinks=False)
+            if ((published.st_dev, published.st_ino, published.st_size)
+                    != (temp_stat.st_dev, temp_stat.st_ino,
+                        temp_stat.st_size)):
+                raise ProviderConfigurationError("Artefact final modifié")
             try:
                 current = produced_path.stat(follow_symlinks=False)
             except OSError:
                 current = None
-            if (current is not None
-                    and (current.st_dev, current.st_ino) ==
-                        (before.st_dev, before.st_ino)):
-                try:
-                    produced_path.unlink()
-                except OSError:
-                    pass
+            if not same_stage(current):
+                # Source path was rebound even after the validated copy:
+                # undo ONLY our own newly linked destination.
+                published_now = destination.stat(follow_symlinks=False)
+                if ((published_now.st_dev, published_now.st_ino)
+                        == (temp_stat.st_dev, temp_stat.st_ino)):
+                    destination.unlink()
+                raise ProviderConfigurationError("Artefact final modifié")
+            try:
+                produced_path.unlink()
+            except OSError:
+                pass
             return destination
-    raise ProviderConfigurationError("Destination ADEPT déjà occupée")
-
+        raise ProviderConfigurationError("Destination ADEPT déjà occupée")
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
             destination, previous_path, Path, ProviderConfigurationError,
