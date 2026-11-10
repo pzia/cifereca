@@ -180,8 +180,8 @@ def execute_admitted_convergence(
             type(explicit_entitlement_id) is not str
             or not explicit_entitlement_id
             or len(explicit_entitlement_id) > 256
-            or any(c in explicit_entitlement_id for c in "\\x00\\r\\n")
-            persisted_consent is None
+            or any(ord(c) < 32 for c in explicit_entitlement_id)
+            or persisted_consent is None
             or len(persisted_consent) != 1
             or publication_guard is None
             or expected_source_policy_revision is not None
