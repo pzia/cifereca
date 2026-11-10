@@ -108,6 +108,7 @@ def test_foreign_book_does_not_load_provider_detail_or_supplier_actions(monkeypa
     )
     item = {
         "key": "artifact:a", "identity_id": "alice",
+        "_library_view_owner": "alice",
         "placement_id": "placed-a", "artifact_id": "sha256:a",
         "title": "Alice book", "source": "loan", "loan_id": "private-a",
     }
