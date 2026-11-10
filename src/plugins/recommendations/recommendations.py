@@ -946,6 +946,24 @@ class UxRecommendationsView:
         self._resetting_preference_optin = False
         self._preference_optin.connect("toggled", self._preference_optin_changed)
         controls.append(self._preference_optin)
+        # #4681: a different, voluntary source filter. This does not mean
+        # that a local book was read or liked; it only limits *documentary*
+        # query terms to Core-attested present Placements of the active profile.
+        self._local_only_optin = Gtk.CheckButton(
+            label="Sources : fichiers locaux vérifiés",
+        )
+        self._local_only_optin.set_active(False)
+        self._local_only_optin.set_tooltip_text(
+            "Facultatif : construire les affinités à partir des fichiers "
+            "présents et vérifiés pour ce profil. Les prêts/achats distants "
+            "restent visibles et exclus comme déjà possédés, mais ne sont "
+            "plus des thèmes de recherche. Ce filtre n'est pas un avis."
+        )
+        self._resetting_local_only_optin = False
+        self._local_only_optin.connect(
+            "toggled", self._local_only_optin_changed,
+        )
+        controls.append(self._local_only_optin)
         self._feedback_button = Gtk.Button(label="Mes appréciations…")
         self._feedback_button.set_tooltip_text(
             "Choisir un livre de ce profil et enregistrer ou effacer un avis "
@@ -1280,6 +1298,19 @@ class UxRecommendationsView:
             # preference is used merely by displaying or filtering the view.
             self.refresh()
 
+    def _clear_local_only_optin(self) -> None:
+        widget = getattr(self, "_local_only_optin", None)
+        if widget is not None and widget.get_active():
+            self._resetting_local_only_optin = True
+            try:
+                widget.set_active(False)
+            finally:
+                self._resetting_local_only_optin = False
+
+    def _local_only_optin_changed(self, *_args) -> None:
+        if not getattr(self, "_resetting_local_only_optin", False):
+            self.refresh()
+
     def _manage_feedback(self, *_args) -> None:
         """#4681: explicit per-book preference, no catalogue or provider action."""
         if (getattr(self, "_disposed", False)
@@ -1495,9 +1526,13 @@ class UxRecommendationsView:
         self._reference_book = reference
         self.plugin._pending_reference = reference
         self._clear_preference_optin()
+        self._clear_local_only_optin()
         optin = getattr(self, "_preference_optin", None)
         if optin is not None:
             optin.set_sensitive(reference is None)
+        documentary = getattr(self, "_local_only_optin", None)
+        if documentary is not None:
+            documentary.set_sensitive(reference is None)
         self.refresh()
 
     def set_reference_book(self, book, *, refresh: bool = True) -> None:
@@ -1507,9 +1542,13 @@ class UxRecommendationsView:
         self._reference_book = book
         self.plugin._pending_reference = book
         self._clear_preference_optin()
+        self._clear_local_only_optin()
         optin = getattr(self, "_preference_optin", None)
         if optin is not None:
             optin.set_sensitive(False)
+        documentary = getattr(self, "_local_only_optin", None)
+        if documentary is not None:
+            documentary.set_sensitive(False)
         self._reload_reference_books(self._reference_books)
         if refresh:
             self.refresh()
@@ -1929,6 +1968,12 @@ class UxRecommendationsView:
                      and self._preference_optin.get_active())
             and self.selected_identity_id() == identity_id
         )
+        local_only = (
+            reference is None
+            and bool(getattr(self, "_local_only_optin", None)
+                     and self._local_only_optin.get_active())
+            and self.selected_identity_id() == identity_id
+        )
 
         def operation(control):
             def progress(done: int, total: int, detail: str) -> None:
@@ -1977,6 +2022,7 @@ class UxRecommendationsView:
                 exclude_owned=exclude_owned,
                 snapshot_cache=self._library_snapshot_cache,
                 **({"use_saved_explicit_preferences": True} if use_preferences else {}),
+                **({"documentary_source_policy": "attested_local"} if local_only else {}),
                 progress=progress,
                 partial=partial,
                 control=control,
@@ -2034,6 +2080,7 @@ class UxRecommendationsView:
             # Preferences are account-local consent, not a sticky global UI
             # setting. A→B→A requires a new explicit opt-in.
             self._clear_preference_optin()
+            self._clear_local_only_optin()
         self._active_identity_id = identity_id
         self._provisional_order.clear()
         self._set_provisional(False)
