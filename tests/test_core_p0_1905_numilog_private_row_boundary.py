@@ -60,20 +60,34 @@ def test_numilog_source_revoked_during_rights_projection_cannot_publish_catalogu
     service = _service(tmp_path)
     try:
         account, session, calls = _connect(service, number=1)
-        original = numilog_manifest_rights.mirror_numilog_manifest_rights
+        if mode == "manual":
+            # There is no rights projection on explicit Sync anymore.
+            # Revoke the binding DURING the actual provider inventory read.
+            def revoke_during_inventory():
+                calls.append("library")
+                service.storage.provider_connection_put({
+                    "identity_id": "default", "provider_id": "numilog",
+                    "credential_id": account.credential_id, "enabled": False,
+                })
+                return [_row(account.credential_id, 0)]
 
-        def revoke_after_projection(*args, **kwargs):
-            count = original(*args, **kwargs)
-            service.storage.provider_connection_put({
-                "identity_id": "default", "provider_id": "numilog",
-                "credential_id": account.credential_id, "enabled": False,
-            })
-            return count
+            session.library = revoke_during_inventory
+        else:
+            # Opening still has the legacy projector until #5464 lands.
+            original = numilog_manifest_rights.mirror_numilog_manifest_rights
 
-        monkeypatch.setattr(
-            numilog_manifest_rights, "mirror_numilog_manifest_rights",
-            revoke_after_projection,
-        )
+            def revoke_after_projection(*args, **kwargs):
+                count = original(*args, **kwargs)
+                service.storage.provider_connection_put({
+                    "identity_id": "default", "provider_id": "numilog",
+                    "credential_id": account.credential_id, "enabled": False,
+                })
+                return count
+
+            monkeypatch.setattr(
+                numilog_manifest_rights, "mirror_numilog_manifest_rights",
+                revoke_after_projection,
+            )
         if mode == "opening":
             result = service.mirror_personal_libraries()
             assert result == {}

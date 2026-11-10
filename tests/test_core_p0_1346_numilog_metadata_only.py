@@ -91,6 +91,8 @@ def test_direct_numilog_account_sync_only_mirrors_remote_inventory(
         assert result["provider"] == "numilog"
         assert result["library"] == 1
         assert "acquired" not in result
+        assert "owned_rights" not in result
+        assert service.storage.entitlements(provider_id="numilog") == []
         assert calls == [
             ("manifest", "private-default"),
             ("mirror", "default", 1),
@@ -118,8 +120,10 @@ def test_public_broker_sync_and_repeat_do_not_download_numilog(
         for _ in range(2):
             result = broker.synchronize_source(target.source_id)
             assert result.ok, repr(result)
-            assert result.changed == 2
+            assert result.changed == 1
             assert result.facts["library"] == 1
+            assert "owned_rights" not in result.facts
+            assert service.storage.entitlements(provider_id="numilog") == []
             assert "acquired" not in result.facts
         assert calls == [
             ("manifest", "private-default"), ("mirror", "default", 1),
@@ -142,7 +146,9 @@ def test_generic_batch_is_scoped_to_identity_and_mirrors_without_acquisition(
         broker = SynchronizationBrokerImpl(service)
         result = broker.synchronize(SyncRequest(identity_id="alex"))
         assert result.ok, repr(result)
-        assert result.changed == 2
+        assert result.changed == 1
+        assert "owned_rights" not in result.facts
+        assert service.storage.entitlements(provider_id="numilog") == []
         assert calls == [
             ("manifest", "private-alex"), ("mirror", "alex", 1),
         ]

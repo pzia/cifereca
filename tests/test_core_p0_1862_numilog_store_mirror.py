@@ -122,11 +122,12 @@ def test_manual_source_inventory_sync_does_not_use_backup_or_direct_download(
         assert "local_materialization" not in source.sync_capabilities
         assert not hasattr(service, "_acquire_personal_library_item")
         result = broker.synchronize_source(source.source_id)
-        assert result.ok and result.changed == 4  # two notices and two attested ownership rights
+        assert result.ok and result.changed == 2  # only two remote notices
         assert result.facts["library"] == 2
+        assert "owned_rights" not in result.facts
         assert "acquired" not in result.facts
         batch = broker.synchronize(SyncRequest(identity_id="default"))
-        assert batch.ok and batch.changed == 4  # two notices and two attested ownership rights
+        assert batch.ok and batch.changed == 2  # no pseudo-rights
         assert calls == ["library", "library"]
     finally:
         service.close()

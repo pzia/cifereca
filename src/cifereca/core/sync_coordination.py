@@ -218,8 +218,8 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         if snapshot is None or snapshot.status == "partial":
             result["status"] = "partial"
     if session.capabilities.personal_library:
-        # A provider can implement a one-shot iterable: both the entitlement
-        # mirror and remote catalog must see the exact same authenticated rows.
+        # A provider may expose a one-shot iterable: consume it once for
+        # the scoped catalogue observation, never for a rights projection.
         with measure("library_read_ms"):
             rows = list(session.library())
         if not private_source_current():
@@ -228,40 +228,13 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             from .numilog_private_rows import private_library_rows_valid
             if not private_library_rows_valid(rows, account.credential_id):
                 raise ProviderConfigurationError("Inventaire privé Numilog non conforme")
-        # Generic typed rights observations are independently admitted by
-        # rights_snapshot_read and canonical convergence. Never grant a
-        # purchase from personal-library SearchResult rows.
-        if account.provider_id == "numilog":
-            # The private connected library is the only positive evidence of
-            # purchases. Public search, even with owned=True, cannot grant
-            # ownership. No signed ACSM resolution or download happens here.
-            from .numilog_manifest_rights import mirror_numilog_manifest_rights
-            from ..plugin_api import Cancelled
-            try:
-                with measure("rights_mirror_ms"):
-                    result["owned_rights"] = mirror_numilog_manifest_rights(
-                        self, rows, identity_id=account.identity_id,
-                        credential_id=account.credential_id,
-                        account_id=account.unique_id or None,
-                    )
-            except Cancelled:
-                raise
-            except Exception:
-                # This legacy projection is descriptive, not authorization.
-                # Its failure must not prevent the separately admitted v14
-                # selected-offer/GET/OriginLink path from processing the same
-                # authenticated source. Do not report a fully successful Sync
-                # while the optional SQLite mirror is incomplete.
-                logging.getLogger("cifereca").warning(
-                    "TRACE source sync code=numilog_optional_rights_mirror_failed"
-                )
-                result["owned_rights"] = 0
-                result["rights_mirror_deferred"] = True
-                result["status"] = "partial"
+        # Personal-library rows are observations, never durable ownership.
+        # Only the independently admitted provider offer can lead to delivery.
+        # Do not project Numilog pseudo-rights or infer availability here.
         # A private metadata observation is not acquisition consent. The
         # canonical resource/offer stage below retains its own admission.
-        # Revalidate after compatibility mirroring too: a callback must not
-        # project a stale source's notices into its former profile.
+        # Revalidate immediately before the catalogue write: the source may
+        # have been rebound or disabled during validation.
         if not private_source_current():
             raise ProviderConfigurationError("private_inventory_source_changed")
         with measure("catalog_mirror_ms"):
