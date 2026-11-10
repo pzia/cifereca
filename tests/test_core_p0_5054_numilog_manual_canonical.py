@@ -13,7 +13,7 @@ from cifereca.core.numilog_owned_download import NumilogOwnedDownloadTarget
 import cifereca.core.explicit_owned_canonical as manual
 
 
-def _setup(monkeypatch, tmp_path, *, mismatch=False, rebind=False):
+def _setup(monkeypatch, tmp_path, *, mismatch=False, rebind=False, borrower_rebind=False):
     scope = ProviderRightsScope("owner", "numilog", "credential", "account")
     account = Account(provider_id="numilog", credential_id="credential",
                       unique_id="account", identity_id="owner")
@@ -33,6 +33,8 @@ def _setup(monkeypatch, tmp_path, *, mismatch=False, rebind=False):
         calls.append(("offer", kwargs))
         if rebind:
             service._source_context_epoch += 1
+        if borrower_rebind:
+            session.accounts = [Account(provider_id='numilog', credential_id='credential', unique_id='other', identity_id='owner')]
         return selected
     session.downloadable_resource_snapshot = lambda *_a, **_k: pytest.fail("unselected inventory read prohibited")
     session.downloadable_selected_offer_snapshot = offer
@@ -93,13 +95,14 @@ def test_one_click_uses_one_selected_offer_and_canonical_executor(monkeypatch, t
     )
 
 
-@pytest.mark.parametrize("damage", ["offer_mismatch", "epoch_rebound"])
+@pytest.mark.parametrize("damage", ["offer_mismatch", "epoch_rebound", "borrower_rebound"])
 def test_no_canonical_writer_after_unattested_offer_or_context_change(
     monkeypatch, tmp_path, damage,
 ):
     service, target, calls = _setup(
         monkeypatch, tmp_path, mismatch=damage == "offer_mismatch",
         rebind=damage == "epoch_rebound",
+        borrower_rebind=damage == "borrower_rebound",
     )
     with pytest.raises(ValueError, match="explicit_canonical"):
         manual.obtain_explicit_owned(service, target, resolve=lambda *_a: (target, NS(record_id='edition')))
