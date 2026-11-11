@@ -116,59 +116,37 @@ def _reader_acs4_offer_id(identity_id, credential_id, account_id, loan_id, resou
     return 'bnf.reader_acs4:' + hashlib.sha256(payload).hexdigest()
 
 
-def _loan_stage_activity_reason(exc: Exception) -> str:
-    """Translate live BnF activity errors without exposing private URLs."""
-    from cifereca.core.diagnostic_bnf_loan_action import provider_reason
-
-    if (isinstance(exc, ProviderError)
-            and exc.args == ("bnf_selected_offer_scope_changed",)):
-        return "bnf_loan_not_observed"
-    reason = provider_reason(exc)
-    if reason in {
-        "bnf_auth_required", "bnf_access_denied", "bnf_rate_limited",
-        "bnf_http_unavailable", "bnf_transport_unavailable",
-        "bnf_operation_timeout",
-    }:
-        return "bnf_activity_" + reason[4:]
-    return "bnf_activity_unavailable"
-
-
 class BnfProviderSession(ProviderSession):
-    def stage_loan_acsm_candidate(
-        self, service, loan: Loan, *, confirmed: bool,
-        expected_identity_id: str, interprocess_lock, lock_path,
-        busy_error, inspect_artifact, observe_phase,
-    ) -> dict[str, str]:
-        """Provider-owned BnF staging profile; Core owns its locked execution.
+    # Pure data, inspectable without invoking any plugin getter or I/O.
+    # The Core's existing explicit-ACSM executor owns all locking, leases,
+    # admission, artifact inspection and staging cleanup.
+    loan_acsm_stage_profile = (
+        "bnf_html",
+        (
+            "bnf_explicit_confirmation_required",
+            "bnf_loan_scope_unproven",
+            "bnf_loan_token_unavailable",
+            "bnf_loan_token_invalid",
+            "bnf_acquisition_busy",
+        ),
+    )
 
-        This method is deliberately not a new download or loan operation:
-        it only binds the provider's branch and closed diagnostics to the
-        existing Core loan-token verifier. No private GET occurs before the
-        Core account/session lease has been captured.
-        """
-        from cifereca.core.explicit_loan_acsm import stage_explicit_loan_acsm
-        from cifereca.core.diagnostic_bnf_loan_action import (
-            BnfLoanActionError, provider_reason,
-        )
-
-        return stage_explicit_loan_acsm(
-            service, loan, confirmed=confirmed,
-            expected_identity_id=expected_identity_id,
-            interprocess_lock=interprocess_lock, lock_path=lock_path,
-            busy_error=busy_error, inspect_artifact=inspect_artifact,
-            expected_provider_id="bnf-pret", selected_branch="bnf_html",
-            action_error_type=BnfLoanActionError,
-            error_codes={
-                "confirmation": "bnf_explicit_confirmation_required",
-                "scope": "bnf_loan_scope_unproven",
-                "unavailable": "bnf_loan_token_unavailable",
-                "invalid": "bnf_loan_token_invalid",
-                "busy": "bnf_acquisition_busy",
-            },
-            classify_activity_error=_loan_stage_activity_reason,
-            classify_candidate_error=provider_reason,
-            observe_phase=observe_phase,
-        )
+    def loan_stage_activity_reason(self, error: Exception) -> str:
+        """Closed provider activity verdict, not a transport exception."""
+        if (isinstance(error, ProviderError)
+                and error.args == ("bnf_selected_offer_scope_changed",)):
+            return "bnf_loan_not_observed"
+        if (isinstance(error, ProviderError)
+                and type(error.args) is tuple
+                and len(error.args) == 1
+                and type(error.args[0]) is str
+                and error.args[0] in {
+                    "auth_required", "access_denied", "rate_limited",
+                    "http_unavailable", "transport_unavailable",
+                    "operation_timeout",
+                }):
+            return "bnf_activity_" + error.args[0]
+        return "bnf_activity_unavailable"
 
     def __init__(self, *, client=None, diagnostics=None, identity_broker=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
