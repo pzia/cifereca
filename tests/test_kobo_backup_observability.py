@@ -11,7 +11,8 @@ from cifereca.models import Account, SearchResult
 from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
-from cifereca.providers import ProviderConfigurationError, ProviderError
+from cifereca.providers import ProviderConfigurationError
+from cifereca.providers.base import ProviderError
 
 import pytest
 
