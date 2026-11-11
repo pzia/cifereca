@@ -3,12 +3,37 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from .paris_adept_presentation import (
-    normal_paris_adept_summary, normal_paris_adept_runtime_summary,
-)
 from .settings_accounts_section import (build_identity_settings_header, build_provider_accounts_header, build_provider_account_buttons)
 from .settings_identity_editor import build_identity_settings_editor
 from .settings_account_editor import build_provider_account_editor
+
+
+def _local_adept_binding_caption(state: dict[str, Any]) -> str:
+    """Non-authorizing local settings status, never a provider permission."""
+    if state.get("status") == "ready":
+        return (
+            "Prêt (liaisons locales) · compte et profil ADEPT associés. "
+            "Autorisation Adobe non testée."
+        )
+    if state.get("status") == "to_configure":
+        return "À configurer · liaison compte/profil ADEPT manquante ou non vérifiée."
+    if state.get("reason") == "multiple_paris_connections":
+        return "À vérifier · plusieurs connexions : choix explicite requis. Aucun profil ADEPT choisi automatiquement."
+    return "À vérifier · liaisons locales non attestées. Aucun profil ADEPT choisi automatiquement."
+
+
+def _adept_runtime_caption(result: dict[str, Any]) -> str:
+    """A local runtime capability is not an Adobe authorization."""
+    if (result.get("status") == "observed"
+            and result.get("reason") == "adept_acsm_capability_reported"
+            and result.get("acsm_ready") is True):
+        return (
+            "ADEPT vérifié localement · capacité ACSM déclarée par le runtime. "
+            "Autorisation Adobe et emprunt non testés."
+        )
+    if result.get("reason") == "adept_acsm_readiness_unknown":
+        return "À vérifier · disponibilité ACSM non publiée. Aucune autorisation Adobe attestée."
+    return "À vérifier · contrôle ADEPT non concluant. Aucune autorisation Adobe attestée."
 
 
 def _saved_interactive_probe_ready(row: dict[str, Any]) -> bool:
@@ -138,7 +163,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             or ""
         )
         normal_subtitle = (
-            normal_paris_adept_summary(
+            _local_adept_binding_caption(
                 self.service.normal_paris_adept_status(identity_id)
             )
             if data.get("id")
@@ -188,7 +213,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             start_status = self.service.normal_paris_adept_status(saved_id)
             if start_status.get("status") != "ready":
                 e["normal_adept_status"].set_subtitle(
-                    normal_paris_adept_summary(start_status)
+                    _local_adept_binding_caption(start_status)
                 )
                 return
             generations = (
@@ -224,14 +249,14 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 release()
                 if current():
                     e["normal_adept_status"].set_subtitle(
-                        normal_paris_adept_runtime_summary(result)
+                        _adept_runtime_caption(result)
                     )
 
             def error(_exc):
                 release()
                 if current():
                     e["normal_adept_status"].set_subtitle(
-                        normal_paris_adept_runtime_summary({
+                        _adept_runtime_caption({
                             "reason": "adept_runtime_unavailable",
                         })
                     )
