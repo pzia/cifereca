@@ -21,12 +21,14 @@ def _normal_paris_source_current(service, item: SearchResult, identity_id: str) 
 
 def manual_paris_borrow_diagnostic(service, item: SearchResult) -> dict[str, object]:
     """Read-only Paris projection; never an eligibility or download grant."""
-    return manual_borrow_diagnostic(
+    result = manual_borrow_diagnostic(
         service, item, provider_id="paris", docbase="DILICOM",
         primary_id="", source_current=_normal_paris_source_current,
-        source_binding_reason="primary_paris_connection_mismatch_or_inactive",
         available=manual_borrow_available, result_type=SearchResult,
     )
+    if result["reason_code"] == "local_primary_source_binding_mismatch":
+        result["reason_code"] = "primary_paris_connection_mismatch_or_inactive"
+    return result
 
 
 def manual_paris_borrow_available(service, item: SearchResult) -> bool:
