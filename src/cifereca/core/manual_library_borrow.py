@@ -6,7 +6,7 @@ Only the provider implements the remote protocol; no Sync or ADEPT runs here.
 from __future__ import annotations
 
 import logging
-from inspect import getattr_static
+from inspect import getattr_static, isfunction
 from uuid import uuid4
 
 from ..models import Account, Loan, SearchResult
@@ -28,6 +28,82 @@ def _result(status: str, reason: str, *, verified: bool = False):
         } else "manual_only",
     }
 
+
+
+def _stage_confirmed_initial_loan_acsm(
+    service, session, account: Account, loan: Loan, *, scope_current,
+    claim_key: str, operation_id: str,
+) -> bool:
+    """Admit an optional provider-delivered initial ACSM *after* the loan claim.
+
+    The provider owns which initial URL/offer may be fetched. Core alone checks
+    the durable one-shot checkpoint, exact borrower lease, private staged bytes,
+    and claim-bound local receipt; none of these grants another loan attempt.
+    """
+    from pathlib import Path
+    from .. import acsm_cache
+    from ..artifact_inspection import inspect_artifact
+    from .loan_acsm_token_validation import staged_loan_acsm_path_safe
+
+    if (type(account) is not Account or type(loan) is not Loan
+            or type(claim_key) is not str or type(operation_id) is not str
+            or not callable(scope_current)
+            or not isfunction(getattr_static(
+                type(session), "initial_loan_acsm_candidate", None,
+            ))):
+        return False
+
+    def claim_current() -> bool:
+        try:
+            row = service.storage.loan_borrow_state(claim_key)
+            return (
+                type(row) is dict
+                and row.get("status") == "confirmed"
+                and row.get("request_accepted") is True
+                and row.get("verification") == "positive_active_loan"
+                and row.get("operation_id") == operation_id
+                and row.get("verified_loan_id") == loan.id
+            )
+        except Exception:
+            return False
+
+    try:
+        if (scope_current() is not True or not claim_current()
+                or (loan.identity_id, loan.source_provider,
+                    loan.source_credential) != (
+                    account.identity_id, account.provider_id,
+                    account.credential_id)):
+            return False
+        directory = service._acquisition_work_dir(
+            account.identity_id, account.provider_id, loan.id,
+        )
+        if scope_current() is not True or not claim_current():
+            return False
+        candidate = session.initial_loan_acsm_candidate(
+            loan, account, directory,
+            admission_current=lambda: (
+                scope_current() is True and claim_current()),
+        )
+        if (scope_current() is not True or not claim_current()
+                or not isinstance(candidate, Path)
+                or not staged_loan_acsm_path_safe(candidate, directory)):
+            return False
+        checked = inspect_artifact(candidate, expected_format="acsm")
+        if checked.valid is not True or checked.media_format != "acsm":
+            return False
+        if scope_current() is not True or not claim_current():
+            return False
+        return acsm_cache.remember_initial(
+            candidate, directory, loan, account.identity_id,
+            loan.source_account_id,
+            borrow_claim=(claim_key, operation_id),
+            admission_current=lambda: (
+                scope_current() is True and claim_current()),
+        )
+    except Exception:
+        # No failed initial candidate can re-open or roll back the one-shot
+        # supplier mutation. Do not log private URLs, exception or file paths.
+        return False
 
 def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
                             docbase: str, primary_id: str | None = None,
@@ -259,27 +335,26 @@ def manual_borrow(
         )
         if finished is None:
             return _result("verification_unavailable", "borrow_checkpoint_unavailable")
-        if provider_id == "paris":
-            # #3121: the first signed ACSM offer exists only on the fresh Loan
-            # returned by the claimed borrow. Stage *after* the durable
-            # confirmed checkpoint, by a guarded, read-only token GET. Its
-            # failure does not negate the separately verified lender loan.
+        # Optional producer ABI: only the provider knows whether the first
+        # signed loan offer was delivered with the just-confirmed mutation.
+        # Missing ABI is not a Core permission or a reason to retry a borrow.
+        if isfunction(getattr_static(
+            type(session), "initial_loan_acsm_candidate", None,
+        )):
             try:
-                from .paris_first_acsm_receipt import stage_paris_initial_acsm
-                staged = stage_paris_initial_acsm(
+                staged = _stage_confirmed_initial_loan_acsm(
                     service, session, account, loan, scope_current=current,
-                    claim_key=key, operation_id=operation_id)
+                    claim_key=key, operation_id=operation_id,
+                )
                 verdict = "staged" if staged is True else "refused"
                 reason = ("verified_initial_receipt" if staged is True
                           else "initial_candidate_unavailable")
             except Exception:
-                # The borrow claim is already durably confirmed. A local
-                # staging/config/import fault cannot unconfirm it or reopen
-                # the mutating supplier request. Never log the exception:
-                # it can contain a bearer URL, loan ID or local ACSM path.
+                # A confirmed loan stays confirmed even if private staging
+                # fails. Never expose a signed offer or grant a second POST.
                 verdict, reason = "refused", "initial_staging_error"
             _LOG.info(
-                "TRACE paris_first_acsm outcome=%s reason_code=%s",
+                "TRACE initial_loan_acsm outcome=%s reason_code=%s",
                 verdict, reason,
             )
         return _result("confirmed", "borrow_active_loan_observed", verified=True)

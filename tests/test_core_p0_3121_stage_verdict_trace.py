@@ -30,10 +30,10 @@ def test_confirmed_paris_borrow_reports_staging_verdict_without_token(
         notes = [
             row.message for row in caplog.records
             if row.name == "cifereca.core.manual_library_borrow"
-            and "TRACE paris_first_acsm" in row.message
+            and "TRACE initial_loan_acsm" in row.message
         ]
         assert notes == [
-            f"TRACE paris_first_acsm outcome={verdict} reason_code={reason}"
+            f"TRACE initial_loan_acsm outcome={verdict} reason_code={reason}"
         ]
         assert not any("https://" in msg or "loan-exact" in msg for msg in notes)
     finally:
@@ -47,7 +47,7 @@ def test_unexpected_staging_error_cannot_unconfirm_loan_or_log_exception(
     def broken(*_a, **_kw):
         raise RuntimeError("https://signed.invalid/secret.acsm?bearer=SENSITIVE")
     monkeypatch.setattr(
-        "cifereca.core.paris_first_acsm_receipt.stage_paris_initial_acsm",
+        "cifereca.core.manual_library_borrow._stage_confirmed_initial_loan_acsm",
         broken,
     )
     try:
@@ -62,7 +62,7 @@ def test_unexpected_staging_error_cannot_unconfirm_loan_or_log_exception(
             if row.name == "cifereca.core.manual_library_borrow"
         ]
         assert notes == [
-            "TRACE paris_first_acsm outcome=refused reason_code=initial_staging_error"
+            "TRACE initial_loan_acsm outcome=refused reason_code=initial_staging_error"
         ]
         assert "bearer" not in "".join(notes)
     finally:
