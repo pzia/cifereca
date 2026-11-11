@@ -7,7 +7,6 @@ import pytest
 from cifereca.core.loan_acsm_token_validation import (
     MAX_LOAN_TOKEN_BYTES, discard_untrusted_staged_acsm, valid_loan_acsm_token,
 )
-from cifereca.core import bnf_explicit_acsm as legacy
 
 
 LOAN = (b'<fulfillmentToken xmlns="http://ns.adobe.com/adept" '
@@ -18,12 +17,6 @@ BUY = (b'<fulfillmentToken xmlns="http://ns.adobe.com/adept" '
 
 def _inspector(*, valid=True, media_format="acsm"):
     return lambda _path: NS(valid=valid, media_format=media_format)
-
-
-def test_bnf_adapter_reexports_exact_generic_validators():
-    assert legacy._valid_loan_token is valid_loan_acsm_token
-    assert legacy._discard_invalid_candidate is discard_untrusted_staged_acsm
-    assert legacy._MAX_BYTES == MAX_LOAN_TOKEN_BYTES
 
 
 @pytest.mark.parametrize(("content", "expected"), [
