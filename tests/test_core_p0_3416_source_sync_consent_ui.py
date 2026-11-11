@@ -168,3 +168,25 @@ def test_canonical_presentation_is_provider_neutral():
         assert shown.action_label == 'Synchroniser ' + source.label
         assert 'fichiers disponibles' in shown.summary
         assert 'ne télécharge aucun ebook' not in shown.summary
+
+def test_sync_coreui_has_no_bnf_specific_auto_download_widget():
+    """The generic CAS source consent UI replaces the historical BnF switch.
+
+    Old source preferences remain readable by Core's compatibility bridge;
+    no GUI provider-specific legacy setter may resurrect a stale ON.
+    """
+    source = (Path(__file__).resolve().parents[1]
+              / 'src/cifereca/gui/sync_controller.py').read_text(
+                  encoding='utf-8',
+              )
+    tree = ast.parse(source)
+    assert 'bnf_auto_download_enabled' not in source
+    assert 'set_bnf_auto_download' not in source
+    assert 'Télécharger automatiquement les prêts BnF' not in source
+    assert 'append_source_sync_consent_controls' in source
+    assert not any(
+        isinstance(node, ast.Compare)
+        and any(isinstance(value, ast.Constant) and value.value == 'bnf-pret'
+                for value in (node.left, *node.comparators))
+        for node in ast.walk(tree)
+    )
