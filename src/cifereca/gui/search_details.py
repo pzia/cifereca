@@ -174,7 +174,7 @@ def _apply_search_detail(
                account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
                source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
     # Local import also works when the adapter body is bound by a headless host.
-    from .search_details import _add_explicit_enrichment_action
+    from cifereca.gui.search_details import _add_explicit_enrichment_action
     _add_explicit_enrichment_action(self, selected_id, item, detail, context)
 
 
