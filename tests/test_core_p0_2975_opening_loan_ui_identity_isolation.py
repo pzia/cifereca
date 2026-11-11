@@ -49,7 +49,7 @@ def _setup(service, monkeypatch):
         return list(observations[account.credential_id])
     monkeypatch.setattr(service, "_loans_for_account", read)
     monkeypatch.setattr(service, "mirror_personal_libraries", lambda: {})
-    monkeypatch.setattr(service, "kobo_backup_enabled", lambda: False)
+    service.config.set("kobo_backup.enabled", False)
     return first, second, observations, calls
 
 
