@@ -1700,6 +1700,10 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
+        from .bnf_borrow_controller import (
+            present_bnf_borrow, present_paris_borrow,
+            present_paris_borrow_verification,
+        )
         # A verification-only gesture is never a new borrow, independently of
         # source-provider names. The follow-up controller and Core admission
         # enforce the exact spent claim, account and read-only observation.
@@ -1709,7 +1713,6 @@ class MainWindow(Adw.ApplicationWindow):
             and control.get_name() == "cifereca-borrow-followup"
         )
         if verification_only:
-            from .bnf_borrow_controller import present_paris_borrow_verification
             present_paris_borrow_verification(
                 self, item, control, TaskPriority=TaskPriority,
             )
@@ -1718,13 +1721,11 @@ class MainWindow(Adw.ApplicationWindow):
         # until the provider ABI exposes an exact, typed generic action.
         # Never fall through to the historic session.borrow() for these sources.
         if getattr(item, "source_provider", None) == "bnf-pret":
-            from .bnf_borrow_controller import present_bnf_borrow
             present_bnf_borrow(
                 self, item, control, Adw=Adw, TaskPriority=TaskPriority,
             )
             return
         if getattr(item, "source_provider", None) == "paris":
-            from .bnf_borrow_controller import present_paris_borrow
             present_paris_borrow(
                 self, item, control, Adw=Adw, TaskPriority=TaskPriority,
                 account=account,
