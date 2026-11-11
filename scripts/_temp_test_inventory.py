@@ -31,7 +31,7 @@ DOMAINS = (
     ("library_storage", ("library", "sqlite", "storage", "db_", "ledger", "provenance", "source_reference", "placement")),
     ("diagnostics", ("diagnostic", "journal", "telemetry", "event", "report", "trace", "logging")),
     ("plugin_contracts", ("plugin", "provider", "capabilit", "manifest", "registry", "packag")),
-    ("ci_quality", ("ci_", "test_", "pytest", "workflow", "release", "installer", "quality", "contract")),
+    ("ci_quality", ("ci_", "_ci", "pytest", "workflow", "release", "installer", "quality", "test_selection")),
     ("interface_ux", ("gui", "coreui", "core_ui", "ui_", "widget", "window", "page", "layout", "view", "gtk", "theme")),
     ("device_transfer", ("usb", "device", "reader", "webdav", "transfer", "opds_pull")),
     ("recommendations", ("recommend", "optimizer", "critic", "suggestion", "rating")),
@@ -66,10 +66,10 @@ def summarize(rows, errors, section, package=None):
     cross=collections.defaultdict(collections.Counter); files=collections.Counter()
     examples=collections.defaultdict(list)
     for path,nodeid in rows:
-        signal=path.lower().replace("-","_")
+        signal=Path(path).stem.lower().replace("-","_").removeprefix("test_")
         architecture=architecture_for(signal,package)
         provider=provider_for(signal)
-        if package and provider=="transverse" and architecture=="plugins/providers":provider=package.removeprefix("provider-").replace("-","_")
+        if package and architecture=="plugins/providers":provider=package.removeprefix("provider-").replace("-","_")
         domain=domain_for(signal)
         res[architecture]+=1;by_provider[provider]+=1;by_domain[domain]+=1
         cross[architecture][domain]+=1
@@ -128,6 +128,6 @@ def main():
         "by_architecture":dict(agg_arch),"by_provider":dict(agg_provider),
         "by_business":dict(agg_business),
         "architecture_by_business":{k:dict(v) for k,v in agg_cross.items()},
-        "limits":"Primary exclusive classification by source test module filename; parameterized item counts; CoreUI heuristic is not architectural import graph. E2E and simulation separate. Collection errors imply lower bound."
+        "limits":"Exclusive primary business family based on test module basename (not test_ or plugin directory), unclassified retained; CoreUI by basename/path heuristic, not import graph. Provider plugin counts by package ownership; Core provider tests inferred from basename; E2E and simulation separate. Errors lower bound."
     },ensure_ascii=False,sort_keys=True))
 if __name__=="__main__":main()
