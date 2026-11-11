@@ -135,3 +135,23 @@ def test_coreui_policy_has_no_bnf_specific_presentation_branch():
                            for value in (node.left, *node.comparators))
                    for node in ast.walk(func))
     assert "manual_borrow_presentation" in ast.get_source_segment(source, func)
+
+
+def test_p0_5048_candidate_has_no_supplier_identity_branch():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src/cifereca/gui/detail_model.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    candidate = next(node for node in tree.body
+                     if isinstance(node, ast.FunctionDef)
+                     and node.name == "search_detail_borrow_action_candidate")
+    forbidden = {"bnf", "bnf-pret", "paris", "kobo", "numilog", "numilog-catalog"}
+    assert not any(isinstance(node, ast.Constant)
+                   and type(node.value) is str and node.value in forbidden
+                   for node in ast.walk(candidate))
+    # Do not present a candidate as an executable action without Core admission.
+    detail_panel = (
+        Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
+    ).read_text(encoding="utf-8")
+    assert "if self.window.can_borrow_item(item):" in detail_panel
