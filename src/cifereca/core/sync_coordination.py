@@ -1528,7 +1528,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         # Optional persistence must neither fail the opening nor reveal a
         # filesystem, plugin or database exception class in TRACE.
         logger.warning("TRACE kobo backup decision persistence error code=decision_save_failed")
-    self.diagnostics.add_core_kobo_backup_decision(kobo_decision)
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
     # The opening inventory covers ALL local identities to keep their rights
