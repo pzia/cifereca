@@ -29,6 +29,7 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
         account = candidates[0]
         if (type(account) is not Account or account.is_primary is not True
                 or account.provider_id != item.source_provider
+                or account.credential_id != item.source_credential
                 or (expected_account is not None and account is not expected_account)):
             return
         if sum(candidate is account for candidate in window.service.accounts) != 1:
@@ -211,7 +212,7 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
             or item.medium != "digital"
             or not window.service.paris_borrow_followup_available(item)
             or getattr(window, "_manual_borrow_pending", None) is not None
-            or getattr(window, "_paris_borrow_followup_pending", None) is not None):
+            or getattr(window, "_borrow_followup_pending", None) is not None):
         return
     try:
         session, candidates = window._eligible_borrow_accounts(item)
@@ -276,11 +277,11 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     if not current():
         return
     token = object()
-    window._paris_borrow_followup_pending = token
+    window._borrow_followup_pending = token
 
     def release():
-        if getattr(window, "_paris_borrow_followup_pending", None) is token:
-            window._paris_borrow_followup_pending = None
+        if getattr(window, "_borrow_followup_pending", None) is token:
+            window._borrow_followup_pending = None
 
     def work():
         if not current():
@@ -295,29 +296,29 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
                 and result.get("retry_borrow") is False
                 and result.get("mutated") is False):
             window._activity_result(
-                "Prêt Paris désormais observé ; demande initiale non rejouée"
+                "Prêt désormais observé ; demande initiale non rejouée"
             )
             window.refresh_loans(True)
         else:
             window.show_error(
-                "Le prêt Paris n’est pas encore confirmé par une observation "
+                "Le prêt n’est pas encore confirmé par une observation "
                 "complète de ce compte. Ne réempruntez pas : actualisez "
                 "ultérieurement vos prêts.",
-                "Vérification de prêt Paris",
+                "Vérification de prêt",
             )
 
     def failed(_error):
         release()
         if current():
             window.show_error(
-                "La vérification du prêt Paris est indisponible. "
+                "La vérification du prêt est indisponible. "
                 "Aucune nouvelle demande n’a été envoyée ; ne réempruntez pas.",
-                "Vérification de prêt Paris",
+                "Vérification de prêt",
             )
 
     try:
         window.runner.submit(
-            "Vérification du prêt Paris…", work, done, failed,
+            "Vérification du prêt…", work, done, failed,
             control=control, priority=TaskPriority.USER_ACTION,
             kind="borrow-verification", origin="user",
         )

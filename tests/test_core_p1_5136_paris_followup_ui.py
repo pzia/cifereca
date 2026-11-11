@@ -71,7 +71,7 @@ def test_check_after_timeout_uses_same_spent_claim_without_second_post(tmp_path)
         assert service.storage.metadata_get(borrow_claim_key(account, item)) == before
         assert errors == []
         assert refreshes == [True]
-        assert messages == ["Prêt Paris désormais observé ; demande initiale non rejouée"]
+        assert messages == ["Prêt désormais observé ; demande initiale non rejouée"]
         assert service.storage.entitlements(provider_id="paris") == []
     finally:
         service.close()
@@ -232,7 +232,7 @@ def test_mainwindow_existing_paris_router_dispatches_only_readonly_followup(tmp_
         assert len(window.runner.tasks) == 1
         assert window.runner.complete()["status"] == "observed_current_loan"
         assert state["mutations"] == 1
-        assert messages == ["Prêt Paris désormais observé ; demande initiale non rejouée"]
+        assert messages == ["Prêt désormais observé ; demande initiale non rejouée"]
         assert errors == [] and refreshes == [True]
         # Another source can never reuse this flag to run a regular borrow.
         for foreign_provider in ("unknown", "bnf-pret", "kobo"):

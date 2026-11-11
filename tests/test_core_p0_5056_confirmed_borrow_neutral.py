@@ -129,3 +129,31 @@ def test_neutral_borrow_rejects_mismatched_account_provider_before_queue(account
     )
     assert queued == []
     assert window._manual_borrow_pending is None
+
+
+
+def test_shared_borrow_rejects_foreign_credential_before_queue():
+    """A forged eligible-account list may never bypass exact source binding."""
+    item = SearchResult("synthetic-alpha")
+    account = Account("synthetic-alpha")
+    account.credential_id = "different-credential"
+    session = NS(connected=True, _epoch=1)
+    queued = []
+    service = NS(
+        current_identity=NS(identity_id="alice"), _account_context_epoch=1,
+        accounts=[account],
+        _session_for_source=lambda *_: session,
+    )
+    window = NS(
+        _closed=False, service=service,
+        _eligible_borrow_accounts=lambda _: (session, [account]),
+        _manual_borrow_pending=None,
+        runner=NS(submit=lambda *args, **kwargs: queued.append((args, kwargs))),
+    )
+    _controller()(
+        window, item, object(), TaskPriority=NS(USER_ACTION="user"),
+        label="Fournisseur", available=lambda _: True,
+        dispatch=lambda *_args, **_kw: pytest.fail("foreign credential dispatched"),
+    )
+    assert queued == []
+    assert window._manual_borrow_pending is None

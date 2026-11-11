@@ -30,6 +30,11 @@ def test_search_detail_remains_non_authorizing_and_keeps_action_gate():
     assert "Éligibilité du compte non vérifiée auprès du fournisseur." in source
     assert "paris_borrow_status_message" not in source
     assert "paris_borrow_diagnostic" not in source
+    assert 'if item.source_provider == "bnf-pret"' not in ast.get_source_segment(source, method)
+    assert 'elif item.source_provider == "paris"' not in ast.get_source_segment(source, method)
+    assert "Une demande antérieure peut exister : consultez Mes emprunts." in source
+    assert "Cifereca ne répétera pas automatiquement la demande." in source
+
 
 
 def test_uncertain_existing_loan_exposes_read_only_followup_without_new_post():

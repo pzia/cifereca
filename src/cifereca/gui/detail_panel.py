@@ -1076,19 +1076,15 @@ class DetailPanel(Gtk.Box):
                 self._actions([borrow])
             else:
                 row = Adw.ActionRow()
-                row.set_title(
-                    "État de la demande d’emprunt"
-                    if item.source_provider == "bnf-pret"
-                    else "Emprunt requis avant téléchargement"
-                )
+                row.set_title("État de la demande d’emprunt")
+                # A public catalogue cannot attest an account's loan rights,
+                # while a missing Core action may also represent a spent claim.
+                # Neither situation authorizes a new borrow.
                 explanation = (
-                    "Une demande BnF existe peut-être déjà pour ce livre, "
-                    "ou le compte actif n’est pas admissible. "
-                    "Consultez Mes emprunts avant toute nouvelle demande ; "
-                    "Cifereca ne répétera pas automatiquement l’emprunt."
-                    if item.source_provider == "bnf-pret"
-                    else "Emprunt indisponible pour l’identité et le compte "
-                         "actifs, ou non pris en charge par cette source."
+                    "Éligibilité du compte non vérifiée auprès du fournisseur. "
+                    "L'emprunt est indisponible pour cette identité et ce compte. "
+                    "Une demande antérieure peut exister : consultez Mes emprunts. "
+                    "Cifereca ne répétera pas automatiquement la demande."
                 )
                 # Only a previously spent exact Core claim can expose
                 # this read-only action. No inferred borrower eligibility,
@@ -1109,12 +1105,6 @@ class DetailPanel(Gtk.Box):
                         lambda _b: self.window.borrow_search_item(item, verify),
                     )
                     self._actions([verify])
-                elif item.source_provider == "paris":
-                    # The public catalogue cannot attest account eligibility.
-                    explanation = (
-                        "Éligibilité du compte non vérifiée auprès du fournisseur. "
-                        "L'emprunt reste indisponible pour ce profil et ce compte."
-                    )
                 row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)
