@@ -63,7 +63,7 @@ def test_legacy_on_start_never_authorizes_w2_even_with_cas(
         monkeypatch.setattr(
             service, "_sync_kobo_backup_account_locked",
             lambda *_args, **_kwargs: calls.append("legacy GET"),
-        )
+        , raising=False)
         assert not can_enable_kobo_on_start(service, account)
         assert kobo_on_start_sessions(service) == ()
         assert not on_start_due(service, account)
