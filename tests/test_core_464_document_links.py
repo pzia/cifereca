@@ -32,8 +32,11 @@ def test_explicit_gallica_document_link_gets_standard_label():
             {'relation': 'gallica', 'url': 'https://gallica.bnf.fr/ark:/12148/bpt6k123'},
         ]},
     })
-    assert [link.label for link in links] == ['Ouvrir la notice', 'Ouvrir dans Gallica']
+    assert [link.label for link in links] == ['Ouvrir la notice', 'Ouvrir le document']
     assert links[1].relation == 'gallica'
+    assert document_links({'metadata': {'document_links': [
+        {'relation': 'synthetic-source', 'url': 'https://example.test/info'},
+    ]}})[0].label == 'Ouvrir le document'
 
 
 def test_document_links_are_deduplicated_by_safe_url():
@@ -66,8 +69,9 @@ def test_generic_relation_requires_explicit_label():
             {'relation': 'related', 'label': 'Documentation', 'url': 'https://example.test/docs'},
         ]},
     })
-    assert len(links) == 1
-    assert links[0].label == 'Documentation'
+    assert len(links) == 2
+    assert links[0].label == 'Ouvrir le document'
+    assert links[1].label == 'Documentation'
 
 
 def test_shared_detail_renderer_uses_external_link_buttons_and_dedupes_catalogue_action():
