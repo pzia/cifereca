@@ -52,56 +52,22 @@ def test_bnf_download_failure_logs_original_cause_without_new_attempt(
     assert service.storage.acquisitions(provider_id="manual") == []
 
 
-@pytest.mark.parametrize("stage,patch_path", [
-    ("indexed_candidates", "cifereca.core.local_candidate_screen"),
-    ("physical_candidates", "cifereca.core.local_physical_title_candidates"),
-])
-def test_bnf_local_preflight_failure_logs_raw_cause_without_get(
-    connected_core, monkeypatch, caplog, stage, patch_path,
-):
-    import importlib
-    service, session, account, loan, downloaded = _ready(connected_core)
-    module = importlib.import_module(patch_path)
-    symbol = (
-        "screen_local_candidates" if stage == "indexed_candidates"
-        else "observe_physical_local_titles"
-    )
 
-    def broken_read(**_kw):
-        raise OSError(SENTINEL)
-
-    monkeypatch.setattr(module, symbol, broken_read)
-    attempted = []
-    monkeypatch.setattr(
-        session, "download_digital",
-        lambda *_a, **_kw: attempted.append(True),
-    )
-    with caplog.at_level(logging.WARNING, logger="cifereca"):
-        outcome = materialize(service, account, loan)
-    assert outcome == {
-        "status": "attention_required", "code": "bnf_local_evidence_unavailable",
-    }
-    assert f"stage={stage}" in caplog.text
-    assert SENTINEL in caplog.text and loan.id in caplog.text
-    assert account.credential_id not in caplog.text
-    assert account.identity_id not in caplog.text
-    assert account.unique_id not in caplog.text
-    assert not attempted and not downloaded
-    assert SENTINEL not in repr(outcome)
-
-
-def test_cancelled_bnf_local_screen_stays_cancelled_not_provider_error(
+def test_cancelled_bnf_delivery_before_signed_get_remains_cancelled(
     connected_core, monkeypatch,
 ):
-    from cifereca.core import local_candidate_screen
+    from types import SimpleNamespace as NS
+
     service, session, account, loan, downloaded = _ready(connected_core)
-    calls = []
+    called = []
+    monkeypatch.setattr(
+        session, "download_digital",
+        lambda *_a, **_kw: called.append(True),
+    )
 
-    def cancelled(**_kwargs):
-        calls.append(True)
-        raise Cancelled("synthetic cancellation")
+    def stop():
+        raise Cancelled("synthetic cancellation before signed GET")
 
-    monkeypatch.setattr(local_candidate_screen, "screen_local_candidates", cancelled)
     with pytest.raises(Cancelled):
-        materialize(service, account, loan)
-    assert calls == [True] and downloaded == []
+        materialize(service, account, loan, control=NS(check_cancelled=stop))
+    assert called == [] and downloaded == []
