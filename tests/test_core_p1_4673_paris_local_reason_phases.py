@@ -67,3 +67,32 @@ def test_success_and_empty_diagnostic_have_same_non_authorizing_boolean(tmp_path
         assert state["mutations"] == 0 and state["calls"] == []
     finally:
         service.close()
+
+
+def test_paris_readiness_uses_one_shared_local_admission():
+    """No second provider-specific decision path in the boolean facade."""
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "src/cifereca/services.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    library = next(node for node in tree.body
+                   if isinstance(node, ast.ClassDef)
+                   and node.name == "LibraryService")
+    method = next(node for node in library.body
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "can_borrow_paris")
+    calls = [
+        node for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+    ]
+    assert len(calls) == 1
+    assert ast.unparse(calls[0].func) == "self.paris_borrow_diagnostic"
+    assert not any(
+        isinstance(node, ast.Constant) and node.value in {
+            "paris", "DILICOM", "primary_paris_connection_id"
+        }
+        for node in ast.walk(method)
+    )
