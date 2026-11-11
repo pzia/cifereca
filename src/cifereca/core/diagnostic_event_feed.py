@@ -599,12 +599,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 message = public_bnf_action_message(candidate)
                 severity = ('info' if candidate['status']=='success' else
                             'error' if candidate['status']=='failed' else 'warning')
-        if category == "NUMILOG":
-            # Provider-specific diagnostics are not an authority in Core.
-            # Only the canonical, provenance-checked generic observations
-            # above may publish structured details or attest provider IDs.
-            public_detail = {}
-            message = "[opération masquée]"
+        # Unattested supplier categories inherit the generic masked
+        # projection. Structured detail requires a verified Core producer.
         # Do not infer the provider from a business category (PNB/PLUGIN).
         # Only typed observations with Core provenance attest this identity.
         # runtime.kobo-adept also serves Paris, Numilog and manual imports.
