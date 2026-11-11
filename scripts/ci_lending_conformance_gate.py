@@ -21,6 +21,7 @@ CORE_LENDING_PATHS = frozenset({
     "src/cifereca/core/manual_library_borrow.py",
     "src/cifereca/core/selected_loan_offer.py",
     "src/cifereca/core/library_projection.py",
+    "src/cifereca/core/library_local_inspection.py",
     "src/cifereca/core/observed_import_provenance.py",
     "src/cifereca/core/local_import_display_links.py",
     "src/cifereca/core/loan_action_scope.py",
