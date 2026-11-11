@@ -3876,24 +3876,6 @@ class LibraryService:
             "storage_schema_version": self.storage.schema_version(),
         }
 
-    def synchronize_kobo_selected_edition(
-        self, credential_id: str, edition_id: str, *,
-        explicit_user_action: bool = False,
-        cancelled: Callable[[], bool] = lambda: False,
-    ) -> dict[str, object]:
-        """One consented Kobo edition through canonical A→B, never v0.7 W2.
-
-        This is distinct from the old catalogue direct-download API and from
-        account-wide Sync. Incomplete provider ABIs are never adapted through
-        historical backup_items to make this operation appear supported.
-        """
-        from .core.canonical_selected_edition import synchronize_selected_edition
-        return synchronize_selected_edition(
-            self, provider_id="kobo", credential_id=credential_id,
-            edition_id=edition_id, explicit_user_action=explicit_user_action,
-            cancelled=cancelled, result_schema="core.kobo.selected-canonical/1",
-        )
-
     def _account_for_loan(self, loan: Loan) -> Account:
         """Resolve the exact borrower recorded on a loan.
 
