@@ -239,3 +239,23 @@ def test_mainwindow_existing_paris_router_dispatches_only_readonly_followup(tmp_
         assert not window.runner.tasks
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("mismatch", ["provider", "credential"])
+def test_followup_rejects_cross_source_account_before_queue(tmp_path, mismatch):
+    service, session, account, item, state, _op = _pending(tmp_path)
+    window, errors, messages, refreshes = view(service, session, account, item)
+    window.runner = ReadOnlyTasks()
+    try:
+        # A cached local readiness decision cannot authorize a changed account.
+        service.paris_borrow_followup_available = lambda _item: True
+        if mismatch == "provider":
+            account.provider_id = "synthetic-foreign"
+        else:
+            account.credential_id = "foreign-credential"
+        _run(window, item)
+        assert window.runner.tasks == []
+        assert state["mutations"] == 1
+        assert errors == messages == refreshes == []
+    finally:
+        service.close()
