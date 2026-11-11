@@ -182,24 +182,6 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
     submit_once()
 
 
-def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
-    _present_manual_borrow(
-        window, item, control, TaskPriority=TaskPriority,
-        label="BnF",
-        available=window.service.can_borrow_bnf,
-        dispatch=window.service.borrow_bnf_manual,
-    )
-
-
-def present_paris_borrow(window, item, control, *, Adw, TaskPriority, account=None):
-    _present_manual_borrow(
-        window, item, control, TaskPriority=TaskPriority,
-        label="Paris",
-        available=window.service.can_borrow_paris,
-        dispatch=window.service.borrow_paris_manual, expected_account=account,
-    )
-
-
 def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     """Explicit read-only follow-up: no borrow dispatch or claim mutation.
 
