@@ -1,4 +1,4 @@
-"""P0 #3228: unindexed historical EPUB never becomes a phantom new BnF loan.
+"""P0 #3228: unindexed historical EPUB cannot become provenance or a false BnF loan veto.
 
 Real Core + SQLite, synthetic BnF HTTPX and EPUB; no external network/DRM.
 """
@@ -11,7 +11,6 @@ import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.core.bnf_auto_materialization import materialize
-from cifereca.core.local_physical_title_candidates import observe_physical_local_titles
 from tests.test_core_p0_2055_bnf_explicit_stage import connected_core
 from tests.test_library_reconciliation import epub
 
@@ -28,54 +27,6 @@ def manual_epub(tmp_path, title, *, identity='hugues', directory='manual', filen
     path.parent.mkdir(parents=True, exist_ok=True)
     epub(path, title=title)
     return path
-
-
-@pytest.mark.parametrize('id_', ['provider-alpha', 'provider-beta'])
-def test_provider_neutral_unindexed_epub_title_hint(tmp_path, id_):
-    path = manual_epub(tmp_path, 'Same Book')
-    original = path.read_bytes()
-    root = path.parents[1]
-    evidence = observe_physical_local_titles(
-        identity_id=id_, roots=(root,),
-    )
-    assert evidence.complete
-    candidate = evidence.screen(identity_id=id_, title='  SAME  book ')
-    assert candidate.status == 'needs_reconciliation'
-    assert candidate.reason == 'local_candidate_found'
-    assert not candidate.acquisition_authorized
-    assert evidence.screen(identity_id=id_, title='Different book').status == 'none_observed'
-    assert evidence.screen(identity_id='different-identity', title='Same Book').status == 'needs_reconciliation'
-    assert str(path) not in repr(evidence)
-    assert path.read_bytes() == original
-
-
-def test_missing_manual_root_does_not_disable_a_new_loan(tmp_path):
-    evidence = observe_physical_local_titles(
-        identity_id='A', roots=(tmp_path / 'EBooks' / 'A' / 'manual',),
-    )
-    assert evidence.complete
-    assert evidence.screen(identity_id='A', title='New book').status == 'none_observed'
-
-
-def test_symlinked_manual_root_is_inconclusive(tmp_path):
-    outside = tmp_path / 'outside'
-    outside.mkdir()
-    epub(outside / 'book.epub', title='Book')
-    root = tmp_path / 'EBooks' / 'A' / 'manual'
-    root.parent.mkdir(parents=True)
-    root.symlink_to(outside, target_is_directory=True)
-    evidence = observe_physical_local_titles(identity_id='A', roots=(root,))
-    assert not evidence.complete
-    assert evidence.screen(identity_id='A', title='Book').reason == 'local_evidence_unavailable'
-
-
-def test_invalid_epub_makes_scan_inconclusive_without_permission_to_download(tmp_path):
-    root = tmp_path / 'A' / 'manual'
-    root.mkdir(parents=True)
-    (root / 'broken.epub').write_bytes(b'invalid EPUB')
-    evidence = observe_physical_local_titles(identity_id='A', roots=(root,))
-    assert not evidence.complete
-    assert evidence.screen(identity_id='A', title='Book').status == 'needs_reconciliation'
 
 
 @pytest.mark.parametrize('directory', ['manual', 'acsm-import'])
@@ -130,12 +81,12 @@ def test_second_unrelated_loan_remains_eligible_without_false_reconciliation(
     cache = {}
     assert materialize(service, account, loan, physical_scan_cache=cache)['code'] == 'bnf_auto_acquisition_failed'
     assert materialize(service, account, other, physical_scan_cache=cache)['code'] == 'bnf_auto_acquisition_failed'
-    assert len(cache) == 1 and invoked == [True, True] and not downloaded
+    assert cache == {} and invoked == [True, True] and not downloaded
     assert first.is_file()
 
 
 @pytest.mark.parametrize('directory', ['manual', 'acsm-import'])
-def test_unindexed_symlinked_root_never_triggers_signed_get(
+def test_unindexed_symlinked_manual_root_neither_grants_nor_vetoes_delivery(
     connected_core, tmp_path, monkeypatch, directory,
 ):
     service, session, account, loan, downloaded = active(connected_core)
@@ -147,8 +98,8 @@ def test_unindexed_symlinked_root_never_triggers_signed_get(
     root.symlink_to(outside, target_is_directory=True)
     invoked = []
     monkeypatch.setattr(session, 'download_digital', lambda *_a, **_kw: invoked.append(True))
-    assert materialize(service, account, loan)['code'] == 'bnf_local_evidence_unavailable'
-    assert not invoked and not downloaded
+    assert materialize(service, account, loan)['code'] == 'bnf_auto_acquisition_failed'
+    assert invoked == [True] and not downloaded
     assert (outside / 'book.epub').exists()
 
 
