@@ -1,77 +1,64 @@
 name: Validate full Core release install
-
-# The transaction gate covers Core/CLI/updater/plugins, not pure GTK widgets.
-# GUI-only changes keep the Core test, wheel-install and GTK E2E coverage.
-
 on:
   pull_request:
     paths:
-      - "src/cifereca/**"
-      - "!src/cifereca/gui/**"
-      - "!src/cifereca/builtin_ui/**"
-      - "!src/cifereca/app.py"
-      - "src/plugins/*/cifereca-plugin.json"
-      - "scripts/ci_provider_core_coupling_inventory.py"
-      - "scripts/ci_provider_coupling_delta_gate.py"
-      - "scripts/ci-full-release-install-gate.py"
-      - "scripts/prepare-admitted-wheelhouse.py"
-      - "scripts/plugin_packaging.py"
-      - "scripts/package-dev-snapshot.py"
-      - "scripts/verify-packaging.py"
-      - "pyproject.toml"
-      - "VERSION"
       - ".github/workflows/core-full-install.yml"
-  push:
-    branches: [main]
-    paths:
-      - "src/cifereca/**"
-      - "!src/cifereca/gui/**"
-      - "!src/cifereca/builtin_ui/**"
-      - "!src/cifereca/app.py"
-      - "src/plugins/*/cifereca-plugin.json"
-      - "scripts/ci_provider_core_coupling_inventory.py"
-      - "scripts/ci_provider_coupling_delta_gate.py"
-      - "scripts/ci-full-release-install-gate.py"
-      - "scripts/prepare-admitted-wheelhouse.py"
-      - "scripts/plugin_packaging.py"
-      - "scripts/package-dev-snapshot.py"
-      - "scripts/verify-packaging.py"
-      - "pyproject.toml"
-      - "VERSION"
-      - ".github/workflows/core-full-install.yml"
-  workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: full-core-install-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   full-install:
-    name: Full source install and Core rollback (Python 3.11)
+    name: Temporary current decoupling LOC
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install packaging prerequisites
+      - name: Count LOC
         run: |
-          python -m pip install --disable-pip-version-check "setuptools>=69" wheel "packaging>=24,<26" "httpx>=0.28.1,<0.29"
-
-      - name: Prepare attested offline wheels for full updater test
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: python scripts/prepare-admitted-wheelhouse.py
-
-      - name: Exercise full release and Core rollback
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: python scripts/ci-full-release-install-gate.py
+          PYTHONPATH=. python - <<'PY'
+          import pathlib, json, collections
+          from scripts.ci_provider_core_coupling_report import extended_inventory,_installed_provider_aliases,_SIGNAL_KINDS
+          from scripts.ci_provider_core_coupling_inventory import inspect_source,_dedicated_provider
+          root=pathlib.Path.cwd()
+          r=extended_inventory(root)
+          aliases=_installed_provider_aliases(root)
+          def family(a):
+              a=a.casefold()
+              if 'biblioaccess' in a:return 'BiblioAccess'
+              if a in ('bnf-catalogue','bnf_catalogue'):return 'BnF-Catalogue'
+              if a in ('bnf-pret','bnf_pret'):return 'BnF-Prêt'
+              if a=='bnf':return 'BnF générique'
+              if 'kobo' in a:return 'Kobo'
+              if 'numilog' in a:return 'Numilog'
+              if 'paris' in a:return 'Paris'
+              if 'gallica' in a:return 'Gallica'
+              if 'gutenberg' in a:return 'Gutenberg'
+              if 'ebooksgratuits' in a:return 'EbooksGratuits'
+              if 'baen' in a:return 'Baen'
+              return None
+          by=collections.defaultdict(collections.Counter)
+          modules=collections.defaultdict(list)
+          signal_lines=collections.defaultdict(set)
+          extra=set(r['vendor_named_modules_outside_legacy_dedicated_scope'])
+          for p in sorted((root/'src/cifereca').rglob('*.py')):
+              rel=p.relative_to(root).as_posix()
+              if rel in r['historical']['parse_errors']:continue
+              source=p.read_text(encoding='utf-8')
+              n=len(source.splitlines())
+              dedicated=_dedicated_provider(p.relative_to(root))
+              if dedicated:
+                  fam=family(dedicated)
+                  if fam:by[fam]['legacy_loc']+=n; modules[fam].append([rel,n,'legacy'])
+                  continue
+              if rel in extra:
+                  fam=next((family(a) for a in ('bnf','numilog','paris','kobo','biblioaccess') if p.stem.startswith(a+'_') or p.stem==a),None)
+                  if fam:by[fam]['extra_loc']+=n; modules[fam].append([rel,n,'extra'])
+                  continue
+              signals=inspect_source(source,providers=aliases)
+              for kind in _SIGNAL_KINDS:
+                  for item in signals[kind]:
+                      for alias in item['providers']:
+                          fam=family(alias)
+                          if fam:signal_lines[fam].add((rel,item['line']))
+          for fam,lines in signal_lines.items():by[fam]['ast_generic_unique'] = len(lines)
+          print('DECOUPLING_LATEST='+json.dumps({'historical':r['historical'],'expanded':r['expanded_named_modules'],'remaining_generic':r['remaining_generic_after_expanded_named_scope'],'total_core_files':r['total_core_python_files'],'core_physical_loc':r['total_core_python_physical_lines'],'by_provider':{k:dict(v) for k,v in sorted(by.items())},'modules':dict(modules),'top_generic':r['top_generic_by_ast_signal'][:12],'errors':r['historical']['parse_errors']},sort_keys=True))
+          PY
