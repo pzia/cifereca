@@ -114,7 +114,8 @@ def test_binding_fails_closed_without_supplier_io(tmp_path, failure):
 
 def test_manual_admission_does_not_import_numilog_binding():
     root = Path(__file__).resolve().parents[1]
-    file = root / "src/cifereca/core/numilog_manual_acquisition.py"
+    file = root / "src/cifereca/core/numilog_owned_download.py"
+    assert not (root / "src/cifereca/core/numilog_manual_acquisition.py").exists()
     source = file.read_text(encoding="utf-8")
     assert "numilog_inventory_binding_valid" not in source
     assert "exact_private_inventory_binding_valid" in source
