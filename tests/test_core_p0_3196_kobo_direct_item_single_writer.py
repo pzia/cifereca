@@ -48,7 +48,7 @@ def test_no_direct_kobo_get_with_complete_or_incomplete_abi(
             pytest.fail("retired D3 cannot invoke historical admission")
         with pytest.raises(
             ProviderConfigurationError,
-            match="kobo_legacy_direct_get_retired_use_canonical_provider",
+            match="canonical_explicit_action_required",
         ):
             service.acquire_direct_item(
                 item, _admission=admission if with_admission else None,
