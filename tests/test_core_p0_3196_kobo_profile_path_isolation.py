@@ -26,7 +26,7 @@ def test_kobo_root_selection_is_pure_without_w2(tmp_path):
 
 @pytest.mark.parametrize("module", [
     "source_materialization.py",
-    "kobo_local_reconciliation.py",
+    "offline_canonical_relink.py",
 ])
 def test_read_only_consumers_do_not_import_retired_backup_engine(module):
     import ast
