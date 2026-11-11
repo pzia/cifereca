@@ -249,7 +249,7 @@ def test_federated_search_falls_back_and_ranks_title_author_match_first():
             service.close()
 
 
-def test_paris_digital_available_is_labeled_as_borrowable_not_downloadable():
+def test_catalogue_availability_does_not_infer_paris_loan_offer():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         service = LibraryService(
@@ -271,7 +271,10 @@ def test_paris_digital_available_is_labeled_as_borrowable_not_downloadable():
         )
         try:
             assert service.provider_display_name("paris") == "paris"
-            assert service.availability_display_label(item, detail) == "Disponible à l’emprunt"
+            # Catalogue availability is descriptive, never an offer to borrow.
+            assert service.availability_display_label(item, detail) == "Disponible"
+            detail.availability_label = "Indisponible"
+            assert service.availability_display_label(item, detail) == "Indisponible"
         finally:
             service.close()
 
