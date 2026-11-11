@@ -69,7 +69,6 @@ def test_valid_adept_binding_and_no_loan_id_keep_historical_meaning():
     assert original == {
         "adept_profile_id": "stable", "adept_profile_name": "reader",
         "adept_loan_id": "urn:uuid:attested", "loan_state": "active",
-        "return_available": True,
     }
     without_loan = capture_binding({
         "ok": True, "profile": "reader",
@@ -77,10 +76,9 @@ def test_valid_adept_binding_and_no_loan_id_keep_historical_meaning():
     assert without_loan == {
         "adept_profile_id": "stable", "adept_profile_name": "reader",
         "adept_loan_id": None, "loan_state": "unavailable",
-        "return_available": False,
     }
     without_profile_id = capture_binding({
         "ok": True, "loan_id": "urn:uuid:attested",
     }, profile_name="reader", profile_id=None)
     assert without_profile_id["loan_state"] == "active"
-    assert without_profile_id["return_available"] is False
+    assert "return_available" not in without_profile_id
