@@ -17,6 +17,8 @@ CI, packaging et simulation sont classés mais **ne sont pas des points
 d'entrée d'audit de la bibliothèque réelle**. Ce registre n'est pas une
 preuve d'exécution d'un compte fournisseur authentifié.
 
+**Outil CI ajouté :** `scripts/ci_provider_core_coupling_report.py` — classe les signaux AST de dépendance Core/fournisseur et compte les LOC de code dédiées ; lecture locale des sources, sortie de diagnostic **T** (sans session fournisseur, téléchargement ou mutation de bibliothèque). Les nombres signalés ne sont pas additifs et ne mesurent pas seuls une responsabilité effective.
+
 ## Légende : effets réels, pas étiquettes marketing
 
 | Classe | Sens | Effet à anticiper |
