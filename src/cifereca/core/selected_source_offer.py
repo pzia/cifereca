@@ -134,9 +134,24 @@ def select_library_source_offer_target(service, entry):
         if type(row) is dict and row.get("identity_id") == identity
         and row.get("kind") == "owned" and row.get("state") == "active"
     ] if type(entry.get("possessions")) in (tuple, list) else []
-    if len(candidates) != 1:
+    if not candidates:
+        # A catalogue observation is never a pseudo-possession. Its exact
+        # private origin can be selected passively; current delivery remains
+        # a separate producer callback after explicit user action.
+        refs = entry.get("source_refs")
+        if (entry.get("source") != "private_catalog_observation"
+                or entry.get("state") != "remote_catalog"
+                or type(refs) not in (tuple, list) or len(refs) != 1
+                or type(refs[0]) is not dict):
+            return None
+        candidate = refs[0]
+        if (candidate.get("identity_id") != identity
+                or candidate.get("kind") != "purchase"):
+            return None
+    elif len(candidates) == 1:
+        candidate = candidates[0]
+    else:
         return None
-    candidate = candidates[0]
     provider = candidate.get("provider_id")
     item_id = candidate.get("item_id")
     account_id = candidate.get("account_id")
