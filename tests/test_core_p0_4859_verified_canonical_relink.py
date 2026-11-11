@@ -302,7 +302,7 @@ def test_offline_config_cannot_rebind_profile_folder(published, tmp_path):
     with pytest.raises(repair.ReconciliationRejected, match="identity_directory_unproven"):
         repair.reconcile_existing_profile(
             config_path=profile, database_path=store.path,
-            canonical_relink=True, provider_id="kobo",
+            canonical_relink=True, provider_id="kobo", legacy_journal=True,
             credential_id="vault-1", identity_id="A",
             account_id="buyer-A", edition_id="book-1",
             right_id="purchase", branch_id="purchases",
@@ -324,7 +324,7 @@ def test_offline_profile_changed_during_sql_commit_rolls_back_B(
     profile = _offline(published, tmp_path)
     kwargs = {
         "config_path": profile, "database_path": store.path,
-        "canonical_relink": True, "provider_id": "kobo",
+        "canonical_relink": True, "provider_id": "kobo", "legacy_journal": True,
         "credential_id": "vault-1", "identity_id": "A",
         "account_id": "buyer-A", "edition_id": "book-1",
         "right_id": "purchase", "branch_id": "purchases",
