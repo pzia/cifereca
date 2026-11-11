@@ -2917,7 +2917,24 @@ class LibraryService:
     def obtain_search_item(self, item: SearchResult):
         from .core.materialization import MaterializationCoordinator
 
-        if item.source_provider == "numilog":
+        # Select a supplier's canonical, current-offer path by its installed
+        # session ABI, not by a provider name. Reading the Core session map is
+        # passive: no connect(), login(), inventory or download is invoked.
+        # The selected path independently checks account, session, offer,
+        # consent, epoch and final artifact before publication.
+        session = None
+        if (type(item) is SearchResult
+                and type(item.source_provider) is str
+                and type(item.source_credential) is str):
+            session = self._sessions.get(
+                self._session_key(item.source_provider, item.source_credential)
+            )
+        from inspect import getattr_static
+        branch = getattr_static(session, "selected_purchase_branch", None)
+        declared_shape = getattr_static(session, "private_inventory_row_contract", None)
+        if branch is not None or declared_shape is not None:
+            # Even an invalid or partial declaration fails closed through the
+            # selected-source validator; it must never downgrade to legacy GET.
             from .core.selected_owned_search import obtain_selected_owned
             return obtain_selected_owned(self, item)
         return MaterializationCoordinator(
