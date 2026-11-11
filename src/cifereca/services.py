@@ -45,6 +45,7 @@ from .epub_metadata import cached_cover_url
 from .core.covers import candidate as cover_candidate, resolve_cover
 from .config import Config
 from .diagnostics import Diagnostics, redact
+from .kobo import KoboAdeptError
 from .identities import Identity, IdentityPreferences, AdeptProfileResolver, AdeptProfileResolutionError
 from .core import adept_profiles
 from .locking import InterProcessLock, LockBusyError
@@ -2028,10 +2029,6 @@ class LibraryService:
         """Fresh exact-account read after ADEPT; never send ReturnDigitalLoan."""
         return loan_return_verification.verify_paris_return_inventory(self, loan, AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG)
 
-    def _adobe_return_inventory_confirmed(self, acquisition: dict[str, Any]) -> bool:
-        """Crash recovery: ADEPT inventory check ONLY, never replay mutation."""
-        return loan_return_verification.adobe_return_inventory_confirmed(self, acquisition)
-
     @staticmethod
     def _return_operation_lock_file(loan: Loan) -> Path:
         """Coordinate Adobe and PNB mutations across threads and processes.
@@ -3721,7 +3718,7 @@ class LibraryService:
                 adept_binding=adept_binding if acquisition.kind == "acsm" else None,
                 decision=decision,
             )
-        except UserFacingError as exc:
+        except (KoboAdeptError, UserFacingError) as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=adept_error", trace_ref)
             # A plugin's error code is not a public contract by itself.
