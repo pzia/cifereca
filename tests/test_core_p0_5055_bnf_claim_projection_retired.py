@@ -11,6 +11,8 @@ def test_bnf_claim_detail_projection_is_absent_without_changing_loan_guards():
     assert "bnf_borrow_claim_status" not in detail
     assert "bnf_borrow_claim_message" not in detail
     assert "Une demande BnF existe peut-être déjà" in detail
+    assert "Consultez Mes emprunts avant toute nouvelle demande" in detail
+    assert "Cifereca ne répétera pas automatiquement l’emprunt" in detail
     assert 'if item.source_provider == "paris":' in detail
     assert "paris_borrow_diagnostic" in detail
     # Core's checkpoint and anti-replay are retained independently of UI text.
