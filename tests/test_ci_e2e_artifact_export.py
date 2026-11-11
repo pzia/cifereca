@@ -105,6 +105,37 @@ class SafeE2EExportTests(unittest.TestCase):
         self.assertNotIn("name: e2e-core-debug", content)
 
 
+def test_book_detail_callback_line_is_ast_validated_and_excludes_private_details():
+    import ast
+    module = _module()
+    tree = ast.parse((ROOT / "e2e/book_detail_probe.py").read_text())
+    call = next(node.lineno for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "later")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-1600"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        for line, accepted in ((call, True), (True, False),
+                               (str(call), False), (10**9, False)):
+            report.write_text(json.dumps({
+                "public_stage": "callback_other",
+                "callback_line": line,
+                "error": "PRIVATE_SIGNED_URL",
+                "secret": "PRIVATE_COOKIE",
+            }))
+            result = module.safe_summary(source)["results"][0]
+            assert result["book_detail_last_stage"] == "callback_other"
+            if accepted:
+                assert result["book_detail_callback_line"] == call
+            else:
+                assert "book_detail_callback_line" not in result
+            assert "PRIVATE" not in repr(result)
+
+
 def test_book_detail_1700_closed_stage_exports_without_private_values():
     module = _module()
     with tempfile.TemporaryDirectory() as tmp:

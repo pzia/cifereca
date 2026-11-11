@@ -246,9 +246,20 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         data = json.loads(report.read_text(encoding="utf-8"))
         if type(data) is not dict:
             return {}
+        result = {}
         last = data.get("public_stage")
         if type(last) is str and last in _BOOK_DETAIL_STAGES:
-            return {"book_detail_last_stage": last}
+            result["book_detail_last_stage"] = last
+        line = data.get("callback_line")
+        if type(line) is int:
+            tree = ast.parse((ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8"))
+            permitted = {node.lineno for node in ast.walk(tree)
+                         if isinstance(node, ast.Call)
+                         and isinstance(node.func, ast.Name)
+                         and node.func.id == "later"}
+            if line in permitted:
+                result["book_detail_callback_line"] = line
+        return result
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
         pass
     return {}
