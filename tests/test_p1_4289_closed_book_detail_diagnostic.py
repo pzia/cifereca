@@ -165,29 +165,119 @@ def test_anonymous_callbacks_are_explicitly_pinned_to_reviewed_stages():
     }
 
 
-def test_retired_owned_gtk_fixture_cannot_resurrect_historical_entitlements():
-    """The detail E2E follows generic GTK checks without fabricated loan rights."""
+def test_owned_gtk_fixture_persists_exact_borrower_binding_before_entitlement():
+    """Regression #4289: a connected session alone cannot attest a purchase."""
     tree = ast.parse(PROBE.read_text(encoding="utf-8"))
-    defined = {node.name for node in ast.walk(tree)
-               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    assert "begin_owned_book_action" not in defined
-    assert not {"owned_book_select", "owned_book_action_visible",
-                "owned_book_action_completed"} & defined
-    assert "verify_library" in defined and "component_summaries" in defined
-    source = PROBE.read_text(encoding="utf-8")
-    for retired in (
-        "storage.entitlement_put(", "provider_connection_put(",
-        "provider_account_put(", "download-owned-",
-        "P0_1347_owned_library_XTEST_exact_single_target",
+    function = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "begin_owned_book_action"
+    )
+    calls = [
+        (node.lineno, node) for node in ast.walk(function)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {
+            "provider_connection_put", "provider_account_put", "entitlement_put",
+        }
+    ]
+    order = [node.func.attr for _line, node in sorted(calls)]
+    assert order == [
+        "provider_connection_put", "provider_account_put", "entitlement_put",
+    ]
+    account = next(
+        node for line, node in calls
+        if node.func.attr == "provider_account_put"
+    )
+    assert len(account.args) == 1
+    assert isinstance(account.args[0], ast.Dict)
+    keys = [value.value for value in account.args[0].keys]
+            # noqa: E128
+    values = {key: value for key, value in zip(keys, account.args[0].values)}
+    for mandatory in (
+        "connection_id", "identity_id", "provider_id",
+        "credential_id", "account_id",
     ):
-        assert retired not in source
-    verify = next(node for node in ast.walk(tree)
-                  if isinstance(node, ast.FunctionDef)
-                  and node.name == "verify_library")
-    assert any(isinstance(node, ast.Call)
-               and isinstance(node.func, ast.Name)
-               and node.func.id == "later"
-               and len(node.args) >= 2
-               and isinstance(node.args[1], ast.Name)
-               and node.args[1].id == "component_summaries"
-               for node in ast.walk(verify))
+        assert mandatory in values
+    assert isinstance(values["connection_id"], ast.Name)
+    assert values["connection_id"].id == "connection_id"
+    assert isinstance(values["account_id"], ast.Attribute)
+    assert values["account_id"].attr == "unique_id"
+    assert isinstance(values["credential_id"], ast.Attribute)
+    assert values["credential_id"].attr == "credential_id"
+
+
+@pytest.mark.parametrize("code", [
+    "library_expander_unavailable", "library_author_first",
+    "library_author_second", "library_subject", "library_isbn",
+    "library_award", "library_keyword", "library_collection",
+    "library_public_format", "library_online_calls",
+    "library_owned_begin", "owned_identity", "owned_connection",
+    "owned_account", "owned_entitlement", "owned_admission", "owned_render",
+])
+def test_only_closed_synthetic_field_code_is_published(code):
+    mod = exporter()
+    with TemporaryDirectory() as tmp:
+        source, report = write_case(
+            Path(tmp), "book-detail-1366", stage="verify_library",
+        )
+        data = json.loads(report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = code
+        report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        assert result["book_detail_failure_code"] == code
+        assert result["book_detail_last_stage"] == "verify_library"
+        public = repr(result)
+        for private in ("SECRET", "PRIVATE", "Bearer", "private.invalid", "/home"):
+            assert private not in public
+
+
+@pytest.mark.parametrize("bad", [
+    None, True, 17, "", "library_subject\\nSECRET",
+    "private:/home/PRIVATE", "Bearer SECRET", "library_custom_provider",
+])
+def test_untrusted_failure_code_is_never_exported(bad):
+    mod = exporter()
+    with TemporaryDirectory() as tmp:
+        source, report = write_case(
+            Path(tmp), "book-detail-1300", stage="verify_library",
+        )
+        data = json.loads(report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = bad
+        report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        assert "book_detail_failure_code" not in result
+
+
+def test_failure_code_cannot_leak_on_pass_or_other_scenario():
+    mod = exporter()
+    with TemporaryDirectory() as tmp:
+        source, report = write_case(
+            Path(tmp), "book-detail-1366", returncode=0,
+            stage="verify_library",
+        )
+        data = json.loads(report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = "library_isbn"
+        report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        assert "book_detail_failure_code" not in result
+        other_source, other_report = write_case(
+            Path(tmp), "startup", stage="verify_library",
+        )
+        data = json.loads(other_report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = "library_isbn"
+        other_report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(other_source)["results"][0]
+        assert "book_detail_failure_code" not in result
+
+def test_synthetic_failure_code_is_hidden_outside_library_checkpoint():
+    mod = exporter()
+    with TemporaryDirectory() as tmp:
+        source, report = write_case(
+            Path(tmp), "book-detail-1366", stage="expanded_search",
+        )
+        data = json.loads(report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = "library_isbn"
+        report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        assert result["book_detail_last_stage"] == "expanded_search"
+        assert "book_detail_failure_code" not in result
