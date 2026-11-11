@@ -6,9 +6,6 @@ import pytest
 from tests.test_core_ui_1132_opening_sync_close_gate import (
     _host as opening_host, _method as opening_method,
 )
-from tests.test_core_ui_1132_kobo_progress_close_gate import (
-    _method as kobo_method,
-)
 
 
 PRIVATE_ERROR = (
@@ -69,7 +66,6 @@ def test_opening_progress_without_public_label_never_falls_back_to_identity_key(
     assert "PRIVATE_ACCOUNT" not in repr(updates)
 
 
-@pytest.mark.parametrize("manual", [True, False])
 def test_kobo_worker_redacts_provider_exception_before_taskrunner(manual):
     run, _queue = kobo_method("run_kobo_backup")
     submitted = []
