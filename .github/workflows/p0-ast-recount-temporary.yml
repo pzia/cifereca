@@ -1,0 +1,32 @@
+name: P0 AST recount temporary
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-ast-recount-temporary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recount:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Report provider AST counts on current main snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_provider_core_coupling_report.py --json > "$RUNNER_TEMP/ast-report.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ["RUNNER_TEMP"]) / "ast-report.json").read_text())
+          print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+          PY
+      - name: Upload provider AST recount
+        uses: actions/upload-artifact@v6
+        with:
+          name: p0-ast-recount
+          path: ${{ runner.temp }}/ast-report.json
+          retention-days: 1
