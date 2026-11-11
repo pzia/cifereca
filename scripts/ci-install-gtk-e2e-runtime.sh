@@ -37,12 +37,31 @@ if (("${#missing[@]}" > 0)); then
     echo "::endgroup::"
   else
     echo "::endgroup::"
-    echo "::warning::GTK dependencies unresolved; refreshing package metadata once."
-    echo "::group::GTK E2E APT update (max 120s)"
-    timeout --signal=TERM --kill-after=10s 120s sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" update
+    # GitHub's Azure apt mirror can be unreachable while Ubuntu upstream is
+    # available. Use signed Ubuntu archives for the single bounded fallback,
+    # never disable apt-secure or retry indefinitely.
+    . /etc/os-release
+    if [[ "${ID:-}:${VERSION_CODENAME:-}" != "ubuntu:noble" ]]; then
+      echo "::error::GTK E2E APT fallback supports only ubuntu-24.04"
+      exit 1
+    fi
+    fallback_sources="$(mktemp)"
+    trap 'rm -f "$fallback_sources"' EXIT
+    cat > "$fallback_sources" <<'APT_SOURCES'
+deb https://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+deb https://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+deb https://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+APT_SOURCES
+    fallback_options=(
+      -o "Dir::Etc::sourcelist=$fallback_sources"
+      -o Dir::Etc::sourceparts=-
+    )
+    echo "::warning::GTK Azure mirror unavailable; switching to signed Ubuntu archives."
+    echo "::group::GTK E2E Ubuntu archive update (max 120s)"
+    timeout --signal=TERM --kill-after=10s 120s sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" "${fallback_options[@]}" update
     echo "::endgroup::"
-    echo "::group::GTK E2E APT retry (max 240s)"
-    timeout --signal=TERM --kill-after=10s 240s sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y --no-install-recommends "${missing[@]}"
+    echo "::group::GTK E2E Ubuntu archive install (max 240s)"
+    timeout --signal=TERM --kill-after=10s 240s sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" "${fallback_options[@]}" install -y --no-install-recommends "${missing[@]}"
     echo "::endgroup::"
   fi
 else
