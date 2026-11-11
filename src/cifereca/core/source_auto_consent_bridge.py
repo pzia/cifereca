@@ -169,3 +169,68 @@ def consent_generation_in_transaction(db, source):
     if raw is None:
         return None
     return raw if type(raw) is str and _HEX.fullmatch(raw) else "invalid"
+
+
+def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | None]:
+    """Read one explicitly configured legacy SOURCE consent (never a right).
+
+    The legacy switch is admitted to canonical A→B only when a separate
+    revision was durably committed with it. Missing/invalid revisions cannot
+    be promoted into a permission after an ON→OFF→ON change. This reader
+    never examines stored entitlements or bibliographic titles.
+    """
+    from ..plugin_api.provider_rights_observation import ProviderRightsScope
+    if type(scope) is not ProviderRightsScope or type(kind) is not str:
+        return "off", None
+    spec = _POLICIES.get((scope.provider_id, kind))
+    if spec is None:
+        return "off", None
+    if ambiguous_legacy_source_account_id(
+        scope.provider_id, scope.credential_id, scope.account_id,
+    ):
+        return "off", None
+    prefix, active, epoch_prefix = spec
+    sid = _source_id(scope)
+    revision_key = (epoch_prefix + sid if epoch_prefix is not None
+                    else prefix + sid + ".revision")
+    try:
+        value = storage.metadata_get(prefix + sid)
+        revision = storage.metadata_get(revision_key)
+    except Exception:
+        return "off", None
+    if type(revision) is not str or _HEX.fullmatch(revision) is None:
+        return "off", None
+    return ("on" if value == active else "off"), revision
+
+
+def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> bool:
+    """Revalidate source-level ON and the EXACT old generation before GET."""
+    if (type(source) is not SourceKey or type(revision) is not str
+            or _HEX.fullmatch(revision) is None):
+        return False
+    try:
+        mode, actual_revision = legacy_source_auto_policy(
+            storage, source.scope, source.kind,
+        )
+        return mode == "on" and actual_revision == revision
+    except Exception:
+        return False
+
+
+def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> bool:
+    """Final SQLite-transaction fence; protects against consent ABA."""
+    if (type(source) is not SourceKey or type(revision) is not str
+            or _HEX.fullmatch(revision) is None):
+        return False
+    try:
+        if toggle_state(db, source) != "on":
+            return False
+        key = _consent_generation_key(source.scope)
+        if key is None:
+            return False
+        row = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (key,),
+        ).fetchone()
+        return row is not None and row[0] == revision
+    except Exception:
+        return False
