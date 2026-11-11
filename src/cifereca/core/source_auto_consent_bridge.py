@@ -227,6 +227,10 @@ def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> b
             or _HEX.fullmatch(revision) is None):
         return False
     try:
+        # An exact generic CAS source policy takes precedence, irrespective
+        # of a leftover ON row from a past broker UI generation.
+        if policy_in_transaction(db, source.scope).configured:
+            return False
         if toggle_state(db, source) != "on":
             return False
         key = _consent_generation_key(source.scope)
