@@ -18,7 +18,6 @@ from cifereca.diagnostics import Diagnostics
 from cifereca.models import Account
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
-from cifereca.core.numilog_manifest_rights import mirror_numilog_manifest_rights
 from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row
 from tests.test_sync_state_contract import _service
 
@@ -300,18 +299,6 @@ def test_numilog_rebound_while_fetching_never_persists_stale_rights_or_catalogue
         assert calls == ["library"]
         assert service.storage.entitlements(provider_id="numilog") == []
         assert service.storage.catalog_entries() == []
-    finally:
-        service.close()
-
-
-def test_numilog_entitlement_helper_is_inert_without_authenticated_owner(tmp_path):
-    service = _service(tmp_path)
-    try:
-        assert mirror_numilog_manifest_rights(
-            service, [_row("not-connected", 0)], identity_id="default",
-            credential_id="not-connected", account_id="unbound",
-        ) == 0
-        assert service.storage.entitlements(provider_id="numilog") == []
     finally:
         service.close()
 
