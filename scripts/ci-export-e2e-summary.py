@@ -215,6 +215,14 @@ _BOOK_DETAIL_STAGES = frozenset({
 })
 
 
+_BOOK_DETAIL_FAILURE_CODES = frozenset({
+    "library_expander_unavailable",
+    "library_author_first", "library_author_second", "library_subject",
+    "library_isbn", "library_award", "library_keyword",
+    "library_collection", "library_public_format", "library_online_calls",
+})
+
+
 def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
     """Expose the last *closed* GUI callback stage, never raw failure data."""
     if scenario not in {
@@ -234,7 +242,11 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
             return {}
         last = data.get("public_stage")
         if type(last) is str and last in _BOOK_DETAIL_STAGES:
-            return {"book_detail_last_stage": last}
+            result = {"book_detail_last_stage": last}
+            code = data.get("book_detail_failure_code")
+            if type(code) is str and code in _BOOK_DETAIL_FAILURE_CODES:
+                result["book_detail_failure_code"] = code
+            return result
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
         pass
     return {}
