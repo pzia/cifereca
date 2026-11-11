@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import pytest
 
-from cifereca.core.paris_adept_runtime_check import describe_paris_adept_runtime
+from cifereca.core.adept_runtime_observation import describe_adept_runtime as describe_paris_adept_runtime
 from cifereca.models import Account
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 

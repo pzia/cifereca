@@ -810,7 +810,7 @@ class LibraryService:
         This is *not* an Adobe fulfillment authorization, and it does not
         reinterpret historical loan provenance or exceptional borrower grants.
         """
-        from .core.paris_adept_normal import normal_paris_adept_status
+        from .core.adept_source_binding_status import normal_source_adept_status
 
         if self.identity_by_id(identity_id) is None:
             return {
@@ -836,13 +836,18 @@ class LibraryService:
                           and row.get("enabled", True) is True]
             if len(candidates) != 1:
                 connections = []
-        return normal_paris_adept_status(
+        status = normal_source_adept_status(
+            source_provider_id="paris", source_label="Paris",
             identity_id=identity_id,
             connections=connections,
             accounts=self.accounts,
             profile_id=self.storage.adept_profile_binding_get("identity", identity_id),
             primary_connection_id=selected,
         )
+        # UI compatibility: only the field name is historic; the Core
+        # binding decision itself is provider-neutral and read-only.
+        status["paris_label"] = status.pop("source_label")
+        return status
 
     def check_normal_paris_adept_runtime(self, identity_id: str) -> dict[str, object]:
         """Explicit read-only check, NEVER called during Settings rendering.
@@ -852,11 +857,11 @@ class LibraryService:
         The caller must request this check; this method never changes a
         profile binding even if an old runtime reports a different alias.
         """
-        from .core.paris_adept_runtime_check import describe_paris_adept_runtime
+        from .core.adept_runtime_observation import describe_adept_runtime
 
         before = self.normal_paris_adept_status(identity_id)
         if before.get("status") != "ready":
-            return describe_paris_adept_runtime(before, None)
+            return describe_adept_runtime(before, None)
         try:
             profiles = self.kobo_profiles()
             if type(profiles) is not list or len(profiles) > 2048:
@@ -867,7 +872,7 @@ class LibraryService:
             # Profile lookup uses only the pre-enumerated rows: no second
             # runtime call, fallback to another name, or selected identity.
         except Exception:
-            return describe_paris_adept_runtime(
+            return describe_adept_runtime(
                 before, None, runtime_available=False,
             )
         if self.normal_paris_adept_status(identity_id) != before:
@@ -875,7 +880,7 @@ class LibraryService:
                 "identity_id": identity_id, "status": "to_verify",
                 "reason": "local_binding_changed", "acsm_ready": None,
             }
-        return describe_paris_adept_runtime(before, selected)
+        return describe_adept_runtime(before, selected)
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
         target = identity_id or (self.current_identity.identity_id if self.current_identity else None)
