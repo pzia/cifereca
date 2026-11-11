@@ -30,18 +30,19 @@ if (("${#missing[@]}" > 0)); then
   echo "GTK E2E runtime missing: ${missing[*]}"
   # Bound mirror, dpkg-lock and retry delays. A failed install must fail E2E.
   apt_options=(-o Acquire::Retries=1 -o Acquire::http::Timeout=25
-               -o Acquire::https::Timeout=25 -o DPkg::Lock::Timeout=30)
+               -o Acquire::https::Timeout=25 -o DPkg::Lock::Timeout=30
+               -o Dpkg::Use-Pty=0)
   echo "::group::GTK E2E APT install (max 240s)"
-  if timeout --signal=TERM --kill-after=10s 240s sudo apt-get "${apt_options[@]}" install -y --no-install-recommends "${missing[@]}"; then
+  if timeout --signal=TERM --kill-after=10s 240s sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y --no-install-recommends "${missing[@]}"; then
     echo "::endgroup::"
   else
     echo "::endgroup::"
     echo "::warning::GTK dependencies unresolved; refreshing package metadata once."
     echo "::group::GTK E2E APT update (max 120s)"
-    timeout --signal=TERM --kill-after=10s 120s sudo apt-get "${apt_options[@]}" update
+    timeout --signal=TERM --kill-after=10s 120s sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" update
     echo "::endgroup::"
     echo "::group::GTK E2E APT retry (max 240s)"
-    timeout --signal=TERM --kill-after=10s 240s sudo apt-get "${apt_options[@]}" install -y --no-install-recommends "${missing[@]}"
+    timeout --signal=TERM --kill-after=10s 240s sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y --no-install-recommends "${missing[@]}"
     echo "::endgroup::"
   fi
 else
