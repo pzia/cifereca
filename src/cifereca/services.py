@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .core import acsm_staging, loan_failure_evidence, adept_acquisition_return
+from .core import acsm_staging, loan_failure_evidence
 from .core import adept_artifact_publication
 from .core import loan_acquisition_admission, loan_local_preparation
 from .core import loan_provider_delivery
