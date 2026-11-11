@@ -31,7 +31,8 @@ def test_known_private_keys_are_retained_verbatim(tmp_path):
     broker = query_diagnostic_events(
         d, log_path=tmp_path / "missing", source="core_events",
     )
-    assert broker["events"][0]["detail"]["path_kind"] == "confirmation_page"
+    assert "detail" not in broker["events"][0]
+    assert "provider_id" not in broker["events"][0]
 
 
 def test_untrusted_status_remains_normalized(tmp_path):
