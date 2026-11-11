@@ -13,6 +13,16 @@ class OwnedDownloadRejected(ValueError):
 
 def owned_library_download_target(service, entry):
     """Passively select one exact source origin, never a stored pseudo-right."""
+    if type(entry) is dict and type(entry.get("possessions")) in (list, tuple):
+        identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+        origins = [
+            row for row in entry["possessions"]
+            if type(row) is dict and row.get("identity_id") == identity
+            and row.get("state") == "active" and row.get("kind") == "owned"
+        ]
+        # No fallback may choose one supplier from multiple explicit origins.
+        if len(origins) > 1:
+            return None
     from .selected_source_offer import select_library_source_offer_target
     return select_library_source_offer_target(service, entry)
 
