@@ -188,7 +188,9 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
            / "src/cifereca/gui/detail_panel.py").read_text(encoding="utf-8")
     assert '"Vérifier le prêt sans réemprunter"' in src
     assert "paris_borrow_followup_available" in src
-    assert 'availability = "Empruntable"' in src
+    assert 'availability = "Empruntable"' not in src
+    assert "elif pending_followup or search_detail_borrow_action_candidate(item, availability):" in src
+    assert "if not pending_followup and self.window.can_borrow_item(item):" in src
     assert "pending_followup = (" in src
     assert 'verify.set_name("cifereca-borrow-followup")' in src
     router = (Path(__file__).resolve().parents[1]
