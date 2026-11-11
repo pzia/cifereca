@@ -74,6 +74,22 @@ Debian : celle-ci dépend de la chaîne APT signée qui a généré les paquets.
 Le bootstrap produit `packages-lock.json` avec les versions et SHA de
 chaque paquet effectivement installé.
 
+## Agent sans DNS vers GitHub : transfert via GitHub Actions
+
+Quand l'agent ne peut résoudre **ni** GitHub **ni** les miroirs Debian,
+le relais réseau vérifié est : **GitHub Release publique → job Ubuntu 24.04
+de téléchargement et contrôle SHA-256 → artefact Actions à rétention courte
+→ connecteur GitHub de l'agent → `fetch_release_cache.py --archive --sha256`
+→ bootstrap rootless Debian hors ligne**.
+
+La recette opératoire complète et les preuves du 11/11/2026 figurent dans
+[README.md — Secours validé](README.md#secours-validé--github-actions--connecteur-github--debian-sans-dns).
+La PR du relais est fermée sans fusion après transfert ; **ne jamais**
+publier de source privée, capture GTK, profil ou journal dans l'artefact.
+Le cache d'octobre valide GTK4 mais manque actuellement de la dépendance
+`apsw>=3.54.0,<3.55` exigée par le Core : un nouveau cache est requis
+pour réussir la vérification complète du bootstrap.
+
 ## Production / maintenance de cet asset (rôle CI/CD)
 
 La publication est réalisée par le workflow
