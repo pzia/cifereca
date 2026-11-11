@@ -18,5 +18,16 @@ def test_direct_download_hint_validates_only_origin_record_shape():
         if isinstance(node, ast.ImportFrom)
     ]
     assert "core.numilog_manifest_rights" not in modules
-    assert "core.credential_scoped_record" in modules
-    assert "exact_credential_scoped_record(" in ast.get_source_segment(src, fn)
+    assert "core.credential_scoped_record" not in modules
+    assert "core.private_inventory_row_scope" in modules
+    body = ast.get_source_segment(src, fn)
+    assert "selected_private_offer_hint(" in body
+    assert "numilog" not in body.lower()
+    guard = (path.parent / "core/private_inventory_row_scope.py").read_text(
+        encoding="utf-8",
+    )
+    assert "credential_scoped_private_inventory_rows_valid(" in guard
+    record = (path.parent / "core/credential_scoped_record.py").read_text(
+        encoding="utf-8",
+    )
+    assert "def exact_credential_scoped_record(" in record

@@ -71,9 +71,15 @@ class NumilogOfferFixture:
         )
         self.session = NS(
             capabilities=NS(direct_download=True),
+            selected_purchase_branch="meslivres",
+            private_inventory_row_contract=(
+                "library", "NUMILOG_LIBRARY", "credential_scoped_record_v1",
+            ),
             downloadable_resource_snapshot=lambda *_: pytest.fail("no v2 snapshot during render"),
             downloadable_selected_offer_snapshot=lambda *_: pytest.fail("no v2 offer during render"),
         )
+        self._sessions = {f"numilog:{CREDENTIAL}": self.session}
+        self._session_key = lambda provider, credential: f"{provider}:{credential}"
         self.source_calls = []
         self.acquisition = NS(
             override_command=lambda *_: pytest.fail("no acquisition fallback"),
@@ -91,7 +97,7 @@ class NumilogOfferFixture:
 def test_private_verified_inventory_offer_preserves_manual_button_hint():
     service = NumilogOfferFixture()
     assert service.can_direct(private_purchase()) is True
-    assert service.source_calls == [("numilog", CREDENTIAL)]
+    assert service.source_calls == []  # passive Core session-map check
 
 
 @pytest.mark.parametrize("changes", [
