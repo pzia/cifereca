@@ -47,7 +47,7 @@ def add_numilog_enrichment_action(host, selected_id, item, detail, context, *,
         # and its subsequent GTK callback.
         expected_identity_id = context[3] or ""
         def do_enrich():
-            return host.service.enrich_numilog_search_result(
+            return host.service.enrich_provider_search_result(
                 item, expected_identity_id=expected_identity_id,
             )
 
