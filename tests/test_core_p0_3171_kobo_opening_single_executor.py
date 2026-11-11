@@ -48,7 +48,7 @@ def test_canonical_kobo_does_not_fall_through_to_legacy_get(
         pytest.fail("canonical Kobo source must not start a second legacy GET")
 
     monkeypatch.setattr(sync_coordination, "_run_observed_canonical_convergence", canonical)
-    monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", legacy)
+    monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", legacy, raising=False)
     try:
         result = service.opening_sync()
         owner = next(
@@ -86,7 +86,7 @@ def test_old_kobo_session_without_canonical_attempt_never_runs_legacy(
             "sources": [{"status": "complete", "source_id": account.credential_id}],
         }
 
-    monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", legacy)
+    monkeypatch.setattr(service, "_sync_kobo_backup_account_locked", legacy, raising=False)
     try:
         service.opening_sync()
         assert calls == []
@@ -145,8 +145,7 @@ def test_on_start_policy_never_schedules_complete_canonical_kobo_session(
             service, "_sync_kobo_backup_account_locked",
             lambda *_args, **_kwargs: pytest.fail(
                 "canonical Kobo ABI must not launch legacy on_start"
-            ),
-        )
+            ), raising=False)
         service.opening_sync()
         assert service.storage.metadata_get(
             "sync.source.materialization.last_attempt." + source_id

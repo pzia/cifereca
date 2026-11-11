@@ -703,10 +703,6 @@
     "kind": "method",
     "signature": "(self, identity_id: 'str') -> 'int'"
   },
-  "_sync_kobo_backup_locked": {
-    "kind": "method",
-    "signature": "(self, progress: 'Callable[[dict[str, Any]], None] | None' = None) -> 'dict[str, Any]'"
-  },
   "_account_for_loan": {
     "kind": "method",
     "signature": "(self, loan: 'Loan') -> 'Account'"

@@ -67,7 +67,7 @@ def test_kobo_canonical_off_never_falls_back_after_missing_typed_inventory(tmp_p
     broker.set_source_sync_consent(sid, enabled=False, expected_revision=None)
     monkeypatch.setattr(sync_coordination, '_run_observed_canonical_convergence', lambda *_a, **_kw: None)
     monkeypatch.setattr(service, '_sync_kobo_backup_account_locked',
-                        lambda *_a, **_kw: pytest.fail('OFF cannot fall back to Kobo legacy'))
+                        lambda *_a, **_kw: pytest.fail('OFF cannot fall back to Kobo legacy'), raising=False)
     try:
         service.opening_sync()
         assert service.storage.placements() == []

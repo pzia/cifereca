@@ -26,12 +26,10 @@ def test_historical_global_flag_never_authorizes_startup_download(
         service.config.set("kobo_backup.enabled", legacy_enabled)
         monkeypatch.setattr(
             service, "_sync_kobo_backup_locked",
-            lambda **_kwargs: pytest.fail("global Kobo batch is forbidden"),
-        )
+            lambda **_kwargs: pytest.fail("global Kobo batch is forbidden"), raising=False)
         monkeypatch.setattr(
             service, "_sync_kobo_backup_account_locked",
-            lambda *_args, **_kwargs: pytest.fail("no source consent"),
-        )
+            lambda *_args, **_kwargs: pytest.fail("no source consent"), raising=False)
         if deep:
             monkeypatch.setattr(service, "catalog_scan", lambda **_kwargs: {"scanned": 0})
         result = service._opening_sync_locked(deep=deep)
@@ -69,8 +67,7 @@ def test_retired_kobo_startup_consent_never_authorizes_dispatch(
         before_retry = service.storage.metadata_get(schedule.retry_interval_key(source_id))
         monkeypatch.setattr(
             service, "_sync_kobo_backup_account_locked",
-            lambda *_a, **_kw: pytest.fail("retired W2 GET must never run"),
-        )
+            lambda *_a, **_kw: pytest.fail("retired W2 GET must never run"), raising=False)
         assert schedule.can_enable_kobo_on_start(service, account) is False
         assert schedule.kobo_on_start_sessions(service) == ()
         assert schedule.on_start_due(service, account) is False
@@ -102,8 +99,7 @@ def test_retired_scheduler_never_admits_rebound_kobo_account(
             service.accounts[0] = replace(account, identity_id="other-identity")
         monkeypatch.setattr(
             service, "_sync_kobo_backup_account_locked",
-            lambda *_a, **_kw: pytest.fail("rebound W2 must never GET"),
-        )
+            lambda *_a, **_kw: pytest.fail("rebound W2 must never GET"), raising=False)
         assert schedule.kobo_on_start_sessions(service) == ()
         assert schedule.on_start_due(service, service.accounts[0]) is False
         assert service._opening_sync_locked(deep=False)["kobo_decision"]["scheduled_kobo"] == 0

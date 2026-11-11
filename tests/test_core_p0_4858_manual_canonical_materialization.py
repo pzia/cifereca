@@ -72,7 +72,7 @@ def canonical(case, monkeypatch):
         pytest.fail("W2 legacy manifest, backup or direct GET must not run")
 
     monkeypatch.setattr(case.target, "backup_manifest", forbidden)
-    monkeypatch.setattr(kobo_backup, "_sync_kobo_backup_locked", forbidden)
+    assert not hasattr(kobo_backup, "_sync_kobo_backup_locked")
     monkeypatch.setattr(case.service.storage, "backup_list", forbidden)
     monkeypatch.setattr(case.service.storage, "backup_put", forbidden)
 
