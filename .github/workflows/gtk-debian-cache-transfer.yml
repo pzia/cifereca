@@ -1,0 +1,41 @@
+name: Temporary Debian GTK cache transfer (diagnostic)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gtk-debian-cache-transfer.yml'
+permissions:
+  contents: read
+jobs:
+  transfer:
+    if: github.repository == 'pzia/cifereca'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Download and verify immutable reviewed Debian release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cache-transfer
+          base="https://github.com/pzia/cifereca/releases/download/gtk4-debian13-trixie-amd64-20261020"
+          asset="gtk4-deb-cache-debian13-trixie-amd64.tar.gz"
+          curl --fail --location --retry 3 --retry-delay 3 --connect-timeout 20 --max-time 300 \
+            "$base/$asset" -o "cache-transfer/$asset"
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 45 \
+            "$base/SHA256SUMS" -o cache-transfer/SHA256SUMS
+          cd cache-transfer
+          printf '%s  %s\n' \
+            994827c014446ffdd37016a18c4e457ef2ad225a1de84f9c738efc23f60324e4 \
+            "$asset" | sha256sum -c -
+          sha256sum -c SHA256SUMS
+          test "$(wc -c < SHA256SUMS)" -le 512
+          test "$(stat -c %s "$asset")" -le 314572800
+      - name: Stage verified Debian archive for connector transfer
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian13-gtk-cache-transfer
+          path: |
+            cache-transfer/gtk4-deb-cache-debian13-trixie-amd64.tar.gz
+            cache-transfer/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
