@@ -1061,19 +1061,16 @@ class DetailPanel(Gtk.Box):
             )
         except Exception:
             pending_followup = False
-        if pending_followup:
-            # Preserve the existing borrow-candidate renderer/contract while
-            # making a spent claim visible even when catalogue availability
-            # changed. This is a local variable used by the action gate only.
-            availability = "Empruntable"
+        # An uncertain spent claim is a read-only follow-up, not evidence
+        # that the catalogue currently permits another borrow.
         if direct_download:
             self._direct_download_action(item)
-        elif search_detail_borrow_action_candidate(item, availability):
+        elif pending_followup or search_detail_borrow_action_candidate(item, availability):
             # Commercial store inventory/catalogues never become loan sources,
             # even if a generic availability label is malformed.
             action = Adw.PreferencesGroup()
             action.set_title("Action")
-            if self.window.can_borrow_item(item):
+            if not pending_followup and self.window.can_borrow_item(item):
                 borrow = self.window.action_button("Emprunter", "document-save-symbolic", suggested=True)
                 borrow.connect("clicked", lambda _b: self.window.borrow_search_item(item, borrow))
                 self._actions([borrow])
@@ -1093,33 +1090,31 @@ class DetailPanel(Gtk.Box):
                     else "Emprunt indisponible pour l’identité et le compte "
                          "actifs, ou non pris en charge par cette source."
                 )
-                if item.source_provider == "paris":
-                    # The catalogue cannot attest account eligibility.
-                    # Never reconstruct it from historical rights or from
-                    # supplier-specific diagnostic reason codes.
+                # Only a previously spent exact Core claim can expose
+                # this read-only action. No inferred borrower eligibility,
+                # new claim, provider GET or mutating fallback is authorized.
+                if pending_followup:
+                    explanation = (
+                        "Demande de prêt déjà envoyée ; confirmation "
+                        "indisponible. Ne réempruntez pas. "
+                        "La vérification ci-dessous ne soumet aucun prêt."
+                    )
+                    verify = self.window.action_button(
+                        "Vérifier le prêt sans réemprunter",
+                        "view-refresh-symbolic",
+                    )
+                    verify.set_name("cifereca-borrow-followup")
+                    verify.connect(
+                        "clicked",
+                        lambda _b: self.window.borrow_search_item(item, verify),
+                    )
+                    self._actions([verify])
+                elif item.source_provider == "paris":
+                    # The public catalogue cannot attest account eligibility.
                     explanation = (
                         "Éligibilité du compte non vérifiée auprès du fournisseur. "
                         "L'emprunt reste indisponible pour ce profil et ce compte."
                     )
-                    # P1 #5136: a spent uncertain loan claim is NOT an
-                    # invitation to repeat Emprunter. Only an exact local
-                    # pending claim may expose a later read-only GET action.
-                    if pending_followup:
-                        explanation = (
-                            "Demande de prêt Paris déjà envoyée ; confirmation "
-                            "indisponible. Ne réempruntez pas. "
-                            "La vérification ci-dessous ne soumet aucun prêt."
-                        )
-                        verify = self.window.action_button(
-                            "Vérifier le prêt sans réemprunter",
-                            "view-refresh-symbolic",
-                        )
-                        verify.set_name("cifereca-paris-borrow-followup")
-                        verify.connect(
-                            "clicked",
-                            lambda _b: self.window.borrow_search_item(item, verify),
-                        )
-                        self._actions([verify])
                 row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)
