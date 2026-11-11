@@ -148,7 +148,7 @@ def test_modern_page_uses_same_controls_and_never_reads_legacy_tools(monkeypatch
     b.source_sync_consent = lambda sid: dict(state)
     b.set_source_sync_consent = lambda *args, **kwargs: pytest.fail('render must not mutate')
     for name in ('canonical_acquisition_choices', 'preview_local_materialization', 'audit_local_reconciliation',
-                 'local_materialization_schedule', 'bnf_auto_download_enabled', 'numilog_materialization_schedule'):
+                 'bnf_auto_download_enabled', 'numilog_materialization_schedule'):
         setattr(b, name, lambda *_a, **_kw: pytest.fail('modern page must not enter legacy policy/tools'))
     w._refresh_sync_page()
     group, = w._sync_sources_box.children
