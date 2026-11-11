@@ -1079,19 +1079,16 @@ class DetailPanel(Gtk.Box):
                 self._actions([borrow])
             else:
                 row = Adw.ActionRow()
-                row.set_title(
-                    "État de la demande d’emprunt"
-                    if item.source_provider == "bnf-pret"
-                    else "Emprunt requis avant téléchargement"
-                )
+                row.set_title("Emprunt indisponible pour ce compte")
+                # Visibility is not provider authorization. Do not infer a
+                # right from a catalogue notice or invite a second POST after
+                # an unverified attempt, regardless of the source.
                 explanation = (
-                    "Une demande BnF existe peut-être déjà pour ce livre, "
-                    "ou le compte actif n’est pas admissible. "
-                    "Consultez Mes emprunts avant toute nouvelle demande ; "
-                    "Cifereca ne répétera pas automatiquement l’emprunt."
-                    if item.source_provider == "bnf-pret"
-                    else "Emprunt indisponible pour l’identité et le compte "
-                         "actifs, ou non pris en charge par cette source."
+                    "L’emprunt n’est pas disponible pour l’identité et le "
+                    "compte actifs. Une demande précédente peut être en "
+                    "attente de vérification : consultez Mes emprunts ou "
+                    "le portail avant toute nouvelle action volontaire. "
+                    "Cifereca ne renvoie jamais automatiquement une demande."
                 )
                 if item.source_provider == "paris":
                     # The catalogue cannot attest account eligibility.
