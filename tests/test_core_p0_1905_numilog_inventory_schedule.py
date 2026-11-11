@@ -165,9 +165,8 @@ def test_numilog_manual_is_default_and_not_a_backup_permission(tmp_path):
         service.storage.metadata_set("kobo_backup.enabled", "1")
         assert broker.synchronize_scheduled_inventory("alice", "startup").facts["attempted"] == 0
         assert calls == []
-        assert broker.local_materialization_schedule(sid) == "not_supported"
-        with pytest.raises(ValueError):
-            broker.set_local_materialization_schedule(sid, "on_start")
+        assert not hasattr(broker, "local_materialization_schedule")
+        assert not hasattr(broker, "set_local_materialization_schedule")
         assert session.capabilities.direct_download is True
         assert service.storage.metadata_get("sync.source.materialization.on_start." + sid) is None
     finally:
@@ -197,7 +196,7 @@ def test_numilog_opt_in_startup_only_refreshes_private_inventory_once(tmp_path):
         ).facts["attempted"] == 0
         assert broker.synchronize_scheduled_inventory("bob", "startup").facts["attempted"] == 0
         assert len(calls) == 1
-        assert broker.local_materialization_schedule(sid) == "not_supported"
+        assert not hasattr(broker, "local_materialization_schedule")
     finally:
         service.storage.close()
 
