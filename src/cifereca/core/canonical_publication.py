@@ -164,7 +164,7 @@ def publish_completed_acquisition(
                     or not explicit_offer_id
                     or len(explicit_offer_id) > 256
                     or any(ord(c) < 32 for c in explicit_offer_id)
-                    or type(explicit_staged_path) is not Path
+                    or not isinstance(explicit_staged_path, Path)
                     or not explicit_staged_path.is_absolute())))):
         raise ValueError("canonical_explicit_transaction_guard_required")
     if offer_mode and (
