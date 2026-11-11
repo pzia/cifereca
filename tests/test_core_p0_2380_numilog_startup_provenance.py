@@ -1,53 +1,66 @@
-"""P0 #2380: typed Numilog startup is Core-attested, not plugin-supplied.
-
-All observations and refs are synthetic. No network, account or receipt.
-"""
-from __future__ import annotations
-
+"""P0 #5054: a retired supplier startup worker cannot reattest pseudo-rights."""
+import ast
 import json
+from pathlib import Path
 
-from cifereca.core.diagnostic_event_feed import query_diagnostic_events
 from cifereca.diagnostics import Diagnostics
+from cifereca.core.diagnostic_event_feed import query_diagnostic_events
 
 
-def _fields():
-    return {
-        "phase": "completed", "cause_phase": "acquisition",
-        "code": "acquisition_failed", "status": "failed",
-        "task_kind": "source-materialize",
-        "attempted": 1, "downloaded": 0, "skipped": 0, "failed": 1,
-        "task_ref": "123456789abc",
+def test_core_retired_startup_producer_and_view_are_physically_absent():
+    root = Path(__file__).resolve().parents[1] / "src/cifereca"
+    assert not (root / "core/numilog_startup_diagnostics.py").exists()
+    assert not (root / "gui/numilog_materialization_status.py").exists()
+    source = (root / "diagnostics.py").read_text(encoding="utf-8")
+    assert "def add_core_numilog_startup(" not in source
+    ast.parse(source)
+
+
+def test_generic_numilog_startup_details_remain_masked(tmp_path):
+    diag = Diagnostics()
+    detail = {
+        "phase": "completed", "status": "failed",
+        "code": "manifest_failed",
+        "private": "https://private.invalid/?auth=NEVER_SHOW",
     }
-
-
-def test_generic_numilog_entry_cannot_publish_unattested_startup_fact(tmp_path):
-    diag = Diagnostics()
-    diag.add("NUMILOG", "startup_materialization", "error", detail=_fields())
-    row, = query_diagnostic_events(
-        diag, source="core_events", log_path=tmp_path / "unread",
-    )["events"]
-    assert row["module"] == "NUMILOG"
-    assert row["message"] == "[opération masquée]"
-    assert "detail" not in row
-    assert "task_ref" not in row
-    assert "acquisition_failed" not in json.dumps(row)
-
-
-def test_malformed_attested_fields_are_not_persisted_or_displayed(tmp_path):
-    diag = Diagnostics()
-    bad = {**_fields(), "token": "https://private.invalid/?secret=NEVER"}
-    diag.add_core_numilog_startup(bad)
-    assert diag.snapshot() == []
-    diag.add("NUMILOG", "startup_materialization", "error", detail=bad)
+    diag.add("NUMILOG", "startup_materialization", "error", detail=detail)
     output = query_diagnostic_events(
         diag, source="core_events", log_path=tmp_path / "unread",
     )
     assert output["total"] == 1
-    assert "detail" not in output["events"][0]
-    assert "NEVER" not in json.dumps(output)
+    row = output["events"][0]
+    assert row["message"] == "[opération masquée]"
+    assert "detail" not in row and "provider_id" not in row
+    assert "NEVER_SHOW" not in json.dumps(output)
 
 
-def test_attested_producer_respects_disabled_collector():
-    diag = Diagnostics(enabled=False)
-    diag.add_core_numilog_startup(_fields())
-    assert diag.snapshot() == []
+def test_retired_worker_cannot_fabricate_current_download_facts():
+    from cifereca.core.diagnostic_numilog_projection import public_numilog_fields
+    assert public_numilog_fields(
+        "startup_materialization",
+        {"status": "complete", "downloaded": 1, "attempted": 1},
+    ) == {}
+
+
+def test_active_numilog_session_and_delivery_diagnostics_remain_filtered():
+    from cifereca.core.diagnostic_numilog_projection import (
+        public_numilog_fields, public_numilog_message,
+    )
+    session = public_numilog_fields(
+        "session_state", {"reason": "connect_failed", "connected": False,
+                          "secret": "https://private.invalid/?token=NEVER_SHOW"},
+    )
+    assert session == {"reason": "connect_failed", "connected": False}
+    assert public_numilog_message("session_state", session) is not None
+    delivery = public_numilog_fields(
+        "acquisition_delivery", {
+            "phase": "completed", "code": "epub_complete",
+            "mime": "epub", "http_status": 200,
+            "url": "https://private.invalid/?token=NEVER_SHOW",
+        },
+    )
+    assert delivery == {
+        "phase": "completed", "code": "epub_complete",
+        "mime": "epub", "http_status": 200,
+    }
+    assert "NEVER_SHOW" not in public_numilog_message("acquisition_delivery", delivery)

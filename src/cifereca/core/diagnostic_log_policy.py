@@ -33,7 +33,6 @@ def is_public_core_observation(logger: str, message: str) -> bool:
     from .diagnostic_source_sync import public_log_fields as source_sync
     from .diagnostic_adept import public_log_fields as adept
     from .diagnostic_kobo_projection import public_kobo_backup_log
-    from .numilog_startup_diagnostics import public_log_fields as numilog_startup
     return bool(
         public_connection_log_fields(message)
         or public_connection_success_log_fields(message)
@@ -43,5 +42,4 @@ def is_public_core_observation(logger: str, message: str) -> bool:
         or source_sync(message)
         or adept(message)
         or public_kobo_backup_log(message)
-        or numilog_startup(message)
     )

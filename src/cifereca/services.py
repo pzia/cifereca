@@ -2532,12 +2532,10 @@ class LibraryService:
                 raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
             try:
                 with InterProcessLock(acquisition_lock_file().with_name("manual-acsm.lock")):
-                    from .core.numilog_startup_diagnostics import adept_stage
-                    with adept_stage(provider_id) as startup_trace:
-                        result = self._import_acsm_impl(source, identity_id=iid, provider_id=provider_id,
-                                                        title=title, placement_provider_id=placement_provider_id)
-                        if startup_trace is not None and result.get("status") not in {"complete", "unchanged"}:
-                            startup_trace.fail("adept_failed")
+                    result = self._import_acsm_impl(
+                        source, identity_id=iid, provider_id=provider_id,
+                        title=title, placement_provider_id=placement_provider_id,
+                    )
             except LockBusyError:
                 raise ProviderConfigurationError("Un import ACSM est déjà en cours") from None
             outcome = "success" if result.get("status") in {"complete", "unchanged"} else "failed"
