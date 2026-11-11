@@ -12,6 +12,19 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = ("src/plugins/provider-paris/", "src/plugins/provider-bnf-pret/")
+# Core-to-provider lending boundaries need conformance coverage even when
+# only the Core dispatch or synchronization layer changed.
+CORE_LENDING_PATHS = frozenset({
+    "src/cifereca/services.py",
+    "src/cifereca/brokers.py",
+    "src/cifereca/core/sync_coordination.py",
+    "src/cifereca/core/manual_library_borrow.py",
+    "src/cifereca/core/selected_loan_offer.py",
+    "src/cifereca/core/loan_action_scope.py",
+    "src/cifereca/gui/bnf_borrow_controller.py",
+    "src/cifereca/gui/bnf_acsm_action_controller.py",
+})
+
 TESTS = (
     "tests/test_core_p1_3122_real_manifest_lending_conformance.py",
     "tests/test_core_p1_3122_paris_bnf_snapshots.py",
@@ -26,7 +39,10 @@ GATE_FILES = frozenset({
 
 def selected(paths, root=ROOT, *, full=False):
     relevant = full or any(
-        path.startswith(PACKAGES) or path in GATE_FILES
+        path.startswith(PACKAGES)
+        or path.startswith('src/cifereca/core/bnf_')
+        or path in CORE_LENDING_PATHS
+        or path in GATE_FILES
         for path in paths
     )
     if relevant and any(not (root / path).is_file() for path in TESTS):
