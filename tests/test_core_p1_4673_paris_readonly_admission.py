@@ -7,7 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from cifereca.core import manual_paris_borrow as paris
+import cifereca.services as services
+from cifereca.core import manual_library_borrow, primary_source_binding
+
+
+class Probe:
+    paris_borrow_diagnostic = services.LibraryService.paris_borrow_diagnostic
+    can_borrow_paris = services.LibraryService.can_borrow_paris
 
 
 class FakeResult:
@@ -21,11 +27,13 @@ class FakeResult:
 
 @pytest.fixture
 def harness(monkeypatch):
-    monkeypatch.setattr(paris, "SearchResult", FakeResult)
+    monkeypatch.setattr(services, "SearchResult", FakeResult)
     counters = {"scope": 0, "local": 0}
     choices = {"scope": True, "local": True}
 
-    def scope(*args):
+    def scope(*args, **kwargs):
+        assert kwargs == {"provider_id": "paris",
+                          "selection_key": "primary_paris_connection_id"}
         counters["scope"] += 1
         return choices["scope"]
 
@@ -43,22 +51,24 @@ def harness(monkeypatch):
             )
         return choices["local"]
 
-    monkeypatch.setattr(paris, "_normal_paris_source_current", scope)
-    monkeypatch.setattr(paris, "manual_borrow_available", local)
-    service = SimpleNamespace(current_identity=SimpleNamespace(identity_id="profile-A"))
+    monkeypatch.setattr(primary_source_binding,
+                        "configured_primary_source_current", scope)
+    monkeypatch.setattr(manual_library_borrow, "manual_borrow_available", local)
+    service = Probe()
+    service.current_identity = SimpleNamespace(identity_id="profile-A")
     return service, choices, counters
 
 
 def test_readiness_is_not_provider_permission_even_when_local_action_possible(harness):
     service, choices, counters = harness
     item = FakeResult()
-    evidence = paris.manual_paris_borrow_diagnostic(service, item)
+    evidence = service.paris_borrow_diagnostic(item)
     assert evidence == {
         "local_action_possible": True,
         "reason_code": "local_action_available_provider_unknown",
         "provider_eligibility": "unknown",
     }
-    assert paris.manual_paris_borrow_available(service, item) is True
+    assert service.can_borrow_paris(item) is True
     assert counters == {"scope": 2, "local": 2}
 
 
@@ -70,7 +80,7 @@ def test_readiness_is_not_provider_permission_even_when_local_action_possible(ha
 ])
 def test_foreign_or_ambiguous_edition_never_reaches_local_admission(harness, change, reason):
     service, choices, counters = harness
-    result = paris.manual_paris_borrow_diagnostic(service, FakeResult(**change))
+    result = service.paris_borrow_diagnostic(FakeResult(**change))
     assert result["local_action_possible"] is False
     assert result["provider_eligibility"] == "unknown"
     assert result["reason_code"] == reason
@@ -80,7 +90,7 @@ def test_foreign_or_ambiguous_edition_never_reaches_local_admission(harness, cha
 def test_missing_identity_rejects_without_other_checks(harness):
     service, choices, counters = harness
     service.current_identity = None
-    evidence = paris.manual_paris_borrow_diagnostic(service, FakeResult())
+    evidence = service.paris_borrow_diagnostic(FakeResult())
     assert evidence["reason_code"] == "identity_not_selected"
     assert evidence["local_action_possible"] is False
     assert counters == {"scope": 0, "local": 0}
@@ -89,7 +99,7 @@ def test_missing_identity_rejects_without_other_checks(harness):
 def test_primary_connection_mismatch_stops_before_local_admission(harness):
     service, choices, counters = harness
     choices["scope"] = False
-    evidence = paris.manual_paris_borrow_diagnostic(service, FakeResult())
+    evidence = service.paris_borrow_diagnostic(FakeResult())
     assert evidence["reason_code"] == "primary_paris_connection_mismatch_or_inactive"
     assert evidence["local_action_possible"] is False
     assert counters == {"scope": 1, "local": 0}
@@ -98,10 +108,10 @@ def test_primary_connection_mismatch_stops_before_local_admission(harness):
 def test_local_rejection_never_claims_remote_ineligibility(harness):
     service, choices, counters = harness
     choices["local"] = False
-    evidence = paris.manual_paris_borrow_diagnostic(service, FakeResult())
+    evidence = service.paris_borrow_diagnostic(FakeResult())
     assert evidence["reason_code"] == "local_admission_unavailable"
     assert evidence["provider_eligibility"] == "unknown"
-    assert paris.manual_paris_borrow_available(service, FakeResult()) is False
+    assert service.can_borrow_paris(FakeResult()) is False
 
 
 def test_exception_fails_closed_without_leaking_private_data(harness, monkeypatch):
@@ -109,8 +119,9 @@ def test_exception_fails_closed_without_leaking_private_data(harness, monkeypatc
 
     def secret_failure(*args, **kwargs):
         raise RuntimeError("sensitive login and signed URL")
-    monkeypatch.setattr(paris, "manual_borrow_available", secret_failure)
-    evidence = paris.manual_paris_borrow_diagnostic(service, FakeResult())
+    monkeypatch.setattr(manual_library_borrow,
+                        "manual_borrow_available", secret_failure)
+    evidence = service.paris_borrow_diagnostic(FakeResult())
     assert evidence == {
         "local_action_possible": False,
         "reason_code": "local_admission_unavailable",
