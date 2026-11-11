@@ -11,7 +11,7 @@ import pytest
 
 from cifereca.providers import ProviderConfigurationError
 
-from cifereca.core.kobo_backup import (
+from cifereca.core.legacy_checkpoint_read import (
     _kobo_checkpoint_key,
 )
 from tests.test_kobo_backup_reconcile_prune import _manifest_row, _service, _write_epub
