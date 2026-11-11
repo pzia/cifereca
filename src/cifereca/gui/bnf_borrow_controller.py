@@ -9,6 +9,62 @@ from copy import copy
 from ..models import Account, SearchResult
 
 
+def _capture_borrow_ui_scope(window, item, account, session):
+    """Capture one immutable UI lease for a user-initiated lending action.
+
+    This is an inert guard only: no provider request, borrow permission or
+    new right. Both a mutable attempt and a read-only follow-up use it.
+    """
+    identity_id = account.identity_id
+    identity_gen = getattr(window, "_identity_context_generation", None)
+    account_gen = getattr(window, "_account_context_generation", None)
+    core_epoch = getattr(window.service, "_account_context_epoch", None)
+    selection_id = getattr(window, "_selected_search_id", None)
+    detail_gen = getattr(window, "_search_detail_request_generation", None)
+    provider_id = item.source_provider
+    credential_id = account.credential_id
+    source_epoch = getattr(session, "_epoch", None)
+    notice_scope = (
+        item.id, item.record_id, item.docbase, item.medium,
+        item.source_provider, item.source_credential, item.source_collection,
+        item.title,
+    )
+    account_scope = (
+        account.identity_id, account.provider_id, account.credential_id,
+        account.unique_id, account.is_primary,
+    )
+    if type(core_epoch) is not int or not identity_id:
+        return None
+
+    def current():
+        try:
+            return (
+                not getattr(window, "_closed", False)
+                and window._identity_context_generation == identity_gen
+                and window._account_context_generation == account_gen
+                and window._selected_search_id == selection_id
+                and window._search_detail_request_generation == detail_gen
+                and getattr(window.service.current_identity,
+                            "identity_id", None) == identity_id
+                and window.service._account_context_epoch == core_epoch
+                and session.connected is True
+                and getattr(session, "_epoch", None) == source_epoch
+                and window.service._session_for_source(
+                    provider_id, credential_id) is session
+                and sum(row is account for row in window.service.accounts) == 1
+                and (account.identity_id, account.provider_id,
+                     account.credential_id, account.unique_id,
+                     account.is_primary) == account_scope
+                and (item.id, item.record_id, item.docbase, item.medium,
+                     item.source_provider, item.source_credential,
+                     item.source_collection, item.title) == notice_scope
+            )
+        except Exception:
+            return False
+
+    return identity_id, core_epoch, current
+
+
 def _present_manual_borrow(window, item, control, *, TaskPriority,
                            provider_id, label, available, dispatch, expected_account=None):
     """Submit only a user-clicked, published and Core-admissible loan action.
@@ -33,51 +89,11 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
             return
     except Exception:
         return
-    identity_id = account.identity_id
-    identity_gen = getattr(window, "_identity_context_generation", None)
-    account_gen = getattr(window, "_account_context_generation", None)
-    core_epoch = getattr(window.service, "_account_context_epoch", None)
-    selection_id = getattr(window, "_selected_search_id", None)
-    detail_gen = getattr(window, "_search_detail_request_generation", None)
-    selected = copy(item)
-    notice_scope = (
-        item.id, item.record_id, item.docbase, item.medium,
-        item.source_provider, item.source_credential, item.source_collection,
-        item.title,
-    )
-    account_scope = (
-        account.identity_id, account.provider_id, account.credential_id,
-        account.unique_id, account.is_primary,
-    )
-    source_epoch = getattr(session, "_epoch", None)
-    if type(core_epoch) is not int or not identity_id:
+    scope = _capture_borrow_ui_scope(window, item, account, session)
+    if scope is None:
         return
-
-    def current():
-        try:
-            return (
-                not getattr(window, "_closed", False)
-                and window._identity_context_generation == identity_gen
-                and window._account_context_generation == account_gen
-                and window._selected_search_id == selection_id
-                and window._search_detail_request_generation == detail_gen
-                and getattr(window.service.current_identity,
-                            "identity_id", None) == identity_id
-                and window.service._account_context_epoch == core_epoch
-                and session.connected is True
-                and getattr(session, "_epoch", None) == source_epoch
-                and window.service._session_for_source(
-                    provider_id, account.credential_id) is session
-                and sum(row is account for row in window.service.accounts) == 1
-                and (account.identity_id, account.provider_id,
-                     account.credential_id, account.unique_id,
-                     account.is_primary) == account_scope
-                and (item.id, item.record_id, item.docbase, item.medium,
-                     item.source_provider, item.source_credential,
-                     item.source_collection, item.title) == notice_scope
-            )
-        except Exception:
-            return False
+    identity_id, core_epoch, current = scope
+    selected = copy(item)
 
     # The explicit click on "Emprunter" is the sole user gesture. Avoid a
     # second confirmation dialog and prevent repeated queued requests even if
@@ -223,52 +239,15 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
             return
     except Exception:
         return
-    identity_id = account.identity_id
-    identity_gen = getattr(window, "_identity_context_generation", None)
-    account_gen = getattr(window, "_account_context_generation", None)
-    core_epoch = getattr(window.service, "_account_context_epoch", None)
-    selection = getattr(window, "_selected_search_id", None)
-    detail_gen = getattr(window, "_search_detail_request_generation", None)
-    source_epoch = getattr(session, "_epoch", None)
-    original_scope = (
-        item.id, item.record_id, item.docbase, item.medium,
-        item.source_provider, item.source_credential,
-        item.source_collection, item.title,
-    )
-    account_scope = (
-        account.identity_id, account.provider_id, account.credential_id,
-        account.unique_id, account.is_primary,
-    )
-    if type(core_epoch) is not int or not identity_id:
+    scope = _capture_borrow_ui_scope(window, item, account, session)
+    if scope is None:
         return
+    _identity_id, _core_epoch, scope_current = scope
     selected = copy(item)
 
-    def current() -> bool:
-        try:
-            return (
-                not getattr(window, "_closed", False)
-                and window._identity_context_generation == identity_gen
-                and window._account_context_generation == account_gen
-                and window.service._account_context_epoch == core_epoch
-                and window._selected_search_id == selection
-                and window._search_detail_request_generation == detail_gen
-                and getattr(window.service.current_identity, "identity_id", None) == identity_id
-                and session.connected is True
-                and getattr(session, "_epoch", None) == source_epoch
-                and window.service._session_for_source(
-                    "paris", account.credential_id,
-                ) is session
-                and sum(a is account for a in window.service.accounts) == 1
-                and (account.identity_id, account.provider_id,
-                     account.credential_id, account.unique_id,
-                     account.is_primary) == account_scope
-                and (item.id, item.record_id, item.docbase, item.medium,
-                     item.source_provider, item.source_credential,
-                     item.source_collection, item.title) == original_scope
-                and window.service.paris_borrow_followup_available(selected)
-            )
-        except Exception:
-            return False
+    def current():
+        return (scope_current()
+                and window.service.paris_borrow_followup_available(selected))
 
     if not current():
         return
