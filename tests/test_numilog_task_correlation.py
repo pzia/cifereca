@@ -41,11 +41,12 @@ def test_failed_real_broker_task_links_provider_event_to_public_worker_outcome(t
         payload = query_diagnostic_events(diag, log_path=path)
         delivery = next(e for e in payload['events'] if e['module']=='NUMILOG')
         worker = next(e for e in payload['events'] if 'task correlation' in e['message'])
-        ref = delivery['detail']['task_ref']
+        ref = diag.snapshot()[0]['task_ref']
+        assert 'detail' not in delivery
+        assert delivery['message'] == '[opération masquée]'
         assert re.fullmatch('[0-9a-f]{12}', ref)
         assert worker['task_ref'] == ref
         assert f'task_ref={ref} status=failed' in worker['message']
-        assert f'task_ref={ref}' in delivery['message']
         assert f'task_ref={ref}' in diag.text('test')
         assert 'PRIVATE' not in json.dumps(payload)
         assert "PRIVATE" in path.read_text()  # raw journal is intentionally unmasked
@@ -149,7 +150,8 @@ def test_public_feed_rejects_untrusted_reference_values(tmp_path, reference):
         detail={'phase':'completed','code':'html_delivery_link_missing'})
     payload = query_diagnostic_events(SimpleNamespace(snapshot=lambda:[row]),
                                       source='core_events',log_path=tmp_path/'missing')
-    assert 'task_ref' not in payload['events'][0]['detail']
+    assert 'detail' not in payload['events'][0]
+    assert 'task_ref' not in payload['events'][0]
     assert 'PRIVATE' not in json.dumps(payload)
 
 
