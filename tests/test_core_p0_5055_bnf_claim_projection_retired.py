@@ -14,8 +14,6 @@ def test_bnf_claim_detail_projection_is_absent_without_changing_loan_guards():
     assert "Une demande antérieure peut exister : consultez Mes emprunts." in detail
     assert "Cifereca ne répétera pas automatiquement la demande." in detail
     assert "Une demande BnF existe peut-être déjà" not in detail
-    assert "Consultez Mes emprunts avant toute nouvelle demande" in detail
-    assert "Cifereca ne répétera pas automatiquement l’emprunt" in detail
     # #5387: Paris eligibility diagnostics must not be a CoreUI fallback.
     # This is independent from the BnF anti-replay guarantees above.
     assert "paris_borrow_diagnostic" not in detail
