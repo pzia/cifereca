@@ -5,7 +5,7 @@ import ast
 from pathlib import Path
 
 from cifereca.core.local_attachment_refusal_types import ReconciliationRejected
-from cifereca.core.kobo_local_reconciliation import (
+from cifereca.core.offline_canonical_relink import (
     ReconciliationRejected as LegacyReconciliationRejected,
 )
 from cifereca.core.library_attachment_refusal import public_refusal_code
