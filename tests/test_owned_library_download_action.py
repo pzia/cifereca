@@ -117,17 +117,11 @@ def test_unrecognized_owned_target_never_creates_provider_action(provider):
     assert actions == [] and submissions == [] and called == []
 
 
-def test_canonical_kobo_owned_target_declares_provider_as_immutable_class_contract():
-    from cifereca.core.owned_library_download import OwnedDownloadTarget
-    from dataclasses import fields
-    assert OwnedDownloadTarget.provider_id == "kobo"
-    assert "provider_id" not in {field.name for field in fields(OwnedDownloadTarget)}
-    target = OwnedDownloadTarget(
-        entitlement_id="right", identity_id="alice", source_id="source",
-        scope=("alice",), configuration="configuration", item_id="book",
-        revision_id="revision",
-    )
-    assert target.provider_id == "kobo"
+def test_legacy_owned_download_target_class_is_absent():
+    from cifereca.core import owned_library_download as action
+    assert not hasattr(action, "OwnedDownloadTarget")
+    # Only the generic SourceOfferTarget is executable. Old persisted
+    # entitlement coordinates cannot recreate a direct GET.
 
 
 def test_render_is_passive_and_only_explicit_click_submits_one_book():
