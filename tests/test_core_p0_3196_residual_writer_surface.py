@@ -87,7 +87,7 @@ def test_kobo_w4_historical_writer_is_unreachable_from_production():
 
 def test_no_historical_w4_execution_entry_in_installed_core():
     """The only historical positive W4 executor now lives under tests/."""
-    target = ROOT / "src" / "cifereca" / "core" / "kobo_local_reconciliation.py"
+    target = ROOT / "src" / "cifereca" / "core" / "offline_canonical_relink.py"
     source = target.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(target))
     forbidden = {"_historical_reconcile_kobo_local"}
@@ -96,6 +96,6 @@ def test_no_historical_w4_execution_entry_in_installed_core():
         and node.name in forbidden for node in ast.walk(tree)
     )
     # Runtime lookup, not only a source-level name test.
-    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca.core import offline_canonical_relink as repair
     assert not hasattr(repair, "_historical_reconcile_kobo_local")
     assert not hasattr(repair, "reconcile_kobo_local")
