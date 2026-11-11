@@ -69,11 +69,7 @@ def test_retired_w2_never_reclassifies_archived_recovery_receipts(
         monkeypatch.setattr(service, "_execute_kobo_acquisition", forbidden)
         monkeypatch.setattr(service.storage, "backup_put", forbidden)
         for _ in range(2):
-            with pytest.raises(
-                ProviderConfigurationError,
-                match="kobo_legacy_w2_retired_use_canonical_provider",
-            ):
-                service.sync_kobo_backup()
+            assert not hasattr(service, "sync_kobo_backup")
             assert service.storage.backup_get(
                 "kobo", record["credential_id"], "book-1",
             ) == before
@@ -121,11 +117,7 @@ def test_legacy_recovery_has_no_candidate_scan_or_source_rebind_window(
                      "right-b", "purchase", 1, 1),
                 )
         assert not hasattr(service, "_kobo_record_candidate_paths")
-        with pytest.raises(
-            ProviderConfigurationError,
-            match="kobo_legacy_w2_retired_use_canonical_provider",
-        ):
-            service.sync_kobo_backup()
+        assert not hasattr(service, "sync_kobo_backup")
         assert service.storage.backup_get("kobo", "vault-1", "book-1") == before
     finally:
         service.close()
