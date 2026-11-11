@@ -97,12 +97,9 @@ ADEPT stable change. L'activation demeure bloquée tant qu'une nouvelle
 confirmation explicite n'est pas faite. Un compte Paris principal peut aussi recevoir une exception explicite et
 révocable : cela ne déplace pas l'origine du prêt ni son droit fournisseur.
 
-## 5. Auditer les emprunts visibles sur plusieurs connexions (hors réseau)
+## 5. Auditer une transaction Paris/ADEPT exacte (hors réseau)
 
-```bash
-cifereca-cli paris-adept audit
-cifereca-cli paris-adept audit --credential "<connexion-paris>"
-```
+L'ancien audit agrégé `paris-adept audit`, fondé sur les lignes d'entitlements historiques, a été retiré. Aucun rapprochement inter-comptes ne peut constituer une permission de livraison ou une preuve d'identité Adobe.
 
 Pour examiner **une transaction historique précise** par les identifiants
 exacts du prêt Paris et de l'item (sans rapprochement par titre, ISBN ou SHA) :
