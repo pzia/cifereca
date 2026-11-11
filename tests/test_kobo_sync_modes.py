@@ -5,7 +5,7 @@ from dataclasses import replace
 import json
 import time
 
-from cifereca.core.kobo_backup import _kobo_checkpoint_key
+from cifereca.core.legacy_checkpoint_read import _kobo_checkpoint_key
 from types import SimpleNamespace
 
 import cifereca.services as services_module
@@ -81,7 +81,7 @@ def test_fast_sync_uses_fresh_kobo_cache_and_skips_filesystem_scan(tmp_path: Pat
         _neutralize_unrelated_sync_work(service, monkeypatch)
         monkeypatch.setattr(services_module.time, "time", lambda: 100_000)
         service.storage.metadata_set("kobo_backup_last_success_at", 100_000)
-        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        service.config.set("kobo_backup.enabled", True)
         monkeypatch.setattr(
             service,
             "_sync_kobo_backup_locked",
@@ -107,7 +107,7 @@ def test_deep_sync_forces_kobo_backup_and_deep_catalog_scan(tmp_path: Path, monk
         _neutralize_unrelated_sync_work(service, monkeypatch)
         monkeypatch.setattr(services_module.time, "time", lambda: 100_000)
         service.storage.metadata_set("kobo_backup_last_success_at", 100_000)
-        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        service.config.set("kobo_backup.enabled", True)
 
         calls = {"kobo": 0, "catalog": []}
 
@@ -140,7 +140,7 @@ def test_fast_sync_shows_throttled_incomplete_kobo_batch(tmp_path: Path, monkeyp
         monkeypatch.setattr(services_module.time, "time", lambda: 100_000)
         service.storage.metadata_set("kobo_backup_last_attempt_at", 100_000)
         service.storage.metadata_set("kobo_backup_last_batch_status", "attention_required")
-        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        service.config.set("kobo_backup.enabled", True)
         monkeypatch.setattr(
             service, "_sync_kobo_backup_locked",
             lambda progress=None: (_ for _ in ()).throw(AssertionError("pending cache should throttle")), raising=False)
@@ -177,7 +177,7 @@ def test_opening_only_materializes_source_with_explicit_on_start_consent(tmp_pat
             "counts": {},
         }))
         service.storage.metadata_set("kobo_backup_last_success_at", now)
-        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        service.config.set("kobo_backup.enabled", True)
         calls = []
         monkeypatch.setattr(
             service, "_sync_kobo_backup_locked",
@@ -211,7 +211,7 @@ def test_opening_all_cached_partial_sources_remain_visible(tmp_path: Path, monke
             "total": 3, "processed": 2, "counts": {"pending": 1},
         }))
         service.storage.metadata_set("kobo_backup_last_attempt_at", now)
-        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        service.config.set("kobo_backup.enabled", True)
         monkeypatch.setattr(
             service, "_sync_kobo_backup_account_locked",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -242,7 +242,7 @@ def test_opening_rechecks_recently_interrupted_kobo_checkpoint_without_global_re
                 "counts": {"downloaded": 1},
             }),
         )
-        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
+        service.config.set("kobo_backup.enabled", True)
         calls = []
         monkeypatch.setattr(
             service, "_sync_kobo_backup_locked",
