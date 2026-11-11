@@ -42,10 +42,6 @@ class ActivityEntry:
     def operation_label(self) -> str:
         # Operation types are literal UI labels, never arbitrary provider IDs,
         # private titles or URLs supplied as task labels.
-        if self.kind == 'obtain' and self.label.casefold() == 'obtention depuis numilog…':
-            return 'Télécharger un achat Numilog'
-        if self.kind == 'source-sync' and self.label == 'Actualiser mes achats Numilog…':
-            return 'Actualiser mes achats Numilog'
         return {
             'search-known': 'Recherche dans le connu',
             'search-online': 'Recherche en ligne',

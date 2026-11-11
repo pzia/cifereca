@@ -42,7 +42,7 @@ def exercise(window, *, Gtk, Adw, walk, device, report, capture, later, done):
     def close_dialog():
         dialog = next(node for node in dialogs() if node.get_heading() == 'Obtention Numilog')
         assert window.activity_feedback.latest_unacknowledged_error() is not None
-        assert 'Télécharger un achat Numilog' in window.busy_label.get_label()
+        assert 'Obtention d’un livre' in window.busy_label.get_label()
         assert 'E2E_PRIVATE_SENTINEL' not in window.busy_label.get_label()
         close = next(node for node in walk(dialog) if isinstance(node, Gtk.Button)
                      and str(node.get_label()).replace('_', '') == 'Fermer')
@@ -59,7 +59,7 @@ def exercise(window, *, Gtk, Adw, walk, device, report, capture, later, done):
             'Terminé · Recherche dans le connu : 18 résultats'), online_search)
 
     def online_search():
-        assert 'Erreur antérieure · Télécharger un achat Numilog' in window.busy_label.get_label()
+        assert 'Erreur antérieure · Obtention d’un livre' in window.busy_label.get_label()
         assert window.activity_feedback.latest_unacknowledged_error() is not None
         window.runner.submit('Recherche en ligne…', lambda: 20, lambda _result: None,
                              priority=TaskPriority.USER_ACTION, kind='search-online',
@@ -69,7 +69,7 @@ def exercise(window, *, Gtk, Adw, walk, device, report, capture, later, done):
 
     def show_combined():
         text = window.busy_label.get_label()
-        assert 'Erreur antérieure · Télécharger un achat Numilog' in text
+        assert 'Erreur antérieure · Obtention d’un livre' in text
         assert 'E2E_PRIVATE_SENTINEL' not in text and 'https://' not in text
         assert window.activity_status_icon.has_css_class('activity-success')
         assert window.activity_dismiss.get_visible() and window.activity_dismiss.get_label() == 'Acquitter'
