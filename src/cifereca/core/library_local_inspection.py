@@ -67,6 +67,23 @@ _FIELDS = {'entitlement_id': 'Droit', 'provider_id': 'Source déclarée', 'accou
            'catalog_entry_id': 'Notice', 'source_item_id': 'Édition du placement'}
 
 
+def _declarable_right_scope(right, scope, identity_id, occurrences):
+    """Bound local display declarations to exact active loan evidence.
+
+    This controls only the UI's ability to record a *user declaration*,
+    never acquisition, provider entitlement or an attested file link.
+    """
+    if (type(right) is not dict or type(scope) is not tuple
+            or len(scope) < 1 or scope[0] != identity_id
+            or type(occurrences) is not int or occurrences != 1):
+        return False
+    if right.get('entitlement_type') == 'loan':
+        return (right.get('state') == 'active'
+                and type(right.get('loan_id')) is str
+                and bool(right['loan_id']))
+    return True
+
+
 def _text(value):
     if type(value) not in (str, int):
         return ''
@@ -849,19 +866,11 @@ class LocalInspection:
                         matching_artifacts[0].get('size'),
                     )
             scope = right_scope(right)
-            # A declaration never proves a provider right or file. For any
-            # *loan*, an inactive or unidentifiable borrower transaction may
-            # not become a positive declared local association. Non-loan
-            # records retain their existing source-scoped display contract.
-            exact_active_loan = (
-                right.get('state') == 'active'
-                and type(right.get('loan_id')) is str
-                and bool(right['loan_id'])
-            )
-            if (scope is not None and scope[0] == identity_id
-                    and (right.get('entitlement_type') != 'loan'
-                         or exact_active_loan)
-                    and scope_counts[scope] == 1):
+            # No provider-specific privilege in user declaration admission.
+            # An expired/anonymous loan cannot become a local file claim.
+            if _declarable_right_scope(
+                right, scope, identity_id, scope_counts[scope],
+            ):
                 self._declared_right_scopes[f'right:{index}'] = scope
             if scope is not None and right.get('provider_id') == 'numilog':
                 self._manual_right_scopes[f'right:{index}'] = scope
