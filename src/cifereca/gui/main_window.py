@@ -1700,43 +1700,36 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
-        # #2055: the historic session.borrow() path must NEVER be used for
-        # BnF. Source-specific consent and a durable Core claim are required.
-        if getattr(item, "source_provider", None) == "bnf-pret":
-            if (control is not None
-                    and callable(getattr(control, "get_name", None))
-                    and control.get_name() == "cifereca-paris-borrow-followup"):
-                return
-            from .bnf_borrow_controller import present_bnf_borrow
-            present_bnf_borrow(
-                self, item, control, Adw=Adw, TaskPriority=TaskPriority,
-            )
-            return
-        # Preserve the required initial BnF guard above and the stable
-        # MainWindow method signature. A forged widget name can only request
-        # read-only verification, never authorize a provider borrow.
+        # A verification-only gesture is never a new borrow, independently of
+        # source-provider names. The follow-up controller and Core admission
+        # enforce the exact spent claim, account and read-only observation.
         verification_only = (
             control is not None
             and callable(getattr(control, "get_name", None))
             and control.get_name() == "cifereca-paris-borrow-followup"
         )
-        if getattr(item, "source_provider", None) == "paris":
-            # One established provider routing import; the read-only branch
-            # is segregated from the one permitted mutating borrower call.
-            from .bnf_borrow_controller import (
-                present_paris_borrow, present_paris_borrow_verification,
-            )
-            if verification_only:
-                present_paris_borrow_verification(
-                    self, item, control, TaskPriority=TaskPriority,
-                )
-            else:
-                present_paris_borrow(
-                    self, item, control, Adw=Adw, TaskPriority=TaskPriority, account=account,
-                )
-            return
         if verification_only:
-            return  # Never transform a follow-up click into another provider borrow.
+            from .bnf_borrow_controller import present_paris_borrow_verification
+            present_paris_borrow_verification(
+                self, item, control, TaskPriority=TaskPriority,
+            )
+            return
+        # Manual borrowing retains the provider-specific Core admission
+        # until the provider ABI exposes an exact, typed generic action.
+        # Never fall through to the historic session.borrow() for these sources.
+        if getattr(item, "source_provider", None) == "bnf-pret":
+            from .bnf_borrow_controller import present_bnf_borrow
+            present_bnf_borrow(
+                self, item, control, Adw=Adw, TaskPriority=TaskPriority,
+            )
+            return
+        if getattr(item, "source_provider", None) == "paris":
+            from .bnf_borrow_controller import present_paris_borrow
+            present_paris_borrow(
+                self, item, control, Adw=Adw, TaskPriority=TaskPriority,
+                account=account,
+            )
+            return
         try:
             session, accounts = self._eligible_borrow_accounts(item)
         except Exception as exc:
