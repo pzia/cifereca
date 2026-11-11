@@ -667,7 +667,7 @@ def stage_claimed_initial_acsm(service, session, account: Account, source, *,
                 or not 0 < before.st_size <= MAX_BYTES):
             raise ValueError("canonical_initial_bytes_untrusted")
         with os.fdopen(file_fd, "rb", closefd=False) as source_stream:
-            payload = source_stream.read(acsm_cache.MAX_BYTES + 1)
+            payload = source_stream.read(MAX_BYTES + 1)
         after = os.fstat(file_fd)
         if (len(payload) != before.st_size
                 or (before.st_dev, before.st_ino, before.st_size,
@@ -680,7 +680,7 @@ def stage_claimed_initial_acsm(service, session, account: Account, source, *,
         # again after our own pinned read, not only before opening the file.
         if (_initial_digest(candidate, directory, __import__("time").time())
                 != digest
-                or acsm_cache.reuse_initial(
+                or reuse_initial(
                     directory, loan, scope.identity_id, "primary",
                     claim_state=claim_state) != candidate
                 or admission_current() is not True):
@@ -705,7 +705,7 @@ def stage_claimed_initial_acsm(service, session, account: Account, source, *,
             os.fsync(destination.fileno())
         if (os.fstat(target_fd).st_size != len(payload)
                 or admission_current() is not True
-                or acsm_cache.reuse_initial(
+                or reuse_initial(
                     directory, loan, scope.identity_id, "primary",
                     claim_state=claim_state) != candidate
                 or os.fstat(file_fd).st_ino != before.st_ino):
