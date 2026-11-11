@@ -155,3 +155,15 @@ def test_p0_5048_candidate_has_no_supplier_identity_branch():
         Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
     ).read_text(encoding="utf-8")
     assert "if self.window.can_borrow_item(item):" in detail_panel
+
+
+@pytest.mark.parametrize("changes", [
+    {"source_provider": ""}, {"source_provider": None},
+    {"source_provider": 17}, {"record_id": ""},
+    {"record_id": None}, {"docbase": ""}, {"docbase": None},
+])
+def test_generic_borrow_candidate_refuses_missing_or_ill_typed_source_coordinates(changes):
+    # A catalogue label is not a source-identity proof, including on a newly
+    # introduced provider without a supplier-name allow/deny list.
+    row = replace(BNF, metadata={}, **changes)
+    assert not search_detail_borrow_action_candidate(row, "Empruntable")
