@@ -1,53 +1,68 @@
-"""P0 #5054: unknown providers must not be silently ignored by legacy actions."""
+"""P0 #5054: a Library action cannot guess between multiple source origins."""
 from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.core import numilog_owned_download as owned
+from cifereca.models import Account
+from cifereca.core import selected_source_offer as selection
 
 
 def _pos(provider, *, identity="alice", kind="owned", state="active"):
     return {
         "provider_id": provider, "identity_id": identity,
-        "kind": kind, "state": state, "entitlement_id": "owned-1",
-        "item_id": "edition-1",
+        "kind": kind, "state": state, "item_id": "edition-1",
+        "account_id": "account-A",
+        # Compatibility-only input: never used to authorize source selection.
+        "entitlement_id": "obsolete-ownership",
     }
 
 
+def _service():
+    account = Account(identity_id="alice", provider_id="numilog",
+                      credential_id="card-A", unique_id="account-A")
+    return NS(current_identity=NS(identity_id="alice"), accounts=[account])
+
+
 @pytest.mark.parametrize("other_provider", ["kobo", "future-library", "bnf-pret"])
-def test_competing_owned_provider_refuses_numilog_action_before_resolution(
+def test_competing_origin_refuses_library_action_before_provider_call(
     monkeypatch, other_provider,
 ):
-    calls = []
-    monkeypatch.setattr(owned, "_resolve", lambda *_args: calls.append("resolved"))
-    service = NS(current_identity=NS(identity_id="alice"))
+    monkeypatch.setattr(selection, "select_source_offer_target",
+                        lambda *_a, **_kw: pytest.fail("ambiguous origin"))
     entry = {"possessions": [_pos("numilog"), _pos(other_provider)]}
-    assert owned.target_for_entry(service, entry) is None
-    assert calls == []
+    assert selection.select_library_source_offer_target(_service(), entry) is None
 
 
-def test_exact_single_numilog_right_remains_eligible(monkeypatch):
+def test_single_source_uses_exact_account_not_historical_right(monkeypatch):
     marker = object()
     calls = []
-    def resolve(_service, entitlement, identity, item):
-        calls.append((entitlement, identity, item))
-        return marker, object()
-    monkeypatch.setattr(owned, "_resolve", resolve)
-    service = NS(current_identity=NS(identity_id="alice"))
+    def select(_service, **coords):
+        calls.append(coords)
+        return marker
+    monkeypatch.setattr(selection, "select_source_offer_target", select)
     entry = {"possessions": [
         _pos("numilog"), _pos("future-library", identity="bob"),
         _pos("future-library", state="expired"),
         _pos("future-library", kind="loan"),
     ]}
-    assert owned.target_for_entry(service, entry) is marker
-    assert calls == [("owned-1", "alice", "edition-1")]
+    assert selection.select_library_source_offer_target(_service(), entry) is marker
+    assert calls == [{
+        "provider_id": "numilog", "credential_id": "card-A",
+        "item_id": "edition-1",
+    }]
 
 
-def test_single_unknown_provider_never_becomes_numilog(monkeypatch):
-    calls = []
-    monkeypatch.setattr(owned, "_resolve", lambda *_args: calls.append("resolved"))
-    service = NS(current_identity=NS(identity_id="alice"))
-    assert owned.target_for_entry(
+def test_unregistered_provider_and_duplicate_accounts_never_become_a_target(monkeypatch):
+    monkeypatch.setattr(selection, "select_source_offer_target",
+                        lambda *_a, **_kw: pytest.fail("not exact"))
+    service = _service()
+    assert selection.select_library_source_offer_target(
         service, {"possessions": [_pos("future-library")]},
     ) is None
-    assert calls == []
+    service.accounts.append(Account(
+        identity_id="alice", provider_id="numilog",
+        credential_id="card-B", unique_id="account-A",
+    ))
+    assert selection.select_library_source_offer_target(
+        service, {"possessions": [_pos("numilog")]},
+    ) is None
