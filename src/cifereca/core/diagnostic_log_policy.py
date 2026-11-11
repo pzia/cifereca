@@ -32,7 +32,6 @@ def is_public_core_observation(logger: str, message: str) -> bool:
     from .diagnostic_reconciliation import public_reconciliation_log_fields as audit
     from .diagnostic_source_sync import public_log_fields as source_sync
     from .diagnostic_adept import public_log_fields as adept
-    from .diagnostic_kobo_projection import public_kobo_backup_log
     return bool(
         public_connection_log_fields(message)
         or public_connection_success_log_fields(message)
@@ -41,5 +40,4 @@ def is_public_core_observation(logger: str, message: str) -> bool:
         or audit(message)
         or source_sync(message)
         or adept(message)
-        or public_kobo_backup_log(message)
     )
