@@ -91,9 +91,17 @@ def toggle_state(db, source: SourceKey):
         return None
     if row[0] != active:
         return "off"
-    if epoch_prefix is not None:
+    # Loan delivery is non-repeatable and cannot inherit the permissive
+    # unversioned legacy purchase switches. A missing loan-source epoch is
+    # never sufficient to authorize a signed ACSM GET.
+    revision_key = (
+        epoch_prefix + sid if epoch_prefix is not None
+        else prefix + sid + ".revision" if source.kind == "loan"
+        else None
+    )
+    if revision_key is not None:
         revision = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (epoch_prefix + sid,),
+            "SELECT value FROM metadata WHERE key=?", (revision_key,),
         ).fetchone()
         if (revision is None or type(revision[0]) is not str
                 or _HEX.fullmatch(revision[0]) is None):
