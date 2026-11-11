@@ -10,7 +10,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.core import kobo_backup, source_materialization as materialize
+from cifereca.core import source_materialization as materialize
 from cifereca.plugin_api import ProviderRightsScope, ProviderRightsSnapshot, ProviderRightObservation, SyncResult
 from tests.test_source_materialization_confirmation import case  # noqa: F401
 
@@ -72,7 +72,7 @@ def canonical(case, monkeypatch):
         pytest.fail("W2 legacy manifest, backup or direct GET must not run")
 
     monkeypatch.setattr(case.target, "backup_manifest", forbidden)
-    assert not hasattr(kobo_backup, "_sync_kobo_backup_locked")
+    assert not hasattr(case.service, "_sync_kobo_backup_locked")
     monkeypatch.setattr(case.service.storage, "backup_list", forbidden)
     monkeypatch.setattr(case.service.storage, "backup_put", forbidden)
 
