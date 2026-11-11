@@ -186,7 +186,7 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
 
 def manual_borrow_diagnostic(
     service, item: SearchResult, *, provider_id: str, docbase: str,
-    primary_id: str | None, source_current, source_binding_reason: str,
+    primary_id: str | None, source_current,
     available=manual_borrow_available, result_type=SearchResult,
 ) -> dict[str, object]:
     """Provider-neutral read-only admission; NOT a lender eligibility oracle.
@@ -213,7 +213,7 @@ def manual_borrow_diagnostic(
                   and item.metadata.get("catalogue_access") == "shared_read_only")):
             reason = "edition_or_source_unqualified"
         elif not source_current(service, item, identity_id):
-            reason = source_binding_reason
+            reason = "local_primary_source_binding_mismatch"
         else:
             admission = {}
             possible = available(
