@@ -194,6 +194,10 @@ def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | Non
     revision_key = (epoch_prefix + sid if epoch_prefix is not None
                     else prefix + sid + ".revision")
     try:
+        from .source_sync_consent import source_enablement_key
+        from .source_enablement import source_enabled
+        if not source_enabled(storage.metadata_get(source_enablement_key(scope))):
+            return "off", None
         value = storage.metadata_get(prefix + sid)
         revision = storage.metadata_get(revision_key)
     except Exception:
@@ -230,6 +234,14 @@ def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> b
         # An exact generic CAS source policy takes precedence, irrespective
         # of a leftover ON row from a past broker UI generation.
         if policy_in_transaction(db, source.scope).configured:
+            return False
+        from .source_sync_consent import source_enablement_key
+        from .source_enablement import source_enabled
+        enabled_row = db.execute(
+            "SELECT value FROM metadata WHERE key=?",
+            (source_enablement_key(source.scope),),
+        ).fetchone()
+        if not source_enabled(enabled_row[0] if enabled_row else None):
             return False
         if toggle_state(db, source) != "on":
             return False
