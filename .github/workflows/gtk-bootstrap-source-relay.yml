@@ -1,0 +1,34 @@
+name: Temporary Debian GTK bootstrap source relay
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gtk-bootstrap-source-relay.yml'
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package only tracked bootstrap and test sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p transfer
+          git archive --format=tar --prefix=cifereca/ HEAD \
+            environnements/openai-chat-debian e2e src pyproject.toml \
+            | gzip -n -9 > transfer/cifereca-bootstrap-sources.tar.gz
+          sha256sum transfer/cifereca-bootstrap-sources.tar.gz > transfer/SHA256SUMS
+          tar -tzf transfer/cifereca-bootstrap-sources.tar.gz | grep -q '^cifereca/environnements/openai-chat-debian/bootstrap.py$'
+          tar -tzf transfer/cifereca-bootstrap-sources.tar.gz | grep -q '^cifereca/environnements/openai-chat-debian/check_import.py$'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-bootstrap-sources
+          path: |
+            transfer/cifereca-bootstrap-sources.tar.gz
+            transfer/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
