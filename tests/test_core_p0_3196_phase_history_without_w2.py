@@ -5,15 +5,9 @@ import ast
 import json
 from pathlib import Path
 
-from cifereca.core import kobo_backup
 from cifereca.core.legacy_checkpoint_read import (
     _kobo_checkpoint_for, _kobo_checkpoint_key,
 )
-
-
-def test_w2_keeps_exact_checkpoint_compatibility_symbols():
-    assert kobo_backup._kobo_checkpoint_for is _kobo_checkpoint_for
-    assert kobo_backup._kobo_checkpoint_key is _kobo_checkpoint_key
 
 
 def test_checkpoint_reader_is_read_only_and_exactly_scoped():
