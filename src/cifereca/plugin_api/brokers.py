@@ -84,13 +84,6 @@ class SourceInventoryRefreshScheduleBroker(Protocol):
 
 
 @runtime_checkable
-class SourceMaterializationScheduleBroker(Protocol):
-    """Optional Sync capability: legacy SynchronizationBroker stays compatible."""
-    def local_materialization_schedule(self, source_id: str) -> str: ...
-    def set_local_materialization_schedule(self, source_id: str, mode: str) -> str: ...
-
-
-@runtime_checkable
 class MetadataBroker(Protocol):
     def library_entries(self, **options: Any) -> list[Mapping[str, Any]]: ...
     def scan(self, **options: Any) -> Mapping[str, Any]: ...

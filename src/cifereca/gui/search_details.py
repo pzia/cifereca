@@ -173,11 +173,11 @@ def _apply_search_detail(
                                            "current_identity", None), "identity_id", None),
                account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
                source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    # Keep unrelated provider callbacks (and AST-isolated host tests)
-    # independent of the optional Numilog UI adapter.
-    if getattr(item, "source_provider", None) in {"numilog", "numilog-catalog"}:
-        from .numilog_enrichment_action import add_numilog_enrichment_action
-        add_numilog_enrichment_action(
+    # Capability-based action; legacy headless hosts without an installed
+    # session registry cannot offer it and must not import GTK adapters.
+    if getattr(getattr(self, "service", None), "_sessions", None) is not None:
+        from .provider_enrichment_action import add_provider_enrichment_action
+        add_provider_enrichment_action(
             self, selected_id, item, detail, context,
             button_factory=self.search_page.detail.window.action_button,
         )

@@ -1,23 +1,23 @@
-"""P0 #1072: no-network Core boundary for an explicit Numilog book action."""
+"""P0 #1072: no-network Core boundary for an explicit synthetic provider book action."""
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
 from cifereca.core.provider_explicit_enrichment import enrich_provider_detail_once
-from cifereca.gui.numilog_enrichment_action import can_enrich_numilog_result
+from cifereca.core.provider_explicit_enrichment import can_enrich_provider_detail_result
 from cifereca.models import SearchResult
 from cifereca.plugin_api import ProviderCapabilityError
 
 
 def item(**kwargs):
     values = dict(
-        id="numilog:scope:42:()", record_id="numilog:scope:42:()",
-        docbase="NUMILOG", medium="digital", title="Livre acheté",
+        id="synthetic-private:scope:42:()", record_id="synthetic-private:scope:42:()",
+        docbase="SYNTHETIC", medium="digital", title="Livre acheté",
         author=None, type="Livre numérique", format=None, publisher=None,
         published_at=None, description=None, thumbnail_url=None,
-        friendly_url="https://www.numilog.com/1958476/book.ebook",
-        scenario="NUMILOG_LIBRARY", source_provider="numilog",
+        friendly_url="https://www.synthetic-private.com/1958476/book.ebook",
+        scenario="SYNTHETIC_LIBRARY", source_provider="synthetic-private",
         source_credential="alice", source_collection="library",
         owned=True, downloadable=True, download_url=None, metadata={},
     )
@@ -52,13 +52,13 @@ class Service:
         )
 
 
-OWNED_ACCOUNT = SimpleNamespace(provider_id="numilog", credential_id="alice")
+OWNED_ACCOUNT = SimpleNamespace(provider_id="synthetic-private", credential_id="alice")
 
 
 def test_owned_action_is_one_shot_and_does_not_change_download_rights():
     service = Service([OWNED_ACCOUNT])
     row = item()
-    assert can_enrich_numilog_result(row)
+    assert can_enrich_provider_detail_result(row)
     value = enrich_provider_detail_once(service, row, expected_identity_id="identity-A")
     assert value.publisher == "Éditeur public"
     assert value.owned is True and value.downloadable is True
@@ -70,8 +70,8 @@ def test_owned_action_is_one_shot_and_does_not_change_download_rights():
 def test_public_catalogue_isolated_without_private_account_query():
     service = Service()
     row = item(
-        id="numilog:public:1958476", record_id="numilog:public:1958476",
-        scenario="NUMILOG_PUBLIC", source_provider="numilog-catalog",
+        id="synthetic-private:public:1958476", record_id="synthetic-private:public:1958476",
+        scenario="SYNTHETIC_PUBLIC", source_provider="synthetic-public",
         source_credential="__public__", source_collection="public_catalog",
         owned=False, downloadable=False,
     )
@@ -120,8 +120,8 @@ def test_changing_profile_mid_request_discards_result():
     {"owned": False}, {"downloadable": False},
     {"download_url": "https://example.invalid/fulfillment?auth=PRIVATE_TOKEN"},
     {"format": "EPUB"}, {"source_credential": "bob"},
-    {"record_id": "numilog:scope:other:()"},
-    {"source_provider": "numilog-catalog"},
+    {"record_id": "synthetic-private:scope:other:()"},
+    {"source_provider": "synthetic-public"},
 ])
 def test_provider_must_not_promote_acquisition_or_cross_reference(changes):
     service = Service([OWNED_ACCOUNT])
@@ -133,7 +133,7 @@ def test_provider_must_not_promote_acquisition_or_cross_reference(changes):
 
 
 def test_legacy_can_be_a_real_credential_id_if_account_matches():
-    service = Service([SimpleNamespace(provider_id="numilog", credential_id="legacy")])
+    service = Service([SimpleNamespace(provider_id="synthetic-private", credential_id="legacy")])
     row = item(source_credential="legacy")
     result = enrich_provider_detail_once(service, row, expected_identity_id="identity-A")
     assert result.source_credential == "legacy"
@@ -145,11 +145,11 @@ def test_legacy_can_be_a_real_credential_id_if_account_matches():
 ])
 def test_core_detail_action_hint_is_provider_host_neutral(link):
     # No Core supplier host allowlist: the plugin re-attests the URL before GET.
-    assert can_enrich_numilog_result(item(friendly_url=link))
+    assert can_enrich_provider_detail_result(item(friendly_url=link))
 
 
 @pytest.mark.parametrize("link", [
-    "", "http://www.numilog.com/1958476/book.ebook",
+    "", "http://www.synthetic-private.com/1958476/book.ebook",
     "https://user:password@example.org/book",
     "https://example.org:8443/book",
     "https://example.org/book?token=private",
@@ -160,4 +160,4 @@ def test_core_detail_action_hint_is_provider_host_neutral(link):
     "https://example.org/book\\nINJECTED",
 ])
 def test_core_detail_action_hint_rejects_invalid_https_or_ambiguous_urls(link):
-    assert not can_enrich_numilog_result(item(friendly_url=link))
+    assert not can_enrich_provider_detail_result(item(friendly_url=link))

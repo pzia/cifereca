@@ -1557,7 +1557,9 @@ def main() -> int:
         # inert. Numilog inventory consent is exercised separately below.
         # #1905 adds one distinct Numilog *book backup* consent row.
         # The synthetic broker has no consent APIs: the CTA must be inert.
-        assert len(rows) == 28, ("Unexpected GTK sync action-row count", len(rows))
+        # Four retired Kobo W2 startup rows have been physically removed.
+        # Keep asserting exact, provider-neutral visible row cardinality.
+        assert len(rows) == 24, ("Unexpected GTK sync action-row count", len(rows))
         assert not any(
             row.get_title() == "Sauvegarde automatique des achats Numilog"
             for row in rows
@@ -1577,11 +1579,10 @@ def main() -> int:
                 for node in walk(sync_action_row(inventory_row))
             )
         report["checks"]["P0_1346_inventory_schedule_is_separate_and_inert_without_broker"] = True
-        schedule_row = next(row for row in rows
-                            if row.get_title() == "Téléchargement automatique de ce compte")
-        assert "Planification indisponible" in schedule_row.get_subtitle()
-        assert not any(isinstance(node, Gtk.Button) and node.get_sensitive()
-                       for node in walk(sync_action_row(schedule_row)))
+        assert not any(
+            row.get_title() == "Téléchargement automatique de ce compte"
+            for row in rows
+        ), "Retired W2 startup control must not appear for Kobo"
         acquisition_row = next(row for row in rows
                                if row.get_title() == "Téléchargement local · confirmation obligatoire")
         assert "Non préparé" in acquisition_row.get_subtitle()

@@ -12,7 +12,6 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.config import Config
-from cifereca.core import source_materialization_schedule as schedule
 
 
 class Metadata:
@@ -125,36 +124,3 @@ def test_invalid_or_existing_migration_metadata_is_never_overwritten(tmp_path):
     assert Config(path).get("migration_history") == "legacy-extension"
 
 
-@pytest.mark.parametrize("account_id", ["source-alice", "source-bob"])
-def test_retired_w2_startup_never_dispatches_or_mutates(account_id):
-    """Previously allowed retry scheduling is now intentionally disabled."""
-    storage = Metadata()
-    storage.rows[schedule.policy_key(account_id)] = "1"
-    storage.rows[schedule.retry_interval_key(account_id)] = "60"
-    before = deepcopy(storage.rows)
-    service = NS(storage=storage)
-    account = _account(account_id, "alice")
-    assert schedule.can_enable_kobo_on_start(service, account) is False
-    assert schedule.on_start_due(service, account) is False
-    assert schedule.mark_on_start_attempt(service, account) is False
-    assert schedule.kobo_on_start_sessions(service) == ()
-    assert storage.rows == before
-
-
-@pytest.mark.parametrize("invalid", [None, "", "0", "15", "59", "60000",
-                                     "-60", "+60", True, 60, "120"])
-def test_legacy_retry_metadata_cannot_authorize_retired_w2(invalid):
-    storage = Metadata()
-    account = _account("source", "alice")
-    if invalid is not None:
-        storage.rows[schedule.retry_interval_key("source")] = invalid
-    before = deepcopy(storage.rows)
-    service = NS(storage=storage)
-    assert schedule.on_start_due(service, account) is False
-    assert schedule.mark_on_start_attempt(service, account) is False
-    assert storage.rows == before
-
-
-def test_retired_w2_legacy_keys_still_address_historical_values():
-    assert schedule.policy_key("source") == "sync.source.materialization.on_start.source"
-    assert schedule.retry_interval_key("source") == "sync.source.materialization.retry_minutes.source"

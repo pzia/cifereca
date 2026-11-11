@@ -64,15 +64,14 @@ def _neutralize_unrelated_sync_work(service: LibraryService, monkeypatch) -> Non
 def _enable_on_start(service: LibraryService, credential_id: str = "vault") -> None:
     """Seed an archived 0.7 ON bit, never an executable startup grant."""
     from cifereca.brokers import SynchronizationBrokerImpl
-    from cifereca.core.source_materialization_schedule import policy_key
     account = next(a for a in service.accounts if a.credential_id == credential_id)
     service.storage.provider_connection_put({
         "identity_id": account.identity_id, "provider_id": "kobo",
         "credential_id": credential_id, "enabled": True,
     })
     sid = SynchronizationBrokerImpl._source_id(account)
-    service.storage.metadata_set(policy_key(sid), "1")
-    assert service.storage.metadata_get(policy_key(sid)) == "1"
+    service.storage.metadata_set("sync.source.materialization.on_start." + sid, "1")
+    assert service.storage.metadata_get("sync.source.materialization.on_start." + sid) == "1"
 
 def test_fast_sync_uses_fresh_kobo_cache_and_skips_filesystem_scan(tmp_path: Path, monkeypatch):
     service = _service(tmp_path)
