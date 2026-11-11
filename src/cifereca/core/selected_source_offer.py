@@ -116,3 +116,39 @@ def obtain_source_offer(service, target: SourceOfferTarget):
     return obtain_explicit_owned(
         service, target, resolve=resolve, right_current=current,
     )
+
+
+def select_library_source_offer_target(service, entry):
+    """Select exactly one remote origin from a Library card; never a right.
+
+    Historical possession rows may still carry a legacy entitlement ID. That
+    ID is intentionally ignored; it confers neither offer nor download access.
+    The provider must attest a current selected offer after the click.
+    """
+    if (type(entry) is not dict or entry.get("local")
+            or entry.get("local_path") or entry.get("placement_id")):
+        return None
+    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+    candidates = [
+        row for row in (entry.get("possessions") or ())
+        if type(row) is dict and row.get("identity_id") == identity
+        and row.get("kind") == "owned" and row.get("state") == "active"
+    ] if type(entry.get("possessions")) in (tuple, list) else []
+    if len(candidates) != 1:
+        return None
+    candidate = candidates[0]
+    provider = candidate.get("provider_id")
+    item_id = candidate.get("item_id")
+    account_id = candidate.get("account_id")
+    accounts = [
+        account for account in service.accounts
+        if getattr(account, "identity_id", None) == identity
+        and getattr(account, "provider_id", None) == provider
+        and getattr(account, "unique_id", None) == account_id
+    ]
+    if len(accounts) != 1:
+        return None
+    return select_source_offer_target(
+        service, provider_id=provider, credential_id=accounts[0].credential_id,
+        item_id=item_id,
+    )
