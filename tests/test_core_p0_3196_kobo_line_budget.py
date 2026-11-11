@@ -7,9 +7,9 @@ from scripts.ci_kobo_core_line_inventory import _category, inventory
 
 
 ROOT = Path(__file__).resolve().parents[1]
-# Contract-first baseline, 2026-11-08 after green #5032 and P0 W4 dead-helper extraction. Only decrease this
-# ceiling after cuts merge; never reclassify production code to hide growth.
-BASELINE = 1228
+# Contract-first Kobo installed dedicated-file ceiling at #5549 HEAD (2026-11-11).
+# Do not reclassify provider-specific production code to disguise growth.
+BASELINE = 641
 
 
 def test_kobo_dedicated_core_surface_never_grows_from_baseline():
