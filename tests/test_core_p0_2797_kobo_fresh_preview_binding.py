@@ -33,8 +33,7 @@ def test_partial_abi_refuses_manifest_before_any_rebind_window(tmp_path, monkeyp
 def test_partial_abi_does_not_project_candidate_path_as_provider_right(tmp_path, monkeypatch):
     service, session = _service(tmp_path, MANIFEST)
     calls = []
-    monkeypatch.setattr(service, "kobo_unlinked_local_count",
-                        lambda *_a: calls.append("local evidence") or 0)
+    # Preview never invokes the retired legacy orphan scan.
     try:
         with pytest.raises(ProviderConfigurationError,
                            match="canonical_kobo_preview_abi_unavailable"):
