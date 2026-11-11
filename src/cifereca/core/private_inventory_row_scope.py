@@ -136,12 +136,23 @@ def selected_private_offer_hint(service: object, item: object) -> bool | None:
             or type(contract) is not tuple or len(contract) != 3
             or type(contract[0]) is not str or not contract[0]
             or type(contract[1]) is not str or not contract[1]
+            or type(contract[2]) is not str
             or contract[2] != "credential_scoped_record_v1"
             or item.downloadable is not True
             or item.download_url is not None
             or item.medium != "digital"
             or credential == "__public__"):
         return False
+
+    # Preserve the source-enable check normally performed by
+    # _session_for_source, but do not resolve or contact the provider.
+    enabled = getattr(service, "_provider_enabled_for_identity", None)
+    if callable(enabled):
+        try:
+            if enabled(provider) is not True:
+                return False
+        except Exception:
+            return False
 
     collection, scenario, _schema = contract
     if not credential_scoped_private_inventory_rows_valid(
