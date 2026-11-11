@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import pytest
-from cifereca.core import kobo_local_reconciliation as repair
+from cifereca.core import offline_canonical_relink as repair
 
 
 @pytest.mark.parametrize("flag,reason", [
@@ -33,7 +33,7 @@ def test_invalid_file_only_dispatch_rejected_before_storage(monkeypatch, value):
 
 def test_w4_file_only_executor_is_not_installed():
     root = Path(__file__).resolve().parents[1]
-    content = (root / "src/cifereca/core/kobo_local_reconciliation.py").read_text()
+    content = (root / "src/cifereca/core/offline_canonical_relink.py").read_text()
     assert "def observe_kobo_local_file_only(" not in content
     assert "_FILE_ONLY_SCHEMA" not in content
     assert "_FILE_ONLY_JOURNAL" not in content
