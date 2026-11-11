@@ -7,7 +7,7 @@ here makes live HTTP calls or real lender mutations.
 from dataclasses import replace
 from types import SimpleNamespace as NS
 
-from cifereca.gui.bnf_borrow_controller import present_bnf_borrow
+from cifereca.gui.bnf_borrow_controller import _present_manual_borrow
 from tests.test_core_p0_2055_manual_dispatch import setup
 
 
@@ -56,9 +56,10 @@ def view(service, session, account, item):
 
 
 def request(window, item):
-    present_bnf_borrow(
-        window, item, None,
-        Adw=DialogApi, TaskPriority=NS(USER_ACTION=object()),
+    _present_manual_borrow(
+        window, item, None, TaskPriority=NS(USER_ACTION=object()),
+        label="BnF", available=window.service.can_borrow_bnf,
+        dispatch=window.service.borrow_bnf_manual,
     )
     return DialogApi.instance
 
