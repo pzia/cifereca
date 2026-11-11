@@ -1480,10 +1480,11 @@ def main() -> int:
                        if isinstance(node, Gtk.Button)]
             assert len(buttons) == 1 and row.get_mapped()
             assert "Synchronisation :" in row.get_subtitle()
-        backup = next(node for node in walk(w._sync_sources_box)
-                      if isinstance(node, Adw.ActionRow)
-                      and node.get_title() == "Sauvegarde automatique des achats Numilog")
-        assert backup.get_mapped(), "Durable backup status must remain outside tools"
+        assert not any(
+            isinstance(node, Adw.ActionRow)
+            and node.get_title() == "Sauvegarde automatique des achats Numilog"
+            for node in walk(w._sync_sources_box)
+        ), "Retired startup consent must not be shown"
         assert "11 source(s)" in w._sync_summary.get_label()
         # #2141: the summary and actions must stay OUTSIDE the scrolling
         # source list, including after moving far below the first fold.
@@ -1576,20 +1577,12 @@ def main() -> int:
         # inert. Numilog inventory consent is exercised separately below.
         # #1905 adds one distinct Numilog *book backup* consent row.
         # The synthetic broker has no consent APIs: the CTA must be inert.
-        assert len(rows) == 30, ("Unexpected GTK sync action-row count", len(rows))
-        numilog_backup_rows = [
-            row for row in rows
-            if row.get_title() == "Sauvegarde automatique des achats Numilog"
-        ]
-        assert len(numilog_backup_rows) == 1
-        numilog_backup = numilog_backup_rows[0]
-        assert "Sauvegarde planifiée indisponible" in numilog_backup.get_subtitle()
-        assert 0 < numilog_backup.get_height() <= 420
+        assert len(rows) == 29, ("Unexpected GTK sync action-row count", len(rows))
         assert not any(
-            isinstance(node, Gtk.Button) and node.get_sensitive()
-            for node in walk(sync_action_row(numilog_backup))
+            row.get_title() == "Sauvegarde automatique des achats Numilog"
+            for row in rows
         )
-        report["checks"]["P0_1905_numilog_backup_consent_inert_without_broker"] = True
+        report["checks"]["P0_5054_no_legacy_numilog_startup_consent"] = True
         inventory_schedule_rows = [
             row for row in rows
             if row.get_title() == "Actualisation automatique des notices Kobo"
