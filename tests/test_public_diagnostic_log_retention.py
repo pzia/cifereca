@@ -54,7 +54,6 @@ def test_closed_log_body_survives_filter_without_generic_arg_truncation(monkeypa
 @pytest.mark.parametrize("body", [
     "TRACE task correlation task_ref=aaaaaaaaaaaa status=failed",
     'TRACE provider connection failure {"code":"provider_connect_failed","provider_id":"provider.paris"}',
-    "TRACE kobo backup decision status=error enabled=True connected=1 eligible=1 interval=60",
     'TRACE adept runtime {"code":"adept_error","operation":"status","operation_kind":"kobo_adept","phase":"completed","plugin_id":"runtime.kobo-adept","schema_version":1,"status":"failed"}',
 ])
 def test_known_canonical_producers_are_retained_at_normal_level(monkeypatch, body):
@@ -74,6 +73,13 @@ def test_known_canonical_producers_are_retained_at_normal_level(monkeypatch, bod
 def test_normal_mode_never_enables_arbitrary_or_extended_trace(monkeypatch, attack):
     monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
     body = attack(observation())
+    assert not is_public_core_observation("cifereca", body)
+    assert not logging_utils.RedactionFilter().filter(record(body))
+
+
+def test_retired_kobo_backup_trace_cannot_claim_public_core_evidence(monkeypatch):
+    monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
+    body = "TRACE kobo backup decision status=error enabled=True connected=1 eligible=1 interval=60"
     assert not is_public_core_observation("cifereca", body)
     assert not logging_utils.RedactionFilter().filter(record(body))
 
