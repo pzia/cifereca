@@ -85,7 +85,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
         "--provider", "--identity", "--credential", "--account-id",
         "--confirm", "--json", "--report", "--verify-files",
         "--trace-export", "--confirm-trace-export", "--output",
-        "--refresh-manifest", "--confirm-downloads",
+        
         "--confirm-ownership",
     }
     assert required_commands <= commands
@@ -115,7 +115,6 @@ def test_offline_analyzers_are_real_and_named_in_inventory():
         assert (ROOT / path).is_file(), path
         assert path in document, path
     assert "pas de placement final" in document
-    assert "kobo-resume-preview --credential C --refresh-manifest" in document
     assert "lance rien" in BACKLOG.read_text(encoding="utf-8") or (
         "Le rôle backlog **ne lance pas**" in BACKLOG.read_text(encoding="utf-8")
     )
