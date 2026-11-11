@@ -5,22 +5,12 @@ negotiated kobo-adept contract. State is owned by the service facade."""
 from __future__ import annotations
 
 from .legacy_checkpoint_read import _kobo_checkpoint_key, _kobo_checkpoint_for
-from .legacy_diagnostic_projection import (
-    _safe_kobo_opening_decision,
-    safe_kobo_backup_report,
-    _KOBO_DIAGNOSTIC_METRICS,
-    _KOBO_DIAGNOSTIC_STATUSES,
-    _safe_kobo_backup_diagnostic_detail,
-)
+from .legacy_diagnostic_projection import _safe_kobo_opening_decision
 
-import time
-import re
 import json
 from pathlib import Path
 from typing import Any, Callable
 from ..acquisition import Acquisition
-from ..library_files import sha256_file
-from ..paths import acquisition_lock_file
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
 
