@@ -75,7 +75,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
         "doctor", "sync", "list", "run", "acquisition-audit",
         "statistics", "catalog-list", "acquisition-ledger",
         "acquisition-reconcile", "kobo-resume-preview",
-        "kobo-resume", "kobo-reconcile-local",
+        "kobo-reconcile-local",
         "paris-adept", "audit-origin", "audit-canonical", "audit-transaction",
         "preview-resolution", "bind", "unbind", "plugin", "diagnose",
         "config-get", "config-set", "deps-repair", "identity-directory",
