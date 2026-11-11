@@ -1798,20 +1798,19 @@ class LibraryService:
                         "provider=%s reason=source_binding_changed", provider_id,
                     )
                     continue
-                if provider_id == "numilog":
-                    from .core.private_inventory_row_scope import (
-                        credential_scoped_private_inventory_rows_valid,
+                from .core.private_inventory_row_scope import (
+                    declared_private_inventory_batch_valid,
+                )
+                if not declared_private_inventory_batch_valid(
+                    rows, session=session, provider_id=provider_id,
+                    credential_id=credential_id,
+                ):
+                    result.blocked_sources += 1
+                    _TRACE_LOG.warning(
+                        "TRACE catalog personal-library inventory skipped "
+                        "provider=%s reason=invalid_private_rows", provider_id,
                     )
-                    if not credential_scoped_private_inventory_rows_valid(
-                        rows, provider_id=provider_id, credential_id=credential_id,
-                        collection="library", scenario="NUMILOG_LIBRARY",
-                    ):
-                        result.blocked_sources += 1
-                        _TRACE_LOG.warning(
-                            "TRACE catalog personal-library inventory skipped "
-                            "provider=%s reason=invalid_private_rows", provider_id,
-                        )
-                        continue
+                    continue
                 # Observed supplier rows are metadata only. Delivery requires
                 # a fresh, independently validated provider offer; neither
                 # SearchResult.owned nor an old local record grants access.
