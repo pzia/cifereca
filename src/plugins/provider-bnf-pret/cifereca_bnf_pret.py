@@ -1084,7 +1084,12 @@ class BnfProviderSession(ProviderSession):
             source_provider=self.provider_id, source_credential=self.credential_id,
             content_type='ebook', owned=None, downloadable=False,
             metadata={'isbn': record.isbn, 'languages': [language] if language else [],
-                      'availability': record.availability, 'inventory_exhaustive': False},
+                      'availability': record.availability, 'inventory_exhaustive': False,
+                      # UI hint only, never a borrow authority or a verified offer.
+                      'manual_borrow_presentation': {
+                          'provider_id': self.provider_id, 'docbase': 'BNF_PRET',
+                          'record_id': record.resource_id,
+                      }},
         )
 
     def holdings(self, item, search_terms=''):
