@@ -11,8 +11,21 @@ from cifereca.core.source_auto_consent_bridge import (
     legacy_source_auto_policy, _source_id,
 )
 from cifereca.core.source_sync_consent import scope_for_account
+from cifereca.core.source_account_binding import source_account_binding_ready
 from tests.test_core_p0_2055_bnf_explicit_stage import connected_core
 
+
+
+
+def _historical_legacy_on(service, account):
+    """Exercise the same exact account-binding fence as Core's real executor."""
+    if not source_account_binding_ready(
+        service, account, expected_provider_id=account.provider_id,
+    ):
+        return False
+    return legacy_source_auto_policy(
+        service.storage, scope_for_account(account), "loan",
+    )[0] == "on"
 
 @pytest.mark.parametrize(("first", "rebound"), [
     ("", "bnf-pret:bnf-card:primary"),
@@ -40,18 +53,20 @@ def test_bnf_old_on_never_transfers_to_aliased_borrower(
     account.unique_id = first
     broker = SynchronizationBrokerImpl(service)
     source_id = broker._source_id(account)
-    assert broker.set_bnf_auto_download(source_id, True)
-    assert broker.bnf_auto_download_enabled(source_id) is True
+    prefix = "sync.source.bnf_auto."
+    key = prefix + _source_id(scope_for_account(account))
+    service.storage.metadata_set_with_revision(key, "1", key + ".revision")
+    assert _historical_legacy_on(service, account) is True
 
     account.unique_id = rebound
     assert broker._source_id(account) == source_id
     assert len(session.accounts) == len(service.accounts) == 1
-    assert broker.bnf_auto_download_enabled(source_id) is False
+    assert _historical_legacy_on(service, account) is False
     assert not downloaded
     assert service.storage.metadata_get(
         "sync.source.bnf_auto." + _source_id(scope_for_account(account))
     ) == "1"
     account.unique_id = first
-    assert broker.bnf_auto_download_enabled(source_id) is True
+    assert _historical_legacy_on(service, account) is True
 
 

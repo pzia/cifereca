@@ -32,7 +32,7 @@ def test_bnf_real_session_advertises_distinct_capability_not_kobo_materializatio
     assert "Téléchargement local : Téléchargement distinct de cette synchronisation" in rendered
     assert "Téléchargement local : Réussie" not in rendered
     assert "Téléchargement local : Non prise en charge" not in rendered
-    assert broker.bnf_auto_download_enabled(source.source_id) is False
+    assert broker.source_sync_consent(source.source_id)['enabled'] is False
     assert downloaded == []
     assert service.storage.acquisitions() == []
     assert service.storage.placements() == []

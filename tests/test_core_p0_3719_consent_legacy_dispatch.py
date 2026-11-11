@@ -9,6 +9,18 @@ from tests.test_core_p0_2055_bnf_explicit_stage import connected_core
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA, register
 
 
+def _write_historical_bnf_choice(service, account, enabled: bool) -> bool:
+    """Fixture: reproduce an existing *versioned* legacy switch, not a UI API."""
+    from cifereca.core.source_auto_consent_bridge import _source_id
+    from cifereca.core.source_sync_consent import scope_for_account
+
+    key = "sync.source.bnf_auto." + _source_id(scope_for_account(account))
+    service.storage.metadata_set_with_revision(
+        key, "1" if enabled else "0", key + ".revision",
+    )
+    return enabled
+
+
 @pytest.mark.parametrize('opening', [False, True])
 @pytest.mark.parametrize('allowed', [False, True])
 def test_bnf_configured_source_has_one_executor_even_with_legacy_on(
@@ -20,7 +32,7 @@ def test_bnf_configured_source_has_one_executor_even_with_legacy_on(
     session.identity_broker = IdentityBrokerImpl(service)
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(account)
-    assert broker.set_bnf_auto_download(sid, True)
+    assert _write_historical_bnf_choice(service, account, True)
     for module in ('sync_coordination', 'canonical_selected_offers', 'canonical_selected_delivery',
                    'convergence_execution', 'canonical_recovery'):
         monkeypatch.setattr('cifereca.core.' + module + '.acquisition_lock_file',
@@ -94,7 +106,7 @@ def test_bnf_legacy_source_on_uses_single_canonical_executor_and_verified_placem
     session.identity_broker = IdentityBrokerImpl(service)
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(account)
-    assert broker.set_bnf_auto_download(sid, True)
+    assert _write_historical_bnf_choice(service, account, True)
     for module in (
         "sync_coordination", "canonical_selected_offers",
         "canonical_selected_delivery", "convergence_execution",
@@ -147,7 +159,7 @@ def test_bnf_legacy_consent_revoked_during_canonical_delivery_never_publishes(
     session.identity_broker = IdentityBrokerImpl(service)
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(account)
-    assert broker.set_bnf_auto_download(sid, True)
+    assert _write_historical_bnf_choice(service, account, True)
     for module in (
         "sync_coordination", "canonical_selected_offers",
         "canonical_selected_delivery", "convergence_execution",
@@ -161,9 +173,9 @@ def test_bnf_legacy_consent_revoked_during_canonical_delivery_never_publishes(
 
     def delivery(key, offer):
         calls.append(key)
-        assert broker.set_bnf_auto_download(sid, False) is False
+        assert _write_historical_bnf_choice(service, account, False) is False
         if mutation == "off_on":
-            assert broker.set_bnf_auto_download(sid, True) is True
+            assert _write_historical_bnf_choice(service, account, True) is True
         path = tmp_path / "ephemeral.pdf"
         path.write_bytes(BYTES)
         return CompletedDelivery(
