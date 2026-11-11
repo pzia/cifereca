@@ -2032,21 +2032,6 @@ class LibraryService:
         """Crash recovery: ADEPT inventory check ONLY, never replay mutation."""
         return loan_return_verification.adobe_return_inventory_confirmed(self, acquisition)
 
-    @staticmethod
-    def _return_operation_lock_file(loan: Loan) -> Path:
-        """Coordinate Adobe and PNB mutations across threads and processes.
-
-        The lock is scoped by provider + upstream loan ID, not UI identity:
-        the same Paris loan may be exposed by two different connections.
-        No account identifiers or credentials are written in the lock path.
-        """
-        digest = hashlib.sha256(
-            (str(loan.source_provider).casefold() + "\\0" + str(loan.id or "")).encode("utf-8")
-        ).hexdigest()[:32]
-        return acquisition_lock_file().with_name(
-            "cifereca-return-" + digest + ".lock"
-        )
-
     def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
         """Removed voluntary return: reject before lock, scope, storage or runtime."""
         raise AttentionRequired(
