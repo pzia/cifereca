@@ -33,14 +33,14 @@ def test_bnf_manual_action_section_ignores_unverified_catalogue_label(label):
     "paris", "provider-reference", "bnf-test", "public-provider",
 ])
 def test_other_lending_sources_still_require_empruntable_label(provider):
-    item = replace(BNF, source_provider=provider)
+    item = replace(BNF, source_provider=provider, metadata={})
     assert search_detail_borrow_action_candidate(item, "Inconnue") is False
     assert search_detail_borrow_action_candidate(item, "Empruntable") is True
 
 
 @pytest.mark.parametrize("provider", ["numilog", "numilog-catalog", "kobo"])
 def test_store_catalogues_do_not_inherit_bnf_manual_exception(provider):
-    item = replace(BNF, source_provider=provider)
+    item = replace(BNF, source_provider=provider, metadata={})
     assert search_detail_borrow_action_candidate(item, "Empruntable") is False
     assert search_detail_borrow_action_candidate(item, "Inconnue") is False
 
