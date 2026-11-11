@@ -35,6 +35,7 @@ from cifereca.plugin_api import (
     ProviderCapabilityError,
     ProviderConfigurationError,
     ProviderDescriptor,
+    ManualBorrowPolicy,
     ProviderPlugin,
     ProviderSession,
     ProviderError, Cancelled,
@@ -166,6 +167,11 @@ def _paris_loan_branch_coverage(rows, upstream, medium, failed):
 
 DESCRIPTOR = ProviderDescriptor(
     id="paris",
+    manual_borrow_policy=ManualBorrowPolicy(
+        docbase="DILICOM", primary_borrower_id="",
+        source_selection_key="primary_paris_connection_id",
+        verification="provider_observed",
+    ),
     display_name="Bibliothèques de Paris",
     description="Catalogue, compte lecteur et prêt numérique PNB des Bibliothèques de Paris.",
     # Versioned, read-only text contributions. State classification is the
