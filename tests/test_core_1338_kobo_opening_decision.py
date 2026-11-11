@@ -84,13 +84,13 @@ def test_opening_never_executes_retired_w2_or_leaks_summary(tmp_path, monkeypatc
         assert "secret" not in decision and "item_id" not in decision
         entries = [row for row in service.diagnostics.snapshot()
                    if row["operation"] == "automatic backup decision"]
-        assert len(entries) == 1
-        assert entries[0]["detail"]["status"] == "manual_only"
+        # Retired supplier-only diagnostic channel must not be resurrected.
+        assert entries == []
     finally:
         service.close()
 
 
-def test_opening_manual_only_still_reports_decision_without_backup(tmp_path, monkeypatch):
+def test_opening_manual_only_does_not_publish_retired_backup_diagnostic(tmp_path, monkeypatch):
     service = _service(tmp_path)
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
@@ -103,8 +103,8 @@ def test_opening_manual_only_still_reports_decision_without_backup(tmp_path, mon
         result = service._opening_sync_locked(deep=False)
         assert result["kobo"] is None
         assert result["kobo_decision"]["status"] == "manual_only"
-        assert len([row for row in service.diagnostics.snapshot()
-                    if row["operation"] == "automatic backup decision"]) == 1
+        assert not [row for row in service.diagnostics.snapshot()
+                    if row["operation"] == "automatic backup decision"]
     finally:
         service.close()
 
