@@ -48,7 +48,6 @@ from .config import Config
 from .diagnostics import Diagnostics, redact
 from .kobo import KoboAdeptError
 from .kobo.acquisition import KoboOfferAdapter, KoboAcquisitionSelectionError
-from .kobo.executor import execute_kobo_acquisition
 from .kobo.vault import KoboVaultError
 from .identities import Identity, IdentityPreferences, AdeptProfileResolver, AdeptProfileResolutionError
 from .core import adept_profiles
