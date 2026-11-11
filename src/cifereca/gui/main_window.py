@@ -1638,20 +1638,16 @@ class MainWindow(Adw.ApplicationWindow):
             priority=TaskPriority.USER_ACTION, kind="loan-acquisition")
 
     def can_borrow_item(self, item: SearchResult) -> bool:
-        # #2055: the BnF button is *only* the Core's inert readiness check.
-        # Current BnF has no acquisition.borrow capability; no button shown.
-        # A future published action still needs positive borrower permission
-        # and explicit consent at the time of the actual attempt.
-        if getattr(item, "source_provider", None) == "bnf-pret":
-            return self.service.can_borrow_bnf(item)
-        if getattr(item, "source_provider", None) == "paris":
-            return self.service.can_borrow_paris(item)
+        """Exact local admission; an explicit claimed executor never falls back."""
+        from inspect import getattr_static
         try:
-            # The button must reflect the same exact borrower-account scope
-            # enforced by the click handler, not just a provider capability.
-            # This remains only action availability; quota, subscription and
-            # per-book permission still require separate provider evidence.
-            _session, accounts = self._eligible_borrow_accounts(item)
+            session, accounts = self._eligible_borrow_accounts(item)
+            if callable(getattr_static(
+                type(session), "borrow_explicit_with_claim", None,
+            )):
+                # The installed plugin's versioned policy is mandatory.
+                # A visible action still never attests lender eligibility.
+                return self.service.can_borrow_manual(item) is True
             return bool(accounts)
         except Exception:
             return False
@@ -1699,9 +1695,9 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
+        from inspect import getattr_static
         from .bnf_borrow_controller import (
-            present_bnf_borrow, present_paris_borrow,
-            present_paris_borrow_verification,
+            _present_manual_borrow, present_paris_borrow_verification,
         )
         # A verification-only gesture is never a new borrow, independently of
         # source-provider names. The follow-up controller and Core admission
@@ -1716,18 +1712,28 @@ class MainWindow(Adw.ApplicationWindow):
                 self, item, control, TaskPriority=TaskPriority,
             )
             return
-        # Manual borrowing retains the provider-specific Core admission
-        # until the provider ABI exposes an exact, typed generic action.
-        # Never fall through to the historic session.borrow() for these sources.
-        if getattr(item, "source_provider", None) == "bnf-pret":
-            present_bnf_borrow(
-                self, item, control, Adw=Adw, TaskPriority=TaskPriority,
+        # The claimed one-shot executor is never permitted to fall through to
+        # the historic session.borrow(), even if the ABI is missing/malformed.
+        # A provider-independent, versioned installed-plugin declaration is
+        # required to reach Core's durable single-attempt mutation path.
+        try:
+            session = self.service._session_for_source(
+                item.source_provider, item.source_credential,
             )
+            claimed_executor = callable(getattr_static(
+                type(session), "borrow_explicit_with_claim", None,
+            ))
+        except Exception:
             return
-        if getattr(item, "source_provider", None) == "paris":
-            present_paris_borrow(
-                self, item, control, Adw=Adw, TaskPriority=TaskPriority,
-                account=account,
+        if claimed_executor:
+            policy = self.service.manual_borrow_policy(item)
+            if policy is None:
+                return
+            _present_manual_borrow(
+                self, item, control, TaskPriority=TaskPriority,
+                label=session.descriptor.display_name,
+                available=self.service.can_borrow_manual,
+                dispatch=self.service.borrow_manual, expected_account=account,
             )
             return
         try:
