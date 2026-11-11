@@ -469,7 +469,7 @@ def main(argv: list[str] | None = None) -> int:
             configure_logging()
             set_diagnostics_level("trace")
         if a.cmd == "kobo-sync-edition":
-            from .core.canonical_kobo_selected import SelectedKoboRejected
+            from .core.canonical_selected_edition import SelectedEditionRejected
             try:
                 # Reuse the existing exact-credential connect gate, never
                 # connect every Kobo account or infer source from an item.
@@ -482,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = service.synchronize_kobo_selected_edition(
                     a.credential, a.item, explicit_user_action=True,
                 )
-            except SelectedKoboRejected as exc:
+            except SelectedEditionRejected as exc:
                 result = {"status": "failed", "ok": False, "changed": 0,
                           "reason": exc.code}
             except Exception:

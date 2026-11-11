@@ -11,7 +11,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca import cli
-from cifereca.core import canonical_kobo_selected as selected_impl
+from cifereca.core import canonical_selected_edition as selected_impl
 from cifereca.core import (
     canonical_sync_stage, rights_snapshot_read, sync_coordination,
 )
@@ -130,8 +130,8 @@ def rig(case, monkeypatch):
 
 
 def _run(rig, edition="book-1", **kwargs):
-    return selected_impl.synchronize_selected_kobo_edition(
-        rig.service, credential_id=rig.credential, edition_id=edition,
+    return selected_impl.synchronize_selected_edition(
+        rig.service, provider_id="kobo", credential_id=rig.credential, edition_id=edition,
         explicit_user_action=True, **kwargs,
     )
 
@@ -153,6 +153,25 @@ def test_selected_delivery_only_one_exact_A_right_and_no_legacy_get(rig):
         assert secret not in public
 
 
+def test_selected_canonical_edition_is_provider_neutral(rig):
+    """The same A→B guard works for a synthetic supplier without Kobo branches."""
+    provider = "synthetic-seller"
+    session = rig.case.target
+    old_key = rig.service._session_key(session.provider_id, rig.credential)
+    assert rig.service._sessions.pop(old_key) is session
+    session.provider_id = provider
+    rig.account.provider_id = provider
+    rig.service._sessions[rig.service._session_key(provider, rig.credential)] = session
+    rig.a[0] = _snapshot(rig.account)
+    result = selected_impl.synchronize_selected_edition(
+        rig.service, provider_id=provider, credential_id=rig.credential,
+        edition_id="book-1", explicit_user_action=True,
+    )
+    assert result["status"] == "downloaded"
+    assert result["schema"] == "core.selected-canonical/1"
+    assert len(rig.calls["reads"]) == len(rig.calls["persisted"]) == len(rig.calls["executed"]) == 1
+
+
 def test_selected_other_edition_never_runs_sibling_get(rig):
     assert _run(rig, "book-2")["ok"]
     assert [r.edition_id for r in rig.calls["executed"][0][0].rights] == ["book-2"]
@@ -168,20 +187,20 @@ def test_missing_or_ambiguous_right_never_publishes_A_or_attempts_B(
     rig, edition, ambiguity, code,
 ):
     rig.a[0] = _snapshot(rig.account, ambiguous=ambiguity)
-    with pytest.raises(selected_impl.SelectedKoboRejected, match=code):
+    with pytest.raises(selected_impl.SelectedEditionRejected, match=code):
         _run(rig, edition)
     assert not rig.calls["persisted"] and not rig.calls["executed"]
 
 
 def test_source_off_or_explicit_action_absent_is_zero_provider_io(rig):
-    with pytest.raises(selected_impl.SelectedKoboRejected, match="invalid_selected_request"):
-        selected_impl.synchronize_selected_kobo_edition(
-            rig.service, credential_id=rig.credential,
+    with pytest.raises(selected_impl.SelectedEditionRejected, match="invalid_selected_request"):
+        selected_impl.synchronize_selected_edition(
+            rig.service, provider_id="kobo", credential_id=rig.credential,
             edition_id="book-1", explicit_user_action=False,
         )
     rig.consent[0] = Policy("off", "b" * 32)
     with pytest.raises(
-        selected_impl.SelectedKoboRejected, match="canonical_source_consent_required"
+        selected_impl.SelectedEditionRejected, match="canonical_source_consent_required"
     ):
         _run(rig)
     assert not rig.calls["reads"] and not rig.calls["persisted"]
@@ -201,7 +220,7 @@ def test_rebind_or_revoke_after_A_disallows_B(rig, monkeypatch, race):
     monkeypatch.setattr(
         rights_snapshot_read, "read_account_rights_snapshot", source_read,
     )
-    with pytest.raises(selected_impl.SelectedKoboRejected, match="selected_source_changed"):
+    with pytest.raises(selected_impl.SelectedEditionRejected, match="selected_source_changed"):
         _run(rig)
     assert not rig.calls["persisted"] and not rig.calls["executed"]
 
@@ -214,7 +233,7 @@ def test_outcome_cannot_claim_success_if_executor_is_missing_or_broad(
         lambda *_a, **_k: {name: (2 if name == "downloaded" else 0)
                           for name in _NAMES},
     )
-    with pytest.raises(selected_impl.SelectedKoboRejected,
+    with pytest.raises(selected_impl.SelectedEditionRejected,
                        match="selected_delivery_unavailable"):
         _run(rig)
 

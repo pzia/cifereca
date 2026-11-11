@@ -1,4 +1,4 @@
-"""P0 #4858 D3: one selected Kobo edition through the existing Core A->B executor.
+"""One exact selected provider edition through the existing canonical Core A→B executor.
 
 Unlike the old direct SearchResult/ADEPT path, this command never interprets
 backup_items, local titles, a catalogue `owned` flag or an arbitrary file SHA
@@ -19,7 +19,7 @@ from .source_context import source_context_epoch
 from .source_sync_consent import read_policy
 
 
-class SelectedKoboRejected(ValueError):
+class SelectedEditionRejected(ValueError):
     """Closed reason only: never include private supplier payload or URL."""
 
     _KNOWN = frozenset({
@@ -39,7 +39,7 @@ class SelectedKoboRejected(ValueError):
 
 def _require(condition: bool, reason: str) -> None:
     if not condition:
-        raise SelectedKoboRejected(reason)
+        raise SelectedEditionRejected(reason)
 
 
 def _valid_id(value: object) -> bool:
@@ -50,9 +50,10 @@ def _valid_id(value: object) -> bool:
     )
 
 
-def synchronize_selected_kobo_edition(
-    service: Any, *, credential_id: str, edition_id: str,
+def synchronize_selected_edition(
+    service: Any, *, provider_id: str, credential_id: str, edition_id: str,
     explicit_user_action: bool, cancelled: Callable[[], bool] = lambda: False,
+    result_schema: str = "core.selected-canonical/1",
 ) -> dict[str, object]:
     """Execute only ONE exact provider A right under Core's existing B engine.
 
@@ -63,8 +64,9 @@ def synchronize_selected_kobo_edition(
     The result contains closed counters only, no borrower, title, path or URL.
     """
     _require(
-        _valid_id(credential_id) and credential_id != "__public__"
-        and _valid_id(edition_id)
+        _valid_id(provider_id) and _valid_id(credential_id)
+        and credential_id != "__public__" and _valid_id(edition_id)
+        and _valid_id(result_schema)
         and explicit_user_action is True and callable(cancelled),
         "invalid_selected_request",
     )
@@ -75,7 +77,7 @@ def synchronize_selected_kobo_edition(
             storage = service.storage
             rows = [
                 row for row in accounts
-                if type(row) is Account and row.provider_id == "kobo"
+                if type(row) is Account and row.provider_id == provider_id
                 and row.credential_id == credential_id
             ]
             _require(
@@ -85,7 +87,7 @@ def synchronize_selected_kobo_edition(
             account = rows[0]
             candidates = [
                 session for session in sessions.values()
-                if getattr(session, "provider_id", None) == "kobo"
+                if getattr(session, "provider_id", None) == provider_id
                 and getattr(session, "credential_id", None) == credential_id
             ]
             _require(len(candidates) == 1, "selected_source_unavailable")
@@ -98,7 +100,7 @@ def synchronize_selected_kobo_edition(
             epoch = source_context_epoch(service)
             session_epoch = getattr(session, "_epoch", None)
             scope = ProviderRightsScope(
-                account.identity_id, "kobo", credential_id, account.unique_id,
+                account.identity_id, provider_id, credential_id, account.unique_id,
             )
             policy = read_policy(storage, scope)
             _require(
@@ -120,12 +122,12 @@ def synchronize_selected_kobo_edition(
                         and session.provider_id == scope.provider_id
                         and session.credential_id == scope.credential_id
                         and service._sessions.get(
-                            service._session_key("kobo", credential_id),
+                            service._session_key(provider_id, credential_id),
                         ) is session
                         and len([
                             row for row in service.accounts
                             if type(row) is Account
-                            and row.provider_id == "kobo"
+                            and row.provider_id == provider_id
                             and row.credential_id == credential_id
                         ]) == 1
                         and len(session.accounts) == 1
@@ -228,7 +230,7 @@ def synchronize_selected_kobo_edition(
             )
             outcome = next(name for name in expected if counts[name])
             return {
-                "schema": "core.kobo.selected-canonical/1",
+                "schema": result_schema,
                 "status": outcome,
                 "ok": outcome in {"downloaded", "recovered", "present_attested"},
                 "changed": int(outcome == "downloaded"),
@@ -236,13 +238,13 @@ def synchronize_selected_kobo_edition(
                 "canonical_only": True, "legacy_backup_mutations": 0,
             }
     except LockBusyError:
-        raise SelectedKoboRejected("selected_acquisition_busy") from None
-    except SelectedKoboRejected:
+        raise SelectedEditionRejected("selected_acquisition_busy") from None
+    except SelectedEditionRejected:
         raise
     except Exception:
         # The original provider error may contain credentials, absolute
         # paths, signed URLs or personal-library metadata. Never reflect it.
-        raise SelectedKoboRejected("selected_delivery_unavailable") from None
+        raise SelectedEditionRejected("selected_delivery_unavailable") from None
 
 
-__all__ = ["SelectedKoboRejected", "synchronize_selected_kobo_edition"]
+__all__ = ["SelectedEditionRejected", "synchronize_selected_edition"]
