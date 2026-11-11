@@ -16,7 +16,14 @@ def test_gtk_apt_operations_are_bounded_and_keep_retry_finite():
     assert "DPkg::Lock::Timeout=30" in script
     assert script.count("DEBIAN_FRONTEND=noninteractive") == 3
     assert "Dpkg::Use-Pty=0" in script
-    assert "GTK E2E APT retry" in script
+    assert "GTK E2E Ubuntu archive install" in script
+    assert "fallback_sources=\"$(mktemp)\"" in script
+    assert "Dir::Etc::sourceparts=-" in script
+    assert "ubuntu:noble" in script
+    assert "deb https://archive.ubuntu.com/ubuntu noble" in script
+    assert "deb https://security.ubuntu.com/ubuntu noble-security" in script
+    assert "trusted=yes" not in script
+    assert "AllowUnauthenticated" not in script
     assert "|| true" not in script
     assert "set -euo pipefail" in script
     assert "gi.require_version(\"Gtk\", \"4.0\")" in script
