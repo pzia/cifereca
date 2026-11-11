@@ -58,13 +58,10 @@ def test_legacy_orchestrator_is_inert_and_preflight_helpers_removed():
     path = (Path(__file__).resolve().parents[1] /
             "src/cifereca/core/return_adept_orchestrator.py")
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    handler = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
-                   and n.name == "return_loan_prefer_adept")
-    assert isinstance(handler.body[1], ast.Raise)
-    assert "loan_return_removed" in ast.unparse(handler.body[1])
-    calls = {ast.unparse(n.func) for n in ast.walk(handler)
-             if isinstance(n, ast.Call)}
-    assert calls == {"AttentionRequired"}
+    assert not any(
+        isinstance(node, ast.FunctionDef) and node.name == "return_loan_prefer_adept"
+        for node in tree.body
+    )
 
     # No obsolete preflight that could be misused to infer return permission.
     assert not (path.parent / "return_adept_origin_preflight.py").exists()
