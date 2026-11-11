@@ -361,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if a.cmd == "kobo-relink-canonical":
-        from .core.kobo_local_reconciliation import (
+        from .core.offline_canonical_relink import (
             ReconciliationRejected, reconcile_existing_profile,
         )
         from .core.canonical_relink import CanonicalRelinkRejected
@@ -369,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
             if a.account and a.account != a.credential:
                 raise ReconciliationRejected("source_scope_mismatch")
             result = reconcile_existing_profile(
-                canonical_relink=True, credential_id=a.credential,
+                canonical_relink=True, provider_id="kobo", credential_id=a.credential,
                 identity_id=a.identity, account_id=a.account_id,
                 edition_id=a.item, right_id=a.right,
                 branch_id=a.branch, reference_kind=a.kind,
