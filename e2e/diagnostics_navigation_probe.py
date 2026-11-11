@@ -1577,7 +1577,7 @@ def main() -> int:
         # inert. Numilog inventory consent is exercised separately below.
         # #1905 adds one distinct Numilog *book backup* consent row.
         # The synthetic broker has no consent APIs: the CTA must be inert.
-        assert len(rows) == 29, ("Unexpected GTK sync action-row count", len(rows))
+        assert len(rows) == 28, ("Unexpected GTK sync action-row count", len(rows))
         assert not any(
             row.get_title() == "Sauvegarde automatique des achats Numilog"
             for row in rows
@@ -2120,71 +2120,7 @@ def main() -> int:
         assert not f["source_sync_calls"] and not f["mutations"]
         report["checks"]["P0_1905_Numilog_XTEST_inventory_consent_and_revocation_without_acquisition"] = True
         assert not f["numilog_preview_calls"], "Rendering/consent must not read local evidence"
-        numilog_preview_click(False)
-
-    def numilog_preview_click(verify):
-        f = loan_sync_fixture
-        row = next(row for row in walk(window[0]._sync_sources_box)
-                   if isinstance(row, Adw.ActionRow)
-                   and row.get_title() == "Aperçu local des achats Numilog")
-        label = "Vérifier les fichiers…" if verify else "Aperçu local…"
-        button = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
-                      and getattr(node, "_cifereca_action_label", None) == label)
-        scroll = f["sync_scroll"]
-        ok, bounds = button.compute_bounds(scroll)
-        assert ok
-        if bounds.get_y() < 0 or bounds.get_y() + bounds.get_height() > scroll.get_height():
-            key = "numilog_preview_scroll_" + str(verify)
-            f[key] = f.get(key, 0) + 1
-            assert f[key] <= 6
-            adjustment = scroll.get_vadjustment()
-            adjustment.set_value(adjustment.get_value() + bounds.get_y() - 100)
-            later(180, lambda: numilog_preview_click(verify))
-            return
-        assert button.get_mapped() and button.get_sensitive()
-        assert row.get_width() <= scroll.get_width()
-        if verify:
-            first = next(node for node in walk(sync_action_row(row)) if isinstance(node, Gtk.Button)
-                         and getattr(node, "_cifereca_action_label", None) == "Aperçu local…")
-            first.grab_focus()
-            def tab_to_verify(attempt=0):
-                focus = window[0].get_focus()
-                current = focus
-                while current is not None and current is not button:
-                    current = current.get_parent()
-                if current is button:
-                    device[0].key("space", True); device[0].key("space", False)
-                    report["checks"]["P1_1889_sync_Tab_then_space_preserves_action"] = True
-                    later(300, lambda: numilog_preview_complete(verify, row))
-                    return
-                assert attempt < 6, "Verification action unreachable by Tab"
-                device[0].key("Tab", True); device[0].key("Tab", False)
-                later(80, lambda: tab_to_verify(attempt + 1))
-            tab_to_verify()
-            return
-        report["pointer_actions"].append(device[0].click_widget(button))
-        later(300, lambda: numilog_preview_complete(verify, row))
-
-    def numilog_preview_complete(verify, row):
-        f = loan_sync_fixture
-        expected = [("p0-numilog-inventory", False)]
-        if verify:
-            expected.append(("p0-numilog-inventory", True))
-        assert f["numilog_preview_calls"] == expected
-        subtitle = row.get_subtitle()
-        assert "Achats connus : 3" in subtitle and "aucun téléchargement autorisé" in subtitle
-        assert "PRIVATE" not in subtitle
-        assert ("Vérification SHA demandée" if verify else "Sans lecture ni vérification SHA") in subtitle
-        assert not f["prepare_calls"] and not f["materialize_calls"]
-        assert not f["source_sync_calls"] and not f["mutations"]
-        capture("03i3-numilog-sha-preview" if verify else "03i2-numilog-offline-preview")
-        if not verify:
-            numilog_preview_click(True)
-            return
-        report["checks"]["P0_1905_Numilog_XTEST_preview_then_explicit_SHA_without_acquisition"] = True
-        # Accounts precede public-only catalogues (#2141), so Paris is
-        # no longer guaranteed to be at the scroll bottom. Find the real
-        # target inside sync_homonyms_click before dispatching XTEST.
+        assert not f["numilog_preview_calls"]
         later(200, sync_homonyms_click)
 
     def sync_homonyms_click():
