@@ -121,7 +121,10 @@ def search_detail_borrow_action_candidate(item: object, availability: str) -> bo
     """
     from ..models import SearchResult
 
-    if type(item) is not SearchResult or item.medium != "digital":
+    if (type(item) is not SearchResult or item.medium != "digital"
+            or type(item.source_provider) is not str or not item.source_provider
+            or type(item.record_id) is not str or not item.record_id
+            or type(item.docbase) is not str or not item.docbase):
         return False
     # A source name is not borrowing evidence or an entitlement. The visible
     # action is additionally gated by window.can_borrow_item(item), which
