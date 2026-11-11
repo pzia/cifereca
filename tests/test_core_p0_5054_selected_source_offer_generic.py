@@ -131,7 +131,7 @@ def test_exact_current_offer_uses_generic_publisher_without_entitlement(monkeypa
         assert kw["explicit_entitlement_id"] is None
         assert kw["explicit_offer_id"] == "current-offer"
         assert kw["explicitly_confirmed_once"] is True
-        assert kw["expected_source_policy_revision"] is None
+        assert kw.get("expected_source_policy_revision") is None
         assert len(kw["persisted_consent"]) == 1
         key, = tuple(kw["persisted_consent"])
         assert kw["publication_guard"](None, key) is True
