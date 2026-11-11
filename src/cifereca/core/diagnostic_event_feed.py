@@ -22,7 +22,6 @@ from .diagnostic_kobo_projection import (
     public_kobo_backup_decision, public_kobo_backup_log,
     public_kobo_backup_message,
 )
-from .numilog_startup_diagnostics import public_log_fields as public_numilog_startup_log
 from .public_provider_diagnostics import (
     canonical_public_provider_id,
     public_connection_fields,
@@ -235,10 +234,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_kobo_backup_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            numilog_detail = (
-                public_numilog_startup_log(match["body"])
-                if match["logger"] == "cifereca" else {}
-            )
             numilog_session_detail = (
                 public_numilog_session_fields(match["body"])
                 if match["logger"] == "cifereca_numilog" else {}
@@ -301,8 +296,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 message = public_adept_message(adept_detail)
             elif source_sync_detail:
                 message = public_source_sync_message(source_sync_detail)
-            elif numilog_detail:
-                message = public_numilog_message("startup_materialization", numilog_detail)
             elif kobo_detail:
                 message = public_kobo_backup_message(kobo_detail)
             elif match["logger"] == "cifereca_numilog":
@@ -345,7 +338,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # text, guessed module names or timestamps as domain evidence.
             business_module = (
                 "KOBO" if kobo_detail else
-                "NUMILOG" if numilog_detail or numilog_session_detail else
+                "NUMILOG" if numilog_session_detail else
                 "SYNC" if source_sync_detail else
                 "PNB" if loan_download_detail and loan_download_detail["provider_id"] == "paris" else
                 "LOAN" if loan_download_detail or bnf_action_detail else
@@ -365,7 +358,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 or loan_download_detail.get("provider_id")
                 or bnf_action_detail.get("provider_id")
                 or ("kobo" if kobo_detail else None)
-                or ("numilog" if numilog_detail else None)
             )
             events.append({
                 "timestamp": ts,
@@ -374,7 +366,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "module": ".".join(safe_parts)[:90],
                 **({"business_module": business_module} if business_module else {}),
                 "severity": match["level"].lower(),
-                "message": message[:500] if numilog_detail or source_sync_detail or loan_download_detail or adept_detail else message[:240],
+                "message": message[:500] if source_sync_detail or loan_download_detail or adept_detail else message[:240],
                 **({"detail": kobo_detail} if kobo_detail else {}),
                 **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
                 **({"detail": connection_success_detail, "status": "ok"}
@@ -388,7 +380,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                    if audit_detail else {}),
                 **({"task_ref": audit_detail["task_ref"]}
                    if "task_ref" in audit_detail else {}),
-                **({"detail": numilog_detail} if numilog_detail else {}),
                 **({"detail": numilog_session_detail} if numilog_session_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
                    if source_sync_detail else {}),
@@ -623,26 +614,18 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 severity = ('info' if candidate['status']=='success' else
                             'error' if candidate['status']=='failed' else 'warning')
         if category == "NUMILOG":
-            # Startup facts must originate from the dedicated Core emitter.
-            # A generic plugin/diagnostics.add with a correctly shaped
-            # dictionary proves no source, phase, result or task provenance.
-            verified_startup = (
-                operation != "startup_materialization" or (
-                    type(diagnostics) is Diagnostics
-                    and row.get("verified_numilog_startup") is True
-                )
+            # Retired startup pseudo-right observations have no trusted Core
+            # producer. Unknown operations remain masked; active Numilog
+            # session/delivery schemas still use closed field allowlists.
+            public_detail = public_numilog_fields(
+                operation, row.get("detail"), row.get("duration_ms"),
             )
-            if verified_startup:
-                public_detail = public_numilog_fields(
-                    operation, row.get("detail"), row.get("duration_ms"),
-                )
-                task_ref = row.get("task_ref")
-                if (operation in {"acquisition_delivery", "session_state", "startup_materialization"}
-                        and type(task_ref) is str and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
-                    public_detail["task_ref"] = task_ref
-                message = public_numilog_message(operation, public_detail) or "[opération masquée]"
-            else:
-                message = "[opération masquée]"
+            task_ref = row.get("task_ref")
+            if (operation in {"acquisition_delivery", "session_state"}
+                    and type(task_ref) is str
+                    and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
+                public_detail["task_ref"] = task_ref
+            message = public_numilog_message(operation, public_detail) or "[opération masquée]"
         # Do not infer the provider from a business category (PNB/PLUGIN).
         # Only typed observations with Core provenance attest this identity.
         # runtime.kobo-adept also serves Paris, Numilog and manual imports.
@@ -675,9 +658,6 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                              and row.get("verified_kobo_backup") is True
                              and public_detail):
             attested_provider_id = "kobo"
-        elif (category == "NUMILOG" and operation == "startup_materialization"
-              and row.get("verified_numilog_startup") is True and public_detail):
-            attested_provider_id = "numilog"
         base_id = _event_id("core_events", utc_stamp, category + ":" + operation)
         event_id = base_id
         # Two records may share the same timestamp/category/operation.
