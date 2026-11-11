@@ -1,0 +1,21 @@
+"""#5055: obsolete BnF detail projection stays deleted; Core owns loan guards."""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_bnf_claim_detail_projection_is_absent_without_changing_loan_guards():
+    gui = ROOT / "src/cifereca/gui"
+    assert not (gui / "bnf_borrow_claim_status.py").exists()
+    detail = (gui / "detail_panel.py").read_text(encoding="utf-8")
+    assert "bnf_borrow_claim_status" not in detail
+    assert "bnf_borrow_claim_message" not in detail
+    assert "Une demande BnF existe peut-être déjà" in detail
+    assert "Consultez Mes emprunts avant toute nouvelle demande" in detail
+    assert "Cifereca ne répétera pas automatiquement l’emprunt" in detail
+    assert 'if item.source_provider == "paris":' in detail
+    assert "paris_borrow_diagnostic" in detail
+    # Core's checkpoint and anti-replay are retained independently of UI text.
+    core = ROOT / "src/cifereca/core"
+    assert (core / "borrow_claim_observation.py").is_file()
+    assert (core / "borrow_action_scope.py").is_file()
