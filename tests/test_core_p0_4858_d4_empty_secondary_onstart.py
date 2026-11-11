@@ -61,7 +61,7 @@ def test_old_primary_on_start_cannot_authorize_empty_secondary_borrower(
             lambda *_a, **_kw: pytest.fail(
                 "secondary empty Kobo account cannot inherit primary automatic GET"
             ),
-        )
+        , raising=False)
         result = service._opening_sync_locked(deep=False)
         assert result["kobo_decision"]["scheduled_kobo"] == 0
         assert service.storage.metadata_get(clock) is None
