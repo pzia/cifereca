@@ -72,12 +72,10 @@ def test_opening_never_executes_retired_w2_or_leaks_summary(tmp_path, monkeypatc
         service.config.set("kobo_backup.enabled", True)
         monkeypatch.setattr(
             service, "_sync_kobo_backup_locked",
-            lambda **_kwargs: pytest.fail("global batch is forbidden"),
-        , raising=False)
+            lambda **_kwargs: pytest.fail("global batch is forbidden"), raising=False)
         monkeypatch.setattr(
             service, "_sync_kobo_backup_account_locked",
-            lambda *_args, **_kwargs: pytest.fail("retired W2 must not run"),
-        , raising=False)
+            lambda *_args, **_kwargs: pytest.fail("retired W2 must not run"), raising=False)
         result = service._opening_sync_locked(deep=False)
         decision = result["kobo_decision"]
         assert decision["status"] == "manual_only"
@@ -101,8 +99,7 @@ def test_opening_manual_only_still_reports_decision_without_backup(tmp_path, mon
             service, "_sync_kobo_backup_locked",
             lambda progress=None: (_ for _ in ()).throw(
                 AssertionError("backup must not run without saved opt-in")
-            ),
-        , raising=False)
+            ), raising=False)
         result = service._opening_sync_locked(deep=False)
         assert result["kobo"] is None
         assert result["kobo_decision"]["status"] == "manual_only"
@@ -200,8 +197,7 @@ def test_retired_w2_cannot_report_synthetic_provider_success(tmp_path, monkeypat
         service.config.set("kobo_backup.enabled", True)
         monkeypatch.setattr(
             service, "_sync_kobo_backup_account_locked",
-            lambda *_a, **_kw: pytest.fail("no legacy account GET"),
-        , raising=False)
+            lambda *_a, **_kw: pytest.fail("no legacy account GET"), raising=False)
         result = service._opening_sync_locked(deep=False)
         assert result["kobo_decision"]["status"] == "manual_only"
         assert result["kobo_decision"]["scheduled_kobo"] == 0
