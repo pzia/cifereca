@@ -36,6 +36,13 @@ def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evide
     Supplier search rows never prove download permission. Rendering is pure:
     no Vault, provider account connection or remote request is performed.
     """
+    # Kobo supplier notices remain an observation, not a commercial right.
+    # Preserve its warning even when a notice uses a library collection.
+    if item.source_provider == "kobo":
+        if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
+            return "Notice Kobo connue hors ligne · droits non actualisés"
+        return "Origine Kobo · disponibilité à vérifier auprès du fournisseur"
+    # Non-commercial sources have no owned-purchase presentation contract.
     # Scope is documentary, not authorization: the canonical rights ledger
     # decides ownership. No provider flag or source label can grant it.
     if (item.source_credential == "__public__"
@@ -51,11 +58,6 @@ def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evide
         if state == "remote_owned":
             return "Mes achats · fichier local non présumé"
         return "Notice de bibliothèque · aucun droit d'achat attesté"
-    if item.source_provider != "kobo":
-        return ""
-    if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
-        return "Notice Kobo connue hors ligne · droits non actualisés"
-    return "Origine Kobo · disponibilité à vérifier auprès du fournisseur"
 
 class DetailPanel(Gtk.Box):
     def __init__(self, window: "MainWindow"):
