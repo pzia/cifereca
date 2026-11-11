@@ -91,12 +91,16 @@ def _same_positive_loan(candidate: Any, selected: Loan, account: Any) -> bool:
     return True
 
 
-def _renew_source_ready_inert(session: object, credential_id: str) -> bool:
+def _renew_source_ready_inert(
+    session: object, credential_id: str, provider_id: str,
+) -> bool:
     """Inspect initialized source capabilities without a plugin getter.
 
     This availability check only reads already-stored values. It never grants
     borrower permissions or sends a RenewLoans request.
     """
+    if type(provider_id) is not str or not provider_id:
+        return False
     memory = _inert_session_state(session)
     if memory is None:
         return False
@@ -116,9 +120,9 @@ def _renew_source_ready_inert(session: object, credential_id: str) -> bool:
     return bool(
         memory.get("connected") is True
         and memory.get("_closed") is not True
-        and memory.get("provider_id") == "paris"
+        and memory.get("provider_id") == provider_id
         and memory.get("credential_id") == credential_id
-        and descriptor.id == "paris"
+        and descriptor.id == provider_id
         and vars(descriptor.capabilities).get("renew_loan") is True
     )
 
@@ -159,7 +163,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         account, session, _return_key = self._return_loan_identity(loan)
         if (account.identity_id != loan.identity_id
                 or not _renew_source_ready_inert(
-                    session, loan.source_credential,
+                    session, loan.source_credential, loan.source_provider,
                 )):
             return _public("blocked", "loan_scope_unverified")
         # Loan.state from older Paris models may be None even when CanRenew is

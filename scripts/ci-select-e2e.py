@@ -154,6 +154,8 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             selected.update(RECOMMENDATIONS)
         elif path.startswith("src/plugins/epub_optimizer/"):
             selected.update(OPTIMIZER_GTK)
+        elif path == "src/cifereca/core/provider_loan_renewal.py":
+            selected.update(BOOK_DETAIL)
         elif path in SYNC_PRODUCERS:
             selected.update(SYNC_CORE)
         elif path.startswith("src/cifereca/builtin_ui/"):
