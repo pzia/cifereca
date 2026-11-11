@@ -190,7 +190,7 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
     assert "paris_borrow_followup_available" in src
     assert 'availability = "Empruntable"' in src
     assert "pending_followup = (" in src
-    assert 'verify.set_name("cifereca-paris-borrow-followup")' in src
+    assert 'verify.set_name("cifereca-borrow-followup")' in src
     router = (Path(__file__).resolve().parents[1]
               / "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
     assert "present_paris_borrow_verification(" in router
@@ -225,7 +225,7 @@ def test_mainwindow_existing_paris_router_dispatches_only_readonly_followup(tmp_
     session.borrow_explicit_with_claim = lambda *_a, **_kw: pytest.fail("POST")
     try:
         # Only the explicit verification_only flag reaches the new controller.
-        readonly_button = NS(get_name=lambda: "cifereca-paris-borrow-followup")
+        readonly_button = NS(get_name=lambda: "cifereca-borrow-followup")
         namespace["borrow_search_item"](window, item, readonly_button)
         assert len(window.runner.tasks) == 1
         assert window.runner.complete()["status"] == "observed_current_loan"
