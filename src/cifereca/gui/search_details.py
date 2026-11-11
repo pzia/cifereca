@@ -173,14 +173,76 @@ def _apply_search_detail(
                                            "current_identity", None), "identity_id", None),
                account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
                source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    # Keep unrelated provider callbacks (and AST-isolated host tests)
-    # independent of the optional Numilog UI adapter.
-    if getattr(item, "source_provider", None) in {"numilog", "numilog-catalog"}:
-        from .numilog_enrichment_action import add_numilog_enrichment_action
-        add_numilog_enrichment_action(
-            self, selected_id, item, detail, context,
-            button_factory=self.search_page.detail.window.action_button,
+    _add_explicit_enrichment_action(self, selected_id, item, detail, context)
+
+
+def _add_explicit_enrichment_action(
+    host: SearchDetailHost, selected_id: str, item: SearchResult,
+    detail: ItemDetail, context: tuple[int, int, int, str | None] | None,
+) -> bool:
+    """Expose an opt-in metadata action only for an installed source ABI.
+
+    Visibility is a hint, never an acquisition grant. The service rechecks
+    current identity and source during execution; callbacks guard selection.
+    """
+    from dataclasses import replace
+    from inspect import getattr_static
+    from ..core.provider_explicit_enrichment import can_enrich_provider_detail_result
+
+    if (not isinstance(context, tuple) or len(context) != 4
+            or not can_enrich_provider_detail_result(item)
+            or not host._search_detail_context_current(selected_id, context)):
+        return False
+    session = getattr(host.service, "_sessions", {}).get(
+        host.service._session_key(item.source_provider, item.source_credential)
+    )
+    method = ("enrich_public_detail" if item.source_collection == "public_catalog"
+              else "enrich_owned_public_detail")
+    if not callable(getattr_static(session, method, None)):
+        return False
+
+    def selected_key():
+        keys = [key for key, current in host.search_objects.items() if current is item]
+        return keys[0] if len(keys) == 1 else None
+
+    if selected_key() is None:
+        return False
+    button = host.search_page.detail.window.action_button(
+        "Enrichir les métadonnées", "view-refresh-symbolic",
+    )
+
+    def invoke(_button):
+        if (not host._search_detail_context_current(selected_id, context)
+                or selected_key() is None):
+            return
+        def worker():
+            return host.service.enrich_provider_search_result(
+                item, expected_identity_id=context[3] or "",
+            )
+        def success(enriched):
+            if not host._search_detail_context_current(selected_id, context):
+                return
+            key = selected_key()
+            if key is None:
+                return
+            refreshed = replace(
+                detail, title=enriched.title, author=enriched.author,
+                year=enriched.published_at, thumbnail_url=enriched.thumbnail_url,
+            )
+            host.search_objects[key] = enriched
+            host._apply_search_detail(selected_id, enriched, refreshed, context=context)
+        def failure(_exc):
+            if host._search_detail_context_current(selected_id, context):
+                host.toast("Enrichissement indisponible ou non attesté.", 5)
+        host.runner.submit(
+            "Enrichissement des métadonnées…", worker, success, failure,
+            control=button, priority=TaskPriority.USER_ACTION,
+            kind="plugin", origin="user",
         )
+
+    button.connect("clicked", invoke)
+    host.search_page.detail.add_actions([button])
+    return True
 
 
 def _search_detail_error(
