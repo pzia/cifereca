@@ -268,3 +268,16 @@ def test_failure_code_cannot_leak_on_pass_or_other_scenario():
         other_report.write_text(json.dumps(data), encoding="utf-8")
         result = mod.safe_summary(other_source)["results"][0]
         assert "book_detail_failure_code" not in result
+
+def test_synthetic_failure_code_is_hidden_outside_library_checkpoint():
+    mod = exporter()
+    with TemporaryDirectory() as tmp:
+        source, report = write_case(
+            Path(tmp), "book-detail-1366", stage="expanded_search",
+        )
+        data = json.loads(report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = "library_isbn"
+        report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        assert result["book_detail_last_stage"] == "expanded_search"
+        assert "book_detail_failure_code" not in result
