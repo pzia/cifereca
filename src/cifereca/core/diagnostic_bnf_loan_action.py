@@ -9,7 +9,7 @@ import re
 import time
 
 from ..diagnostic_task_context import diagnostic_task_reference
-from ..plugin_api import ProviderConfigurationError, ProviderError
+from ..plugin_api import ProviderConfigurationError
 
 PREFIX = 'EVENT bnf loan action '
 ACTIONS = frozenset({'stage_loan_token', 'import_acsm'})
@@ -56,19 +56,6 @@ class BnfLoanActionError(ProviderConfigurationError):
     def __init__(self, code):
         self.code = code if type(code) is str and code in STAGE_CODES | IMPORT_CODES else 'bnf_action_failed'
         super().__init__(self.code)
-
-
-def provider_reason(error):
-    # Never str(error), class names, arbitrary attributes, or log parsing.
-    if not isinstance(error, ProviderError):
-        return 'bnf_loan_token_unavailable'
-    try:
-        args = error.args
-        if type(args) is tuple and len(args) == 1 and type(args[0]) is str and args[0] in PROVIDER_REASONS:
-            return 'bnf_' + args[0]
-    except Exception:
-        pass
-    return 'bnf_loan_token_unavailable'
 
 
 def public_fields(value):
