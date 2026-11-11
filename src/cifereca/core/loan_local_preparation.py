@@ -75,7 +75,6 @@ def prepare(self, loan, *, identity, entitlement_id, force_refresh, started,
         credential_id=loan.source_credential,
         account_id=loan.source_account_id,
         item_id=str(loan.record_id or loan.id),
-        source_provider=loan.source_provider,
         artifact_inspector=inspect_artifact,
     )
     previous = previous_state.row
