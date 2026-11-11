@@ -48,20 +48,6 @@ def _safe_kobo_resume_receipt(summary: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _safe_kobo_progress_count(value: Any) -> int:
-    """Render only a bounded, non-identifying Kobo progress counter."""
-    return value if type(value) is int and 0 <= value <= 1_000_000 else 0
-
-
-def _safe_kobo_sync_receipt(summary: dict[str, Any]) -> dict[str, Any]:
-    """Copyable Kobo sync output without private per-book or provider data."""
-    from .core.legacy_diagnostic_projection import _safe_kobo_backup_diagnostic_detail
-
-    # This serializer is also used by Diagnostics.add; it rejects all free
-    # text, account identifiers, titles, signed URLs, local paths and tokens.
-    return {"redacted": True, **_safe_kobo_backup_diagnostic_detail(summary)}
-
-
 def _kobo_legacy_report_view(
     safe_report: dict[str, Any], *, observed_at: int | None = None,
 ) -> dict[str, Any]:
