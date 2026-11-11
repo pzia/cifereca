@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from cifereca.core import kobo_local_reconciliation as repair
+from cifereca.core import offline_canonical_relink as repair
 
 
 FILE_ONLY = {
