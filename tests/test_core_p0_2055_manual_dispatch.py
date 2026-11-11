@@ -299,61 +299,57 @@ def test_wrong_source_or_identity_never_touches_account_or_claim(tmp_path):
         service.close()
 
 
-def test_legacy_gtk_borrow_never_dispatches_bnf_even_if_capability_changes():
-    """An accidental manifest promotion cannot route BnF to session.borrow."""
+def test_manual_gtk_dispatch_is_provider_neutral_and_claimed_only():
+    """Named BnF/Paris routing must never revive the legacy session.borrow."""
     import ast
     path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     main = next(n for n in tree.body
                 if isinstance(n, ast.ClassDef) and n.name == "MainWindow")
+    methods = {
+        node.name: node for node in main.body if isinstance(node, ast.FunctionDef)
+    }
     for name in ("can_borrow_item", "borrow_search_item"):
-        method = next(n for n in main.body
-                      if isinstance(n, ast.FunctionDef) and n.name == name)
-        guards = [
-            (index, node) for index, node in enumerate(method.body)
-            if isinstance(node, ast.If)
-            and ast.unparse(node.test) ==
-            "getattr(item, 'source_provider', None) == 'bnf-pret'"
-        ]
-        assert len(guards) == 1
-        index, guard = guards[0]
-        assert isinstance(guard.body[-1], ast.Return)
-        if name == "can_borrow_item":
-            assert index == 0
-            assert ast.unparse(guard.body[-1].value) == (
-                "self.service.can_borrow_bnf(item)"
-            )
-        else:
-            assert guard.body[-1].value is None
-            assert any(
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Name)
-                and call.func.id == "present_bnf_borrow"
-                for call in ast.walk(guard)
-            )
-            # The read-only gesture always terminates before any lender's
-            # mutating path, including BnF and the legacy generic branch.
-            verification = [
-                (i, node) for i, node in enumerate(method.body)
-                if isinstance(node, ast.If)
-                and isinstance(node.test, ast.Name)
-                and node.test.id == "verification_only"
-            ]
-            assert len(verification) == 1
-            vi, read_only = verification[0]
-            assert vi < index
-            assert isinstance(read_only.body[-1], ast.Return)
-            assert not any(
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and call.func.attr in {"borrow", "borrow_explicit_with_claim"}
-                for call in ast.walk(read_only)
-            )
-    # Generic session.borrow remains only in the non-BnF branch.
-    source = ast.unparse(next(n for n in main.body
-                             if isinstance(n, ast.FunctionDef)
-                             and n.name == "borrow_search_item"))
-    assert source.index("present_bnf_borrow(") < source.index("session.borrow(")
+        method = methods[name]
+        source = ast.unparse(method)
+        assert "bnf-pret" not in source and "paris" not in source
+        assert "self.service.can_borrow_bnf" not in source
+        assert "self.service.can_borrow_paris" not in source
+        assert "present_bnf_borrow" not in source
+        assert "present_paris_borrow(" not in source
+        assert "getattr_static(" in source
+    router = methods["borrow_search_item"]
+    verification = [
+        (i, node) for i, node in enumerate(router.body)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "verification_only"
+    ]
+    assert len(verification) == 1
+    vi, read_only = verification[0]
+    assert isinstance(read_only.body[-1], ast.Return)
+    assert not any(
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr in {"borrow", "borrow_explicit_with_claim"}
+        for call in ast.walk(read_only)
+    )
+    claimed = [
+        (i, node) for i, node in enumerate(router.body)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "claimed_executor"
+    ]
+    assert len(claimed) == 1
+    ci, guarded = claimed[0]
+    assert ci > vi
+    assert isinstance(guarded.body[-1], ast.Return)
+    assert "_present_manual_borrow(" in ast.unparse(guarded)
+    # Explicit claimed executors are dispatched to a Core one-shot API
+    # or rejected; no possible fallthrough to the historical mutator.
+    assert ast.unparse(router).index("if claimed_executor:") < (
+        ast.unparse(router).index("session.borrow(")
+    )
 
 
 def test_inert_ui_visibility_ignores_catalogue_button_without_capability(tmp_path):
