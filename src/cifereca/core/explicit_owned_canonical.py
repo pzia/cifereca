@@ -30,6 +30,9 @@ from .source_convergence import SourceKey
 
 def obtain_explicit_owned(service, target, *, resolve, right_current) -> MaterializationResult:
     """Exact, one-shot Core permission; never implicit source-wide Sync consent."""
+    # A selected current provider offer can replace a historical Core right.
+    # The exact source/session and one-shot click remain mandatory.
+    offer_only = getattr(target, "entitlement_id", "invalid") is None
     if (not callable(resolve) or not callable(right_current)
             or type(getattr(target, "provider_id", None)) is not str
             or not target.provider_id or type(getattr(target, "branch", None)) is not str
@@ -166,6 +169,11 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                 """
                 if source != key or not context_current():
                     return False
+                if offer_only:
+                    # No persisted provider rights: publication still performs
+                    # its own BEGIN IMMEDIATE exact owner/source, staged-offer,
+                    # completed receipt, SHA and physical placement checks.
+                    return selected_offer_id[0] is not None
                 try:
                     rows = db.execute(
                         "SELECT entitlement_type,state,loan_id,expires_at,"
@@ -206,7 +214,8 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                 persisted_consent=frozenset({key}),
                 consent_still_current=live_permission,
                 explicitly_confirmed_once=True,
-                explicit_entitlement_id=target.entitlement_id,
+                explicit_entitlement_id=(None if offer_only else target.entitlement_id),
+                explicit_offer_id=(offer_id if offer_only else None),
                 publication_guard=publication_guard,
                 deliver=lambda source, chosen: complete_selected_delivery(
                     service, account, session, source, chosen,
