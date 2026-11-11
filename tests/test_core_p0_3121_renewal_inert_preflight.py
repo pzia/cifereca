@@ -16,19 +16,25 @@ from tests.test_core_p1_3121_paris_renewal_one_post import setup
 def test_normal_initialized_renewal_source_and_exact_credential(tmp_path):
     service, _account, _loan, session = setup(tmp_path)
     try:
-        assert _renew_source_ready_inert(session, "card") is True
-        assert _renew_source_ready_inert(session, "other-credential") is False
+        assert _renew_source_ready_inert(session, "card", "paris") is True
+        assert _renew_source_ready_inert(session, "card", "another-provider") is False
+        assert _renew_source_ready_inert(session, "card", "") is False
+        assert _renew_source_ready_inert(session, "card", None) is False
+        assert _renew_source_ready_inert(session, "other-credential", "paris") is False
+        session.descriptor = replace(session.descriptor, id="another-provider")
+        assert _renew_source_ready_inert(session, "card", "paris") is False
+        session.descriptor = replace(session.descriptor, id="paris")
         session._closed = True
-        assert _renew_source_ready_inert(session, "card") is False
+        assert _renew_source_ready_inert(session, "card", "paris") is False
         session._closed = False
         session.connected = False
-        assert _renew_source_ready_inert(session, "card") is False
+        assert _renew_source_ready_inert(session, "card", "paris") is False
         session.connected = True
         session.descriptor = replace(
             session.descriptor,
             capabilities=replace(session.descriptor.capabilities, renew_loan=False),
         )
-        assert _renew_source_ready_inert(session, "card") is False
+        assert _renew_source_ready_inert(session, "card", "paris") is False
     finally:
         service.close()
 
