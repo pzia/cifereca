@@ -120,9 +120,11 @@ def owned_library_download_target(service, entry):
     # Never choose implicitly between two actionable source possessions.
     if isinstance(entry, dict) and isinstance(entry.get("possessions"), (list, tuple)):
         current = getattr(service.current_identity, "identity_id", None)
-        candidates = [p for p in entry["possessions"] if isinstance(p, dict)
+        # A second active origin from any supplier makes implicit selection
+        # ambiguous. Provider identity is descriptive, never an authority.
+        candidates = [p for p in entry["possessions"] if type(p) is dict
                       and p.get("identity_id") == current and p.get("state") == "active"
-                      and p.get("kind") == "owned" and p.get("provider_id") in {"kobo", "numilog"}]
+                      and p.get("kind") == "owned"]
         if len(candidates) > 1:
             return None
     from .selected_source_offer import select_library_source_offer_target
