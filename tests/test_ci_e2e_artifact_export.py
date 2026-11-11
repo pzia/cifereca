@@ -105,6 +105,33 @@ class SafeE2EExportTests(unittest.TestCase):
         self.assertNotIn("name: e2e-core-debug", content)
 
 
+def test_book_detail_pillow_capture_phase_is_strictly_allowlisted():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        for value in ("imagegrab", "display_geometry", "png_write",
+                      "PRIVATE_X11_ERROR", True, 7, None):
+            report.write_text(json.dumps({
+                "capture_failure_phase": value,
+                "error": "PRIVATE_SIGNED_IMAGE_URL", "account": "PRIVATE",
+            }))
+            result = module.safe_summary(source)["results"][0]
+            if value in {"imagegrab", "display_geometry", "png_write"}:
+                assert result["book_detail_capture_failure_phase"] == value
+            else:
+                assert "book_detail_capture_failure_phase" not in result
+            assert "PRIVATE" not in repr(result)
+        # Only failed GTK probes may disclose the diagnostic category.
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({"capture_failure_phase": "imagegrab"}))
+        assert "book_detail_capture_failure_phase" not in module.safe_summary(source)["results"][0]
+
+
 def test_book_detail_callback_line_is_ast_validated_and_excludes_private_details():
     import ast
     module = _module()
