@@ -179,19 +179,6 @@ def main(argv: list[str] | None = None) -> int:
         "--undo", help="Opération de relocalisation canonique à inverser ; "
                        "remettre physiquement le fichier au chemin d'origine avant l'aperçu",
     )
-    kobo_preview = sub.add_parser(
-        "kobo-resume-preview",
-        help="Aperçu en lecture seule des candidats Kobo (aucun téléchargement)",
-    )
-    kobo_preview.add_argument("--credential", required=True, help="Identifiant de connexion Kobo")
-    kobo_preview.add_argument(
-        "--refresh-manifest", action="store_true",
-        help="Lire seulement le manifeste distant (sans lien d'acquisition ni téléchargement)",
-    )
-    kobo_preview.add_argument(
-        "--verify-files", action="store_true",
-        help="Inspecter et hacher les fichiers liés (peut prendre du temps)",
-    )
     # P0 #4858 D3: one edition only, using Core's same selected-offer A->B.
     # The legacy kobo-resume command stays isolated from this route.
     selected_kobo = sub.add_parser(
@@ -1005,7 +992,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         local_adept_commands = {
-            "kobo-sync-errors", "kobo-backup-errors", "kobo-resume-preview",
+            "kobo-sync-errors", "kobo-backup-errors",
             "statistics", "catalog-scan", "catalog-list", "acquisition-ledger", "acquisition-reconcile",
         }
         if a.cmd not in local_adept_commands:
@@ -1045,35 +1032,6 @@ def main(argv: list[str] | None = None) -> int:
             result = _kobo_legacy_report_view(
                 safe_kobo_backup_report(service.kobo_backup_diagnostic()),
             )
-        elif a.cmd == "kobo-resume-preview":
-            try:
-                if a.refresh_manifest:
-                    # Only the explicit refresh may read the remote Kobo A
-                    # inventory. A complete ABI also needs its one exact
-                    # already-bound Core Account: preview-only session
-                    # registration cannot satisfy the canonical A reader.
-                    # This memory-only bind does NOT grant GET/download:
-                    # the preview's pipeline is read-only and every actual
-                    # acquisition has independent CAS/confirmation gates.
-                    # Incomplete ABIs retain their bounded legacy preview.
-                    service.connect_kobo_canonical(a.credential)
-                result = service.kobo_backup_preview(
-                    a.credential,
-                    refresh_manifest=a.refresh_manifest,
-                    verify_local_files=a.verify_files,
-                    offline_canonical_only=not a.refresh_manifest,
-                )
-            except Exception:
-                # Diagnostic CLI boundary: provider responses, private paths,
-                # signed URLs and tokens must not escape as a traceback.
-                # No fallback to another identity or credential is allowed.
-                result = {
-                    "status": "unavailable",
-                    "code": "kobo_preview_unavailable",
-                    "preview_only": True,
-                    "acquisition_authorized": False,
-                }
-                exit_code = 2
         elif a.cmd == "statistics":
             result = [service.identity_statistics(i.identity_id) for i in service.identities if not a.identity or i.identity_id==a.identity]
         elif a.cmd == "catalog-scan":
