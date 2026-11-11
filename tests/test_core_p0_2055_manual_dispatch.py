@@ -299,8 +299,8 @@ def test_wrong_source_or_identity_never_touches_account_or_claim(tmp_path):
         service.close()
 
 
-def test_manual_gtk_dispatch_is_provider_neutral_and_claimed_only():
-    """Named BnF/Paris routing must never revive the legacy session.borrow."""
+def test_manual_gtk_dispatch_is_provider_neutral_abi_only():
+    """No provider-branch decisions or legacy session.borrow mutation remain."""
     import ast
     path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -310,14 +310,14 @@ def test_manual_gtk_dispatch_is_provider_neutral_and_claimed_only():
         node.name: node for node in main.body if isinstance(node, ast.FunctionDef)
     }
     for name in ("can_borrow_item", "borrow_search_item"):
-        method = methods[name]
-        source = ast.unparse(method)
+        source = ast.unparse(methods[name])
         assert "bnf-pret" not in source and "paris" not in source
-        assert "self.service.can_borrow_bnf" not in source
-        assert "self.service.can_borrow_paris" not in source
+        assert "can_borrow_bnf" not in source
+        assert "can_borrow_paris" not in source
         assert "present_bnf_borrow" not in source
         assert "present_paris_borrow(" not in source
-        assert "getattr_static(" in source
+        assert "session.borrow(" not in source
+
     router = methods["borrow_search_item"]
     verification = [
         (i, node) for i, node in enumerate(router.body)
@@ -334,22 +334,13 @@ def test_manual_gtk_dispatch_is_provider_neutral_and_claimed_only():
         and call.func.attr in {"borrow", "borrow_explicit_with_claim"}
         for call in ast.walk(read_only)
     )
-    claimed = [
-        (i, node) for i, node in enumerate(router.body)
-        if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Name)
-        and node.test.id == "claimed_executor"
-    ]
-    assert len(claimed) == 1
-    ci, guarded = claimed[0]
-    assert ci > vi
-    assert isinstance(guarded.body[-1], ast.Return)
-    assert "_present_manual_borrow(" in ast.unparse(guarded)
-    # Explicit claimed executors are dispatched to a Core one-shot API
-    # or rejected; no possible fallthrough to the historical mutator.
-    assert ast.unparse(router).index("if claimed_executor:") < (
-        ast.unparse(router).index("session.borrow(")
+    source = ast.unparse(router)
+    assert source.index("if verification_only:") < (
+        source.index("self.service.manual_borrow_policy(item)")
     )
+    assert "_present_manual_borrow(" in source
+    assert "self.service.borrow_manual" in source
+    assert "if policy is None:" in source
 
 
 def test_inert_ui_visibility_ignores_catalogue_button_without_capability(tmp_path):
