@@ -20,6 +20,10 @@ NODE24_ARTIFACT_WORKFLOWS = frozenset({
 })
 
 PUBLIC_ARTIFACT_PATHS = {
+    "gtk-ubuntu24-cache-asset.yml": (
+        ".gtk-publish/gtk4-deb-cache-ubuntu24-noble-amd64.tar.gz",
+        ".gtk-publish/SHA256SUMS",
+    ),
     "gtk-debian13-cache-asset.yml": (
         ".gtk-publish/gtk4-deb-cache-debian13-trixie-amd64.tar.gz",
         ".gtk-publish/SHA256SUMS",
