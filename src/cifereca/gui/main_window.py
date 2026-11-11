@@ -1706,7 +1706,7 @@ class MainWindow(Adw.ApplicationWindow):
         verification_only = (
             control is not None
             and callable(getattr(control, "get_name", None))
-            and control.get_name() == "cifereca-paris-borrow-followup"
+            and control.get_name() == "cifereca-borrow-followup"
         )
         if verification_only:
             from .bnf_borrow_controller import present_paris_borrow_verification
