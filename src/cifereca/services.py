@@ -4055,10 +4055,6 @@ class LibraryService:
             explicit_user_action=explicit_user_action, cancelled=cancelled,
         )
 
-    def kobo_unlinked_local_count(self, identity_id: str) -> int:
-        """Conservative guard, never infer a Kobo link from a filename/title."""
-        return kobo_backup.kobo_unlinked_local_count(self, identity_id)
-
     def _account_for_loan(self, loan: Loan) -> Account:
         """Resolve the exact borrower recorded on a loan.
 
