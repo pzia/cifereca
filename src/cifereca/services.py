@@ -1792,8 +1792,8 @@ class LibraryService:
 
     def enrich_numilog_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
         """User-triggered metadata-only Numilog enrichment; never auto-sync."""
-        from .core.numilog_explicit_enrichment import enrich_numilog_result_once
-        return enrich_numilog_result_once(
+        from .core.provider_explicit_enrichment import enrich_provider_detail_once
+        return enrich_provider_detail_once(
             self, item, expected_identity_id=expected_identity_id,
         )
 
