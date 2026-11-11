@@ -16,7 +16,7 @@ from ..locking import InterProcessLock
 from ..models import Account
 from ..paths import acquisition_lock_file
 from ..plugin_api.downloadable_resources import (
-    ResourceSnapshot, as_legacy_rights_snapshot,
+    as_legacy_rights_snapshot,
 )
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_delivery_abi import has_complete_delivery_abi
@@ -134,20 +134,11 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                 kind="purchase", branch=target.branch,
                 explicit_user_action=True,
             )
-            if (type(observed) is not ResourceSnapshot
-                    or observed.scope != scope or observed.branch != key.branch
-                    or observed.status not in {"success", "partial"}
-                    or len(observed.resources) != 1):
+            from .explicit_selected_offer import exact_selected_offer_id
+            offer_id = exact_selected_offer_id(observed, key)
+            if offer_id is None:
                 raise ValueError("explicit_canonical_offer_unattested")
-            offer = observed.resources[0]
-            if (offer.source.scope != scope
-                    or offer.source.branch != key.branch
-                    or (offer.source.edition_id, offer.source.resource_id,
-                        offer.source.kind) != (
-                        key.edition_id, key.right_id, key.kind)
-                    or not offer.can_propose_delivery):
-                raise ValueError("explicit_canonical_offer_mismatch")
-            selected_offer_id[0] = offer.capability.offer_id
+            selected_offer_id[0] = offer_id
             if not live_permission(key):
                 raise ValueError("explicit_canonical_permission_revoked")
             # The strict target resolver (including no competing receipt)
