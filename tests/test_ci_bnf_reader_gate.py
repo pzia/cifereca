@@ -33,8 +33,19 @@ class BnfReaderGateTests(unittest.TestCase):
 
     def test_other_provider_and_core_do_not_select_gate(self):
         self.transport()
-        for path in ('README.md', 'src/plugins/provider-paris/a.py', 'src/cifereca/services.py'):
+        for path in ('README.md', 'src/plugins/provider-paris/a.py',
+                     'src/cifereca/core/book_runtime.py'):
             self.assertFalse(gate.selected([path], self.root))
+
+    def test_core_bnf_cutover_selects_httpx_acceptance(self):
+        self.transport()
+        for path in (
+            'src/cifereca/core/bnf_auto_materialization.py',
+            'src/cifereca/core/sync_coordination.py',
+            'src/cifereca/brokers.py',
+            'src/cifereca/services.py',
+        ):
+            self.assertTrue(gate.selected([path], self.root), path)
 
     def test_workflow_harness_and_manual_full_run_revalidate(self):
         self.transport()
