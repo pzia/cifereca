@@ -27,6 +27,61 @@ GTK4_POC_PYTHON=/usr/bin/python3 ./gtk-python check_import.py
 
 **Ne pas relancer le téléchargement si le cache existe déjà** : l'outil refuse volontairement d'écraser une destination. Le relais GitHub Actions documenté plus bas sert de **secours/reconstruction**, pas de préalable systématique. Aucune installation système ni archive privée.
 
+## Secours validé : GitHub Actions → connecteur GitHub → Debian sans DNS
+
+**Vérifié le 11/11/2026 sur Debian 13.3 / Python 3.13.5** : lorsque la VM
+de l'agent ne résout ni GitHub ni les miroirs APT, un runner GitHub Actions
+Ubuntu 24.04 peut servir de **transport** de la Release Debian immuable.
+Il ne construit **aucun paquet Ubuntu** et n'exécute pas le bootstrap Debian.
+
+1. Sur une branche/PR **temporaire non fusionnée**, utiliser un job Actions
+   `runs-on: ubuntu-24.04` avec `permissions: contents: read`.
+   Télécharger uniquement les deux assets publics de la Release
+   `gtk4-debian13-trixie-amd64-20261020` : le TAR Debian et `SHA256SUMS`.
+   Vérifier dans le job le SHA-256 **épinglé** :
+   `994827c014446ffdd37016a18c4e457ef2ad225a1de84f9c738efc23f60324e4`.
+   Publier uniquement ces deux fichiers avec `actions/upload-artifact`,
+   `retention-days: 1`, `if-no-files-found: error`. Ne pas inclure de
+   checkout, journaux, captures ou fichiers privés dans l'artefact.
+2. Depuis l'agent sans réseau, utiliser **le connecteur GitHub** connecté
+   pour lire les artefacts du run et télécharger le ZIP Actions dans le
+   conteneur courant ; ce transfert ne nécessite pas la résolution DNS
+   GitHub par la VM. Décompresser le ZIP (il contient le TAR et SHA256SUMS).
+3. Depuis la racine de Cifereca, vérifier et décompresser le TAR avec le
+   validateur versionné, sans extraire directement un TAR non vérifié :
+
+```bash
+ARCHIVE="/chemin/local/gtk4-deb-cache-debian13-trixie-amd64.tar.gz"
+CACHE="/chemin/vers/un/nouveau/gtk4-cache-debian13"
+/usr/bin/python3 environnements/openai-chat-debian/fetch_release_cache.py \
+  --archive "$ARCHIVE" \
+  --sha256 994827c014446ffdd37016a18c4e457ef2ad225a1de84f9c738efc23f60324e4 \
+  --dest "$CACHE"
+cd environnements/openai-chat-debian
+/usr/bin/python3 bootstrap.py --offline --deb-cache "$CACHE" --python /usr/bin/python3
+GTK4_POC_PYTHON=/usr/bin/python3 ./gtk-python check_import.py
+GTK4_POC_PYTHON=/usr/bin/python3 ./headless \
+  --screen 1300x900x24 -- ./gtk-python test_ui.py
+```
+
+**Preuve du transfert** : [run #43072042312](https://github.com/pzia/cifereca/actions/runs/43072042312),
+[PR temporaire #5650](https://github.com/pzia/cifereca/pull/5650)
+fermée sans fusion. TAR vérifié : **261 paquets**, SHA-256 conforme.
+Self-test GTK4/Xvfb/XTEST exécuté ici : **11/11 PASS**, GTK4 4.18.6,
+PyGObject 3.50.0. Ce self-test valide le harnais, **pas un E2E Cifereca**.
+
+**Limite constatée sur le `main` du 11/11/2026** : le cache immuable
+d'octobre n'inclut pas `apsw>=3.54.0,<3.55`, désormais exigé par
+`pyproject.toml`. Le `check_import.py` du bootstrap échoue donc
+(`PackageNotFoundError: apsw`), même si GTK4/libadwaita et le self-test
+fonctionnent. **Ne pas annoncer un bootstrap complet PASS** ni contourner
+le contrôle : le rôle CI/CD doit produire un cache actualisé compatible,
+avec un **nouveau tag** et une nouvelle empreinte épinglée.
+
+Après transfert, fermer la PR temporaire **sans fusion** et laisser expirer
+l'artefact. Cette alternative est réservée aux agents Debian sans DNS :
+les E2E GitHub classiques continuent à utiliser Ubuntu 24.04.
+
 ## Préparer l'environnement
 
 Prérequis : Debian 13 `trixie`, Python 3.13, `apt-get`, `dpkg-deb`, `tar` et
