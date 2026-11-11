@@ -69,7 +69,7 @@ def test_search_detail_actual_ui_uses_candidate_and_core_admission():
     """The GTK renderer must not reintroduce the legacy string-only veto."""
     path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
     source = path.read_text(encoding="utf-8")
-    assert "elif search_detail_borrow_action_candidate(item, availability):" in source
-    assert "if self.window.can_borrow_item(item):" in source
+    assert "elif pending_followup or search_detail_borrow_action_candidate(item, availability):" in source
+    assert "if not pending_followup and self.window.can_borrow_item(item):" in source
     assert "self.window.borrow_search_item(item, borrow)" in source
     assert 'availability == "Empruntable"' not in source
