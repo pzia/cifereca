@@ -1,3 +1,4 @@
+# Baseline-only CI probe (#5048): no executable change; compare book-detail on main.
 #!/usr/bin/env python3
 """UX #942: real GTK4 Search/Library detail, multivalued bibliographic rows.
 
