@@ -512,6 +512,11 @@ def main():
 
     def library_select():
         assert window.library_page.store.get_n_items() == 1
+        # SingleSelection may already point to row 0 after a route switch.
+        # A no-op set_selected(0) emits no selection-changed signal and
+        # leaves the detail rendering stale. Trigger a genuine transition,
+        # then verify the same real GTK detail and all metadata assertions.
+        window.library_page.selection.set_selected(Gtk.INVALID_LIST_POSITION)
         window.library_page.selection.set_selected(0)
         later(270, verify_library)
 
