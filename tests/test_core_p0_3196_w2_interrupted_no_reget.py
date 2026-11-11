@@ -67,11 +67,7 @@ def test_retired_w2_never_retries_or_rewrites_historical_checkpoint(
         monkeypatch.setattr(service.storage, "backup_put", forbidden)
         monkeypatch.setattr(service.storage, "backup_prune_missing", forbidden)
         for _ in range(2):  # repeated startup/replay must remain no-op
-            with pytest.raises(
-                ProviderConfigurationError,
-                match="kobo_legacy_w2_retired_use_canonical_provider",
-            ):
-                service.sync_kobo_backup()
+            assert not hasattr(service, "sync_kobo_backup")
             assert service.storage.backup_get(
                 "kobo", "vault-1", "book-1",
             ) == before
@@ -111,11 +107,7 @@ def test_interrupted_locator_does_not_mint_sha_or_canonical_origin(
                             lambda *_a, **_k: pytest.fail("legacy writer"))
         monkeypatch.setattr(service, "_execute_kobo_acquisition",
                             lambda *_a, **_k: pytest.fail("second GET"))
-        with pytest.raises(
-            ProviderConfigurationError,
-            match="kobo_legacy_w2_retired_use_canonical_provider",
-        ):
-            service.sync_kobo_backup()
+        assert not hasattr(service, "sync_kobo_backup")
         assert service.storage.backup_get("kobo", "vault-1", "book-1") == before
         assert path.read_bytes() == original
         assert service.storage.placements() == placements_before
