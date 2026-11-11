@@ -9,6 +9,7 @@ exact borrower, file/inode/hash, and final OriginLink transaction.
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from .canonical_recovery import _SCHEMA, _STAGED, _scope, _stage_id
@@ -71,5 +72,5 @@ def selected_offer_stage_current_in_transaction(
             and stage.get("receipt") == delivery_receipt_ref
             and stage.get("adept_receipt") == adept_receipt_ref
         )
-    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+    except (AttributeError, TypeError, ValueError, sqlite3.Error):
         return False
