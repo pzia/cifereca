@@ -18,7 +18,8 @@ def test_kobo_dedicated_core_surface_never_grows_from_baseline():
     assert result["dedicated_lines"] <= BASELINE
     assert result["dedicated_lines"] == sum(result["groups"].values())
     assert result["dedicated_files"] == len(result["per_file"])
-    assert result["groups"]["core"] > 0
+    assert result["groups"]["core"] == 0
+    assert result["dedicated_lines"] == 0  # P0: no supplier-named Core module survives
     assert result["groups"]["kobo_subpackage"] == 0
     assert result["groups"]["gui_legacy"] == 0
     assert result["nonblank_noncomment_lines"] <= result["dedicated_lines"]
