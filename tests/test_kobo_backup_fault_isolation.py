@@ -7,9 +7,8 @@ import zipfile
 
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
-from cifereca.kobo.vault import KoboVaultError
 from cifereca.models import Account, SearchResult
-from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
+from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession, ProviderError
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
@@ -93,11 +92,7 @@ class BackupSession(ProviderSession):
         self.resolve_calls.append((product_id, mode))
         if product_id == "bad":
             if mode == "delegated":
-                raise KoboVaultError(
-                    "Kobo-Vault : scope insuffisant",
-                    code="insufficient_scope",
-                    status_code=403,
-                )
+                raise ProviderError("Synthetic provider refusal")
             return {
                 "acquisition": {
                     "candidates": [{
