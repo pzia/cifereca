@@ -13,7 +13,11 @@ def test_kobo_service_facades_have_no_w2_executor_call() -> None:
         node for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name == "LibraryService"
     )
-    for name in ("sync_kobo_backup", "sync_kobo_backup_account"):
+    assert not any(
+        isinstance(node, ast.FunctionDef) and node.name == "sync_kobo_backup"
+        for node in service.body
+    )
+    for name in ("sync_kobo_backup_account",):
         method = next(
             node for node in service.body
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))

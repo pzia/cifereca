@@ -168,9 +168,7 @@ def test_retired_w2_does_not_reconcile_or_prune_legacy_receipts(
         monkeypatch.setattr(service.storage, "backup_put", forbidden)
         monkeypatch.setattr(service.storage, "backup_prune_missing", forbidden)
         for _ in range(2):
-            with pytest.raises(ProviderConfigurationError,
-                               match="kobo_legacy_w2_retired_use_canonical_provider"):
-                service.sync_kobo_backup()
+            assert not hasattr(service, "sync_kobo_backup")
             assert service.storage.backup_get("kobo", "vault-1", "book-1") == before
         assert service.storage.placements() == previous
         if prior_bytes is not None:

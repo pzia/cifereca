@@ -57,11 +57,7 @@ def test_ambiguous_flags_never_trigger_acquisition_or_prune(
     try:
         original = saved.read_bytes()
         # Raw 0.7 flags are not canonical A evidence. D3 cannot GET.
-        with pytest.raises(
-            ProviderConfigurationError,
-            match="kobo_legacy_w2_retired_use_canonical_provider",
-        ):
-            service.sync_kobo_backup()
+        assert not hasattr(service, "sync_kobo_backup")
         assert service.storage.backup_get(
             "kobo", "vault-1", "book-1",
         )["status"] == "complete"
@@ -95,11 +91,7 @@ def test_retired_w2_cannot_consume_partial_historical_manifest(tmp_path, monkeyp
     )
     try:
 
-        with pytest.raises(
-            ProviderConfigurationError,
-            match="kobo_legacy_w2_retired_use_canonical_provider",
-        ):
-            service.sync_kobo_backup()
+        assert not hasattr(service, "sync_kobo_backup")
         with pytest.raises(
             ProviderConfigurationError,
             match="canonical_kobo_preview_abi_unavailable",

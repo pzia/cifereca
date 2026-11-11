@@ -265,11 +265,7 @@ def test_legacy_w2_never_downloads_or_mutates_hostile_local_candidates(
             lambda *_a, **_kw: pytest.fail("retired W2 must not write"),
         )
         for _ in range(2):
-            with pytest.raises(
-                ProviderConfigurationError,
-                match="kobo_legacy_w2_retired_use_canonical_provider",
-            ):
-                service.sync_kobo_backup()
+            assert not hasattr(service, "sync_kobo_backup")
         assert service.storage.backup_get("kobo", "vault-1", "book-1") == before
         assert service.storage.placements() == placements_before
         assert all(path.read_bytes() == content

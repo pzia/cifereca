@@ -6,9 +6,6 @@ import pytest
 from tests.test_core_ui_1132_opening_sync_close_gate import (
     _host as opening_host, _method as opening_method,
 )
-from tests.test_core_ui_1132_kobo_progress_close_gate import (
-    _method as kobo_method,
-)
 
 
 PRIVATE_ERROR = (
@@ -67,41 +64,3 @@ def test_opening_progress_without_public_label_never_falls_back_to_identity_key(
     })
     assert updates == ["Synchronisation · une identité…"]
     assert "PRIVATE_ACCOUNT" not in repr(updates)
-
-
-@pytest.mark.parametrize("manual", [True, False])
-def test_kobo_worker_redacts_provider_exception_before_taskrunner(manual):
-    run, _queue = kobo_method("run_kobo_backup")
-    submitted = []
-    displays = []
-    diagnostics = []
-    host = type("Host", (), {})()
-    host._closed = False
-    host.service = type("Service", (), {"sync_kobo_backup": staticmethod(raise_private)})()
-    host.runner = type("Runner", (), {
-        "submit": staticmethod(lambda *args, **kwargs: submitted.append((args, kwargs)))
-    })()
-    host.show_error = lambda *args: displays.append(args)
-    host.diagnostics = type("Diagnostics", (), {
-        "add": staticmethod(lambda *args, **kwargs: diagnostics.append((args, kwargs)))
-    })()
-    run(host, manual=manual)
-    args, _kwargs = submitted[0]
-    with pytest.raises(RuntimeError) as exc:
-        args[1]()
-    assert str(exc.value) == "Synchronisation locale Kobo indisponible"
-    assert exc.value.__cause__ is None
-    args[3](exc.value)
-    if manual:
-        assert displays == [(
-            "Synchronisation locale Kobo indisponible.",
-            "Synchronisation Kobo impossible",
-        )]
-        assert diagnostics == []
-    else:
-        assert displays == []
-        assert diagnostics == [(
-            ("KOBO", "automatic backup task", "error"),
-            {"detail": {"reason": "kobo_sync_failed"}},
-        )]
-    assert PRIVATE_ERROR not in repr((exc.value, displays, diagnostics))

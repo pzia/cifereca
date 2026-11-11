@@ -139,14 +139,11 @@ def test_runner_success_toast_uses_activity_result_with_legacy_fallback():
     assert "self.window.toast(success_toast)" in source
 
 
-def test_sync_and_kobo_results_do_not_create_second_notification_row():
+def test_sync_results_do_not_create_second_notification_row():
     opening = _method(MAIN, "MainWindow", "run_opening_sync")
-    kobo = _method(MAIN, "MainWindow", "run_kobo_backup")
     sync_page = _method(MAIN, "MainWindow", "_build_sync_page")
     assert "self._activity_result(" in opening
     assert 'self.toast(f"Synchronisation :' not in opening
-    assert "self._activity_result(" in kobo
-    assert "self.toast(" not in kobo
     assert "Synchronisation terminée" not in sync_page
 
 

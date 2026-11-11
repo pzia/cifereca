@@ -695,10 +695,6 @@
     "kind": "method",
     "signature": "(self) -> 'dict[str, Any]'"
   },
-  "sync_kobo_backup": {
-    "kind": "method",
-    "signature": "(self, progress: 'Callable[[dict[str, Any]], None] | None' = None) -> 'dict[str, Any]'"
-  },
   "kobo_unlinked_local_count": {
     "kind": "method",
     "signature": "(self, identity_id: 'str') -> 'int'"

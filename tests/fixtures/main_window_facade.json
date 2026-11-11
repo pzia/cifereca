@@ -1275,12 +1275,6 @@
     "decorators": [],
     "async": false
   },
-  "MainWindow.run_kobo_backup": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='manual', annotation=Name(id='bool', ctx=Load())), arg(arg='control', annotation=BinOp(left=Attribute(value=Name(id='Gtk', ctx=Load()), attr='Widget', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=True), Constant(value=None)])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
   "MainWindow.choose_adept_loan": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='acquisition_id'), arg(arg='loan'), arg(arg='control')], kwonlyargs=[], kw_defaults=[], defaults=[])",
     "returns": null,

@@ -66,7 +66,7 @@ def test_cli_redacts_persisted_private_book_and_provider_details(
         pytest.fail("a local diagnostic must never connect to providers")
 
     monkeypatch.setattr(service, "connect_configured", no_network)
-    monkeypatch.setattr(service, "sync_kobo_backup", no_network)
+    assert not hasattr(service, "sync_kobo_backup")
     monkeypatch.setattr(cli.CiferecaCore, "open", lambda **_kw: SimpleNamespace(
         library=service, close=lambda: None,
     ))

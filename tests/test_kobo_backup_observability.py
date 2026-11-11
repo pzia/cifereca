@@ -240,11 +240,7 @@ def test_retired_w2_cannot_claim_progress_or_success(
                             lambda *_a, **_kw: pytest.fail("no provider GET"))
         monkeypatch.setattr(service.storage, "backup_put",
                             lambda *_a, **_kw: pytest.fail("no backup writer"))
-        with pytest.raises(
-            ProviderConfigurationError,
-            match="kobo_legacy_w2_retired_use_canonical_provider",
-        ):
-            service.sync_kobo_backup(progress=calls.append)
+        assert not hasattr(service, "sync_kobo_backup")
         assert calls == []
         assert service.storage.backup_list("kobo") == before
         assert service.storage.metadata_get("kobo_backup_last_success_at") == clock
