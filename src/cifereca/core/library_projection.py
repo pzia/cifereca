@@ -1188,11 +1188,17 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     # descriptive title/cover can leak a former owner's private metadata.
     # Present only catalogue, canonical entitlement and scoped loan facts.
     from .observed_import_provenance import observed_import_links
-    bnf_links = observed_import_links(
-        self.storage,
-        [p for rows in placements_by_artifact.values() for p in rows],
-        local_keys, provider_id='bnf-pret', provenance_field='bnf_observed_loan',
-    )
+    # Historical observation keys are display-only hints. Preserve their
+    # exact provider scope when comparing against arbitrary loan providers.
+    observed_loan_display_aliases = {
+        ('bnf-pret', *scope): local_key
+        for scope, local_key in observed_import_links(
+            self.storage,
+            [p for rows in placements_by_artifact.values() for p in rows],
+            local_keys, provider_id='bnf-pret',
+            provenance_field='bnf_observed_loan',
+        ).items()
+    }
     loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
     for loan in self.last_loans:
         loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
@@ -1236,14 +1242,18 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                     entitlement, entitlement_identity,
                 )
             )
-        if (provider_id == 'bnf-pret' and entitlement_type == 'loan'
+        if (entitlement_type == 'loan'
                 and exact_source_alias.get(typed_scope) is None):
-            # A legacy manual-import display hint must never override an
-            # exact canonical provider OriginLink for this borrower/edition.
-            # Different physical Artifacts remain separate; only the loan
-            # possession follows its strongest actual provenance proof.
-            canonical_key = bnf_links.get((entitlement_identity, entitlement.get('credential_id'),
-                                           entitlement.get('account_id'), entitlement.get('loan_id'), item_id), canonical_key)
+            # A historical manual-import display hint must never override an
+            # exact canonical OriginLink. The lookup is scoped to its provider,
+            # borrower and edition; other providers can never borrow its hint.
+            canonical_key = observed_loan_display_aliases.get(
+                (provider_id, entitlement_identity,
+                 entitlement.get('credential_id'),
+                 entitlement.get('account_id'),
+                 entitlement.get('loan_id'), item_id),
+                canonical_key,
+            )
         existing = merged.get(canonical_key, {})
         meta = dict(entitlement.get("metadata") or {})
         # An active loan may share the same edition/account as an owned right;
