@@ -134,3 +134,13 @@ def test_bindings_list_flags_stale_profile_without_mutation(
         assert rows[0]["profile_id"] == "bob-profile"
     finally:
         service.close()
+
+
+def test_removed_legacy_audit_command_rejected_before_opening_core(monkeypatch, capsys):
+    def forbidden(**kwargs):
+        raise AssertionError("Removed legacy audit must not open Core")
+    monkeypatch.setattr(cli.CiferecaCore, "open", forbidden)
+    with pytest.raises(SystemExit) as error:
+        cli.main(["paris-adept", "audit"])
+    assert error.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err

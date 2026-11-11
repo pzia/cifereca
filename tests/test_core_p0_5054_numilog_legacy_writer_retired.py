@@ -48,7 +48,12 @@ def test_real_gtk_book_detail_does_not_recreate_retired_v1_receipt():
     assert "from cifereca.core.numilog_materialization_checkpoint import record" not in source
     # Retired synthetic direct_download cannot be a positive GTK path.
     assert 'begin_owned_book_action("numilog")' not in source
-    assert "P0_1347_owned_library_XTEST_exact_single_target" in source
+    # No fabricated entitlement-based owned-download widget is acceptable
+    # as a substitute for the canonical live source offer.
+    assert "P0_1347_owned_library_XTEST_exact_single_target" not in source
+    assert "entitlement_put(" not in source
+    assert "begin_owned_book_action" not in names
+    assert "component_summaries" in names
 
 
 def test_retired_v1_startup_has_no_core_dispatch():

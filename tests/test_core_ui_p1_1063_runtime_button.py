@@ -5,7 +5,6 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 from cifereca.gui import settings_editor_actions
-from cifereca.gui.paris_adept_presentation import normal_paris_adept_runtime_summary
 from cifereca.gui.settings_lifetime import SettingsPageLifetime
 from tests.test_settings_page_composition import Widget
 
@@ -135,13 +134,13 @@ def test_late_runtime_result_is_ignored_after_aba_or_page_disposal(monkeypatch):
 
 
 def test_runtime_presentation_never_translates_unknown_into_adobe_ready():
-    assert "À vérifier" in normal_paris_adept_runtime_summary({
+    assert "À vérifier" in settings_editor_actions._adept_runtime_caption({
         "reason": "adept_profile_not_found",
     })
-    assert "non publiée" in normal_paris_adept_runtime_summary({
+    assert "non publiée" in settings_editor_actions._adept_runtime_caption({
         "reason": "adept_acsm_readiness_unknown",
     })
-    assert "Autorisation Adobe" in normal_paris_adept_runtime_summary({
+    assert "Autorisation Adobe" in settings_editor_actions._adept_runtime_caption({
         "status": "observed", "reason": "adept_acsm_capability_reported",
         "acsm_ready": True,
     })

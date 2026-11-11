@@ -165,42 +165,29 @@ def test_anonymous_callbacks_are_explicitly_pinned_to_reviewed_stages():
     }
 
 
-def test_owned_gtk_fixture_persists_exact_borrower_binding_before_entitlement():
-    """Regression #4289: a connected session alone cannot attest a purchase."""
+def test_retired_owned_gtk_fixture_cannot_resurrect_historical_entitlements():
+    """The detail E2E follows generic GTK checks without fabricated loan rights."""
     tree = ast.parse(PROBE.read_text(encoding="utf-8"))
-    function = next(
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "begin_owned_book_action"
-    )
-    calls = [
-        (node.lineno, node) for node in ast.walk(function)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {
-            "provider_connection_put", "provider_account_put", "entitlement_put",
-        }
-    ]
-    order = [node.func.attr for _line, node in sorted(calls)]
-    assert order == [
-        "provider_connection_put", "provider_account_put", "entitlement_put",
-    ]
-    account = next(
-        node for line, node in calls
-        if node.func.attr == "provider_account_put"
-    )
-    assert len(account.args) == 1
-    assert isinstance(account.args[0], ast.Dict)
-    keys = [value.value for value in account.args[0].keys]
-            # noqa: E128
-    values = {key: value for key, value in zip(keys, account.args[0].values)}
-    for mandatory in (
-        "connection_id", "identity_id", "provider_id",
-        "credential_id", "account_id",
+    defined = {node.name for node in ast.walk(tree)
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert "begin_owned_book_action" not in defined
+    assert not {"owned_book_select", "owned_book_action_visible",
+                "owned_book_action_completed"} & defined
+    assert "verify_library" in defined and "component_summaries" in defined
+    source = PROBE.read_text(encoding="utf-8")
+    for retired in (
+        "storage.entitlement_put(", "provider_connection_put(",
+        "provider_account_put(", "download-owned-",
+        "P0_1347_owned_library_XTEST_exact_single_target",
     ):
-        assert mandatory in values
-    assert isinstance(values["connection_id"], ast.Name)
-    assert values["connection_id"].id == "connection_id"
-    assert isinstance(values["account_id"], ast.Attribute)
-    assert values["account_id"].attr == "unique_id"
-    assert isinstance(values["credential_id"], ast.Attribute)
-    assert values["credential_id"].attr == "credential_id"
+        assert retired not in source
+    verify = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.FunctionDef)
+                  and node.name == "verify_library")
+    assert any(isinstance(node, ast.Call)
+               and isinstance(node.func, ast.Name)
+               and node.func.id == "later"
+               and len(node.args) >= 2
+               and isinstance(node.args[1], ast.Name)
+               and node.args[1].id == "component_summaries"
+               for node in ast.walk(verify))
