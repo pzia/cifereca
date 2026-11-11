@@ -93,7 +93,7 @@ def test_opening_sync_persists_per_identity_status_on_partial_errors(tmp_path: P
         monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: loans_by_identity[account.identity_id])
         monkeypatch.setattr(service, "_acquire_active_loan_automatically", lambda loan: {"status": "attention_required", "loan_id": loan.id})
         monkeypatch.setattr(service, "catalog_scan", lambda: {"scanned": 0})
-        monkeypatch.setattr(service, "kobo_backup_enabled", lambda: False)
+        service.config.set("kobo_backup.enabled", False)
         enable_synthetic_paris_opening(service)
         summary = service.opening_sync()
         assert len(summary["identities"]) == 2
