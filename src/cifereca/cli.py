@@ -386,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
                 # executor needs one live Account bound to its persisted
                 # identity/source coordinates. This connector verifies that
                 # binding without enrolling or connecting unrelated accounts.
-                service.connect_kobo_selected_edition(a.credential)
+                service.connect_kobo_canonical(a.credential)
                 result = service.synchronize_selected_edition(
                     provider_id="kobo", credential_id=a.credential,
                     edition_id=a.item, explicit_user_action=True,
