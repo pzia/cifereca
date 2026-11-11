@@ -262,6 +262,28 @@ def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
     assert bridge.legacy_source_auto_current(db, loan, "b" * 32)
 
 
+def test_legacy_bnf_opt_in_does_not_override_source_disable(policy):
+    service, db, _ = policy
+    from cifereca.core.source_sync_consent import source_enablement_key
+
+    loan = replace(
+        service.source, kind="loan",
+        scope=replace(service.source.scope, provider_id="bnf-pret"),
+    )
+    sid = bridge._source_id(loan.scope)
+    db.metadata_set("sync.source.bnf_auto." + sid, "1")
+    db.metadata_set("sync.source.bnf_auto." + sid + ".revision", "a" * 32)
+    db.metadata_set(source_enablement_key(loan.scope), "0")
+    assert bridge.legacy_source_auto_policy(db, loan.scope, "loan") == (
+        "off", None,
+    )
+    assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
+    with db._lock, db._connect() as conn:
+        assert not bridge.legacy_source_auto_in_transaction(
+            conn, loan, "a" * 32,
+        )
+
+
 def test_generic_cas_policy_overrides_legacy_bnf_on(policy):
     service, db, _ = policy
     from cifereca.core.source_sync_consent import policy_key
