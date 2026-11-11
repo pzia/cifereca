@@ -257,7 +257,7 @@ def test_retired_d3_never_builds_kdrm_get_recipe_without_canonical_abi(
                         lambda x: requests.append(x) or forbidden())
     try:
         with pytest.raises(ProviderConfigurationError,
-                           match="kobo_legacy_direct_get_retired"):
+                           match="canonical_explicit_action_required"):
             service.acquire_direct_item(_item())
         assert requests == []
         assert session.acquisition_modes == []
