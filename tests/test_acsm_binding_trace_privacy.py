@@ -78,9 +78,10 @@ def test_binding_diagnostics_contain_only_unbound_reference_and_presence_boolean
     assert binding == original
     assert_clean(caplog)
     event, = service.diagnostics.snapshot()
-    assert event['status'] == ('ok' if flags[2] else 'warning')
+    assert event['status'] == ('ok' if flags[0] and flags[1] else 'warning')
     assert event['detail'] == dict(request_ref=unbound_loan_trace_ref(PRIVATE),
-        adept_loan_id_present=flags[0], origin_profile_id_present=flags[1], return_available=flags[2])
+        adept_loan_id_present=flags[0], origin_profile_id_present=flags[1])
+    assert 'return_available' not in event['detail']
     assert PRIVATE not in service.diagnostics.text('test')
 
 
