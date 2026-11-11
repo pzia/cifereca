@@ -19,8 +19,7 @@ def test_numilog_manifest_projector_is_physically_absent():
 def test_numilog_live_binding_stays_independent_from_projector():
     root = Path(__file__).resolve().parents[1] / "src/cifereca/core"
     assert not (root / "numilog_private_rows.py").exists()
-    for filename in (
-        "numilog_manual_acquisition.py", "numilog_owned_download.py",
-    ):
+    assert not (root / "numilog_manual_acquisition.py").exists()
+    for filename in ("numilog_owned_download.py",):
         source = (root / filename).read_text(encoding="utf-8")
         assert "numilog_manifest_rights" not in source
