@@ -208,7 +208,6 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     """
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
-            or item.docbase != "DILICOM"
             or item.medium != "digital"
             or not window.service.paris_borrow_followup_available(item)
             or getattr(window, "_manual_borrow_pending", None) is not None
@@ -220,6 +219,8 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
             return
         account = candidates[0]
         if (type(account) is not Account or account.is_primary is not True
+                or account.provider_id != item.source_provider
+                or account.credential_id != item.source_credential
                 or account.unique_id != ""
                 or sum(a is account for a in window.service.accounts) != 1):
             return
@@ -258,7 +259,7 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
                 and session.connected is True
                 and getattr(session, "_epoch", None) == source_epoch
                 and window.service._session_for_source(
-                    "paris", account.credential_id,
+                    account.provider_id, account.credential_id,
                 ) is session
                 and sum(a is account for a in window.service.accounts) == 1
                 and (account.identity_id, account.provider_id,
