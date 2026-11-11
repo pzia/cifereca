@@ -85,8 +85,7 @@ def test_fast_sync_uses_fresh_kobo_cache_and_skips_filesystem_scan(tmp_path: Pat
         monkeypatch.setattr(
             service,
             "_sync_kobo_backup_locked",
-            lambda progress=None: (_ for _ in ()).throw(AssertionError("fresh Kobo cache must be reused")),
-        , raising=False)
+            lambda progress=None: (_ for _ in ()).throw(AssertionError("fresh Kobo cache must be reused")), raising=False)
         monkeypatch.setattr(
             service,
             "catalog_scan",
@@ -144,8 +143,7 @@ def test_fast_sync_shows_throttled_incomplete_kobo_batch(tmp_path: Path, monkeyp
         monkeypatch.setattr(service, "kobo_backup_enabled", lambda: True)
         monkeypatch.setattr(
             service, "_sync_kobo_backup_locked",
-            lambda progress=None: (_ for _ in ()).throw(AssertionError("pending cache should throttle")),
-        , raising=False)
+            lambda progress=None: (_ for _ in ()).throw(AssertionError("pending cache should throttle")), raising=False)
         result = service._opening_sync_locked(deep=False)
         # An incomplete legacy batch must not silently start a new download.
         assert result["kobo"] == {"status": "manual_only", "skipped": True}
@@ -183,8 +181,7 @@ def test_opening_only_materializes_source_with_explicit_on_start_consent(tmp_pat
         calls = []
         monkeypatch.setattr(
             service, "_sync_kobo_backup_locked",
-            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("global batch")),
-        , raising=False)
+            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("global batch")), raising=False)
 
         def scoped(credential_id, progress=None):
             calls.append(credential_id)
@@ -219,8 +216,7 @@ def test_opening_all_cached_partial_sources_remain_visible(tmp_path: Path, monke
             service, "_sync_kobo_backup_account_locked",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("partial cached account must not be retried immediately")
-            ),
-        , raising=False)
+            ), raising=False)
         result = service._opening_sync_locked(deep=False)
         assert result["kobo"]["status"] == "manual_only"
         assert result["kobo_decision"]["scheduled_kobo"] == 0
@@ -252,8 +248,7 @@ def test_opening_rechecks_recently_interrupted_kobo_checkpoint_without_global_re
             service, "_sync_kobo_backup_locked",
             lambda progress=None: (_ for _ in ()).throw(
                 AssertionError("no global acquisition on scoped recovery")
-            ),
-        , raising=False)
+            ), raising=False)
 
         def scoped(credential_id, progress=None):
             calls.append(credential_id)
