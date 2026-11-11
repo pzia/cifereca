@@ -30,13 +30,13 @@ def complete(window, task_id, label, kind, success=True, error=None):
 def test_failed_numilog_then_local_and_online_success_preserve_both_results_and_acknowledgement():
     window, now = window_with_clock()
     complete(window, 1, 'Obtention depuis numilog…', 'obtain', False, 'Lien de livraison absent')
-    assert 'Télécharger un achat Numilog' in window.busy_label.label
+    assert 'Obtention d’un livre' in window.busy_label.label
     for task_id, label, kind in [(2, 'Recherche dans le connu…', 'search-known'),
                                  (3, 'Recherche en ligne…', 'search-online')]:
         now[0] += 120
         complete(window, task_id, label, kind)
         text = window.busy_label.label
-        assert text.startswith('Terminé · ' + label + '\nErreur antérieure · Télécharger un achat Numilog')
+        assert text.startswith('Terminé · ' + label + '\nErreur antérieure · Obtention d’un livre')
         assert 'il y a' in text and 'Lien de livraison absent' in text
         assert 'activity-success' in window.activity_status_icon.classes
         assert window.activity_feedback.latest_unacknowledged_error().task_id == 1
@@ -71,7 +71,7 @@ def test_concurrent_completion_order_not_task_start_order_decides_which_failure_
     task_finished(window, 1, 0, 'Obtention depuis numilog…', False, 'Obtention impossible')
     assert window.activity_feedback.latest_unacknowledged_error().task_id == 1
     assert window.activity_feedback.rows()[0].task_id == 1
-    assert 'Télécharger un achat Numilog' in window.busy_label.label
+    assert 'Obtention d’un livre' in window.busy_label.label
     # Duplicate callbacks cannot create another history row or re-acknowledge.
     window.activity_feedback.acknowledge_errors()
     task_finished(window, 1, 0, 'Obtention depuis numilog…', False, 'Duplicate')
@@ -103,8 +103,8 @@ def test_equal_clock_readings_and_new_background_starts_cannot_relabel_a_search_
 def test_inventory_failure_has_an_explicit_scope_distinct_from_search_and_download():
     feedback = ActivityFeedback()
     entry = feedback.finished(1, 'Actualiser mes achats Numilog…', 'source-sync', success=False, error='Bibliothèque inaccessible')
-    assert entry.operation_label == 'Actualiser mes achats Numilog'
-    assert entry.display_text.startswith('Erreur · Actualiser mes achats Numilog')
+    assert entry.operation_label == 'Synchronisation d’une source'
+    assert entry.display_text.startswith('Erreur · Synchronisation d’une source')
 
 
 def test_unbound_error_result_does_not_retain_raw_message_as_its_fallback_label():
@@ -112,3 +112,14 @@ def test_unbound_error_result_does_not_retain_raw_message_as_its_fallback_label(
     entry = feedback.result(42, 'https://example.test/?auth=PRIVATE_SENTINEL', success=False)
     assert entry.label == 'Opération'
     assert 'PRIVATE_SENTINEL' not in repr(feedback.rows())
+
+
+@pytest.mark.parametrize("label", [
+    "Obtention depuis numilog…", "Obtention depuis un autre fournisseur…",
+    "PRIVATE_SENTINEL",
+])
+def test_activity_operation_label_is_kind_only_not_provider_or_untrusted_text(label):
+    feedback = ActivityFeedback()
+    entry = feedback.finished(91, label, "obtain", success=False, error="Échec")
+    assert entry.operation_label == "Obtention d’un livre"
+    assert label not in entry.display_text
