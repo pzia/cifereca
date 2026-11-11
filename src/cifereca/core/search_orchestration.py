@@ -186,14 +186,9 @@ def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> 
         return "Origine Kobo · disponibilité à vérifier auprès du fournisseur"
     if self.can_direct_download(item):
         return "Téléchargement direct"
+    # An availability notice is not an authenticated offer to borrow.
+    # The provider owns its offer/action language; Core only relays the label.
     label = str(detail.availability_label or detail.availability_status or "—").strip()
-    status = self._history_fold(detail.availability_status)
-    folded_label = self._history_fold(label)
-    available = status in {"available", "disponible"} or (
-        folded_label.startswith("disponible") and not folded_label.startswith("indisponible")
-    )
-    if item.source_provider == "paris" and item.medium == "digital" and available:
-        return "Disponible à l’emprunt"
     return label or "—"
 
 
