@@ -88,6 +88,23 @@ def main():
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
         raise SystemExit("Xvfb/GDK_BACKEND=x11 requis")
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    # #5048: public documentary actions are provider-neutral, not grants.
+    # Both real GTK detail rendering and this offline contract check must
+    # preserve explicit link labels and reject delivery URLs.
+    from cifereca.plugin_api import document_links
+    links = document_links({
+        "provider_id": "synthetic-catalogue",
+        "metadata": {"document_links": [
+            {"relation": "gallica", "url": "https://example.test/public/one"},
+            {"relation": "alternate", "url": "https://example.test/public/two"},
+            {"relation": "related", "label": "Notice du plugin", "url": "https://example.test/public/three"},
+            {"relation": "related", "label": "Fichier", "url": "https://example.test/private/book.epub?token=secret"},
+        ]},
+    })
+    assert [link.label for link in links] == [
+        "Ouvrir le document", "Ouvrir le document", "Notice du plugin",
+    ]
+    assert [link.relation for link in links] == ["gallica", "alternate", "related"]
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
     entry = {
         "catalog_entry_id": "ux942-book", "item_id": "ux942-book",
