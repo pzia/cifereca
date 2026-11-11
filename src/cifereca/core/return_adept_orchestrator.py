@@ -10,7 +10,6 @@ import json
 from typing import Any
 
 from .loan_return_guard import _public_timestamp, _verification_time_attested
-from . import return_adept_origin_preflight
 
 
 def adept_return_key(provider_id: str, credential_id: str,
