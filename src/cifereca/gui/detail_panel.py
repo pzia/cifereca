@@ -1114,7 +1114,7 @@ class DetailPanel(Gtk.Box):
                             "Vérifier le prêt sans réemprunter",
                             "view-refresh-symbolic",
                         )
-                        verify.set_name("cifereca-paris-borrow-followup")
+                        verify.set_name("cifereca-borrow-followup")
                         verify.connect(
                             "clicked",
                             lambda _b: self.window.borrow_search_item(item, verify),
