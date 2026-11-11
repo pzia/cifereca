@@ -37,7 +37,11 @@ def _controller():
     method = next(n for n in tree.body
                   if isinstance(n, ast.FunctionDef)
                   and n.name == "_present_manual_borrow")
-    namespace = {"Account": Account, "SearchResult": SearchResult, "copy": copy}
+    from cifereca.gui.bnf_borrow_controller import _capture_borrow_ui_scope
+    namespace = {
+        "Account": Account, "SearchResult": SearchResult, "copy": copy,
+        "_capture_borrow_ui_scope": _capture_borrow_ui_scope,
+    }
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[method], type_ignores=[])), str(CONTROLLER), "exec"), namespace)
     return namespace["_present_manual_borrow"]
