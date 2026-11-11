@@ -288,13 +288,12 @@ def qualify_selected_offers(
             continue
         selected_right = selected.rights[0]
         if selected_right.delivery == "unknown":
-            # #3121: the one-shot ACSM obtained in the SAME confirmed
-            # Paris manual borrow may outlive the later ListLoans EbookUrl.
-            # Only a fresh provider-attested loan plus its exact claim-bound
-            # private receipt can supply this Core-only delivery offer.
-            # This is never an entitlement or a provider token GET.
-            from .paris_first_acsm_offer import qualify_claimed_paris_offer
-            first_offer = qualify_claimed_paris_offer(
+            # A previously claimed first-token receipt may outlive the
+            # provider's current download link. Require a fresh attested loan,
+            # confirmed claim and exact validated local bytes. This is not
+            # provider permission for a second token GET or loan mutation.
+            from ..acsm_cache import qualify_claimed_initial_receipt_offer
+            first_offer = qualify_claimed_initial_receipt_offer(
                 service, account, session, key, selected_right,
                 current=lambda: current() and consent_current(key),
             )
