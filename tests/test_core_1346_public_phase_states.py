@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from cifereca.core.kobo_backup import _kobo_checkpoint_key
+from cifereca.core.legacy_checkpoint_read import _kobo_checkpoint_key
 from cifereca.plugin_api import SyncPhaseState
 from types import SimpleNamespace as NS
 
@@ -23,7 +23,6 @@ def _broker(*, broken_owner=False):
         capabilities=NS(
             personal_library=True, backup=True,
             local_materialization=True,
-            legacy_materialization_checkpoint=True,
         ),
     )
     service.storage.identity_for_connection = lambda provider, credential: (
@@ -59,7 +58,7 @@ def test_source_phase_contract_does_not_migrate_or_acquire():
     assert service.storage.values == {}
 
 
-def test_inventory_success_survives_partial_kobo_materialization():
+def test_legacy_partial_checkpoint_is_not_current_materialization():
     service, broker, target, calls = _broker()
     broker._set_state(target.source_id, {
         "status": "ok", "last_attempt": "2026-10-14T04:00:00+00:00",
@@ -82,8 +81,8 @@ def test_inventory_success_survives_partial_kobo_materialization():
     assert source.last_success == "2026-10-14T04:00:00+00:00"
     assert phases["discover_rights"].status == "success"
     assert phases["discover_rights"].last_success == source.last_success
-    assert phases["materialize"].status == "partial"
-    assert phases["materialize"].last_attempt
+    assert phases["materialize"].status == "idle"
+    assert phases["materialize"].last_attempt == ""
     assert phases["materialize"].last_success == ""
     assert phases["reconcile"].status == "not_supported"
     for private in ("PRIVATE", "vault-secret", "reader-2"):
@@ -92,7 +91,7 @@ def test_inventory_success_survives_partial_kobo_materialization():
     assert not service.calls and not calls
 
 
-def test_complete_checkpoint_has_phase_success_but_is_not_permission():
+def test_complete_legacy_checkpoint_cannot_fabricate_phase_success():
     service, broker, _target, _calls = _broker()
     service.storage.metadata_set(
         _kobo_checkpoint_key("reader-2", "vault-secret"),
@@ -100,10 +99,10 @@ def test_complete_checkpoint_has_phase_success_but_is_not_permission():
                     "updated_at": 1791954000}),
     )
     _source, phases = _phases(broker)
-    assert phases["materialize"].status == "success"
-    assert phases["materialize"].last_success == phases["materialize"].last_attempt
-    assert phases["materialize"].last_success.endswith("+00:00")
-    # A persisted checkpoint is not a new authorization or a scheduled task.
+    assert phases["materialize"].status == "idle"
+    assert phases["materialize"].last_attempt == ""
+    assert phases["materialize"].last_success == ""
+    # A persisted W2 checkpoint is not a current phase or authorization.
     assert phases["reconcile"].status == "not_supported"
     assert service.calls == []
 
@@ -125,6 +124,7 @@ def test_untrusted_checkpoint_and_timestamps_never_reach_public_snapshot():
         assert phases["discover_rights"].status == "idle"
         assert phases["discover_rights"].last_attempt == ""
         assert phases["discover_rights"].last_success == ""
+        assert phases["materialize"].status == "idle"
         assert phases["materialize"].last_attempt == ""
         assert phases["materialize"].last_success == ""
         assert "PRIVATE" not in repr(tuple(phases.values()))

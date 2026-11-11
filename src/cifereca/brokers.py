@@ -370,7 +370,6 @@ class SynchronizationBrokerImpl:
 
     def _phase_states(
         self, account: Any, state: dict[str, Any], sync_caps: tuple[str, ...],
-        *, legacy_checkpoint: bool = False,
     ) -> tuple[SyncPhaseState, ...]:
         """Safe, read-only projection: no remote call, migration or acquisition."""
         raw_status = state.get("status")
@@ -416,39 +415,9 @@ class SynchronizationBrokerImpl:
             if not binding_valid:
                 materialization = SyncPhaseState("materialize", "unknown")
             else:
-                # Legacy W2 checkpoint only; future providers use the exact
-                # generic explicit phase receipt below, never backup_items.
-                row = None
-                if legacy_checkpoint:
-                    from .core.legacy_checkpoint_read import _kobo_checkpoint_for
-                    row = _kobo_checkpoint_for(self.service, identity, credential)
-                if row is None:
-                    materialization = SyncPhaseState("materialize")
-                else:
-                    raw_checkpoint_status = row.get("status")
-                    status = {
-                        "complete": "success", "partial": "partial",
-                        "running": "running", "interrupted": "interrupted",
-                        "attention_required": "attention_required",
-                        "failed": "failed", "aborted": "failed",
-                        "cancelled": "cancelled",
-                    }.get(
-                        raw_checkpoint_status if type(raw_checkpoint_status) is str
-                        else "", "unknown",
-                    )
-                    timestamp = row.get("updated_at")
-                    when = (
-                        datetime.fromtimestamp(timestamp, timezone.utc)
-                            .isoformat(timespec="seconds")
-                        if type(timestamp) is int and 946684800 <= timestamp <= 4102444800
-                        else ""
-                    )
-                    materialization = SyncPhaseState(
-                        phase="materialize", status=status, last_attempt=when,
-                        # A partial checkpoint does not attest historical success;
-                        # never substitute an inventory clock or fabricate it.
-                        last_success=when if status == "success" else "",
-                    )
+                # Only the explicit, exact-source materialization phase receipt
+                # may attest current progress; archived W2 checkpoints are inert.
+                materialization = SyncPhaseState("materialize")
         explicit = self._materialization_state(self._source_id(account))
         # A stale explicit result cannot override a revoked or rebound source.
         if explicit and "local_materialization" in sync_caps and binding_valid:
@@ -578,10 +547,6 @@ class SynchronizationBrokerImpl:
             sync_capabilities=tuple(declared_sync_caps),
             phase_states=self._phase_states(
                 account, state, tuple(declared_sync_caps),
-                legacy_checkpoint=(
-                    getattr(getattr(session, "capabilities", None),
-                            "legacy_materialization_checkpoint", False) is True
-                ),
             ),
             last_cycle=receipt,
         )
