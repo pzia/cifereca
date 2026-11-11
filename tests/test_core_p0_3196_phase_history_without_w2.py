@@ -63,8 +63,9 @@ def test_phase_broker_does_not_import_retired_w2_reader():
         for node in ast.walk(ast.parse(file.read_text(encoding="utf-8")))
         if isinstance(node, ast.ImportFrom)
     ]
-    assert ("core.legacy_checkpoint_read", ("_kobo_checkpoint_for",)) in imports
+    # The broker never treats a historical W2 checkpoint as proof of the
+    # current materialization phase, regardless of provider capabilities.
     assert not any(
-        module == "core.kobo_backup" and "_kobo_checkpoint_for" in names
-        for module, names in imports
+        module in {"core.legacy_checkpoint_read", "core.kobo_backup"}
+        for module, _names in imports
     )
