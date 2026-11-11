@@ -10,6 +10,7 @@ from uuid import uuid4
 from cifereca.plugin_api import (
     Account, Loan, SearchResult, ItemDetail, CredentialField, AccountOptionField,
     ProviderCapabilities, ProviderSearchCapabilities, ProviderDescriptor,
+    ManualBorrowPolicy,
     ProviderPlugin, ProviderSession, ProviderConfigurationError,
     ProviderCapabilityError, ProviderError, BorrowRequestNotSubmitted,
     normalize_language_tag,
@@ -24,6 +25,9 @@ from cifereca_bnf_pret_download import save_private_loan_token, validate_loan_to
 
 DESCRIPTOR = ProviderDescriptor(
     id='bnf-pret', display_name='BnF Prêt', state='ready',
+    manual_borrow_policy=ManualBorrowPolicy(
+        docbase="BNF_PRET", verification="active_only",
+    ),
     description='Catalogue, fiches et prêts du portail lecteur BnF, par HTTPX.',
     capabilities=ProviderCapabilities(authentication=True, multiple_credentials=True, loans=True,
                                       search=True, holdings=True, borrow=True,
