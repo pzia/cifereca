@@ -225,8 +225,14 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         if not private_source_current():
             raise ProviderConfigurationError("private_inventory_source_changed")
         if account.provider_id == "numilog":
-            from .numilog_private_rows import private_library_rows_valid
-            if not private_library_rows_valid(rows, account.credential_id):
+            from .private_inventory_row_scope import (
+                credential_scoped_private_inventory_rows_valid,
+            )
+            if not credential_scoped_private_inventory_rows_valid(
+                rows, provider_id=account.provider_id,
+                credential_id=account.credential_id,
+                collection="library", scenario="NUMILOG_LIBRARY",
+            ):
                 raise ProviderConfigurationError("Inventaire privé Numilog non conforme")
         # Personal-library rows are observations, never durable ownership.
         # Only the independently admitted provider offer can lead to delivery.
