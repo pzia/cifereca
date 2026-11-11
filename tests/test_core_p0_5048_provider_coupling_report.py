@@ -63,3 +63,26 @@ def test_empty_repo_is_safe(tmp_path):
     assert result["total_core_python_physical_lines"] == 0
     assert all(n == 0 for n in result["line_partition"].values())
     assert list(tmp_path.iterdir()) == []
+
+
+def test_manifest_added_provider_is_scanned_not_silently_invisible(tmp_path):
+    write(tmp_path, "src/plugins/provider-xyz/cifereca-plugin.json",
+          '{"plugins": [{"type": "provider.library", "id": "provider.xyz"}]}')
+    write(tmp_path, "src/cifereca/services.py",
+          'if provider_id == "xyz":\n    pass\n')
+    r = extended_inventory(tmp_path)
+    assert "xyz" in r["installed_provider_aliases_scanned"]
+    assert r["line_partition"]["generic_ast_signal"] == 1
+    assert r["historical"]["generic_provider_literal_lines_unique"] == 0
+
+
+def test_expanded_named_modules_are_excluded_from_remaining_generic(tmp_path):
+    write(tmp_path, "src/cifereca/gui/bnf_action_controller.py",
+          'if source == "bnf":\n    run()\n')
+    write(tmp_path, "src/cifereca/core/generic.py",
+          'if source == "kobo":\n    run()\n')
+    r = extended_inventory(tmp_path)
+    assert r["expanded_named_modules"]["all_named_lines"] == 2
+    assert r["remaining_generic_after_expanded_named_scope"]["ast_signal_lines"] == 1
+    assert r["line_partition"]["generic_ast_signal"] == 2
+    assert r["total_core_python_physical_lines"] == 4
