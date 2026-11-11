@@ -43,7 +43,7 @@ def test_retired_d3_cannot_use_delegated_bearer_without_canonical_abi(
     )
     try:
         with pytest.raises(ProviderConfigurationError,
-                           match="kobo_legacy_direct_get_retired"):
+                           match="canonical_explicit_action_required"):
             service.acquire_direct_item(_item())
         assert session.acquisition_modes == []
         assert service.storage.acquisitions(provider_id="kobo") == []
