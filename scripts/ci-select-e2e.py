@@ -17,7 +17,7 @@ SYNC_PRODUCERS = frozenset((
     "src/cifereca/core/numilog_materialization_startup.py",
     "src/cifereca/core/numilog_materialization_checkpoint.py",
     "src/cifereca/core/selected_owned_search.py",
-    "src/cifereca/core/numilog_owned_download.py",
+    "src/cifereca/core/selected_source_offer.py",
     "src/cifereca/core/explicit_owned_canonical.py",
     "src/cifereca/core/loan_local_preparation.py",
     "src/cifereca/core/loan_provider_delivery.py",
