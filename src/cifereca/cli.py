@@ -146,39 +146,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("kobo-sync-errors", help="Diagnostic local de la synchronisation Kobo")
     sub.add_parser("kobo-backup-errors", help="Alias historique de kobo-sync-errors")
-    reconcile = sub.add_parser(
-        "kobo-reconcile-local", help="Commande legacy retirée : relink canonique attesté uniquement"
-    )
-    reconcile.add_argument("--credential", required=True)
-    reconcile.add_argument("--identity", help="Refuser une connexion liée à une autre identité")
-    reconcile.add_argument("--account-id", required=True)
-    reconcile.add_argument("--item", required=True)
-    reconcile.add_argument("--sha256", required=True, help="SHA déjà attesté dans le ledger, jamais inféré du titre")
-    reconcile.add_argument("--path", help="Fichier EPUB/PDF dans le dossier de cette identité")
-    reconcile.add_argument("--undo", help="Identifiant opaque du rapprochement à annuler (aperçu par défaut)")
-    reconcile.add_argument("--confirm", help="Token de l’aperçu exact ; son absence interdit toute écriture")
-    # P0 #4859: existing canonical B path repair, no 0.7 inference.
-    relink_b = sub.add_parser(
-        "kobo-relink-canonical",
-        help="Relocaliser un Placement Kobo déjà attesté A→B, sans droit nouveau",
-    )
-    relink_b.add_argument("--credential", required=True)
-    relink_b.add_argument("--identity", required=True)
-    relink_b.add_argument("--account-id", required=True)
-    relink_b.add_argument("--item", required=True)
-    relink_b.add_argument("--right", required=True)
-    relink_b.add_argument("--branch", required=True)
-    relink_b.add_argument(
-        "--kind", choices=("purchase", "loan"), default="purchase",
-        help="Type exact de SourceReference déjà publié (défaut : purchase)",
-    )
-    relink_b.add_argument("--placement", required=True)
-    relink_b.add_argument("--path", required=True)
-    relink_b.add_argument("--confirm", help="Token exact d'aperçu, sinon lecture seule")
-    relink_b.add_argument(
-        "--undo", help="Opération de relocalisation canonique à inverser ; "
-                       "remettre physiquement le fichier au chemin d'origine avant l'aperçu",
-    )
     # P0 #4858 D3: one edition only, using Core's same selected-offer A->B.
     # The legacy kobo-resume command stays isolated from this route.
     selected_kobo = sub.add_parser(
@@ -344,50 +311,6 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "success", "inventory": inventory},
                          ensure_ascii=False, indent=2))
         return 0
-
-    # A local repair/preview must not activate plugins, chmod Config, purge
-    # caches or recover a directory migration as a side effect of startup.
-    if a.cmd == "kobo-reconcile-local":
-        # P0 #4859 W4/D5: the retired v0.7 positive repair treated legacy
-        # backup_items + generic ledger as authority for an applied delivery.
-        # Deny even preview and undo: a historical token cannot authorize
-        # a new positive mutation after this cutover, and the CLI must never
-        # open SQLite or inspect a private file on this deprecated route.
-        # Only independently published canonical B may be relinked.
-        print(json.dumps({
-            "ok": False, "offline": True, "changed": 0,
-            "reason": "legacy_reconciliation_retired",
-        }, ensure_ascii=False, indent=2))
-        return 2
-
-    if a.cmd == "kobo-relink-canonical":
-        from .core.kobo_local_reconciliation import (
-            ReconciliationRejected, reconcile_existing_profile,
-        )
-        from .core.canonical_relink import CanonicalRelinkRejected
-        try:
-            if a.account and a.account != a.credential:
-                raise ReconciliationRejected("source_scope_mismatch")
-            result = reconcile_existing_profile(
-                canonical_relink=True, credential_id=a.credential,
-                identity_id=a.identity, account_id=a.account_id,
-                edition_id=a.item, right_id=a.right,
-                branch_id=a.branch, reference_kind=a.kind,
-                placement_id=a.placement, path=a.path,
-                confirmation=a.confirm,
-                **({"undo_operation": a.undo} if a.undo is not None else {}),
-            )
-        except Exception as exc:
-            result = {
-                "status": "failed", "ok": False, "changed": 0,
-                "reason": (
-                    exc.code if isinstance(exc, (
-                        ReconciliationRejected, CanonicalRelinkRejected,
-                    )) else "canonical_relink_unavailable"
-                ),
-            }
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0 if result["ok"] else 2
 
     if a.cmd == "kobo-sync-edition":
         # No Core startup or provider I/O for unconfirmed CLI invocations.
