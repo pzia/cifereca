@@ -47,7 +47,6 @@ from .core.covers import candidate as cover_candidate, resolve_cover
 from .config import Config
 from .diagnostics import Diagnostics, redact
 from .kobo import KoboAdeptError
-from .kobo.vault import KoboVaultError
 from .identities import Identity, IdentityPreferences, AdeptProfileResolver, AdeptProfileResolutionError
 from .core import adept_profiles
 from .locking import InterProcessLock, LockBusyError
