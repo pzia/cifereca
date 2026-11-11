@@ -1070,7 +1070,7 @@ class DetailPanel(Gtk.Box):
             # even if a generic availability label is malformed.
             action = Adw.PreferencesGroup()
             action.set_title("Action")
-            if self.window.can_borrow_item(item):
+            if not pending_followup and self.window.can_borrow_item(item):
                 borrow = self.window.action_button("Emprunter", "document-save-symbolic", suggested=True)
                 borrow.connect("clicked", lambda _b: self.window.borrow_search_item(item, borrow))
                 self._actions([borrow])
