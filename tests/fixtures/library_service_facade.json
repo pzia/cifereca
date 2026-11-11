@@ -643,10 +643,6 @@
     "kind": "method",
     "signature": "(self) -> 'dict[str, Any]'"
   },
-  "kobo_unlinked_local_count": {
-    "kind": "method",
-    "signature": "(self, identity_id: 'str') -> 'int'"
-  },
   "_account_for_loan": {
     "kind": "method",
     "signature": "(self, loan: 'Loan') -> 'Account'"
