@@ -1,10 +1,8 @@
-"""Only the current connected Numilog session may attest private purchases."""
+"""Only the current exact-bound private inventory session may be observed."""
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
-from cifereca.core.numilog_manifest_rights import (
-    numilog_inventory_binding_valid,
-)
+from cifereca.core.private_inventory_binding import exact_private_inventory_binding_valid
 from cifereca.services import LibraryService
 from cifereca.providers.base import ProviderSession, ProviderDescriptor, ProviderCapabilities
 
@@ -41,7 +39,7 @@ def source():
 
 def test_current_session_is_eligible_for_private_inventory():
     service, account, session = source()
-    assert numilog_inventory_binding_valid(service, account, session=session)
+    assert exact_private_inventory_binding_valid(service, account, session=session, provider_id="numilog")
 
 
 def test_replaced_session_cannot_attest_owned_rights():
@@ -50,7 +48,7 @@ def test_replaced_session_cannot_attest_owned_rights():
         provider_id="numilog", credential_id="secret-ref", connected=True,
         capabilities=SimpleNamespace(personal_library=True),
     )
-    assert not numilog_inventory_binding_valid(service, account, session=stale)
+    assert not exact_private_inventory_binding_valid(service, account, session=stale, provider_id="numilog")
     service.storage.entitlements.assert_not_called()
 
 
@@ -60,7 +58,7 @@ def test_ambiguous_numilog_sessions_are_not_ownership_evidence():
         provider_id="numilog", credential_id="secret-ref", connected=True,
         capabilities=SimpleNamespace(personal_library=True),
     )
-    assert not numilog_inventory_binding_valid(service, account, session=session)
+    assert not exact_private_inventory_binding_valid(service, account, session=session, provider_id="numilog")
 
 
 def test_mirror_disposes_of_inflight_numilog_rows_after_session_change():
@@ -73,15 +71,10 @@ def test_mirror_disposes_of_inflight_numilog_rows_after_session_change():
         return []
 
     session.library = stale_library
-    with patch(
-        "cifereca.core.numilog_manifest_rights.mirror_numilog_manifest_rights",
-        side_effect=AssertionError("stale rights must not be projected"),
-    ) as rights:
-        summary = LibraryService.mirror_personal_libraries(service)
+    summary = LibraryService.mirror_personal_libraries(service)
     assert not summary
     assert summary.blocked_sources == 1
     assert summary.failed_sources == 0
-    rights.assert_not_called()
     service._mirror_remote_results.assert_not_called()
 
 
@@ -105,7 +98,7 @@ def test_inventory_binding_rejects_hostile_provider_scalar_without_getter(monkey
     )
     current.connected = True
     service._sessions[("numilog", "secret-ref")] = current
-    assert numilog_inventory_binding_valid(service, account, session=current)
+    assert exact_private_inventory_binding_valid(service, account, session=current, provider_id="numilog")
     calls = []
 
     def malicious(_session):
@@ -114,5 +107,5 @@ def test_inventory_binding_rejects_hostile_provider_scalar_without_getter(monkey
 
     with monkeypatch.context() as m:
         m.setattr(SyntheticNumilogSession, "provider_id", property(malicious), raising=False)
-        assert not numilog_inventory_binding_valid(service, account, session=current)
+        assert not exact_private_inventory_binding_valid(service, account, session=current, provider_id="numilog")
     assert calls == []
