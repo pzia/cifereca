@@ -47,16 +47,9 @@ def test_retired_provider_return_helper_is_physically_absent():
     assert not (core_dir / "provider_loan_return.py").exists()
 
 
-def test_direct_adept_first_helper_cannot_bypass_service_guard():
-    with pytest.raises(AttentionRequired) as err:
-        return_adept_orchestrator.return_loan_prefer_adept(
-            Poison(), Poison(),
-            uuid=Poison(), return_ref=Poison(),
-            adept_return_key=Poison(), public_state=Poison(),
-            AttentionRequired=AttentionRequired, _TRACE_LOG=Poison(),
-        )
-    assert err.value.code == "loan_return_removed"
-
+def test_direct_adept_first_helper_is_not_importable():
+    # The historical helper must not remain as a parallel return entry point.
+    assert not hasattr(return_adept_orchestrator, "return_loan_prefer_adept")
 
 def test_historical_adept_receipt_is_read_only_and_never_replayed(tmp_path):
     from cifereca.core.return_adept_orchestrator import adept_return_key
