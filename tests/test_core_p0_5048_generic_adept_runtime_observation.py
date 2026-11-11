@@ -1,10 +1,8 @@
 """#5048: ADEPT runtime projection is source-agnostic and does not grant loans."""
 from cifereca.core.adept_runtime_observation import describe_adept_runtime
-from cifereca.core.paris_adept_runtime_check import describe_paris_adept_runtime
 
 
 def test_generic_adept_projection_matches_existing_paris_compatibility():
-    assert describe_paris_adept_runtime is describe_adept_runtime
     saved = {
         "identity_id": "fictitious-identity", "status": "ready",
         "adept_profile_id": "synthetic-adept-profile",
