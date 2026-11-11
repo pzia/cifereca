@@ -179,37 +179,6 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             # rejected it. Never poison subsequent cache reads with that batch.
             _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
-        if (not inventory_only and account.provider_id == 'bnf-pret'
-                and not source_consent_configured(self, account)):
-            from .bnf_auto_materialization import enabled, materialize
-            if enabled(self, account):
-                # One private bounded inventory per source batch, not one
-                # whole-directory scan for every active loan.
-                physical_scan_cache = {}
-                outcomes = [
-                    materialize(self, account, loan, control=control,
-                                physical_scan_cache=physical_scan_cache)
-                    for loan in loans
-                ]
-                result['files_materialized'] = sum(row['status'] == 'complete' for row in outcomes)
-                result['files_unchanged'] = sum(row['status'] == 'unchanged' for row in outcomes)
-                # Confirmed user declarations are present local files, not
-                # new ADEPT deliveries and not provider-verified receipts.
-                result['files_declared_local'] = sum(
-                    row['status'] == 'declared_local' for row in outcomes
-                )
-                # A file needing an explicit local reconciliation is not
-                # newly materialized or already linked. Emit only an aggregate
-                # counter; no title, path, loan ID or licence in sync facts.
-                result['files_reconciliation_required'] = sum(
-                    row.get('code') in {
-                        'bnf_local_candidate_reconciliation_required',
-                        'bnf_local_declaration_needs_review',
-                    }
-                    for row in outcomes
-                )
-                if any(row['status'] not in {'complete', 'unchanged', 'declared_local', 'skipped'} for row in outcomes):
-                    result['status'] = 'partial'
         # A v1 loans() list never proves full branch coverage, even when
         # last_loan_errors is empty or absent. That mutable side channel is
         # deliberately not an authority for this explicit sync result.
@@ -1304,7 +1273,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     except Exception:
                         logger.warning("TRACE typed loan cache failed code=loan_cache_unavailable")
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
-            physical_scan_cache = {}
             for loan in loans:
                 if any(
                     source_consent_configured(self, account)
@@ -1321,22 +1289,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 session = self._sessions.get(
                     self._session_key(loan.source_provider, loan.source_credential)
                 )
-                if loan.source_provider == 'bnf-pret':
-                    from .bnf_auto_materialization import enabled, materialize
-                    account = next((a for a in self.accounts
-                                    if a.identity_id == loan.identity_id
-                                    and a.provider_id == 'bnf-pret'
-                                    and a.credential_id == loan.source_credential
-                                    and a.unique_id == loan.source_account_id), None)
-                    if account is not None and enabled(self, account):
-                        outcome = materialize(
-                            self, account, loan, physical_scan_cache=physical_scan_cache,
-                        )
-                        if outcome['status'] == 'complete':
-                            new_acquisitions += 1
-                        elif outcome['status'] == 'attention_required':
-                            attention += 1
-                    continue
                 if not _opening_loan_acquisition_allowed(loan, session=session):
                     continue
                 result = self._acquire_active_loan_automatically(loan)
