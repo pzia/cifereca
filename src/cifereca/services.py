@@ -3938,10 +3938,11 @@ class LibraryService:
         account-wide Sync. Incomplete provider ABIs are never adapted through
         historical backup_items to make this operation appear supported.
         """
-        from .core.canonical_kobo_selected import synchronize_selected_kobo_edition
-        return synchronize_selected_kobo_edition(
-            self, credential_id=credential_id, edition_id=edition_id,
-            explicit_user_action=explicit_user_action, cancelled=cancelled,
+        from .core.canonical_selected_edition import synchronize_selected_edition
+        return synchronize_selected_edition(
+            self, provider_id="kobo", credential_id=credential_id,
+            edition_id=edition_id, explicit_user_action=explicit_user_action,
+            cancelled=cancelled, result_schema="core.kobo.selected-canonical/1",
         )
 
     def _account_for_loan(self, loan: Loan) -> Account:
