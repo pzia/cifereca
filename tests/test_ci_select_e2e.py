@@ -24,8 +24,10 @@ class SelectionTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("runner", ROOT / "e2e/run.py")
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
-        self.assertEqual(set(mod.ALL), set(runner.SCENARIOS))
-        self.assertEqual(len(mod.ALL), 44)
+        self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX), set(runner.SCENARIOS))
+        self.assertEqual(set(mod.ALL) & set(mod.OPTIONAL_UX), set())
+        self.assertEqual(mod.OPTIONAL_UX, ("book-detail-1700",))
+        self.assertEqual(len(mod.ALL), 43)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["height"], 768)
@@ -42,7 +44,14 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("book-detail-960", mod.ALL)
         self.assertIn("book-detail-1280", mod.ALL)
         self.assertIn("book-detail-1300", mod.ALL)
-        self.assertIn("book-detail-1700", mod.ALL)
+        self.assertNotIn("book-detail-1700", mod.ALL)
+        self.assertIn("book-detail-1700", runner.SCENARIOS)
+        self.assertEqual(mod.select([], full=True), mod.ALL)
+        self.assertNotIn("book-detail-1700", mod.select(["e2e/book_detail_probe.py"]))
+        self.assertNotIn("book-detail-1700", mod.select(["src/cifereca/gui/main_window.py"]))
+        self.assertNotIn("book-detail-1700", mod.select(["some-unknown-file.py"]))
+        self.assertEqual([name for name, _ in runner.select("book-detail-1700", None)],
+                         ["book-detail-1700"])
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
 
@@ -275,7 +284,15 @@ class SelectionTests(unittest.TestCase):
             "gtk-recommendations": "recommendations_detail_probe.py",
             "gtk-bnf-covers": "bnf_cover_probe.py",
         }
+        # Optional UX reproductions remain targetable by name, but must not
+        # enter the mandatory impact graph. Every required scenario still
+        # has its source dependencies checked exhaustively.
+        self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX),
+                         set(runner.SCENARIOS))
         for scenario, descriptor in runner.SCENARIOS.items():
+            if scenario in mod.OPTIONAL_UX:
+                self.assertNotIn(scenario, mod.ALL)
+                continue
             filename = entrypoints.get(descriptor.get("runner"))
             if filename is None:
                 continue  # startup/core-navigation use the capture runner
