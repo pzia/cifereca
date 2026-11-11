@@ -390,6 +390,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = service.synchronize_selected_edition(
                     provider_id="kobo", credential_id=a.credential,
                     edition_id=a.item, explicit_user_action=True,
+                    result_schema="core.kobo.selected-canonical/1",
                 )
             except SelectedEditionRejected as exc:
                 result = {"status": "failed", "ok": False, "changed": 0,
