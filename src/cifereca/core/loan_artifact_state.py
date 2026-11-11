@@ -29,7 +29,6 @@ def inspect_previous_loan_artifact(
     credential_id: str,
     account_id: str | None,
     item_id: str,
-    source_provider: str,
     artifact_inspector: Callable[..., Any],
 ) -> PreviousLoanArtifact:
     """Preserve the historical exact ledger scope and local-file predicates.
@@ -37,6 +36,7 @@ def inspect_previous_loan_artifact(
     A valid non-protected file is reusable only after an acquisition marked
     complete; ADEPT acquisitions additionally require post_processed. Legacy
     ADEPT artifacts may need a repair, not an automatic second fulfillment.
+    This is an executor/artifact fact, independent of the source provider.
     """
     matches = [
         row for row in acquisitions
@@ -54,8 +54,7 @@ def inspect_previous_loan_artifact(
         expected_previous = "pdf" if previous_path.suffix.casefold() == ".pdf" else "epub" if previous_path.suffix.casefold() == ".epub" else None
         previous_inspection = artifact_inspector(previous_path, expected_previous)
     legacy_acsm_artifact = bool(
-        source_provider == "paris"
-        and (previous or {}).get("executor") == "kobo-adept"
+        (previous or {}).get("executor") == "kobo-adept"
         and previous_path is not None
         and previous_path.is_file()
         and (

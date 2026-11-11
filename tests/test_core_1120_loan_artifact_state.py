@@ -18,10 +18,10 @@ def _row(path: Path, *, status="complete", executor="provider", processed=True):
     }
 
 
-def _inspect(rows, *, inspector, account_id="primary", source_provider="paris"):
+def _inspect(rows, *, inspector, account_id="primary"):
     return inspect_previous_loan_artifact(
         rows, identity_id="alex", credential_id="paris-a",
-        account_id=account_id, item_id="book-a", source_provider=source_provider,
+        account_id=account_id, item_id="book-a",
         artifact_inspector=inspector,
     )
 
@@ -101,12 +101,22 @@ def test_absent_or_missing_artifact_never_triggers_inspector(tmp_path):
     assert not empty.complete_local
 
 
-def test_provider_scope_does_not_mark_other_provider_as_paris_legacy(tmp_path):
+def test_adept_legacy_classification_depends_on_executor_not_supplier(tmp_path):
     path = tmp_path / "book.epub"
     path.write_bytes(b"fake")
     result = _inspect(
         [_row(path, executor="kobo-adept", processed=False)],
-        source_provider="kobo",
+        inspector=lambda *_: SimpleNamespace(valid=False, protected=True),
+    )
+    assert result.legacy_acsm_artifact is True
+    assert result.complete_local is False
+
+
+def test_other_executor_cannot_trigger_adept_repair(tmp_path):
+    path = tmp_path / "book.epub"
+    path.write_bytes(b"fake")
+    result = _inspect(
+        [_row(path, executor="provider", processed=False)],
         inspector=lambda *_: SimpleNamespace(valid=False, protected=True),
     )
     assert result.legacy_acsm_artifact is False
