@@ -228,6 +228,16 @@ def main():
         app.quit()
 
     def later(ms, fn, *, public_stage=None):
+        # Record a code-only, AST-verifiable call site. In particular a
+        # callback_other failure no longer hides the initiating GTK step.
+        from inspect import currentframe
+        frame = currentframe()
+        try:
+            caller = frame.f_back if frame is not None else None
+            line = (caller.f_lineno if caller is not None
+                    and caller.f_code.co_filename == __file__ else None)
+        finally:
+            del frame
         def run():
             # An inline lambda has __name__ == '<lambda>'. Every lambda in
             # this synthetic probe supplies a *literal*, reviewed target
@@ -236,6 +246,10 @@ def main():
             report["public_stage"] = (
                 name if name in _PUBLIC_STAGE_CODES else "callback_other"
             )
+            if type(line) is int:
+                report["callback_line"] = line
+            else:
+                report.pop("callback_line", None)
             try:
                 fn()
             except Exception as exc:
