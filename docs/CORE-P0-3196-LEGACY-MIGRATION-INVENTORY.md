@@ -1,5 +1,13 @@
 # P0 #3196 — inventaire SQL en lecture seule préalable à la migration 0.7
 
+> **ARCHIVE — fonctionnalité retirée (#3196, novembre 2026).** Les modules
+> `legacy_backup_migration_inventory.py` et `legacy_backup_inventory_cli.py`,
+> ainsi que la commande `legacy-backup-inventory`, ne sont plus disponibles.
+> Cette page décrit seulement une ancienne procédure ; elle ne constitue
+> ni un guide d'exécution ni un prérequis de migration. Selon
+> `docs/ARCHITECTURE.md`, aucun historique de pseudo-droits Kobo n'est
+> à reconstruire. Les tables et fichiers utilisateur existants restent intacts.
+
 Le Core ne doit pas traiter `backup_items` comme une preuve de possession,
 de présence physique ni comme un veto de téléchargement. Les anciens
 `backup_put` restent toutefois accessibles pour les connexions sans ABI
