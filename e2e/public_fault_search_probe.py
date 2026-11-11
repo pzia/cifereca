@@ -60,6 +60,21 @@ def main() -> int:
     args = parser.parse_args()
     if os.environ.get("GDK_BACKEND") != "x11" or not os.environ.get("DISPLAY"):
         raise SystemExit("Real GTK/XTEST/Xvfb required")
+    # #5048: even the real GTK search exercise must not confuse a cached
+    # OPDS feed or private library index with a public book-specific notice.
+    from cifereca.catalogue_link import catalogue_notice_url
+    for source in ("ebooksgratuits", "numilog", "synthetic-catalogue"):
+        for route in ("/index.php/feed/search?q=book",
+                      "/book/42.atom", "/Pages/Compte/MesLivres.aspx"):
+            assert catalogue_notice_url(
+                {"friendly_url": "https://books.example" + route},
+                provider=source,
+            ) is None
+        assert catalogue_notice_url(
+            {"friendly_url": "https://books.example/feed/search?q=book",
+             "metadata": {"product_url": "https://books.example/notices/book-42"}},
+            provider=source,
+        ) == "https://books.example/notices/book-42"
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
 
