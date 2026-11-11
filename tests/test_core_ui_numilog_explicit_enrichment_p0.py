@@ -46,7 +46,7 @@ class Host:
             detail=SimpleNamespace(add_actions=self.actions.extend),
         )
         self.runner = SimpleNamespace(submit=self.submit)
-        self.service = SimpleNamespace(enrich_numilog_search_result=self.enrich)
+        self.service = SimpleNamespace(enrich_provider_search_result=self.enrich)
         self.network_requests = 0
 
     def _search_detail_context_current(self, key, context):
