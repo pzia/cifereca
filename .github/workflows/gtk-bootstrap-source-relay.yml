@@ -22,8 +22,27 @@ jobs:
             environnements/openai-chat-debian e2e src pyproject.toml \
             | gzip -n -9 > transfer/cifereca-bootstrap-sources.tar.gz
           sha256sum transfer/cifereca-bootstrap-sources.tar.gz > transfer/SHA256SUMS
-          tar -tzf transfer/cifereca-bootstrap-sources.tar.gz | grep -q '^cifereca/environnements/openai-chat-debian/bootstrap.py$'
-          tar -tzf transfer/cifereca-bootstrap-sources.tar.gz | grep -q '^cifereca/environnements/openai-chat-debian/check_import.py$'
+          tar -tzf transfer/cifereca-bootstrap-sources.tar.gz > transfer/manifest.txt
+          grep -q '^cifereca/environnements/openai-chat-debian/bootstrap.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-bootstrap-sources
+          path: |
+            transfer/cifereca-bootstrap-sources.tar.gz
+            transfer/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+ transfer/manifest.txt
+          grep -q '^cifereca/environnements/openai-chat-debian/check_import.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-bootstrap-sources
+          path: |
+            transfer/cifereca-bootstrap-sources.tar.gz
+            transfer/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+ transfer/manifest.txt
       - uses: actions/upload-artifact@v4
         with:
           name: debian-bootstrap-sources
