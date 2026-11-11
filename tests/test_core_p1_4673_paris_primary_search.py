@@ -89,8 +89,11 @@ def test_missing_primary_keeps_catalogue_provenance_but_never_rebinds(
         assert rows[0].source_credential == "paris-secondary"
         # The normal Paris loan guard must not authorize this secondary
         # credential as the explicitly selected primary.
-        from cifereca.core.manual_paris_borrow import _normal_paris_source_current
-        assert not _normal_paris_source_current(service, rows[0], "alice")
+        from cifereca.core.primary_source_binding import configured_primary_source_current
+        assert not configured_primary_source_current(
+            service, rows[0], "alice", provider_id="paris",
+            selection_key="primary_paris_connection_id",
+        )
     finally:
         service.close()
 

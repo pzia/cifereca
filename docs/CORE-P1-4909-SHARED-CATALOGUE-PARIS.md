@@ -36,8 +36,8 @@ primaire de A et la protection A→B→A restent nécessaires.
   holding ni `CanLoan` du compte B. Une projection `shared_read_only`
   reste inerte même si un ancien résultat est conservé pendant A→B.
 - `can_direct_download` refuse le credential Paris étranger et la
-  projection en lecture seule ; `manual_paris_borrow` conserve le contrôle
-  exact de propriété, connexion et primaire.
+  projection en lecture seule ; `LibraryService.borrow_paris_manual` conserve via les primitives Core
+  génériques le contrôle exact de propriété, connexion et primaire.
 
 ## Tests et limites
 

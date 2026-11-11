@@ -511,18 +511,48 @@ class LibraryService:
         )
 
     def can_borrow_paris(self, item: SearchResult) -> bool:
-        """Inert Paris action availability, without provider I/O."""
-        from .core.manual_paris_borrow import manual_paris_borrow_available
-        return manual_paris_borrow_available(self, item)
+        """Inert admission without a chained supplier-specific Core method."""
+        from .core.manual_library_borrow import (
+            manual_borrow_available, manual_borrow_diagnostic,
+        )
+        from .core.primary_source_binding import configured_primary_source_current
+
+        result = manual_borrow_diagnostic(
+            self, item, provider_id="paris", docbase="DILICOM",
+            primary_id="",
+            source_current=lambda service, row, identity: (
+                configured_primary_source_current(
+                    service, row, identity, provider_id="paris",
+                    selection_key="primary_paris_connection_id",
+                )
+            ),
+            available=manual_borrow_available, result_type=SearchResult,
+        )
+        return result["local_action_possible"] is True
 
     def paris_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
-        """Read-only local readiness, provider eligibility always unknown.
+        """Read-only Core admission; provider eligibility always unknown."""
+        from .core.manual_library_borrow import (
+            manual_borrow_available, manual_borrow_diagnostic,
+        )
+        from .core.primary_source_binding import configured_primary_source_current
 
-        Shares the Core admission decision used by can_borrow_paris. No
-        network operation or mutation is permitted in this diagnostics path.
-        """
-        from .core.manual_paris_borrow import manual_paris_borrow_diagnostic
-        return manual_paris_borrow_diagnostic(self, item)
+        result = manual_borrow_diagnostic(
+            self, item, provider_id="paris", docbase="DILICOM",
+            primary_id="",
+            source_current=lambda service, row, identity: (
+                configured_primary_source_current(
+                    service, row, identity, provider_id="paris",
+                    selection_key="primary_paris_connection_id",
+                )
+            ),
+            available=manual_borrow_available, result_type=SearchResult,
+        )
+        # Preserve the public UI's closed legacy reason without placing
+        # provider-specific diagnostics in the reusable Core admission.
+        if result["reason_code"] == "local_primary_source_binding_mismatch":
+            result["reason_code"] = "primary_paris_connection_mismatch_or_inactive"
+        return result
 
     def paris_borrow_followup_available(self, item: SearchResult) -> bool:
         """Read-only, exact-account pending loan check availability."""
@@ -532,7 +562,7 @@ class LibraryService:
         )
 
     def verify_paris_borrow_followup(self, item: SearchResult) -> dict[str, object]:
-        """Read-only verification of a spent Paris claim, without a second POST."""
+        """Read-only verification of a spent claim, without a second POST."""
         from .core.borrow_later_verification import verify_pending_borrow_followup
         return verify_pending_borrow_followup(
             self, item, readiness=self.paris_borrow_diagnostic,
@@ -543,12 +573,19 @@ class LibraryService:
         confirmed: bool = False, expected_context_epoch: int | None = None,
         expected_account: Account | None = None,
     ) -> dict[str, object]:
-        """Explicit Paris attempt through the durable Core claim only."""
-        from .core.manual_paris_borrow import manual_paris_borrow
-        return manual_paris_borrow(
-            self, item, expected_identity_id=expected_identity_id,
+        """Explicit Paris click through the generic one-shot Core claim."""
+        from .core.manual_library_borrow import manual_borrow
+        from .core.primary_source_binding import configured_primary_source_current
+
+        return manual_borrow(
+            self, item, provider_id="paris", docbase="DILICOM",
+            primary_id="", expected_identity_id=expected_identity_id,
             confirmed=confirmed, expected_context_epoch=expected_context_epoch,
             expected_account=expected_account,
+            additional_scope_current=lambda: configured_primary_source_current(
+                self, item, expected_identity_id, provider_id="paris",
+                selection_key="primary_paris_connection_id",
+            ),
         )
 
     def verify_borrow_without_submission(
