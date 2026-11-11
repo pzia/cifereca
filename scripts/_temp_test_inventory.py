@@ -60,7 +60,7 @@ class Capture:
             except ValueError:relative=path
             self.records.append((relative, item.nodeid))
     def pytest_collectreport(self, report):
-        if report.failed:self.errors.append(report.nodeid)
+        if report.failed:self.errors.append(report.nodeid + " | " + str(report.longrepr).splitlines()[-1][:190])
 def summarize(rows, errors, section, package=None):
     res=collections.Counter(); by_provider=collections.Counter(); by_domain=collections.Counter()
     cross=collections.defaultdict(collections.Counter); files=collections.Counter()
@@ -82,6 +82,7 @@ def summarize(rows, errors, section, package=None):
             "modules":len(files),"top_files":files.most_common(12),
             "domain_examples":dict(examples)}
 def collect(args,section,package=None):
+    sys.path.insert(0,str(Path.cwd()))
     import pytest
     hook=Capture()
     with open(os.devnull,"w") as sink:
@@ -106,7 +107,7 @@ def main():
         if line.startswith("TEST_INVENTORY="):all_results.append(json.loads(line.split("=",1)[1]))
     for package in sorted((ROOT/"src/plugins").iterdir()):
         if not (package/"cifereca-plugin.json").is_file() or not (package/"tests").is_dir():continue
-        env=dict(os.environ);env["PYTHONPATH"]=str(ROOT/"src")
+        env=dict(os.environ);env["PYTHONPATH"]=str(package)+os.pathsep+str(ROOT/"src")
         try:
             p=subprocess.run([sys.executable,str(Path(__file__).resolve()),"single",package.name],
                 cwd=package,env=env,capture_output=True,text=True,timeout=90)
