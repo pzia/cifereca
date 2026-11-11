@@ -35,7 +35,7 @@ def test_search_detail_remains_non_authorizing_and_keeps_action_gate():
 def test_uncertain_existing_loan_exposes_read_only_followup_without_new_post():
     source = PANEL.read_text(encoding="utf-8")
     assert "if pending_followup:" in source
-    assert "Demande de prêt Paris déjà envoyée" in source
+    assert "Demande de prêt déjà envoyée" in source
     assert "Ne réempruntez pas." in source
     assert "Vérifier le prêt sans réemprunter" in source
-    assert "cifereca-paris-borrow-followup" in source
+    assert "cifereca-borrow-followup" in source
