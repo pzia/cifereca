@@ -92,7 +92,7 @@ def test_only_current_verified_borrow_reprojects_exact_detail(provider_id, outco
     priority = NS(USER_ACTION="user")
     _controller()(
         window, item, object(), TaskPriority=priority,
-        provider_id=provider_id, label="Fournisseur",
+        label="Fournisseur",
         available=lambda _: True, dispatch=dispatch,
     )
     assert len(requests) == 1  # Never a second borrow POST.
@@ -103,3 +103,29 @@ def test_only_current_verified_borrow_reprojects_exact_detail(provider_id, outco
     else:
         assert refreshed == []
         assert loans == ([True] if outcome == "stale_after_loans" else [])
+
+
+@pytest.mark.parametrize("account_provider", ["foreign", "", None])
+def test_neutral_borrow_rejects_mismatched_account_provider_before_queue(account_provider):
+    item = SearchResult("synthetic-alpha")
+    account = Account(account_provider)
+    session = NS(connected=True, _epoch=1)
+    queued = []
+    service = NS(
+        current_identity=NS(identity_id="alice"), _account_context_epoch=1,
+        accounts=[account],
+        _session_for_source=lambda *_: session,
+    )
+    window = NS(
+        _closed=False, service=service,
+        _eligible_borrow_accounts=lambda _: (session, [account]),
+        _manual_borrow_pending=None,
+        runner=NS(submit=lambda *args, **kwargs: queued.append((args, kwargs))),
+    )
+    _controller()(
+        window, item, object(), TaskPriority=NS(USER_ACTION="user"),
+        label="Fournisseur", available=lambda _: True,
+        dispatch=lambda *_args, **_kw: pytest.fail("foreign borrower dispatched"),
+    )
+    assert queued == []
+    assert window._manual_borrow_pending is None
