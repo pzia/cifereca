@@ -22,7 +22,7 @@ def normal_source_adept_status(
 ) -> dict[str, Any]:
     """Return a deterministic local-only UI status, never an Adobe decision."""
     # Configuration IDs are opaque strings. Coercing malformed booleans or
-    # numbers may fabricate a matching Paris/ADEPT association.
+    # numbers may fabricate a matching source/ADEPT association.
     identity = identity_id.strip() if type(identity_id) is str else ""
     provider = source_provider_id if type(source_provider_id) is str else ""
     label = source_label if type(source_label) is str else ""
@@ -52,7 +52,7 @@ def normal_source_adept_status(
         if primary_connection_id is not None:
             response.update(status="to_verify", reason=f"primary_{provider}_connection_missing")
         return response
-    # An explicitly designated source never falls back to another Paris
+    # An explicitly designated source never falls back to another source
     # login when its credential disappears, is disabled, or changes owner.
     if primary_connection_id is not None:
         if (type(primary_connection_id) is not str
@@ -64,7 +64,7 @@ def normal_source_adept_status(
                     if row["credential_id"] == primary_connection_id]
         if len(selected) != 1:
             response.update(status="to_verify", reason=(
-                "primary_paris_connection_missing" if not selected
+                f"primary_{provider}_connection_missing" if not selected
                 else f"primary_{provider}_connection_duplicate"))
             return response
         connection = selected[0]
@@ -84,7 +84,7 @@ def normal_source_adept_status(
         account for account in accounts
         if type(getattr(account, "identity_id", None)) is str
         and getattr(account, "identity_id") == identity
-        and str(getattr(account, "provider_id", "") or "").casefold() == "paris"
+        and str(getattr(account, "provider_id", "") or "").casefold() == provider.casefold()
         and type(getattr(account, "credential_id", None)) is str
         and getattr(account, "credential_id") == connection["credential_id"]
         and getattr(account, "is_primary", None) is True
