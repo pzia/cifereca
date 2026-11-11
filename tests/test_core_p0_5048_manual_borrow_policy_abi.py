@@ -132,3 +132,71 @@ def test_manifest_and_session_mismatch_default_deny(tmp_path):
             session.descriptor = old_descriptor
     finally:
         service.close()
+
+
+def test_generic_bnf_uses_only_durable_one_shot_executor(tmp_path):
+    from cifereca.core.borrow_action_scope import borrow_claim_key
+
+    service, session, account, item = bnf_setup(tmp_path)
+    try:
+        session.descriptor = replace(
+            session.descriptor,
+            manual_borrow_policy=ManualBorrowPolicy("BNF_PRET"),
+        )
+        first = service.borrow_manual(
+            item, expected_identity_id=account.identity_id,
+            confirmed=True, expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        assert first["status"] == "confirmed"
+        assert first["provider_verified"] is True
+        assert session.dispatches == [("book-1", "reader")]
+        second = service.borrow_manual(
+            item, expected_identity_id=account.identity_id,
+            confirmed=True, expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        assert second["status"] == "verification_unavailable"
+        assert session.dispatches == [("book-1", "reader")]
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item),
+        )["status"] == "confirmed"
+    finally:
+        service.close()
+
+
+def test_generic_paris_uncertain_post_is_never_replayed(tmp_path):
+    service, session, account, item, state = paris_setup(
+        tmp_path, result="timeout-unconfirmed",
+    )
+    try:
+        args = dict(
+            expected_identity_id=account.identity_id,
+            confirmed=True, expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        first = service.borrow_manual(item, **args)
+        assert first["status"] == "verification_unavailable"
+        assert state["mutations"] == 1
+        second = service.borrow_manual(item, **args)
+        assert second["status"] == "verification_unavailable"
+        assert second["reason_code"] == "borrow_previous_attempt"
+        assert state["mutations"] == 1
+        assert service.storage.entitlements(provider_id="paris") == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("confirmation", [False, None, 1, "yes"])
+def test_generic_action_denies_ambiguous_consent_before_supplier_io(tmp_path, confirmation):
+    service, session, account, item, state = paris_setup(tmp_path)
+    try:
+        result = service.borrow_manual(
+            item, expected_identity_id=account.identity_id,
+            confirmed=confirmation, expected_account=account,
+        )
+        assert result["status"] == "blocked"
+        assert result["reason_code"] == "borrow_confirmation_required"
+        assert state["calls"] == [] and state["mutations"] == 0
+    finally:
+        service.close()
