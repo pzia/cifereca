@@ -156,6 +156,25 @@ def test_queued_followup_is_revoked_on_changed_context(tmp_path, change):
         service.close()
 
 
+
+def test_linked_reader_cannot_reuse_primary_followup_claim(tmp_path):
+    """The Core enforces the exact borrower's primary binding, not GTK."""
+    service, session, account, item, state, op = _pending(tmp_path)
+    window, errors, messages, refreshes = view(service, session, account, item)
+    window.runner = ReadOnlyTasks()
+    try:
+        # The account remains registered and source-matched, but the
+        # primary borrower scope is no longer the one in the spent claim.
+        account.unique_id = "other-reader"
+        assert not service.paris_borrow_followup_available(item)
+        _run(window, item)
+        assert window.runner.tasks == []
+        assert state["mutations"] == 1
+        assert messages == refreshes == errors == []
+    finally:
+        service.close()
+
+
 def test_other_scope_or_confirmed_checkpoint_never_offers_followup(tmp_path):
     service, session, account, item, state, op = _pending(tmp_path)
     try:
