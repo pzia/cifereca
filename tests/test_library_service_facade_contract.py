@@ -59,7 +59,7 @@ def test_opening_partial_continues_other_loans_and_recovers_without_ui_identity_
         service.current_identity = service.identity_by_id('bob')
         monkeypatch.setattr(service, '_loans_for_account', lambda _a, force=False: loans)
         monkeypatch.setattr(service, '_kobo_adapter', lambda: SimpleNamespace(available=lambda: False))
-        monkeypatch.setattr(service, 'kobo_backup_enabled', lambda: False)
+        service.config.set("kobo_backup.enabled", False)
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, '_reconcile_identity_adept_inventory', lambda _i: {})
         outcomes = {'first': 'attention_required', 'second': 'complete'}
