@@ -1339,9 +1339,12 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     # an entitlement. Expose it as a *remote catalogue* card even when the
     # historical entitlement projector has been physically removed. A click
     # still needs the exact live account/session and a fresh selected offer.
-    for observed in self.storage.catalog_entries(
-        state="remote_catalog", identity_id=identity_id,
-    ):
+    for observed in self.storage.catalog_entries():
+        # Keep compatibility with Storage's existing read-only catalogue API
+        # and lightweight projection fixtures; do not issue a provider read.
+        if (observed.get("local_state") != "remote_catalog"
+                or observed.get("identity_id") != identity_id):
+            continue
         metadata = observed.get("metadata")
         if type(metadata) is not dict:
             continue
