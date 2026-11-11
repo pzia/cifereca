@@ -849,17 +849,18 @@ class LocalInspection:
                         matching_artifacts[0].get('size'),
                     )
             scope = right_scope(right)
-            # BnF's existing Core declaration workflow may only record an
-            # active, exact loan. A catalogue entry, an expired entitlement
-            # or a book title is not a valid BnF loan/file association.
-            bnf_exact_loan = (
+            # A declaration never proves a provider right or file. For any
+            # *loan*, an inactive or unidentifiable borrower transaction may
+            # not become a positive declared local association. Non-loan
+            # records retain their existing source-scoped display contract.
+            exact_active_loan = (
                 right.get('state') == 'active'
-                and right.get('entitlement_type') == 'loan'
                 and type(right.get('loan_id')) is str
                 and bool(right['loan_id'])
             )
             if (scope is not None and scope[0] == identity_id
-                    and (scope[1] != 'bnf-pret' or bnf_exact_loan)
+                    and (right.get('entitlement_type') != 'loan'
+                         or exact_active_loan)
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
             if scope is not None and right.get('provider_id') == 'numilog':
