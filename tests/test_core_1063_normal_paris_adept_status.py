@@ -1,7 +1,7 @@
 """P0 #1063: normal Paris/ADEPT status never infers an Adobe owner."""
 from __future__ import annotations
 
-from cifereca.core.paris_adept_normal import normal_paris_adept_status
+from cifereca.core.adept_source_binding_status import normal_source_adept_status
 from cifereca.models import Account
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
@@ -18,11 +18,14 @@ def _primary(identity, credential, *, primary=True):
 
 def _status(connections, accounts, *, profile="reader-a", identity="alice",
             selected=None):
-    return normal_paris_adept_status(
-        identity_id=identity, connections=connections,
+    result = normal_source_adept_status(
+        identity_id=identity, source_provider_id="paris",
+        source_label="Paris", connections=connections,
         accounts=accounts, profile_id=profile,
         primary_connection_id=selected,
     )
+    result["paris_label"] = result.pop("source_label")
+    return result
 
 
 def test_one_exact_primary_and_profile_is_locally_ready_only():
