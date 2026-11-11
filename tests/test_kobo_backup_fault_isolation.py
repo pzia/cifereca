@@ -8,7 +8,8 @@ import zipfile
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.models import Account, SearchResult
-from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession, ProviderError
+from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
+from cifereca.providers.base import ProviderError
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
