@@ -122,6 +122,9 @@ def test_numilog_epoch_and_bnf_mode_cannot_leak_across_types(policy):
         assert bridge.toggle_state(conn, loan) is None
     db.metadata_set("sync.source.bnf_auto." + bnf_id, "1")
     with db._lock, db._connect() as conn:
+        assert bridge.toggle_state(conn, loan) == "off"  # no loan epoch
+    db.metadata_set("sync.source.bnf_auto." + bnf_id + ".revision", "b" * 32)
+    with db._lock, db._connect() as conn:
         assert bridge.toggle_state(conn, loan) == "on"
         assert bridge.toggle_state(conn, purchase) == "on"
 
