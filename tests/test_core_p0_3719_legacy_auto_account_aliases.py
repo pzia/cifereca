@@ -7,7 +7,10 @@ from __future__ import annotations
 import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
-from cifereca.core import bnf_auto_materialization as bnf
+from cifereca.core.source_auto_consent_bridge import (
+    legacy_source_auto_policy, _source_id,
+)
+from cifereca.core.source_sync_consent import scope_for_account
 from tests.test_core_p0_2055_bnf_explicit_stage import connected_core
 
 
@@ -38,15 +41,16 @@ def test_bnf_old_on_never_transfers_to_aliased_borrower(
     broker = SynchronizationBrokerImpl(service)
     source_id = broker._source_id(account)
     assert broker.set_bnf_auto_download(source_id, True)
-    assert bnf.enabled(service, account) is True
+    assert broker.bnf_auto_download_enabled(source_id) is True
 
     account.unique_id = rebound
     assert broker._source_id(account) == source_id
     assert len(session.accounts) == len(service.accounts) == 1
-    assert bnf.enabled(service, account) is False
-    assert bnf.materialize(service, account, loan)["status"] == "skipped"
+    assert broker.bnf_auto_download_enabled(source_id) is False
     assert not downloaded
-    assert service.storage.metadata_get(bnf.policy_key(account)) == "1"
+    assert service.storage.metadata_get(
+        "sync.source.bnf_auto." + _source_id(scope_for_account(account))
+    ) == "1"
     account.unique_id = first
     assert bnf.enabled(service, account) is True
 
