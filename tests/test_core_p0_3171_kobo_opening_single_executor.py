@@ -7,10 +7,12 @@ from __future__ import annotations
 import pytest
 
 from cifereca.core import sync_coordination
-from cifereca.core.source_materialization_schedule import (
-    kobo_on_start_sessions, policy_key,
-)
 from tests.test_kobo_backup_guard import _service
+
+
+def _historical_w2_policy_key(source_id: str) -> str:
+    """Synthetic persisted 0.7 bit; no runtime schedule is available."""
+    return "sync.source.materialization.on_start." + source_id
 
 
 def _ready_source(tmp_path):
@@ -20,8 +22,7 @@ def _ready_source(tmp_path):
     session = service._sessions[service._session_key("kobo", "vault-1")]
     account = session.accounts[0]
     service.accounts = [account]
-    service.storage.metadata_set(policy_key(service.sync_source_id(account)), "1")
-    assert kobo_on_start_sessions(service) == ()
+    service.storage.metadata_set(_historical_w2_policy_key(service.sync_source_id(account)), "1")
     return service, account
 
 
@@ -108,7 +109,7 @@ def test_on_start_policy_never_schedules_complete_canonical_kobo_session(
     service, account = _ready_source(tmp_path)
     session = service._sessions[service._session_key("kobo", "vault-1")]
     source_id = service.sync_source_id(account)
-    original_policy = service.storage.metadata_get(policy_key(source_id))
+    original_policy = service.storage.metadata_get(_historical_w2_policy_key(source_id))
     methods = (
         ("downloadable_resource_snapshot", "downloadable_selected_offer_snapshot",
          "downloadable_selected_delivery_candidate")
@@ -123,11 +124,9 @@ def test_on_start_policy_never_schedules_complete_canonical_kobo_session(
                     "policy must inspect ABI statically"
                 ), raising=False,
             )
-        assert kobo_on_start_sessions(service) == ()
-        assert service.storage.metadata_get(policy_key(source_id)) == original_policy
+        assert service.storage.metadata_get(_historical_w2_policy_key(source_id)) == original_policy
         broker = SynchronizationBrokerImpl(service)
-        with pytest.raises(ValueError):
-            broker.set_local_materialization_schedule(source_id, "on_start")
+        assert not hasattr(broker, "set_local_materialization_schedule")
 
         # A missing/partial source snapshot does not grant a fallback to
         # a historical backup writer merely because an ON was persisted.
@@ -164,9 +163,8 @@ def test_on_start_partial_abi_never_reenables_older_kobo_worker(tmp_path, monkey
                 "an incomplete ABI is not a provider request"
             ), raising=False,
         )
-        assert kobo_on_start_sessions(service) == ()
         assert service.storage.metadata_get(
-            policy_key(service.sync_source_id(account))
+            _historical_w2_policy_key(service.sync_source_id(account))
         ) == "1"
     finally:
         service.close()
