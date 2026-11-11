@@ -91,7 +91,7 @@ def test_anonymous_numilog_search_shows_notice_not_purchase_or_download():
     host._populate_search(host._remote_search_results, announce=False)
     rows = host.search_page.show_rows.call_args.args[0]
     assert len(rows) == 1
-    assert "Catalogue public Numilog" in rows[0].meta
+    assert "Catalogue public · aucun achat attesté" in rows[0].meta
     assert "aucun achat attesté" in rows[0].meta
     assert "Mes achats" not in rows[0].meta
     assert rows[0].options["action_label"] is None
@@ -107,7 +107,7 @@ def test_private_numilog_inventory_does_not_imply_local_epub():
     host.service.can_direct_download = Mock(return_value=False)
     host._populate_search(host._remote_search_results, announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
-    assert "Mes achats Numilog" in row.meta
+    assert "Mes achats · fichier local non présumé" in row.meta
     assert "fichier local non présumé" in row.meta
     assert "Fichier local disponible" not in row.meta
     assert row.options["action_label"] is None
