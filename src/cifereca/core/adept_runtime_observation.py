@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-def describe_paris_adept_runtime(
+def describe_adept_runtime(
     saved_status: Mapping[str, Any],
     profile_row: Mapping[str, Any] | None,
     *,
@@ -57,4 +57,4 @@ def describe_paris_adept_runtime(
     return response
 
 
-__all__ = ["describe_paris_adept_runtime"]
+__all__ = ["describe_adept_runtime"]
