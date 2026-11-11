@@ -9,7 +9,7 @@ from copy import copy
 from ..models import Account, SearchResult
 
 
-def _capture_borrow_ui_scope(window, item, account, session):
+def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
     """Capture one immutable UI lease for a user-initiated lending action.
 
     This is an inert guard only: no provider request, borrow permission or
@@ -21,7 +21,6 @@ def _capture_borrow_ui_scope(window, item, account, session):
     core_epoch = getattr(window.service, "_account_context_epoch", None)
     selection_id = getattr(window, "_selected_search_id", None)
     detail_gen = getattr(window, "_search_detail_request_generation", None)
-    provider_id = item.source_provider
     credential_id = account.credential_id
     source_epoch = getattr(session, "_epoch", None)
     notice_scope = (
@@ -33,7 +32,9 @@ def _capture_borrow_ui_scope(window, item, account, session):
         account.identity_id, account.provider_id, account.credential_id,
         account.unique_id, account.is_primary,
     )
-    if type(core_epoch) is not int or not identity_id:
+    if (type(core_epoch) is not int or not identity_id
+            or item.source_provider != provider_id
+            or account.provider_id != provider_id):
         return None
 
     def current():
@@ -89,7 +90,9 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
             return
     except Exception:
         return
-    scope = _capture_borrow_ui_scope(window, item, account, session)
+    scope = _capture_borrow_ui_scope(
+        window, item, account, session, provider_id=provider_id,
+    )
     if scope is None:
         return
     identity_id, core_epoch, current = scope
@@ -239,7 +242,9 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
             return
     except Exception:
         return
-    scope = _capture_borrow_ui_scope(window, item, account, session)
+    scope = _capture_borrow_ui_scope(
+        window, item, account, session, provider_id="paris",
+    )
     if scope is None:
         return
     _identity_id, _core_epoch, scope_current = scope
