@@ -105,6 +105,64 @@ class SafeE2EExportTests(unittest.TestCase):
         self.assertNotIn("name: e2e-core-debug", content)
 
 
+def test_book_detail_1700_closed_stage_exports_without_private_values():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-1700"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        report.write_text(json.dumps({
+            "public_stage": "component_overflow",
+            "error": "PRIVATE_SIGNED_URL", "token": "PRIVATE_TOKEN",
+        }))
+        row = module.safe_summary(source)["results"][0]
+        assert row["book_detail_last_stage"] == "component_overflow"
+        assert "PRIVATE" not in repr(row)
+        report.write_text(json.dumps({"public_stage": "PRIVATE_STAGE"}))
+        assert "book_detail_last_stage" not in module.safe_summary(source)["results"][0]
+
+
+def test_bulk_refresh_timeout_exports_only_strict_fixture_flags():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "diagnostics-large-1600"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        flags = {
+            "refresh_mapped": True,
+            "refresh_sensitive": False,
+            "fixture_enabled": True,
+        }
+        report.write_text(json.dumps({
+            "stage": "P0_2140_bulk_fixture",
+            "bulk_refresh_observation": flags,
+            "error": "PRIVATE_JOURNAL", "token": "PRIVATE_TOKEN",
+        }))
+        row = module.safe_summary(source)["results"][0]
+        assert row["bulk_refresh_observation"] == flags
+        assert "PRIVATE" not in repr(row)
+        for bad in (
+            {"refresh_mapped": 1, "refresh_sensitive": False, "fixture_enabled": True},
+            {**flags, "private_label": "PRIVATE"},
+            {"refresh_mapped": True},
+        ):
+            report.write_text(json.dumps({
+                "stage": "P0_2140_bulk_fixture",
+                "bulk_refresh_observation": bad,
+            }))
+            assert "bulk_refresh_observation" not in module.safe_summary(source)["results"][0]
+        report.write_text(json.dumps({
+            "stage": "PRIVATE_STAGE", "bulk_refresh_observation": flags,
+        }))
+        assert "bulk_refresh_observation" not in module.safe_summary(source)["results"][0]
+
+
 def test_diagnostics_timeout_wait_line_is_ast_validated_and_never_text():
     """Public E2E can locate a polling timeout without exposing GTK evidence."""
     import ast
