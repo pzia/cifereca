@@ -78,7 +78,8 @@ def build(stage: Path, cache: Path) -> tuple[Path, str]:
     )
     archive = stage / ASSET
     mod.build(reviewed, archive, profile=mod.UBUNTU_PROFILE)
-    sha = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+    with archive.open("rb") as stream:
+        sha = hashlib.file_digest(stream, "sha256").hexdigest()
     (stage / "SHA256SUMS").write_text(f"{sha}  {ASSET}\n", encoding="ascii")
     return archive, sha
 
