@@ -113,7 +113,8 @@ def test_controller_keeps_durable_numilog_backup_status_outside_tools(monkeypatc
                           sync_capabilities=("remote_inventory",)),
     ])
     methods["_refresh_sync_page"](window)
-    assert "Aperçu local des achats Numilog" in details
+    assert "Aperçu local des achats Numilog" not in details
+    assert "Actualisation automatique des notices Numilog" in details
     assert "Sauvegarde automatique des achats Numilog" not in details
     assert window.runner.tasks == []
     assert not any(call[0] in {"sync-source", "acquire", "prepare"} for call in calls)

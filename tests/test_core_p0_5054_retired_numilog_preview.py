@@ -1,19 +1,24 @@
-"""The removed Numilog v1 preview cannot authorize local or provider I/O."""
-from types import SimpleNamespace
+"""P0 #5054: the retired Numilog preview has no Core or GTK façade.
 
-from cifereca.core.numilog_local_preview import preview
+The generic Kobo local-materialization preview remains available, but a
+Numilog source must not expose a fake local-hash check or call the old worker.
+"""
+import ast
+from pathlib import Path
 
 
-def test_retired_preview_fails_closed_without_touching_its_broker_or_account():
-    class Inaccessible:
-        def __getattribute__(self, name):
-            raise AssertionError("retired preview accessed caller state")
+ROOT = Path(__file__).resolve().parents[1] / "src/cifereca"
 
-    for verify in (False, True):
-        receipt = preview(Inaccessible(), Inaccessible(), "unknown", verify_local_files=verify)
-        assert not receipt.ok
-        assert receipt.changed == 0
-        assert receipt.facts["status"] == "preview_unavailable"
-        assert receipt.facts["read_only"] is True
-        assert receipt.facts["acquisition_authorized"] is False
-        assert "counts" not in receipt.facts
+
+def test_retired_numilog_preview_has_no_core_or_gtk_entrypoint():
+    assert not (ROOT / "core/numilog_local_preview.py").exists()
+    broker = (ROOT / "brokers.py").read_text(encoding="utf-8")
+    gui = (ROOT / "gui/sync_controller.py").read_text(encoding="utf-8")
+    view = (ROOT / "gui/sync_view.py").read_text(encoding="utf-8")
+    for source in (broker, gui, view):
+        ast.parse(source)
+        assert "numilog_local_preview" not in source
+    assert "Aperçu local des achats Numilog" not in gui
+    assert "Vérifier les fichiers…" not in gui
+    assert "def preview_local_materialization(" in broker
+    assert "Aperçu local…" in gui  # Kobo-only canonical preview

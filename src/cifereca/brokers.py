@@ -934,12 +934,6 @@ class SynchronizationBrokerImpl:
             return rejected("unknown_source")
         if not self._enabled(source_id):
             return rejected("source_disabled")
-        if getattr(account, "provider_id", None) == "numilog":
-            from .core.numilog_local_preview import preview
-            return preview(
-                self, account, source_id,
-                verify_local_files=verify_local_files,
-            )
         # Provider inventory previews belong to the canonical Sync contract.
         return rejected("not_supported")
 
