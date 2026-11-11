@@ -2,13 +2,12 @@
 from pathlib import Path
 
 from cifereca import cli
-from cifereca.core import legacy_diagnostic_projection as projection
+from cifereca.core.diagnostic_kobo_projection import public_kobo_backup_decision
 
 
 def test_retired_kobo_report_commands_and_serializers_are_absent():
     assert not hasattr(cli, "_kobo_legacy_report_view")
-    assert not hasattr(projection, "safe_kobo_backup_report")
-    assert not hasattr(projection, "_safe_kobo_backup_diagnostic_detail")
+    assert not (Path(__file__).resolve().parents[1] / "src/cifereca/core/legacy_diagnostic_projection.py").exists()
     src = (Path(__file__).resolve().parents[1] / "src/cifereca/cli.py").read_text(encoding="utf-8")
     assert "kobo-sync-errors" not in src
     assert "kobo-backup-errors" not in src
@@ -16,6 +15,6 @@ def test_retired_kobo_report_commands_and_serializers_are_absent():
 
 def test_existing_opening_decision_redaction_remains_closed():
     private = "Bearer SECRET_PRIVATE from /home/alice/Book.epub"
-    assert projection._safe_kobo_opening_decision({
+    assert public_kobo_backup_decision({
         "schema_version": 1, "status": private, "credential_id": private,
-    }) == {"schema_version": 1, "status": "unknown", "persisted_enabled": False}
+    }) == {}
