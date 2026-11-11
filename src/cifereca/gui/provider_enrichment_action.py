@@ -1,4 +1,4 @@
-"""Explicit Numilog public detail button for a selected Core search result.
+"""Explicit provider public detail action for a selected Core search result.
 
 This GTK-independent adapter schedules exactly one user task per click;
 the existing SearchDetailHost generation and identity guards control the
@@ -13,16 +13,26 @@ from cifereca.task_queue import TaskPriority
 
 
 
-def can_enrich_numilog_result(item) -> bool:
-    return can_enrich_provider_detail_result(
-        item, private_provider_id="numilog", public_provider_id="numilog-catalog",
-    )
+def can_offer_provider_enrichment(service, item) -> bool:
+    """No provider-name dispatch and no service/session network calls on render."""
+    from inspect import getattr_static
+
+    if not can_enrich_provider_detail_result(item):
+        return False
+    sessions = getattr(service, "_sessions", None)
+    key_factory = getattr(service, "_session_key", None)
+    if not isinstance(sessions, dict) or not callable(key_factory):
+        return False
+    session = sessions.get(key_factory(item.source_provider, item.source_credential))
+    method = ("enrich_public_detail" if item.source_credential == "__public__"
+              else "enrich_owned_public_detail")
+    return callable(getattr_static(session, method, None))
 
 
-def add_numilog_enrichment_action(host, selected_id, item, detail, context, *,
+def add_provider_enrichment_action(host, selected_id, item, detail, context, *,
                                   button_factory) -> bool:
     if (not isinstance(context, tuple) or len(context) != 4
-            or not can_enrich_numilog_result(item)
+            or not can_offer_provider_enrichment(host.service, item)
             or not host._search_detail_context_current(selected_id, context)):
         return False
     # Remote search rows use a provider-scoped dict key; their SearchResult.id
@@ -36,7 +46,7 @@ def add_numilog_enrichment_action(host, selected_id, item, detail, context, *,
 
     if selected_row_key() is None:
         return False
-    button = button_factory("Enrichir depuis Numilog", "view-refresh-symbolic")
+    button = button_factory("Enrichir les métadonnées", "view-refresh-symbolic")
 
     def invoke(_button):
         if (not host._search_detail_context_current(selected_id, context)
@@ -72,10 +82,10 @@ def add_numilog_enrichment_action(host, selected_id, item, detail, context, *,
             # Never echo arbitrary private/provider exceptions, signed URLs,
             # account ids, or raw HTML to a GTK toast.
             if host._search_detail_context_current(selected_id, context):
-                host.toast("Enrichissement Numilog indisponible ou non attesté.", 5)
+                host.toast("Enrichissement indisponible ou non attesté.", 5)
 
         host.runner.submit(
-            "Enrichissement public Numilog…", do_enrich,
+            "Enrichissement public…", do_enrich,
             success, failure, control=button,
             priority=TaskPriority.USER_ACTION, kind="plugin", origin="user",
         )
