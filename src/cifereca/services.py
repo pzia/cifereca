@@ -2757,45 +2757,10 @@ class LibraryService:
                         and item.metadata.get("catalogue_access") == "shared_read_only")):
                 return False
         try:
-            if item.source_provider in {"numilog", "numilog-catalog"}:
-                # A private Numilog session has direct_download=True, but that
-                # capability is NOT a per-notice download offer. Public search
-                # results (including those returned from a logged-in account's
-                # scope=catalog) have no purchase/variant authority.
-                if item.source_provider != "numilog":
-                    return False
-                if (item.source_collection != "library"
-                        or item.scenario != "NUMILOG_LIBRARY"
-                        or item.owned is not True
-                        or item.downloadable is not True
-                        or item.download_url is not None
-                        or item.medium != "digital"
-                        or type(item.source_credential) is not str
-                        or not item.source_credential
-                        or item.source_credential == "__public__"):
-                    return False
-                from .core.credential_scoped_record import exact_credential_scoped_record
-                if exact_credential_scoped_record(
-                    item.record_id, provider_id="numilog",
-                    credential_id=item.source_credential,
-                ) is None:
-                    return False
-                # A private notice from another family member's credentials
-                # must not show a download on the selected profile, even when
-                # the old query is still loaded during a profile transition.
-                identity = getattr(getattr(self, "current_identity", None), "identity_id", None)
-                if type(identity) is not str or not identity:
-                    return False
-                matching_accounts = [
-                    account for account in self.accounts
-                    if getattr(account, "provider_id", None) == "numilog"
-                    and getattr(account, "credential_id", None) == item.source_credential
-                ]
-                if (len(matching_accounts) != 1
-                        or matching_accounts[0].identity_id != identity):
-                    return False
-                # This is only a read-only visibility hint; the locked
-                # acquisition still re-attests the exact account and edition.
+            from .core.private_inventory_row_scope import selected_private_offer_hint
+            private_hint = selected_private_offer_hint(self, item)
+            if private_hint is not None:
+                return private_hint
             session = self._session_for_source(
                 item.source_provider, item.source_credential,
             )
