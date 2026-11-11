@@ -37,7 +37,7 @@ from cifereca.gui.main_window import MainWindow
 # Public diagnostic checkpoint names are reviewed *function identifiers*, not
 # supplier metadata or private widget labels. Every new checkpoint requires a
 # deliberate source update; no provider callback can create a public name.
-_PUBLIC_STAGE_CODES = frozenset(["activation","callback_other","search_initial","wait_search","search_detail","expanded_search","verify_tab_order","click_copy","read_clipboard","search_isbn","click_isbn","verify_isbn","library_select","verify_library","finish","reset_library_detail_for_security_audit","security_detail_expanders","audit_mixed_security_values","audit_mixed_security_values_rendered","audit_all_private_values","audit_all_private_values_rendered","begin_stale_public_detail","stale_public_detail_rendered","component_summaries","component_summary_short","component_summary_six_lines","component_summary_seven_lines","component_expand","component_collapse","component_click_collapse","component_overflow","component_open_overflow","component_click_hidden","component_lists","component_identity","component_identity_rendered"])
+_PUBLIC_STAGE_CODES = frozenset(["activation","callback_other","search_initial","wait_search","search_detail","expanded_search","verify_tab_order","click_copy","read_clipboard","search_isbn","click_isbn","verify_isbn","library_select","verify_library","begin_owned_book_action","owned_book_select","owned_book_action_visible","owned_book_action_completed","finish","reset_library_detail_for_security_audit","security_detail_expanders","audit_mixed_security_values","audit_mixed_security_values_rendered","audit_all_private_values","audit_all_private_values_rendered","begin_stale_public_detail","stale_public_detail_rendered","component_summaries","component_summary_short","component_summary_six_lines","component_summary_seven_lines","component_expand","component_collapse","component_click_collapse","component_overflow","component_open_overflow","component_click_hidden","component_lists","component_identity","component_identity_rendered"])
 
 TITLE = "Camille, le détail UX"
 METADATA = {
@@ -521,23 +521,179 @@ def main():
         if args.geometry_1300:
             report["ux611_probe_stage"] = "selected_library"
             geometry_1300("library")
+        # Only a pre-reviewed fixed stage may leave the private probe.
+        # Neither widget text, raw metadata nor an assertion is published.
+        report["book_detail_failure_code"] = "library_expander_unavailable"
         expander, rows = detail_info("library")
         shown = read_rows(rows)
-        for expected in (
-            ("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
-            ("Sujet", "nature"), ("ISBN déclaré", "9780306406157"),
-            ("Prix littéraire", "Prix du Quai"), ("Mot-clé", "enquête & mystère"),
-            ("Collection", "Collection enquête"),
-            ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
+        for code, expected in (
+            ("library_author_first", ("Auteur", "Alice Exemple")),
+            ("library_author_second", ("Auteur", "Bob Exemple")),
+            ("library_subject", ("Sujet", "nature")),
+            ("library_isbn", ("ISBN déclaré", "9780306406157")),
+            ("library_award", ("Prix littéraire", "Prix du Quai")),
+            ("library_keyword", ("Mot-clé", "enquête & mystère")),
+            ("library_collection", ("Collection", "Collection enquête")),
+            ("library_public_format", (
+                "Fiche publique · Format commercial sélectionné", "PDF sans DRM",
+            )),
         ):
+            report["book_detail_failure_code"] = code
             assert expected in shown, f"Bibliothèque n'utilise pas le détail partagé : {shown!r}"
         report["checks"]["library_metadata"] = True
         report["library_rows"] = shown
         report["library_expanded"] = expander.get_expanded()
         capture("03-library-shared-detail")
+        report["book_detail_failure_code"] = "library_online_calls"
         assert len(report["online_calls"]) == 1
-        # Continue testing generic GTK components, not retired provider-specific
-        # ownership fixtures or noncanonical entitlement-backed downloads.
+        report["book_detail_failure_code"] = "library_owned_begin"
+        begin_owned_book_action()
+
+    owned_action = {}
+
+    def begin_owned_book_action(provider="kobo"):
+        """#1347: real Library renderer/TaskRunner and physical targeted click.
+
+        Ownership/source eligibility uses real Core storage. The acquisition
+        boundary is observed, never connected to a provider or DRM runtime;
+        tests/test_owned_library_download.py verifies the engine/file boundary.
+        """
+        from types import SimpleNamespace as NS
+        from cifereca.models import Account
+        service = window.service
+        report["book_detail_failure_code"] = "owned_identity"
+        owner = service.current_identity.identity_id
+        assert owner == "camille"
+        label = "Numilog" if provider == "numilog" else "Kobo"
+        product = "gtk-owned-product"
+        if provider == "numilog":
+            scope = hashlib.sha256(b"gtk-owned-credential").hexdigest()[:20]
+            product = "numilog:" + scope + ":fictional:" + "a"*16
+        account = Account(display_name=label + " fictif ciblé", unique_id="gtk-owned-account",
+                          provider_id=provider, credential_id="gtk-owned-credential", identity_id=owner)
+        owned_action.update(accounts=list(service.accounts), sessions=dict(service._sessions),
+                            obtain=service.obtain_owned_library_item, refresh=window.refresh_library,
+                            recent=window.refresh_recent, calls=[], refreshed=[], recents=[],
+                            provider=provider, product=product, resume=False)
+        # #4289/#3171: this probe fabricates an owned borrower. Register the
+        # exact SQLite (connection, borrower) pair: a connected session plus
+        # provider_connection alone is *not* purchase authority. Never weaken
+        # Core's fail-closed binding check to make a UI fixture pass.
+        report["book_detail_failure_code"] = "owned_connection"
+        connection_id = service.storage.provider_connection_put({
+            "provider_id": provider, "credential_id": account.credential_id,
+            "identity_id": owner, "label": label + " fictif ciblé",
+        })
+        report["book_detail_failure_code"] = "owned_account"
+        service.storage.provider_account_put({
+            "connection_id": connection_id, "identity_id": owner,
+            "provider_id": provider, "credential_id": account.credential_id,
+            "account_id": account.unique_id, "label": label + " fictif ciblé",
+        })
+        report["book_detail_failure_code"] = "owned_entitlement"
+        service.storage.entitlement_put({"entitlement_id": "gtk-owned-right", "provider_id": provider,
+            "credential_id": account.credential_id, "account_id": account.unique_id, "identity_id": owner,
+            "item_id": product, "revision_id": "r1", "entitlement_type": "owned", "state": "active",
+            "metadata": {"title": TITLE, **({"source":"numilog.authenticated_library"}
+                         if provider == "numilog" else {"media_format":"epub"})}})
+        service.accounts = [*service.accounts, account]
+        service._sessions[service._session_key(provider, account.credential_id)] = NS(
+            provider_id=provider, credential_id=account.credential_id, connected=True,
+            capabilities=NS(backup=True, personal_library=True, direct_download=True), accounts=[account])
+        def observe(target):
+            assert target.identity_id == owner and target.item_id == product
+            owned_action["calls"].append((target.identity_id, target.item_id))
+            return NS(path=out / "synthetic-boundary-only.epub")
+        service.obtain_owned_library_item = observe
+        window.refresh_library = lambda *a, **kw: owned_action["refreshed"].append(a)
+        window.refresh_recent = lambda *a, **kw: owned_action["recents"].append(a)
+        possession = {"identity_id": owner, "provider_id": provider, "item_id": product,
+                      "kind": "owned", "state": "active", "entitlement_id": "gtk-owned-right"}
+        window._library_entries_cache = [dict(entry, key="gtk-owned-row-" + provider, provider_id=provider,
+            item_id=product, local=False, state="remote_owned", source="entitlement",
+            entitlement_id="gtk-owned-right", possessions=[possession])]
+        # Different purchases need different canonical GTK row keys; reusing
+        # a key would intentionally exercise the progressive append fast path
+        # and leave the preceding provider's row materialized.
+        report["book_detail_failure_code"] = "owned_admission"
+        assert service.owned_library_download_target(window._library_entries_cache[0]) is not None
+        report["book_detail_failure_code"] = "owned_render"
+        window._render_library()
+        report.pop("book_detail_failure_code", None)
+        later(160, owned_book_select)
+
+    def owned_book_select():
+        assert window.library_page.store.get_n_items() == 1
+        window.library_page.selection.set_selected(0)
+        later(260, owned_book_action_visible)
+
+    def owned_book_action_visible():
+        access = [node for node in walk(panel("library").content)
+                  if isinstance(node, Adw.PreferencesGroup) and node.get_title() == "Bibliothèques et accès"]
+        assert len(access) == 1
+        facts = [(node.get_title(), node.get_subtitle())
+                 for node in walk(access[0]) if isinstance(node, Adw.ActionRow)]
+        # #4682: entitlement kind is a typed row heading, not a raw
+        # paragraph in the subtitle. Preserve the exact positive/right
+        # and no-local-file checks after rendering separate profile cards.
+        assert any(kind.strip() == "Achat possédé en ligne" and bool(value.strip())
+                   for kind, value in facts)
+        assert not any(kind.strip() == "Fichier local"
+                       or "Fichier local :" in value for kind, value in facts)
+        buttons = [node for node in walk(panel("library"))
+                   if isinstance(node, Gtk.Button) and getattr(node, "_cifereca_action_id", "") == ("resume-index-numilog" if owned_action["resume"] else "download-owned-" + owned_action["provider"])]
+        assert len(buttons) == 1, "Action individuelle du livre possédé absente"
+        button = buttons[0]
+        assert button.get_mapped() and button.get_sensitive()
+        ok, bounds = button.compute_bounds(window)
+        assert ok and bounds.get_width() > 0 and bounds.get_height() > 0
+        assert 0 <= bounds.get_x() and bounds.get_x() + bounds.get_width() <= window.get_width()
+        assert 0 <= bounds.get_y() and bounds.get_y() + bounds.get_height() <= window.get_height()
+        assert not owned_action["calls"] and not owned_action["refreshed"]
+        report["checks"]["P0_1905_numilog_resume_passive_until_physical_click" if owned_action["resume"] else "P0_1347_owned_library_action_passive_until_physical_click" if owned_action["provider"] == "kobo" else "P0_2024_owned_numilog_passive_until_physical_click"] = True
+        capture("03a-owned-" + owned_action["provider"] + ("-resume-index-action" if owned_action["resume"] else "-single-book-action"))
+        report.setdefault("pointer_actions", []).append(device.click_widget(button))
+        owned_action["deadline"] = monotonic() + 6
+        later(100, owned_book_action_completed)
+
+    def owned_book_action_completed():
+        if not owned_action["refreshed"]:
+            assert monotonic() < owned_action["deadline"], "Action individuelle GTK non terminée"
+            later(100, owned_book_action_completed)
+            return
+        assert owned_action["calls"] == [("camille", owned_action["product"])]
+        assert len(owned_action["refreshed"]) == len(owned_action["recents"]) == 1
+        assert len(report["online_calls"]) == 1, "Téléchargement individuel devenu une recherche distante"
+        if owned_action['resume']:
+            receipt = window.service.storage.acquisition_get(owned_action['receipt'])
+            assert receipt['status'] == 'complete' and receipt['metadata']['phase'] == 'indexed'
+            placement = window.service.storage.placement_for_path(owned_action['path'])
+            assert placement['identity_id'] == 'camille' and placement['source_item_id'] == owned_action['product']
+            assert not window.service.accounts and not window.service._sessions
+            report['checks']['P0_1905_numilog_resume_XTEST_real_offline_index_complete'] = True
+            report['numilog_resume_scope'] = 'synthetic delivered file; real receipt/GTK/XTEST/TaskRunner/index/SQLite, no provider session'
+        else:
+            report["checks"]["P0_1347_owned_library_XTEST_exact_single_target" if owned_action["provider"] == "kobo" else "P0_2024_owned_numilog_XTEST_exact_single_target"] = True
+        report["owned_download_scope"] = "real GTK/TaskRunner + stored ownership; acquisition boundary observed, no live provider"
+        capture("03b-owned-" + owned_action["provider"] + ("-resume-index-complete" if owned_action["resume"] else "-targeted-click-complete"))
+        service = window.service
+        service.accounts = owned_action["accounts"]
+        service._sessions = owned_action["sessions"]
+        service.obtain_owned_library_item = owned_action["obtain"]
+        window.refresh_library = owned_action["refresh"]
+        window.refresh_recent = owned_action["recent"]
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("DELETE FROM entitlements WHERE entitlement_id='gtk-owned-right'")
+            db.execute("DELETE FROM provider_connections WHERE provider_id=? AND credential_id='gtk-owned-credential'", (owned_action["provider"],))
+        # #5054: the historical synthetic Numilog 'direct_download' session
+        # lacks the guarded v2 delivery ABI and is no longer a valid positive
+        # GTK acquisition. Canonical Numilog admission is covered by the
+        # dedicated guarded-v2 Core/provider contract tests instead.
+        window._library_entries_cache = [dict(entry, key="ux942-library")]
+        window._render_library()
+        window.library_page.selection.set_selected(0)
+        # Every Core book-detail E2E width executes #1018's real GTK
+        # allocation/overflow checks, not only the optional component suite.
         later(160, component_summaries)
 
     def finish():
