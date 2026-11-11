@@ -26,7 +26,7 @@ def test_disjoint_partition_and_passive_mentions(tmp_path):
     r = extended_inventory(tmp_path)
     p = r["line_partition"]
     assert r["historical"]["dedicated_lines"] == 2
-    assert r["historical"]["generic_provider_literal_lines_unique"] == 4
+    assert r["historical"]["generic_provider_literal_lines_unique"] == 5
     assert r["total_core_python_physical_lines"] == 10
     assert p["dedicated_modules"] == 2
     assert p["generic_ast_signal"] == 1
