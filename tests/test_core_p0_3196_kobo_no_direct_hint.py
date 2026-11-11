@@ -13,15 +13,11 @@ def test_kobo_direct_download_hint_denies_before_session_or_rights_lookup():
                and n.name == "LibraryService")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
                   and n.name == "can_direct_download")
-    assert any(
-        isinstance(node, ast.If)
-        and isinstance(node.test, ast.Compare)
-        and ast.unparse(node.test) == "item.source_provider == 'kobo'"
-        and any(isinstance(statement, ast.Return)
-                and isinstance(statement.value, ast.Constant)
-                and statement.value.value is False for statement in node.body)
-        for node in method.body
-    )
+    # A private row is rejected by the generic passive hint before any
+    # provider lookup. No supplier-name exception remains in the Core.
+    assert "kobo" not in ast.unparse(method).lower()
+    assert "selected_private_offer_hint" in ast.unparse(method)
+    assert "legacy_direct_get_retired" in ast.unparse(method)
     # Keep the provider-specific direct path physically absent, not merely
     # gated behind a flag that another caller might change later.
     assert "kobo_personal_right_states" not in ast.unparse(method)
