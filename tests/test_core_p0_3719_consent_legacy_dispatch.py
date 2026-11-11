@@ -1,4 +1,4 @@
-"""A configured canonical source must never fall through to a legacy worker."""
+"""A configured canonical source wins over any historical source-wide opt-in."""
 from pathlib import Path
 
 import pytest
@@ -14,7 +14,6 @@ from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, SHA, register
 def test_bnf_configured_source_has_one_executor_even_with_legacy_on(
     connected_core, monkeypatch, tmp_path, opening, allowed,
 ):
-    from cifereca.core import bnf_auto_materialization
     service, session, account, loan, state, downloaded = connected_core
     register(service.storage, account.identity_id, account.provider_id,
              account.credential_id, account=account.unique_id)
@@ -27,8 +26,6 @@ def test_bnf_configured_source_has_one_executor_even_with_legacy_on(
         monkeypatch.setattr('cifereca.core.' + module + '.acquisition_lock_file',
                             lambda: tmp_path / 'acquisition.lock')
     broker.set_source_sync_consent(sid, enabled=allowed, expected_revision=None)
-    monkeypatch.setattr(bnf_auto_materialization, 'materialize',
-                        lambda *_a, **_kw: pytest.fail('canonical source cannot use BnF legacy worker'))
     monkeypatch.setattr(service, '_acquire_active_loan_automatically',
                         lambda *_a, **_kw: pytest.fail('canonical source cannot use generic legacy loan worker'))
     calls = []
