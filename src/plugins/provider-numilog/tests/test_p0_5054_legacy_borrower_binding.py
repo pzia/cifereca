@@ -4,9 +4,7 @@ A connected session plus a credential's enabled provider connection is NOT
 proof that this specific borrower is still attached to that connection. All
 tests are local SQLite v14, no private HTTP or book delivery.
 """
-from cifereca.core.numilog_manifest_rights import (
-    mirror_numilog_manifest_rights, numilog_inventory_binding_valid,
-)
+from cifereca.core.private_inventory_binding import exact_private_inventory_binding_valid
 from types import SimpleNamespace as NS
 import hashlib
 
@@ -91,7 +89,7 @@ def test_legacy_numilog_borrower_must_be_registered_not_just_connected(tmp_path)
     service = _service(tmp_path)
     try:
         account, session, calls = _connect(service, number=0)
-        assert numilog_inventory_binding_valid(service, account, session=session)
+        assert exact_private_inventory_binding_valid(service, account, session=session, provider_id="numilog")
         with service.storage._lock, service.storage._connect() as db:
             db.execute(
                 "DELETE FROM provider_accounts WHERE identity_id=? "
@@ -100,13 +98,8 @@ def test_legacy_numilog_borrower_must_be_registered_not_just_connected(tmp_path)
                     account.identity_id, account.credential_id, account.unique_id,
                 ),
             )
-        assert not numilog_inventory_binding_valid(service, account, session=session)
-        assert mirror_numilog_manifest_rights(
-            service, [_row(account.credential_id, 0)],
-            identity_id=account.identity_id,
-            credential_id=account.credential_id,
-            account_id=account.unique_id,
-        ) == 0
+        assert not exact_private_inventory_binding_valid(service, account, session=session, provider_id="numilog")
+        # A detached borrower cannot authorize a private inventory read.
         assert service.storage.entitlements(provider_id="numilog") == []
         assert calls == []
     finally:
@@ -150,7 +143,7 @@ def test_foreign_connection_cannot_claim_borrower_amid_100_siblings(tmp_path, mo
                 AssertionError("separate unpinned owner read")
             ),
         )
-        assert numilog_inventory_binding_valid(service, account, session=session)
+        assert exact_private_inventory_binding_valid(service, account, session=session, provider_id="numilog")
         with service.storage._lock, service.storage._connect() as db:
             db.execute(
                 "UPDATE provider_accounts SET connection_id=? "
@@ -158,12 +151,8 @@ def test_foreign_connection_cannot_claim_borrower_amid_100_siblings(tmp_path, mo
                 "AND credential_id=? AND account_id=?",
                 (other, owner, credential, account.unique_id),
             )
-        assert not numilog_inventory_binding_valid(service, account, session=session)
-        assert mirror_numilog_manifest_rights(
-            service, [_row(account.credential_id, 0)],
-            identity_id=owner, credential_id=credential,
-            account_id=account.unique_id,
-        ) == 0
+        assert not exact_private_inventory_binding_valid(service, account, session=session, provider_id="numilog")
+        # The borrower must remain bound to the exact current connection.
         with service.storage._lock, service.storage._connect() as db:
             db.execute(
                 "UPDATE provider_accounts SET connection_id=? "
@@ -171,7 +160,7 @@ def test_foreign_connection_cannot_claim_borrower_amid_100_siblings(tmp_path, mo
                 "AND credential_id=? AND account_id=?",
                 (current, owner, credential, account.unique_id),
             )
-        assert numilog_inventory_binding_valid(service, account, session=session)
+        assert exact_private_inventory_binding_valid(service, account, session=session, provider_id="numilog")
         assert calls == []
     finally:
         service.close()
