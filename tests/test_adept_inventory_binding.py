@@ -95,7 +95,7 @@ def test_missing_adept_id_is_restored_from_unique_public_inventory_match(tmp_pat
         result = service.reconcile_adept_acquisition(acquisition_id)
 
         assert result["status"] == "resolved"
-        assert result["return_available"] is True
+        assert result["return_available"] is False
         binding = service.storage.acquisition_get(acquisition_id)["metadata"]["adept_binding"]
         assert binding["adept_loan_id"] == "registry-id"
         assert binding["adept_profile_id"] == "stable-profile"

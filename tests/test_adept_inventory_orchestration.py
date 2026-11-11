@@ -75,97 +75,44 @@ def test_missing_artifact_never_reads_runtime_or_changes_ledger(tmp_path):
         service.close()
 
 
-def _measured_batch(tmp_path, monkeypatch, *, legacy=False, replace_runtime=False):
-    """Count actual calls through the LibraryService capability facade."""
-    from cifereca.services import LibraryService
+def test_batch_reconciliation_never_probes_retired_return_capabilities(tmp_path):
     from cifereca.core import adept_inventory_reconciliation as module
     service = _service(tmp_path)
-    counts = {'profiles': 0, 'inventories': 0, 'capabilities': 0}
     first = _artifact(tmp_path)
-    paths = [first, first.with_name('Second.epub'), first.with_name('Third.epub')]
-    for i, path in enumerate(paths):
-        path.write_bytes(f'local-{i}'.encode())
-        _acquisition(service, path, acquisition_id=f'acq-{i}')
+    second = first.with_name("Second.epub")
+    second.write_bytes(b"second-local-artifact")
+    _acquisition(service, first, acquisition_id="acq-0")
+    _acquisition(service, second, acquisition_id="acq-1")
+    observed = {"profiles": 0, "inventories": 0, "capabilities": 0}
     def profiles():
-        counts['profiles'] += 1
-        return [{'profile_id': 'stable-profile', 'name': 'origin'}]
+        observed["profiles"] += 1
+        return [{"profile_id": "stable-profile", "name": "origin"}]
     def inventory(names):
-        counts['inventories'] += 1
-        return {'complete': True, 'profiles': [{'profile': 'origin', 'loans': [
-            {'id': f'loan-{i}', 'local_book': str(p), 'returned': False,
-             'expired': False, 'token_present': True} for i, p in enumerate(paths)]}]}
-    def capabilities():
-        counts['capabilities'] += 1
-        return {'capabilities': {'adept': {'loan_return': True}}}
-    runtime = NS(loan_inventories=inventory, capabilities=capabilities)
-    service._kobo_adapter = lambda: (
-        NS(loan_inventories=inventory, capabilities=capabilities) if replace_runtime else runtime)
+        observed["inventories"] += 1
+        return {"complete": True, "profiles": [{"profile": "origin", "loans": [
+            {"id": "loan-0", "local_book": str(first), "returned": False,
+             "expired": False, "token_present": True},
+            {"id": "loan-1", "local_book": str(second), "returned": False,
+             "expired": False, "token_present": True},
+        ]}]}
+    def capability():
+        observed["capabilities"] += 1
+        raise AssertionError("retired return capability must not be queried")
+    service._kobo_adapter = lambda: NS(loan_inventories=inventory, capabilities=capability)
+    service._adept_return_capability = capability
     service.kobo_profiles = profiles
-    service._adept_return_capability = LibraryService._adept_return_capability.__get__(service)
-    if legacy:
-        monkeypatch.setattr(module, '_return_capability_for_batch',
-                            lambda service, runtime, cache: service._adept_return_capability())
-    return service, counts, paths
-
-
-def test_batch_capabilities_before_after_counts_and_identical_bindings(tmp_path, monkeypatch):
-    results = []
-    observed_bindings = []
-    for legacy in (True, False):
-        with monkeypatch.context() as patcher:
-            service, counts, paths = _measured_batch(tmp_path / str(legacy), patcher, legacy=legacy)
-            try:
-                summary = service._reconcile_identity_adept_inventory('default')
-                assert summary == {'resolved': 3, 'unresolved': 0, 'errors': 0}
-                bindings = [service.storage.acquisition_get(f'acq-{i}')['metadata']['adept_binding']
-                            for i in range(3)]
-                for i, binding in enumerate(bindings):
-                    assert binding['adept_loan_id'] == f'loan-{i}'
-                    assert binding['adept_profile_id'] == 'stable-profile'
-                    assert binding['return_available'] is True
-                    assert paths[i].read_bytes() == f'local-{i}'.encode()
-                observed_bindings.append([
-                    {key: value for key, value in binding.items() if key != "inventory_checked_at"}
-                    for binding in bindings])
-                results.append(dict(counts))
-                if not legacy:
-                    # A new batch is a fresh observation, not a global cache.
-                    service._reconcile_identity_adept_inventory('default')
-                    assert counts == {'profiles': 2, 'inventories': 2, 'capabilities': 2}
-            finally:
-                service.close()
-    assert observed_bindings[0] == observed_bindings[1]
-    assert results == [
-        {'profiles': 1, 'inventories': 1, 'capabilities': 3},
-        {'profiles': 1, 'inventories': 1, 'capabilities': 1},
-    ]
-
-
-def test_batch_capability_never_reuses_a_replaced_runtime(tmp_path, monkeypatch):
-    service, counts, _ = _measured_batch(tmp_path, monkeypatch, replace_runtime=True)
     try:
-        assert service._reconcile_identity_adept_inventory('default')['resolved'] == 3
-        assert counts['capabilities'] == 3
-    finally:
-        service.close()
-
-
-def test_batch_capability_does_not_cache_failed_probe_or_bypass_fresh_action(tmp_path, monkeypatch):
-    service, counts, _ = _measured_batch(tmp_path, monkeypatch)
-    runtime = service._kobo_adapter()
-    def capabilities():
-        counts['capabilities'] += 1
-        if counts['capabilities'] == 1:
-            raise RuntimeError('transient synthetic failure')
-        return {'capabilities': {'adept': {'loan_return': True}}}
-    runtime.capabilities = capabilities
-    try:
-        assert service._reconcile_identity_adept_inventory('default')['resolved'] == 3
-        assert counts['capabilities'] == 2
-        assert service.storage.acquisition_get('acq-0')['metadata']['adept_binding']['return_available'] is False
-        assert service.storage.acquisition_get('acq-1')['metadata']['adept_binding']['return_available'] is True
-        runtime.capabilities = lambda: {'capabilities': {'adept': {'loan_return': False}}}
-        # The action's existing fresh guard does not consult the batch cache.
-        assert service._adept_return_capability() is False
+        assert not hasattr(module, "_return_capability_for_batch")
+        assert service._reconcile_identity_adept_inventory("default") == {
+            "resolved": 2, "unresolved": 0, "errors": 0,
+        }
+        assert observed == {"profiles": 1, "inventories": 1, "capabilities": 0}
+        for i in range(2):
+            row = service.storage.acquisition_get(f"acq-{i}")
+            binding = row["metadata"]["adept_binding"]
+            assert binding["adept_loan_id"] == f"loan-{i}"
+            assert binding["return_available"] is False
+        assert first.read_bytes() == b"existing-local-artifact"
+        assert second.read_bytes() == b"second-local-artifact"
     finally:
         service.close()
