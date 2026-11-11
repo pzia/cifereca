@@ -145,8 +145,7 @@ def test_on_start_policy_never_schedules_complete_canonical_kobo_session(
             service, "_sync_kobo_backup_account_locked",
             lambda *_args, **_kwargs: pytest.fail(
                 "canonical Kobo ABI must not launch legacy on_start"
-            ),
-        , raising=False)
+            ), raising=False)
         service.opening_sync()
         assert service.storage.metadata_get(
             "sync.source.materialization.last_attempt." + source_id
