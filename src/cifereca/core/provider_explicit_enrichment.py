@@ -75,7 +75,8 @@ def enrich_provider_detail_once(service, item: SearchResult, *,
 
 def can_enrich_provider_detail_result(item: object, *, private_provider_id: str | None = None, public_provider_id: str | None = None) -> bool:
     """UI visibility hint only; provider will re-attest all source evidence."""
-    if not isinstance(item, SearchResult):
+    if (type(item) is not SearchResult or type(item.source_provider) is not str
+            or not item.source_provider or type(item.source_credential) is not str):
         return False
     url = getattr(item, "friendly_url", None)
     # This is only a UI hint. Core must not encode a supplier hostname:
