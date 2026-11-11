@@ -69,6 +69,10 @@ def _connect(service, *, identity="default", credential="numilog-private",
 
     session = NS(
         provider_id="numilog", credential_id=credential, connected=True,
+        selected_purchase_branch="meslivres",
+        private_inventory_row_contract=(
+            "library", "NUMILOG_LIBRARY", "credential_scoped_record_v1",
+        ),
         capabilities=NS(loans=False, personal_library=True, direct_download=True),
         library=library, download_direct=forbidden,
         # Deliberately no download_library_item method: the real Numilog
