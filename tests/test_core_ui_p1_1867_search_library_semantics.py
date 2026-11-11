@@ -141,9 +141,19 @@ def test_detail_usage_is_read_only_and_matches_search_projection():
         _private_numilog(), NS(current_identity=NS(identity_id="alice")),
         purchase_evidence=_proof())
     assert "aucun droit d'achat attesté" in usage(
-        replace(_private_numilog(), source_collection="catalog")
+        replace(_private_numilog(), source_collection="library")
     )
+    assert usage(replace(_private_numilog(), source_collection="catalog")) == ""
     assert usage(_book("paris")) == ""
+    # Kobo retains its supplier-specific *warning* rather than being
+    # mislabelled an owned commercial purchase by the shared library scope.
+    assert "disponibilité à vérifier" in usage(
+        replace(_book("kobo"), source_collection="library", owned=True)
+    )
+    assert "droits non actualisés" in usage(
+        replace(_book("kobo"), source_collection="library",
+                metadata={"search_provenance": "known_catalog_stale"})
+    )
     # A supplier-name switch must never manufacture purchase provenance.
     synthetic_public = replace(_public_numilog(), source_provider="synthetic-public")
     assert usage(synthetic_public) == "Catalogue commercial public · aucun achat attesté"
