@@ -70,11 +70,7 @@ def test_ambiguous_flags_never_trigger_acquisition_or_prune(
         assert service.storage.metadata_get(
             _kobo_checkpoint_key("default", "vault-1")
         ) is None
-        with pytest.raises(
-            ProviderConfigurationError,
-            match="canonical_kobo_preview_abi_unavailable",
-        ):
-            service.kobo_backup_preview("vault-1", refresh_manifest=True)
+        assert not hasattr(service, "kobo_backup_preview")
     finally:
         service.close()
 
@@ -92,10 +88,6 @@ def test_retired_w2_cannot_consume_partial_historical_manifest(tmp_path, monkeyp
     try:
 
         assert not hasattr(service, "sync_kobo_backup")
-        with pytest.raises(
-            ProviderConfigurationError,
-            match="canonical_kobo_preview_abi_unavailable",
-        ):
-            service.kobo_backup_preview("vault-1", refresh_manifest=True)
+        assert not hasattr(service, "kobo_backup_preview")
     finally:
         service.close()
