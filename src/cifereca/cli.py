@@ -94,17 +94,6 @@ def main(argv: list[str] | None = None) -> int:
         "--confirm-trace-export", action="store_true",
         help="Je confirme la création locale d'un ZIP HTTP brut incluant possiblement des secrets"
     )
-    reconcile = sub.add_parser(
-        "kobo-reconcile-local", help="Commande legacy retirée : relink canonique attesté uniquement"
-    )
-    reconcile.add_argument("--credential", required=True)
-    reconcile.add_argument("--identity", help="Refuser une connexion liée à une autre identité")
-    reconcile.add_argument("--account-id", required=True)
-    reconcile.add_argument("--item", required=True)
-    reconcile.add_argument("--sha256", required=True, help="SHA déjà attesté dans le ledger, jamais inféré du titre")
-    reconcile.add_argument("--path", help="Fichier EPUB/PDF dans le dossier de cette identité")
-    reconcile.add_argument("--undo", help="Identifiant opaque du rapprochement à annuler (aperçu par défaut)")
-    reconcile.add_argument("--confirm", help="Token de l’aperçu exact ; son absence interdit toute écriture")
     # P0 #4859: existing canonical B path repair, no 0.7 inference.
     relink_b = sub.add_parser(
         "kobo-relink-canonical",
@@ -279,19 +268,6 @@ def main(argv: list[str] | None = None) -> int:
 
     # A local repair/preview must not activate plugins, chmod Config, purge
     # caches or recover a directory migration as a side effect of startup.
-    if a.cmd == "kobo-reconcile-local":
-        # P0 #4859 W4/D5: the retired v0.7 positive repair treated legacy
-        # backup_items + generic ledger as authority for an applied delivery.
-        # Deny even preview and undo: a historical token cannot authorize
-        # a new positive mutation after this cutover, and the CLI must never
-        # open SQLite or inspect a private file on this deprecated route.
-        # Only independently published canonical B may be relinked.
-        print(json.dumps({
-            "ok": False, "offline": True, "changed": 0,
-            "reason": "legacy_reconciliation_retired",
-        }, ensure_ascii=False, indent=2))
-        return 2
-
     if a.cmd == "kobo-relink-canonical":
         from .core.offline_canonical_relink import (
             ReconciliationRejected, reconcile_existing_profile,
