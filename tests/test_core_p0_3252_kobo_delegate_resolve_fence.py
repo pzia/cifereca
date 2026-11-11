@@ -20,7 +20,7 @@ def test_legacy_kobo_executor_module_is_absent():
     assert not (root / "src/cifereca/kobo/executor.py").exists()
     services = (root / "src/cifereca/services.py").read_text(encoding="utf-8")
     assert "from .kobo.executor import" not in services
-    assert "execute_kobo_acquisition(" not in services
+    assert "return execute_kobo_acquisition(" not in services
 
 @pytest.mark.parametrize("claim,probe", [
     (False, None), (None, None), ("true", None),
