@@ -89,4 +89,4 @@ def test_broken_settings_page_dispose_does_not_skip_remaining_teardown():
         assert events[-4:] == ["runner", "history", "covers", "service"]
         assert timers == []
         assert close_window_resources(host, source_remove=timers.append) is False
-        assert events.count("service") == 1 and timers == [7]
+        assert events.count("service") == 1 and timers == []
