@@ -1094,15 +1094,13 @@ class DetailPanel(Gtk.Box):
                          "actifs, ou non pris en charge par cette source."
                 )
                 if item.source_provider == "paris":
-                    from .paris_borrow_status import paris_borrow_status_message
-                    reader = getattr(
-                        self.window.service, "paris_borrow_diagnostic", None,
+                    # The catalogue cannot attest account eligibility.
+                    # Never reconstruct it from historical rights or from
+                    # supplier-specific diagnostic reason codes.
+                    explanation = (
+                        "Éligibilité du compte non vérifiée auprès du fournisseur. "
+                        "L'emprunt reste indisponible pour ce profil et ce compte."
                     )
-                    try:
-                        diagnostic = reader(item) if callable(reader) else None
-                    except Exception:
-                        diagnostic = None
-                    explanation = paris_borrow_status_message(diagnostic)
                     # P1 #5136: a spent uncertain loan claim is NOT an
                     # invitation to repeat Emprunter. Only an exact local
                     # pending claim may expose a later read-only GET action.
