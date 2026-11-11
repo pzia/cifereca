@@ -2931,7 +2931,10 @@ class LibraryService:
             )
         from inspect import getattr_static
         branch = getattr_static(session, "selected_purchase_branch", None)
-        if type(branch) is str and branch:
+        declared_shape = getattr_static(session, "private_inventory_row_contract", None)
+        if branch is not None or declared_shape is not None:
+            # Even an invalid or partial declaration fails closed through the
+            # selected-source validator; it must never downgrade to legacy GET.
             from .core.selected_owned_search import obtain_selected_owned
             return obtain_selected_owned(self, item)
         return MaterializationCoordinator(
