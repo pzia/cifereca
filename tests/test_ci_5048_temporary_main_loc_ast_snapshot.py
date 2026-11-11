@@ -18,7 +18,7 @@ def test_main_provider_core_coupling_telemetry():
         "signal_occurrences_by_alias": report["generic_ast_signal_occurrences_by_provider_alias"],
         "signal_occurrences_by_kind": report["generic_ast_signal_occurrences_by_kind"],
         "top_signal_files": report["top_generic_by_ast_signal"][:8],
-        "expanded_named_module_paths": [row["path"] for row in report["vendor_named_modules_outside_legacy_dedicated_scope"]],
+        "expanded_named_module_paths": sorted(report["vendor_named_modules_outside_legacy_dedicated_scope"]),
     }
     warnings.warn("P0_5048_MAIN_LOC_AST_SNAPSHOT=" + json.dumps(snapshot, ensure_ascii=True, sort_keys=True), UserWarning)
     assert not report["historical"]["parse_errors"]
