@@ -41,9 +41,7 @@
 > conservent leurs validations exactes et leurs fonctions propres.
 > L'API directe `reconcile_kobo_local(...)` refuse elle aussi
 > immédiatement preview, confirmation et undo historiques, sans IO.
-> L'ancien exécuteur W4 a été **extrait du package Core** vers
-> `tests/kobo_legacy_reconciliation_archive.py` (fixtures de non-régression
-> historiques). Le module installé ne contient plus la fonction privée
+> L'ancien exécuteur W4 a été extrait du package Core puis son archive de tests inutilisée a été supprimée (#5534). Le module installé ne contient plus la fonction privée
 > `_historical_reconcile_kobo_local`. Aucune voie de production ne peut la
 > rappeler ; les helpers conservés pour les gardes/observations ne constituent
 > jamais une autorisation de reconstituer les droits 0.7.
