@@ -98,7 +98,7 @@ def test_opening_sync_statistics_are_counts_without_raw_borrower_id(
     monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [loan])
     monkeypatch.setattr(service, "_acquire_active_loan_automatically",
                         lambda _loan: {"status": status, "loan_id": PRIVATE})
-    monkeypatch.setattr(service, "kobo_backup_enabled", lambda: False)
+    service.config.set("kobo_backup.enabled", False)
     try:
         enable_synthetic_paris_opening(service)
         outcome = service.opening_sync()
