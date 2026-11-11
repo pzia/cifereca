@@ -43,7 +43,7 @@ def _core(monkeypatch, calls):
              HTTPX_TRANSPORT.trace_enabled())
         ),
         synchronize_selected_edition=lambda *, provider_id, credential_id, edition_id,
-        explicit_user_action: (
+        explicit_user_action, result_schema: (
             calls.append(("sync", credential_id, edition_id, explicit_user_action))
             or {"ok": True, "status": "present_attested", "changed": 0}
         ),
