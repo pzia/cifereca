@@ -59,9 +59,7 @@ def completed_outcome(
         "status": "complete",
         "loan_id": loan.id,
         "path": str(final_path),
-        "adept_return_available": bool(
-            acquisition_kind == "acsm" and adept_binding.get("return_available")
-        ),
+        "adept_return_available": False,  # Voluntary ADEPT return is retired.
         "decision": decision.action,
         "reason": decision.reason,
         "source": decision.source,
