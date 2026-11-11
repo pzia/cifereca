@@ -32,42 +32,10 @@ def _fake_acquirer(calls):
     return acquire
 
 
-@pytest.mark.parametrize("cancel", ["true", "false", "exception", "delayed"])
-def test_retired_w2_cancelled_or_not_never_starts_legacy_get(
-    tmp_path, monkeypatch, cancel,
-):
-    from cifereca.providers import ProviderConfigurationError
-    service, session = _service(tmp_path, _manifest())
-    calls = []
-    try:
-        service.storage.backup_put({
-            "provider_id": "kobo", "credential_id": "vault-1",
-            "identity_id": "default", "account_id": "account",
-            "item_id": "historical", "status": "acquiring",
-            "title": "Historical",
-        })
-        before = service.storage.backup_get("kobo", "vault-1", "historical")
-        def forbidden(*_a, **_kw):
-            pytest.fail("retired W2 callback or provider GET")
-        monkeypatch.setattr(session, "backup_manifest", forbidden)
-        monkeypatch.setattr(service, "_execute_kobo_acquisition", forbidden)
-        monkeypatch.setattr(service.storage, "backup_put", forbidden)
-        def cancelled():
-            calls.append("cancel")
-            if cancel == "exception":
-                raise RuntimeError("detached cancellation")
-            return cancel == "true"
-        events = []
-        with pytest.raises(ProviderConfigurationError,
-                           match="kobo_legacy_w2_retired_use_canonical_provider"):
-            service.sync_kobo_backup_account(
-                "vault-1", cancelled=cancelled,
-                progress=events.append,
-            )
-        assert calls == [] and events == []
-        assert service.storage.backup_get("kobo", "vault-1", "historical") == before
-    finally:
-        service.close()
+
+def test_scoped_legacy_resume_is_physically_absent():
+    from cifereca.services import LibraryService
+    assert not hasattr(LibraryService, "sync_kobo_backup_account")
 
 
 def test_expired_cancelled_checkpoint_stays_manual_only(tmp_path):
