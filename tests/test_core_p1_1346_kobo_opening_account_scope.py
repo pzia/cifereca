@@ -9,8 +9,10 @@ from cifereca.core.sync_coordination import _kobo_opening_decision
 def _host(accounts, sessions, *, enabled=True, due=False):
     return NS(
         accounts=accounts, _sessions={str(i): s for i, s in enumerate(sessions)},
-        kobo_backup_enabled=lambda: enabled,
-        kobo_backup_interval_minutes=lambda: 90,
+        config=NS(get=lambda key, default=None: {
+            "kobo_backup.enabled": enabled,
+            "kobo_backup.interval_minutes": 90,
+        }.get(key, default)),
         sync_source_enabled=lambda account: account.enabled,
         storage=NS(metadata_get=lambda key: None),
     )
@@ -57,7 +59,7 @@ def test_disconnected_or_uncapable_session_never_qualifies():
 def test_old_global_toggle_neither_enables_nor_disables_source_sync():
     host = _host([_account("a", "c")], [_session("c")])
     assert _kobo_opening_decision(host)["status"] == "manual_only"
-    host.kobo_backup_enabled = lambda: False
+    host.config.get = lambda key, default=None: False if key == "kobo_backup.enabled" else 90
     result = _kobo_opening_decision(host)
     assert result["status"] == "manual_only"
     assert result["persisted_enabled"] is False
@@ -77,7 +79,9 @@ def test_opening_reason_depends_only_on_live_source_state_not_retired_toggle():
     for accounts, sessions, expected in cases:
         host = _host(accounts, sessions)
         for historical_enabled in (True, False):
-            host.kobo_backup_enabled = lambda enabled=historical_enabled: enabled
+            host.config.get = lambda key, default=None, enabled=historical_enabled: (
+                enabled if key == "kobo_backup.enabled" else 90
+            )
             outcome = _kobo_opening_decision(host)
             assert outcome["status"] == expected
             assert outcome["persisted_enabled"] is historical_enabled
