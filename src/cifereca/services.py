@@ -288,47 +288,6 @@ class LibraryService:
             self, item, provider_id="bnf-pret", docbase="BNF_PRET",
         )
 
-    def bnf_borrow_claim_observation(
-        self, item: SearchResult, *, expected_identity_id: str,
-    ):
-        """Read-only status of a prior BnF request for one exact edition.
-
-        This is a diagnostic projection, never a borrow admission. A missing
-        checkpoint does not enable a POST; a consumed checkpoint is never
-        cleared. No provider call, session refresh or account fallback.
-        """
-        from .core.borrow_claim_observation import (
-            BorrowClaimObservation, observe_borrow_claim,
-        )
-
-        unavailable = BorrowClaimObservation(
-            "scope_unverified", None, False,
-        )
-        if (type(item) is not SearchResult
-                or type(expected_identity_id) is not str
-                or not expected_identity_id
-                or getattr(getattr(self, "current_identity", None),
-                           "identity_id", None) != expected_identity_id
-                or item.source_provider != "bnf-pret"
-                or item.docbase != "BNF_PRET"
-                or item.medium != "digital"):
-            return unavailable
-        accounts = [
-            a for a in self.accounts
-            if type(a) is Account
-            and a.identity_id == expected_identity_id
-            and a.provider_id == "bnf-pret"
-            and a.credential_id == item.source_credential
-            and a.is_primary is True
-        ]
-        if len(accounts) != 1:
-            return unavailable
-        return observe_borrow_claim(
-            storage=self.storage, account=accounts[0], item=item,
-            expected_identity_id=expected_identity_id,
-            provider_id="bnf-pret", docbase="BNF_PRET",
-        )
-
     def borrow_bnf_manual(
         self, item: SearchResult, *, expected_identity_id: str,
         confirmed: bool = False, site_checked: bool = False,
