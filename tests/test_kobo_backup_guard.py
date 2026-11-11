@@ -31,6 +31,7 @@ def _write_epub(path: Path, marker: bytes = b"book") -> None:
 
 
 class KoboSession(ProviderSession):
+    legacy_direct_get_retired = True
     api_version = "2.3"
     supports_acquisition_display_profile = False
     supports_acquisition_acsm = False
