@@ -28,8 +28,8 @@ class _FakeHTTP:
 
 
 def _read(monkeypatch, payload, upstream="DILICOM"):
-    root = Path(__file__).resolve().parents[1]
-    monkeypatch.syspath_prepend(str(root / "src" / "plugins" / "provider-paris"))
+    provider_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(provider_root))
     module = importlib.import_module("cifereca_paris_client")
     client = _FakeHTTP(payload)
     adapter = module.ParisClient(client_factory=lambda: client)
