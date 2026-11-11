@@ -1642,9 +1642,11 @@ class MainWindow(Adw.ApplicationWindow):
         from inspect import getattr_static
         try:
             session, accounts = self._eligible_borrow_accounts(item)
-            if callable(getattr_static(
+            if (callable(getattr_static(
                 type(session), "borrow_explicit_with_claim", None,
-            )):
+            )) or callable(getattr_static(
+                session, "borrow_explicit_with_claim", None,
+            ))):
                 # The installed plugin's versioned policy is mandatory.
                 # A visible action still never attests lender eligibility.
                 return self.service.can_borrow_manual(item) is True
@@ -1720,9 +1722,14 @@ class MainWindow(Adw.ApplicationWindow):
             session = self.service._session_for_source(
                 item.source_provider, item.source_credential,
             )
-            claimed_executor = callable(getattr_static(
-                type(session), "borrow_explicit_with_claim", None,
-            ))
+            claimed_executor = (
+                callable(getattr_static(
+                    type(session), "borrow_explicit_with_claim", None,
+                ))
+                or callable(getattr_static(
+                    session, "borrow_explicit_with_claim", None,
+                ))
+            )
         except Exception:
             return
         if claimed_executor:
