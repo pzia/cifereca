@@ -42,9 +42,9 @@ def _core(monkeypatch, calls):
             ("connect", credential, diagnostics_level(),
              HTTPX_TRANSPORT.trace_enabled())
         ),
-        synchronize_kobo_selected_edition=lambda credential, item, *,
+        synchronize_selected_edition=lambda *, provider_id, credential_id, edition_id,
         explicit_user_action: (
-            calls.append(("sync", credential, item, explicit_user_action))
+            calls.append(("sync", credential_id, edition_id, explicit_user_action))
             or {"ok": True, "status": "present_attested", "changed": 0}
         ),
     )
