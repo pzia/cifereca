@@ -192,104 +192,12 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
             return {'status': 'declared_local'}
         return {'status': 'attention_required', 'code': 'bnf_local_declaration_needs_review'}
 
-    # An older manual ACSM/EPUB or indexed manual placement may already
-    # represent this title. Titles are *hints*, not proof of the same edition
-    # or licence: stop before a new signed GET and request a deliberate
-    # reconciliation instead of silently producing a second file. The
-    # provider-agnostic screen never opens, attaches or moves any EPUB.
-    try:
-        from .library_audit_roots import configured_identity_roots
-        from .local_candidate_screen import screen_local_candidates
-        # Older manually imported ACSM books can live in either directory.
-        # Both are possible presence hints only: neither folder name proves
-        # the edition, BnF loan, ADEPT licence or authorization to attach it.
-        roots = tuple(
-            root / directory
-            for root in configured_identity_roots(
-                service.config, account.identity_id,
-            )[account.identity_id]
-            for directory in ('manual', 'acsm-import')
-        )
-        catalogue = service.storage.catalog_entries(
-            state='local', identity_id=account.identity_id, limit=8193,
-        )
-        local = screen_local_candidates(
-            identity_id=account.identity_id, title=loan.title,
-            roots=roots, acquisitions=manual_acquisitions, catalogue=catalogue,
-        )
-    except Cancelled:
-        raise
-    except Exception:
-        _TRACE_LOG.warning(
-            "TRACE bnf auto local evidence failed stage=indexed_candidates "
-            "provider_id=%s loan_id=%s",
-            loan.source_provider, loan.id, exc_info=True,
-        )
-        return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
-    if not current():
-        return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-    if local.status == 'needs_reconciliation':
-        if local.reason != 'local_candidate_found':
-            # Broken/inconclusive local evidence is a real integrity gate.
-            # A title match on otherwise readable local bytes is NOT.
-            return {'status': 'attention_required',
-                    'code': 'bnf_local_evidence_unavailable'}
-        _TRACE_LOG.info(
-            "TRACE bnf local bibliographic hint is not a Sync veto "
-            "provider_id=%s loan_id=%s",
-            account.provider_id, loan.id,
-        )
+    # Unlinked manual books and matching titles/OPF are bibliographic hints,
+    # never evidence of the exact loan origin. They must neither authorize
+    # reuse nor veto a separately consented, provider-attested delivery.
+    # The Core may redownload and hash/deduplicate verified bytes later;
+    # it never adopts, moves or deletes an unrelated user's local book.
 
-    # An old manually imported EPUB may not have any SQLite reference.
-    # Consult only configured manual/ roots via Core's bounded, no-follow
-    # physical inventory. OPF title equality is a REVIEW HINT, never a loan
-    # or ADEPT grant. A partial/unsafe scan must not certify absence.
-    try:
-        from .local_physical_title_candidates import observe_physical_local_titles
-        cache_key = (account.identity_id, roots, core_epoch, consent_revision,
-                     provider_epoch)
-        physical = (
-            physical_scan_cache.get(cache_key)
-            if type(physical_scan_cache) is dict else None
-        )
-        if physical is None:
-            # Preserve the existing cancellation checkpoints around the
-            # signed GET and before ADEPT. The scan itself has a hard deadline;
-            # extra polling here would shift a post-GET cancellation into the
-            # pre-GET phase and invalidate the cleanup contract.
-            physical = observe_physical_local_titles(
-                identity_id=account.identity_id, roots=roots,
-            )
-            if type(physical_scan_cache) is dict:
-                physical_scan_cache[cache_key] = physical
-        physical_result = physical.screen(
-            identity_id=account.identity_id, title=loan.title,
-        )
-    except Cancelled:
-        raise
-    except Exception:
-        _TRACE_LOG.warning(
-            "TRACE bnf auto local evidence failed stage=physical_candidates "
-            "provider_id=%s loan_id=%s",
-            loan.source_provider, loan.id, exc_info=True,
-        )
-        return {'status': 'attention_required', 'code': 'bnf_local_evidence_unavailable'}
-    if not current():
-        return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
-    if physical_result.status == 'needs_reconciliation':
-        if physical_result.reason != 'local_candidate_found':
-            return {'status': 'attention_required',
-                    'code': 'bnf_local_evidence_unavailable'}
-        # The OPF title can confirm a bibliographic candidate but it never
-        # proves a provider OriginLink, the current ACSM or ADEPT identity.
-        # A previously configured, fresh account-scoped opt-in is therefore
-        # allowed to reach the independently signed GET as in #3171, never
-        # to adopt, unlink, relocate or delete the historical manual EPUB.
-        _TRACE_LOG.info(
-            "TRACE bnf local OPF hint is not a Sync veto "
-            "provider_id=%s loan_id=%s",
-            account.provider_id, loan.id,
-        )
     # A signed ACSM is a private short-lived candidate. If admission fails
     # before ADEPT is invoked, it must not linger in acquisition-work.
     # Once handed to import_acsm, leave lifetime and receipt ownership to

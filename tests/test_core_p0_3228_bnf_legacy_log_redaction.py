@@ -61,7 +61,7 @@ def test_all_legacy_bnf_logs_use_only_provider_or_loan_coordinates():
         else:
             assert not node.keywords
         checked += 1
-    assert checked == 8
+    assert checked == 4
 
 
 def test_receipt_local_error_reports_closed_reason_without_private_cause(
