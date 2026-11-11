@@ -210,7 +210,6 @@ def test_window_close_continues_after_dispose_and_worker_failures():
 
     class Window:
         _closed = False
-        _kobo_backup_timer_id = 17
         _settings_main_lifetime = SimpleNamespace(dispose=lambda: fail("settings"))
         _settings_standalone_lifetime = SimpleNamespace(dispose=lambda: done("standalone"))
         _cached_book_unsubscribe = lambda self: fail("unsubscribe")
@@ -230,10 +229,10 @@ def test_window_close_continues_after_dispose_and_worker_failures():
     assert window._closed is True
     assert window._settings_main_lifetime is None
     assert window._settings_standalone_lifetime is None
-    assert window._kobo_backup_timer_id is None
+    assert not hasattr(window, '_kobo_backup_timer_id')
     assert window._cached_book_services == ()
     assert calls == [
-        "settings", "standalone", "timer", "notification", "activity",
+        "settings", "standalone", "notification", "activity",
         "unsubscribe", "runner", "history", "covers", "service",
     ]
     assert module.close_window_resources(window, source_remove=lambda source: fail("repeat")) is False
