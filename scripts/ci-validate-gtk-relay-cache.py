@@ -16,6 +16,7 @@ import tarfile
 
 MARKER = ".gtk4-cache-profile.json"
 PROFILE = {"distro": "debian", "codename": "trixie", "architecture": "amd64"}
+UBUNTU_PROFILE = {"distro": "ubuntu", "codename": "noble", "architecture": "amd64"}
 DEB_NAME = re.compile(r"[a-z0-9][a-z0-9+._~-]*_[a-zA-Z0-9.+:~_-]+_(?:all|amd64)\.deb")
 MAX_MARKER_BYTES = 512
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
@@ -23,13 +24,17 @@ MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MIN_PACKAGES, MAX_PACKAGES = 11, 300
 
 
-def build(cache: Path, output: Path) -> int:
+def build(cache: Path, output: Path, *, profile: dict[str, str] | None = None) -> int:
+    if profile is None:
+        profile = PROFILE
+    if profile not in (PROFILE, UBUNTU_PROFILE):
+        raise ValueError("unknown platform")
     if cache.is_symlink() or not cache.is_dir():
         raise ValueError("invalid cache")
     marker = cache / MARKER
     if marker.is_symlink() or not marker.is_file() or marker.stat().st_size > MAX_MARKER_BYTES:
         raise ValueError("invalid cache profile")
-    if json.loads(marker.read_text(encoding="utf-8")) != PROFILE:
+    if json.loads(marker.read_text(encoding="utf-8")) != profile:
         raise ValueError("unexpected cache profile")
 
     packages: list[Path] = []
@@ -73,7 +78,7 @@ def build(cache: Path, output: Path) -> int:
         # Re-serialize the reviewed marker from constants, never copy raw
         # bytes: JSON can hide private values in duplicate keys or padding
         # even when json.loads(raw) equals PROFILE.
-        safe_marker = (json.dumps(PROFILE, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+        safe_marker = (json.dumps(profile, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
         marker_info = tarfile.TarInfo(f".gtk-deb-cache/{MARKER}")
         marker_info.size = len(safe_marker)
         marker_info.mode = 0o644
@@ -95,9 +100,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--platform", choices=("debian13", "ubuntu24"), default="debian13")
     args = parser.parse_args(argv)
     try:
-        count = build(args.cache, args.output)
+        count = build(args.cache, args.output, profile=(
+            UBUNTU_PROFILE if args.platform == "ubuntu24" else PROFILE
+        ))
     except (OSError, ValueError, UnicodeError, TypeError, RecursionError, json.JSONDecodeError):
         # Do not echo untrusted paths, filenames, values or exceptions.
         print("GTK cache artifact refused")

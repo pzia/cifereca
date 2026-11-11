@@ -20,6 +20,17 @@ Une recette peut fournir du bootstrap rootless, des lanceurs, des tests de valid
 
 **Réflexe prioritaire des agents :** [cache de 261 paquets Debian 13 GTK4 publié comme asset GitHub Releases](openai-chat-debian/GITHUB_RELEASE_CACHE.md), téléchargement et extraction sécurisés par [`fetch_release_cache.py`](openai-chat-debian/fetch_release_cache.py), puis `bootstrap.py --offline`. Contrairement aux artefacts temporaires d'Actions, la Release a une **URL stable**. Si GitHub lui-même est inaccessible, transférer seulement cette archive vérifiée depuis une machine connectée. Réserver le workflow de relais APT aux renouvellements du cache, pas à chaque agent.
 
+### GTK4 sur Ubuntu 24.04 : cache GitHub Releases
+
+Pour les runners Ubuntu 24.04 Noble et les VM ChatGPT Work, utiliser le
+[workflow de publication d'un cache Ubuntu séparé](chatgpt-work/GITHUB_RELEASE_CACHE.md).
+Il produit une prerelease GitHub avec des `.deb` Ubuntu et `SHA256SUMS`, sur
+approbation manuelle ; **ne pas utiliser l'asset Debian 13 sur Ubuntu**.
+La documentation Ubuntu indique les commandes de téléchargement, de vérification
+SHA-256 et de bootstrap rootless. Tant que la Release Ubuntu n'est pas
+effectivement publiée et vérifiée, ce chemin reste une procédure de publication,
+pas un cache disponible.
+
 ## Choix de la recette : commencer ici
 
 Avant toute recette GTK, capture, démonstration ou E2E exploratoire, identifier
