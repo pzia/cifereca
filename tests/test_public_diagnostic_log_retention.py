@@ -56,7 +56,6 @@ def test_closed_log_body_survives_filter_without_generic_arg_truncation(monkeypa
     'TRACE provider connection failure {"code":"provider_connect_failed","provider_id":"provider.paris"}',
     "TRACE kobo backup decision status=error enabled=True connected=1 eligible=1 interval=60",
     'TRACE adept runtime {"code":"adept_error","operation":"status","operation_kind":"kobo_adept","phase":"completed","plugin_id":"runtime.kobo-adept","schema_version":1,"status":"failed"}',
-    'TRACE numilog startup_materialization {"attempted":0,"cause_phase":"manifest_fetch","code":"manifest_failed","downloaded":0,"failed":1,"phase":"completed","skipped":0,"status":"failed","task_kind":"source-materialize"}',
 ])
 def test_known_canonical_producers_are_retained_at_normal_level(monkeypatch, body):
     monkeypatch.setattr(logging_utils, "_diagnostic_level", "normal")
@@ -296,3 +295,15 @@ def test_extended_core_event_is_not_recognized_but_stays_raw(
         assert "PRIVATE_PASSWORD" in item.getMessage()
         assert not is_public_core_observation("cifereca", item.getMessage())
     assert not is_public_core_observation("cifereca.plugin", body)
+
+
+def test_retired_startup_pseudo_right_trace_is_not_public():
+    # Old worker logs are no longer a trusted public diagnostic schema.
+    text = (
+        'TRACE numilog startup_materialization '
+        '{"attempted":0,"cause_phase":"manifest_fetch",'
+        '"code":"manifest_failed","downloaded":0,"failed":1,'
+        '"phase":"completed","skipped":0,"status":"failed",'
+        '"task_kind":"source-materialize"}'
+    )
+    assert not is_public_core_observation("cifereca", text)
