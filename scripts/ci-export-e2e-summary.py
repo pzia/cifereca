@@ -129,11 +129,13 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
                 and type(observation) is dict
                 and set(observation) == {
                     "refresh_mapped", "refresh_sensitive", "fixture_enabled",
+                    "broker_queried",
                 }
                 and all(type(value) is bool for value in observation.values())):
             result["bulk_refresh_observation"] = {
                 key: observation[key] for key in (
                     "refresh_mapped", "refresh_sensitive", "fixture_enabled",
+                    "broker_queried",
                 )
             }
         # #2095: only closed, fixture-derived diagnostic state is publishable
