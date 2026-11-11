@@ -347,10 +347,6 @@
     "kind": "method",
     "signature": "(self, loan: 'Loan') -> 'dict[str, str]'"
   },
-  "_adobe_return_inventory_confirmed": {
-    "kind": "method",
-    "signature": "(self, acquisition: 'dict[str, Any]') -> 'bool'"
-  },
   "_return_operation_lock_file": {
     "kind": "staticmethod",
     "signature": "(loan: 'Loan') -> 'Path'"

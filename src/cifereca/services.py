@@ -2028,10 +2028,6 @@ class LibraryService:
         """Fresh exact-account read after ADEPT; never send ReturnDigitalLoan."""
         return loan_return_verification.verify_paris_return_inventory(self, loan, AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG)
 
-    def _adobe_return_inventory_confirmed(self, acquisition: dict[str, Any]) -> bool:
-        """Crash recovery: ADEPT inventory check ONLY, never replay mutation."""
-        return loan_return_verification.adobe_return_inventory_confirmed(self, acquisition)
-
     @staticmethod
     def _return_operation_lock_file(loan: Loan) -> Path:
         """Coordinate Adobe and PNB mutations across threads and processes.
