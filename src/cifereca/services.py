@@ -575,7 +575,7 @@ class LibraryService:
         """
         from inspect import getattr_static, isfunction
         from .core.diagnostic_bnf_loan_action import (
-            ActionObservation, BnfLoanActionError, provider_reason, STAGE_CODES,
+            ActionObservation, BnfLoanActionError, STAGE_CODES,
         )
         from .core.explicit_loan_acsm import stage_explicit_loan_acsm
 
@@ -611,12 +611,16 @@ class LibraryService:
             activity_reason = getattr_static(
                 type(session), "loan_stage_activity_reason", None,
             )
+            candidate_reason = getattr_static(
+                type(session), "loan_stage_candidate_reason", None,
+            )
             if (type(profile) is not tuple or len(profile) != 2
                     or type(profile[0]) is not str or not profile[0]
                     or type(profile[1]) is not tuple or len(profile[1]) != 5
                     or any(type(code) is not str or code not in STAGE_CODES
                            for code in profile[1])
-                    or not isfunction(activity_reason)):
+                    or not isfunction(activity_reason)
+                    or not isfunction(candidate_reason)):
                 raise BnfLoanActionError("bnf_loan_token_unavailable")
             reason_codes = dict(zip(
                 ("confirmation", "scope", "unavailable", "invalid", "busy"),
@@ -635,7 +639,9 @@ class LibraryService:
                 classify_activity_error=lambda error: activity_reason(
                     session, error,
                 ),
-                classify_candidate_error=provider_reason,
+                classify_candidate_error=lambda error: candidate_reason(
+                    session, error,
+                ),
                 observe_phase=observation.at,
             )
         except BnfLoanActionError as exc:

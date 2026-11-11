@@ -23,6 +23,10 @@ def test_bnf_stage_profile_is_static_closed_data_without_remote_calls():
             type(session), "loan_stage_activity_reason",
         )
         assert isfunction(reason_method)
+        candidate_method = getattr_static(
+            type(session), "loan_stage_candidate_reason",
+        )
+        assert isfunction(candidate_method)
         assert downloaded == []
     finally:
         session.close()
@@ -42,6 +46,27 @@ def test_provider_activity_reason_is_closed_without_private_url():
         )
         assert secret == "bnf_activity_unavailable"
         assert "sensitive" not in secret
+        assert downloaded == []
+    finally:
+        session.close()
+
+
+def test_candidate_reason_is_provider_owned_closed_and_never_leaks_secrets():
+    session, _account, _loan, _state, _calls, downloaded = connected()
+    try:
+        for reason in ("access_denied", "invalid_loan_token",
+                       "download_redirect_refused", "activity_url_refused"):
+            assert session.loan_stage_candidate_reason(
+                ProviderError(reason),
+            ) == "bnf_" + reason
+        for error in (
+            ProviderError("private signed URL?token=SECRET"),
+            ValueError("access_denied"),
+            ProviderError("BNF_UNKNOWN_REASON"),
+        ):
+            code = session.loan_stage_candidate_reason(error)
+            assert code == "bnf_loan_token_unavailable"
+            assert "SECRET" not in code
         assert downloaded == []
     finally:
         session.close()

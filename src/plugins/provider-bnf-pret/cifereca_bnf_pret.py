@@ -131,6 +131,36 @@ class BnfProviderSession(ProviderSession):
         ),
     )
 
+    def loan_stage_candidate_reason(self, error: Exception) -> str:
+        """Classify only finite provider token-GET errors; never expose text."""
+        allowed = frozenset({
+            "loan_not_observed", "invalid_loan_token", "token_limit",
+            "session_closed", "download_redirect_refused",
+            "download_storage_failed", "auth_required", "access_denied",
+            "rate_limited", "http_unavailable", "operation_timeout",
+            "transport_unavailable", "invalid_activity_page",
+            "unrecognized_loans", "ambiguous_loans", "unexpected_content",
+            "invalid_dom", "html_limit", "scope_mismatch",
+            "activity_access_denied", "activity_auth_required",
+            "activity_rate_limited", "activity_http_unavailable",
+            "activity_transport_unavailable", "activity_operation_timeout",
+            "activity_url_refused", "activity_redirect_invalid",
+            "activity_redirect_limit", "activity_unexpected_content",
+            "activity_html_limit", "activity_invalid_dom",
+            "activity_dom_limit", "activity_unrecognized_loans",
+            "activity_ambiguous_loans", "activity_invalid_activity_page",
+            "activity_scope_mismatch", "activity_unavailable",
+        })
+        if isinstance(error, ProviderError):
+            try:
+                args = error.args
+                if (type(args) is tuple and len(args) == 1
+                        and type(args[0]) is str and args[0] in allowed):
+                    return "bnf_" + args[0]
+            except Exception:
+                pass
+        return "bnf_loan_token_unavailable"
+
     def loan_stage_activity_reason(self, error: Exception) -> str:
         """Closed provider activity verdict, not a transport exception."""
         if (isinstance(error, ProviderError)
