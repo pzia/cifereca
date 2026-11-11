@@ -118,7 +118,10 @@ jobs:
             failed=0
             for scenario in $E2E_SCENARIOS; do
               echo "::group::GTK/XTEST $scenario"
-              if ! /usr/bin/python3 e2e/run.py --scenario "$scenario" --out "e2e-artifacts/$scenario"; then
+              if /usr/bin/python3 e2e/run.py --scenario "$scenario" --out "e2e-artifacts/$scenario"; then
+                echo "CIFERECA_E2E_VERDICT:PASS:$scenario"
+              else
+                echo "CIFERECA_E2E_VERDICT:FAIL:$scenario"
                 failed=1
               fi
               echo "::endgroup::"
