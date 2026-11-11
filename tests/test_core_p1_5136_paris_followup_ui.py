@@ -188,9 +188,11 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
            / "src/cifereca/gui/detail_panel.py").read_text(encoding="utf-8")
     assert '"Vérifier le prêt sans réemprunter"' in src
     assert "paris_borrow_followup_available" in src
-    assert 'availability = "Empruntable"' in src
+    assert 'availability = "Empruntable"' not in src
+    assert "elif pending_followup or search_detail_borrow_action_candidate(item, availability):" in src
+    assert "if not pending_followup and self.window.can_borrow_item(item):" in src
     assert "pending_followup = (" in src
-    assert 'verify.set_name("cifereca-paris-borrow-followup")' in src
+    assert 'verify.set_name("cifereca-borrow-followup")' in src
     router = (Path(__file__).resolve().parents[1]
               / "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
     assert "present_paris_borrow_verification(" in router
@@ -225,7 +227,7 @@ def test_mainwindow_existing_paris_router_dispatches_only_readonly_followup(tmp_
     session.borrow_explicit_with_claim = lambda *_a, **_kw: pytest.fail("POST")
     try:
         # Only the explicit verification_only flag reaches the new controller.
-        readonly_button = NS(get_name=lambda: "cifereca-paris-borrow-followup")
+        readonly_button = NS(get_name=lambda: "cifereca-borrow-followup")
         namespace["borrow_search_item"](window, item, readonly_button)
         assert len(window.runner.tasks) == 1
         assert window.runner.complete()["status"] == "observed_current_loan"
@@ -233,9 +235,32 @@ def test_mainwindow_existing_paris_router_dispatches_only_readonly_followup(tmp_
         assert messages == ["Prêt Paris désormais observé ; demande initiale non rejouée"]
         assert errors == [] and refreshes == [True]
         # Another source can never reuse this flag to run a regular borrow.
-        namespace["borrow_search_item"](
-            window, replace(item, source_provider="unknown"), readonly_button,
-        )
-        assert not window.runner.tasks
+        for foreign_provider in ("unknown", "bnf-pret", "kobo"):
+            namespace["borrow_search_item"](
+                window, replace(item, source_provider=foreign_provider),
+                readonly_button,
+            )
+            assert not window.runner.tasks
+        assert state["mutations"] == 1  # no reborrow, even on another provider
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("mismatch", ["provider", "credential"])
+def test_followup_rejects_cross_source_account_before_queue(tmp_path, mismatch):
+    service, session, account, item, state, _op = _pending(tmp_path)
+    window, errors, messages, refreshes = view(service, session, account, item)
+    window.runner = ReadOnlyTasks()
+    try:
+        # A cached local readiness decision cannot authorize a changed account.
+        service.paris_borrow_followup_available = lambda _item: True
+        if mismatch == "provider":
+            account.provider_id = "synthetic-foreign"
+        else:
+            account.credential_id = "foreign-credential"
+        _run(window, item)
+        assert window.runner.tasks == []
+        assert state["mutations"] == 1
+        assert errors == messages == refreshes == []
     finally:
         service.close()
