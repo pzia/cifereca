@@ -2825,41 +2825,52 @@ class LibraryService:
             raise ProviderConfigurationError(
                 "Résultat connu hors ligne : acquisition indisponible"
             )
-        # Every supported targeted admission is replayed under the same lock
-        # as its provider I/O. Unknown providers must never silently ignore it.
+        # Never resolve a credential-bearing supplier session before deciding
+        # whether the legacy direct GET is an admissible acquisition path.
+        # The selected A→B ABI is a Core-owned, provider-neutral contract.
+        from inspect import getattr_static
+        selected_session = None
+        if (type(item) is SearchResult
+                and type(item.source_provider) is str
+                and type(item.source_credential) is str):
+            selected_session = self._sessions.get(
+                self._session_key(item.source_provider, item.source_credential)
+            )
+        has_selected_abi = (
+            getattr_static(selected_session, "selected_purchase_branch", None) is not None
+            or getattr_static(selected_session, "private_inventory_row_contract", None) is not None
+        )
+        # A targeted callback without the selected-source/Core executor is
+        # never authorization for a legacy GET.
         if _admission is not None and (
-            not callable(_admission) or item.source_provider not in {"kobo", "numilog"}
+            not callable(_admission)
+            or (item.source_provider != "kobo" and not has_selected_abi)
         ):
             raise ProviderConfigurationError(
                 "Acquisition ciblée indisponible : autorisation du compte non vérifiable"
             )
-        # Numilog's account/credential is untrusted until the dedicated
-        # source guard validates its persistent owner under the global lock.
-        # Do not look up the session using an untrusted credential first.
-        session = (
-            None if item.source_provider == "numilog"
-            else self._session_for_source(item.source_provider, item.source_credential)
-        )
-        content_type = self.acquisition.content_type_for(item)
 
         if item.source_provider == "kobo":
             # #3196/#4858: D3/W2 is retired, including partial-ABI sources.
-            # A selected canonical Kobo acquisition must run through the
-            # scoped A→B executor after fresh rights and consent admission.
-            # Never authorize a GET from backup_items or local filenames.
             raise ProviderConfigurationError(
                 "kobo_legacy_direct_get_retired_use_canonical_provider"
             )
 
-        if item.source_provider == "numilog":
-            # The historical direct method returns an Acquisition *before*
-            # canonical A→B publication. It can never provide the typed
-            # selected-offer consent or the no-retry recovery journal.
-            # Explicit user actions instead call obtain_search_item(), which
-            # returns the Core-published canonical MaterializationResult.
-            raise ProviderConfigurationError(
-                "numilog_canonical_explicit_action_required"
-            )
+        if has_selected_abi or (
+            type(item) is SearchResult
+            and item.source_collection == "library"
+            and item.medium == "digital"
+            and item.download_url is None
+        ):
+            # A private record or any selected-source ABI is not an executable
+            # download offer. Require exact current offer, consent, journal,
+            # final SHA and placement through obtain_search_item().
+            raise ProviderConfigurationError("canonical_explicit_action_required")
+
+        session = self._session_for_source(
+            item.source_provider, item.source_credential,
+        )
+        content_type = self.acquisition.content_type_for(item)
 
         identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (
