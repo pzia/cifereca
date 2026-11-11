@@ -546,7 +546,7 @@ def main():
         capture("03-library-shared-detail")
         report["book_detail_failure_code"] = "library_online_calls"
         assert len(report["online_calls"]) == 1
-        report.pop("book_detail_failure_code", None)
+        report["book_detail_failure_code"] = "library_owned_begin"
         begin_owned_book_action()
 
     owned_action = {}
@@ -561,6 +561,7 @@ def main():
         from types import SimpleNamespace as NS
         from cifereca.models import Account
         service = window.service
+        report["book_detail_failure_code"] = "owned_identity"
         owner = service.current_identity.identity_id
         assert owner == "camille"
         label = "Numilog" if provider == "numilog" else "Kobo"
@@ -578,15 +579,18 @@ def main():
         # exact SQLite (connection, borrower) pair: a connected session plus
         # provider_connection alone is *not* purchase authority. Never weaken
         # Core's fail-closed binding check to make a UI fixture pass.
+        report["book_detail_failure_code"] = "owned_connection"
         connection_id = service.storage.provider_connection_put({
             "provider_id": provider, "credential_id": account.credential_id,
             "identity_id": owner, "label": label + " fictif ciblé",
         })
+        report["book_detail_failure_code"] = "owned_account"
         service.storage.provider_account_put({
             "connection_id": connection_id, "identity_id": owner,
             "provider_id": provider, "credential_id": account.credential_id,
             "account_id": account.unique_id, "label": label + " fictif ciblé",
         })
+        report["book_detail_failure_code"] = "owned_entitlement"
         service.storage.entitlement_put({"entitlement_id": "gtk-owned-right", "provider_id": provider,
             "credential_id": account.credential_id, "account_id": account.unique_id, "identity_id": owner,
             "item_id": product, "revision_id": "r1", "entitlement_type": "owned", "state": "active",
@@ -611,8 +615,11 @@ def main():
         # Different purchases need different canonical GTK row keys; reusing
         # a key would intentionally exercise the progressive append fast path
         # and leave the preceding provider's row materialized.
+        report["book_detail_failure_code"] = "owned_admission"
         assert service.owned_library_download_target(window._library_entries_cache[0]) is not None
+        report["book_detail_failure_code"] = "owned_render"
         window._render_library()
+        report.pop("book_detail_failure_code", None)
         later(160, owned_book_select)
 
     def owned_book_select():
