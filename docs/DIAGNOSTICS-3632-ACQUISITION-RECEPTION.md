@@ -90,7 +90,7 @@ python -m pytest -q tests/test_diagnostics_acquisition_fidelity.py \
 - `services.py`, inner download : `TRACE download provider error` ne fournit
   pas `exc_info`. Les retours executor/retryable ne fournissent pas toujours la
   cause du processus. Diagnostics ne peut pas reconstruire ces informations.
-- `core/bnf_explicit_acsm.py` : conversion de l'exception fournisseur par
+- `provider-bnf-pret/cifereca_bnf_pret.py` : conversion de l'exception fournisseur par
   `_refuse(provider_reason(exc))` perd le détail original.
 - Branche `Cancelled` du wrapper : terminal conservé, cause originale non émise.
   Fournir une cause observée si elle est nécessaire, sans inventer une panne.
