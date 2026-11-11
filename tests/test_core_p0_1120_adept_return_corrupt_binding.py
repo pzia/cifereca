@@ -73,7 +73,7 @@ def test_valid_historical_ready_state_still_allows_explicit_return(tmp_path):
     try:
         state = service.adept_return_status_for_loan(loan)
         assert state["status"] == "ready"
-        assert state["return_available"] is True
+        assert state["return_available"] is False
         assert state["acquisition_id"] == "adept-01"
         assert paris.posts == 0 and paris.accounts_read == []
     finally:

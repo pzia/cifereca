@@ -2295,13 +2295,6 @@ class LibraryService:
             reference_of=self._adept_profile_ref,
         )
 
-    def _adept_return_capability(self) -> bool:
-        try:
-            payload = self._kobo_adapter().capabilities()
-            return (payload.get("capabilities") or {}).get("adept", {}).get("loan_return") is True
-        except Exception:
-            return False
-
     def _adept_acquisition_path(self, row):
         paths = {str(r.get("metadata", {}).get("path")) for r in self.storage.catalog_entries()
                  if r.get("artifact_id") == row.get("artifact_id") and row.get("artifact_id")
@@ -2396,7 +2389,7 @@ class LibraryService:
                     "binding_source": "manual_selection", "manually_confirmed_at": int(time.time()),
                     "inventory_status": "resolved", "inventory_checked_at": int(time.time()), "return_verification": "verification_failed" if returned else "active_confirmed",
                     "provider_loan_active": provider_active,
-                    "return_available": bool(not returned and not loan["expired"] and loan["token_present"] and self._adept_return_capability())}
+                    "return_available": False}
                 metadata["previous_adept_binding"] = previous
                 metadata["adept_binding"] = binding
                 self.storage.acquisition_put({**row, "metadata": metadata})
@@ -3214,10 +3207,7 @@ class LibraryService:
             "acquisition_id": row["acquisition_id"],
             "adept_loan_id": binding.get("adept_loan_id"),
             "profile_name": binding.get("adept_profile_name"),
-            "return_available": bool(
-                state == "ready" and binding.get("return_available") is True
-                and self._adept_return_capability()
-            ),
+            "return_available": False,
         }
 
     def reacquire_digital_loan(self, loan: Loan) -> dict[str, Any]:

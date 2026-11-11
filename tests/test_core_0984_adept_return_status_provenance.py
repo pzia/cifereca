@@ -62,7 +62,7 @@ def test_linked_borrower_uses_confirmed_adobe_profile_not_ui_identity(tmp_path):
         assert alice_ui == bob_ui
         assert alice_ui["acquisition_id"] == acq
         assert alice_ui["status"] == "ready"
-        assert alice_ui["return_available"] is True
+        assert alice_ui["return_available"] is False
     finally:
         service.close()
 
@@ -182,6 +182,6 @@ def test_primary_account_can_use_its_own_proven_profile(tmp_path):
         _acquisition(service, primary, profile="alice-profile")
         result = service.adept_return_status_for_loan(primary)
         assert result["status"] == "ready"
-        assert result["return_available"] is True
+        assert result["return_available"] is False
     finally:
         service.close()

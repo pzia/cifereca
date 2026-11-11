@@ -67,7 +67,7 @@ def test_other_strategy_does_not_make_exact_loan_auto_ambiguous(tmp_path):
         state = service.adept_return_status_for_loan(loan)
         assert state["status"] == "ready"
         assert state["acquisition_id"] == canonical_id
-        assert state["return_available"] is True
+        assert state["return_available"] is False
     finally:
         service.close()
 

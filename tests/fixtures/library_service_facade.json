@@ -403,10 +403,6 @@
     "kind": "method",
     "signature": "(self, identity_id: 'str', profile_name: 'str') -> 'str | None'"
   },
-  "_adept_return_capability": {
-    "kind": "method",
-    "signature": "(self) -> 'bool'"
-  },
   "_adept_acquisition_path": {
     "kind": "method",
     "signature": "(self, row)"

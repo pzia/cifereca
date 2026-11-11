@@ -143,7 +143,7 @@ def test_manual_binding_revalidates_exact_id_and_preserves_artifact_and_previous
         assert result == {
             "status": "resolved",
             "acquisition_id": acquisition_id,
-            "return_available": True,
+            "return_available": False,
         }
         row = service.storage.acquisition_get(acquisition_id)
         binding = row["metadata"]["adept_binding"]
@@ -153,7 +153,7 @@ def test_manual_binding_revalidates_exact_id_and_preserves_artifact_and_previous
         assert binding["adept_profile_name"] == "alexandre"
         assert binding["adept_loan_id"] == "selected-id"
         assert binding["binding_source"] == "manual_selection"
-        assert binding["return_available"] is True
+        assert binding["return_available"] is False
         assert previous["adept_loan_id"] == "ancien-id"
         assert previous["adept_profile_name"] == "ancien-profil"
         assert path.read_bytes() == before
