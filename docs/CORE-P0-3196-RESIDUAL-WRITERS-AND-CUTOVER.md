@@ -285,3 +285,5 @@ source legacy ni de provenance canonique. Les méthodes de lecture d'archives
 et les gardes négatifs peuvent persister sans empêcher la fermeture.
 
 **État du 07/11 : NON atteint.** W3 est retiré pour Kobo et **W4 n'a plus de writer public positif**, même en ABI partielle. W5 conserve désormais les localisateurs d'archives Kobo inchangés ; les migrations de Placements restent contrôlées. W1 bloque le miroir pour les reçus incomplets et les rapprochements sans connexion active exacte, mais **la projection 0.7 sur source active demeure**. Les éditions historiques sans SourceReference n'ont pas migré : **W2 et D1–D4 internes restent le chemin critique**, pas l'undo W4 déjà retiré. Les garde-fous ne remplacent pas le cutover canonique A→B.
+
+**Cutover offline canonique #5558 :** `core/kobo_local_reconciliation.py` est supprimé du code livré ; la commande Kobo est désormais un client explicite de `core/offline_canonical_relink.py` (`provider_id=kobo`, compatibilité du journal historique fournie à la frontière CLI). Le Core générique garde toutes les vérifications profil, SHA, origine, placement, SQLite et confirmation, sans droit implicite.
