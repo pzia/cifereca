@@ -91,7 +91,7 @@ def test_anonymous_numilog_search_shows_notice_not_purchase_or_download():
     host._populate_search(host._remote_search_results, announce=False)
     rows = host.search_page.show_rows.call_args.args[0]
     assert len(rows) == 1
-    assert "Catalogue public Numilog" in rows[0].meta
+    assert "Catalogue public · aucun achat attesté" in rows[0].meta
     assert "aucun achat attesté" in rows[0].meta
     assert "Mes achats" not in rows[0].meta
     assert rows[0].options["action_label"] is None
@@ -107,7 +107,7 @@ def test_private_numilog_inventory_does_not_imply_local_epub():
     host.service.can_direct_download = Mock(return_value=False)
     host._populate_search(host._remote_search_results, announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
-    assert "Mes achats Numilog" in row.meta
+    assert "Mes achats · fichier local non présumé" in row.meta
     assert "fichier local non présumé" in row.meta
     assert "Fichier local disponible" not in row.meta
     assert row.options["action_label"] is None
@@ -172,3 +172,25 @@ def test_library_references_do_not_confuse_loan_purchase_and_catalogue():
     assert "Achat" not in host._library_state_label(
         {"state": "remote_catalog", "provider_id": "numilog-catalog"}
     )
+
+
+def test_public_source_label_is_neutral_for_a_future_provider_without_rights():
+    host = _host()
+    row = replace(_public_numilog(), source_provider="synthetic-public")
+    host._remote_search_results = [row]
+    host.service.can_direct_download = Mock(return_value=False)
+    host._populate_search([row], announce=False)
+    result = host.search_page.show_rows.call_args.args[0][0]
+    assert "Catalogue public · aucun achat attesté" in result.meta
+    assert "Mes achats" not in result.meta
+    assert result.options["action_label"] is None
+    host.download_direct_item.assert_not_called()
+
+
+def test_p0_5056_search_labels_do_not_dispatch_by_numilog_identity():
+    source = (Path(__file__).resolve().parents[1]
+              / "src/cifereca/gui/search_results.py").read_text(encoding="utf-8")
+    assert 'if item.source_provider == "numilog-catalog":' not in source
+    assert 'elif item.source_provider == "numilog"' not in source
+    assert "Catalogue public · aucun achat attesté" in source
+    assert "Mes achats · fichier local non présumé" in source
