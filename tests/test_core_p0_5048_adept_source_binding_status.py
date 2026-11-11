@@ -35,7 +35,11 @@ def test_generic_binding_two_providers_never_claims_acsm_or_loan():
         params["connections"][0]["provider_id"] = "another-lender"
         rejected = normal_source_adept_status(**params)
         assert rejected["status"] == "to_verify"
-        assert rejected["reason"] == f"missing_{provider}_connection"
+        assert rejected["reason"] == f"primary_{provider}_connection_missing"
+        params["primary_connection_id"] = None
+        unselected = normal_source_adept_status(**params)
+        assert unselected["status"] == "to_configure"
+        assert unselected["reason"] == f"missing_{provider}_connection"
         assert rejected["adept_profile_id"] is None
 
 
