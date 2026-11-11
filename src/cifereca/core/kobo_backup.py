@@ -685,9 +685,3 @@ def kobo_unlinked_local_count(self, identity_id: str) -> int:
     return len(
         paths - _verified_canonical_kobo_unlinked_exemptions(self, identity_id, paths)
     )
-
-
-def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None=None, *, logger, credential_id: str | None = None, cancelled: Callable[[], bool] | None = None, retry_scope_blocked: bool = False, confirmed_manifest: list | None = None, source_guard: Callable[[], None] | None = None, item_guard: Callable[[SearchResult, str, str | None], None] | None = None, on_delivery_committed: Callable[[], None] | None = None) -> dict[str, Any]:
-    """Retired W2 compatibility boundary. No historical execution authority."""
-    raise ProviderConfigurationError("kobo_legacy_w2_retired_use_canonical_provider")
-
