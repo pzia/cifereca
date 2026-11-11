@@ -4006,22 +4006,6 @@ class LibraryService:
             offline_canonical_only=offline_canonical_only,
         )
 
-    def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
-        """Compatibility entry point for the Kobo local synchronization.
-
-        0.8.0 keeps the validated cross-process serialization for acquisition work. The
-        same global lock is intentionally named for local acquisition rather
-        than Kobo so the 0.8.x loan synchronizer can share it.
-        """
-        # A complete typed provider ABI is required. No legacy W2 fallback.
-        from .core.kobo_backup_canonical_batch import run_global_kobo_with_canonical_sources
-        routed = run_global_kobo_with_canonical_sources(self, progress)
-        if routed is not None:
-            return routed
-        raise ProviderConfigurationError(
-            "kobo_legacy_w2_retired_use_canonical_provider"
-        )
-
     def sync_kobo_backup_account(
         self, credential_id: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
