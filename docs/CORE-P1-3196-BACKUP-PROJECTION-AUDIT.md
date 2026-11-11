@@ -1,5 +1,12 @@
 # Core P1 #3196 — audit de dérive backup_items → autorités SQLite
 
+> **ARCHIVE — module retiré (#3196, 11/11/2026).** L'auditeur
+> `cifereca.core.backup_projection_audit` est supprimé : il n'a aucun
+> appelant de production et comparait `backup_items` aux pseudo-droits
+> historiques, sans fournir une preuve canonique. Ce document n'est pas
+> un guide d'exécution. Les archives SQLite et les fichiers utilisateur
+> restent intacts ; la synchronisation canonique fait foi.
+
 > **Document historique/partiel — 28/10/2026.** backup_items = projection historique v0.7, migration canonique #3196 en cours. La cible normative est la **synchronisation automatique unique** décrite dans [ARCHITECTURE.md](ARCHITECTURE.md) et [#3171](https://github.com/pzia/cifereca/issues/3171) ; le rattrapage manuel #2797 reste exceptionnel. Conserver les gardes existants ; ne pas déduire qu'un OriginLink canonique/transaction Core est livré de cette seule recette.
 
 ## Contrat livré
