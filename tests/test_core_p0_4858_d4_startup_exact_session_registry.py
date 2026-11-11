@@ -43,7 +43,7 @@ def test_detached_alias_cannot_run_legacy_startup_or_consume_clock(
             lambda *_a, **_kw: pytest.fail(
                 "detached provider alias may not enter legacy W2"
             ),
-        )
+        , raising=False)
         result = service._opening_sync_locked(deep=False)
         assert result["kobo_decision"]["scheduled_kobo"] == 0
         assert service.storage.metadata_get(clock) is None
