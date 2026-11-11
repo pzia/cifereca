@@ -44,6 +44,9 @@ class BnfReaderGateTests(unittest.TestCase):
             'src/cifereca/core/sync_coordination.py',
             'src/cifereca/brokers.py',
             'src/cifereca/services.py',
+            'src/cifereca/core/library_projection.py',
+            'src/cifereca/core/observed_import_provenance.py',
+            'src/cifereca/core/local_import_display_links.py',
         ):
             self.assertTrue(gate.selected([path], self.root), path)
 
