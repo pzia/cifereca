@@ -157,7 +157,6 @@ def _service(tmp_path: Path, *, manifest, unauthorized=False):
     session.connect()
     service._sessions[service._session_key("kobo", "vault-1")] = session
     service.catalog_scan = lambda *args, **kwargs: {"scanned": 0}
-    service.kobo_unlinked_local_count = lambda identity_id: 0
     service.resolve_adept_profile = lambda **kwargs: ("", "test")
     service.runtime_diagnostic = lambda _plugin_id: {}
     service.kobo_adept_state = lambda **kwargs: {
