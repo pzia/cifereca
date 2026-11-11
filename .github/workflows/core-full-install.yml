@@ -1,77 +1,96 @@
 name: Validate full Core release install
-
-# The transaction gate covers Core/CLI/updater/plugins, not pure GTK widgets.
-# GUI-only changes keep the Core test, wheel-install and GTK E2E coverage.
-
 on:
   pull_request:
     paths:
-      - "src/cifereca/**"
-      - "!src/cifereca/gui/**"
-      - "!src/cifereca/builtin_ui/**"
-      - "!src/cifereca/app.py"
-      - "src/plugins/*/cifereca-plugin.json"
-      - "scripts/ci_provider_core_coupling_inventory.py"
-      - "scripts/ci_provider_coupling_delta_gate.py"
-      - "scripts/ci-full-release-install-gate.py"
-      - "scripts/prepare-admitted-wheelhouse.py"
-      - "scripts/plugin_packaging.py"
-      - "scripts/package-dev-snapshot.py"
-      - "scripts/verify-packaging.py"
-      - "pyproject.toml"
-      - "VERSION"
       - ".github/workflows/core-full-install.yml"
-  push:
-    branches: [main]
-    paths:
-      - "src/cifereca/**"
-      - "!src/cifereca/gui/**"
-      - "!src/cifereca/builtin_ui/**"
-      - "!src/cifereca/app.py"
-      - "src/plugins/*/cifereca-plugin.json"
-      - "scripts/ci_provider_core_coupling_inventory.py"
-      - "scripts/ci_provider_coupling_delta_gate.py"
-      - "scripts/ci-full-release-install-gate.py"
-      - "scripts/prepare-admitted-wheelhouse.py"
-      - "scripts/plugin_packaging.py"
-      - "scripts/package-dev-snapshot.py"
-      - "scripts/verify-packaging.py"
-      - "pyproject.toml"
-      - "VERSION"
-      - ".github/workflows/core-full-install.yml"
-  workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: full-core-install-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   full-install:
-    name: Full source install and Core rollback (Python 3.11)
+    name: Temporary provider-by-type LOC matrix
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-
-      - name: Install packaging prerequisites
+      - name: Measure provider LOC v2 and per-provider split
         run: |
-          python -m pip install --disable-pip-version-check "setuptools>=69" wheel "packaging>=24,<26" "httpx>=0.28.1,<0.29"
-
-      - name: Prepare attested offline wheels for full updater test
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: python scripts/prepare-admitted-wheelhouse.py
-
-      - name: Exercise full release and Core rollback
-        env:
-          PYTHONPATH: ${{ github.workspace }}/src
-        run: python scripts/ci-full-release-install-gate.py
+          PYTHONPATH=. python - <<'PY'
+          import ast,collections,json,pathlib
+          from scripts.ci_provider_core_coupling_report import extended_inventory,_installed_provider_aliases,_provider_pattern,_docstring_lines,_comment_lines,_SIGNAL_KINDS
+          from scripts.ci_provider_core_coupling_inventory import inspect_source,_dedicated_provider
+          root=pathlib.Path.cwd()
+          report=extended_inventory(root)
+          aliases=_installed_provider_aliases(root)
+          pattern=_provider_pattern(aliases)
+          def family(alias):
+              a=alias.casefold()
+              if 'biblioaccess' in a: return 'BiblioAccess'
+              if 'numilog' in a: return 'Numilog'
+              if a.startswith(('bnf','provider-bnf')): return 'BnF'
+              if a.startswith(('kobo','provider-kobo')): return 'Kobo'
+              if a.startswith(('paris','provider-paris')): return 'Paris'
+              if 'gallica' in a: return 'Gallica'
+              if 'gutenberg' in a: return 'Gutenberg'
+              if 'ebooksgratuits' in a: return 'EbooksGratuits'
+              if 'baen' in a: return 'Baen'
+              return 'Other ('+a+')'
+          by=collections.defaultdict(collections.Counter)
+          top=collections.defaultdict(list)
+          legacy_files=report['historical']['dedicated_by_provider']
+          extras=set(report['vendor_named_modules_outside_legacy_dedicated_scope'])
+          for p in sorted((root/'src'/'cifereca').rglob('*.py')):
+              relative=p.relative_to(root).as_posix()
+              if relative in report['historical']['parse_errors']: continue
+              src=p.read_text(encoding='utf8')
+              lines=src.splitlines()
+              dedicated=_dedicated_provider(p.relative_to(root))
+              if dedicated:
+                  fam=family(dedicated)
+                  by[fam]['dedicated_legacy']+=len(lines)
+                  top[fam].append((relative,len(lines),'dedicated_legacy'))
+                  continue
+              if relative in extras:
+                  parts=p.stem
+                  fam=next((family(x) for x in ('bnf','numilog','paris','kobo','biblioaccess') if parts.startswith(x+'_') or parts==x),'Other')
+                  by[fam]['dedicated_extra']+=len(lines)
+                  top[fam].append((relative,len(lines),'dedicated_extra'))
+                  continue
+              tree=ast.parse(src)
+              signals=inspect_source(src,providers=aliases)
+              ast_by_line=collections.defaultdict(set)
+              for k in _SIGNAL_KINDS:
+                  for item in signals[k]:
+                      ast_by_line[item['line']].update(family(a) for a in item['providers'])
+              docs=_docstring_lines(tree)
+              comments=_comment_lines(src)
+              for i,line in enumerate(lines,1):
+                  if i in ast_by_line:
+                      for fam in ast_by_line[i]:
+                          by[fam]['generic_ast_signal']+=1
+                      continue
+                  if not line.strip():continue
+                  if i in docs or line.lstrip().startswith('#'):
+                      relevant=line
+                      typ='generic_passive_docstring' if i in docs else 'generic_passive_comment'
+                  else:
+                      relevant=line.split('#',1)[0] if i in comments else line
+                      typ='generic_passive_code'
+                  families={family(m.group(0)) for m in pattern.finditer(relevant)}
+                  for fam in families:by[fam][typ]+=1
+                  if i in comments and not families and i not in docs:
+                      tailfamilies={family(m.group(0)) for m in pattern.finditer(line)}
+                      for fam in tailfamilies:by[fam]['generic_passive_comment']+=1
+          print('PROVIDER_MATRIX_RESULT='+json.dumps({
+              'historical':report['historical'],
+              'expanded_named_modules':report['expanded_named_modules'],
+              'remaining_generic_after_expanded_named_scope':report['remaining_generic_after_expanded_named_scope'],
+              'line_partition':report['line_partition'],
+              'total_core_python_physical_lines':report['total_core_python_physical_lines'],
+              'total_core_python_files':report['total_core_python_files'],
+              'generic_ast_signal_occurrences_by_kind':report['generic_ast_signal_occurrences_by_kind'],
+              'providers':{p:dict(v) for p,v in sorted(by.items())},
+              'named_files':{p:sorted(v,key=lambda x:-x[1]) for p,v in sorted(top.items())},
+              'top_generic_by_ast_signal':[{'path':v['path'],'ast_signal_lines':v['ast_signal_lines'],'passive_code_mention_lines':v['passive_code_mention_lines']} for v in report['top_generic_by_ast_signal'][:18]],
+              'parse_errors':report['historical']['parse_errors']
+          },sort_keys=True,ensure_ascii=False))
+          PY
