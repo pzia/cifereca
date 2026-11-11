@@ -26,7 +26,11 @@ SYNC_PRODUCERS = frozenset((
 ))
 CAPTURE_GTK = ("capture-session-gtk-1366",)
 BUSY_GTK = ("task-busy-settings-1366",)
-BOOK_DETAIL = ("book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700")
+# Required product widths. The 1700px field reproduction (#4682) is opt-in,
+# not a supported CI acceptance target. It remains runnable explicitly via
+# `python3 e2e/run.py --scenario book-detail-1700 --out ...`.
+BOOK_DETAIL = ("book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600")
+OPTIONAL_UX = ("book-detail-1700",)
 BNF_COVERS = ("bnf-covers-1366",)
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 SEARCH_GTK = ("search-filter-p0", "search-filter-1024")
