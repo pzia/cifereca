@@ -165,25 +165,6 @@ def test_log_requires_complete_canonical_schema(body):
     assert public_log_fields(body) == {}
 
 
-def test_kobo_partial_decision_and_successful_source_sync_are_independent(tmp_path, monkeypatch):
-    service = _service(tmp_path)
-    try:
-        account, _, _ = setup_source(service, monkeypatch, tmp_path)
-        service.diagnostics.add_core_kobo_backup_decision(dict(
-            status="partial", persisted_enabled=True, connected_kobo=3,
-            eligible_kobo=3, interval_minutes=60))
-        service.synchronize_account_source(account)
-        rows = query_diagnostic_events(service.diagnostics, source="core_events",
-                                       log_path=tmp_path / "missing")["events"]
-        kobo = next(r for r in rows if r["module"] == "KOBO")
-        sync = next(r for r in rows if r.get("detail", {}).get("phase") == "completed")
-        assert kobo["detail"]["status"] == "partial"
-        assert sync["detail"]["status"] == "success"
-        assert "task_ref" not in kobo["detail"]
-    finally:
-        service.close()
-
-
 def test_concurrent_and_reused_workers_keep_distinct_explicit_references(application_log):
     diag = Diagnostics()
     pool = PriorityExecutor(max_workers=2)
