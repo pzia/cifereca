@@ -70,43 +70,39 @@ def _item():
     )
 
 
-def test_exact_owned_search_delegates_to_same_canonical_library_target(monkeypatch):
+def test_numilog_search_selects_exact_live_offer_without_entitlement(monkeypatch):
     item = _item()
-    account = Account(provider_id="numilog", credential_id="card",
-                      unique_id="borrower", identity_id="owner")
-    right = {
-        "entitlement_id": "owned-right", "identity_id": "owner",
-        "credential_id": "card", "account_id": "borrower",
-        "item_id": "edition", "entitlement_type": "owned",
-        "state": "active", "loan_id": None, "expires_at": None,
-    }
-    target = NS(provider_id="numilog", identity_id="owner",
-                item_id="edition")
-    store = NS(
-        provider_scope_account_bound=lambda **_kw: True,
-        entitlements=lambda **_kw: [right],
-    )
-    service = NS(
-        current_identity=NS(identity_id="owner"),
-        accounts=[account], storage=store,
-    )
-    from cifereca.core import owned_library_download as owned
-    selections = []
-    monkeypatch.setattr(owned, "owned_library_download_target",
-                        lambda _service, entry: selections.append(entry) or target)
-    monkeypatch.setattr(owned, "obtain_owned_library_item",
+    target = NS(provider_id="numilog", identity_id="owner", item_id="edition")
+    calls = []
+    from cifereca.core import selected_source_offer
+    monkeypatch.setattr(selected_source_offer, "select_source_offer_target",
+                        lambda _service, **kw: calls.append(("select", kw)) or target)
+    monkeypatch.setattr(selected_source_offer, "obtain_source_offer",
                         lambda _service, selected: (
-                            "canonical-result" if selected is target else
-                            pytest.fail("retargeted owned action")
+                            "canonical-result" if selected is target
+                            else pytest.fail("foreign account target")
                         ))
+    class Store:
+        def entitlements(self, **_kw):
+            pytest.fail("historical rights forbidden")
+    service = NS(current_identity=NS(identity_id="owner"), storage=Store())
     assert search.obtain_selected_owned(service, item) == "canonical-result"
-    assert len(selections) == 1
-    assert selections[0]["possessions"][0]["entitlement_id"] == "owned-right"
+    assert calls == [("select", {
+        "provider_id": "numilog", "credential_id": "card",
+        "item_id": "edition",
+    })]
 
-    store.entitlements = lambda **_kw: [right, {**right, "entitlement_id": "other"}]
+
+@pytest.mark.parametrize("invalid", [
+    {"source_collection": "public_catalog"},
+    {"download_url": "https://example.invalid/signed?token=secret"},
+    {"downloadable": False}, {"owned": False},
+    {"id": "forged"}, {"source_credential": ""},
+])
+def test_unproven_search_never_requests_an_offer(monkeypatch, invalid):
+    from dataclasses import replace
+    from cifereca.core import selected_source_offer
+    monkeypatch.setattr(selected_source_offer, "select_source_offer_target",
+                        lambda *_a, **_kw: pytest.fail("no provider request"))
     with pytest.raises(ProviderConfigurationError, match="canonical_owned"):
-        search.obtain_selected_owned(service, item)
-    store.entitlements = lambda **_kw: [right]
-    target.operation = "resume_index"
-    with pytest.raises(ProviderConfigurationError, match="canonical_owned"):
-        search.obtain_selected_owned(service, item)
+        search.obtain_selected_owned(NS(), replace(_item(), **invalid))
