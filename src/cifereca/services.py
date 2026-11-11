@@ -3880,6 +3880,7 @@ class LibraryService:
         self, *, provider_id: str, credential_id: str, edition_id: str,
         explicit_user_action: bool = False,
         cancelled: Callable[[], bool] = lambda: False,
+        result_schema: str = "core.selected-canonical/1",
     ) -> dict[str, object]:
         """One exact selected edition through the provider-neutral A→B engine.
 
@@ -3890,7 +3891,7 @@ class LibraryService:
         return synchronize_selected_edition(
             self, provider_id=provider_id, credential_id=credential_id,
             edition_id=edition_id, explicit_user_action=explicit_user_action,
-            cancelled=cancelled,
+            cancelled=cancelled, result_schema=result_schema,
         )
 
     def _account_for_loan(self, loan: Loan) -> Account:
