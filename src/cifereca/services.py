@@ -2694,17 +2694,11 @@ class LibraryService:
     def can_direct_download(self, item: SearchResult) -> bool:
         """Can this *exact* remote offer show a consented direct-download action?
 
-        An unauthenticated Kobo catalogue owned=True flag is not a purchase.
-        Require active, identity/credential/item-bound Core rights before
-        inspecting the provider's executable acquisition capabilities.
+        An unauthenticated catalogue owned=True flag is not a purchase.
+        A retired legacy direct GET never becomes a current delivery offer.
         This read-only check never refreshes, downloads or writes rights.
         """
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
-            return False
-        # Kobo's v0.7 direct GET has been retired for ALL ABI versions.
-        # The selected A→B action is independent of this legacy UI hint.
-        # Do not consult the manifest, a historical right, or a session here.
-        if item.source_provider == "kobo":
             return False
         if item.source_provider == "paris":
             # Catalogue provenance (including a manually cached old row)
@@ -2728,6 +2722,9 @@ class LibraryService:
             session = self._session_for_source(
                 item.source_provider, item.source_credential,
             )
+            from inspect import getattr_static
+            if getattr_static(session, "legacy_direct_get_retired", None) is True:
+                return False
             if item.source_provider == "ebooksgratuits":
                 # Public COPS catalogue rows can precede OPDS enrichment:
                 # a generic remote/distant notice is not an EPUB offer.
@@ -2769,28 +2766,25 @@ class LibraryService:
             getattr_static(selected_session, "selected_purchase_branch", None) is not None
             or getattr_static(selected_session, "private_inventory_row_contract", None) is not None
         )
-        # A targeted callback without the selected-source/Core executor is
-        # never authorization for a legacy GET.
+        retired_direct = getattr_static(
+            selected_session, "legacy_direct_get_retired", None
+        ) is True
+        private_record = (
+            type(item) is SearchResult
+            and item.source_collection == "library"
+            and item.medium == "digital"
+            and item.download_url is None
+        )
+        # An external targeted callback cannot authorize a legacy supplier GET.
         if _admission is not None and (
             not callable(_admission)
-            or (item.source_provider != "kobo" and not has_selected_abi)
+            or not (has_selected_abi or retired_direct)
         ):
             raise ProviderConfigurationError(
                 "Acquisition ciblée indisponible : autorisation du compte non vérifiable"
             )
 
-        if item.source_provider == "kobo":
-            # #3196/#4858: D3/W2 is retired, including partial-ABI sources.
-            raise ProviderConfigurationError(
-                "kobo_legacy_direct_get_retired_use_canonical_provider"
-            )
-
-        if has_selected_abi or (
-            type(item) is SearchResult
-            and item.source_collection == "library"
-            and item.medium == "digital"
-            and item.download_url is None
-        ):
+        if retired_direct or has_selected_abi or private_record:
             # A private record or any selected-source ABI is not an executable
             # download offer. Require exact current offer, consent, journal,
             # final SHA and placement through obtain_search_item().

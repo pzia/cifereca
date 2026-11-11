@@ -42,7 +42,7 @@ def test_retired_d3_fails_closed_without_provider_get_or_file_changes(
 
         with pytest.raises(
             ProviderConfigurationError,
-            match="kobo_legacy_direct_get_retired_use_canonical_provider",
+            match="canonical_explicit_action_required",
         ):
             service._acquire_direct_item_impl(
                 item, _admission=unexpected_admission if with_admission else None,

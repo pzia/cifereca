@@ -246,7 +246,7 @@ def test_retired_direct_executor_never_issues_get_or_retry(
         before = service.storage.acquisitions(provider_id="kobo")
         with pytest.raises(
             ProviderConfigurationError,
-            match="kobo_legacy_direct_get_retired",
+            match="canonical_explicit_action_required",
         ):
             service.acquire_direct_item(item)
         assert calls == []
