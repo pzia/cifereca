@@ -163,7 +163,7 @@ def test_retired_w2_does_not_reconcile_or_prune_legacy_receipts(
         def forbidden(*_a, **_kw):
             pytest.fail("retired W2 cannot read provider or mutate legacy")
         monkeypatch.setattr(session, "backup_manifest", forbidden)
-        monkeypatch.setattr(service, "_execute_kobo_acquisition", forbidden)
+        assert not hasattr(service, "_execute_kobo_acquisition")
         monkeypatch.setattr(service.storage, "backup_put", forbidden)
         monkeypatch.setattr(service.storage, "backup_prune_missing", forbidden)
         for _ in range(2):
