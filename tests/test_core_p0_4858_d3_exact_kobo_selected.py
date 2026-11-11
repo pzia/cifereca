@@ -153,6 +153,25 @@ def test_selected_delivery_only_one_exact_A_right_and_no_legacy_get(rig):
         assert secret not in public
 
 
+def test_selected_canonical_edition_is_provider_neutral(rig):
+    """The same A→B guard works for a synthetic supplier without Kobo branches."""
+    provider = "synthetic-seller"
+    session = rig.case.target
+    old_key = rig.service._session_key(session.provider_id, rig.credential)
+    assert rig.service._sessions.pop(old_key) is session
+    session.provider_id = provider
+    rig.account.provider_id = provider
+    rig.service._sessions[rig.service._session_key(provider, rig.credential)] = session
+    rig.a[0] = _snapshot(rig.account)
+    result = selected_impl.synchronize_selected_edition(
+        rig.service, provider_id=provider, credential_id=rig.credential,
+        edition_id="book-1", explicit_user_action=True,
+    )
+    assert result["status"] == "downloaded"
+    assert result["schema"] == "core.selected-canonical/1"
+    assert len(rig.calls["reads"]) == len(rig.calls["persisted"]) == len(rig.calls["executed"]) == 1
+
+
 def test_selected_other_edition_never_runs_sibling_get(rig):
     assert _run(rig, "book-2")["ok"]
     assert [r.edition_id for r in rig.calls["executed"][0][0].rights] == ["book-2"]
