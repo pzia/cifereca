@@ -6,7 +6,7 @@ from cifereca.core import CiferecaCore
 from cifereca.gui.facet_text import author_search_text
 from cifereca.plugin_api import AttentionRequired
 from cifereca.models import Loan, Account
-from cifereca.kobo.errors import KoboAdeptError
+from cifereca.plugin_api import UserFacingError
 from cifereca.acquisition import Acquisition
 
 class Core0911(unittest.TestCase):
@@ -103,7 +103,7 @@ class Core0911(unittest.TestCase):
         self.service.runtime_diagnostic=Mock(return_value={'returncode':0,'duration_ms':166206,'stdout_bytes':0,'stderr_bytes':82,'stdin':'secret-key','stdout':'secret-key','operation':'secret-key'})
         def fail(request):
             if artifact:Path(request['destination']).write_bytes(b'output-not-yet-validated')
-            raise KoboAdeptError('JSON invalide',code='kobo_adept_invalid_json',exit_code=1)
+            error=UserFacingError('JSON invalide',code='kobo_adept_invalid_json');error.exit_code=1;raise error
         self.service.execute_acquisition_request=fail
         self.core.diagnostics.level='errors'
         return self.service._acquire_active_loan_automatically(loan),acsm

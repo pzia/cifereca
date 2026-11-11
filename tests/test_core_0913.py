@@ -147,9 +147,9 @@ class Core0913(unittest.TestCase):
     def test_utf16_dtd_not_remembered(self):
         self.path.write_bytes('<!DOCTYPE x [<!ENTITY a "x">]><fulfillmentToken/>'.encode('utf-16'));self.assertFalse(self.remember())
     def test_runtime_failure_keeps_reusable_input(self):
-        from cifereca.kobo.errors import KoboAdeptError
+        from cifereca.plugin_api import UserFacingError
         self.connect_provider();self.service.kobo_profiles=Mock(return_value=[{'name':'hb','fetch_capable':True}])
-        self.service.execute_acquisition_request=Mock(side_effect=KoboAdeptError('failure',code='kobo_adept_invalid_json'))
+        self.service.execute_acquisition_request=Mock(side_effect=UserFacingError('failure',code='kobo_adept_invalid_json'))
         for _ in range(2):
             # Malformed runtime JSON is a recoverable protocol failure rather
             # than a named Adobe license refusal or identity ambiguity.

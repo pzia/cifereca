@@ -7,9 +7,9 @@ from scripts.ci_kobo_core_line_inventory import _category, inventory
 
 
 ROOT = Path(__file__).resolve().parents[1]
-# Contract-first Kobo installed dedicated-file ceiling at #5549 HEAD (2026-11-11).
+# Contract-first Kobo installed dedicated-file ceiling after ADEPT shim removal (2026-11-11).
 # Do not reclassify provider-specific production code to disguise growth.
-BASELINE = 641
+BASELINE = 611
 
 
 def test_kobo_dedicated_core_surface_never_grows_from_baseline():
@@ -19,7 +19,7 @@ def test_kobo_dedicated_core_surface_never_grows_from_baseline():
     assert result["dedicated_lines"] == sum(result["groups"].values())
     assert result["dedicated_files"] == len(result["per_file"])
     assert result["groups"]["core"] > 0
-    assert result["groups"]["kobo_subpackage"] > 0
+    assert result["groups"]["kobo_subpackage"] == 0
     assert result["groups"]["gui_legacy"] == 0
     assert result["nonblank_noncomment_lines"] <= result["dedicated_lines"]
     assert result["outside_dedicated_kobo_literal_lines"] >= 0
