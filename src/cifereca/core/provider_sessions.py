@@ -661,11 +661,6 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
     return session
 
 
-def connect_kobo_selected_edition(self, credential_id: str) -> ProviderSession:
-    """Compatibility API: selected-edition and resume share one safe bind."""
-    return connect_kobo_canonical(self, credential_id)
-
-
 # Closed reason vocabulary: provider exception text, types, URLs and tokens
 # are NEVER forwarded into the raw journal. A recognized provider error.code
 # can explain a failed authentication without exposing its response body.
