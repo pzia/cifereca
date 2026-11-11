@@ -1,0 +1,22 @@
+"""P0 #5054: GUI/CLI passive action hint cannot import a rights projector."""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+
+def test_direct_download_hint_validates_only_origin_record_shape():
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/services.py"
+    src = path.read_text(encoding="utf-8")
+    fn = next(
+        node for node in ast.walk(ast.parse(src))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "can_direct_download"
+    )
+    modules = [
+        node.module for node in ast.walk(fn)
+        if isinstance(node, ast.ImportFrom)
+    ]
+    assert "core.numilog_manifest_rights" not in modules
+    assert "core.credential_scoped_record" in modules
+    assert "exact_credential_scoped_record(" in ast.get_source_segment(src, fn)
