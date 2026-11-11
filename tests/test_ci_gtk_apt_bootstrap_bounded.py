@@ -9,8 +9,8 @@ SCRIPT = ROOT / "scripts/ci-install-gtk-e2e-runtime.sh"
 def test_gtk_apt_operations_are_bounded_and_keep_retry_finite():
     script = SCRIPT.read_text(encoding="utf-8")
     assert script.count("timeout --signal=TERM --kill-after=10s") == 3
-    assert "240s sudo apt-get" in script
-    assert "120s sudo apt-get" in script
+    assert "240s sudo env DEBIAN_FRONTEND=noninteractive apt-get" in script
+    assert "120s sudo env DEBIAN_FRONTEND=noninteractive apt-get" in script
     assert "Acquire::http::Timeout=25" in script
     assert "Acquire::https::Timeout=25" in script
     assert "DPkg::Lock::Timeout=30" in script
