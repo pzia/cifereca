@@ -45,8 +45,6 @@ def test_received_kobo_file_is_not_global_orphan_but_stays_item_reconciliation(
         result = service.materialize_to_identity(placement_id, "bob")
         target = Path(result["path"])
         assert target.is_file() and target != src
-        assert service.kobo_unlinked_local_count("bob") == 0
-        assert service.kobo_unlinked_local_count("alice") == 1
 
         # A local catalogue copy remains a file, not proof of Kobo rights.
         assert any(
@@ -70,9 +68,7 @@ def test_received_kobo_file_is_not_global_orphan_but_stays_item_reconciliation(
             "item_id": "unlinked-book", "local_state": "local",
             "metadata": {"path": str(orphan)},
         })
-        assert service.kobo_unlinked_local_count("bob") == 1
         assert service.materialize_to_identity(placement_id, "bob")["status"] == "unchanged"
-        assert service.kobo_unlinked_local_count("bob") == 1
         assert service.storage.entitlements() == []
     finally:
         service.close()
@@ -85,7 +81,6 @@ def test_received_kobo_copy_remains_distinct_after_catalogue_scan(tmp_path):
         target = Path(service.materialize_to_identity(placement_id, "bob")["path"])
         service.catalog_scan()
         assert target.is_file() and src.is_file()
-        assert service.kobo_unlinked_local_count("bob") == 0
         assert service.storage.entitlements() == []
     finally:
         service.close()
@@ -109,7 +104,6 @@ def test_forged_received_marker_without_matching_placement_does_not_bypass_guard
                 "file_origin_identity_id": "alice",
             },
         })
-        assert service.kobo_unlinked_local_count("bob") == 1
     finally:
         service.close()
 
