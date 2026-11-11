@@ -305,6 +305,19 @@ def _project_paris_acquisition_formats(item: SearchResult) -> SearchResult:
     if raw_evidence:
         metadata["paris_format_evidence"] = raw_evidence
     metadata.update(projection)
+    # Presentation hint, not an offer, entitlement or borrow permission.
+    # Core still checks the exact identity, credential, live borrower scope
+    # and a durable one-shot claim before any PNB mutation.
+    if (item.source_provider == "paris" and item.docbase == "DILICOM"
+            and item.medium == "digital" and type(item.record_id) is str
+            and item.record_id):
+        metadata["manual_borrow_presentation"] = {
+            "provider_id": item.source_provider,
+            "docbase": item.docbase,
+            "record_id": item.record_id,
+        }
+    else:
+        metadata.pop("manual_borrow_presentation", None)
     item.metadata = metadata
     return item
 
