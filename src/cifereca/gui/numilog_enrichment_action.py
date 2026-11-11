@@ -8,8 +8,43 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from cifereca.core.numilog_explicit_enrichment import can_enrich_numilog_result
+from urllib.parse import urlsplit
+
+from cifereca.models import SearchResult
 from cifereca.task_queue import TaskPriority
+
+
+def can_enrich_numilog_result(item: object) -> bool:
+    """UI visibility hint only; provider will re-attest all source evidence."""
+    if not isinstance(item, SearchResult):
+        return False
+    url = getattr(item, "friendly_url", None)
+    # This is only a UI hint. Core must not encode Numilog's hostname:
+    # the provider independently attests the product URL before any GET.
+    # Keep a generic syntactic HTTPS gate to avoid advertising malformed links.
+    if (type(url) is not str or not url or len(url) > 16384
+            or any(ord(char) < 33 or ord(char) == 127 or ord(char) == 92 for char in url)):
+        return False
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.port not in (None, 443)
+                or not parsed.path or parsed.path == "/"
+                or parsed.query or parsed.fragment):
+            return False
+    except ValueError:
+        return False
+    if item.source_provider == "numilog":
+        return (item.owned is True
+                and item.source_collection == "library"
+                and item.source_credential not in {"", "__public__"}
+                and item.download_url is None)
+    return (item.source_provider == "numilog-catalog"
+            and item.source_credential == "__public__"
+            and item.source_collection == "public_catalog"
+            and item.owned is False and item.downloadable is False
+            and item.download_url is None)
 
 
 def add_numilog_enrichment_action(host, selected_id, item, detail, context, *,
