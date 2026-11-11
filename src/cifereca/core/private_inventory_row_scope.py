@@ -89,6 +89,7 @@ def declared_private_inventory_batch_valid(
         collection, scenario, record_schema = contract
         if (type(collection) is not str or not collection
                 or type(scenario) is not str or not scenario
+                or type(record_schema) is not str
                 or record_schema != "credential_scoped_record_v1"):
             return False
         return credential_scoped_private_inventory_rows_valid(
