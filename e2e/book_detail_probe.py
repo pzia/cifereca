@@ -521,21 +521,32 @@ def main():
         if args.geometry_1300:
             report["ux611_probe_stage"] = "selected_library"
             geometry_1300("library")
+        # Only a pre-reviewed fixed stage may leave the private probe.
+        # Neither widget text, raw metadata nor an assertion is published.
+        report["book_detail_failure_code"] = "library_expander_unavailable"
         expander, rows = detail_info("library")
         shown = read_rows(rows)
-        for expected in (
-            ("Auteur", "Alice Exemple"), ("Auteur", "Bob Exemple"),
-            ("Sujet", "nature"), ("ISBN déclaré", "9780306406157"),
-            ("Prix littéraire", "Prix du Quai"), ("Mot-clé", "enquête & mystère"),
-            ("Collection", "Collection enquête"),
-            ("Fiche publique · Format commercial sélectionné", "PDF sans DRM"),
+        for code, expected in (
+            ("library_author_first", ("Auteur", "Alice Exemple")),
+            ("library_author_second", ("Auteur", "Bob Exemple")),
+            ("library_subject", ("Sujet", "nature")),
+            ("library_isbn", ("ISBN déclaré", "9780306406157")),
+            ("library_award", ("Prix littéraire", "Prix du Quai")),
+            ("library_keyword", ("Mot-clé", "enquête & mystère")),
+            ("library_collection", ("Collection", "Collection enquête")),
+            ("library_public_format", (
+                "Fiche publique · Format commercial sélectionné", "PDF sans DRM",
+            )),
         ):
+            report["book_detail_failure_code"] = code
             assert expected in shown, f"Bibliothèque n'utilise pas le détail partagé : {shown!r}"
         report["checks"]["library_metadata"] = True
         report["library_rows"] = shown
         report["library_expanded"] = expander.get_expanded()
         capture("03-library-shared-detail")
+        report["book_detail_failure_code"] = "library_online_calls"
         assert len(report["online_calls"]) == 1
+        report.pop("book_detail_failure_code", None)
         begin_owned_book_action()
 
     owned_action = {}
