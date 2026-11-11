@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from cifereca.kobo.vault import KoboVaultError
 from tests.test_kobo_executor_policy import (
     _candidate, _item, _service, _state,
 )
