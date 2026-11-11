@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Temporary P0 #5048 baseline replay: no behavioral changes; compare six book-detail GTK scenarios.
 """UX #942: real GTK4 Search/Library detail, multivalued bibliographic rows.
 
 Only the real Core GUI and local indexed rows are used. Online clicks are
