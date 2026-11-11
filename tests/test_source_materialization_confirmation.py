@@ -15,7 +15,6 @@ import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.core import source_materialization as materialize
-from cifereca.core import kobo_backup
 from cifereca.identities import Identity
 from cifereca.locking import InterProcessLock
 from cifereca.models import Account
