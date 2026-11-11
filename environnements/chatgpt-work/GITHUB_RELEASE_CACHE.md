@@ -3,6 +3,40 @@
 **Cible exclusive : Ubuntu 24.04 `noble`, amd64, Python 3.12.** Ne jamais réutiliser
 l'archive Debian 13 déjà publiée : ses dépendances binaires ne sont pas compatibles.
 
+## Solution immédiate : publier depuis le cache **déjà téléchargé** sur Work
+
+Quand les runners GitHub Actions ne résolvent plus les miroirs APT Ubuntu, **ne
+pas recommencer le téléchargement des paquets**. Sur la VM Ubuntu 24.04
+ChatGPT Work qui contient déjà des `.deb` dans
+`environnements/chatgpt-work/runtime/apt/archives/` :
+
+```bash
+cd /chemin/vers/cifereca
+# Contrôler le runtime Work déjà installé (aucun téléchargement APT).
+./environnements/chatgpt-work/work bootstrap --offline
+./environnements/chatgpt-work/work check-import
+
+# Préparer et valider l'archive localement SANS publication.
+python3 environnements/chatgpt-work/publish_cached_release.py
+
+# Publication volontaire après revue et authentification gh (contents:write).
+gh auth status
+python3 environnements/chatgpt-work/publish_cached_release.py \
+  --tag gtk4-ubuntu24-noble-amd64-20261111 --publish
+```
+
+Le script publie l'archive `gtk4-deb-cache-ubuntu24-noble-amd64.tar.gz` et
+`SHA256SUMS` dans une prerelease GitHub. Il refuse un tag existant et vérifie
+les deux noms d'assets après publication. La VM doit être **Ubuntu Noble
+amd64 / Python 3.12** et le cache doit déjà être complet ; sans cela il
+échoue sans télécharger quoi que ce soit. Le `gh` doit être installé et
+connecté à un compte autorisé à créer une Release dans `pzia/cifereca`.
+
+**Privilégier cette voie pour débloquer maintenant la publication**. Le
+workflow GitHub Actions ci-dessous reste utilisable quand le DNS APT des
+runners est rétabli. Ne pas mélanger les archives Debian et Ubuntu.
+Une Release ne devient « publiée » qu'après vérification effective des assets.
+
 ## Publication
 
 Workflow dédié : [Publish Ubuntu 24.04 GTK4 rootless offline cache](../../.github/workflows/gtk-ubuntu24-cache-asset.yml).
