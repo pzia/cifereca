@@ -209,6 +209,10 @@ def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> boo
             or _HEX.fullmatch(revision) is None):
         return False
     try:
+        # A newly configured CAS source policy supersedes the old toggle,
+        # even if its legacy row still says ON (including ABA).
+        if read_policy(storage, source.scope).configured:
+            return False
         mode, actual_revision = legacy_source_auto_policy(
             storage, source.scope, source.kind,
         )
