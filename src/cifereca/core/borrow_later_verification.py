@@ -137,7 +137,7 @@ def _pending_borrow_followup_scope(service, item: SearchResult, *, readiness):
         accounts = [
             row for row in service.accounts
             if (type(row) is Account and row.is_primary is True
-                and row.unique_id == "" and row.identity_id == identity
+                and row.identity_id == identity
                 and row.provider_id == item.source_provider
                 and row.credential_id == item.source_credential
                 and sum(member is row for member in registered) == 1)
@@ -163,7 +163,7 @@ def _pending_borrow_followup_scope(service, item: SearchResult, *, readiness):
 
 
 def borrow_followup_available(service, item: SearchResult, *, readiness) -> bool:
-    """Inert local UI admission for one pending Paris loan check after restart."""
+    """Inert local admission for one exact spent loan claim after restart."""
     return _pending_borrow_followup_scope(service, item, readiness=readiness) is not None
 
 
