@@ -12,19 +12,33 @@ permissions:
 jobs:
   provider-core-coupling:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: parent-main-f4bb60
+            sha: f4bb60d3765251309cc867929987d46b39b6242f
+          - label: latest-main-755144
+            sha: 755144ecb9ab5c2af20fc5b094b63ef0bb4ff3bb
+          - label: numilog-pr-5618-7edc6e
+            sha: 7edc6ebcb3944cf8c603319e5be54884d87ff1f3
+          - label: kobo-pr-5598-02c267
+            sha: 02c267dfcbd5a9a2de5cff20e0502c794b1632a7
     steps:
-      - name: Checkout exact tested SHA
+      - name: Checkout immutable commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
       - name: Measure physical and AST coupling without provider I/O
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/ci_provider_core_coupling_report.py --json | tee "$RUNNER_TEMP/provider-core-coupling.json"
-          python3 -m json.tool "$RUNNER_TEMP/provider-core-coupling.json" >/dev/null
-          cp "$RUNNER_TEMP/provider-core-coupling.json" ./provider-core-coupling-baseline.json
-      - name: Publish baseline report
+          python3 scripts/ci_provider_core_coupling_report.py --json | tee provider-core-coupling-report.json
+          python3 -m json.tool provider-core-coupling-report.json >/dev/null
+      - name: Publish exact SHA report
         uses: actions/upload-artifact@v4
         with:
-          name: provider-core-coupling-baseline
-          path: provider-core-coupling-baseline.json
+          name: provider-core-coupling-${{ matrix.label }}
+          path: provider-core-coupling-report.json
           retention-days: 2
