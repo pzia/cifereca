@@ -256,10 +256,7 @@ def test_legacy_w2_never_downloads_or_mutates_hostile_local_candidates(
             session, "backup_manifest",
             lambda: pytest.fail("retired W2 must not fetch manifest"),
         )
-        monkeypatch.setattr(
-            service, "_execute_kobo_acquisition",
-            lambda *_a, **_kw: pytest.fail("retired W2 must not GET"),
-        )
+        assert not hasattr(service, "_execute_kobo_acquisition")
         monkeypatch.setattr(
             service.storage, "backup_put",
             lambda *_a, **_kw: pytest.fail("retired W2 must not write"),
@@ -276,27 +273,10 @@ def test_legacy_w2_never_downloads_or_mutates_hostile_local_candidates(
         service.close()
 
 
-@pytest.mark.parametrize("existing", [False, True])
-def test_retired_direct_executor_cannot_overwrite_or_acquire(
-    tmp_path: Path, existing,
-):
-    """D3 direct executor cannot bypass acquisition lock or destination guard."""
-    from cifereca.core.kobo_backup import _execute_kobo_acquisition
+def test_retired_direct_executor_is_not_installed(tmp_path):
     service = _service(tmp_path)
     try:
-        target = service.library_identity_provider_dir("alice", "kobo") / "Book One.epub"
-        if existing:
-            _write_epub(target)
-        before = target.read_bytes() if existing else None
-        with pytest.raises(
-            ProviderConfigurationError,
-            match="kobo_legacy_direct_get_retired",
-        ):
-            _execute_kobo_acquisition(service, SimpleNamespace(), target.parent)
-        if existing:
-            assert target.read_bytes() == before
-        else:
-            assert not target.exists()
+        assert not hasattr(service, "_execute_kobo_acquisition")
     finally:
         service.close()
 
