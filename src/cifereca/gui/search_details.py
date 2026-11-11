@@ -193,9 +193,11 @@ def _add_explicit_enrichment_action(
             or not can_enrich_provider_detail_result(item)
             or not host._search_detail_context_current(selected_id, context)):
         return False
-    session = getattr(host.service, "_sessions", {}).get(
-        host.service._session_key(item.source_provider, item.source_credential)
-    )
+    session_key = getattr(host.service, "_session_key", None)
+    sessions = getattr(host.service, "_sessions", None)
+    if not callable(session_key) or not isinstance(sessions, dict):
+        return False
+    session = sessions.get(session_key(item.source_provider, item.source_credential))
     method = ("enrich_public_detail" if item.source_collection == "public_catalog"
               else "enrich_owned_public_detail")
     if not callable(getattr_static(session, method, None)):
