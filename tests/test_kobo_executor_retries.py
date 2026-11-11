@@ -8,7 +8,6 @@ import pytest
 
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
-from cifereca.kobo.acquisition import KoboOfferAdapter
 from cifereca.kobo.errors import KoboAdeptError
 from cifereca.models import Account, SearchResult
 from cifereca.providers import ProviderConfigurationError
