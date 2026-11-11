@@ -1187,18 +1187,19 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     # A v0.7 backup projection is not scoped by identity/borrower: even a
     # descriptive title/cover can leak a former owner's private metadata.
     # Present only catalogue, canonical entitlement and scoped loan facts.
-    from .observed_import_provenance import observed_import_links
-    # Historical observation keys are display-only hints. Preserve their
-    # exact provider scope when comparing against arbitrary loan providers.
-    observed_loan_display_aliases = {
-        ('bnf-pret', *scope): local_key
-        for scope, local_key in observed_import_links(
+    from .observed_import_provenance import (
+        observed_import_links, provider_scoped_observed_links,
+    )
+    # Retain historical display hints only under their exact source provider.
+    observed_loan_display_aliases = provider_scoped_observed_links(
+        'bnf-pret',
+        observed_import_links(
             self.storage,
             [p for rows in placements_by_artifact.values() for p in rows],
             local_keys, provider_id='bnf-pret',
             provenance_field='bnf_observed_loan',
-        ).items()
-    }
+        ),
+    )
     loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
     for loan in self.last_loans:
         loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
