@@ -6,7 +6,6 @@ from dataclasses import replace
 import pytest
 
 from cifereca.providers import ProviderConfigurationError
-from cifereca.core import numilog_manifest_rights
 from tests.test_core_p0_1862_numilog_store_mirror import _connect, _row
 from tests.test_sync_state_contract import _service
 
@@ -54,40 +53,22 @@ def test_private_inventory_rejects_mixed_batch_before_any_write(
 
 
 @pytest.mark.parametrize("mode", ["opening", "manual"])
-def test_numilog_source_revoked_during_rights_projection_cannot_publish_catalogue(
+def test_numilog_source_revoked_during_inventory_never_publishes_catalogue(
     tmp_path, monkeypatch, mode,
 ):
     service = _service(tmp_path)
     try:
         account, session, calls = _connect(service, number=1)
-        if mode == "manual":
-            # There is no rights projection on explicit Sync anymore.
-            # Revoke the binding DURING the actual provider inventory read.
-            def revoke_during_inventory():
-                calls.append("library")
-                service.storage.provider_connection_put({
-                    "identity_id": "default", "provider_id": "numilog",
-                    "credential_id": account.credential_id, "enabled": False,
-                })
-                return [_row(account.credential_id, 0)]
 
-            session.library = revoke_during_inventory
-        else:
-            # Opening still has the legacy projector until #5464 lands.
-            original = numilog_manifest_rights.mirror_numilog_manifest_rights
+        def revoke_during_inventory():
+            calls.append("library")
+            service.storage.provider_connection_put({
+                "identity_id": "default", "provider_id": "numilog",
+                "credential_id": account.credential_id, "enabled": False,
+            })
+            return [_row(account.credential_id, 0)]
 
-            def revoke_after_projection(*args, **kwargs):
-                count = original(*args, **kwargs)
-                service.storage.provider_connection_put({
-                    "identity_id": "default", "provider_id": "numilog",
-                    "credential_id": account.credential_id, "enabled": False,
-                })
-                return count
-
-            monkeypatch.setattr(
-                numilog_manifest_rights, "mirror_numilog_manifest_rights",
-                revoke_after_projection,
-            )
+        session.library = revoke_during_inventory
         if mode == "opening":
             result = service.mirror_personal_libraries()
             assert result == {}
@@ -97,5 +78,8 @@ def test_numilog_source_revoked_during_rights_projection_cannot_publish_catalogu
                 service._synchronize_account_source_impl(account)
         assert calls == ["library"]
         assert service.storage.catalog_entries() == []
+        assert service.storage.entitlements(provider_id="numilog") == []
+        assert service.storage.acquisitions(provider_id="numilog") == []
+        assert service.storage.placements() == []
     finally:
         service.close()
