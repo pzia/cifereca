@@ -253,7 +253,7 @@ def _offline(published, tmp_path):
 def test_offline_profile_relink_and_cli_do_not_start_provider_or_legacy(
     published, tmp_path, monkeypatch, capsys,
 ):
-    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca.core import offline_canonical_relink as repair
     from cifereca import cli
 
     store, original, path, args, source, finished = published
@@ -290,7 +290,7 @@ def test_offline_profile_relink_and_cli_do_not_start_provider_or_legacy(
 
 
 def test_offline_config_cannot_rebind_profile_folder(published, tmp_path):
-    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca.core import offline_canonical_relink as repair
 
     store, original, path, args, source, finished = published
     original.rename(path)
@@ -302,7 +302,7 @@ def test_offline_config_cannot_rebind_profile_folder(published, tmp_path):
     with pytest.raises(repair.ReconciliationRejected, match="identity_directory_unproven"):
         repair.reconcile_existing_profile(
             config_path=profile, database_path=store.path,
-            canonical_relink=True,
+            canonical_relink=True, provider_id="kobo", legacy_journal=True,
             credential_id="vault-1", identity_id="A",
             account_id="buyer-A", edition_id="book-1",
             right_id="purchase", branch_id="purchases",
@@ -316,7 +316,7 @@ def test_offline_config_cannot_rebind_profile_folder(published, tmp_path):
 def test_offline_profile_changed_during_sql_commit_rolls_back_B(
     published, tmp_path, monkeypatch,
 ):
-    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca.core import offline_canonical_relink as repair
     from cifereca.core import canonical_relink as canonical
 
     store, original, path, args, source, finished = published
@@ -324,7 +324,7 @@ def test_offline_profile_changed_during_sql_commit_rolls_back_B(
     profile = _offline(published, tmp_path)
     kwargs = {
         "config_path": profile, "database_path": store.path,
-        "canonical_relink": True,
+        "canonical_relink": True, "provider_id": "kobo", "legacy_journal": True,
         "credential_id": "vault-1", "identity_id": "A",
         "account_id": "buyer-A", "edition_id": "book-1",
         "right_id": "purchase", "branch_id": "purchases",
@@ -511,7 +511,7 @@ def test_relink_rejects_invalid_reference_kind_before_sql_mutation(
 def test_offline_cli_selects_canonical_loan_kind_without_core_start(
     store, tmp_path, monkeypatch, capsys,
 ):
-    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca.core import offline_canonical_relink as repair
     from cifereca import cli
 
     source, snapshot = new_source(
@@ -687,7 +687,7 @@ def test_journal_undo_rejects_rebound_right_or_file_without_mutation(
 def test_offline_cli_undo_is_exact_and_does_not_start_core(
     published, tmp_path, monkeypatch, capsys,
 ):
-    from cifereca.core import kobo_local_reconciliation as repair
+    from cifereca.core import offline_canonical_relink as repair
     from cifereca import cli
 
     store, original, moved, args, _source, _finished = published

@@ -68,6 +68,6 @@ def test_colliding_profile_directory_refuses(tmp_path):
 
 
 def test_retired_kobo_w2_root_aliases_are_absent():
-    from cifereca.core import kobo_local_reconciliation as adapter
+    from cifereca.core import offline_canonical_relink as adapter
     assert not hasattr(adapter, "_roots")
     assert not hasattr(adapter, "_within")

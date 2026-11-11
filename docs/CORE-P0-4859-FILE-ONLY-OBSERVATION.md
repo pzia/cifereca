@@ -54,3 +54,5 @@ de droit, d'origine, de placement et de catalogue.
 mutations pour les cas sans source A, puis supprimer les écritures positives
 de W4/undo seulement après livraison des cas ayant une preuve fournisseur
 A→B indépendante. Le parent #3196 reste pilote de `storage.py`/W1.
+
+**État après #5558 :** le module `core/kobo_local_reconciliation.py` est physiquement supprimé. Le relink autorisé d'un Placement déjà canonique passe par `core/offline_canonical_relink.py`; la voie W4 `file_only=True` reste interdite avant tout accès disque.

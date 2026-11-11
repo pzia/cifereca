@@ -1,7 +1,7 @@
-"""Offline canonical Kobo relink facade, with historical W4 paths retired.
+"""Offline canonical placement relink for an explicitly scoped provider.
 
-No 0.7 receipt or local-file observation is an acquisition or a right.
-Retired SQL and filesystem repair helpers live in test-only archives.
+Read persisted profile and SQLite without starting Core or a provider. No
+historical receipt or local-file observation establishes a provider right.
 """
 from __future__ import annotations
 
@@ -35,15 +35,21 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
     # P0 #4859 W4/D5: the historical default created positive ledger and
     # Placement rows from v0.7 evidence. All production callers are retired:
     # never open Config, SQLite or a file for legacy preview/confirm/undo.
-    # Only two explicit, independently fenced safe operators remain.
+    # Only the independently attested canonical relink remains.
     file_only = options.pop("file_only", False)
     canonical_relink = options.pop("canonical_relink", False)
+    provider_id = options.pop("provider_id", None)
+    legacy_journal = options.pop("legacy_journal", False)
     _require(type(file_only) is bool and type(canonical_relink) is bool
              and not (file_only and canonical_relink), "invalid_request")
     # The W4 file-only journal does not establish canonical provider A or B.
     # It is retired before any profile, SQLite or file access.
     _require(not file_only, "legacy_file_observation_retired")
     _require(canonical_relink, "legacy_reconciliation_retired")
+    _require(type(legacy_journal) is bool, "invalid_request")
+    _require(type(provider_id) is str and 0 < len(provider_id) <= 128
+             and provider_id == provider_id.strip()
+             and all(32 < ord(c) < 127 for c in provider_id), "invalid_request")
     # Only an independently attested canonical Placement may be relinked.
     provided = set(options)
     required = {
@@ -101,9 +107,8 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
         _require(Storage._read_schema_version(connection) == CURRENT_SCHEMA_VERSION, "schema_upgrade_required")
         storage = SimpleNamespace(path=database_path, _lock=threading.Lock(),
                                   _connect=lambda: connection, _stable_id=Storage._stable_id)
-        service = SimpleNamespace(storage=storage, config=SimpleNamespace(get=get), identity_by_id=identity)
+        from .canonical_relink import relink_verified_canonical
         if canonical_relink:
-            from .canonical_relink import relink_verified_canonical_kobo
             # This offline path deliberately reads Config/SQLite, not any
             # connected provider. The CURRENT on-disk profile mapping must
             # match the exact identity's canonical SQLite directory.
@@ -143,9 +148,10 @@ def reconcile_existing_profile(*, config_path=None, database_path=None, **option
                 except Exception:
                     return False
 
-            return relink_verified_canonical_kobo(
-                storage, library_root=root, new_path=Path(path),
-                context_current=profile_current, **options,
+            return relink_verified_canonical(
+                storage, provider_id=provider_id, library_root=root,
+                new_path=Path(path), context_current=profile_current,
+                _legacy_journal=legacy_journal, **options,
             )
     except (OSError, sqlite3.Error, json.JSONDecodeError, UnicodeError):
         raise ReconciliationRejected("local_profile_unavailable") from None

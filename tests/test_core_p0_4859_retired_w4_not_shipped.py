@@ -8,7 +8,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from cifereca.core import kobo_local_reconciliation as module
+from cifereca.core import offline_canonical_relink as module
 
 
 _RETIRED = {
@@ -37,4 +37,5 @@ def test_legacy_w4_positive_engine_is_not_shipped_in_core():
     assert not (declared & _RETIRED_CONSTANTS)
     assert "observe_kobo_local_file_only" not in functions
     assert "reconcile_existing_profile" in functions
+    assert not (Path(module.__file__).parent / "kobo_local_reconciliation.py").exists()
     assert "reconcile_kobo_local" not in functions

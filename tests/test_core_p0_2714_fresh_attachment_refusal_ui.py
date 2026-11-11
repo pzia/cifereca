@@ -10,7 +10,7 @@ import pytest
 from cifereca.core.library_attachment_refusal import (
     public_refusal_code, public_refusal_label,
 )
-from cifereca.core import kobo_local_reconciliation as kobo
+from cifereca.core import offline_canonical_relink as kobo
 from cifereca.gui.library_inspection_view import _attachment_refusal_message
 
 
