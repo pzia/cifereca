@@ -125,15 +125,18 @@ def search_detail_borrow_action_candidate(item: object, availability: str) -> bo
         return False
     if item.source_provider in {"numilog", "numilog-catalog", "kobo"}:
         return False
-    hint = item.metadata.get("manual_borrow_presentation") if type(item.metadata) is dict else None
-    if (type(hint) is dict
+    metadata = item.metadata if type(item.metadata) is dict else {}
+    if "manual_borrow_presentation" in metadata:
+        hint = metadata["manual_borrow_presentation"]
+        return bool(
+            type(hint) is dict
             and set(hint) == {"provider_id", "docbase", "record_id"}
             and all(type(hint[name]) is str and hint[name] for name in hint)
             and type(item.record_id) is str and item.record_id
             and type(item.docbase) is str and item.docbase
             and (hint["provider_id"], hint["docbase"], hint["record_id"])
-            == (item.source_provider, item.docbase, item.record_id)):
-        return True
+            == (item.source_provider, item.docbase, item.record_id)
+        )
     return availability == "Empruntable"
 
 
