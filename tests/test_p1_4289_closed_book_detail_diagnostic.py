@@ -211,6 +211,8 @@ def test_owned_gtk_fixture_persists_exact_borrower_binding_before_entitlement():
     "library_author_second", "library_subject", "library_isbn",
     "library_award", "library_keyword", "library_collection",
     "library_public_format", "library_online_calls",
+    "library_owned_begin", "owned_identity", "owned_connection",
+    "owned_account", "owned_entitlement", "owned_admission", "owned_render",
 ])
 def test_only_closed_synthetic_field_code_is_published(code):
     mod = exporter()
