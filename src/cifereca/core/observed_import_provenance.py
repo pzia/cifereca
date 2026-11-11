@@ -31,3 +31,20 @@ def observed_import_links(storage, placements, local_keys, *,
         storage, placements, local_keys, provenance_field=provenance_field,
         placement_provider_id=provider_id, validate_scope=scope_key,
     )
+
+
+def provider_scoped_observed_links(provider_id: str, links: object) -> dict:
+    """Key a display hint by its exact provider, never by borrower alone.
+
+    The legacy links cannot mint or verify rights. Malformed/unscoped hints
+    are discarded rather than becoming cross-provider aliases.
+    """
+    if type(provider_id) is not str or not provider_id or type(links) is not dict:
+        return {}
+    return {
+        (provider_id, *scope): local_key
+        for scope, local_key in links.items()
+        if type(scope) is tuple and len(scope) == 5
+        and all(type(value) is str and bool(value) for value in scope)
+        and type(local_key) is str and bool(local_key)
+    }
