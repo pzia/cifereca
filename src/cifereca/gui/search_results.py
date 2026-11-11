@@ -271,7 +271,7 @@ def _render_search_results(self) -> int:
                 and item.source_collection == "public_catalog"):
             extras.append("Catalogue public · aucun achat attesté")
         elif (item.source_collection == "library"
-                and project(item)["state"] == "remote_owned"):
+                and project(item).get("state") == "remote_owned"):
             extras.append("Mes achats · fichier local non présumé")
         # A supplier notice is not a right or an executable selected offer.
         # The provider-only canonical acquisition flow must re-attest any
