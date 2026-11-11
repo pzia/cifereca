@@ -11,7 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from cifereca import cli
-from cifereca.core.kobo_backup import safe_kobo_backup_report, _kobo_checkpoint_key
+from cifereca.core.legacy_diagnostic_projection import safe_kobo_backup_report
+from cifereca.core.legacy_checkpoint_read import _kobo_checkpoint_key
 from tests.test_kobo_backup_reconcile_prune import _service
 
 
