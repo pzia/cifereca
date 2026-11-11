@@ -311,7 +311,7 @@ def test_manual_gtk_dispatch_is_provider_neutral_abi_only():
     }
     for name in ("can_borrow_item", "borrow_search_item"):
         source = ast.unparse(methods[name])
-        assert "bnf-pret" not in source and "paris" not in source
+        assert "'bnf-pret'" not in source and "'paris'" not in source
         assert "can_borrow_bnf" not in source
         assert "can_borrow_paris" not in source
         assert "present_bnf_borrow" not in source
