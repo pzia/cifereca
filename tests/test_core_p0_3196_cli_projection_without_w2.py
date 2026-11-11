@@ -5,16 +5,13 @@ import ast
 from pathlib import Path
 
 from cifereca.core import legacy_diagnostic_projection as projection
-from cifereca.core import kobo_backup
 
 
-def test_retired_w2_reexports_identical_pure_projection_functions():
-    assert kobo_backup.safe_kobo_backup_report is projection.safe_kobo_backup_report
-    assert (
-        kobo_backup._safe_kobo_backup_diagnostic_detail
-        is projection._safe_kobo_backup_diagnostic_detail
-    )
-    assert kobo_backup._safe_kobo_opening_decision is projection._safe_kobo_opening_decision
+def test_retired_w2_does_not_reexport_pure_projection_functions():
+    from cifereca.core import kobo_backup
+    assert not hasattr(kobo_backup, 'safe_kobo_backup_report')
+    assert not hasattr(kobo_backup, '_safe_kobo_backup_diagnostic_detail')
+    assert projection.safe_kobo_backup_report is not None
 
 
 def test_cli_redaction_imports_pure_projector_not_w2_engine():
