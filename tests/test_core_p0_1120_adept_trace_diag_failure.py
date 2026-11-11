@@ -52,7 +52,7 @@ def test_successful_adept_fulfillment_ignores_non_native_runtime_trace_values(
     assert binding == {
         "adept_profile_id": "profile-ref", "adept_profile_name": "reader",
         "adept_loan_id": "adept-loan", "loan_state": "active",
-        "return_available": True,
+        "return_available": False,
     }
     executed.assert_called_once_with(request)
     service._originating_adept_profile_id.assert_called_once_with(

@@ -24,4 +24,4 @@ def capture_binding(result, *, profile_name, profile_id):
         raise ValueError('Loan ID ADEPT invalide')
     return {'adept_profile_id': profile_id, 'adept_profile_name': profile_name,
             'adept_loan_id': loan_id, 'loan_state': 'active' if loan_id else 'unavailable',
-            'return_available': bool(loan_id and profile_id)}
+            'return_available': False}

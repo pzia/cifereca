@@ -65,7 +65,7 @@ class Core0919(unittest.TestCase):
   self.assertEqual(self.storage.acquisition_get(status['acquisition_id'])['metadata']['preserved_artifact_path'],str(original))
  def test_manual_deleted_file_forces_complete_recovery(self):
   self.initial().unlink();result=self.service.reacquire_digital_loan(self.loan)
-  self.assertTrue(Path(result['path']).is_file());self.assertTrue(result['adept_return_available'])
+  self.assertTrue(Path(result['path']).is_file());self.assertFalse(result['adept_return_available'])
  def test_failed_reacquisition_preserves_file_and_previous_return_binding(self):
   original=self.initial();before=original.read_bytes();binding=self.service.adept_return_status_for_loan(self.loan)
   self.service.execute_acquisition_request.side_effect=AttentionRequired('Runtime refusé',code='runtime_refused')
