@@ -341,6 +341,17 @@ def test_manual_gtk_dispatch_is_provider_neutral_abi_only():
     assert "_present_manual_borrow(" in source
     assert "self.service.borrow_manual" in source
     assert "if policy is None:" in source
+    controller = Path(__file__).resolve().parents[1] / (
+        "src/cifereca/gui/bnf_borrow_controller.py"
+    )
+    symbols = {
+        node.name for node in ast.parse(
+            controller.read_text(encoding="utf-8")
+        ).body if isinstance(node, ast.FunctionDef)
+    }
+    assert "_present_manual_borrow" in symbols
+    assert "present_bnf_borrow" not in symbols
+    assert "present_paris_borrow" not in symbols
 
 
 def test_inert_ui_visibility_ignores_catalogue_button_without_capability(tmp_path):
