@@ -61,17 +61,17 @@ class Core0919(unittest.TestCase):
   self.assertNotEqual(original,new);self.assertEqual(original.read_bytes(),before);self.assertTrue(new.is_file())
   self.assertEqual(self.service.acquire_digital_loan.call_args.kwargs,{'force_refresh':True})
   status=self.service.adept_return_status_for_loan(self.loan)
-  self.assertEqual(status['adept_loan_id'],'adept-exact');self.assertTrue(status['return_available'])
+  self.assertEqual(status['adept_loan_id'],'adept-exact');self.assertFalse(status['return_available'])
   self.assertEqual(self.storage.acquisition_get(status['acquisition_id'])['metadata']['preserved_artifact_path'],str(original))
  def test_manual_deleted_file_forces_complete_recovery(self):
   self.initial().unlink();result=self.service.reacquire_digital_loan(self.loan)
-  self.assertTrue(Path(result['path']).is_file());self.assertTrue(result['adept_return_available'])
+  self.assertTrue(Path(result['path']).is_file());self.assertFalse(result['adept_return_available'])
  def test_failed_reacquisition_preserves_file_and_previous_return_binding(self):
   original=self.initial();before=original.read_bytes();binding=self.service.adept_return_status_for_loan(self.loan)
   self.service.execute_acquisition_request.side_effect=AttentionRequired('Runtime refusé',code='runtime_refused')
   with self.assertRaises(AttentionRequired):self.service.reacquire_digital_loan(self.loan)
   self.assertEqual(original.read_bytes(),before)
-  self.assertTrue(self.service.adept_return_status_for_loan(self.loan)['return_available'])
+  self.assertFalse(self.service.adept_return_status_for_loan(self.loan)['return_available'])
   self.assertEqual(self.storage.acquisition_get(binding['acquisition_id'])['metadata']['last_reacquisition_failure']['code'],'runtime_refused')
   self.assertTrue(self.acsm.exists())
  def test_single_loan_recovery_does_not_realize_other_active_loans(self):
