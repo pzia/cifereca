@@ -98,6 +98,14 @@ _CATEGORIES = frozenset({
     "CORE", "SYNC", "ADEPT", "PNB", "PARIS", "KOBO", "PLUGIN",
     "UPDATER", "UI", "CATALOG", "DIAGNOSTICS", "IMPORT", "LIBRARY", "NUMILOG", "LOAN", "COVER",
 })
+# Generic Core operations may expose only allowlisted operational words.
+# Supplier-named channels have no independent Core provenance: their free
+# operation text stays masked unless an attested, typed Core producer supplied
+# an independently validated public detail.
+_GENERIC_OPERATION_TEXT_CATEGORIES = frozenset({
+    "CORE", "SYNC", "ADEPT", "PNB", "PLUGIN", "UPDATER", "UI",
+    "CATALOG", "DIAGNOSTICS", "IMPORT", "LIBRARY", "LOAN", "COVER",
+})
 
 
 def _stamp(value: str) -> datetime:
@@ -599,11 +607,11 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 message = public_bnf_action_message(candidate)
                 severity = ('info' if candidate['status']=='success' else
                             'error' if candidate['status']=='failed' else 'warning')
-        if category == "NUMILOG":
-            # Provider-specific diagnostics are not an authority in Core.
-            # Only the canonical, provenance-checked generic observations
-            # above may publish structured details or attest provider IDs.
-            public_detail = {}
+        # An arbitrary supplier-named category cannot publish even a
+        # harmless-looking operation token without a verified Core producer.
+        # No provider-name exceptions or guessed identity attribution.
+        if (category not in _GENERIC_OPERATION_TEXT_CATEGORIES
+                and not public_detail):
             message = "[opération masquée]"
         # Do not infer the provider from a business category (PNB/PLUGIN).
         # Only typed observations with Core provenance attest this identity.
