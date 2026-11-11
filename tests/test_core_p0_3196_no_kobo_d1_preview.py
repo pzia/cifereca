@@ -2,23 +2,13 @@
 from pathlib import Path
 
 from cifereca.services import LibraryService
-from cifereca.core import kobo_backup
 
 
 ROOT = Path(__file__).resolve().parents[1] / "src" / "cifereca"
 
 
 def test_kobo_d1_manifest_preview_engine_is_physically_gone():
-    source = (ROOT / "core" / "kobo_backup.py").read_text(encoding="utf-8")
-    for name in (
-        "_canonical_kobo_backup_offline_preview",
-        "_canonical_kobo_offline_historical_report",
-        "_canonical_kobo_disconnected_offline_preview",
-        "_canonical_kobo_backup_preview",
-        "def kobo_backup_preview(",
-    ):
-        assert name not in source
-    assert not hasattr(kobo_backup, "kobo_backup_preview")
+    assert not (ROOT / "core" / "kobo_backup.py").exists()
     assert not hasattr(LibraryService, "kobo_backup_preview")
 
 
