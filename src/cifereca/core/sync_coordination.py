@@ -304,7 +304,7 @@ def _run_observed_canonical_convergence(
                 consent_still_current=lambda: current_consent(key),
             )
     if (admitted_snapshots and callable(delivery)
-            and (canonical_on or callable(consent_reader))):
+            and (canonical_on or legacy_on or callable(consent_reader))):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
         from .source_auto_consent_bridge import (
