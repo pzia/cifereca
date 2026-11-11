@@ -297,9 +297,11 @@ def test_source_wide_auto_switch_replaces_six_individual_consents(
     assert not hasattr(broker, "synchronize_scheduled_numilog_materialization")
     assert content_gets(gets, urls) == []
     result = synchronize(service, account)
-    assert result["present_attested"] == 3
+    # An explicit canonical OFF fences even present-attestation reads;
+    # historical local files and placements remain untouched.
+    assert result["present_attested"] == (3 if enabled else 0)
     assert result["downloaded"] == (3 if enabled else 0)
-    assert result["pending"] == (0 if enabled else 3)
+    assert result["pending"] == (0 if enabled else 6)
     assert result["failed"] == result["blocked"] == 0
     assert content_gets(gets, urls) == (urls[3:] if enabled else [])
     assert {p: p.read_bytes() for p in paths} == before
@@ -307,7 +309,8 @@ def test_source_wide_auto_switch_replaces_six_individual_consents(
     assert len(runtime_calls) == (3 if enabled and kind == "acsm" else 0)
     again = synchronize(service, account)
     assert again["downloaded"] == 0
-    assert again["present_attested"] == (6 if enabled else 3)
+    assert again["present_attested"] == (6 if enabled else 0)
+    assert again["pending"] == (0 if enabled else 6)
     assert content_gets(gets, urls) == (urls[3:] if enabled else [])
 
 
@@ -331,8 +334,10 @@ def test_source_wide_revocation_blocks_existing_per_right_permission(
     )
     assert updated["enabled"] is False
     result = synchronize(service, account)
-    assert result["present_attested"] == 3
-    assert result["pending"] == 3
+    # Canonical OFF vetoes all six candidate resource executions, including
+    # local present attestation; it never alters the six original placements.
+    assert result["present_attested"] == 0
+    assert result["pending"] == 6
     assert result["downloaded"] == 0
     assert content_gets(gets, urls) == []
     assert service.storage.placements() and len(service.storage.placements()) == 6
