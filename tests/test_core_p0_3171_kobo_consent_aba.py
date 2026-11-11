@@ -135,8 +135,7 @@ def test_retired_kobo_on_start_does_not_grant_legacy_consent(tmp_path):
         broker = SynchronizationBrokerImpl(service)
         sid = broker._source_id(account)
         policy = "sync.source.materialization.on_start." + sid
-        with pytest.raises(ValueError, match="source not eligible"):
-            broker.set_local_materialization_schedule(sid, "on_start")
+        assert not hasattr(broker, "set_local_materialization_schedule")
         assert service.storage.metadata_get(policy) is None
         assert service.storage.metadata_get(policy + ".revision") is None
     finally:
