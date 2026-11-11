@@ -12,7 +12,7 @@ from dataclasses import replace
 
 import pytest
 
-from cifereca.core.numilog_private_rows import private_library_rows_valid
+from cifereca.core.private_inventory_row_scope import credential_scoped_private_inventory_rows_valid
 from cifereca.models import SearchResult
 
 
@@ -32,8 +32,8 @@ def _row(credential="private-a", variant="0123456789abcdef"):
 
 
 def test_scoped_private_metadata_batch_is_accepted_without_entitlement():
-    assert private_library_rows_valid([_row()], "private-a") is True
-    assert private_library_rows_valid([], "private-a") is True
+    assert credential_scoped_private_inventory_rows_valid([_row()], provider_id="numilog", credential_id="private-a", collection="library", scenario="NUMILOG_LIBRARY") is True
+    assert private_library_rows_valid([], provider_id="numilog", credential_id="private-a", collection="library", scenario="NUMILOG_LIBRARY") is True
 
 
 @pytest.mark.parametrize("row", [
@@ -52,7 +52,7 @@ def test_unsafe_or_cross_credential_private_row_fails_closed(row):
 
 def test_private_row_validator_has_no_legacy_projector_dependency():
     root = Path(__file__).resolve().parents[1]
-    source = (root / "src/cifereca/core/numilog_private_rows.py").read_text(
+    source = (root / "src/cifereca/core/private_inventory_row_scope.py").read_text(
         encoding="utf-8",
     )
     tree = ast.parse(source)
