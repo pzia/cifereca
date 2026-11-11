@@ -10,7 +10,7 @@ from ..models import Account, SearchResult
 
 
 def _present_manual_borrow(window, item, control, *, TaskPriority,
-                           provider_id, label, available, dispatch, expected_account=None):
+                           label, available, dispatch, expected_account=None):
     """Submit only a user-clicked, published and Core-admissible loan action.
 
     No second dialog or separate website attestation is required (#3121).
@@ -18,7 +18,8 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
     """
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
-            or item.source_provider != provider_id
+            or not isinstance(item.source_provider, str)
+            or not item.source_provider
             or not available(item)):
         return
     try:
@@ -27,6 +28,7 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
             return
         account = candidates[0]
         if (type(account) is not Account or account.is_primary is not True
+                or account.provider_id != item.source_provider
                 or (expected_account is not None and account is not expected_account)):
             return
         if sum(candidate is account for candidate in window.service.accounts) != 1:
@@ -67,7 +69,7 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
                 and session.connected is True
                 and getattr(session, "_epoch", None) == source_epoch
                 and window.service._session_for_source(
-                    provider_id, account.credential_id) is session
+                    account.provider_id, account.credential_id) is session
                 and sum(row is account for row in window.service.accounts) == 1
                 and (account.identity_id, account.provider_id,
                      account.credential_id, account.unique_id,
@@ -182,7 +184,7 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
 def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
     _present_manual_borrow(
         window, item, control, TaskPriority=TaskPriority,
-        provider_id="bnf-pret", label="BnF",
+        label="BnF",
         available=window.service.can_borrow_bnf,
         dispatch=window.service.borrow_bnf_manual,
     )
@@ -191,7 +193,7 @@ def present_bnf_borrow(window, item, control, *, Adw, TaskPriority):
 def present_paris_borrow(window, item, control, *, Adw, TaskPriority, account=None):
     _present_manual_borrow(
         window, item, control, TaskPriority=TaskPriority,
-        provider_id="paris", label="Paris",
+        label="Paris",
         available=window.service.can_borrow_paris,
         dispatch=window.service.borrow_paris_manual, expected_account=account,
     )
@@ -206,7 +208,6 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     """
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
-            or item.docbase != "DILICOM"
             or item.medium != "digital"
             or not window.service.paris_borrow_followup_available(item)
             or getattr(window, "_manual_borrow_pending", None) is not None
@@ -218,6 +219,8 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
             return
         account = candidates[0]
         if (type(account) is not Account or account.is_primary is not True
+                or account.provider_id != item.source_provider
+                or account.credential_id != item.source_credential
                 or account.unique_id != ""
                 or sum(a is account for a in window.service.accounts) != 1):
             return
@@ -256,7 +259,7 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
                 and session.connected is True
                 and getattr(session, "_epoch", None) == source_epoch
                 and window.service._session_for_source(
-                    "paris", account.credential_id,
+                    account.provider_id, account.credential_id,
                 ) is session
                 and sum(a is account for a in window.service.accounts) == 1
                 and (account.identity_id, account.provider_id,
