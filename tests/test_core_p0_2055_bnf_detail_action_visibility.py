@@ -38,11 +38,16 @@ def test_other_lending_sources_still_require_empruntable_label(provider):
     assert search_detail_borrow_action_candidate(item, "Empruntable") is True
 
 
-@pytest.mark.parametrize("provider", ["numilog", "numilog-catalog", "kobo"])
-def test_store_catalogues_do_not_inherit_bnf_manual_exception(provider):
+@pytest.mark.parametrize("provider", ["numilog", "numilog-catalog", "kobo", "future-store"])
+def test_candidate_is_provider_neutral_and_not_a_borrow_authorization(provider):
+    # An untrusted availability label is only a display hint; the actual GTK
+    # action remains gated by window.can_borrow_item(item) and Core admission.
     item = replace(BNF, source_provider=provider, metadata={})
-    assert search_detail_borrow_action_candidate(item, "Empruntable") is False
+    assert search_detail_borrow_action_candidate(item, "Empruntable") is True
     assert search_detail_borrow_action_candidate(item, "Inconnue") is False
+    # A stale hint borrowed from another supplier must still fail closed.
+    stale = replace(item, metadata=BNF.metadata)
+    assert search_detail_borrow_action_candidate(stale, "Empruntable") is False
 
 
 def test_bnf_non_digital_edition_never_offers_manual_lending():
