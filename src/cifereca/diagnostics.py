@@ -116,7 +116,13 @@ class Diagnostics:
                     and type(operation) is str and operation == "BnF HTTP"
                     and type(raw_detail.get("provider_id")) is str
                     and raw_detail["provider_id"] == "bnf-pret")
-        # Correlate these typed producer operations with the *current Core\n        # worker* only. A category or provider label is never task provenance.\n        correlate = bnf_http or (\n            type(operation) is str and operation in {\n                "acquisition_delivery", "session_state",\n            }\n        )
+        # Correlate these typed producer operations with the *current Core
+        # worker* only. A category or provider label is never task provenance.
+        correlate = bnf_http or (
+            type(operation) is str and operation in {
+                "acquisition_delivery", "session_state",
+            }
+        )
         entry = DiagnosticEntry(
             timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             category=category[:160] if type(category) is str else "DIAGNOSTICS",
