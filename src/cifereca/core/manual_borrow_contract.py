@@ -114,6 +114,6 @@ def manual_borrow_action(
         docbase=policy.docbase, primary_id=policy.primary_borrower_id,
         expected_identity_id=expected_identity_id, confirmed=confirmed,
         expected_context_epoch=expected_context_epoch,
-        expected_account=expected_account,
+        expected_account=expected_account, verification=policy.verification,
         additional_scope_current=still_bound,
     )
