@@ -246,8 +246,11 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     selected = copy(item)
 
     def current():
-        return (scope_current()
-                and window.service.paris_borrow_followup_available(selected))
+        try:
+            return (scope_current()
+                    and window.service.paris_borrow_followup_available(selected) is True)
+        except Exception:
+            return False
 
     if not current():
         return
