@@ -95,6 +95,8 @@ def publish_completed_acquisition(
     expected_source_policy_revision: str | None = None,
     explicitly_confirmed_once: bool = False,
     explicit_entitlement_id: str | None = None,
+    explicit_offer_id: str | None = None,
+    explicit_staged_path: Path | None = None,
 ) -> PublicationResult:
     """Publish an *already completed* authorized acquisition into schema v14.
 
@@ -139,19 +141,36 @@ def publish_completed_acquisition(
         raise ValueError("canonical_invalid_epoch_guard")
     if transaction_guard is not None and not callable(transaction_guard):
         raise ValueError("canonical_invalid_transaction_guard")
-    # A Core-confirmed explicit click may use a one-shot, exact-right SQL
-    # guard instead of a persisted source-wide ON policy. Never let the
-    # flag alone grant B, nor weaken the default Sync contract.
+    # An explicit click has two mutually exclusive admission modes:
+    # legacy scoped entitlement (transition only), or a Core-owned receipt
+    # for the *currently selected provider offer*. Neither a boolean nor a
+    # stale source-reference row may grant B. Both modes require an
+    # independent, exact transaction_guard.
+    offer_mode = explicit_offer_id is not None or explicit_staged_path is not None
     if (type(explicitly_confirmed_once) is not bool
-            or (not explicitly_confirmed_once and explicit_entitlement_id is not None)
+            or (not explicitly_confirmed_once and (
+                explicit_entitlement_id is not None or offer_mode))
             or (explicitly_confirmed_once and (
                 transaction_guard is None
                 or expected_source_policy_revision is not None
-                or type(explicit_entitlement_id) is not str
-                or not explicit_entitlement_id
-                or len(explicit_entitlement_id) > 256
-                or any(ord(c) < 32 for c in explicit_entitlement_id)))):
+                or (offer_mode and explicit_entitlement_id is not None)
+                or (not offer_mode and (
+                    type(explicit_entitlement_id) is not str
+                    or not explicit_entitlement_id
+                    or len(explicit_entitlement_id) > 256
+                    or any(ord(c) < 32 for c in explicit_entitlement_id)))
+                or (offer_mode and (
+                    type(explicit_offer_id) is not str
+                    or not explicit_offer_id
+                    or len(explicit_offer_id) > 256
+                    or any(ord(c) < 32 for c in explicit_offer_id)
+                    or not isinstance(explicit_staged_path, Path)
+                    or not explicit_staged_path.is_absolute()))))):
         raise ValueError("canonical_explicit_transaction_guard_required")
+    if offer_mode and (
+            source.kind != "purchase" or not row.delivery_attested
+            or row.delivery_offer_id != explicit_offer_id):
+        raise ValueError("canonical_explicit_selected_offer_unattested")
 
     # This is non-authoritative preliminary I/O. The authoritative owner
     # binding and file identity are rechecked *inside* the SQL transaction.
@@ -235,20 +254,37 @@ def publish_completed_acquisition(
                     or policy.revision != expected_source_policy_revision):
                 raise ValueError("canonical_source_policy_revoked")
         if explicitly_confirmed_once:
-            # A callable claiming True is not evidence of a user-owned right.
-            # Independently attest the exact persisted purchase in the very
-            # same SQLite transaction as the provider OriginLink/Placement.
-            rows = db.execute(
-                "SELECT 1 FROM entitlements WHERE entitlement_id=? "
-                "AND identity_id=? AND provider_id=? AND credential_id=? "
-                "AND account_id=? AND item_id=? "
-                "AND entitlement_type='owned' AND state='active' "
-                "AND loan_id IS NULL AND expires_at IS NULL LIMIT 2",
-                (explicit_entitlement_id, scope.identity_id, scope.provider_id,
-                 scope.credential_id, scope.account_id, source.edition_id),
-            ).fetchall()
-            if len(rows) != 1 or source.kind != "purchase":
-                raise ValueError("canonical_explicit_right_unproven")
+            if offer_mode:
+                # The exact Core-completed delivery was staged only AFTER GET
+                # and physical byte inspection. Check the staged source,
+                # account, selected offer, bytes and supplier receipt in THIS
+                # transaction, not via any historical pseudo-right.
+                # The staging path differs from the promoted final path:
+                # canonical_promotion copies (it does not move) the bytes.
+                from .explicit_selected_offer_stage import (
+                    selected_offer_stage_current_in_transaction,
+                )
+                if not selected_offer_stage_current_in_transaction(
+                    db, source, offer_id=explicit_offer_id,
+                    path=explicit_staged_path, final_sha256=final_sha256,
+                    delivery_receipt_ref=delivery_receipt_ref,
+                    adept_receipt_ref=adept_receipt_ref,
+                ):
+                    raise ValueError("canonical_explicit_offer_stage_unproven")
+            else:
+                # Historical compatibility path until all callers stop
+                # persisting pseudo-rights. Never adopt it for new providers.
+                rows = db.execute(
+                    "SELECT 1 FROM entitlements WHERE entitlement_id=? "
+                    "AND identity_id=? AND provider_id=? AND credential_id=? "
+                    "AND account_id=? AND item_id=? "
+                    "AND entitlement_type='owned' AND state='active' "
+                    "AND loan_id IS NULL AND expires_at IS NULL LIMIT 2",
+                    (explicit_entitlement_id, scope.identity_id, scope.provider_id,
+                     scope.credential_id, scope.account_id, source.edition_id),
+                ).fetchall()
+                if len(rows) != 1 or source.kind != "purchase":
+                    raise ValueError("canonical_explicit_right_unproven")
         if transaction_guard is not None and transaction_guard(db) is not True:
             raise ValueError("canonical_publication_policy_changed")
         # Do not rely on a caller's old account-to-credential binding.

@@ -150,6 +150,7 @@ def execute_admitted_convergence(
     expected_source_policy_revision: str | None = None,
     explicitly_confirmed_once: bool = False,
     explicit_entitlement_id: str | None = None,
+    explicit_offer_id: str | None = None,
 ) -> tuple[ConvergenceOutcome, ...]:
     """Execute the authorized part of the same Sync; no second remote read.
 
@@ -175,12 +176,24 @@ def execute_admitted_convergence(
                  or any(ch not in "0123456789abcdef"
                         for ch in expected_source_policy_revision)))
         or type(explicitly_confirmed_once) is not bool
-        or ((not explicitly_confirmed_once) and explicit_entitlement_id is not None)
+        or ((not explicitly_confirmed_once) and (
+            explicit_entitlement_id is not None or explicit_offer_id is not None))
         or (explicitly_confirmed_once and (
-            type(explicit_entitlement_id) is not str
-            or not explicit_entitlement_id
-            or len(explicit_entitlement_id) > 256
-            or any(ord(c) < 32 for c in explicit_entitlement_id)
+            (explicit_entitlement_id is None) == (explicit_offer_id is None)
+            or (explicit_entitlement_id is not None and (
+                type(explicit_entitlement_id) is not str
+                or not explicit_entitlement_id
+                or len(explicit_entitlement_id) > 256
+                or any(ord(c) < 32 for c in explicit_entitlement_id)))
+            or (explicit_offer_id is not None and (
+                type(explicit_offer_id) is not str
+                or not explicit_offer_id
+                or len(explicit_offer_id) > 256
+                or any(ord(c) < 32 for c in explicit_offer_id)
+                or len(snapshot.rights) != 1
+                or not snapshot.rights[0].delivery_attested
+                or snapshot.rights[0].delivery_offer_id != explicit_offer_id
+                or snapshot.rights[0].kind != "purchase"))
             or persisted_consent is None
             or len(persisted_consent) != 1
             or publication_guard is None
@@ -629,7 +642,12 @@ def execute_admitted_convergence(
                 # only a genuinely explicit click supplies the new grant.
                 **({
                     "explicitly_confirmed_once": True,
-                    "explicit_entitlement_id": explicit_entitlement_id,
+                    **({
+                        "explicit_entitlement_id": explicit_entitlement_id,
+                    } if explicit_entitlement_id is not None else {
+                        "explicit_offer_id": explicit_offer_id,
+                        "explicit_staged_path": completed.path,
+                    }),
                 } if explicitly_confirmed_once else {}),
                 transaction_guard=(
                     (lambda db: publication_guard(db, key))
