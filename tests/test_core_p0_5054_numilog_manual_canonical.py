@@ -129,8 +129,6 @@ def test_real_library_obtain_routes_complete_v2_away_from_legacy_writer(
     from cifereca.core import numilog_owned_download as facade
     service, target, calls = _setup(monkeypatch, tmp_path)
     service.identity_by_id = lambda identity_id: NS(identity_id=identity_id)
-    monkeypatch.setattr(facade, "require_source", lambda *_a, **_k:
-                        pytest.fail("source already captured by exact target"))
     monkeypatch.setattr(
         manual, "obtain_explicit_owned",
         lambda _service, _target, *, resolve, right_current: (

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-@pytest.mark.parametrize("module", ["numilog_manual_acquisition.py", "numilog_owned_download.py"])
+@pytest.mark.parametrize("module", ["numilog_owned_download.py"])
 def test_numilog_acquisition_no_import_from_legacy_projector(module):
     root = Path(__file__).resolve().parents[1]
     source = (root / "src/cifereca/core" / module).read_text(encoding="utf-8")
@@ -21,6 +21,8 @@ def test_numilog_acquisition_no_import_from_legacy_projector(module):
         for node in ast.walk(tree)
     )
     assert "exact_credential_scoped_record(" in source
+    assert "exact_private_inventory_binding_valid(" in source
+    assert not (root / "src/cifereca/core/numilog_manual_acquisition.py").exists()
 
 
 def test_scoped_id_is_passive_and_credential_exact():
