@@ -29,11 +29,11 @@ def test_g_runtime_configuration_has_single_plugin_source_of_truth():
     defaults = (ROOT / "src" / "cifereca" / "config_defaults.py").read_text(encoding="utf-8")
     gui = (ROOT / "src" / "cifereca" / "gui" / "main_window.py").read_text(encoding="utf-8")
     cli = (ROOT / "src" / "cifereca" / "cli.py").read_text(encoding="utf-8")
-    executor = (ROOT / "src" / "cifereca" / "kobo" / "executor.py").read_text(encoding="utf-8")
+    # The old branded executor has been physically removed (#3196).
+    assert not (ROOT / "src" / "cifereca" / "kobo" / "executor.py").exists()
     for token in ("kobo_adept.command", "kobo_adept.update_command", "kobo_adept.run_hook", "kobo_adept.adept_profile"):
         assert token not in defaults
         assert token not in gui
-        assert token not in executor
     for command in ("kobo-config-paths", "kobo-config-explain", "kobo-update-status"):
         assert command not in cli
 
