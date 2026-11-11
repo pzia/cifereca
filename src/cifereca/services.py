@@ -2772,7 +2772,7 @@ class LibraryService:
         # An external targeted callback cannot authorize a legacy supplier GET.
         if _admission is not None and (
             not callable(_admission)
-            or not (has_selected_abi or retired_direct or private_record)
+            or not (has_selected_abi or retired_direct)
         ):
             raise ProviderConfigurationError(
                 "Acquisition ciblée indisponible : autorisation du compte non vérifiable"
