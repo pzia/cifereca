@@ -73,16 +73,17 @@ def enrich_provider_detail_once(service, item: SearchResult, *,
         raise ProviderCapabilityError(_ERROR) from None
 
 
-def can_enrich_provider_detail_result(item: object, *, private_provider_id: str, public_provider_id: str) -> bool:
-    """UI visibility hint only; provider will re-attest all source evidence."""
+def can_enrich_provider_detail_result(item: object) -> bool:
+    """Provider-neutral, passive UI hint; the session re-attests before GET.
+
+    This checks only the source record shape. The GTK caller additionally
+    requires an installed session exposing the matching enrichment ABI.
+    """
     if not isinstance(item, SearchResult):
         return False
     url = getattr(item, "friendly_url", None)
-    # This is only a UI hint. Core must not encode Numilog's hostname:
-    # the provider independently attests the product URL before any GET.
-    # Keep a generic syntactic HTTPS gate to avoid advertising malformed links.
     if (type(url) is not str or not url or len(url) > 16384
-            or any(ord(char) < 33 or ord(char) == 127 or ord(char) == 92 for char in url)):
+            or any(ord(char) < 33 or ord(char) in (92, 127) for char in url)):
         return False
     try:
         parsed = urlsplit(url)
@@ -94,14 +95,11 @@ def can_enrich_provider_detail_result(item: object, *, private_provider_id: str,
             return False
     except ValueError:
         return False
-    if item.source_provider == private_provider_id:
-        return (item.owned is True
-                and item.source_collection == "library"
-                and item.source_credential not in {"", "__public__"}
+    if (item.source_credential == "__public__"
+            and item.source_collection == "public_catalog"):
+        return (item.owned is False and item.downloadable is False
                 and item.download_url is None)
-    return (item.source_provider == public_provider_id
-            and item.source_credential == "__public__"
-            and item.source_collection == "public_catalog"
-            and item.owned is False and item.downloadable is False
+    return (item.owned is True and item.source_collection == "library"
+            and type(item.source_credential) is str
+            and item.source_credential not in ("", "__public__")
             and item.download_url is None)
-
