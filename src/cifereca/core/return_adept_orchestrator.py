@@ -128,16 +128,3 @@ def return_preflight_code(exc: BaseException) -> str:
     }:
         return code
     return "loan_return_borrower_unproven"
-
-
-# Retired mutation helper: kept importable only to reject historical callers.
-# Its non-mutating receipt/status projection remains available above.
-def return_loan_prefer_adept(
-    self, loan: Any, *, uuid, return_ref, adept_return_key, public_state,
-    AttentionRequired, _TRACE_LOG,
-) -> dict[str, Any]:
-    """Reject the obsolete Adobe-first mutation before any provider access."""
-    raise AttentionRequired(
-        "Restitution volontaire retirée de Cifereca.",
-        code="loan_return_removed",
-    )
