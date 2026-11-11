@@ -173,11 +173,13 @@ def _apply_search_detail(
                                            "current_identity", None), "identity_id", None),
                account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
                source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    # Local import also works when the adapter body is bound by a headless host.
+    from .search_details import _add_explicit_enrichment_action
     _add_explicit_enrichment_action(self, selected_id, item, detail, context)
 
 
 def _add_explicit_enrichment_action(
-    host: SearchDetailHost, selected_id: str, item: SearchResult,
+    self: SearchDetailHost, selected_id: str, item: SearchResult,
     detail: ItemDetail, context: tuple[int, int, int, str | None] | None,
 ) -> bool:
     """Expose an opt-in metadata action only for an installed source ABI.
@@ -191,10 +193,10 @@ def _add_explicit_enrichment_action(
 
     if (not isinstance(context, tuple) or len(context) != 4
             or not can_enrich_provider_detail_result(item)
-            or not host._search_detail_context_current(selected_id, context)):
+            or not self._search_detail_context_current(selected_id, context)):
         return False
-    session_key = getattr(host.service, "_session_key", None)
-    sessions = getattr(host.service, "_sessions", None)
+    session_key = getattr(self.service, "_session_key", None)
+    sessions = getattr(self.service, "_sessions", None)
     if not callable(session_key) or not isinstance(sessions, dict):
         return False
     session = sessions.get(session_key(item.source_provider, item.source_credential))
@@ -204,25 +206,25 @@ def _add_explicit_enrichment_action(
         return False
 
     def selected_key():
-        keys = [key for key, current in host.search_objects.items() if current is item]
+        keys = [key for key, current in self.search_objects.items() if current is item]
         return keys[0] if len(keys) == 1 else None
 
     if selected_key() is None:
         return False
-    button = host.search_page.detail.window.action_button(
+    button = self.search_page.detail.window.action_button(
         "Enrichir les métadonnées", "view-refresh-symbolic",
     )
 
     def invoke(_button):
-        if (not host._search_detail_context_current(selected_id, context)
+        if (not self._search_detail_context_current(selected_id, context)
                 or selected_key() is None):
             return
         def worker():
-            return host.service.enrich_provider_search_result(
+            return self.service.enrich_provider_search_result(
                 item, expected_identity_id=context[3] or "",
             )
         def success(enriched):
-            if not host._search_detail_context_current(selected_id, context):
+            if not self._search_detail_context_current(selected_id, context):
                 return
             key = selected_key()
             if key is None:
@@ -231,19 +233,19 @@ def _add_explicit_enrichment_action(
                 detail, title=enriched.title, author=enriched.author,
                 year=enriched.published_at, thumbnail_url=enriched.thumbnail_url,
             )
-            host.search_objects[key] = enriched
-            host._apply_search_detail(selected_id, enriched, refreshed, context=context)
+            self.search_objects[key] = enriched
+            self._apply_search_detail(selected_id, enriched, refreshed, context=context)
         def failure(_exc):
-            if host._search_detail_context_current(selected_id, context):
-                host.toast("Enrichissement indisponible ou non attesté.", 5)
-        host.runner.submit(
+            if self._search_detail_context_current(selected_id, context):
+                self.toast("Enrichissement indisponible ou non attesté.", 5)
+        self.runner.submit(
             "Enrichissement des métadonnées…", worker, success, failure,
             control=button, priority=TaskPriority.USER_ACTION,
             kind="plugin", origin="user",
         )
 
     button.connect("clicked", invoke)
-    host.search_page.detail.add_actions([button])
+    self.search_page.detail.add_actions([button])
     return True
 
 
