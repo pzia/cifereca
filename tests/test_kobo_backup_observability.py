@@ -7,12 +7,12 @@ import zipfile
 
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
-from cifereca.kobo.vault import KoboVaultError
 from cifereca.models import Account, SearchResult
 from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 from cifereca.providers import ProviderConfigurationError
+from cifereca.providers.base import ProviderError
 
 import pytest
 
@@ -93,11 +93,7 @@ class BackupSession(ProviderSession):
         display_profile=None,
     ):
         if self.unauthorized:
-            raise KoboVaultError(
-                "Kobo-Vault : Bearer token invalide",
-                code="unauthorized",
-                status_code=401,
-            )
+            raise ProviderError("Synthetic provider refusal")
         return {
             "acquisition": {
                 "candidates": [{

@@ -8,7 +8,6 @@ import zipfile
 
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
-from cifereca.kobo.vault import KoboVaultError
 from cifereca.models import Account
 from cifereca.providers import ProviderCapabilities, ProviderDescriptor, ProviderSession
 from cifereca.services import LibraryService
