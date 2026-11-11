@@ -30,7 +30,7 @@ def test_noble_cache_marker_is_required_and_cannot_mix_debian(tmp_path):
     output = tmp_path / "out.tar.gz"
     for i in range(12):
         (cache / f"gtkfixture{i}_1.0_amd64.deb").write_bytes(
-            b"!<arch>\\n" + b"synthetic data"
+            b"!<arch>\n" + b"synthetic data"
         )
     marker.write_text(json.dumps(mod.PROFILE), encoding="utf-8")
     with pytest.raises(ValueError):
