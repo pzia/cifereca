@@ -22,7 +22,11 @@ def test_storage_does_not_import_numilog_manifest_rights():
         module is not None and "numilog_manifest_rights" in module
         for module in imports
     )
-    assert source.count("exact_credential_scoped_record(") >= 2
+    # Both legacy Numilog-specific scoped-ID validators disappeared along
+    # with their orphaned SQL callers; only the generic store survives.
+    assert "numilog_purchase_has_local_conflict" not in source
+    assert "numilog_possession_rights" not in source
+    assert "numilog_purchase_preflight_evidence" not in source
 
 
 def test_record_scope_validation_does_not_admit_foreign_or_malformed_ids():
