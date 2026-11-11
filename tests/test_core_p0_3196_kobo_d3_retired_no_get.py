@@ -32,10 +32,7 @@ def test_retired_d3_fails_closed_without_provider_get_or_file_changes(
             service.storage.acquisitions(provider_id="kobo"),
             service.storage.placements(),
         )
-        monkeypatch.setattr(
-            service, "_execute_kobo_acquisition",
-            lambda *_a, **_kw: pytest.fail("legacy provider GET is prohibited"),
-        )
+        assert not hasattr(service, "_execute_kobo_acquisition")
         monkeypatch.setattr(
             session, "download_direct",
             lambda *_a, **_kw: pytest.fail("direct provider GET is prohibited"),
