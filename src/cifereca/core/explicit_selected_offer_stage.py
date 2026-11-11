@@ -29,7 +29,7 @@ def selected_offer_stage_current_in_transaction(
     """
     if (type(source) is not SourceKey
             or type(offer_id) is not str or not offer_id or len(offer_id) > 256
-            or type(path) is not Path or not path.is_absolute()
+            or not isinstance(path, Path) or not path.is_absolute()
             or type(final_sha256) is not str or len(final_sha256) != 64
             or any(c not in "0123456789abcdef" for c in final_sha256)
             or type(delivery_receipt_ref) is not str or not delivery_receipt_ref
