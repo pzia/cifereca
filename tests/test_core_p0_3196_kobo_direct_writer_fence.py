@@ -9,7 +9,6 @@ import logging
 
 import pytest
 
-from cifereca.core import kobo_backup
 from cifereca.core.canonical_delivery_abi import has_complete_delivery_abi
 from cifereca.locking import InterProcessLock
 from cifereca.providers import ProviderConfigurationError
@@ -65,8 +64,8 @@ def test_complete_core_abi_blocks_direct_legacy_writer_before_io(
 
         before_backups = service.storage.backup_list()
         before_placements = service.storage.placements()
-        assert not hasattr(kobo_backup, "_sync_kobo_backup_locked")
-        assert not hasattr(kobo_backup, "sync_kobo_backup")
+        assert not hasattr(service, "_sync_kobo_backup_locked")
+        assert not hasattr(service, "sync_kobo_backup")
         assert service.storage.backup_list() == before_backups
         assert service.storage.placements() == before_placements
     finally:
