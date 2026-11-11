@@ -49,6 +49,40 @@ def test_bnf_configured_source_has_one_executor_even_with_legacy_on(
 
 
 
+def test_unversioned_bnf_legacy_on_cannot_trigger_canonical_get(
+    connected_core, monkeypatch, tmp_path,
+):
+    service, session, account, loan, _state, downloaded = connected_core
+    register(service.storage, account.identity_id, account.provider_id,
+             account.credential_id, account=account.unique_id)
+    session.identity_broker = IdentityBrokerImpl(service)
+    from cifereca.core.source_auto_consent_bridge import _source_id
+    from cifereca.core.source_sync_consent import scope_for_account
+    switch = "sync.source.bnf_auto." + _source_id(scope_for_account(account))
+    # Pre-versioned ON is not a durable, revocable loan admission.
+    service.storage.metadata_set(switch, "1")
+    calls = []
+    monkeypatch.setattr(
+        service, "_canonical_right_delivery",
+        lambda *_a: calls.append(True) or pytest.fail(
+            "unversioned BnF consent must not authorize delivery"
+        ),
+        raising=False,
+    )
+    for module in (
+        "sync_coordination", "canonical_selected_offers",
+        "canonical_selected_delivery", "convergence_execution",
+        "canonical_recovery",
+    ):
+        monkeypatch.setattr(
+            "cifereca.core." + module + ".acquisition_lock_file",
+            lambda: tmp_path / "acquisition.lock",
+        )
+    service.synchronize_account_source(account)
+    assert calls == [] and downloaded == []
+    assert service.storage.placements() == []
+
+
 @pytest.mark.parametrize("opening", [False, True])
 def test_bnf_legacy_source_on_uses_single_canonical_executor_and_verified_placement(
     connected_core, monkeypatch, tmp_path, opening,
