@@ -2,7 +2,7 @@
   "manifest": 1,
   "package": {
     "id": "org.cifereca.provider.numilog",
-    "version": "0.1.91",
+    "version": "0.1.92",
     "name": "Numilog",
     "publisher": "cifereca",
     "plugin_api": ">=1.4.1,<2"
