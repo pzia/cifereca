@@ -1335,6 +1335,97 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
                 if remote_proof not in proofs:
                     proofs.append(remote_proof)
 
+    # A current private inventory is descriptive origin metadata, never
+    # an entitlement. Expose it as a *remote catalogue* card even when the
+    # historical entitlement projector has been physically removed. A click
+    # still needs the exact live account/session and a fresh selected offer.
+    for observed in self.storage.catalog_entries():
+        # Keep compatibility with Storage's existing read-only catalogue API
+        # and lightweight projection fixtures; do not issue a provider read.
+        if (observed.get("local_state") != "remote_catalog"
+                or observed.get("identity_id") != identity_id):
+            continue
+        metadata = observed.get("metadata")
+        if type(metadata) is not dict:
+            continue
+        if (metadata.get("source_collection") != "library"
+                or metadata.get("catalogue_scope_version") != 2):
+            continue
+        provider = observed.get("provider_id")
+        credential = metadata.get("source_credential")
+        edition = observed.get("item_id")
+        if not all(
+            type(value) is str and value and len(value) <= 1024
+            and not any(ch in value for ch in "\x00\r\n")
+            for value in (provider, credential, edition)
+        ):
+            continue
+        matches = [
+            account for account in self.accounts
+            if (account.identity_id, account.provider_id,
+                account.credential_id) == (identity_id, provider, credential)
+        ]
+        if len(matches) != 1:
+            continue
+        account_id = matches[0].unique_id
+        if (type(account_id) is not str or not account_id
+                or not self.storage.provider_scope_account_bound(
+                    identity_id=identity_id, provider_id=provider,
+                    credential_id=credential, account_id=account_id,
+                )):
+            continue
+        # A previously published, physically verified source already has a
+        # local card; do not invent a second 'missing' copy of that source.
+        scope = (identity_id, provider, credential, account_id, edition, "purchase")
+        if scope in exact_source_alias:
+            continue
+        card_key = "observation:" + str(observed["catalog_entry_id"])
+        if card_key in merged:
+            continue
+        # A personal inventory may contain purchases OR loans. Only a
+        # declared purchase-offer ABI allows the card's origin to be selected
+        # as a purchase. Otherwise it remains an inert descriptive source.
+        from inspect import getattr_static
+        try:
+            session = self._sessions.get(self._session_key(provider, credential))
+            branch = getattr_static(session, "selected_purchase_branch", None)
+        except Exception:
+            branch = None
+        kind = "purchase" if type(branch) is str and branch else "observation"
+        origin = {
+            "identity_id": identity_id, "provider_id": provider,
+            "credential_id": credential, "account_id": account_id,
+            "item_id": edition, "kind": kind,
+        }
+        safe_metadata = {
+            name: metadata[name] for name in (
+                "publisher", "isbn", "series", "collection", "description",
+            ) if type(metadata.get(name)) is str
+        }
+        safe_cover = cover_candidate(
+            metadata.get("cover_url"), tier="catalog",
+            source="private-inventory", evidence_id=card_key,
+            evidence_strength=50,
+        )
+        merged[card_key] = {
+            "key": card_key, "book_id": edition,
+            "title": observed.get("title") or edition,
+            "author": observed.get("author"), "provider_id": provider,
+            "providers": [provider], "identity_id": identity_id,
+            "identity_ids": [identity_id], "item_id": edition,
+            "source_refs": [origin], "state": "remote_catalog",
+            "local": False, "local_path": None,
+            "media_format": observed.get("media_format"),
+            "artifact_kind": None, "bundle_members": [], "playlist": None,
+            "entitlement_type": None, "entitlement_id": None,
+            "due_at": None, "source": "private_catalog_observation",
+            "loan_id": None,
+            "thumbnail_url": safe_cover.url if safe_cover else None,
+            "artifact_id": None, "sha256": None, "placement_id": None,
+            "placements": [], "possessions": [],
+            "metadata": safe_metadata,
+        }
+
     result=[]
     for row in merged.values():
         row["providers"] = sorted(dict.fromkeys(str(x) for x in row.get("providers", []) if x))
