@@ -171,22 +171,3 @@ def test_corrupt_switch_stays_off_through_opening_but_another_source_updates(
         service.close()
 
 
-def test_corrupted_toggle_cannot_be_automatically_reenabled_by_kobo_policy(
-    tmp_path,
-):
-    from tests.test_kobo_sync_modes import _service as _kobo_service
-    from cifereca.core.source_materialization_schedule import kobo_on_start_sessions
-
-    service = _kobo_service(tmp_path)
-    try:
-        account = service.accounts[0]
-        source_id = service.sync_source_id(account)
-        service.storage.metadata_set(
-            "sync.source.materialization.on_start." + source_id, "1",
-        )
-        assert kobo_on_start_sessions(service) == ()
-        service.storage.metadata_set("sync.source.enabled." + source_id, "garbage")
-        assert not service.sync_source_enabled(account)
-        assert kobo_on_start_sessions(service) == ()
-    finally:
-        service.close()

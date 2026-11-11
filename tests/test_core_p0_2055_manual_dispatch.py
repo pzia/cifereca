@@ -40,6 +40,9 @@ def notice(a):
         publisher=None, published_at=None, description=None,
         thumbnail_url=None, friendly_url=None, scenario="BNF_PRET",
         source_provider="bnf-pret", source_credential=a.credential_id,
+        metadata={"manual_borrow_presentation": {
+            "provider_id": "bnf-pret", "docbase": "BNF_PRET", "record_id": "book-1",
+        }},
     )
 
 

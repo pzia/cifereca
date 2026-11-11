@@ -10,7 +10,6 @@ from types import SimpleNamespace as NS
 import pytest
 
 from tests import test_core_ui_1347_sync_action_scope as harness
-from tests import test_core_p0_1346_kobo_schedule_ui as materialization_harness
 from tests.test_core_p0_1347_kobo_confirmed_per_account import Dialog
 
 
@@ -19,9 +18,16 @@ def fixture(monkeypatch, *, sources=None, inventory=None):
         sources = [harness._source(
             sync_capabilities=("remote_inventory", "local_materialization"),
         )]
-    w, broker, calls, materialization = materialization_harness.fixture(
-        monkeypatch, sources=sources,
-    )
+    # Use the canonical source-page harness directly: retired Kobo W2
+    # download scheduling no longer has a UI fixture or controls.
+    Dialog.shown.clear()
+    methods = harness._methods()
+    env = methods["_refresh_sync_page"].__globals__
+    env["Adw"].MessageDialog = Dialog
+    env["Adw"].ResponseAppearance = NS(SUGGESTED=1)
+    monkeypatch.setattr(harness, "_methods", lambda: methods)
+    w, broker, calls, _build, _page = harness._fixture(sources=sources)
+    materialization = {}
     modes = dict(inventory or {})
 
     def read(sid):
@@ -44,10 +50,10 @@ def fixture(monkeypatch, *, sources=None, inventory=None):
 
 def controls(w, idx=0):
     group = w._sync_sources_box.children[idx]
-    # Existing download actions and their separate consent row are stable.
+    # Canonical manual download remains; the removed W2 schedule row is absent.
     assert group.children[2].title == "Téléchargement local · confirmation obligatoire"
-    assert group.children[3].title == "Téléchargement automatique de ce compte"
-    row = group.children[4]
+    assert all(row.title != "Téléchargement automatique de ce compte" for row in group.children)
+    row = group.children[3]
     assert row.title == "Actualisation automatique des notices Kobo"
     assert len(row.suffixes) == 1
     return row.suffixes[0], row

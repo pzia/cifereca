@@ -1,19 +1,19 @@
-"""Explicit Numilog search detail action; headless, no GTK or network."""
+"""Explicit synthetic-provider search detail action; headless, no GTK or network."""
 from dataclasses import replace
 from types import SimpleNamespace
 
-from cifereca.gui.numilog_enrichment_action import add_numilog_enrichment_action
+from cifereca.gui.provider_enrichment_action import add_provider_enrichment_action
 from cifereca.models import SearchResult, ItemDetail
 
 
 def item():
     return SearchResult(
-        id="book", record_id="numilog:scope:42", docbase="NUMILOG",
+        id="book", record_id="synthetic-private:scope:42", docbase="SYNTHETIC",
         medium="digital", title="Mon livre", author=None,
         type="Livre", format=None, publisher=None, published_at=None,
         description=None, thumbnail_url=None,
-        friendly_url="https://www.numilog.com/1958476/book.ebook",
-        scenario="NUMILOG_LIBRARY", source_provider="numilog",
+        friendly_url="https://www.synthetic-private.com/1958476/book.ebook",
+        scenario="SYNTHETIC_LIBRARY", source_provider="synthetic-private",
         source_credential="alice", source_collection="library",
         owned=True, downloadable=True, download_url=None,
     )
@@ -41,12 +41,21 @@ class Host:
         self.tasks = []
         self.refresh = []
         self.toasts = []
-        self.search_objects = {"numilog:book": item()}
+        self.search_objects = {"synthetic-private:book": item()}
         self.search_page = SimpleNamespace(
             detail=SimpleNamespace(add_actions=self.actions.extend),
         )
         self.runner = SimpleNamespace(submit=self.submit)
-        self.service = SimpleNamespace(enrich_provider_search_result=self.enrich)
+        self.service = SimpleNamespace(
+            enrich_provider_search_result=self.enrich,
+            _sessions={
+                "synthetic-private:alice": SimpleNamespace(
+                    enrich_owned_public_detail=lambda row: row),
+                "synthetic-public:__public__": SimpleNamespace(
+                    enrich_public_detail=lambda row: row),
+            },
+            _session_key=lambda provider, credential: f"{provider}:{credential}",
+        )
         self.network_requests = 0
 
     def _search_detail_context_current(self, key, context):
@@ -69,16 +78,16 @@ class Host:
 
 def detail():
     return ItemDetail(
-        record_id="numilog:scope:42", docbase="NUMILOG", title="Mon livre",
+        record_id="synthetic-private:scope:42", docbase="SYNTHETIC", title="Mon livre",
         author=None, type="Livre", year=None, thumbnail_url=None,
         availability_status="owned", availability_label="Acheté",
-        holdings=[], source_provider="numilog", source_credential="alice",
+        holdings=[], source_provider="synthetic-private", source_credential="alice",
     )
 
 
 def build(host, row=None, context=None):
-    return add_numilog_enrichment_action(
-        host, "book", row if row is not None else host.search_objects["numilog:book"], detail(),
+    return add_provider_enrichment_action(
+        host, "book", row if row is not None else host.search_objects["synthetic-private:book"], detail(),
         host.context if context is None else context,
         button_factory=Button,
     )
@@ -89,7 +98,7 @@ def test_button_is_opt_in_and_never_fetches_while_rendering():
     assert build(host)
     assert len(host.actions) == 1
     assert host.network_requests == 0 and host.tasks == []
-    assert host.actions[0].label == "Enrichir depuis Numilog"
+    assert host.actions[0].label == "Enrichir les métadonnées"
 
 
 def test_click_submits_worker_with_user_origin_and_identity_snapshot():
@@ -104,7 +113,7 @@ def test_click_submits_worker_with_user_origin_and_identity_snapshot():
     enriched = args[1]()
     assert host.network_requests == 1
     args[2](enriched)
-    assert host.search_objects["numilog:book"].author == "Autrice détaillée"
+    assert host.search_objects["synthetic-private:book"].author == "Autrice détaillée"
     assert "book" not in host.search_objects
     assert host.refresh[0][0][2].author == "Autrice détaillée"
     assert host.refresh[0][1]["context"] == host.context
@@ -123,7 +132,7 @@ def test_stale_click_does_not_schedule_network_and_stale_result_is_discarded():
     host.active = False
     args[2](enriched)
     args[3](RuntimeError("PRIVATE_TOKEN"))
-    assert host.search_objects["numilog:book"].author is None
+    assert host.search_objects["synthetic-private:book"].author is None
     assert host.refresh == [] and host.toasts == []
 
 
@@ -132,25 +141,25 @@ def test_provider_error_never_reaches_ui_toast_text():
     build(host)
     host.actions[0].click()
     args, _kwargs = host.tasks[0]
-    args[3](RuntimeError("https://numilog.com/PRIVATE?token=PASSWORD"))
-    assert host.toasts == ["Enrichissement Numilog indisponible ou non attesté."]
+    args[3](RuntimeError("https://synthetic-private.com/PRIVATE?token=PASSWORD"))
+    assert host.toasts == ["Enrichissement indisponible ou non attesté."]
 
 
 def test_public_ownership_false_is_eligible_but_no_private_scope():
     host = Host()
-    public = replace(item(), source_provider="numilog-catalog",
+    public = replace(item(), source_provider="synthetic-public",
                      source_collection="public_catalog",
                      source_credential="__public__", owned=False,
                      downloadable=False)
-    host.search_objects = {"numilog-catalog:book": public}
+    host.search_objects = {"synthetic-public:book": public}
     assert build(host, row=public)
     assert host.network_requests == 0
 
 
 def test_wrong_source_or_missing_context_never_displays_action():
     host = Host()
-    assert not build(host, row=replace(item(), source_provider="kobo"))
-    assert add_numilog_enrichment_action(
+    assert not build(host, row=replace(item(), source_provider="unsupported-provider"))
+    assert add_provider_enrichment_action(
         host, "book", item(), detail(), None, button_factory=Button,
     ) is False
     assert len(host.actions) == 0
@@ -158,30 +167,30 @@ def test_wrong_source_or_missing_context_never_displays_action():
 
 def test_remote_result_key_may_differ_from_book_id_and_must_not_be_reinvented():
     host = Host()
-    original = host.search_objects["numilog:book"]
+    original = host.search_objects["synthetic-private:book"]
     assert original.id == "book"
     assert build(host)
     host.actions[0].click()
     args, _kwargs = host.tasks[0]
     args[2](replace(original, publisher="Éditeur public"))
-    assert list(host.search_objects) == ["numilog:book"]
-    assert host.search_objects["numilog:book"].publisher == "Éditeur public"
+    assert list(host.search_objects) == ["synthetic-private:book"]
+    assert host.search_objects["synthetic-private:book"].publisher == "Éditeur public"
 
 
 def test_replaced_remote_row_with_same_id_discards_expired_result():
     host = Host()
-    original = host.search_objects["numilog:book"]
+    original = host.search_objects["synthetic-private:book"]
     assert build(host)
     host.actions[0].click()
     args, _kwargs = host.tasks[0]
-    host.search_objects["numilog:book"] = replace(original, title="Autre livre")
+    host.search_objects["synthetic-private:book"] = replace(original, title="Autre livre")
     args[2](replace(original, author="Fausse métadonnée"))
     assert host.refresh == []
-    assert host.search_objects["numilog:book"].author is None
+    assert host.search_objects["synthetic-private:book"].author is None
 
 
 def test_ambiguous_remote_row_object_does_not_offer_action():
     host = Host()
-    host.search_objects["duplicate"] = host.search_objects["numilog:book"]
+    host.search_objects["duplicate"] = host.search_objects["synthetic-private:book"]
     assert not build(host)
     assert host.actions == []

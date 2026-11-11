@@ -54,15 +54,6 @@ def test_d3_legacy_direct_executor_is_removed():
     assert not hasattr(LibraryService, "_execute_kobo_acquisition")
 
 
-def test_d4_retired_on_start_never_persists_attempt():
-    from cifereca.core import source_materialization_schedule as schedule
-
-    assert not schedule.can_enable_kobo_on_start(_NoLegacyAccess(), _NoLegacyAccess())
-    assert schedule.kobo_on_start_sessions(_NoLegacyAccess()) == ()
-    assert not schedule.on_start_due(_NoLegacyAccess(), _NoLegacyAccess())
-    assert not schedule.mark_on_start_attempt(_NoLegacyAccess(), _NoLegacyAccess())
-
-
 @pytest.mark.parametrize("account_index", [0, 1, 2])
 @pytest.mark.parametrize("legacy_token", ["", "a" * 64, "not-a-token"])
 def test_all_bound_profiles_refuse_legacy_w2_confirmation_and_get(
