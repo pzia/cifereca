@@ -124,3 +124,5 @@ Le journal est conservé ; aucun fichier n'est supprimé, même à l'annulation.
 Code de sortie : `0` pour aperçu/succès/sans effet ; `2` pour refus ou erreur.
 Les raisons sont des codes fixes expurgés. Ce parcours ne télécharge rien, ne
 vérifie pas le DRM et ne prétend pas réparer une édition aux octets divergents.
+
+> **Découplage #5558 :** la commande utilise désormais `core/offline_canonical_relink.py`, avec un `provider_id` explicite. Les anciens journaux Kobo restent lisibles et annulables ; aucune mutation 0.7 n'est réactivée.
