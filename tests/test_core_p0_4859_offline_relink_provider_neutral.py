@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 import pytest
 
 from cifereca.core.offline_canonical_relink import (
@@ -47,10 +45,15 @@ def test_generic_offline_relink_requires_exact_provider_and_preserves_file(
         "right_id": "purchase", "branch_id": "purchases",
         "placement_id": published.placement_id, "path": str(new_path),
     }
-    before = (
-        store.source_references(), store.origin_links(),
-        store.entitlements(), store.backup_list(),
-    )
+    def immutable_rows():
+        with store._lock, store._connect() as db:
+            return tuple(
+                tuple(db.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall())
+                for table in ("source_references", "origin_links", "artifacts",
+                              "entitlements", "backup_items")
+            )
+
+    before = immutable_rows()
     with pytest.raises(CanonicalRelinkRejected):
         reconcile_existing_profile(**{**args, "provider_id": "kobo"})
     with pytest.raises(ReconciliationRejected, match="invalid_request"):
@@ -67,8 +70,5 @@ def test_generic_offline_relink_requires_exact_provider_and_preserves_file(
     assert confirmed["file_mutations"] == 0
     assert confirmed["rights_mutations"] == 0
     assert store.placement_get(published.placement_id)["path"] == str(new_path)
-    assert before == (
-        store.source_references(), store.origin_links(),
-        store.entitlements(), store.backup_list(),
-    )
+    assert before == immutable_rows()
     assert old_path.exists() is False and new_path.read_bytes() == BYTES
