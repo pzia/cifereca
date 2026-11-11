@@ -264,13 +264,15 @@ def _render_search_results(self) -> int:
         source = self.service.provider_display_name(item.source_provider)
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
         extras: list[str] = list(_stale_catalog_provenance(item.metadata)) if stale_known else []
-        if item.source_provider == "numilog-catalog":
-            # An anonymous commercial notice is not an owned ebook, even if
-            # the provider unexpectedly supplies owned/downloadable=True.
-            extras.append("Catalogue public Numilog · aucun achat attesté")
-        elif item.source_provider == "numilog" and project(item)["state"] == "remote_owned":
-            # Private inventory, NOT a locally available EPUB/ACSM.
-            extras.append("Mes achats Numilog · fichier local non présumé")
+        # Source-scoped presentation, not a vendor-name inference of rights.
+        # A public sentinel never attests ownership; a remote-owned row does
+        # not prove any local EPUB/ACSM is present. No extra provider I/O.
+        if (item.source_credential == "__public__"
+                and item.source_collection == "public_catalog"):
+            extras.append("Catalogue public · aucun achat attesté")
+        elif (item.source_collection == "library"
+                and project(item).get("state") == "remote_owned"):
+            extras.append("Mes achats · fichier local non présumé")
         # A supplier notice is not a right or an executable selected offer.
         # The provider-only canonical acquisition flow must re-attest any
         # delivery with the exact account and explicit consent.
