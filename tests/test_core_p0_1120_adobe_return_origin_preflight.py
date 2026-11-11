@@ -10,67 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from cifereca.core import return_adept_origin_preflight as origin
 from cifereca.core.return_adept_orchestrator import (
-    _public_origin_status, adept_return_key,
+    adept_return_key,
 )
 from tests.test_core_0984_adept_first_paris_reconcile import setup
-
-
-@pytest.mark.parametrize("raw_status,expected_status,expected_retry", [
-    ("no_acquisition", "provider_action_available", "provider_action_explicit"),
-    ("ready", "adept_return_binding_required", "resolve_identity"),
-    ("profile_missing", "profile_missing", "resolve_identity"),
-    ("ADEPT_TOKEN=https://secret.invalid/private", "adept_return_binding_required",
-     "resolve_identity"),
-    (False, "adept_return_binding_required", "resolve_identity"),
-    ({"profile": "private"}, "adept_return_binding_required", "resolve_identity"),
-])
-def test_missing_acquisition_preserves_only_closed_public_origin_codes(
-    raw_status, expected_status, expected_retry,
-):
-    source = {"status": raw_status, "private": "PRIVATE_LICENSE_XML"}
-    before = dict(source)
-    result = origin.missing_acquisition_outcome(
-        source, public_origin_status=_public_origin_status,
-    )
-    assert result == {
-        "status": expected_status, "scope": "adobe_first_paris",
-        "retry": expected_retry,
-    }
-    assert source == before
-    assert "PRIVATE_LICENSE_XML" not in repr(result)
-
-
-@pytest.mark.parametrize("status,available,expected_status", [
-    ("ready", True, None),
-    ("ready", False, "adept_return_state_required"),
-    ("ready", 1, "adept_return_state_required"),
-    ("ready", "true", "adept_return_state_required"),
-    ("ready", None, "adept_return_state_required"),
-    ("expired", True, "expired"),
-    ("inventory_error", True, "inventory_error"),
-    ("https://secret.invalid/private", True, "adept_return_state_required"),
-    (None, True, "adept_return_state_required"),
-])
-def test_initial_return_claim_requires_closed_ready_and_native_true(
-    status, available, expected_status,
-):
-    source = {"status": status, "return_available": available,
-              "private": "PRIVATE_PROFILE"}
-    before = dict(source)
-    result = origin.unready_to_return_outcome(
-        source, public_origin_status=_public_origin_status,
-    )
-    assert source == before
-    if expected_status is None:
-        assert result is None
-    else:
-        assert result == {
-            "status": expected_status, "scope": "adobe_first_paris",
-            "retry": "verification_only",
-        }
-        assert "PRIVATE_PROFILE" not in repr(result)
 
 
 @pytest.mark.parametrize("source,expected_status,expected_retry", [
@@ -111,7 +54,7 @@ def test_real_core_facade_refuses_before_checkpoint_or_adobe(
         service.close()
 
 
-def test_legacy_orchestrator_is_inert_and_pure_origin_helpers_remain_pure():
+def test_legacy_orchestrator_is_inert_and_preflight_helpers_removed():
     path = (Path(__file__).resolve().parents[1] /
             "src/cifereca/core/return_adept_orchestrator.py")
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -123,8 +66,5 @@ def test_legacy_orchestrator_is_inert_and_pure_origin_helpers_remain_pure():
              if isinstance(n, ast.Call)}
     assert calls == {"AttentionRequired"}
 
-    helper_path = path.parent / "return_adept_origin_preflight.py"
-    helper_tree = ast.parse(helper_path.read_text(encoding="utf-8"))
-    calls = {ast.unparse(n.func) for n in ast.walk(helper_tree)
-             if isinstance(n, ast.Call)}
-    assert calls == {"public_origin_status", "source.get"}
+    # No obsolete preflight that could be misused to infer return permission.
+    assert not (path.parent / "return_adept_origin_preflight.py").exists()
