@@ -66,3 +66,38 @@ def test_unregistered_provider_and_duplicate_accounts_never_become_a_target(monk
     assert selection.select_library_source_offer_target(
         service, {"possessions": [_pos("numilog")]},
     ) is None
+
+
+@pytest.mark.parametrize("other_provider", [
+    "future-library", "bnf-pret", "kobo", "", None,
+])
+def test_owned_download_target_never_guesses_among_multiple_origins(
+    monkeypatch, other_provider,
+):
+    from cifereca.core import owned_library_download as action
+    calls = []
+    monkeypatch.setattr(
+        selection, "select_library_source_offer_target",
+        lambda *_args: calls.append("selected") or object(),
+    )
+    entry = {"possessions": [_pos("numilog"), _pos(other_provider)]}
+    assert action.owned_library_download_target(_service(), entry) is None
+    assert calls == []
+
+
+def test_owned_download_target_allows_only_the_exact_single_origin(monkeypatch):
+    from cifereca.core import owned_library_download as action
+    target = object()
+    calls = []
+    monkeypatch.setattr(
+        selection, "select_library_source_offer_target",
+        lambda *_args: calls.append("selected") or target,
+    )
+    entry = {"possessions": [
+        _pos("numilog"),
+        _pos("future-library", identity="bob"),
+        _pos("future-library", state="expired"),
+        _pos("future-library", kind="loan"),
+    ]}
+    assert action.owned_library_download_target(_service(), entry) is target
+    assert calls == ["selected"]
