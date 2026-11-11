@@ -82,12 +82,18 @@ def test_numilog_session_filter_keeps_plugin_observation_distinct_from_core(
     report = query_diagnostic_events(
         diagnostics, source="all", log_path=log, module="NUMILOG",
     )
-    assert report["total"] == 2
-    assert {x["source"] for x in report["events"]} == {"core_events", "app_log"}
-    log_event = next(x for x in report["events"] if x["source"] == "app_log")
+    assert report["total"] == 1
+    assert {x["source"] for x in report["events"]} == {"core_events"}
+    assert "detail" not in report["events"][0]
+    assert "provider_id" not in report["events"][0]
+    logger_report = query_diagnostic_events(
+        diagnostics, source="app_log", log_path=log, module="cifereca_numilog",
+    )
+    assert logger_report["total"] == 1
+    log_event = logger_report["events"][0]
     assert log_event["module"] == "cifereca_numilog"
-    assert log_event["business_module"] == "NUMILOG"
-    assert log_event["detail"] == {"connected": False, "reason": "connect_failed"}
+    assert "business_module" not in log_event
+    assert "detail" not in log_event
     assert all("task_ref" not in event for event in report["events"])
     assert "PRIVATE_USER" not in json.dumps(report)
     assert "VERY_PRIVATE" not in json.dumps(report)
