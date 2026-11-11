@@ -154,7 +154,7 @@ def test_p0_5048_candidate_has_no_supplier_identity_branch():
     detail_panel = (
         Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
     ).read_text(encoding="utf-8")
-    assert "if self.window.can_borrow_item(item):" in detail_panel
+    assert "if not pending_followup and self.window.can_borrow_item(item):" in detail_panel
 
 
 @pytest.mark.parametrize("changes", [
