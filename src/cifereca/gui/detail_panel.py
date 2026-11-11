@@ -1087,7 +1087,8 @@ class DetailPanel(Gtk.Box):
                 explanation = (
                     "Une demande BnF existe peut-être déjà pour ce livre, "
                     "ou le compte actif n’est pas admissible. "
-                    "Consultez Mes emprunts."
+                    "Consultez Mes emprunts avant toute nouvelle demande ; "
+                    "Cifereca ne répétera pas automatiquement l’emprunt."
                     if item.source_provider == "bnf-pret"
                     else "Emprunt indisponible pour l’identité et le compte "
                          "actifs, ou non pris en charge par cette source."
