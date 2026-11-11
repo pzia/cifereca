@@ -218,7 +218,7 @@ def test_opening_sync_partial_never_invents_success(tmp_path, monkeypatch):
         monkeypatch.setattr(lib, "_acquire_active_loan_automatically",
                             lambda _loan: {"status": "attention_required", "loan_id": loan.id})
         monkeypatch.setattr(lib, "catalog_scan", lambda: {"scanned": 0})
-        monkeypatch.setattr(lib, "kobo_backup_enabled", lambda: False)
+        lib.config.set("kobo_backup.enabled", False)
         enable_synthetic_paris_opening(lib)
         result = lib.opening_sync()
         assert result["identities"][0]["status"] == "partial"

@@ -1,71 +1,22 @@
-"""#3196: source phase history must not import retired W2 execution machinery."""
+"""#3196: source phase history must not depend on retired Kobo W2 state."""
 from __future__ import annotations
 
 import ast
-import json
 from pathlib import Path
 
-from cifereca.core import kobo_backup
-from cifereca.core.legacy_checkpoint_read import (
-    _kobo_checkpoint_for, _kobo_checkpoint_key,
-)
+
+ROOT = Path(__file__).resolve().parents[1] / "src/cifereca"
 
 
-def test_w2_keeps_exact_checkpoint_compatibility_symbols():
-    assert kobo_backup._kobo_checkpoint_for is _kobo_checkpoint_for
-    assert kobo_backup._kobo_checkpoint_key is _kobo_checkpoint_key
+def test_w2_checkpoint_reader_and_engine_are_removed():
+    assert not (ROOT / "core/legacy_checkpoint_read.py").exists()
+    assert not (ROOT / "core/kobo_backup.py").exists()
 
 
-def test_checkpoint_reader_is_read_only_and_exactly_scoped():
-    class Storage:
-        def __init__(self):
-            self.records = {}
-            self.reads = []
-        def metadata_get(self, key):
-            self.reads.append(key)
-            return self.records.get(key)
-    class Service:
-        storage = Storage()
-
-    service = Service()
-    first = _kobo_checkpoint_key("identity-a", "credential-a")
-    second = _kobo_checkpoint_key("identity-a", "credential-b")
-    third = _kobo_checkpoint_key("identity-b", "credential-a")
-    assert len({first, second, third}) == 3
-    service.storage.records[first] = json.dumps({
-        "schema_version": 1, "status": "partial", "updated_at": 123456789,
-    })
-    service.storage.records[second] = json.dumps({
-        "schema_version": 2, "status": "complete",
-    })
-    assert _kobo_checkpoint_for(service, "identity-a", "credential-a") == {
-        "schema_version": 1, "status": "partial", "updated_at": 123456789,
-    }
-    assert _kobo_checkpoint_for(service, "identity-a", "credential-b") is None
-    assert _kobo_checkpoint_for(service, "identity-b", "credential-a") is None
-    assert service.storage.reads == [first, second, third]
-    assert len(service.storage.records) == 2
-
-
-def test_malformed_offline_checkpoint_remains_untrusted():
-    class Service:
-        class storage:
-            @staticmethod
-            def metadata_get(_key):
-                return "{malformed private json"
-    assert _kobo_checkpoint_for(Service(), "identity", "credential") is None
-
-
-def test_phase_broker_does_not_import_retired_w2_reader():
-    file = Path(__file__).resolve().parents[1] / "src/cifereca/brokers.py"
-    imports = [
-        (node.module, tuple(alias.name for alias in node.names))
-        for node in ast.walk(ast.parse(file.read_text(encoding="utf-8")))
-        if isinstance(node, ast.ImportFrom)
-    ]
-    # The broker never treats a historical W2 checkpoint as proof of the
-    # current materialization phase, regardless of provider capabilities.
+def test_phase_broker_never_imports_retired_checkpoint_reader():
+    tree = ast.parse((ROOT / "brokers.py").read_text(encoding="utf-8"))
     assert not any(
-        module in {"core.legacy_checkpoint_read", "core.kobo_backup"}
-        for module, _names in imports
+        isinstance(node, ast.ImportFrom)
+        and node.module in {"core.legacy_checkpoint_read", "core.kobo_backup"}
+        for node in ast.walk(tree)
     )

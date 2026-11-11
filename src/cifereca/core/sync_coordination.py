@@ -686,7 +686,11 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
     never an authorization to download. Deep inventory scanning cannot
     silently change an acquisition policy. No provider calls here.
     """
-    legacy_enabled = self.kobo_backup_enabled() is True
+    legacy_enabled = self.config.get("kobo_backup.enabled", False) is True
+    try:
+        interval_minutes = max(15, int(self.config.get("kobo_backup.interval_minutes", 60)))
+    except (TypeError, ValueError):
+        interval_minutes = 60
     kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
     connected = [s for s in kobo if s.connected]
     capable = [s for s in connected if getattr(s.capabilities, "backup", False)]
@@ -727,7 +731,7 @@ def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
         "eligible_kobo": len(eligible),
         "eligible_kobo_bindings": len(eligible_accounts),
         "scheduled_kobo": 0,
-        "interval_minutes": self.kobo_backup_interval_minutes(),
+        "interval_minutes": interval_minutes,
         "last_success_age_minutes": last_success_age_minutes,
         "deep": bool(deep),
     }

@@ -619,18 +619,6 @@
     "kind": "method",
     "signature": "(self) -> 'dict[str, Any]'"
   },
-  "kobo_backup_enabled": {
-    "kind": "method",
-    "signature": "(self) -> 'bool'"
-  },
-  "kobo_backup_interval_minutes": {
-    "kind": "method",
-    "signature": "(self) -> 'int'"
-  },
-  "kobo_backup_diagnostic": {
-    "kind": "method",
-    "signature": "(self) -> 'dict[str, Any]'"
-  },
   "_account_for_loan": {
     "kind": "method",
     "signature": "(self, loan: 'Loan') -> 'Account'"

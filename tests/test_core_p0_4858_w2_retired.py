@@ -16,16 +16,17 @@ class _NoLegacyAccess:
 
 
 def test_w2_locked_entrypoints_physically_removed():
-    from cifereca.core import kobo_backup
     from cifereca.services import LibraryService
-    assert not hasattr(kobo_backup, '_sync_kobo_backup_locked')
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    assert not (root / "src/cifereca/core/kobo_backup.py").exists()
     assert not hasattr(LibraryService, '_sync_kobo_backup_locked')
     assert not hasattr(LibraryService, '_sync_kobo_backup_account_locked')
 
 
 def test_public_sync_w2_is_physically_absent():
-    from cifereca.core import kobo_backup
-    assert not hasattr(kobo_backup, "sync_kobo_backup")
+    from cifereca.services import LibraryService
+    assert not hasattr(LibraryService, "sync_kobo_backup")
 
 
 def test_d2_partial_abi_cannot_prepare_legacy_confirmation(case, monkeypatch):
@@ -49,9 +50,7 @@ def test_d2_partial_abi_cannot_prepare_legacy_confirmation(case, monkeypatch):
 
 
 def test_d3_legacy_direct_executor_is_removed():
-    from cifereca.core import kobo_backup
     from cifereca.services import LibraryService
-    assert not hasattr(kobo_backup, "_execute_kobo_acquisition")
     assert not hasattr(LibraryService, "_execute_kobo_acquisition")
 
 

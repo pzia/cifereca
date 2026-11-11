@@ -11,9 +11,6 @@ import pytest
 
 from cifereca.providers import ProviderConfigurationError
 
-from cifereca.core.kobo_backup import (
-    _kobo_checkpoint_key,
-)
 from tests.test_kobo_backup_reconcile_prune import _manifest_row, _service, _write_epub
 
 
@@ -64,9 +61,6 @@ def test_ambiguous_flags_never_trigger_acquisition_or_prune(
         assert original_row["local_path"] == str(saved)
         assert saved.read_bytes() == original
 
-        assert service.storage.metadata_get(
-            _kobo_checkpoint_key("default", "vault-1")
-        ) is None
         assert not hasattr(service, "kobo_backup_preview")
     finally:
         service.close()
