@@ -113,13 +113,11 @@ def compact_availability_label(value: object) -> str:
     return text
 
 def search_detail_borrow_action_candidate(item: object, availability: str) -> bool:
-    """Presentation candidate only; never entitlement or permission.
+    """Presentation only: an exact source-bound hint never authorizes borrowing.
 
-    The BnF reader deliberately returns 'Disponibilité non vérifiée' even
-    when the user can borrow a book. For this source the reader checks the
-    exact title on pret.bnf.fr before confirming a Core-owned attempt; the
-    real, immutable account/notice/claim guard is still checked separately
-    by service.can_borrow_bnf(). Other sources keep their legacy UI gate.
+    The source may advertise a user-verified borrow action even if public
+    catalogue availability is unknown. Core still performs the definitive
+    account, session, offer and one-shot borrow admission before any POST.
     """
     from ..models import SearchResult
 
@@ -127,8 +125,18 @@ def search_detail_borrow_action_candidate(item: object, availability: str) -> bo
         return False
     if item.source_provider in {"numilog", "numilog-catalog", "kobo"}:
         return False
-    if item.source_provider == "bnf-pret":
-        return item.docbase == "BNF_PRET" and bool(item.record_id)
+    metadata = item.metadata if type(item.metadata) is dict else {}
+    if "manual_borrow_presentation" in metadata:
+        hint = metadata["manual_borrow_presentation"]
+        return bool(
+            type(hint) is dict
+            and set(hint) == {"provider_id", "docbase", "record_id"}
+            and all(type(hint[name]) is str and hint[name] for name in hint)
+            and type(item.record_id) is str and item.record_id
+            and type(item.docbase) is str and item.docbase
+            and (hint["provider_id"], hint["docbase"], hint["record_id"])
+            == (item.source_provider, item.docbase, item.record_id)
+        )
     return availability == "Empruntable"
 
 
