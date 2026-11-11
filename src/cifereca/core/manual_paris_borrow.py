@@ -7,73 +7,14 @@ a loan right: the lender still decides after the explicitly claimed click.
 """
 from ..models import Account, SearchResult
 from .manual_library_borrow import manual_borrow, manual_borrow_available
+from .primary_source_binding import configured_primary_source_current
 
 
 def _normal_paris_source_current(service, item: SearchResult, identity_id: str) -> bool:
-    """Inert, exact-owner current login check; never select another identity.
-
-    Check again inside the provider's Core lease to cover edits occurring
-    after button rendering and during descriptive preflight. No profile ADEPT
-    enumeration or remote request belongs to this borrowing admission.
-    """
-    if (type(item) is not SearchResult
-            or item.source_provider != "paris"
-            or type(item.source_credential) is not str
-            or not item.source_credential
-            or type(identity_id) is not str or not identity_id
-            or (type(getattr(item, "metadata", None)) is dict
-                and item.metadata.get("catalogue_access") == "shared_read_only")):
-        # A shared catalogue projection is never an action source, even
-        # when its owner later becomes the selected identity (A -> B).
-        return False
-    try:
-        saved = service.config.identity(identity_id)
-        if type(saved) is not dict:
-            return False
-        selected = saved.get("primary_paris_connection_id")
-        if selected is not None and (
-                type(selected) is not str or not selected
-                or len(selected) > 256 or selected != selected.strip()
-                or not selected.isprintable()):
-            return False
-
-        rows = service.storage.provider_connections(identity_id=identity_id)
-        if type(rows) is not list or len(rows) > 512:
-            return False
-        enabled = [
-            row for row in rows
-            if type(row) is dict
-            and row.get("identity_id") == identity_id
-            and row.get("provider_id") == "paris"
-            and row.get("enabled") is True
-            and type(row.get("credential_id")) is str
-            and row["credential_id"]
-        ]
-        if selected is None:
-            # The legacy implicit selection is safe only with a single
-            # eligible Paris source. Never take the first of several.
-            return (len(enabled) == 1
-                    and enabled[0]["credential_id"] == item.source_credential)
-        if selected != item.source_credential:
-            return False
-        if (len([row for row in enabled
-                 if row["credential_id"] == selected]) != 1):
-            return False
-        configured = service.config.provider_accounts()
-        if type(configured) is not list or len(configured) > 2048:
-            return False
-        matches = [
-            row for row in configured
-            if type(row) is dict
-            and type(row.get("id")) is str and row["id"] == selected
-            and type(row.get("provider")) is str
-            and row["provider"].casefold() == "paris"
-            and row.get("identity_id") == identity_id
-            and row.get("enabled", True) is True
-        ]
-        return len(matches) == 1
-    except Exception:
-        return False
+    return configured_primary_source_current(
+        service, item, identity_id, provider_id="paris",
+        selection_key="primary_paris_connection_id",
+    )
 
 
 
