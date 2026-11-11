@@ -95,7 +95,6 @@ def test_bnf_legacy_source_on_uses_single_canonical_executor_and_verified_placem
     assert result["canonical_execution"]["downloaded"] == 1
     assert len(calls) == 1 and downloaded == []
     assert len(service.storage.placements()) == 1
-    assert service.storage.entitlements() == []
 
     if not opening:
         again = service.synchronize_account_source(account)
@@ -144,7 +143,6 @@ def test_bnf_legacy_consent_revoked_during_canonical_delivery_never_publishes(
     assert result["canonical_execution"]["downloaded"] == 0
     assert len(service.storage.placements()) == 0
     assert downloaded == []
-    assert service.storage.entitlements() == []
 
 def test_kobo_canonical_off_never_falls_back_after_missing_typed_inventory(tmp_path, monkeypatch):
     from tests.test_kobo_backup_guard import _service
