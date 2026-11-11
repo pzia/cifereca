@@ -79,36 +79,50 @@ def materialize(service, account: Account, loan: Loan, *, control=None,
         return {'status': 'attention_required', 'code': 'bnf_loan_scope_unproven'}
     ref = hashlib.sha256('\0'.join((account.identity_id, account.credential_id,
                                       account.unique_id, loan.id, loan.record_id)).encode()).hexdigest()
-    # Canonical Core lease already pins the exact mutable Loan, borrower,
-    # source, session generation and identity epoch without running plugin
-    # getters. Keep the separate BnF opt-in revision and source epoch fences:
-    # neither an account lease nor an observed loan grants a signed GET.
-    from .loan_action_scope import capture_loan_action_scope, _inert_session_state
+    # This is a *background source* lease, not an explicit UI action:
+    # another identity may be visible while the BnF account syncs.
+    # Retain the provider-neutral account binding, and separately pin the
+    # immutable source/loan coordinates and generation used for this GET.
+    from .loan_action_scope import _inert_session_state
     core_epoch = source_context_epoch(service)
     consent_revision = service.storage.metadata_get(policy_key(account) + '.revision')
     session = service._sessions.get(
         service._session_key('bnf-pret', account.credential_id),
     )
-    session_state = _inert_session_state(session)
-    provider_epoch = session_state.get('_epoch') if session_state is not None else None
-    lease = capture_loan_action_scope(
-        service, loan, account, session,
-        expected_identity_id=account.identity_id,
+    initial_session_state = _inert_session_state(session)
+    provider_epoch = (
+        initial_session_state.get('_epoch')
+        if initial_session_state is not None else None
+    )
+    source_scope = (
+        account.identity_id, account.provider_id, account.credential_id,
+        account.unique_id, loan.identity_id, loan.source_provider,
+        loan.source_credential, loan.source_account_id, loan.id,
+        loan.record_id, loan.medium, loan.state,
     )
 
     def current() -> bool:
         try:
+            state = _inert_session_state(session)
             return (
-                lease is not None
-                and lease.current(service)
+                state is not None
+                and state.get('_epoch') == provider_epoch
+                and service._sessions.get(
+                    service._session_key('bnf-pret', account.credential_id),
+                ) is session
                 and enabled(service, account)
                 and service.storage.metadata_get(
                     policy_key(account) + '.revision'
                 ) == consent_revision
                 and source_context_epoch(service) == core_epoch
-                and loan.source_provider == 'bnf-pret'
-                and loan.medium == 'digital'
-                and loan.state == 'active'
+                and (
+                    account.identity_id, account.provider_id,
+                    account.credential_id, account.unique_id,
+                    loan.identity_id, loan.source_provider,
+                    loan.source_credential, loan.source_account_id,
+                    loan.id, loan.record_id, loan.medium, loan.state,
+                ) == source_scope
+                and service._account_for_loan(loan) is account
             )
         except Exception:
             return False
