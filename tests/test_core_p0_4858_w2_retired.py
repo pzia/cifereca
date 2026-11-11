@@ -143,15 +143,8 @@ def test_all_bound_profiles_refuse_legacy_w2_confirmation_and_get(
     assert not case.downloaded
 
 
-def test_direct_imported_kobo_executor_is_also_retired_before_any_io():
-    """Reject even a caller bypassing the LibraryService façade entirely."""
-    from cifereca.kobo import executor as legacy
-
-    with pytest.raises(
-        ProviderConfigurationError,
-        match="kobo_legacy_direct_get_retired_use_canonical_provider",
-    ):
-        legacy.execute_kobo_acquisition(
-            _NoLegacyAccess(), _NoLegacyAccess(), _NoLegacyAccess(),
-        )
-    assert not hasattr(legacy, "_execute_kobo_acquisition_impl")
+def test_direct_imported_kobo_executor_is_physically_removed():
+    """No retired Core module remains importable as an executable hook."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    assert not (root / "src/cifereca/kobo/executor.py").exists()
