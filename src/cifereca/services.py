@@ -2820,10 +2820,27 @@ class LibraryService:
         )
 
     def acquire_direct_item(self, item: SearchResult, *, _admission=None) -> Acquisition:
+        # Audit redaction follows the item/ABI, never a supplier name.
+        # Private library records must not leak their IDs to global actions,
+        # or be attributed using a credential before locked admission.
+        from inspect import getattr_static
+        session = None
+        if (type(item) is SearchResult
+                and type(item.source_provider) is str
+                and type(item.source_credential) is str):
+            session = self._sessions.get(
+                self._session_key(item.source_provider, item.source_credential)
+            )
+        private_item = (
+            getattr_static(session, "selected_purchase_branch", None) is not None
+            or getattr_static(session, "private_inventory_row_contract", None) is not None
+            or (type(item) is SearchResult
+                and item.source_collection == "library"
+                and item.medium == "digital"
+                and item.download_url is None)
+        )
         identity_id = None
-        # Do not trust a persisted connection owner to attribute private
-        # Numilog activity before the locked source admission succeeds.
-        if item.source_provider != "numilog":
+        if not private_item:
             try:
                 identity_id = self.identity_for_connection(
                     item.source_provider, item.source_credential,
@@ -2833,17 +2850,21 @@ class LibraryService:
         try:
             result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
                       else self._acquire_direct_item_impl(item))
-            if item.source_provider == "numilog":
-                identity_id = result.metadata.get("identity_id")
-            safe_facts = ({"private_item": True} if item.source_provider == "numilog"
-                          else {"record_id": item.record_id})
+            if private_item:
+                # A private acquisition can only be attributed after its
+                # canonical executor has attested the exact identity.
+                metadata = getattr(result, "metadata", None)
+                if type(metadata) is dict:
+                    identity_id = metadata.get("identity_id")
+            safe_facts = {"private_item": True} if private_item else {"record_id": item.record_id}
             self._record_action(identity_id, "acquisition", "success",
                                 provider_id=item.source_provider, facts=safe_facts)
             return result
         except Exception as exc:
-            safe_facts = ({"private_item": True, "error": type(exc).__name__}
-                          if item.source_provider == "numilog"
-                          else {"record_id": item.record_id, "error": type(exc).__name__})
+            safe_facts = (
+                {"private_item": True, "error": type(exc).__name__}
+                if private_item else {"record_id": item.record_id, "error": type(exc).__name__}
+            )
             self._record_action(identity_id, "acquisition", "failed",
                                 provider_id=item.source_provider, facts=safe_facts)
             raise
