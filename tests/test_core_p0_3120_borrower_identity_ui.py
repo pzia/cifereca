@@ -235,3 +235,43 @@ def test_borrow_button_rechecks_session_rebinding_without_fallback():
     assert ui.can_borrow_item(item) is True
     assert queued == []
     previous.borrow.assert_not_called()
+
+
+class _ClaimedSession(NS):
+    def borrow_explicit_with_claim(self, *_args, **_kwargs):
+        raise AssertionError("A GUI fallback must never invoke a claimed POST")
+
+
+def test_claimed_executor_without_installed_policy_never_uses_legacy_mutation():
+    ui, item, state, queued, events = _ui()
+    state.session = _ClaimedSession(**vars(state.session))
+    ui.service.can_borrow_manual = Mock(return_value=False)
+    ui.service.manual_borrow_policy = Mock(return_value=None)
+    assert ui.can_borrow_item(item) is False
+    ui.borrow_search_item(item)
+    assert queued == []
+    state.session.borrow.assert_not_called()
+    ui.service.manual_borrow_policy.assert_called_once_with(item)
+
+
+def test_claimed_executor_with_typed_policy_routes_only_generic_controller(monkeypatch):
+    from cifereca.gui import bnf_borrow_controller
+
+    ui, item, state, queued, events = _ui()
+    state.session = _ClaimedSession(**vars(state.session))
+    policy = object()
+    ui.service.can_borrow_manual = Mock(return_value=True)
+    ui.service.manual_borrow_policy = Mock(return_value=policy)
+    ui.service.borrow_manual = Mock(side_effect=AssertionError("unexpected POST"))
+    presenter = Mock()
+    monkeypatch.setattr(bnf_borrow_controller, "_present_manual_borrow", presenter)
+    assert ui.can_borrow_item(item) is True
+    ui.borrow_search_item(item)
+    presenter.assert_called_once()
+    _, args_item, _control = presenter.call_args.args
+    assert args_item is item
+    assert presenter.call_args.kwargs["available"] is ui.service.can_borrow_manual
+    assert presenter.call_args.kwargs["dispatch"] is ui.service.borrow_manual
+    assert queued == []
+    state.session.borrow.assert_not_called()
+    ui.service.borrow_manual.assert_not_called()
