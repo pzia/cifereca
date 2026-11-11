@@ -387,8 +387,10 @@ def main(argv: list[str] | None = None) -> int:
                 # identity/source coordinates. This connector verifies that
                 # binding without enrolling or connecting unrelated accounts.
                 service.connect_kobo_selected_edition(a.credential)
-                result = service.synchronize_kobo_selected_edition(
-                    a.credential, a.item, explicit_user_action=True,
+                result = service.synchronize_selected_edition(
+                    provider_id="kobo", credential_id=a.credential,
+                    edition_id=a.item, explicit_user_action=True,
+                    result_schema="core.kobo.selected-canonical/1",
                 )
             except SelectedEditionRejected as exc:
                 result = {"status": "failed", "ok": False, "changed": 0,
