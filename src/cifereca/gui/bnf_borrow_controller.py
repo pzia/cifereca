@@ -205,7 +205,9 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
 
     The controller never sees or displays the persisted operation_id. It
     preserves the same exact notice/account/UI generation constraints as the
-    original borrower action, including across queued GTK callbacks.
+    original borrower action, including across queued GTK callbacks. The
+    provider-specific primary-account convention is verified by Core readiness
+    and by the durable claim, not duplicated in this generic GTK boundary.
     """
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
@@ -222,7 +224,6 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
         if (type(account) is not Account or account.is_primary is not True
                 or account.provider_id != item.source_provider
                 or account.credential_id != item.source_credential
-                or account.unique_id != ""
                 or sum(a is account for a in window.service.accounts) != 1):
             return
     except Exception:
