@@ -1,11 +1,10 @@
 """P0 #3171: exceptional consent and local receipt reads never print secrets."""
 
 import logging
-from pathlib import Path
 from types import SimpleNamespace
 
 from cifereca.models import Account
-from cifereca.core import bnf_auto_materialization, source_auto_consent_bridge, source_sync_consent
+from cifereca.core import source_auto_consent_bridge, source_sync_consent
 from cifereca.core.source_convergence import SourceKey
 from cifereca.plugin_api.provider_rights_observation import ProviderRightsScope
 
@@ -59,25 +58,14 @@ def test_unreadable_generation_and_transaction_keep_closed_status(caplog):
     _assert_redacted(caplog)
 
 
-def test_bnf_local_receipt_exception_does_not_log_file_or_borrower(caplog):
-    account = Account(
-        identity_id="PRIVATE_IDENTITY", provider_id="bnf-pret",
-        credential_id="PRIVATE_CREDENTIAL", unique_id="PRIVATE_BORROWER",
+def test_legacy_source_consent_read_fails_closed_without_private_exception(caplog):
+    scope = ProviderRightsScope(
+        "PRIVATE_IDENTITY", "bnf-pret", "PRIVATE_CREDENTIAL",
+        "PRIVATE_BORROWER",
     )
-    failing = SimpleNamespace(artifact_get=lambda *_args:
-        (_ for _ in ()).throw(OSError("private book " + SECRET)))
-    service = SimpleNamespace(storage=failing)
-    row = {
-        "identity_id": account.identity_id,
-        "provider_id": "manual", "credential_id": "manual",
-        "artifact_id": "sha256:" + "a" * 64,
-    }
-    path = Path("/PRIVATE_IDENTITY/PRIVATE_BORROWER/PRIVATE-book.epub")
     with caplog.at_level(logging.WARNING, logger="cifereca"):
-        verified = bnf_auto_materialization._receipt_local_file_verified(
-            service, account, row, path,
+        mode, revision = source_auto_consent_bridge.legacy_source_auto_policy(
+            BrokenStorage(), scope, "loan",
         )
-    assert verified is False
-    assert "receipt file check failed provider_id=bnf-pret" in caplog.text
+    assert mode == "off" and revision is None
     _assert_redacted(caplog)
-    assert str(path) not in caplog.text
