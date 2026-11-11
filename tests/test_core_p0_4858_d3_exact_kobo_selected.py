@@ -256,7 +256,7 @@ def test_cli_connects_only_exact_credential_and_reports_closed_counters(
     service = NS(
         connect_kobo_selected_edition=lambda credential: calls.append(("connect", credential)),
         synchronize_selected_edition=lambda *, provider_id, credential_id, edition_id,
-        explicit_user_action: (
+        explicit_user_action, result_schema: (
             calls.append(("sync", credential_id, edition_id, explicit_user_action))
             or {"status": "present_attested", "ok": True, "changed": 0}
         ),
