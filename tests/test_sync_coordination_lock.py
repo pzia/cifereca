@@ -59,7 +59,7 @@ def test_progress_exception_does_not_change_fast_sync_result(tmp_path, monkeypat
         events.append(event)
         raise RuntimeError('UI observer unavailable')
 
-    monkeypatch.setattr(service, 'kobo_backup_enabled', lambda: False)
+    service.config.set("kobo_backup.enabled", False)
     monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
     monkeypatch.setattr(service, '_reconcile_identity_adept_inventory', lambda _id: {})
     monkeypatch.setattr(service, 'catalog_scan', lambda **_kw: pytest.fail('fast sync must not scan'))
