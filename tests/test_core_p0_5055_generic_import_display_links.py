@@ -3,7 +3,9 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.core.observed_import_provenance import observed_import_links
+from cifereca.core.observed_import_provenance import (
+    observed_import_links, provider_scoped_observed_links,
+)
 from cifereca.core.local_import_display_links import observed_import_display_links
 
 
@@ -120,3 +122,44 @@ def test_hostile_metadata_path_never_raises_or_grants(invalid):
     data = row()
     data["metadata"]["path"] = invalid
     assert view([data]) == {}
+
+
+def test_provider_scoped_observation_never_leaks_between_lenders():
+    links = {KEY: "local-1"}
+    scoped = provider_scoped_observed_links("bnf-pret", links)
+    assert scoped == {("bnf-pret", *KEY): "local-1"}
+    assert ("future-lender", *KEY) not in scoped
+    assert ("paris", *KEY) not in scoped
+    assert provider_scoped_observed_links("future-lender", links) == {
+        ("future-lender", *KEY): "local-1",
+    }
+    assert links == {KEY: "local-1"}  # no mutations
+
+
+@pytest.mark.parametrize("provider,links", [
+    ("", {KEY: "local-1"}), (None, {KEY: "local-1"}),
+    ("bnf-pret", {("alice",): "local-1"}),
+    ("bnf-pret", {KEY: ""}),
+    ("bnf-pret", {KEY: None}),
+    ("bnf-pret", {("alice", "", "borrower-a", "loan-a", "edition-a"): "local-1"}),
+])
+def test_provider_scoped_observations_discard_invalid_scope(provider, links):
+    assert provider_scoped_observed_links(provider, links) == {}
+
+def test_library_projection_has_no_bnf_specific_loan_dispatch():
+    from pathlib import Path
+    import ast
+
+    source = (Path(__file__).resolve().parents[1]
+              / "src/cifereca/core/library_projection.py").read_text(
+                  encoding="utf-8",
+              )
+    tree = ast.parse(source)
+    assert not any(
+        isinstance(node, ast.Compare)
+        and any(isinstance(value, ast.Constant) and value.value == "bnf-pret"
+                for value in [node.left, *node.comparators])
+        for node in ast.walk(tree)
+    )
+    assert "provider_scoped_observed_links" in source
+    assert "exact_source_alias.get(typed_scope) is None" in source

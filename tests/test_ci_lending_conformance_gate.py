@@ -34,6 +34,9 @@ def test_provider_or_contract_change_selects_conformance(root, path):
     "src/cifereca/core/sync_coordination.py",
     "src/cifereca/brokers.py",
     "src/cifereca/services.py",
+    "src/cifereca/core/library_projection.py",
+    "src/cifereca/core/observed_import_provenance.py",
+    "src/cifereca/core/local_import_display_links.py",
 ])
 def test_core_bnf_cutover_selects_conformance(root, path):
     assert gate.selected([path], root)
