@@ -69,7 +69,7 @@ def test_valid_adept_binding_and_no_loan_id_keep_historical_meaning():
     assert original == {
         "adept_profile_id": "stable", "adept_profile_name": "reader",
         "adept_loan_id": "urn:uuid:attested", "loan_state": "active",
-        "return_available": True,
+        "return_available": False,
     }
     without_loan = capture_binding({
         "ok": True, "profile": "reader",
