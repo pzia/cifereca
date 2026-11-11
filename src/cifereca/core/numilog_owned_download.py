@@ -10,7 +10,7 @@ from typing import ClassVar
 from ..models import SearchResult
 from ..plugin_api import Cancelled
 from .credential_scoped_record import exact_credential_scoped_record
-from .numilog_manual_acquisition import require_source
+from .private_inventory_binding import exact_private_inventory_binding_valid
 from .numilog_local_preview import _identity_root
 from .owned_library_download import OwnedDownloadRejected, _require
 
@@ -129,10 +129,19 @@ def _resolve(service, entitlement_id, identity_id, item_id, *, canonical_offer_i
         source_credential=account.credential_id, source_collection='library',
         owned=True, downloadable=True, content_type='ebook', metadata={},
     )
-    owner, session, account_id = require_source(service, item)
+    # The former Numilog manual-acquisition wrapper built this very item
+    # above and then re-validated it before returning the same session.
+    # Reuse the already proven generic, exact account/session binding instead.
+    session = service._sessions.get(
+        service._session_key(account.provider_id, account.credential_id)
+    )
+    _require(session is not None and exact_private_inventory_binding_valid(
+        service, account, session=session, provider_id=account.provider_id,
+    ))
+    owner = service.identity_by_id(identity_id)
     from inspect import getattr_static
     from .canonical_delivery_abi import has_complete_delivery_abi
-    _require(owner.identity_id == identity_id and account_id == account.unique_id)
+    _require(owner is not None and owner.identity_id == identity_id)
     # A partial/legacy session cannot expose an actionable owned-library
     # target: there is no longer an authorized legacy GET writer to back it.
     _require(has_complete_delivery_abi(session)
