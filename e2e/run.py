@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+# #5387 temporary main-baseline CI trigger; no executable behavior changes.
 import argparse
 from datetime import datetime, timezone
 import json
