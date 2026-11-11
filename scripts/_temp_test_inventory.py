@@ -71,6 +71,9 @@ def summarize(rows, errors, section, package=None):
         provider=provider_for(signal)
         if package and architecture=="plugins/providers":provider=package.removeprefix("provider-").replace("-","_")
         domain=domain_for(signal)
+        if domain=="other_unclassified":
+            method=nodeid.split("::")[-1].split("[",1)[0].lower().removeprefix("test_")
+            domain=domain_for(method)
         res[architecture]+=1;by_provider[provider]+=1;by_domain[domain]+=1
         cross[architecture][domain]+=1
         files[path]+=1
@@ -128,6 +131,6 @@ def main():
         "by_architecture":dict(agg_arch),"by_provider":dict(agg_provider),
         "by_business":dict(agg_business),
         "architecture_by_business":{k:dict(v) for k,v in agg_cross.items()},
-        "limits":"Exclusive primary business family based on test module basename (not test_ or plugin directory), unclassified retained; CoreUI by basename/path heuristic, not import graph. Provider plugin counts by package ownership; Core provider tests inferred from basename; E2E and simulation separate. Errors lower bound."
+        "limits":"Exclusive primary business family based on test module basename, with test function name fallback for unknown names; unclassified retained; CoreUI by basename/path heuristic, not import graph. Provider plugin counts by package ownership; Core provider tests inferred from basename; E2E and simulation separate. Errors lower bound."
     },ensure_ascii=False,sort_keys=True))
 if __name__=="__main__":main()
