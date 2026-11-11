@@ -6,12 +6,14 @@ chemin de Sync `canonical_selected_delivery` ne le consommait pas et
 déclenchait un second GET d'une URL fournisseur potentiellement éphémère.
 
 Le Core consulte maintenant le reçu privé `.initial-acsm-receipt.json`
-uniquement pour un `SourceKey` **Paris/dilicom/loan** déjà admis,
+uniquement pour un `SourceKey` de prêt déjà admis avec reçu revendiqué
+(la version historique du reçu est actuellement limitée à Paris/DILICOM),
 sous verrou de convergence et source/consentement actuels. Il reobserve
 le prêt exact via `session.loans(account)` (lecture d'inventaire, pas
 d'emprunt ni GET ACSM), puis `acsm_cache.reuse_initial` vérifie le reçu,
-le SHA, le TTL et le claim SQLite `loan.borrow` confirmé. Une copie
-bornée `O_NOFOLLOW` et exclusive est placée dans le `run-*` canonique
+le SHA, le TTL et le claim SQLite `loan.borrow` confirmé. La primitive Core `acsm_cache.stage_claimed_initial_acsm` réutilise le
+même reçu et contrôle les descripteurs physiques, le SHA et le claim ;
+une copie bornée `O_NOFOLLOW` et exclusive est placée dans le `run-*` canonique
 et devient le candidat ACSM Core ; **aucun deuxième GET du token**.
 La transaction ADEPT et la publication de l'EPUB/PDF restent inchangées.
 
