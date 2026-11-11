@@ -246,7 +246,7 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         if type(last) is str and last in _BOOK_DETAIL_STAGES:
             result = {"book_detail_last_stage": last}
             code = data.get("book_detail_failure_code")
-            if type(code) is str and code in _BOOK_DETAIL_FAILURE_CODES:
+            if last == "verify_library" and type(code) is str and code in _BOOK_DETAIL_FAILURE_CODES:
                 result["book_detail_failure_code"] = code
             return result
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
