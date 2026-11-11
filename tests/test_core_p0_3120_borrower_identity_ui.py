@@ -275,3 +275,16 @@ def test_claimed_executor_with_typed_policy_routes_only_generic_controller(monke
     assert queued == []
     state.session.borrow.assert_not_called()
     ui.service.borrow_manual.assert_not_called()
+
+
+
+def test_instance_only_claimed_executor_never_falls_through():
+    ui, item, state, queued, events = _ui()
+    state.session.borrow_explicit_with_claim = Mock()
+    ui.service.can_borrow_manual = Mock(return_value=False)
+    ui.service.manual_borrow_policy = Mock(return_value=None)
+    assert ui.can_borrow_item(item) is False
+    ui.borrow_search_item(item)
+    assert queued == []
+    state.session.borrow.assert_not_called()
+    state.session.borrow_explicit_with_claim.assert_not_called()
