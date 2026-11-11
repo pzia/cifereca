@@ -232,26 +232,61 @@ def test_optional_right_state_does_not_veto_canonical_download(
 
 
 
-def test_bnf_legacy_auto_prevents_parallel_canonical_dispatch(monkeypatch):
-    """Until BnF declared-local proofs migrate, auto-on has one owner."""
-    from types import SimpleNamespace
-    from cifereca.models import Account
-    from cifereca.core.sync_coordination import _run_observed_canonical_convergence
-    monkeypatch.setattr(
-        "cifereca.core.bnf_auto_materialization.enabled",
-        lambda service, account: True,
+def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
+    """Only the existing SOURCE consent transfers to canonical execution."""
+    service, db, _ = policy
+    loan = replace(
+        service.source, kind="loan",
+        scope=replace(service.source.scope, provider_id="bnf-pret"),
     )
-    target = Account(
-        identity_id="default", provider_id="bnf-pret",
-        credential_id="synthetic", unique_id="borrower",
+    sid = bridge._source_id(loan.scope)
+    switch = "sync.source.bnf_auto." + sid
+    db.metadata_set(switch, "1")
+    assert bridge.legacy_source_auto_policy(db, loan.scope, "loan") == (
+        "off", None,
+    )  # No durable generation: never grant an ACSM GET.
+    db.metadata_set(switch + ".revision", "a" * 32)
+    assert bridge.legacy_source_auto_policy(db, loan.scope, "loan") == (
+        "on", "a" * 32,
     )
-    # Even if a modern adapter publishes typed A, a consented legacy
-    # BnF loan must not start a second canonical GET in the same Sync.
-    result = _run_observed_canonical_convergence(
-        SimpleNamespace(), target, [],
-        admitted_epoch=1, sync_lease=None, cancelled_for_rights=lambda: False,
+    assert bridge.legacy_source_auto_current(db, loan, "a" * 32)
+    with db._lock, db._connect() as conn:
+        assert bridge.legacy_source_auto_in_transaction(conn, loan, "a" * 32)
+    db.metadata_set(switch, "0")
+    assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
+    with db._lock, db._connect() as conn:
+        assert not bridge.legacy_source_auto_in_transaction(conn, loan, "a" * 32)
+    db.metadata_set(switch + ".revision", "b" * 32)
+    db.metadata_set(switch, "1")
+    assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
+    assert bridge.legacy_source_auto_current(db, loan, "b" * 32)
+
+
+def test_generic_cas_policy_overrides_legacy_bnf_on(policy):
+    service, db, _ = policy
+    from cifereca.core.source_sync_consent import policy_key
+    import json
+
+    loan = replace(
+        service.source, kind="loan",
+        scope=replace(service.source.scope, provider_id="bnf-pret"),
     )
-    assert result is None
+    sid = bridge._source_id(loan.scope)
+    db.metadata_set("sync.source.bnf_auto." + sid, "1")
+    db.metadata_set("sync.source.bnf_auto." + sid + ".revision", "a" * 32)
+    db.metadata_set(policy_key(loan.scope), json.dumps({
+        "schema": "cifereca.source-sync-consent/1",
+        "scope": list((
+            loan.scope.identity_id, loan.scope.provider_id,
+            loan.scope.credential_id, loan.scope.account_id,
+        )),
+        "enabled": False, "revision": "c" * 32,
+    }))
+    assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
+    with db._lock, db._connect() as conn:
+        assert not bridge.legacy_source_auto_in_transaction(
+            conn, loan, "a" * 32,
+        )
 
 
 def test_provider_kind_membership_facade_is_retired():
