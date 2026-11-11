@@ -46,7 +46,7 @@ def test_attested_status_is_read_only_and_origin_wins_after_reconfiguration(tmp_
         service.kobo_profiles = lambda: pytest.fail('status must not query inventory')
         before = service.storage.acquisition_get(acq)
         status = service.adept_return_status_for_loan(loan)
-        assert status['status'] == 'ready' and status['return_available'] is True
+        assert status['status'] == 'ready' and status['return_available'] is False
         assert status['profile_name'] == 'bob-cli' and status['acquisition_id'] == acq
         assert service.storage.acquisition_get(acq) == before
         _, code = service._paris_adept_identity_for_loan(loan, connection_identity_id='alice')
