@@ -52,6 +52,6 @@ def test_bnf_old_on_never_transfers_to_aliased_borrower(
         "sync.source.bnf_auto." + _source_id(scope_for_account(account))
     ) == "1"
     account.unique_id = first
-    assert bnf.enabled(service, account) is True
+    assert broker.bnf_auto_download_enabled(source_id) is True
 
 
