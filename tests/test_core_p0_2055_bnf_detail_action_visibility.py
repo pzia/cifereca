@@ -84,3 +84,49 @@ def test_malformed_non_search_result_cannot_offer_manual_bnf_action():
     from types import SimpleNamespace
     item = SimpleNamespace(source_provider="bnf-pret", medium="digital", docbase="BNF_PRET", record_id="abc")
     assert search_detail_borrow_action_candidate(item, "Empruntable") is False
+
+@pytest.mark.parametrize("provider", ["future-lender", "paris", "bnf-pret"])
+def test_exact_manual_candidate_is_provider_neutral_and_advisory(provider):
+    from dataclasses import replace
+    item = replace(
+        BNF, source_provider=provider, docbase="PROVIDER_BOOK",
+        record_id="publication-7",
+        metadata={"manual_borrow_presentation": {
+            "provider_id": provider, "docbase": "PROVIDER_BOOK",
+            "record_id": "publication-7",
+        }},
+    )
+    assert search_detail_borrow_action_candidate(item, "Non vérifiée")
+    assert not search_detail_borrow_action_candidate(
+        replace(item, source_provider="another-lender"), "Non vérifiée",
+    )
+    assert not search_detail_borrow_action_candidate(
+        replace(item, record_id="another-edition"), "Empruntable",
+    )
+    assert not search_detail_borrow_action_candidate(
+        replace(item, docbase="another-collection"), "Empruntable",
+    )
+
+
+@pytest.mark.parametrize("bad", [
+    None, True, "allow", {}, {"provider_id": "bnf-pret"},
+    {"provider_id": "bnf-pret", "docbase": "BNF_PRET", "record_id": 1},
+    {"provider_id": "bnf-pret", "docbase": "BNF_PRET", "record_id": "book-1",
+     "private_url": "SECRET"},
+])
+def test_malformed_manual_candidate_never_raises_or_exposes_action(bad):
+    item = replace(BNF, metadata={"manual_borrow_presentation": bad})
+    assert not search_detail_borrow_action_candidate(item, "Empruntable")
+
+
+def test_coreui_policy_has_no_bnf_specific_presentation_branch():
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_model.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    func = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                and node.name == "search_detail_borrow_action_candidate")
+    assert not any(isinstance(node, ast.Compare)
+                   and any(isinstance(value, ast.Constant) and value.value == "bnf-pret"
+                           for value in (node.left, *node.comparators))
+                   for node in ast.walk(func))
+    assert "manual_borrow_presentation" in ast.get_source_segment(source, func)
