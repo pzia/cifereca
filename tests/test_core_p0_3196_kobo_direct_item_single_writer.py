@@ -34,10 +34,7 @@ def test_no_direct_kobo_get_with_complete_or_incomplete_abi(
                 lambda *_a, **_kw: pytest.fail("D3 invoked provider ABI"),
                 raising=False,
             )
-        monkeypatch.setattr(
-            service, "_execute_kobo_acquisition",
-            lambda *_a, **_kw: pytest.fail("D3 invoked legacy executor"),
-        )
+        assert not hasattr(service, "_execute_kobo_acquisition")
         monkeypatch.setattr(
             session, "download_direct",
             lambda *_a, **_kw: pytest.fail("D3 invoked provider GET"),
