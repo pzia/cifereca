@@ -33,7 +33,7 @@ def _row(credential="private-a", variant="0123456789abcdef"):
 
 def test_scoped_private_metadata_batch_is_accepted_without_entitlement():
     assert credential_scoped_private_inventory_rows_valid([_row()], provider_id="numilog", credential_id="private-a", collection="library", scenario="NUMILOG_LIBRARY") is True
-    assert private_library_rows_valid([], provider_id="numilog", credential_id="private-a", collection="library", scenario="NUMILOG_LIBRARY") is True
+    assert credential_scoped_private_inventory_rows_valid([], provider_id="numilog", credential_id="private-a", collection="library", scenario="NUMILOG_LIBRARY") is True
 
 
 @pytest.mark.parametrize("row", [
@@ -47,7 +47,7 @@ def test_scoped_private_metadata_batch_is_accepted_without_entitlement():
     lambda: object(),
 ])
 def test_unsafe_or_cross_credential_private_row_fails_closed(row):
-    assert private_library_rows_valid([_row(), row()], "private-a") is False
+    assert credential_scoped_private_inventory_rows_valid([_row(), row()], provider_id="numilog", credential_id="private-a", collection="library", scenario="NUMILOG_LIBRARY") is False
 
 
 def test_private_row_validator_has_no_legacy_projector_dependency():
