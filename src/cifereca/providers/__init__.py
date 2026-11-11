@@ -7,6 +7,7 @@ GUI or service layer.
 """
 from .base import (
     AccountOptionField,
+    ManualBorrowPolicy,
     BorrowerScopedOptionField,
     CredentialField,
     ProviderCapabilities,
@@ -21,6 +22,7 @@ from .registry import ProviderRegistry
 
 __all__ = [
     "AccountOptionField",
+    "ManualBorrowPolicy",
     "BorrowerScopedOptionField",
     "CredentialField",
     "ProviderCapabilities",
