@@ -125,10 +125,10 @@ def owned_library_download_target(service, entry):
                       and p.get("kind") == "owned" and p.get("provider_id") in {"kobo", "numilog"}]
         if len(candidates) > 1:
             return None
-    from .numilog_owned_download import target_for_entry
-    numilog = target_for_entry(service, entry)
-    if numilog is not None:
-        return numilog
+    from .selected_source_offer import select_library_source_offer_target
+    selected = select_library_source_offer_target(service, entry)
+    if selected is not None:
+        return selected
     try:
         _require(isinstance(entry, dict) and not entry.get("local") and not entry.get("placement_id")
                  and not entry.get("local_path"))
@@ -149,9 +149,9 @@ def owned_library_download_target(service, entry):
 
 def obtain_owned_library_item(service, target):
     """Recheck at dispatch and again *inside* the direct-acquisition lock."""
-    from .numilog_owned_download import NumilogOwnedDownloadTarget, obtain
-    if type(target) is NumilogOwnedDownloadTarget:
-        return obtain(service, target)
+    from .selected_source_offer import SourceOfferTarget, obtain_source_offer
+    if type(target) is SourceOfferTarget:
+        return obtain_source_offer(service, target)
     try:
         _require(type(target) is OwnedDownloadTarget)
         current, item = _resolve(service, target.entitlement_id, target.identity_id)
