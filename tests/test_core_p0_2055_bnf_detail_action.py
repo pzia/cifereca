@@ -56,9 +56,9 @@ def test_bnf_only_exception_preserves_other_provider_presentation_rules(tmp_path
             assert not search_detail_borrow_action_candidate(
                 replace(item, source_provider=source), "Empruntable")
         assert not search_detail_borrow_action_candidate(
-            replace(item, source_provider="paris"), unknown)
+            replace(item, source_provider="paris", metadata={}), unknown)
         assert search_detail_borrow_action_candidate(
-            replace(item, source_provider="paris"), "Empruntable")
+            replace(item, source_provider="paris", metadata={}), "Empruntable")
         assert not search_detail_borrow_action_candidate(object(), "Empruntable")
         assert session.reads == session.dispatches == []
     finally:
