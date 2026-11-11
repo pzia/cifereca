@@ -93,7 +93,7 @@ def _rig(monkeypatch, *, session=None, accepted=True, identity_present=True):
 
 def test_exact_selected_binds_persisted_account_without_enrolling(monkeypatch):
     svc, session, previous, reads, calls = _rig(monkeypatch)
-    selected = provider_sessions.connect_kobo_selected_edition(svc, "kobo-2")
+    selected = provider_sessions.connect_kobo_canonical(svc, "kobo-2")
     assert selected is session
     assert calls == [(svc, "kobo-2")]
     assert len(svc.accounts) == 2
@@ -146,7 +146,7 @@ def test_selected_refuses_bad_scope_without_upgrading_memory(monkeypatch, case):
     old_account = svc.accounts[0]
     old_epoch = svc._source_context_epoch
     with pytest.raises(ProviderConfigurationError):
-        provider_sessions.connect_kobo_selected_edition(svc, "kobo-2")
+        provider_sessions.connect_kobo_canonical(svc, "kobo-2")
     assert svc.accounts == [old_account]
     assert svc.primary is old_account and svc.current_account is old_account
     assert svc.current_identity is before
@@ -157,7 +157,7 @@ def test_selected_refuses_bad_scope_without_upgrading_memory(monkeypatch, case):
 def test_unknown_credential_fails_before_any_scope_promotion(monkeypatch):
     svc, _, before, reads, calls = _rig(monkeypatch)
     with pytest.raises(ProviderConfigurationError):
-        provider_sessions.connect_kobo_selected_edition(svc, "other-kobo")
+        provider_sessions.connect_kobo_canonical(svc, "other-kobo")
     assert calls == [(svc, "other-kobo")]
     assert reads == []
     assert svc.current_identity is before
