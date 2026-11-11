@@ -110,7 +110,6 @@ def test_opening_manual_only_still_reports_decision_without_backup(tmp_path, mon
 
 def test_manual_only_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeypatch):
     """A second offline process still explains items=0, not 'no error'."""
-    from cifereca.core.legacy_diagnostic_projection import safe_kobo_backup_report
 
     service = _service(tmp_path)
     try:
@@ -131,10 +130,7 @@ def test_manual_only_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeyp
         assert persisted["items"] == 0
         assert persisted["opening_decision"]["status"] == "manual_only"
         assert persisted["opening_decision"]["persisted_enabled"] is False
-        shared = safe_kobo_backup_report(persisted)
-        assert shared["items"] == 0
-        assert shared["opening_decision"]["status"] == "manual_only"
-        assert "vault" not in json.dumps(shared).lower()
+        assert "vault" not in json.dumps(persisted).lower()
     finally:
         other.close()
 
@@ -147,12 +143,11 @@ def test_manual_only_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeyp
                 "token": "Bearer SECRET", "signed_url": "https://secret.example/"}),
 ])
 def test_kobo_persisted_decision_never_echoes_untrusted_metadata(tmp_path, invalid):
-    from cifereca.core.legacy_diagnostic_projection import safe_kobo_backup_report
 
     service = _service(tmp_path)
     try:
         service.storage.metadata_set("kobo_backup_opening_decision_v1", invalid)
-        report = safe_kobo_backup_report(service.kobo_backup_diagnostic())
+        report = service.kobo_backup_diagnostic()
         output = json.dumps(report)
         assert "SECRET" not in output
         assert "secret.example" not in output
@@ -188,7 +183,6 @@ def test_kobo_autobackup_opt_in_must_be_literal_boolean(tmp_path, monkeypatch, m
 
 def test_retired_w2_cannot_report_synthetic_provider_success(tmp_path, monkeypatch):
     """An old ON bit cannot transform a nonexistent W2 run into success."""
-    from cifereca.core.legacy_diagnostic_projection import safe_kobo_backup_report
 
     service = _service(tmp_path)
     try:
@@ -201,7 +195,7 @@ def test_retired_w2_cannot_report_synthetic_provider_success(tmp_path, monkeypat
         result = service._opening_sync_locked(deep=False)
         assert result["kobo_decision"]["status"] == "manual_only"
         assert result["kobo_decision"]["scheduled_kobo"] == 0
-        report = safe_kobo_backup_report(service.kobo_backup_diagnostic())
+        report = service.kobo_backup_diagnostic()
         assert report["opening_decision"]["status"] == "manual_only"
         assert report["items"] == 0
     finally:
