@@ -26,7 +26,7 @@ from .borrow_for_identity_preview import (
     _display_account_label, preview_borrow_for_identity,
 )
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
-from .manual_paris_borrow import _normal_paris_source_current
+from .primary_source_binding import configured_primary_source_current
 from .source_context import source_context_epoch
 
 
@@ -213,8 +213,10 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         # Paris's normal borrow contract supports exactly the selected
         # primary. Other profiles are NEVER activated to inspect this fact.
         if (evidence.provider_id == "paris"
-                and not _normal_paris_source_current(
+                and not configured_primary_source_current(
                     service, item, evidence.identity_id,
+                    provider_id="paris",
+                    selection_key="primary_paris_connection_id",
                 )):
             return "lender_unavailable"
 
