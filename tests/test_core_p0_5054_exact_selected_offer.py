@@ -60,8 +60,7 @@ def test_failed_snapshot_mixed_batch_and_untyped_inputs_are_refused():
     assert exact_selected_offer_id(None, key) is None
     assert exact_selected_offer_id(snap, object()) is None
     assert exact_selected_offer_id(replace(snap, resources=()), key) is None
-    assert exact_selected_offer_id(
-        replace(snap, resources=(snap.resources[0], snap.resources[0])),
-        key,
-    ) is None
+    # The transport contract itself rejects duplicate exact resource keys.
+    with pytest.raises(ValueError, match="duplicate"):
+        replace(snap, resources=(snap.resources[0], snap.resources[0]))
     assert exact_selected_offer_id(replace(snap, status="failed", resources=()), key) is None
