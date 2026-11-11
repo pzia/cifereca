@@ -16,7 +16,7 @@ from ..locking import InterProcessLock
 from ..models import Account
 from ..paths import acquisition_lock_file
 from ..plugin_api.downloadable_resources import (
-    ResourceSnapshot, as_legacy_rights_snapshot,
+    as_legacy_rights_snapshot,
 )
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
 from .canonical_delivery_abi import has_complete_delivery_abi
