@@ -138,6 +138,7 @@ def test_bulk_refresh_timeout_exports_only_strict_fixture_flags():
             "refresh_mapped": True,
             "refresh_sensitive": False,
             "fixture_enabled": True,
+            "broker_queried": False,
         }
         report.write_text(json.dumps({
             "stage": "P0_2140_bulk_fixture",
@@ -148,7 +149,7 @@ def test_bulk_refresh_timeout_exports_only_strict_fixture_flags():
         assert row["bulk_refresh_observation"] == flags
         assert "PRIVATE" not in repr(row)
         for bad in (
-            {"refresh_mapped": 1, "refresh_sensitive": False, "fixture_enabled": True},
+            {"refresh_mapped": 1, "refresh_sensitive": False, "fixture_enabled": True, "broker_queried": False},
             {**flags, "private_label": "PRIVATE"},
             {"refresh_mapped": True},
         ):
