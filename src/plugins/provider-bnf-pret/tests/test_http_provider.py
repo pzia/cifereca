@@ -399,6 +399,10 @@ class HTTPCatalogTests(unittest.TestCase):
         self.assertEqual(row.publisher,'Éditeur fictif')
         self.assertEqual(row.metadata['languages'],['fr'])
         self.assertEqual(row.metadata['isbn'],'9780000000002')
+        self.assertEqual(row.metadata['manual_borrow_presentation'], {
+            'provider_id': row.source_provider, 'docbase': row.docbase,
+            'record_id': row.record_id,
+        })
         self.assertIsNone(row.owned)
         self.assertFalse(row.downloadable)
         self.assertIsNone(row.download_url)
