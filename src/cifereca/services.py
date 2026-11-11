@@ -4070,33 +4070,6 @@ class LibraryService:
         """Conservative guard, never infer a Kobo link from a filename/title."""
         return kobo_backup.kobo_unlinked_local_count(self, identity_id)
 
-    def _sync_kobo_backup_locked(self, progress: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
-        """Reconcile the Vault manifest and acquire missing Kobo books locally.
-
-        Paris owns the destination and orchestration. Vault Provider API v2.x
-        resolves Kobo acquisition information; Kobo-Adept's negotiated public
-        contract executes the local download. Neither supplier drives the other.
-
-        0.8.0 keeps Vault API 2.3 semantics and Adept contract v8+, but candidate policy/execution now live in the generic engine and Kobo adapter. It keeps
-        transport selection with candidate.handling authoritative and adds Vault 2.3.3 library_sync pinned KDRM bridging:
-        ACSM/ADEPT first, then SignedNoDrm/http_plain by direct HTTP, then true
-        KDRM/kobo_kdrm through delegated Kobo execution. Explicit user-attention
-        states and cross-process serialization remain unchanged. Adept contract v8 remains the preferred local executor;
-        existing reconciliation safeguards still prevent duplicate redownloads.
-        """
-        return kobo_backup._sync_kobo_backup_locked(self, progress, logger=_TRACE_LOG)
-
-    def _sync_kobo_backup_account_locked(
-        self, credential_id: str,
-        progress: Callable[[dict[str, Any]], None] | None = None,
-        *, retry_scope_blocked: bool = False, cancelled: Callable[[], bool] | None = None,
-    ) -> dict[str, Any]:
-        """Internal scoped variant: caller owns the global acquisition lock."""
-        return kobo_backup._sync_kobo_backup_locked(
-            self, progress, logger=_TRACE_LOG, credential_id=credential_id,
-            cancelled=cancelled, retry_scope_blocked=retry_scope_blocked,
-        )
-
     def _account_for_loan(self, loan: Loan) -> Account:
         """Resolve the exact borrower recorded on a loan.
 
