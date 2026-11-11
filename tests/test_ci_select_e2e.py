@@ -46,6 +46,12 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
 
+    def test_renewal_preflight_selects_exact_loan_detail_gtk_probes(self):
+        self.assertEqual(
+            mod.select(["src/cifereca/core/provider_loan_renewal.py"]),
+            mod.BOOK_DETAIL,
+        )
+
     def test_p1_5178_task_busy_settings_is_an_explicit_gtk_contract(self):
         self.assertEqual(mod.BUSY_GTK, ("task-busy-settings-1366",))
         self.assertEqual(mod.select(["e2e/task_busy_settings_probe.py"]), mod.BUSY_GTK)
