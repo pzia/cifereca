@@ -174,7 +174,9 @@ jobs:
 
       - name: Upload privacy-safe E2E verdicts only
         if: always()
-        uses: actions/upload-artifact@v6
+        # Test the reviewed v7 transport against recurring v6 upload failures.
+        # This remains a required step; a publication failure still fails CI.
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: e2e-core-summary
           path: ${{ runner.temp }}/cifereca-e2e-public/summary.json
