@@ -29,7 +29,7 @@ def _fixture(*, save_fails=False, runner_fails=False, lifetime_fails=()):
         _closed=False, _settings_main_lifetime=Lifetime("main"),
         _settings_standalone_lifetime=Lifetime("standalone"), _diag_refresh=object(),
         config=Config(events, save_fails), get_width=lambda:1366,
-        get_height=lambda:900, _kobo_backup_timer_id=7,
+        get_height=lambda:900,
         _cancel_activity_hide=lambda:events.append("activity"),
         _cached_book_unsubscribe=lambda:events.append("unsubscribe"),
         runner=closer("runner", runner_fails),
@@ -46,13 +46,13 @@ def test_close_once_orders_existing_cleanup_and_destroys_settings_sessions():
     assert host._closed and host._diag_refresh is None
     assert host._settings_main_lifetime is None
     assert host._settings_standalone_lifetime is None
-    assert host._kobo_backup_timer_id is None and timers == [7]
+    assert timers == []
     assert events.index("dispose:main") < events.index("dispose:standalone")
     assert events.index("save") < events.index("activity") < events.index("unsubscribe")
     assert events[-4:] == ["runner","history","covers","service"]
     before = events[:]
     assert close_window_resources(host, source_remove=timers.append) is False
-    assert events == before and timers == [7]
+    assert events == before and timers == []
 
 
 def test_close_failure_isolation_releases_all_resources():
@@ -63,7 +63,6 @@ def test_close_failure_isolation_releases_all_resources():
 
 def test_missing_timer_never_removes_glib_source():
     host, events = _fixture()
-    host._kobo_backup_timer_id = None
     def forbidden(_source):
         raise AssertionError("no timer")
     close_window_resources(host, source_remove=forbidden)
@@ -88,6 +87,6 @@ def test_broken_settings_page_dispose_does_not_skip_remaining_teardown():
         assert events.count("dispose:standalone") == 1
         assert events.count("unsubscribe") == 1
         assert events[-4:] == ["runner", "history", "covers", "service"]
-        assert timers == [7]
+        assert timers == []
         assert close_window_resources(host, source_remove=timers.append) is False
         assert events.count("service") == 1 and timers == [7]
