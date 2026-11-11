@@ -112,6 +112,7 @@ def compact_availability_label(value: object) -> str:
         return text.split(" — ", 1)[0].strip()
     return text
 
+# CI baseline control only: unchanged borrow policy; exercise GTK book-detail.
 def search_detail_borrow_action_candidate(item: object, availability: str) -> bool:
     """Presentation candidate only; never entitlement or permission.
 
