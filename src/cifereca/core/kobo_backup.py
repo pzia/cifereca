@@ -8,16 +8,7 @@ from .legacy_checkpoint_read import _kobo_checkpoint_key, _kobo_checkpoint_for
 from .legacy_diagnostic_projection import _safe_kobo_opening_decision
 
 import json
-from pathlib import Path
-from typing import Any, Callable
-from ..acquisition import Acquisition
-from ..models import SearchResult
-from ..providers import ProviderConfigurationError
-
-
-def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
-    """Retired D3 direct Kobo executor: use the selected canonical delivery API."""
-    raise ProviderConfigurationError("kobo_legacy_direct_get_retired_use_canonical_provider")
+from typing import Any
 
 
 def kobo_backup_enabled(self) -> bool:
@@ -132,6 +123,3 @@ def _kobo_source_summaries(self) -> list[dict[str, Any]]:
     return summaries
 
 
-def sync_kobo_backup(self, progress: Callable[[dict[str, Any]], None] | None=None, *, credential_id: str | None=None, retry_scope_blocked: bool=False, cancelled: Callable[[], bool] | None=None, lock_factory, lock_path) -> dict[str, Any]:
-    """Retired legacy W2 facade: never invoke a fallback or acquire its lock."""
-    raise ProviderConfigurationError("kobo_legacy_w2_retired_use_canonical_provider")
