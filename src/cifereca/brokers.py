@@ -861,8 +861,11 @@ class SynchronizationBrokerImpl:
         """Read existing source consent; never infer loan availability."""
         from .core.source_auto_consent_bridge import legacy_source_auto_policy
         from .core.source_sync_consent import read_policy, scope_for_account
+        from .core.source_account_binding import source_account_binding_ready
         account = self._find_account(source_id)
-        if not self._account_bound_for_bnf(account):
+        if not source_account_binding_ready(
+            self.service, account, expected_provider_id=account.provider_id,
+        ):
             return False
         scope = scope_for_account(account)
         generic = read_policy(self.service.storage, scope)
@@ -913,7 +916,21 @@ class SynchronizationBrokerImpl:
                 key, active if value else "0", revision_key,
             )
         self._notify()
-        return self.bnf_auto_download_enabled(source_id)
+        # Read back through the Core-neutral binding and committed source
+        # policy, rather than chaining another provider-named broker method.
+        from .core.source_account_binding import source_account_binding_ready
+        if not source_account_binding_ready(
+            self.service, account, expected_provider_id=account.provider_id,
+        ):
+            return False
+        current = read_policy(self.service.storage, scope)
+        if current.configured:
+            return current.mode == "on"
+        from .core.source_auto_consent_bridge import legacy_source_auto_policy
+        mode, _revision = legacy_source_auto_policy(
+            self.service.storage, scope, "loan",
+        )
+        return mode == "on"
 
     def _account_bound_for_bnf(self, account: Any) -> bool:
         from .core.source_account_binding import source_account_binding_ready
