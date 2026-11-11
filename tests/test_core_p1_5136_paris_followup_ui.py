@@ -233,10 +233,13 @@ def test_mainwindow_existing_paris_router_dispatches_only_readonly_followup(tmp_
         assert messages == ["Prêt Paris désormais observé ; demande initiale non rejouée"]
         assert errors == [] and refreshes == [True]
         # Another source can never reuse this flag to run a regular borrow.
-        namespace["borrow_search_item"](
-            window, replace(item, source_provider="unknown"), readonly_button,
-        )
-        assert not window.runner.tasks
+        for foreign_provider in ("unknown", "bnf-pret", "kobo"):
+            namespace["borrow_search_item"](
+                window, replace(item, source_provider=foreign_provider),
+                readonly_button,
+            )
+            assert not window.runner.tasks
+        assert state["mutations"] == 1  # no reborrow, even on another provider
     finally:
         service.close()
 
