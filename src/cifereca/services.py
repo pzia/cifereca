@@ -2691,8 +2691,11 @@ class LibraryService:
                         or not item.source_credential
                         or item.source_credential == "__public__"):
                     return False
-                from .core.numilog_manifest_rights import _scoped_record_id
-                if _scoped_record_id(item.record_id, item.source_credential) is None:
+                from .core.credential_scoped_record import exact_credential_scoped_record
+                if exact_credential_scoped_record(
+                    item.record_id, provider_id="numilog",
+                    credential_id=item.source_credential,
+                ) is None:
                     return False
                 # A private notice from another family member's credentials
                 # must not show a download on the selected profile, even when
