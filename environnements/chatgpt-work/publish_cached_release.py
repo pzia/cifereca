@@ -114,7 +114,7 @@ def main() -> int:
             )
             if existing.returncode == 0:
                 raise ValueError("release tag already exists; refusing overwrite")
-            # 'gh release create' refuses an existing release. No --clobber.
+            # 'gh release create' refuses existing tags; never overwrite a Release.
             run("gh", "release", "create", args.tag, str(archive),
                 str(stage / "SHA256SUMS"), "--repo", REPOSITORY,
                 "--target", "main", "--prerelease",
