@@ -8,14 +8,19 @@ from __future__ import annotations
 from ..models import SearchResult
 
 
-def configured_primary_source_current(\n    service, item: SearchResult, identity_id: str, *,\n    provider_id: str, selection_key: str,\n) -> bool:
+def configured_primary_source_current(
+    service, item: SearchResult, identity_id: str, *,
+    provider_id: str, selection_key: str,
+) -> bool:
     """Inert, exact-owner current login check; never select another identity.
 
     Check again inside the provider's Core lease to cover edits occurring
     after button rendering and during descriptive preflight. No profile ADEPT
     enumeration or remote request belongs to this borrowing admission.
     """
-    if (type(provider_id) is not str or not provider_id\n            or type(selection_key) is not str or not selection_key\n            or type(item) is not SearchResult
+    if (type(provider_id) is not str or not provider_id
+            or type(selection_key) is not str or not selection_key
+            or type(item) is not SearchResult
             or item.source_provider != provider_id
             or type(item.source_credential) is not str
             or not item.source_credential
