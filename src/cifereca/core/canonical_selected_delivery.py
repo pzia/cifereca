@@ -312,12 +312,12 @@ def complete_selected_delivery(
                     guarded = True
                 if not current():
                     raise ValueError("canonical_delivery_source_rebound")
-        # #3121: a confirmed manual Paris borrow may have already staged
+        # #3121: a confirmed manual borrow may have already staged
         # its exact one-shot ACSM. The canonical executor must consume that
         # claim-bound token before asking the provider for another signed URL.
         # Only an exact, current, private receipt bypasses the candidate GET.
-        from .paris_initial_canonical_candidate import stage_first_paris_acsm
-        first_acsm = stage_first_paris_acsm(
+        from ..acsm_cache import stage_claimed_initial_acsm
+        first_acsm = stage_claimed_initial_acsm(
             service, session, account, source, attempt=attempt,
             admission_current=current,
         )
