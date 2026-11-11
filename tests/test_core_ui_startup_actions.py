@@ -136,8 +136,8 @@ def test_history_scroll_signal_ignores_disposed_window():
     assert source.index("getattr(window, '_closed', False)") < source.index("adjustment.get_upper()")
 
 
-def test_window_close_clears_timer_handle_even_when_removal_fails():
-    """#1132: stale GLib source IDs must not survive teardown failures."""
+def test_window_close_does_not_remove_nonexistent_legacy_timer():
+    """#1132: no phantom provider timer cleanup during teardown."""
     import importlib.util
     module_path = ROOT / "src/cifereca/gui/window_close.py"
     spec = importlib.util.spec_from_file_location("test_window_close_1132", module_path)
@@ -147,7 +147,6 @@ def test_window_close_clears_timer_handle_even_when_removal_fails():
 
     class Window:
         _closed = False
-        _kobo_backup_timer_id = 42
         _diag_refresh = object()
         _cached_book_unsubscribe = lambda self: None
         _cancel_notification_hide = lambda self: None
@@ -169,7 +168,7 @@ def test_window_close_clears_timer_handle_even_when_removal_fails():
         raise RuntimeError("source already removed")
     assert module.close_window_resources(window, source_remove=fail_remove) is False
     assert window._closed is True
-    assert window._kobo_backup_timer_id is None
+    assert not hasattr(window, '_kobo_backup_timer_id')
     assert module.close_window_resources(window, source_remove=fail_remove) is False
 
 
