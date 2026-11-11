@@ -30,12 +30,6 @@ def test_provider_or_contract_change_selects_conformance(root, path):
 
 
 @pytest.mark.parametrize("path", [
-    "src/plugins/provider-kobo/cifereca_kobo.py",
-    "src/cifereca/core/book_runtime.py",
-    "src/plugins/baen/cifereca_baen.py",
-    "README.md",
-])
-@pytest.mark.parametrize("path", [
     "src/cifereca/core/bnf_auto_materialization.py",
     "src/cifereca/core/sync_coordination.py",
     "src/cifereca/brokers.py",
@@ -45,6 +39,12 @@ def test_core_bnf_cutover_selects_conformance(root, path):
     assert gate.selected([path], root)
 
 
+@pytest.mark.parametrize("path", [
+    "src/plugins/provider-kobo/cifereca_kobo.py",
+    "src/cifereca/core/book_runtime.py",
+    "src/plugins/baen/cifereca_baen.py",
+    "README.md",
+])
 def test_unrelated_changes_do_not_select_conformance(root, path):
     assert not gate.selected([path], root)
 
