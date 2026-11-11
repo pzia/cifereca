@@ -179,37 +179,6 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             # rejected it. Never poison subsequent cache reads with that batch.
             _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
-        if (not inventory_only and account.provider_id == 'bnf-pret'
-                and not source_consent_configured(self, account)):
-            from .bnf_auto_materialization import enabled, materialize
-            if enabled(self, account):
-                # One private bounded inventory per source batch, not one
-                # whole-directory scan for every active loan.
-                physical_scan_cache = {}
-                outcomes = [
-                    materialize(self, account, loan, control=control,
-                                physical_scan_cache=physical_scan_cache)
-                    for loan in loans
-                ]
-                result['files_materialized'] = sum(row['status'] == 'complete' for row in outcomes)
-                result['files_unchanged'] = sum(row['status'] == 'unchanged' for row in outcomes)
-                # Confirmed user declarations are present local files, not
-                # new ADEPT deliveries and not provider-verified receipts.
-                result['files_declared_local'] = sum(
-                    row['status'] == 'declared_local' for row in outcomes
-                )
-                # A file needing an explicit local reconciliation is not
-                # newly materialized or already linked. Emit only an aggregate
-                # counter; no title, path, loan ID or licence in sync facts.
-                result['files_reconciliation_required'] = sum(
-                    row.get('code') in {
-                        'bnf_local_candidate_reconciliation_required',
-                        'bnf_local_declaration_needs_review',
-                    }
-                    for row in outcomes
-                )
-                if any(row['status'] not in {'complete', 'unchanged', 'declared_local', 'skipped'} for row in outcomes):
-                    result['status'] = 'partial'
         # A v1 loans() list never proves full branch coverage, even when
         # last_loan_errors is empty or absent. That mutable side channel is
         # deliberately not an authority for this explicit sync result.
@@ -262,15 +231,6 @@ def _run_observed_canonical_convergence(
     persisted exact SourceKey authorization and session/offers are checked by
     the original executor, under that same lock, before and after network I/O.
     """
-    if account.provider_id == "bnf-pret" and not source_consent_configured(self, account):
-        from .bnf_auto_materialization import enabled as bnf_legacy_auto_enabled
-        # The legacy BnF auto route still owns declared-local loan matching
-        # and receipts. Running its fulfilled ACSM again through A→B would
-        # duplicate ADEPT/placements. While that source's explicit auto
-        # switch is ON, let exactly one existing path own the acquisition.
-        # Other providers and BnF exact-right/manual scopes retain canonical.
-        if bnf_legacy_auto_enabled(self, account):
-            return None
     if (type(admitted_snapshots) is not list or len(admitted_snapshots) != 1
             or type(sync_lease) is not InterProcessLock
             or sync_lease._handle is None
@@ -287,13 +247,39 @@ def _run_observed_canonical_convergence(
     # Canonical source-level ON does not depend on the retired per-right
     # consent reader. Keep that reader only for legacy/unset sources.
     from .source_sync_consent import read_policy
+    from .source_auto_consent_bridge import (
+        legacy_source_auto_policy, legacy_source_auto_current,
+        legacy_source_auto_in_transaction,
+    )
     canonical_on = False
+    legacy_revision = None
+    legacy_keys = frozenset()
     if type(admitted_snapshots) is list and len(admitted_snapshots) == 1:
-        canonical_on = (
-            read_policy(self.storage, admitted_snapshots[0].scope).mode == "on"
-        )
+        observed = admitted_snapshots[0]
+        policy = read_policy(self.storage, observed.scope)
+        canonical_on = policy.mode == "on"
+        # Existing BnF source-wide ON is a user consent, not a loan right.
+        # Promote only the ephemeral exact keys from THIS admitted provider
+        # snapshot; never consult/persist old entitlement or file history.
+        # An explicitly configured generic policy always overrides legacy.
+        if not policy.configured:
+            from .source_convergence import SourceKey
+            keys = frozenset(
+                SourceKey(observed.scope, row.edition_id, row.right_id,
+                          row.kind, observed.branch)
+                for row in observed.rights
+                if row.provider_attested is True and row.kind == "loan"
+            )
+            if keys and all(key.kind == "loan" for key in keys):
+                mode, revision = legacy_source_auto_policy(
+                    self.storage, observed.scope, "loan",
+                )
+                if mode == "on" and type(revision) is str:
+                    legacy_revision = revision
+                    legacy_keys = keys
+    legacy_on = legacy_revision is not None
     if (delivery is None and admitted_snapshots
-            and (canonical_on or callable(consent_reader))):
+            and (canonical_on or legacy_on or callable(consent_reader))):
         from inspect import getattr_static
         try:
             candidate_session = self._session_for_account(account)
@@ -316,7 +302,7 @@ def _run_observed_canonical_convergence(
                 consent_still_current=lambda: current_consent(key),
             )
     if (admitted_snapshots and callable(delivery)
-            and (canonical_on or callable(consent_reader))):
+            and (canonical_on or legacy_on or callable(consent_reader))):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
         from .source_auto_consent_bridge import (
@@ -345,7 +331,8 @@ def _run_observed_canonical_convergence(
         )
 
         try:
-            consent = (consent_reader(account)
+            consent = (legacy_keys if legacy_on else
+                       consent_reader(account)
                        if callable(consent_reader) and not canonical_on
                        else frozenset())
         except Exception:
@@ -382,6 +369,15 @@ def _run_observed_canonical_convergence(
                 # The source-wide ON grant is not an authorization per right.
                 # The offer/snapshot still independently gates availability.
                 return key.scope == admitted_snapshots[0].scope
+            if legacy_on:
+                return (
+                    key in legacy_keys
+                    and key.scope == admitted_snapshots[0].scope
+                    and not read_policy(self.storage, key.scope).configured
+                    and legacy_source_auto_current(
+                        self.storage, key, legacy_revision,
+                    )
+                )
             latest = consent_reader(account)
             return (type(latest) is frozenset
                     and key in latest
@@ -406,6 +402,10 @@ def _run_observed_canonical_convergence(
                 if (current_policy.mode != "on"
                         or current_policy.revision != admitted_source_revision):
                     return False
+            if legacy_on and not legacy_source_auto_in_transaction(
+                db, key, legacy_revision,
+            ):
+                return False
             return (existing_publication_guard(db, key)
                     if callable(existing_publication_guard) else True)
 
@@ -1271,7 +1271,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     except Exception:
                         logger.warning("TRACE typed loan cache failed code=loan_cache_unavailable")
             detail["realized"] = lifecycle["returned_realized"] + lifecycle["expired_realized"]
-            physical_scan_cache = {}
             for loan in loans:
                 if any(
                     source_consent_configured(self, account)
@@ -1288,22 +1287,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 session = self._sessions.get(
                     self._session_key(loan.source_provider, loan.source_credential)
                 )
-                if loan.source_provider == 'bnf-pret':
-                    from .bnf_auto_materialization import enabled, materialize
-                    account = next((a for a in self.accounts
-                                    if a.identity_id == loan.identity_id
-                                    and a.provider_id == 'bnf-pret'
-                                    and a.credential_id == loan.source_credential
-                                    and a.unique_id == loan.source_account_id), None)
-                    if account is not None and enabled(self, account):
-                        outcome = materialize(
-                            self, account, loan, physical_scan_cache=physical_scan_cache,
-                        )
-                        if outcome['status'] == 'complete':
-                            new_acquisitions += 1
-                        elif outcome['status'] == 'attention_required':
-                            attention += 1
-                    continue
                 if not _opening_loan_acquisition_allowed(loan, session=session):
                     continue
                 result = self._acquire_active_loan_automatically(loan)

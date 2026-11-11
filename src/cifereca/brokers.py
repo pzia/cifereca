@@ -823,32 +823,85 @@ class SynchronizationBrokerImpl:
         return "on_start" if raw == "1" else "manual"
 
     def bnf_auto_download_enabled(self, source_id: str) -> bool:
-        from .core.bnf_auto_materialization import enabled
+        """Read existing source consent; never infer loan availability."""
+        from .core.source_auto_consent_bridge import legacy_source_auto_policy
+        from .core.source_sync_consent import read_policy, scope_for_account
+        from .core.source_account_binding import source_account_binding_ready
         account = self._find_account(source_id)
-        return enabled(self.service, account)
+        if not source_account_binding_ready(
+            self.service, account, expected_provider_id=account.provider_id,
+        ):
+            return False
+        scope = scope_for_account(account)
+        generic = read_policy(self.service.storage, scope)
+        if generic.configured:
+            return generic.mode == "on"
+        mode, _revision = legacy_source_auto_policy(
+            self.service.storage, scope, "loan",
+        )
+        return mode == "on"
 
     def set_bnf_auto_download(self, source_id: str, value: bool) -> bool:
-        from .core.bnf_auto_materialization import enabled, policy_key
-        account = self._find_account(source_id)
-        if type(value) is not bool or account.provider_id != 'bnf-pret':
-            raise ValueError('unsupported BnF acquisition policy')
-        if value:
-            # Check the binding before granting a persistent acquisition mode.
-            if not self._enabled(source_id) or not self._account_bound_for_bnf(account):
-                raise ValueError('BnF source not eligible')
-        # BnF's ON->OFF->ON generation and its visible switch are one SQLite
-        # commit. Neither the legacy worker nor canonical A->B may observe an
-        # old consent with a newer epoch during a partially written toggle.
-        self.service.storage.metadata_set_with_revision(
-            policy_key(account), '1' if value else '0',
-            policy_key(account) + '.revision',
+        """Change exactly one loan-source consent, never a supplier right."""
+        from .core.source_auto_consent_bridge import (
+            _POLICIES, _source_id,
         )
+        from .core.source_sync_consent import (
+            read_policy, scope_for_account, set_source_sync_consent,
+        )
+        account = self._find_account(source_id)
+        if type(value) is not bool or account.provider_id != "bnf-pret":
+            raise ValueError("unsupported BnF acquisition policy")
+        if value and (not self._enabled(source_id)
+                      or not self._account_bound_for_bnf(account)):
+            raise ValueError("BnF source not eligible")
+        scope = scope_for_account(account)
+        generic = read_policy(self.service.storage, scope)
+        if generic.configured:
+            # Once a canonical CAS source policy exists, never resurrect
+            # the legacy ON switch after a revocation or reconfiguration.
+            set_source_sync_consent(
+                self.service, account, enabled=value,
+                expected_revision=generic.revision,
+            )
+        else:
+            # Preserve explicit existing users' source-wide preference until
+            # they choose the CAS UI. This is NOT per-loan or entitlement data.
+            spec = _POLICIES.get((account.provider_id, "loan"))
+            if spec is None:
+                raise ValueError("unsupported BnF acquisition policy")
+            prefix, active, epoch_prefix = spec
+            sid = _source_id(scope)
+            key = prefix + sid
+            revision_key = (
+                epoch_prefix + sid if epoch_prefix is not None
+                else key + ".revision"
+            )
+            self.service.storage.metadata_set_with_revision(
+                key, active if value else "0", revision_key,
+            )
         self._notify()
-        return enabled(self.service, account)
+        # Read back through the Core-neutral binding and committed source
+        # policy, rather than chaining another provider-named broker method.
+        from .core.source_account_binding import source_account_binding_ready
+        if not source_account_binding_ready(
+            self.service, account, expected_provider_id=account.provider_id,
+        ):
+            return False
+        current = read_policy(self.service.storage, scope)
+        if current.configured:
+            return current.mode == "on"
+        from .core.source_auto_consent_bridge import legacy_source_auto_policy
+        mode, _revision = legacy_source_auto_policy(
+            self.service.storage, scope, "loan",
+        )
+        return mode == "on"
 
     def _account_bound_for_bnf(self, account: Any) -> bool:
-        from .core.bnf_auto_materialization import binding_ready
-        return binding_ready(self.service, account)
+        from .core.source_account_binding import source_account_binding_ready
+        return source_account_binding_ready(
+            self.service, account, expected_provider_id=account.provider_id,
+        )
 
     def set_local_materialization_schedule(self, source_id: str, mode: str) -> str:
         """Explicit, durable, per-source opt-in. No remote operation.

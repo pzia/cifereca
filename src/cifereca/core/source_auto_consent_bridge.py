@@ -69,6 +69,21 @@ def toggle_state(db, source: SourceKey):
     spec = _POLICIES.get((source.scope.provider_id, source.kind))
     if spec is None:
         return None
+    # No alternative historical per-right grant can bypass an explicitly
+    # disabled loan source. This runs inside the same SQLite transaction as
+    # the final local publication guard.
+    if source.kind == "loan":
+        try:
+            from .source_sync_consent import source_enablement_key
+            from .source_enablement import source_enabled
+            enabled_row = db.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                (source_enablement_key(source.scope),),
+            ).fetchone()
+            if not source_enabled(enabled_row[0] if enabled_row else None):
+                return "off"
+        except Exception:
+            return "off"
     # The old Sync source-id encoding maps an empty primary borrower to the
     # literal text "provider:credential:primary". A real upstream borrower
     # can have exactly that ID. A legacy source-wide ON row cannot identify
@@ -91,9 +106,17 @@ def toggle_state(db, source: SourceKey):
         return None
     if row[0] != active:
         return "off"
-    if epoch_prefix is not None:
+    # Loan delivery is non-repeatable and cannot inherit the permissive
+    # unversioned legacy purchase switches. A missing loan-source epoch is
+    # never sufficient to authorize a signed ACSM GET.
+    revision_key = (
+        epoch_prefix + sid if epoch_prefix is not None
+        else prefix + sid + ".revision" if source.kind == "loan"
+        else None
+    )
+    if revision_key is not None:
         revision = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (epoch_prefix + sid,),
+            "SELECT value FROM metadata WHERE key=?", (revision_key,),
         ).fetchone()
         if (revision is None or type(revision[0]) is not str
                 or _HEX.fullmatch(revision[0]) is None):
@@ -169,3 +192,88 @@ def consent_generation_in_transaction(db, source):
     if raw is None:
         return None
     return raw if type(raw) is str and _HEX.fullmatch(raw) else "invalid"
+
+
+def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | None]:
+    """Read one explicitly configured legacy SOURCE consent (never a right).
+
+    The legacy switch is admitted to canonical A→B only when a separate
+    revision was durably committed with it. Missing/invalid revisions cannot
+    be promoted into a permission after an ON→OFF→ON change. This reader
+    never examines stored entitlements or bibliographic titles.
+    """
+    from ..plugin_api.provider_rights_observation import ProviderRightsScope
+    if type(scope) is not ProviderRightsScope or type(kind) is not str:
+        return "off", None
+    spec = _POLICIES.get((scope.provider_id, kind))
+    if spec is None:
+        return "off", None
+    if ambiguous_legacy_source_account_id(
+        scope.provider_id, scope.credential_id, scope.account_id,
+    ):
+        return "off", None
+    prefix, active, epoch_prefix = spec
+    sid = _source_id(scope)
+    revision_key = (epoch_prefix + sid if epoch_prefix is not None
+                    else prefix + sid + ".revision")
+    try:
+        from .source_sync_consent import source_enablement_key
+        from .source_enablement import source_enabled
+        if not source_enabled(storage.metadata_get(source_enablement_key(scope))):
+            return "off", None
+        value = storage.metadata_get(prefix + sid)
+        revision = storage.metadata_get(revision_key)
+    except Exception:
+        return "off", None
+    if type(revision) is not str or _HEX.fullmatch(revision) is None:
+        return "off", None
+    return ("on" if value == active else "off"), revision
+
+
+def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> bool:
+    """Revalidate source-level ON and the EXACT old generation before GET."""
+    if (type(source) is not SourceKey or type(revision) is not str
+            or _HEX.fullmatch(revision) is None):
+        return False
+    try:
+        # A newly configured CAS source policy supersedes the old toggle,
+        # even if its legacy row still says ON (including ABA).
+        if read_policy(storage, source.scope).configured:
+            return False
+        mode, actual_revision = legacy_source_auto_policy(
+            storage, source.scope, source.kind,
+        )
+        return mode == "on" and actual_revision == revision
+    except Exception:
+        return False
+
+
+def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> bool:
+    """Final SQLite-transaction fence; protects against consent ABA."""
+    if (type(source) is not SourceKey or type(revision) is not str
+            or _HEX.fullmatch(revision) is None):
+        return False
+    try:
+        # An exact generic CAS source policy takes precedence, irrespective
+        # of a leftover ON row from a past broker UI generation.
+        if policy_in_transaction(db, source.scope).configured:
+            return False
+        from .source_sync_consent import source_enablement_key
+        from .source_enablement import source_enabled
+        enabled_row = db.execute(
+            "SELECT value FROM metadata WHERE key=?",
+            (source_enablement_key(source.scope),),
+        ).fetchone()
+        if not source_enabled(enabled_row[0] if enabled_row else None):
+            return False
+        if toggle_state(db, source) != "on":
+            return False
+        key = _consent_generation_key(source.scope)
+        if key is None:
+            return False
+        row = db.execute(
+            "SELECT value FROM metadata WHERE key=?", (key,),
+        ).fetchone()
+        return row is not None and row[0] == revision
+    except Exception:
+        return False
