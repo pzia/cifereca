@@ -8,8 +8,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from cifereca.core.numilog_explicit_enrichment import can_enrich_numilog_result
+from cifereca.core.provider_explicit_enrichment import can_enrich_provider_detail_result
 from cifereca.task_queue import TaskPriority
+
+
+
+def can_enrich_numilog_result(item) -> bool:
+    return can_enrich_provider_detail_result(
+        item, private_provider_id="numilog", public_provider_id="numilog-catalog",
+    )
 
 
 def add_numilog_enrichment_action(host, selected_id, item, detail, context, *,
