@@ -2834,10 +2834,6 @@ class LibraryService:
         except Exception:
             return False
 
-    def _execute_kobo_acquisition(self, item: SearchResult, target_dir: Path) -> Acquisition:
-        """Compatibility façade; Kobo execution lives in the provider adapter."""
-        return kobo_backup._execute_kobo_acquisition(self, item, target_dir)
-
     def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             raise ProviderConfigurationError(

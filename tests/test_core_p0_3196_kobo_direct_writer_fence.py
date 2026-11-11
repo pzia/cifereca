@@ -65,15 +65,8 @@ def test_complete_core_abi_blocks_direct_legacy_writer_before_io(
 
         before_backups = service.storage.backup_list()
         before_placements = service.storage.placements()
-        credential_id = "vault-1" if scoped else None
         assert not hasattr(kobo_backup, "_sync_kobo_backup_locked")
-        with pytest.raises(ProviderConfigurationError,
-                           match="kobo_legacy_w2_retired_use_canonical_provider"):
-            kobo_backup.sync_kobo_backup(
-                service, credential_id=credential_id,
-                lock_factory=InterProcessLock,
-                lock_path=lambda: tmp_path / "acquisition.lock",
-            )
+        assert not hasattr(kobo_backup, "sync_kobo_backup")
         assert service.storage.backup_list() == before_backups
         assert service.storage.placements() == before_placements
     finally:

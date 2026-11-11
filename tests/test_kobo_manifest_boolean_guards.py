@@ -50,10 +50,7 @@ def test_ambiguous_flags_never_trigger_acquisition_or_prune(
         "identity_id": "default", "item_id": "historic",
         "title": "Historic owned book", "status": "pending",
     })
-    monkeypatch.setattr(
-        service, "_execute_kobo_acquisition",
-        lambda *_a, **_kw: pytest.fail("malformed rights must never acquire content"),
-    )
+    assert not hasattr(service, "_execute_kobo_acquisition")
     try:
         original = saved.read_bytes()
         # Raw 0.7 flags are not canonical A evidence. D3 cannot GET.
@@ -81,10 +78,7 @@ def test_retired_w2_cannot_consume_partial_historical_manifest(tmp_path, monkeyp
         "content_type": "ebook", "downloadable": False, "archived": False,
         # Older personal-library responses may omit the 'owned' flag.
     }])
-    monkeypatch.setattr(
-        service, "_execute_kobo_acquisition",
-        lambda *_a, **_kw: pytest.fail("downloadable=False must skip acquisition"),
-    )
+    assert not hasattr(service, "_execute_kobo_acquisition")
     try:
 
         assert not hasattr(service, "sync_kobo_backup")

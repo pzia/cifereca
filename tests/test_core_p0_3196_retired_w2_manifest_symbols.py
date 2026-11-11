@@ -19,6 +19,7 @@ def test_kobo_w2_manifest_interpreters_are_removed_from_core():
         "_kobo_manifest_rejection_count",
         "_manifest_archived",
     })
-    # W2 stays a fail-closed ABI, never a source of entitlement or GET.
-    assert "kobo_legacy_w2_retired_use_canonical_provider" in code
+    # No W2 ABI or historical executor remains in the installed Core.
+    assert "def sync_kobo_backup(" not in code
     assert "def _sync_kobo_backup_locked(" not in code
+    assert "def _execute_kobo_acquisition(" not in code

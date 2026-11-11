@@ -495,10 +495,6 @@
     "kind": "method",
     "signature": "(self, item: 'SearchResult') -> 'bool'"
   },
-  "_execute_kobo_acquisition": {
-    "kind": "method",
-    "signature": "(self, item: 'SearchResult', target_dir: 'Path') -> 'Acquisition'"
-  },
   "_acquire_direct_item_impl": {
     "kind": "method",
     "signature": "(self, item: 'SearchResult', *, _admission=None) -> 'Acquisition'"
