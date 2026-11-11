@@ -495,58 +495,6 @@
     "kind": "method",
     "signature": "(self, item: 'SearchResult') -> 'bool'"
   },
-  "_kobo_adept_format": {
-    "kind": "staticmethod",
-    "signature": "(vault_format: 'str | None') -> 'str | None'"
-  },
-  "_kobo_candidate_media_format": {
-    "kind": "staticmethod",
-    "signature": "(candidate: 'dict[str, Any]') -> 'str'"
-  },
-  "_kobo_candidate_drm": {
-    "kind": "classmethod",
-    "signature": "(cls, candidate: 'dict[str, Any]') -> 'str'"
-  },
-  "_kobo_candidate_handling": {
-    "kind": "classmethod",
-    "signature": "(cls, candidate: 'dict[str, Any]') -> 'str'"
-  },
-  "_kobo_candidate_profile": {
-    "kind": "staticmethod",
-    "signature": "(candidate: 'dict[str, Any]') -> 'str | None'"
-  },
-  "_kobo_candidate_source": {
-    "kind": "staticmethod",
-    "signature": "(candidate: 'dict[str, Any]') -> 'str | None'"
-  },
-  "_kobo_candidate_requires_authorization": {
-    "kind": "staticmethod",
-    "signature": "(candidate: 'dict[str, Any]') -> 'bool'"
-  },
-  "_kobo_acsm_candidate": {
-    "kind": "classmethod",
-    "signature": "(cls, payload: 'dict[str, Any]') -> 'dict[str, Any] | None'"
-  },
-  "_kobo_candidate": {
-    "kind": "classmethod",
-    "signature": "(cls, payload: 'dict[str, Any]', preferred_format: 'str' = 'epub') -> 'dict[str, Any]'"
-  },
-  "_kobo_delegated_candidate": {
-    "kind": "classmethod",
-    "signature": "(cls, payload: 'dict[str, Any]', preferred_format: 'str' = 'epub') -> 'dict[str, Any]'"
-  },
-  "_kobo_url_format": {
-    "kind": "staticmethod",
-    "signature": "(candidate: 'dict[str, Any]') -> 'str | None'"
-  },
-  "_kobo_delegated_request": {
-    "kind": "staticmethod",
-    "signature": "(payload: 'dict[str, Any]', candidate: 'dict[str, Any]') -> 'dict[str, Any] | None'"
-  },
-  "_kobo_kdrm_context": {
-    "kind": "staticmethod",
-    "signature": "(payload: 'dict[str, Any]', candidate: 'dict[str, Any]') -> 'dict[str, str] | None'"
-  },
   "_execute_kobo_acquisition": {
     "kind": "method",
     "signature": "(self, item: 'SearchResult', target_dir: 'Path') -> 'Acquisition'"
