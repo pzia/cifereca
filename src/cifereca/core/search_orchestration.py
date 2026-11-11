@@ -332,18 +332,6 @@ def _search_sessions_for_active_identity(
         self, sessions, identity, preferred_credentials=hints,
     )
 
-def _paris_search_owner(self, session: ProviderSession) -> str | None:
-    """Inert SQLite owner check; unknown ownership never permits private data."""
-    credential = getattr(session, "credential_id", None)
-    if type(credential) is not str or not credential:
-        return None
-    try:
-        owner = self.storage.identity_for_connection("paris", credential)
-    except (AttributeError, LookupError, TypeError, ValueError):
-        return None
-    return owner if type(owner) is str and owner else None
-
-
 def _shared_catalogue_cover_url(value: Any) -> str | None:
     """Preserve an ordinary public catalogue image, never account/private URLs.
 
@@ -664,7 +652,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     or not self._provider_enabled_for_identity(expected[0])
                     or not _search_credential_enabled(self, session)):
                 return False
-        if any(_paris_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
             return False
         if any(_private_search_owner(self, session) != owner
@@ -711,7 +699,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         session.provider_id == "paris" for session in searchable
     )
     paris_owner_leases = tuple(
-        (session, _paris_search_owner(self, session))
+        (session, _private_search_owner(self, session))
         for session in searchable if session.provider_id == "paris"
     )
     active_id = getattr(identity, "identity_id", None)
@@ -1328,7 +1316,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         session.provider_id == "paris" for session in searchable
     )
     paris_owner_leases = tuple(
-        (session, _paris_search_owner(self, session))
+        (session, _private_search_owner(self, session))
         for session in searchable if session.provider_id == "paris"
     )
     active_id = getattr(identity, "identity_id", None)
@@ -1388,7 +1376,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     or not self._provider_enabled_for_identity(expected[0])
                     or not _search_credential_enabled(self, session)):
                 return False
-        if any(_paris_search_owner(self, session) != owner
+        if any(_private_search_owner(self, session) != owner
                for session, owner in paris_owner_leases):
             return False
         if any(_private_search_owner(self, session) != owner

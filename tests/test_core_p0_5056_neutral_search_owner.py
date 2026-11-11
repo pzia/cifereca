@@ -15,12 +15,13 @@ class OwnerStore:
 def test_owner_lookup_uses_exact_session_provider_and_credential():
     storage = OwnerStore()
     service = NS(storage=storage)
-    for provider in ("kobo", "numilog", "provider.future"):
+    for provider in ("kobo", "numilog", "paris", "provider.future"):
         session = NS(provider_id=provider, credential_id="private-account")
         assert _private_search_owner(service, session) == "reader-1"
     assert storage.calls == [
         ("kobo", "private-account"),
         ("numilog", "private-account"),
+        ("paris", "private-account"),
         ("provider.future", "private-account"),
     ]
 
