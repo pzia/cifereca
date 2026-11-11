@@ -193,7 +193,6 @@ def test_bnf_legacy_consent_revoked_during_canonical_delivery_never_publishes(
 def test_kobo_canonical_off_never_falls_back_after_missing_typed_inventory(tmp_path, monkeypatch):
     from tests.test_kobo_backup_guard import _service
     from cifereca.core import sync_coordination
-    from cifereca.core.source_materialization_schedule import policy_key
     service = _service(tmp_path)
     session = service._sessions[service._session_key('kobo', 'vault-1')]
     account = session.accounts[0]
@@ -202,7 +201,7 @@ def test_kobo_canonical_off_never_falls_back_after_missing_typed_inventory(tmp_p
              account.credential_id, account=account.unique_id)
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(account)
-    service.storage.metadata_set(policy_key(sid), '1')
+    service.storage.metadata_set("sync.source.materialization.on_start." + sid, '1')
     broker.set_source_sync_consent(sid, enabled=False, expected_revision=None)
     monkeypatch.setattr(sync_coordination, '_run_observed_canonical_convergence', lambda *_a, **_kw: None)
     monkeypatch.setattr(service, '_sync_kobo_backup_account_locked',

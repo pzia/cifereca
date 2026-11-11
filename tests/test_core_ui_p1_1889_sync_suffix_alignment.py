@@ -37,11 +37,12 @@ def test_kobo_actions_are_centered_even_with_multiline_subtitles(monkeypatch):
 
     # Source switch, refresh and canonical preview remain aligned; W4 audit retired.
     assert len(group.children[0].suffixes) == 3
-    # Explicit local acquisition, cancel, and both independent policy controls.
+    # Explicit manual acquisition remains; the retired Kobo W2 automatic
+    # download scheduler is absent, while inventory scheduling stays centered.
     assert len(group.children[2].suffixes) == 2
     assert len(group.children[3].suffixes) == 1
-    assert len(group.children[4].suffixes) == 1
-    assert len(_check_all_suffixes(window)) == 7
+    assert len(group.children) == 4
+    assert len(_check_all_suffixes(window)) == 6
     assert window.runner.tasks == []
     assert not any(call[0] in {"sync-source", "acquire", "prepare"} for call in calls)
 
