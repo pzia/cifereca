@@ -9,6 +9,18 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = 'src/plugins/provider-bnf-pret/'
 TEST = PACKAGE + 'tests/test_http_provider.py'
+# Core cutovers can change loan admission, staging, or routing without
+# modifying the provider package. Re-run the BnF contract at those boundaries.
+CORE_BNF_PATHS = frozenset({
+    'src/cifereca/brokers.py',
+    'src/cifereca/services.py',
+    'src/cifereca/core/sync_coordination.py',
+    'src/cifereca/core/selected_loan_offer.py',
+    'src/cifereca/core/loan_action_scope.py',
+    'src/cifereca/gui/bnf_acsm_action_controller.py',
+    'src/cifereca/gui/bnf_borrow_controller.py',
+})
+
 EXPLICIT_TESTS = (PACKAGE + 'tests/test_explicit_token_success.py',
                   PACKAGE + 'tests/test_explicit_token_failures.py',
                   PACKAGE + 'tests/test_observed_loan_metadata.py',
@@ -27,6 +39,8 @@ def selected(paths, root=ROOT, *, full=False):
         return False
     relevant = full or any(
         path.startswith(PACKAGE)
+        or path.startswith('src/cifereca/core/bnf_')
+        or path in CORE_BNF_PATHS
         or path in {'scripts/ci_bnf_reader_gate.py', 'scripts/bnf_borrow_dom_probe.py',
                     'tests/test_ci_bnf_reader_gate.py',
                     '.github/workflows/pr-ci.yml', 'tests/test_bnf_pret_web_dom.py'}
