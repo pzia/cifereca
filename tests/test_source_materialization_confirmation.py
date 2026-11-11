@@ -30,7 +30,6 @@ def case(tmp_path, monkeypatch):
     # Keep main's capability fixture addition needed by canonical broker.
     session.descriptor = replace(session.descriptor, capabilities=replace(
         session.capabilities, local_materialization=True,
-        legacy_materialization_checkpoint=True,
     ))
     service.accounts = list(session.accounts)
     sessions = [session]
