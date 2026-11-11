@@ -66,7 +66,7 @@ def test_retired_w2_never_reclassifies_archived_recovery_receipts(
             pytest.fail("retired W2 must never consult manifest or mutate B")
 
         monkeypatch.setattr(session, "backup_manifest", forbidden)
-        monkeypatch.setattr(service, "_execute_kobo_acquisition", forbidden)
+        assert not hasattr(service, "_execute_kobo_acquisition")
         monkeypatch.setattr(service.storage, "backup_put", forbidden)
         for _ in range(2):
             assert not hasattr(service, "sync_kobo_backup")
