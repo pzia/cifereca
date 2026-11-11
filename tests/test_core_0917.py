@@ -121,10 +121,10 @@ class Core0917(unittest.TestCase):
         transport.fetch.assert_not_called()
     def test_binding_captures_exact_runtime_id(self):
         b=capture_binding({'ok':True,'profile':'hb','loan_id':'urn:uuid:ade'},profile_name='hb',profile_id='stable')
-        self.assertEqual(b['adept_loan_id'],'urn:uuid:ade');self.assertTrue(b['return_available'])
+        self.assertEqual(b['adept_loan_id'],'urn:uuid:ade');self.assertNotIn('return_available', b)
     def test_missing_adept_id_never_substitutes_provider_id(self):
         b=capture_binding({'ok':True,'metadata':{'loan_id':'provider-id'}},profile_name='hb',profile_id='stable')
-        self.assertIsNone(b['adept_loan_id']);self.assertFalse(b['return_available'])
+        self.assertIsNone(b['adept_loan_id']);self.assertNotIn('return_available', b)
     def test_binding_profile_mismatch_and_failure_rejected(self):
         for result in [{'ok':False},{'ok':True,'profile':'other'},{'ok':True,'loan_id':123}]:
             with self.assertRaises(ValueError):capture_binding(result,profile_name='hb',profile_id='stable')
