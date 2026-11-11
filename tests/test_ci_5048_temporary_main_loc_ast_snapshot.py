@@ -3,6 +3,7 @@ import json
 import warnings
 
 from scripts.ci_provider_core_coupling_report import extended_inventory
+from scripts.ci_provider_core_coupling_inventory import inventory
 
 
 def test_main_provider_core_coupling_telemetry():
@@ -10,12 +11,14 @@ def test_main_provider_core_coupling_telemetry():
     snapshot = {
         "main_base": "7b8a087e22cec12d3c3383b96cfcc098f1203466",
         "historical": report["historical"],
+        "dedicated_per_file": inventory(__import__("pathlib").Path(__file__).resolve().parents[1])["dedicated_per_file"],
         "physical_lines": report["total_core_python_physical_lines"],
         "partition": report["line_partition"],
         "expanded_named": report["expanded_named_modules"],
         "signal_occurrences_by_alias": report["generic_ast_signal_occurrences_by_provider_alias"],
         "signal_occurrences_by_kind": report["generic_ast_signal_occurrences_by_kind"],
         "top_signal_files": report["top_generic_by_ast_signal"][:8],
+        "expanded_named_module_paths": [row["path"] for row in report["vendor_named_modules_outside_legacy_dedicated_scope"]],
     }
     warnings.warn("P0_5048_MAIN_LOC_AST_SNAPSHOT=" + json.dumps(snapshot, ensure_ascii=True, sort_keys=True), UserWarning)
     assert not report["historical"]["parse_errors"]
