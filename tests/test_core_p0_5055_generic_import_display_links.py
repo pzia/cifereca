@@ -145,3 +145,21 @@ def test_provider_scoped_observation_never_leaks_between_lenders():
 ])
 def test_provider_scoped_observations_discard_invalid_scope(provider, links):
     assert provider_scoped_observed_links(provider, links) == {}
+
+def test_library_projection_has_no_bnf_specific_loan_dispatch():
+    from pathlib import Path
+    import ast
+
+    source = (Path(__file__).resolve().parents[1]
+              / "src/cifereca/core/library_projection.py").read_text(
+                  encoding="utf-8",
+              )
+    tree = ast.parse(source)
+    assert not any(
+        isinstance(node, ast.Compare)
+        and any(isinstance(value, ast.Constant) and value.value == "bnf-pret"
+                for value in [node.left, *node.comparators])
+        for node in ast.walk(tree)
+    )
+    assert "provider_scoped_observed_links" in source
+    assert "exact_source_alias.get(typed_scope) is None" in source
