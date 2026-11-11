@@ -1638,19 +1638,10 @@ class MainWindow(Adw.ApplicationWindow):
             priority=TaskPriority.USER_ACTION, kind="loan-acquisition")
 
     def can_borrow_item(self, item: SearchResult) -> bool:
-        """Exact local admission; an explicit claimed executor never falls back."""
-        from inspect import getattr_static
+        """Only a versioned installed manual-borrow ABI can expose an action."""
         try:
-            session, accounts = self._eligible_borrow_accounts(item)
-            if (callable(getattr_static(
-                type(session), "borrow_explicit_with_claim", None,
-            )) or callable(getattr_static(
-                session, "borrow_explicit_with_claim", None,
-            ))):
-                # The installed plugin's versioned policy is mandatory.
-                # A visible action still never attests lender eligibility.
-                return self.service.can_borrow_manual(item) is True
-            return bool(accounts)
+            # Local-only admission: not a lender's permission to issue a loan.
+            return self.service.can_borrow_manual(item) is True
         except Exception:
             return False
 
@@ -1697,13 +1688,11 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
-        from inspect import getattr_static
         from .bnf_borrow_controller import (
             _present_manual_borrow, present_paris_borrow_verification,
         )
-        # A verification-only gesture is never a new borrow, independently of
-        # source-provider names. The follow-up controller and Core admission
-        # enforce the exact spent claim, account and read-only observation.
+        # A read-only spent-claim verification must terminate before any
+        # mutating admission, including malformed or unsupported providers.
         verification_only = (
             control is not None
             and callable(getattr(control, "get_name", None))
@@ -1714,107 +1703,20 @@ class MainWindow(Adw.ApplicationWindow):
                 self, item, control, TaskPriority=TaskPriority,
             )
             return
-        # The claimed one-shot executor is never permitted to fall through to
-        # the historic session.borrow(), even if the ABI is missing/malformed.
-        # A provider-independent, versioned installed-plugin declaration is
-        # required to reach Core's durable single-attempt mutation path.
+        # No legacy session.borrow() fallback. Missing, malformed or disabled
+        # plugin policy must never manufacture permission to issue a POST.
         try:
-            session = self.service._session_for_source(
-                item.source_provider, item.source_credential,
-            )
-            claimed_executor = (
-                callable(getattr_static(
-                    type(session), "borrow_explicit_with_claim", None,
-                ))
-                or callable(getattr_static(
-                    session, "borrow_explicit_with_claim", None,
-                ))
-            )
+            policy = self.service.manual_borrow_policy(item)
         except Exception:
             return
-        if claimed_executor:
-            policy = self.service.manual_borrow_policy(item)
-            if policy is None:
-                return
-            _present_manual_borrow(
-                self, item, control, TaskPriority=TaskPriority,
-                label=session.descriptor.display_name,
-                available=self.service.can_borrow_manual,
-                dispatch=self.service.borrow_manual, expected_account=account,
-            )
+        if policy is None:
             return
-        try:
-            session, accounts = self._eligible_borrow_accounts(item)
-        except Exception as exc:
-            self.show_error(str(exc), "Emprunt impossible"); return
-        if not session.capabilities.borrow:
-            self.show_error(f"{session.descriptor.display_name} : emprunt non pris en charge", "Emprunt impossible"); return
-        if not accounts:
-            self.show_error(f"{session.descriptor.display_name} : aucun compte principal disponible", "Emprunt impossible"); return
-        if account is None and len(accounts) > 1:
-            dialog = Adw.MessageDialog.new(self, "Choisir le compte d’emprunt", "Plusieurs comptes sont éligibles. Le compte utilisé doit être choisi explicitement.")
-            dialog.add_response("cancel", "Annuler")
-            for index, candidate in enumerate(accounts):
-                response = f"account-{index}"
-                label = candidate.display_name or candidate.barcode or candidate.unique_id or f"Compte {index + 1}"
-                dialog.add_response(response, label)
-            def selected(_dialog, response):
-                if response.startswith("account-"):
-                    index = int(response.split("-", 1)[1])
-                    self.borrow_search_item(item, control, account=accounts[index])
-            dialog.connect("response", selected); dialog.present(); return
-        # A dialog may have been opened under identity A and clicked after
-        # switching to B (or after disconnect/reconnect). Re-check the exact
-        # registered account instead of trusting the captured callback.
-        if account is not None and not any(candidate is account for candidate in accounts):
-            self.show_error("Le compte sélectionné n'est plus disponible pour cette identité.", "Emprunt impossible")
-            return
-        account = account or accounts[0]
-        identity_id = account.identity_id
-        generation = self._identity_context_generation
-        account_scope = (
-            account.identity_id, account.provider_id,
-            account.credential_id, account.unique_id,
+        _present_manual_borrow(
+            self, item, control, TaskPriority=TaskPriority,
+            label=self.service.provider_display_name(item.source_provider),
+            available=self.service.can_borrow_manual,
+            dispatch=self.service.borrow_manual, expected_account=account,
         )
-
-        def current() -> bool:
-            if (getattr(self, "_closed", False)
-                    or self._identity_context_generation != generation
-                    or getattr(self.service.current_identity, "identity_id", None) != identity_id
-                    or not session.connected
-                    or (account.identity_id, account.provider_id,
-                        account.credential_id, account.unique_id) != account_scope):
-                return False
-            try:
-                return self.service._session_for_source(
-                    item.source_provider, item.source_credential,
-                ) is session
-            except Exception:
-                return False
-
-        def work():
-            # The task runner may start after the user changes identity,
-            # credential or provider session; do not send a stale borrow POST.
-            if not current():
-                from ..plugin_api import Cancelled
-                raise Cancelled("Le contexte de l'emprunt a changé.")
-            loan = session.borrow(item, account)
-            loan.identity_id = loan.identity_id or identity_id
-            if loan.source_account_id is None:
-                loan.source_account_id = account.unique_id or "primary"
-            loans = self.service.refresh_identity_loans(force=True, identity_id=identity_id)
-            return loan, loans
-
-        def ok(value) -> None:
-            if not current():
-                return
-            loan, _loans = value
-            self._activity_result(f"Emprunt confirmé : {loan.title}")
-            self.refresh_library(False)
-            self.refresh_recent()
-
-        self.runner.submit(f"Emprunt depuis {item.source_provider}…", work, ok, control=control,
-            priority=TaskPriority.USER_ACTION, kind="borrow")
 
     def download_direct_item(self, item: SearchResult, control: Gtk.Widget | None = None) -> None:
         from .search_snapshot_refresh import invalidate_search_snapshot
