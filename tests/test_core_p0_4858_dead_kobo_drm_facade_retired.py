@@ -16,6 +16,5 @@ def test_unused_kobo_drm_normalization_is_absent_from_library_service():
     methods = {node.name for node in service.body
                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     assert "_kobo_canonical_drm" not in methods
-    # The legacy executor's existing adapter remains its only DRM normalizer.
-    adapter = (ROOT / "src/cifereca/kobo/acquisition.py").read_text()
-    assert "def canonical_drm(value: Any)" in adapter
+    # The legacy supplier DRM adapter has been removed, not relocated.
+    assert not (ROOT / "src/cifereca/kobo/acquisition.py").exists()

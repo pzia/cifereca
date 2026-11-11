@@ -58,3 +58,18 @@ def test_retired_d3_fails_closed_without_provider_get_or_file_changes(
         )
     finally:
         service.close()
+
+
+def test_supplier_candidate_parser_no_longer_installed_in_core():
+    from pathlib import Path
+    from cifereca.services import LibraryService
+
+    root = Path(__file__).resolve().parents[1] / "src" / "cifereca"
+    assert not (root / "kobo" / "acquisition.py").exists()
+    for name in (
+        "_kobo_candidate", "_kobo_acsm_candidate",
+        "_kobo_delegated_candidate", "_kobo_delegated_request",
+        "_kobo_kdrm_context", "_kobo_candidate_drm",
+        "_kobo_candidate_handling", "_kobo_adept_format",
+    ):
+        assert not hasattr(LibraryService, name), name
