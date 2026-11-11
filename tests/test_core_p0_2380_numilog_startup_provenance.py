@@ -40,3 +40,27 @@ def test_retired_worker_cannot_fabricate_current_download_facts():
         "startup_materialization",
         {"status": "complete", "downloaded": 1, "attempted": 1},
     ) == {}
+
+
+def test_active_numilog_session_and_delivery_diagnostics_remain_filtered():
+    from cifereca.core.diagnostic_numilog_projection import (
+        public_numilog_fields, public_numilog_message,
+    )
+    session = public_numilog_fields(
+        "session_state", {"reason": "connect_failed", "connected": False,
+                          "secret": "https://private.invalid/?token=NEVER_SHOW"},
+    )
+    assert session == {"reason": "connect_failed", "connected": False}
+    assert public_numilog_message("session_state", session) is not None
+    delivery = public_numilog_fields(
+        "acquisition_delivery", {
+            "phase": "completed", "code": "epub_complete",
+            "mime": "epub", "http_status": 200,
+            "url": "https://private.invalid/?token=NEVER_SHOW",
+        },
+    )
+    assert delivery == {
+        "phase": "completed", "code": "epub_complete",
+        "mime": "epub", "http_status": 200,
+    }
+    assert "NEVER_SHOW" not in public_numilog_message("acquisition_delivery", delivery)
