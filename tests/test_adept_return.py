@@ -155,16 +155,13 @@ def test_retired_return_does_not_rewrite_a_historical_return_state(tmp_path: Pat
         service.close()
 
 
-def test_core_adept_return_helper_is_inert_even_for_direct_legacy_callers():
-    from cifereca.core.adept_acquisition_return import return_adept_acquisition
+def test_core_adept_return_legacy_helper_is_removed():
+    from pathlib import Path
+    import cifereca.core
 
+    assert not (Path(cifereca.core.__file__).resolve().parent /
+                "adept_acquisition_return.py").exists()
+    # The supported facade is still fail-closed for direct legacy invocations.
     with pytest.raises(AttentionRequired) as caught:
-        return_adept_acquisition(
-            object(), "private-acquisition",
-            AttentionRequired=AttentionRequired,
-            ProviderConfigurationError=object(),
-            DrmMutationRequest=object(),
-            time=object(),
-        )
+        LibraryService.return_adept_acquisition(object(), "private-acquisition")
     assert caught.value.code == "loan_return_removed"
-    assert "private-acquisition" not in str(caught.value)
