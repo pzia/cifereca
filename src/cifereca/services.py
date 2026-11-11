@@ -4006,33 +4006,6 @@ class LibraryService:
             offline_canonical_only=offline_canonical_only,
         )
 
-    def sync_kobo_backup_account(
-        self, credential_id: str,
-        progress: Callable[[dict[str, Any]], None] | None = None,
-        *, retry_scope_blocked: bool = False, cancelled: Callable[[], bool] | None = None,
-    ) -> dict[str, Any]:
-        """One Kobo account: cooperative cancellation and scoped delegation retry.
-
-        retry_scope_blocked is for an explicit action after provider reauthorization.
-        Cancellation stops between items, never amid a file write. All local
-        artifact and duplicate reconciliation guards remain enforced.
-        """
-        # W2/D2 #4858: the old scoped resume is a *public* entry and can
-        # dispatch a complete typed Kobo delivery ABI directly to the same
-        # Core A→B Sync executor as generic Sync. The canonical Sync acquires
-        # the global lease itself; never nest it beneath the 0.7 backup lock.
-        # An incomplete ABI must fail closed; no legacy W2 dispatch.
-        from .core.kobo_backup_canonical_dispatch import run_scoped_canonical_kobo_resume
-        canonical = run_scoped_canonical_kobo_resume(
-            self, credential_id, progress=progress, cancelled=cancelled,
-            retry_scope_blocked=retry_scope_blocked,
-        )
-        if canonical is not None:
-            return canonical
-        raise ProviderConfigurationError(
-            "kobo_legacy_w2_retired_use_canonical_provider"
-        )
-
     def synchronize_kobo_selected_edition(
         self, credential_id: str, edition_id: str, *,
         explicit_user_action: bool = False,
