@@ -69,6 +69,45 @@ def test_consented_exact_loan_stages_candidate_without_ledger_or_adept(connected
     assert not session.capabilities.digital_download
 
 
+def test_missing_candidate_reason_abi_refuses_before_any_get(
+    connected_core, monkeypatch,
+):
+    service, session, _account, loan, _state, downloaded = connected_core
+    monkeypatch.delattr(type(session), "loan_stage_candidate_reason")
+    with pytest.raises(
+        ProviderConfigurationError, match="bnf_loan_token_unavailable",
+    ):
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default",
+        )
+    assert not downloaded
+    assert not service.storage.acquisitions()
+
+
+def test_dynamic_candidate_reason_property_cannot_execute(
+    connected_core, monkeypatch,
+):
+    service, session, _account, loan, _state, downloaded = connected_core
+    seen = []
+
+    def hostile(self):
+        seen.append("called")
+        raise AssertionError("dynamic ABI evaluated")
+
+    monkeypatch.setattr(
+        type(session), "loan_stage_candidate_reason", property(hostile),
+    )
+    with pytest.raises(
+        ProviderConfigurationError, match="bnf_loan_token_unavailable",
+    ):
+        service.stage_bnf_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default",
+        )
+    assert seen == []
+    assert not downloaded
+    assert not service.storage.acquisitions()
+
+
 def test_no_consent_rejects_before_read_or_local_staging(connected_core):
     service, session, account, loan, state, downloaded = connected_core
     for consent in (False, None, 1, "yes"):
