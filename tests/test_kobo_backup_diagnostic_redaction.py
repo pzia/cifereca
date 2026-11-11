@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 
-from cifereca.core.kobo_backup import _safe_kobo_backup_diagnostic_detail
+from cifereca.core.legacy_diagnostic_projection import _safe_kobo_backup_diagnostic_detail
 from tests.test_kobo_backup_observability import _service
 
 
