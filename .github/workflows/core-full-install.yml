@@ -7,43 +7,48 @@ permissions:
   contents: read
 jobs:
   full-install:
-    name: Temporary repository structural audit
+    name: Temporary structural coupling ranking
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
-      - name: Inspect tracked layout and plugin imports
+      - name: Rank structural inconsistencies
         run: |
           python - <<'PY'
-          import subprocess,collections,json,pathlib,ast
+          import json,ast,pathlib,subprocess,collections,importlib.util
+          from scripts.ci_provider_core_coupling_inventory import inventory
+          r=inventory(pathlib.Path.cwd())
+          print('AUDIT2_BEGIN')
+          print('DEDICATED_FILES='+json.dumps(sorted(((p,v['lines'],v['provider']) for p,v in r['dedicated_per_file'].items()),key=lambda x:-x[1])))
+          print('GENERIC_TOP='+json.dumps(sorted(((p,v['mixed_provider_lines']) for p,v in r['generic_per_file'].items()),key=lambda x:-x[1])[:35]))
+          print('AST_SIGNAL_COUNTS='+json.dumps({k:r[k] for k in ('files_with_signals','import_signals','comparison_signals','dispatch_table_signals','dispatch_call_signals','provider_method_call_signals','provider_dynamic_call_signals')}))
           fs=subprocess.check_output(['git','ls-files','-z']).decode().strip('\0').split('\0')
-          print('AUDIT_BEGIN')
-          print('TOTAL_TRACKED='+str(len(fs)))
-          for depth in (1,2,3):
-              groups=collections.Counter('/'.join(p.split('/')[:depth]) for p in fs)
-              if depth==1: print('ROOT='+json.dumps(groups.most_common(),ensure_ascii=False))
-              if depth==2: print('LEVEL2='+json.dumps([(k,v) for k,v in sorted(groups.items()) if k.startswith(('src/','docs/','tests/','simulation/','scripts/','e2e/','environnements/'))],ensure_ascii=False))
-              if depth==3: print('LEVEL3_SRC='+json.dumps([(k,v) for k,v in sorted(groups.items()) if k.startswith(('src/cifereca/','src/plugins/'))],ensure_ascii=False))
-          for root in ('src/cifereca/core/','src/cifereca/kobo/','src/cifereca/paris/','src/cifereca/providers/','src/cifereca/plugin_api/'):
-              print('FILES '+root+'='+json.dumps([x.removeprefix(root) for x in fs if x.startswith(root)],ensure_ascii=False))
-          for root in ('src/plugins/','docs/','tests/'):
-              p=[x for x in fs if x.startswith(root)]
-              matches=[x for x in p if any(y in x.lower() for y in ('legacy','right','entitle','manifest','backup','reconcil','bnf','kobo','numilog','paris','provider'))]
-              print('MATCHES '+root+'='+json.dumps(matches[:270],ensure_ascii=False)+' COUNT='+str(len(matches)))
-          pkgs=collections.Counter(x.split('/')[2] for x in fs if x.startswith('src/plugins/') and len(x.split('/'))>2)
-          print('PLUGIN_PACKAGES='+json.dumps(pkgs.most_common(),ensure_ascii=False))
-          special=[]
-          for p in fs:
-              if p.endswith('.py') and p.startswith('src/plugins/'):
-                  s=pathlib.Path(p).read_text(errors='replace')
-                  try: t=ast.parse(s)
-                  except SyntaxError: continue
-                  for n in ast.walk(t):
-                      mod=''
-                      if isinstance(n,ast.ImportFrom): mod=n.module or ''
-                      elif isinstance(n,ast.Import): mod=','.join(a.name for a in n.names)
-                      if mod.startswith(('cifereca.core','cifereca.storage','cifereca.services','cifereca.gui','cifereca.kobo','cifereca.paris')):
-                          special.append((p,n.lineno,mod))
-          print('PRIVATE_PLUGIN_IMPORTS='+json.dumps(special[:150],ensure_ascii=False)+' COUNT='+str(len(special)))
-          print('AUDIT_END')
+          plugin_files=[p for p in fs if p.startswith('src/plugins/') and p.endswith('.py') and '/tests/' not in p]
+          private=[]
+          for p in plugin_files:
+              try: tree=ast.parse(pathlib.Path(p).read_text())
+              except SyntaxError: continue
+              for n in ast.walk(tree):
+                  modules=[]
+                  if isinstance(n,ast.Import): modules=[x.name for x in n.names]
+                  if isinstance(n,ast.ImportFrom):
+                      if n.level==0: modules=[n.module or '']
+                  for m in modules:
+                      if m.startswith(('cifereca.core','cifereca.storage','cifereca.services','cifereca.gui','cifereca.kobo','cifereca.paris','cifereca.acquisition_engine','cifereca.models','cifereca.providers')):
+                          private.append((p,n.lineno,m))
+          print('PROD_PLUGIN_PRIVATE_IMPORTS='+json.dumps(private)+' COUNT='+str(len(private)))
+          roots=['src/cifereca/kobo/','src/cifereca/core/','src/cifereca/gui/','src/plugins/','tests/','docs/']
+          for root in roots:
+              sel=[p for p in fs if p.startswith(root)]
+              print('TRACKED_COUNT '+root+'='+str(len(sel)))
+          core=pathlib.Path('src/cifereca/core')
+          bystem=collections.Counter()
+          for p in core.glob('*.py'):
+              x=p.stem
+              for prefix in ('kobo','numilog','bnf','paris','legacy','rights','loan','borrow','device_usb','canonical','diagnostic','provider','source','library','adept'):
+                  if x.startswith(prefix):bystem[prefix]+=1;break
+          print('CORE_STEM_COUNTS='+json.dumps(bystem))
+          names=[x for x in fs if x.startswith('src/plugins/') and x.endswith('/cifereca-plugin.json')]
+          print('PLUGIN_MANIFESTS='+json.dumps(names))
+          print('AUDIT2_END')
           PY
