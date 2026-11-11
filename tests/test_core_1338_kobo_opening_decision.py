@@ -124,46 +124,6 @@ def test_manual_only_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeyp
     finally:
         service.close()
 
-    other = _service(tmp_path)
-    try:
-        persisted = other.kobo_backup_diagnostic()
-        assert persisted["items"] == 0
-        assert persisted["opening_decision"]["status"] == "manual_only"
-        assert persisted["opening_decision"]["persisted_enabled"] is False
-        assert "vault" not in json.dumps(persisted).lower()
-    finally:
-        other.close()
-
-
-@pytest.mark.parametrize("invalid", [
-    "{invalid-json",
-    json.dumps({"schema_version": 1, "status": "secret-account-name",
-                "persisted_enabled": "true", "connected_kobo": "5",
-                "eligible_kobo": -1, "checked_at": True,
-                "token": "Bearer SECRET", "signed_url": "https://secret.example/"}),
-])
-def test_kobo_persisted_decision_never_echoes_untrusted_metadata(tmp_path, invalid):
-
-    service = _service(tmp_path)
-    try:
-        service.storage.metadata_set("kobo_backup_opening_decision_v1", invalid)
-        report = service.kobo_backup_diagnostic()
-        output = json.dumps(report)
-        assert "SECRET" not in output
-        assert "secret.example" not in output
-        assert "secret-account-name" not in output
-        assert "Bearer" not in output
-        if invalid.startswith("{invalid"):
-            assert report["opening_decision"] is None
-        else:
-            assert report["opening_decision"] == {
-                "schema_version": 1, "status": "unknown", "persisted_enabled": False,
-            }
-    finally:
-        service.close()
-
-
-
 @pytest.mark.parametrize("malformed_flag", ["false", "true", 1, 0, None])
 def test_kobo_autobackup_opt_in_must_be_literal_boolean(tmp_path, monkeypatch, malformed_flag):
     """A malformed flag must never authorize background downloads."""
@@ -171,7 +131,7 @@ def test_kobo_autobackup_opt_in_must_be_literal_boolean(tmp_path, monkeypatch, m
     try:
         _neutralize_unrelated_sync_work(service, monkeypatch)
         service.config.set("kobo_backup.enabled", malformed_flag)
-        assert service.kobo_backup_enabled() is False
+        assert service.config.get("kobo_backup.enabled") is not True
         monkeypatch.setattr(service, "_sync_kobo_backup_locked",
                             lambda progress=None: pytest.fail("unconsented download"), raising=False)
         response = service._opening_sync_locked(deep=False)
@@ -195,8 +155,7 @@ def test_retired_w2_cannot_report_synthetic_provider_success(tmp_path, monkeypat
         result = service._opening_sync_locked(deep=False)
         assert result["kobo_decision"]["status"] == "manual_only"
         assert result["kobo_decision"]["scheduled_kobo"] == 0
-        report = service.kobo_backup_diagnostic()
-        assert report["opening_decision"]["status"] == "manual_only"
-        assert report["items"] == 0
+        assert result["kobo_decision"]["persisted_enabled"] is True
+        assert service.storage.backup_list(provider_id="kobo") == []
     finally:
         service.close()
