@@ -14,10 +14,6 @@ import re
 import stat
 from typing import Any
 
-from .diagnostic_kobo_projection import (
-    public_kobo_backup_decision, public_kobo_backup_log,
-    public_kobo_backup_message,
-)
 from .public_provider_diagnostics import (
     canonical_public_provider_id,
     public_connection_fields,
@@ -232,12 +228,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 _TASK_CORRELATION.fullmatch(match["body"])
                 if match["logger"] == "cifereca" else None
             )
-            # This exact Core-owned Kobo decision is a small typed fact,
-            # not a general-purpose log parser or an inferred task link.
-            kobo_detail = (
-                public_kobo_backup_log(match["body"])
-                if match["logger"] == "cifereca" else {}
-            )
             source_sync_detail = (
                 public_source_sync_log(match["body"])
                 if match["logger"] == "cifereca" else {}
@@ -296,8 +286,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 message = public_adept_message(adept_detail)
             elif source_sync_detail:
                 message = public_source_sync_message(source_sync_detail)
-            elif kobo_detail:
-                message = public_kobo_backup_message(kobo_detail)
             elif task_correlation:
                 message = task_correlation[0]
             elif trace and trace.group(1).lower() in _STRUCTURED_TERMS and trace.group(2).lower() in (_STRUCTURED_TERMS | {"core"}):
@@ -333,7 +321,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # from the exact known producer. Never classify arbitrary TRACE
             # text, guessed module names or timestamps as domain evidence.
             business_module = (
-                "KOBO" if kobo_detail else
                 "SYNC" if source_sync_detail else
                 "PNB" if loan_download_detail and loan_download_detail["provider_id"] == "paris" else
                 "LOAN" if loan_download_detail or bnf_action_detail else
@@ -352,7 +339,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 or source_sync_detail.get("provider_id")
                 or loan_download_detail.get("provider_id")
                 or bnf_action_detail.get("provider_id")
-                or ("kobo" if kobo_detail else None)
             )
             events.append({
                 "timestamp": ts,
@@ -362,7 +348,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 **({"business_module": business_module} if business_module else {}),
                 "severity": match["level"].lower(),
                 "message": message[:500] if source_sync_detail or loan_download_detail or adept_detail else message[:240],
-                **({"detail": kobo_detail} if kobo_detail else {}),
                 **({"detail": connection_detail, "status": "error"} if connection_detail else {}),
                 **({"detail": connection_success_detail, "status": "ok"}
                    if connection_success_detail else {}),
@@ -533,12 +518,6 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             )):
                 public_detail = validated
                 message = "connexion fournisseur réussie"
-        if (category == "KOBO"
-                and operation == "automatic backup decision"
-                and type(diagnostics) is Diagnostics
-                and row.get("verified_kobo_backup") is True):
-            public_detail = public_kobo_backup_decision(row.get("detail"))
-            message = public_kobo_backup_message(public_detail) or "[opération masquée]"
         reconciliation_detail = {}
         if (category == "LIBRARY"
                 and operation == "library_reconciliation_audit"
@@ -640,11 +619,6 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
               and row.get("verified_public_provider_success") is True
               and public_detail.get("code") == "provider_connected"):
             attested_provider_id = public_detail["provider_id"]
-        elif (category == "KOBO"
-                             and operation == "automatic backup decision"
-                             and row.get("verified_kobo_backup") is True
-                             and public_detail):
-            attested_provider_id = "kobo"
         base_id = _event_id("core_events", utc_stamp, category + ":" + operation)
         event_id = base_id
         # Two records may share the same timestamp/category/operation.

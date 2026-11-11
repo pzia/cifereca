@@ -37,17 +37,18 @@ def test_unverified_supplier_category_keeps_private_payload_masked(
     assert secret not in json.dumps(report)
 
 
-def test_verified_core_kobo_backup_still_emits_typed_public_observation(tmp_path):
+def test_retired_kobo_decision_is_never_attested_by_generic_events(tmp_path):
     diagnostics = Diagnostics(level="detailed")
-    diagnostics.add_core_kobo_backup_decision({
+    diagnostics.add("KOBO", "automatic backup decision", "warning", detail={
         "status": "partial", "persisted_enabled": True,
         "connected_kobo": 1, "eligible_kobo": 1, "interval_minutes": 60,
+        "token": "PRIVATE_TOKEN",
     })
     report = query_diagnostic_events(
         diagnostics, source="core_events", log_path=tmp_path / "absent",
     )
     event, = report["events"]
-    assert event["provider_id"] == "kobo"
-    assert event["module"] == "KOBO"
-    assert event.get("detail", {}).get("status") == "partial"
-    assert event["message"] != "[opération masquée]"
+    assert "provider_id" not in event
+    assert "detail" not in event
+    assert event["message"] == "[opération masquée]"
+    assert "PRIVATE_TOKEN" not in json.dumps(report)

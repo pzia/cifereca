@@ -35,38 +35,6 @@ def _log(path, *lines):
     )
 
 
-def test_kobo_business_filter_includes_closed_core_and_log_without_guessing_link(
-    tmp_path,
-):
-    diagnostics = Diagnostics()
-    diagnostics.add_core_kobo_backup_decision(KOBO)
-    log = tmp_path / "cifereca.log"
-    _log(log, ("cifereca", KOBO_LOG))
-
-    result = query_diagnostic_events(
-        diagnostics, source="all", log_path=log, module="KOBO",
-    )
-    assert result["total"] == 2
-    by_source = {row["source"]: row for row in result["events"]}
-    assert set(by_source) == {"core_events", "app_log"}
-    assert by_source["core_events"]["module"] == "KOBO"
-    assert by_source["app_log"]["module"] == "cifereca"
-    assert by_source["app_log"]["business_module"] == "KOBO"
-    assert "business_module" not in by_source["core_events"]
-    assert by_source["core_events"]["detail"] == by_source["app_log"]["detail"]
-    assert by_source["core_events"]["event_id"] != by_source["app_log"]["event_id"]
-    assert all("task_ref" not in row for row in result["events"])
-    assert PRIVATE not in json.dumps(result)
-    assert result["status"] in {"available", "partial"}
-
-    # Logger queries remain valid, and neither channel changes its identity.
-    logger_only = query_diagnostic_events(
-        diagnostics, source="all", log_path=log, module="cifereca",
-    )
-    assert logger_only["total"] == 1
-    assert logger_only["events"][0]["source"] == "app_log"
-
-
 def test_numilog_session_filter_keeps_plugin_observation_distinct_from_core(
     tmp_path,
 ):
