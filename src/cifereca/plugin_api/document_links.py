@@ -41,12 +41,7 @@ def document_links(row: Mapping[str, Any]) -> tuple[DocumentLink, ...]:
             relation = str(raw.get('relation') or 'related').strip().casefold() or 'related'
             label = str(raw.get('label') or '').strip()
             if not label:
-                if relation == 'gallica':
-                    label = 'Ouvrir dans Gallica'
-                elif relation == 'notice':
-                    label = 'Ouvrir la notice'
-                else:
-                    continue
+                label = 'Ouvrir la notice' if relation == 'notice' else 'Ouvrir le document'
             raw_id = str(raw.get('id') or '').strip()
             link_id = raw_id or f'document-{index}'
             links.append(DocumentLink(link_id, label, url, relation))

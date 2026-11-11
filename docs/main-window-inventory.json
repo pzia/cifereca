@@ -6347,7 +6347,7 @@
         {
           "test": "test_explicit_gallica_document_link_gets_standard_label",
           "assertions": [
-            "[link.label for link in links] == ['Ouvrir la notice', 'Ouvrir dans Gallica']",
+            "[link.label for link in links] == ['Ouvrir la notice', 'Ouvrir le document']",
             "links[1].relation == 'gallica'"
           ]
         },
