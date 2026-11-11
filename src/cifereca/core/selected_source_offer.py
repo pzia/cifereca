@@ -1,0 +1,118 @@
+"""Provider-neutral, exact source offer selection for explicit manual delivery.
+
+No entitlement, ownership history, provider URL or pseudo-right is read here.
+Only the real, bound supplier session can attest a current selected offer.
+The canonical Core executor independently verifies staging, SHA and placement.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from inspect import getattr_static
+
+from ..models import Account
+from .canonical_delivery_abi import has_complete_delivery_abi
+from .private_inventory_binding import exact_private_inventory_binding_valid
+
+
+@dataclass(frozen=True, repr=False)
+class SourceOfferTarget:
+    identity_id: str
+    provider_id: str
+    credential_id: str
+    account_id: str
+    item_id: str
+    branch: str
+    session: object = field(compare=False, repr=False)
+    entitlement_id: None = None
+
+
+def _resolve(service, target: SourceOfferTarget):
+    """Recheck the exact account and live delivery ABI without provider I/O."""
+    if type(target) is not SourceOfferTarget:
+        raise ValueError("selected_source_target_invalid")
+    if (getattr(getattr(service, "current_identity", None), "identity_id", None)
+            != target.identity_id):
+        raise ValueError("selected_source_identity_changed")
+    accounts = [
+        account for account in service.accounts
+        if type(account) is Account
+        and (account.identity_id, account.provider_id, account.credential_id,
+             account.unique_id) == (
+                 target.identity_id, target.provider_id,
+                 target.credential_id, target.account_id,
+             )
+    ]
+    if len(accounts) != 1:
+        raise ValueError("selected_source_account_ambiguous")
+    account = accounts[0]
+    session = service._sessions.get(
+        service._session_key(target.provider_id, target.credential_id)
+    )
+    if (session is not target.session
+            or getattr_static(session, "selected_purchase_branch", None) != target.branch
+            or not has_complete_delivery_abi(session)
+            or not callable(getattr_static(
+                session, "downloadable_selected_delivery_candidate_guarded", None
+            ))
+            or not exact_private_inventory_binding_valid(
+                service, account, session=session, provider_id=target.provider_id,
+            )):
+        raise ValueError("selected_source_binding_changed")
+    return target, account
+
+
+def select_source_offer_target(
+    service, *, provider_id: str, credential_id: str, item_id: str,
+):
+    """Passive target construction: never performs a catalogue or content GET."""
+    if (not all(type(x) is str and x and len(x) <= 1024
+                and not any(c in x for c in "\x00\r\n")
+                for x in (provider_id, credential_id, item_id))):
+        return None
+    try:
+        identity = service.current_identity.identity_id
+        accounts = [a for a in service.accounts
+                    if a.provider_id == provider_id
+                    and a.credential_id == credential_id
+                    and a.identity_id == identity]
+        if len(accounts) != 1:
+            return None
+        account = accounts[0]
+        session = service._sessions.get(service._session_key(provider_id, credential_id))
+        branch = getattr_static(session, "selected_purchase_branch", None)
+        if type(branch) is not str or not branch or len(branch) > 128:
+            return None
+        target = SourceOfferTarget(
+            identity, provider_id, credential_id, account.unique_id,
+            item_id, branch, session,
+        )
+        _resolve(service, target)
+        return target
+    except Exception:
+        return None
+
+
+def obtain_source_offer(service, target: SourceOfferTarget):
+    """Core's existing global-lock, single-offer A→B path, without entitlements."""
+    def resolve(_service, entitlement_id, identity_id, item_id):
+        if (entitlement_id is not None or identity_id != target.identity_id
+                or item_id != target.item_id):
+            raise ValueError("selected_source_coordinates_changed")
+        pinned, _ = _resolve(_service, target)
+        return pinned, None
+
+    def current(_service, selected, *, selected_offer_id=None):
+        if selected is not target:
+            return False
+        try:
+            _resolve(_service, target)
+            # Admission itself never depends on a stored offer: the provider's
+            # fresh selected snapshot is checked independently under lock.
+            return True
+        except Exception:
+            return False
+
+    from .explicit_owned_canonical import obtain_explicit_owned
+    return obtain_explicit_owned(
+        service, target, resolve=resolve, right_current=current,
+    )
