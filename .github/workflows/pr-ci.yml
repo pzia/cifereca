@@ -24,6 +24,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Temporary P0 #5048 AST recount (audit only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_provider_core_coupling_report.py --json > "$RUNNER_TEMP/p0-ast-recount.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ["RUNNER_TEMP"]) / "p0-ast-recount.json").read_text())
+          summary = {
+              "core_files": report["total_core_python_files"],
+              "generic_ast_unique_lines": report["line_partition"]["generic_ast_signal"],
+              "remaining_generic_unique_lines": report["remaining_generic_after_expanded_named_scope"]["ast_signal_lines"],
+              "provider_occurrences": report["generic_ast_signal_occurrences_by_provider_alias"],
+              "parse_errors": report["historical"]["parse_errors"],
+          }
+          print("P0_AST_RECOUNT_JSON=" + json.dumps(summary, sort_keys=True))
+          PY
+
       - name: Block new Core provider coupling (P0 #5057)
         if: github.event_name == 'pull_request'
         shell: bash
