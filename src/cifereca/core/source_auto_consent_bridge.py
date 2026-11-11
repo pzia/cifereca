@@ -69,6 +69,21 @@ def toggle_state(db, source: SourceKey):
     spec = _POLICIES.get((source.scope.provider_id, source.kind))
     if spec is None:
         return None
+    # No alternative historical per-right grant can bypass an explicitly
+    # disabled loan source. This runs inside the same SQLite transaction as
+    # the final local publication guard.
+    if source.kind == "loan":
+        try:
+            from .source_sync_consent import source_enablement_key
+            from .source_enablement import source_enabled
+            enabled_row = db.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                (source_enablement_key(source.scope),),
+            ).fetchone()
+            if not source_enabled(enabled_row[0] if enabled_row else None):
+                return "off"
+        except Exception:
+            return "off"
     # The old Sync source-id encoding maps an empty primary borrower to the
     # literal text "provider:credential:primary". A real upstream borrower
     # can have exactly that ID. A legacy source-wide ON row cannot identify
