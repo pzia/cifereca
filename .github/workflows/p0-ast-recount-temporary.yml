@@ -1,0 +1,28 @@
+name: P0 AST recount temporary
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-ast-recount-temporary.yml'
+permissions:
+  contents: read
+jobs:
+  recount:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Generate provider AST report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_provider_core_coupling_report.py --json > "$RUNNER_TEMP/ast.json"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          r=json.loads((Path(os.environ["RUNNER_TEMP"])/"ast.json").read_text())
+          print("RESIDUAL_AST=" + str(r["remaining_generic_after_expanded_named_scope"]["ast_signal_lines"]))
+          PY
+      - uses: actions/upload-artifact@v6
+        with:
+          name: p0-ast-recount
+          path: ${{ runner.temp }}/ast.json
+          retention-days: 1
