@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from cifereca import acsm_cache
-from cifereca.core.paris_initial_canonical_candidate import stage_first_paris_acsm
+from cifereca.acsm_cache import stage_claimed_initial_acsm
 from cifereca.models import Account
 from tests.test_core_p0_3121_initial_acsm_receipt import first_offer
 from tests.test_core_p0_3171_atomic_publication_v14 import new_source
@@ -54,7 +54,7 @@ def setup(first_offer, tmp_path):
 
 def stage(case, *, current=lambda: True):
     service, session, account, source, attempt, *_ = case
-    return stage_first_paris_acsm(
+    return stage_claimed_initial_acsm(
         service, session, account, source, attempt=attempt,
         admission_current=current)
 
@@ -86,7 +86,7 @@ def test_first_offer_fail_closed(setup, mutate, tmp_path):
     elif mutate == "other_account":
         other = replace(account, unique_id="another")
         case = (service, session, other, source, attempt, path, claim, loan)
-        with pytest.raises(ValueError, match="canonical_paris_initial_scope_invalid"):
+        with pytest.raises(ValueError, match="canonical_initial_scope_invalid"):
             stage(case)
         return
     elif mutate == "claim_not_confirmed":
@@ -105,10 +105,10 @@ def test_first_offer_fail_closed(setup, mutate, tmp_path):
     elif mutate == "token_modified":
         path.write_bytes(b"not-the-initial-token")
     elif mutate == "epoch":
-        with pytest.raises(ValueError, match="canonical_paris_initial_admission_revoked"):
+        with pytest.raises(ValueError, match="canonical_initial_admission_revoked"):
             stage(setup, current=lambda: False)
         return
-    with pytest.raises(ValueError, match="canonical_paris_initial_"):
+    with pytest.raises(ValueError, match="canonical_initial_"):
         stage(setup)
     assert list(attempt.iterdir()) == []
 
@@ -130,7 +130,7 @@ def test_other_paris_borrower_keeps_existing_selected_right_path(setup):
     session.loans = lambda _: pytest.fail(
         "no borrow inventory for non-primary first-offer receipt"
     )
-    assert stage_first_paris_acsm(
+    assert stage_claimed_initial_acsm(
         service, session, other, alternate, attempt=attempt,
         admission_current=lambda: True,
     ) is None
