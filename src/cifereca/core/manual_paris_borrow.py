@@ -6,7 +6,8 @@ connection is unambiguous. Neither source status nor an ADEPT binding grants
 a loan right: the lender still decides after the explicitly claimed click.
 """
 from ..models import Account, SearchResult
-from .manual_library_borrow import manual_borrow, manual_borrow_available\nfrom .primary_source_binding import configured_primary_source_current
+from .manual_library_borrow import manual_borrow, manual_borrow_available
+from .primary_source_binding import configured_primary_source_current
 
 
 def _normal_paris_source_current(service, item: SearchResult, identity_id: str) -> bool:
