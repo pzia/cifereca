@@ -125,3 +125,66 @@ def test_later_verification_transport_unavailable_never_claims_absence(tmp_path)
         assert state["mutations"] == 1
     finally:
         service.close()
+
+
+def test_generic_followup_accepts_linked_primary_only_with_exact_spent_claim(tmp_path):
+    """A fictional linked-account policy can reuse Core's read-only lookup.
+
+    The Paris service diagnostic still refuses this account convention.
+    """
+    from cifereca.core.borrow_later_verification import borrow_followup_available
+
+    service, session, account, item, state = setup(tmp_path)
+    try:
+        account.unique_id = "linked-reader"
+        key = borrow_claim_key(account, item)
+        assert key
+        neutral_readiness = lambda _item: {
+            "local_action_possible": False,
+            "reason_code": "local_previous_attempt",
+        }
+        # Readiness alone is insufficient, even for a primary linked reader.
+        assert not borrow_followup_available(
+            service, item, readiness=neutral_readiness,
+        )
+        claimed, _receipt = service.storage.loan_borrow_claim_once(
+            key, "synthetic-linked-operation",
+        )
+        assert claimed
+        assert service.storage.loan_borrow_finish(
+            key, "synthetic-linked-operation",
+            status="verification_unavailable",
+        ) is not None
+        # Provider-specific policy remains in the Paris service and rejects
+        # linked borrower IDs; Core's generic machinery doesn't hardcode it.
+        assert not service.paris_borrow_followup_available(item)
+        assert borrow_followup_available(
+            service, item, readiness=neutral_readiness,
+        )
+        assert state["mutations"] == 0
+        assert state["calls"] == []
+    finally:
+        service.close()
+
+
+def test_generic_followup_contains_no_paris_primary_sentinel():
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src/cifereca/core/borrow_later_verification.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef)
+        and node.name == "_pending_borrow_followup_scope"
+    )
+    assert not any(
+        isinstance(node, ast.Compare)
+        and any(
+            isinstance(value, ast.Constant) and value.value == ""
+            for value in (node.left, *node.comparators)
+        )
+        for node in ast.walk(function)
+    )
