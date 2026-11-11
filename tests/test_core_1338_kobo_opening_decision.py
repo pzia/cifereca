@@ -110,7 +110,7 @@ def test_opening_manual_only_still_reports_decision_without_backup(tmp_path, mon
 
 def test_manual_only_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeypatch):
     """A second offline process still explains items=0, not 'no error'."""
-    from cifereca.core.kobo_backup import safe_kobo_backup_report
+    from cifereca.core.legacy_diagnostic_projection import safe_kobo_backup_report
 
     service = _service(tmp_path)
     try:
@@ -147,7 +147,7 @@ def test_manual_only_kobo_opening_is_durable_with_no_item_rows(tmp_path, monkeyp
                 "token": "Bearer SECRET", "signed_url": "https://secret.example/"}),
 ])
 def test_kobo_persisted_decision_never_echoes_untrusted_metadata(tmp_path, invalid):
-    from cifereca.core.kobo_backup import safe_kobo_backup_report
+    from cifereca.core.legacy_diagnostic_projection import safe_kobo_backup_report
 
     service = _service(tmp_path)
     try:
@@ -188,7 +188,7 @@ def test_kobo_autobackup_opt_in_must_be_literal_boolean(tmp_path, monkeypatch, m
 
 def test_retired_w2_cannot_report_synthetic_provider_success(tmp_path, monkeypatch):
     """An old ON bit cannot transform a nonexistent W2 run into success."""
-    from cifereca.core.kobo_backup import safe_kobo_backup_report
+    from cifereca.core.legacy_diagnostic_projection import safe_kobo_backup_report
 
     service = _service(tmp_path)
     try:
