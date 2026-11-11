@@ -42,11 +42,7 @@ def test_corrupt_checkpoint_stays_private_and_does_not_crash_report_or_preview(t
         assert leak not in json.dumps(diagnostic["sources"])
         assert not hasattr(service, "_kobo_backup_account_due")
 
-        # A malformed archive must never authorize an ABI-incomplete preview.
-        from cifereca.providers import ProviderConfigurationError
-        import pytest
-        with pytest.raises(ProviderConfigurationError, match="canonical_kobo_preview"):
-            service.kobo_backup_preview("vault-1")
+        assert not hasattr(service, "kobo_backup_preview")
     finally:
         service.close()
 

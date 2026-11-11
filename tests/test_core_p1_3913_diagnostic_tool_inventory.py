@@ -74,7 +74,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
     required_commands = {
         "doctor", "sync", "list", "run", "acquisition-audit",
         "statistics", "catalog-list", "acquisition-ledger",
-        "acquisition-reconcile", "kobo-resume-preview",
+        "acquisition-reconcile",
         "kobo-reconcile-local",
         "paris-adept", "audit-origin", "audit-canonical", "audit-transaction",
         "preview-resolution", "bind", "unbind", "plugin", "diagnose",
@@ -115,7 +115,6 @@ def test_offline_analyzers_are_real_and_named_in_inventory():
         assert (ROOT / path).is_file(), path
         assert path in document, path
     assert "pas de placement final" in document
-    assert "kobo-resume-preview --credential C --refresh-manifest" in document
     assert "lance rien" in BACKLOG.read_text(encoding="utf-8") or (
         "Le rôle backlog **ne lance pas**" in BACKLOG.read_text(encoding="utf-8")
     )
