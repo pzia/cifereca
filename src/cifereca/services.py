@@ -581,11 +581,40 @@ class LibraryService:
         pass it back. The Core revalidates this owner before and after HTTP.
         No entitlement, acquisition, ADEPT or borrowed-state mutation.
         """
-        from .core.bnf_explicit_acsm import stage_bnf_loan_acsm
+        from inspect import getattr_static, isfunction
         from .core.diagnostic_bnf_loan_action import ActionObservation, BnfLoanActionError
+
         observation = ActionObservation(self, 'stage_loan_token')
         try:
-            result = stage_bnf_loan_acsm(
+            # The Core validates the exact origin and consent before dispatch:
+            # a missing/wrong provider must not observe or execute a private
+            # session getter. The plugin supplies only the BnF branch/reasons;
+            # the shared Core still owns the lock, lease and ACSM inspection.
+            if confirmed is not True:
+                raise BnfLoanActionError("bnf_explicit_confirmation_required")
+            if (type(loan) is not Loan or loan.source_provider != "bnf-pret"
+                    or loan.medium != "digital" or loan.state != "active"
+                    or type(loan.source_credential) is not str
+                    or not loan.source_credential
+                    or type(loan.source_account_id) is not str
+                    or not loan.source_account_id
+                    or type(loan.identity_id) is not str or not loan.identity_id
+                    or type(loan.id) is not str or not loan.id
+                    or type(loan.record_id) is not str or not loan.record_id
+                    or type(expected_identity_id) is not str
+                    or expected_identity_id != loan.identity_id):
+                raise BnfLoanActionError("bnf_loan_scope_unproven")
+            try:
+                session = self._session_for_source(
+                    loan.source_provider, loan.source_credential,
+                )
+            except Exception:
+                raise BnfLoanActionError("bnf_loan_scope_unproven") from None
+            if not isfunction(getattr_static(
+                type(session), "stage_loan_acsm_candidate", None,
+            )):
+                raise BnfLoanActionError("bnf_loan_token_unavailable")
+            result = session.stage_loan_acsm_candidate(
                 self, loan, confirmed=confirmed,
                 expected_identity_id=expected_identity_id,
                 interprocess_lock=InterProcessLock,
