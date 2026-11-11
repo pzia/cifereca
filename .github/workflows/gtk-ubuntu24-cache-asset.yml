@@ -1,0 +1,142 @@
+name: Publish Ubuntu 24.04 GTK4 rootless offline cache
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "New immutable tag (gtk4-ubuntu24-noble-amd64-YYYYMMDD)"
+        required: true
+        type: string
+      confirm_publish:
+        description: "Explicit approval to publish immutable prerelease"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gtk4-ubuntu24-noble-amd64-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      github.repository == 'pzia/cifereca' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm_publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    container:
+      image: ubuntu:24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Install Ubuntu runtime bootstrap prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          timeout 240s apt-get -o APT::Update::Error-Mode=any update
+          timeout 240s apt-get install -y --no-install-recommends python3 python3-venv dpkg tar ca-certificates git
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download full Ubuntu Noble GTK4 dependency closure rootlessly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 environnements/chatgpt-work/work_env.py bootstrap
+          mkdir -p .gtk-ubuntu-cache .gtk-publish
+          python3 - <<'PY'
+          from pathlib import Path
+          from shutil import copy2
+          import json
+          src = Path("environnements/chatgpt-work/runtime/apt/archives")
+          dst = Path(".gtk-ubuntu-cache")
+          packages = sorted(src.glob("*.deb"))
+          if not 11 <= len(packages) <= 300:
+              raise SystemExit("Incomplete Ubuntu GTK dependency closure")
+          for package in packages:
+              if not package.is_file() or package.is_symlink():
+                  raise SystemExit("Unexpected package member")
+              copy2(package, dst / package.name)
+          (dst / ".gtk4-cache-profile.json").write_text(
+              json.dumps({"distro":"ubuntu","codename":"noble","architecture":"amd64"},
+                         sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="ascii",
+          )
+          PY
+
+      - name: Validate strict allowlist and create checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset=gtk4-deb-cache-ubuntu24-noble-amd64.tar.gz
+          python3 scripts/ci-validate-gtk-relay-cache.py --platform ubuntu24 \
+            --cache .gtk-ubuntu-cache --output ".gtk-publish/$asset"
+          cd .gtk-publish
+          sha256sum "$asset" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload only reviewed Ubuntu cache and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtk4-ubuntu24-release-staged
+          path: |
+            .gtk-publish/gtk4-deb-cache-ubuntu24-noble-amd64.tar.gz
+            .gtk-publish/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
+
+  publish:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: gtk4-ubuntu24-release-staged
+          path: "${{ runner.temp }}/gtk4-ubuntu24"
+
+      - name: Publish immutable Ubuntu cache prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+          ASSET: gtk4-deb-cache-ubuntu24-noble-amd64.tar.gz
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^gtk4-ubuntu24-noble-amd64-20[0-9]{6}$ ]] || exit 2
+          cd "$RUNNER_TEMP/gtk4-ubuntu24"
+          test "$(find . -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 2
+          test -s "$ASSET" && test -s SHA256SUMS
+          test ! -L "$ASSET" && test ! -L SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 1
+          sha256sum -c SHA256SUMS
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing Ubuntu cache release" >&2
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/ubuntu-gtk-cache-notes.md" <<'NOTES'
+          Ubuntu 24.04 noble amd64 / Python 3.12 rootless GTK4 offline cache.
+          Only validated .deb archives and exact distro marker, without user data,
+          application checkout, screenshots, logs or credentials.
+          Check SHA256SUMS before extraction. Never install on Debian.
+          This immutable prerelease is not the latest Cifereca application.
+          NOTES
+          gh release create "$TAG" "$ASSET" SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "GTK4 Ubuntu 24.04 Noble rootless offline cache" \
+            --notes-file "$RUNNER_TEMP/ubuntu-gtk-cache-notes.md" --prerelease
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
