@@ -186,6 +186,10 @@ _BOOK_DETAIL_STAGES = frozenset({
     "verify_isbn",
     "library_select",
     "verify_library",
+    "begin_owned_book_action",
+    "owned_book_select",
+    "owned_book_action_visible",
+    "owned_book_action_completed",
     "finish",
     "reset_library_detail_for_security_audit",
     "security_detail_expanders",
@@ -211,6 +215,16 @@ _BOOK_DETAIL_STAGES = frozenset({
 })
 
 
+_BOOK_DETAIL_FAILURE_CODES = frozenset({
+    "library_expander_unavailable",
+    "library_author_first", "library_author_second", "library_subject",
+    "library_isbn", "library_award", "library_keyword",
+    "library_collection", "library_public_format", "library_online_calls",
+    "library_owned_begin", "owned_identity", "owned_connection",
+    "owned_account", "owned_entitlement", "owned_admission", "owned_render",
+})
+
+
 def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
     """Expose the last *closed* GUI callback stage, never raw failure data."""
     if scenario not in {
@@ -230,7 +244,11 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
             return {}
         last = data.get("public_stage")
         if type(last) is str and last in _BOOK_DETAIL_STAGES:
-            return {"book_detail_last_stage": last}
+            result = {"book_detail_last_stage": last}
+            code = data.get("book_detail_failure_code")
+            if last == "verify_library" and type(code) is str and code in _BOOK_DETAIL_FAILURE_CODES:
+                result["book_detail_failure_code"] = code
+            return result
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
         pass
     return {}
