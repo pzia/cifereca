@@ -369,7 +369,8 @@ def main(argv: list[str] | None = None) -> int:
             if a.account and a.account != a.credential:
                 raise ReconciliationRejected("source_scope_mismatch")
             result = reconcile_existing_profile(
-                canonical_relink=True, provider_id="kobo", credential_id=a.credential,
+                canonical_relink=True, provider_id="kobo",
+                legacy_journal=True, credential_id=a.credential,
                 identity_id=a.identity, account_id=a.account_id,
                 edition_id=a.item, right_id=a.right,
                 branch_id=a.branch, reference_kind=a.kind,
