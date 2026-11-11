@@ -14,6 +14,8 @@ def test_gtk_apt_operations_are_bounded_and_keep_retry_finite():
     assert "Acquire::http::Timeout=25" in script
     assert "Acquire::https::Timeout=25" in script
     assert "DPkg::Lock::Timeout=30" in script
+    assert script.count("DEBIAN_FRONTEND=noninteractive") == 3
+    assert "Dpkg::Use-Pty=0" in script
     assert "GTK E2E APT retry" in script
     assert "|| true" not in script
     assert "set -euo pipefail" in script
