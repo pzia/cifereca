@@ -13,8 +13,11 @@ def test_bnf_claim_detail_projection_is_absent_without_changing_loan_guards():
     assert "Une demande BnF existe peut-être déjà" in detail
     assert "Consultez Mes emprunts avant toute nouvelle demande" in detail
     assert "Cifereca ne répétera pas automatiquement l’emprunt" in detail
-    assert 'if item.source_provider == "paris":' in detail
-    assert "paris_borrow_diagnostic" in detail
+    # #5387: Paris eligibility diagnostics must not be a CoreUI fallback.
+    # This is independent from the BnF anti-replay guarantees above.
+    assert "paris_borrow_diagnostic" not in detail
+    assert "Éligibilité du compte non vérifiée auprès du fournisseur." in detail
+    assert "Vérifier le prêt sans réemprunter" in detail
     # Core's checkpoint and anti-replay are retained independently of UI text.
     core = ROOT / "src/cifereca/core"
     assert (core / "borrow_claim_observation.py").is_file()
