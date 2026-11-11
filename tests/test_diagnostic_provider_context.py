@@ -107,27 +107,39 @@ def test_generic_categories_and_runtime_do_not_attest_provider(tmp_path):
                                    provider_id="paris")["total"] == 0
 
 
-def test_fixed_core_producers_attest_only_valid_records(tmp_path):
+def test_retired_numilog_startup_log_does_not_gain_provider_provenance(tmp_path):
     diag = Diagnostics()
     diag.add_core_kobo_backup_decision({
         "status": "error", "persisted_enabled": True, "connected_kobo": 1,
         "eligible_kobo": 1, "interval_minutes": 60,
     })
-    detail = dict(phase="completed", cause_phase="manifest_fetch", code="manifest_failed",
-                  status="failed", task_kind="source-materialize",
+    legacy = dict(phase="completed", cause_phase="manifest_fetch",
+                  code="manifest_failed", status="failed",
+                  task_kind="source-materialize",
                   attempted=0, downloaded=0, skipped=0, failed=1)
-    diag.add_core_numilog_startup(detail)
-    # Generic add() must not promote even an otherwise identical payload.
-    diag.add("NUMILOG", "startup_materialization", "error", detail=detail)
-    from cifereca.core.numilog_startup_diagnostics import _LOG_PREFIX
-    log = tmp_path / "cifereca.log"
-    bodies = ["TRACE kobo backup decision status=error enabled=True connected=1 eligible=1 interval=60",
-              _LOG_PREFIX + json.dumps(detail, sort_keys=True, separators=(",", ":"))]
-    log.write_text("\n".join(f"2026-10-23 00:00:00,000 ERROR cifereca {b}" for b in bodies) + "\n")
-    rows = query_diagnostic_events(diag, log_path=log)["events"]
-    for provider in ("kobo", "numilog"):
-        assert {e["source"] for e in rows if e.get("provider_id") == provider} == {"app_log", "core_events"}
-    assert sum("provider_id" not in e for e in rows) == 1
+    # A producer of the retired worker cannot reappear through generic add().
+    diag.add("NUMILOG", "startup_materialization", "error", detail=legacy)
+    trace = ("TRACE numilog startup_materialization "
+             + json.dumps(legacy, sort_keys=True, separators=(",", ":")))
+    log_path = tmp_path / "cifereca.log"
+    bodies = [
+        "TRACE kobo backup decision status=error enabled=True connected=1 eligible=1 interval=60",
+        trace,
+    ]
+    log_path.write_text(
+        "\n".join(f"2026-10-23 00:00:00,000 ERROR cifereca {b}" for b in bodies)
+        + "\n",
+        encoding="utf-8",
+    )
+    rows = query_diagnostic_events(diag, log_path=log_path)["events"]
+    assert {e["source"] for e in rows if e.get("provider_id") == "kobo"} == {
+        "app_log", "core_events",
+    }
+    assert all(e.get("provider_id") != "numilog" for e in rows)
+    assert "manifest_failed" not in json.dumps([
+        e for e in rows if e.get("module") == "NUMILOG"
+    ])
+
 
 
 @pytest.mark.parametrize("provider", [None, True, 1, [], {}, "provider.PARIS", "paris ",
@@ -219,14 +231,12 @@ for plugin in (paris, kobo, numilog):
 diag = Diagnostics()
 diag.add_core_kobo_backup_decision(dict(status="error", persisted_enabled=True,
     connected_kobo=1, eligible_kobo=1, interval_minutes=60))
-diag.add_core_numilog_startup(dict(phase="completed", cause_phase="manifest_fetch",
-    code="manifest_failed", status="failed", task_kind="source-materialize",
-    attempted=0, downloaded=0, skipped=0, failed=1))
 rows = query_diagnostic_events(diag, log_path=Path("unused"), source="core_events")["events"]
-assert {r["provider_id"] for r in rows} == {kobo.descriptor.id, numilog.descriptor.id}
+assert {r["provider_id"] for r in rows} == {kobo.descriptor.id}
 for plugin in (kobo, numilog):
+    expected = 1 if plugin is kobo else 0
     assert query_diagnostic_events(diag, log_path=Path("unused"), source="core_events",
-        provider_id=registered_public_provider_id(registry, plugin.descriptor.id))["total"] == 1
+        provider_id=registered_public_provider_id(registry, plugin.descriptor.id))["total"] == expected
 '''
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(map(str, paths))
            + os.pathsep + os.environ.get("PYTHONPATH", "")}
