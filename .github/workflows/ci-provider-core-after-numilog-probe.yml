@@ -1,0 +1,22 @@
+name: Temporary provider Core LOC measurement after Numilog merge
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ci-provider-core-after-numilog-probe.yml'
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report installed Core physical lines and AST signals
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_provider_core_coupling_report.py --json > report.json
+          python3 -m json.tool report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: provider-core-main-after-numilog
+          path: report.json
+          retention-days: 2
