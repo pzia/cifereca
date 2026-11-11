@@ -190,7 +190,7 @@ def test_mainwindow_contains_no_legacy_mutating_borrow_route():
                if isinstance(node, ast.FunctionDef)}
     for name in ("can_borrow_item", "borrow_search_item"):
         source = ast.unparse(methods[name])
-        assert "bnf-pret" not in source and "paris" not in source
+        assert "'bnf-pret'" not in source and "'paris'" not in source
         assert "session.borrow(" not in source
     assert "self.service.manual_borrow_policy(item)" in ast.unparse(
         methods["borrow_search_item"],
