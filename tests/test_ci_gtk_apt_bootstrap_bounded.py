@@ -1,5 +1,6 @@
 """CI #5376: GTK bootstrap fails closed with finite APT operations."""
 from pathlib import Path
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/ci-install-gtk-e2e-runtime.sh"
@@ -17,3 +18,7 @@ def test_gtk_apt_operations_are_bounded_and_keep_retry_finite():
     assert "|| true" not in script
     assert "set -euo pipefail" in script
     assert "gi.require_version(\"Gtk\", \"4.0\")" in script
+
+
+def test_gtk_bootstrap_shell_syntax_is_valid():
+    subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
