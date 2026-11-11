@@ -105,8 +105,7 @@ def test_interrupted_locator_does_not_mint_sha_or_canonical_origin(
         placements_before = service.storage.placements()
         monkeypatch.setattr(service.storage, "backup_put",
                             lambda *_a, **_k: pytest.fail("legacy writer"))
-        monkeypatch.setattr(service, "_execute_kobo_acquisition",
-                            lambda *_a, **_k: pytest.fail("second GET"))
+        assert not hasattr(service, "_execute_kobo_acquisition")
         assert not hasattr(service, "sync_kobo_backup")
         assert service.storage.backup_get("kobo", "vault-1", "book-1") == before
         assert path.read_bytes() == original
