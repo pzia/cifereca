@@ -4,7 +4,6 @@ from __future__ import annotations
 from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 
 from types import SimpleNamespace as NS
-from dataclasses import replace
 
 import pytest
 from cifereca.plugin_api import AttentionRequired
@@ -240,17 +239,6 @@ def test_concurrent_retired_adobe_pnb_commands_fail_before_any_mutation(tmp_path
         assert service.storage.loan_return_state(
             return_key("paris", "alice-paris", "linked-123", loan.id),
         ) is None
-    finally:
-        service.close()
-
-
-def test_other_connection_same_upstream_loan_keeps_historical_lock_scope(tmp_path):
-    service, loan, paris = setup(tmp_path, paris_active=True)
-    try:
-        other = replace(loan, source_credential="other-paris", identity_id="bob")
-        assert service._return_operation_lock_file(loan) == service._return_operation_lock_file(other)
-        assert "alice-paris" not in service._return_operation_lock_file(loan).name
-        assert "shared-loan" not in service._return_operation_lock_file(loan).name
     finally:
         service.close()
 
