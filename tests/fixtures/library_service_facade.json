@@ -351,10 +351,6 @@
     "kind": "method",
     "signature": "(self, acquisition: 'dict[str, Any]') -> 'bool'"
   },
-  "_return_operation_lock_file": {
-    "kind": "staticmethod",
-    "signature": "(loan: 'Loan') -> 'Path'"
-  },
   "return_loan_prefer_adept": {
     "kind": "method",
     "signature": "(self, loan: 'Loan') -> 'dict[str, Any]'"
