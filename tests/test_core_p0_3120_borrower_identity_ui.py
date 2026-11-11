@@ -1,9 +1,9 @@
-"""P0 #3120: borrower/account selection and queued borrow never cross identities.
+"""P0 #5048: exact borrower admission and no legacy session.borrow fallback.
 
-Execute the real MainWindow methods without GTK to exercise both the
-selection and the delayed task boundary. Synthetic sessions do no HTTP. The legacy fixture uses a neutral lender;
-Paris now has a separate durable-claim controller covered by
-test_paris_manual_borrow_dispatch.py.
+Execute real MainWindow methods without GTK. A provider capability or a
+historical session.borrow is NOT sufficient authorization to issue a loan.
+Only an installed, typed manual-borrow contract may reach the shared GUI
+controller; all real mutations remain under Core's durable one-shot claim.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from unittest.mock import Mock
 import pytest
 
 from cifereca.models import Account
-from cifereca.plugin_api import Cancelled
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
@@ -27,7 +26,8 @@ def _methods():
                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     methods = [node for node in owner.body
                if isinstance(node, ast.FunctionDef)
-               and node.name in {"can_borrow_item", "_eligible_borrow_accounts", "borrow_search_item"}]
+               and node.name in {"can_borrow_item", "_eligible_borrow_accounts",
+                                 "borrow_search_item"}]
     assert len(methods) == 3
     namespace = {
         "__name__": "cifereca.gui.main_window",
@@ -43,7 +43,7 @@ def _methods():
     return namespace
 
 
-def _account(identity="alice", credential="A", provider="legacy-lender", uid=""):
+def _account(identity="alice", credential="A", provider="synthetic", uid=""):
     return Account(identity_id=identity, credential_id=credential,
                    provider_id=provider, unique_id=uid, is_primary=True)
 
@@ -51,156 +51,42 @@ def _account(identity="alice", credential="A", provider="legacy-lender", uid="")
 def _ui(*, accounts=None, identity="alice"):
     rows = [_account()] if accounts is None else accounts
     session = NS(
-        provider_id="legacy-lender", credential_id="A", connected=True,
-        capabilities=NS(borrow=True), descriptor=NS(display_name="Synthetic legacy lender"),
-        accounts=rows,
-        borrow=Mock(return_value=NS(title="Titre", identity_id=None,
-                                    source_account_id=None)),
+        provider_id="synthetic", credential_id="A", connected=True,
+        capabilities=NS(borrow=True), descriptor=NS(display_name="Synthetic"),
+        accounts=rows, borrow=Mock(side_effect=AssertionError("legacy POST")),
     )
     state = NS(session=session)
+
     def session_for_source(provider, credential):
-        if provider != "legacy-lender" or credential != "A":
-            raise RuntimeError("Wrong source")
+        if provider != "synthetic" or credential != "A":
+            raise RuntimeError("wrong source")
         return state.session
+
     service = NS(
         current_identity=NS(identity_id=identity),
         _session_for_source=session_for_source,
-        refresh_identity_loans=Mock(return_value=[]),
+        can_borrow_manual=Mock(return_value=False),
+        manual_borrow_policy=Mock(return_value=None),
+        borrow_manual=Mock(side_effect=AssertionError("unscoped POST")),
+        provider_display_name=lambda _provider: "Synthetic",
     )
     queued = []
-    events = []
     runner = NS(submit=lambda *args, **kwargs: queued.append((args, kwargs)))
-    ui = NS(
-        service=service, _identity_context_generation=1,
-        _closed=False, runner=runner,
-        show_error=lambda message, title: events.append(("error", message, title)),
-        _activity_result=lambda message: events.append(("activity", message)),
-        refresh_library=lambda value: events.append(("refresh_library", value)),
-        refresh_recent=lambda: events.append(("refresh_recent",)),
-    )
+    ui = NS(service=service, runner=runner, _closed=False,
+            _identity_context_generation=1)
     methods = _methods()
     ui._eligible_borrow_accounts = MethodType(methods["_eligible_borrow_accounts"], ui)
     ui.can_borrow_item = MethodType(methods["can_borrow_item"], ui)
     ui.borrow_search_item = MethodType(methods["borrow_search_item"], ui)
-    item = NS(source_provider="legacy-lender", source_credential="A")
-    return ui, item, state, queued, events
+    item = NS(source_provider="synthetic", source_credential="A")
+    return ui, item, state, queued
 
 
-def _queued_work(queued):
-    assert len(queued) == 1
-    # runner.submit(message, work, on_success, ..., kind="borrow")
-    args, kwargs = queued[0]
-    assert kwargs["kind"] == "borrow"
-    return args[1], args[2]
-
-
-def test_no_cross_identity_primary_fallback_or_borrow_post():
-    ui, item, state, queued, events = _ui(accounts=[_account("bob")])
-    session, accounts = ui._eligible_borrow_accounts(item)
-    assert session is state.session and accounts == []
-    ui.borrow_search_item(item)
-    assert queued == []
-    state.session.borrow.assert_not_called()
-    assert events and events[0][0] == "error"
-
-
-def test_selection_filters_exact_identity_provider_credential_and_borrower():
-    alice = _account("alice", uid="primary-A")
-    others = [
-        _account("bob", uid="primary-B"),
-        _account("alice", credential="B", uid="wrong-credential"),
-        _account("alice", provider="other", uid="wrong-provider"),
-    ]
-    ui, item, _state, _queued, _events = _ui(accounts=others + [alice])
-    assert ui._eligible_borrow_accounts(item)[1] == [alice]
-
-
-@pytest.mark.parametrize("mode", ["no_identity", "disconnected", "rebound_credential",
-                                   "duplicate_borrower"])
-def test_unusable_borrower_scope_never_offers_an_account(mode):
-    alice = _account()
-    ui, item, state, _queued, _events = _ui(accounts=[alice])
-    if mode == "no_identity":
-        ui.service.current_identity = None
-    elif mode == "disconnected":
-        state.session.connected = False
-    elif mode == "rebound_credential":
-        state.session.credential_id = "B"
-    else:
-        state.session.accounts.append(_account())
-    assert ui._eligible_borrow_accounts(item)[1] == []
-
-
-def test_stale_dialog_account_rejected_before_queue_even_when_fields_match():
-    ui, item, state, queued, events = _ui()
-    # A new account registration has identical coordinates, but the dialog
-    # still contains the prior Account object from before a reconnect.
-    old = _account()
-    ui.borrow_search_item(item, account=old)
-    assert queued == [] and events[0][0] == "error"
-    state.session.borrow.assert_not_called()
-
-
-@pytest.mark.parametrize("change", [
-    "identity", "aba_generation", "replaced_session", "disconnected",
-    "mutated_borrower", "window_closed",
+@pytest.mark.parametrize("scenario", [
+    "exact_primary", "linked_primary", "foreign_only", "wrong_credential",
+    "wrong_provider", "no_identity", "disconnected", "duplicate_primary",
 ])
-def test_queued_borrow_revalidates_scope_before_provider_post(change):
-    alice = _account()
-    ui, item, state, queued, _events = _ui(accounts=[alice])
-    ui.borrow_search_item(item)
-    work, _ok = _queued_work(queued)
-    original_session = state.session
-    if change == "identity":
-        ui.service.current_identity = NS(identity_id="bob")
-    elif change == "aba_generation":
-        ui._identity_context_generation += 2  # A -> B -> A
-    elif change == "replaced_session":
-        state.session = NS(**vars(state.session))
-    elif change == "disconnected":
-        state.session.connected = False
-    elif change == "mutated_borrower":
-        alice.unique_id = "other-account"
-    else:
-        ui._closed = True
-    with pytest.raises(Cancelled, match="contexte"):
-        work()
-    assert len(queued) == 1
-    # The captured original session never sends a borrow, even if replaced.
-    original_session.borrow.assert_not_called()
-
-
-def test_current_account_executes_once_and_stale_success_never_updates_new_ui():
-    alice = _account()
-    ui, item, state, queued, events = _ui(accounts=[alice])
-    ui.borrow_search_item(item)
-    work, ok = _queued_work(queued)
-    result = work()
-    state.session.borrow.assert_called_once_with(item, alice)
-    ui.service.refresh_identity_loans.assert_called_once_with(
-        force=True, identity_id="alice",
-    )
-    assert result[0].identity_id == "alice"
-    ok(result)
-    assert any(event[0] == "activity" for event in events)
-    prior = list(events)
-    ui._identity_context_generation += 1
-    ok(result)
-    assert events == prior
-
-
-@pytest.mark.parametrize("scenario,shown", [
-    ("exact_primary", True),
-    ("linked_primary", True),
-    ("foreign_only", False),
-    ("wrong_credential", False),
-    ("wrong_provider", False),
-    ("no_identity", False),
-    ("disconnected", False),
-    ("duplicate_primary", False),
-])
-def test_borrow_button_visibility_matches_exact_account_admission(scenario, shown):
-    """A provider-wide borrow flag never advertises another identity's account."""
+def test_legacy_capability_never_grants_manual_borrow(scenario):
     primary = _account(uid="borrower-1")
     accounts = [primary]
     if scenario == "linked_primary":
@@ -213,78 +99,99 @@ def test_borrow_button_visibility_matches_exact_account_admission(scenario, show
         accounts = [_account(provider="other")]
     elif scenario == "duplicate_primary":
         accounts.append(_account(uid="borrower-1"))
-    ui, item, state, queued, _events = _ui(accounts=accounts)
+    ui, item, state, queued = _ui(accounts=accounts)
     if scenario == "no_identity":
         ui.service.current_identity = None
     elif scenario == "disconnected":
         state.session.connected = False
-    assert ui.can_borrow_item(item) is shown
-    assert queued == []
-    state.session.borrow.assert_not_called()
-    ui.service.refresh_identity_loans.assert_not_called()
-
-
-def test_borrow_button_rechecks_session_rebinding_without_fallback():
-    ui, item, state, queued, _events = _ui()
-    assert ui.can_borrow_item(item) is True
-    previous = state.session
-    state.session = NS(**vars(previous))
-    state.session.credential_id = "B"
-    assert ui.can_borrow_item(item) is False
-    state.session = previous
-    assert ui.can_borrow_item(item) is True
-    assert queued == []
-    previous.borrow.assert_not_called()
-
-
-class _ClaimedSession(NS):
-    def borrow_explicit_with_claim(self, *_args, **_kwargs):
-        raise AssertionError("A GUI fallback must never invoke a claimed POST")
-
-
-def test_claimed_executor_without_installed_policy_never_uses_legacy_mutation():
-    ui, item, state, queued, events = _ui()
-    state.session = _ClaimedSession(**vars(state.session))
-    ui.service.can_borrow_manual = Mock(return_value=False)
-    ui.service.manual_borrow_policy = Mock(return_value=None)
     assert ui.can_borrow_item(item) is False
     ui.borrow_search_item(item)
-    assert queued == []
-    state.session.borrow.assert_not_called()
-    ui.service.manual_borrow_policy.assert_called_once_with(item)
-
-
-def test_claimed_executor_with_typed_policy_routes_only_generic_controller(monkeypatch):
-    from cifereca.gui import bnf_borrow_controller
-
-    ui, item, state, queued, events = _ui()
-    state.session = _ClaimedSession(**vars(state.session))
-    policy = object()
-    ui.service.can_borrow_manual = Mock(return_value=True)
-    ui.service.manual_borrow_policy = Mock(return_value=policy)
-    ui.service.borrow_manual = Mock(side_effect=AssertionError("unexpected POST"))
-    presenter = Mock()
-    monkeypatch.setattr(bnf_borrow_controller, "_present_manual_borrow", presenter)
-    assert ui.can_borrow_item(item) is True
-    ui.borrow_search_item(item)
-    presenter.assert_called_once()
-    _, args_item, _control = presenter.call_args.args
-    assert args_item is item
-    assert presenter.call_args.kwargs["available"] is ui.service.can_borrow_manual
-    assert presenter.call_args.kwargs["dispatch"] is ui.service.borrow_manual
     assert queued == []
     state.session.borrow.assert_not_called()
     ui.service.borrow_manual.assert_not_called()
 
 
+def test_exact_account_enumeration_remains_identity_and_source_bound():
+    primary = _account(uid="borrower-1")
+    ui, item, _state, _queued = _ui(accounts=[
+        _account(identity="bob"), _account(credential="other"),
+        _account(provider="foreign"), primary,
+    ])
+    assert ui._eligible_borrow_accounts(item)[1] == [primary]
 
-def test_instance_only_claimed_executor_never_falls_through():
-    ui, item, state, queued, events = _ui()
-    state.session.borrow_explicit_with_claim = Mock()
-    ui.service.can_borrow_manual = Mock(return_value=False)
-    ui.service.manual_borrow_policy = Mock(return_value=None)
+
+def test_duplicate_primary_registration_remains_ambiguous():
+    ui, item, state, _queued = _ui(accounts=[
+        _account(uid="duplicate"), _account(uid="duplicate"),
+    ])
+    assert ui._eligible_borrow_accounts(item)[1] == []
+
+
+def test_unknown_or_invalid_manual_policy_cannot_use_legacy_mutator():
+    ui, item, state, queued = _ui()
     assert ui.can_borrow_item(item) is False
+    ui.borrow_search_item(item)
+    ui.service.manual_borrow_policy.assert_called_once_with(item)
+    assert queued == []
+    state.session.borrow.assert_not_called()
+
+
+def test_policy_lookup_error_fails_closed_without_legacy_post():
+    ui, item, state, queued = _ui()
+    ui.service.manual_borrow_policy.side_effect = RuntimeError("invalid ABI")
     ui.borrow_search_item(item)
     assert queued == []
     state.session.borrow.assert_not_called()
-    state.session.borrow_explicit_with_claim.assert_not_called()
+
+
+def test_generic_policy_enters_only_shared_controller(monkeypatch):
+    from cifereca.gui import bnf_borrow_controller
+
+    ui, item, state, queued = _ui()
+    ui.service.manual_borrow_policy.return_value = object()
+    ui.service.can_borrow_manual.return_value = True
+    present = Mock()
+    monkeypatch.setattr(bnf_borrow_controller, "_present_manual_borrow", present)
+    assert ui.can_borrow_item(item) is True
+    ui.borrow_search_item(item)
+    present.assert_called_once()
+    assert present.call_args.args[1] is item
+    assert present.call_args.kwargs["available"] is ui.service.can_borrow_manual
+    assert present.call_args.kwargs["dispatch"] is ui.service.borrow_manual
+    assert queued == []
+    state.session.borrow.assert_not_called()
+    ui.service.borrow_manual.assert_not_called()
+
+
+def test_readonly_followup_never_enters_manual_or_legacy_path(monkeypatch):
+    from cifereca.gui import bnf_borrow_controller
+
+    ui, item, state, queued = _ui()
+    verify = Mock()
+    mutate = Mock()
+    monkeypatch.setattr(
+        bnf_borrow_controller, "present_paris_borrow_verification", verify,
+    )
+    monkeypatch.setattr(bnf_borrow_controller, "_present_manual_borrow", mutate)
+    control = NS(get_name=lambda: "cifereca-borrow-followup")
+    ui.borrow_search_item(item, control)
+    verify.assert_called_once()
+    mutate.assert_not_called()
+    ui.service.manual_borrow_policy.assert_not_called()
+    assert queued == []
+    state.session.borrow.assert_not_called()
+
+
+def test_mainwindow_contains_no_legacy_mutating_borrow_route():
+    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+    owner = next(node for node in tree.body
+                 if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
+    methods = {node.name: node for node in owner.body
+               if isinstance(node, ast.FunctionDef)}
+    for name in ("can_borrow_item", "borrow_search_item"):
+        source = ast.unparse(methods[name])
+        assert "bnf-pret" not in source and "paris" not in source
+        assert "session.borrow(" not in source
+    assert "self.service.manual_borrow_policy(item)" in ast.unparse(
+        methods["borrow_search_item"],
+    )
