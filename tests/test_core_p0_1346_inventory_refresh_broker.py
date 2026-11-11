@@ -8,7 +8,6 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
-from cifereca.core.source_materialization_schedule import policy_key as acquisition_policy_key
 from cifereca.core.source_refresh_policy import inventory_source_eligible
 from cifereca.models import Account
 from cifereca.plugin_api import SourceInventoryRefreshScheduleBroker
@@ -73,7 +72,7 @@ def test_manual_default_does_not_dispatch_and_never_inherits_backup_consent(tmp_
         }
         assert broker.synchronize_scheduled_inventory("alice", "startup").facts["attempted"] == 0
         assert calls == []
-        assert service.storage.metadata_get(acquisition_policy_key(sid)) is None
+        assert service.storage.metadata_get("sync.source.materialization.on_start." + sid) is None
         # No backup capability is necessary for *inventory* synchronization.
         assert session.capabilities.backup is False
         assert inventory_source_eligible(service, account)
@@ -102,7 +101,7 @@ def test_startup_opt_in_dispatches_once_for_exact_source_and_reopen_throttles(tm
         unknown = broker.synchronize_scheduled_inventory("bob", "startup")
         assert not unknown.ok and unknown.facts == {"reason": "unknown_identity"}
         assert len(calls) == 1
-        assert service.storage.metadata_get(acquisition_policy_key(sid)) is None
+        assert service.storage.metadata_get("sync.source.materialization.on_start." + sid) is None
     finally:
         service.storage.close()
 
@@ -224,7 +223,7 @@ def test_explicit_inventory_policy_never_mutates_materialization_permission(tmp_
         sid = broker._source_id(account)
         for mode in ("on_start", "periodic", "manual"):
             broker.set_inventory_refresh_schedule(sid, mode)
-            assert service.storage.metadata_get(acquisition_policy_key(sid)) is None
+            assert service.storage.metadata_get("sync.source.materialization.on_start." + sid) is None
         assert broker.inventory_refresh_schedule(sid)["mode"] == "manual"
         assert calls == []
     finally:
