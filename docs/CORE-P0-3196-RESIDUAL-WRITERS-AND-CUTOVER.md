@@ -1,5 +1,7 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta de suppression (#3196, 11/11/2026).** La voie `convergence_execution → legacy_backup_retirement → legacy_backup_publication_review` est supprimée dans une PR dédiée : plus de requête sur `backup_items` ni de retrait automatique d'archives pendant Sync. Les lignes historiques restent sur disque et ne prouvent ni une offre actuelle ni un artefact. Les passages ci-dessous sont un inventaire historique antérieur à ce retrait, pas l'état de la PR ou de `main` tant qu'elle n'est pas fusionnée.
+
 > **Statut : inventaire de code, pas migration.** Analyse de `main` après les
 > fusions #4539, #4545, #4546, #4548, #4557 et #4562. Le succès des tests
 > synthétiques ne prouve ni l'état d'un compte Kobo réel ni l'existence de

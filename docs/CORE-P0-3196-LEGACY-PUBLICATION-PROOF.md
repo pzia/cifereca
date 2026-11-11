@@ -1,5 +1,7 @@
 # P0 #3196 — Qualification d'une copie 0.7 déjà publiée en B
 
+> **Archive historique (#3196, 11/11/2026).** L'inspecteur `review_legacy_backup_publication` et le moteur `legacy_backup_retirement` sont supprimés dans la PR de retrait. Aucun inventaire ou pseudo-droit v0.7 ne doit conditionner la synchronisation canonique ; les anciennes lignes `backup_items` restent intactes. Ce document décrit une interface obsolète, et non une API disponible.
+
 ## Garantie
 
 Le Core fournit un diagnostic strictement non mutant :
