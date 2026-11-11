@@ -516,7 +516,9 @@ class LibraryService:
 
     def paris_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
         """Read-only Core admission; provider eligibility always unknown."""
-        from .core.manual_library_borrow import manual_borrow_diagnostic
+        from .core.manual_library_borrow import (
+            manual_borrow_available, manual_borrow_diagnostic,
+        )
         from .core.primary_source_binding import configured_primary_source_current
 
         result = manual_borrow_diagnostic(
@@ -528,7 +530,7 @@ class LibraryService:
                     selection_key="primary_paris_connection_id",
                 )
             ),
-            result_type=SearchResult,
+            available=manual_borrow_available, result_type=SearchResult,
         )
         # Preserve the public UI's closed legacy reason without placing
         # provider-specific diagnostics in the reusable Core admission.
