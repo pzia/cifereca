@@ -934,12 +934,6 @@ class SynchronizationBrokerImpl:
             return rejected("unknown_source")
         if not self._enabled(source_id):
             return rejected("source_disabled")
-        if getattr(account, "provider_id", None) == "numilog":
-            from .core.numilog_local_preview import preview
-            return preview(
-                self, account, source_id,
-                verify_local_files=verify_local_files,
-            )
         if str(getattr(account, "provider_id", "")) != "kobo":
             return rejected("not_supported")
         credential = str(getattr(account, "credential_id", "") or "")
