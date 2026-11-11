@@ -81,6 +81,12 @@ class _OfflineParisSession(ProviderSession):
             friendly_url=None, scenario="EBOOKS",
             source_provider="paris", source_credential=self.credential_id,
             source_collection="catalog",
+            # Synthetic provider emits a source-bound UI hint, never an
+            # authorization or remote offer. Core admission remains separate.
+            metadata={"manual_borrow_presentation": {
+                "provider_id": "paris", "docbase": "DILICOM",
+                "record_id": "edition-" + self.credential_id,
+            }},
         )]
 
     def holdings(self, item, search_terms=""):
