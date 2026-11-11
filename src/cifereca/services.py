@@ -582,7 +582,10 @@ class LibraryService:
         No entitlement, acquisition, ADEPT or borrowed-state mutation.
         """
         from inspect import getattr_static, isfunction
-        from .core.diagnostic_bnf_loan_action import ActionObservation, BnfLoanActionError
+        from .core.diagnostic_bnf_loan_action import (
+            ActionObservation, BnfLoanActionError, provider_reason, STAGE_CODES,
+        )
+        from .core.explicit_loan_acsm import stage_explicit_loan_acsm
 
         observation = ActionObservation(self, 'stage_loan_token')
         try:
@@ -592,7 +595,7 @@ class LibraryService:
             # the shared Core still owns the lock, lease and ACSM inspection.
             if confirmed is not True:
                 raise BnfLoanActionError("bnf_explicit_confirmation_required")
-            if (type(loan) is not Loan or loan.source_provider != "bnf-pret"
+            if (type(loan) is not Loan or loan.source_provider != BnfLoanActionError.provider_id
                     or loan.medium != "digital" or loan.state != "active"
                     or type(loan.source_credential) is not str
                     or not loan.source_credential
@@ -610,16 +613,38 @@ class LibraryService:
                 )
             except Exception:
                 raise BnfLoanActionError("bnf_loan_scope_unproven") from None
-            if not isfunction(getattr_static(
-                type(session), "stage_loan_acsm_candidate", None,
-            )):
+            profile = getattr_static(
+                type(session), "loan_acsm_stage_profile", None,
+            )
+            activity_reason = getattr_static(
+                type(session), "loan_stage_activity_reason", None,
+            )
+            if (type(profile) is not tuple or len(profile) != 2
+                    or type(profile[0]) is not str or not profile[0]
+                    or type(profile[1]) is not tuple or len(profile[1]) != 5
+                    or any(type(code) is not str or code not in STAGE_CODES
+                           for code in profile[1])
+                    or not isfunction(activity_reason)):
                 raise BnfLoanActionError("bnf_loan_token_unavailable")
-            result = session.stage_loan_acsm_candidate(
+            reason_codes = dict(zip(
+                ("confirmation", "scope", "unavailable", "invalid", "busy"),
+                profile[1],
+            ))
+            result = stage_explicit_loan_acsm(
                 self, loan, confirmed=confirmed,
                 expected_identity_id=expected_identity_id,
                 interprocess_lock=InterProcessLock,
                 lock_path=acquisition_lock_file, busy_error=LockBusyError,
-                inspect_artifact=inspect_artifact, observe_phase=observation.at,
+                inspect_artifact=inspect_artifact,
+                expected_provider_id=loan.source_provider,
+                selected_branch=profile[0],
+                action_error_type=BnfLoanActionError,
+                error_codes=reason_codes,
+                classify_activity_error=lambda error: activity_reason(
+                    session, error,
+                ),
+                classify_candidate_error=provider_reason,
+                observe_phase=observation.at,
             )
         except BnfLoanActionError as exc:
             observation.emit('failed', exc.code)
