@@ -27,10 +27,10 @@ def _control(window, index=0, *, source_id=None):
                    if group._cifereca_sync_source_id == source_id]
         assert len(matched) == 1, "Inventory policy must target exactly one account"
         group = matched[0]
-    assert len(group.children) == 3  # source, read-only preview, inventory
+    assert len(group.children) == 2  # source, inventory
     assert all(row.title != "Sauvegarde automatique des achats Numilog"
                for row in group.children)
-    row = group.children[2]
+    row = group.children[1]
     assert row.title == "Actualisation automatique des notices Numilog"
     return row.suffixes[0], row
 
