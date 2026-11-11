@@ -30,6 +30,11 @@ def _register(service, *, credential="card-1", account_id="borrower-1",
         "provider_id": "fictional-provider", "credential_id": credential,
         "account_id": account_id, "label": "Fixture",
     })
+    class PurchaseOfferSession:
+        selected_purchase_branch = "private-purchases"
+    service._sessions[
+        service._session_key("fictional-provider", credential)
+    ] = PurchaseOfferSession()
     service.storage.catalog_entries_upsert_many([{
         "catalog_entry_id": f"private:{credential}:{edition}",
         "identity_id": "default", "provider_id": "fictional-provider",
@@ -156,3 +161,26 @@ def test_ambiguous_library_source_ref_never_selects_provider(monkeypatch):
         service, {**base, "source": "entitlement"},
     ) is None
     assert seen == []
+
+
+def test_private_loan_or_observation_never_fabricates_purchase_origin(
+    tmp_path, monkeypatch,
+):
+    service = _service(tmp_path)
+    try:
+        _register(service)
+        service._sessions.clear()  # No current purchase-offer ABI.
+        cards = [row for row in service.library_entries(identity_id="default")
+                 if row.get("source") == "private_catalog_observation"]
+        assert len(cards) == 1
+        assert cards[0]["source_refs"][0]["kind"] == "observation"
+        called = []
+        monkeypatch.setattr(
+            offers, "select_source_offer_target",
+            lambda *_a, **_kw: called.append(True),
+        )
+        assert offers.select_library_source_offer_target(service, cards[0]) is None
+        assert called == []
+        assert service.storage.entitlements(provider_id="fictional-provider") == []
+    finally:
+        service.close()
