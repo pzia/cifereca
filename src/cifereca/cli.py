@@ -183,10 +183,6 @@ def main(argv: list[str] | None = None) -> int:
         "--confirm-trace-export", action="store_true",
         help="Je confirme la création locale d'un ZIP HTTP brut incluant possiblement des secrets"
     )
-    ks_sync = sub.add_parser("kobo-sync", help="Synchronise localement les ebooks Kobo possédés")
-    ks_sync.add_argument("--quiet", action="store_true", help="N’affiche pas la progression sur stderr")
-    kb = sub.add_parser("kobo-backup", help="Alias historique de kobo-sync")
-    kb.add_argument("--quiet", action="store_true", help="N’affiche pas la progression sur stderr")
     sub.add_parser("kobo-sync-errors", help="Diagnostic local de la synchronisation Kobo")
     sub.add_parser("kobo-backup-errors", help="Alias historique de kobo-sync-errors")
     reconcile = sub.add_parser(
@@ -1105,63 +1101,6 @@ def main(argv: list[str] | None = None) -> int:
             result = [safe_model(x) for x in service.refresh_loans(force=True)]
         elif a.cmd == "history":
             result = [safe_model(x) for x in service.refresh_history(force=True)]
-        elif a.cmd in {"kobo-sync", "kobo-backup"}:
-            progress_state = {"last_scan": 0}
-
-            def progress(event: dict[str, Any]) -> None:
-                if a.quiet:
-                    return
-                # Progress events may contain untrusted book titles, item IDs,
-                # local file paths, plugin error codes, URLs and credentials.
-                # Never echo these values to a terminal, redirected log or CI.
-                kind = str(event.get("event") or "")
-                number = _safe_kobo_progress_count
-                if kind == "adept_probe":
-                    print("[Kobo] Vérification locale Kobo-Adept…", file=sys.stderr, flush=True)
-                elif kind == "adept_ready":
-                    print("[Kobo] Kobo-Adept prêt", file=sys.stderr, flush=True)
-                elif kind == "manifest_fetch":
-                    print("[Kobo] Lecture du manifeste Kobo-Vault…", file=sys.stderr, flush=True)
-                elif kind == "manifest":
-                    print(f"[Kobo] Manifeste : {number(event.get('total'))} éléments", file=sys.stderr, flush=True)
-                elif kind in {"recovered", "recovered_unparsed"}:
-                    print(f"[Kobo] Récupération locale : {number(event.get('count'))} élément(s)", file=sys.stderr, flush=True)
-                elif kind == "reconcile_required":
-                    print("[Kobo] Réconciliation requise", file=sys.stderr, flush=True)
-                elif kind == "reconcile_conflict":
-                    print(f"[Kobo] Conflit local : {number(event.get('count'))} fichier(s)", file=sys.stderr, flush=True)
-                elif kind == "scan":
-                    current = number(event.get("current"))
-                    total = number(event.get("total"))
-                    if current == 1 or current == total or current - progress_state["last_scan"] >= 10:
-                        progress_state["last_scan"] = current
-                        print(
-                            f"[Kobo] {current}/{total} · téléchargés={number(event.get('downloaded'))} · "
-                            f"erreurs={number(event.get('errors'))}",
-                            file=sys.stderr, flush=True,
-                        )
-                elif kind == "downloaded":
-                    print("[Kobo] Téléchargement terminé", file=sys.stderr, flush=True)
-                elif kind == "attention_required":
-                    print("[Kobo] Action requise", file=sys.stderr, flush=True)
-                elif kind == "item_error":
-                    errors = number(event.get("errors"))
-                    if errors <= 3 or errors % 25 == 0:
-                        print(f"[Kobo] Erreur d'acquisition #{errors}", file=sys.stderr, flush=True)
-                elif kind == "done":
-                    print(
-                        f"[Kobo] Terminé · téléchargés={number(event.get('downloaded'))} · "
-                        f"à jour={number(event.get('unchanged'))} · "
-                        f"action={number(event.get('attention_required'))} · "
-                        f"erreurs={number(event.get('errors'))} · "
-                        f"à réconcilier={number(event.get('reconcile_pending'))}",
-                        file=sys.stderr, flush=True,
-                    )
-
-            result = _safe_kobo_sync_receipt(service.sync_kobo_backup(progress=progress))
-            # A partial/failed/cancelled batch must not return shell success:
-            # external schedulers would otherwise mark missing books as done.
-            exit_code = 0 if result["status"] == "complete" else 2
         elif a.cmd in {"kobo-sync-errors", "kobo-backup-errors"}:
             from .core.legacy_diagnostic_projection import safe_kobo_backup_report
 
@@ -1228,7 +1167,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return exit_code
     except KeyboardInterrupt:
-        if getattr(a, "cmd", None) in {"kobo-sync", "kobo-backup", "kobo-resume"} and not getattr(a, "quiet", False):
+        if getattr(a, "cmd", None) in {"kobo-resume"} and not getattr(a, "quiet", False):
             print("\n[Kobo] Synchronisation interrompue ; l’élément en cours sera repris au prochain lancement.", file=sys.stderr, flush=True)
         return 130
     finally:
