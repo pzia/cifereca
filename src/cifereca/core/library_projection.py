@@ -1382,10 +1382,20 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         card_key = "observation:" + str(observed["catalog_entry_id"])
         if card_key in merged:
             continue
+        # A personal inventory may contain purchases OR loans. Only a
+        # declared purchase-offer ABI allows the card's origin to be selected
+        # as a purchase. Otherwise it remains an inert descriptive source.
+        from inspect import getattr_static
+        try:
+            session = self._sessions.get(self._session_key(provider, credential))
+            branch = getattr_static(session, "selected_purchase_branch", None)
+        except Exception:
+            branch = None
+        kind = "purchase" if type(branch) is str and branch else "observation"
         origin = {
             "identity_id": identity_id, "provider_id": provider,
             "credential_id": credential, "account_id": account_id,
-            "item_id": edition, "kind": "purchase",
+            "item_id": edition, "kind": kind,
         }
         safe_metadata = {
             name: metadata[name] for name in (
