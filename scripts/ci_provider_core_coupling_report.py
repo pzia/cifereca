@@ -59,11 +59,39 @@ def _docstring_lines(tree: ast.Module) -> set[int]:
     return result
 
 
-def _provider_pattern() -> re.Pattern[str]:
+_AMBIGUOUS_ALIASES = frozenset({"local", "library", "catalog", "catalogue", "provider"})
+
+
+def _installed_provider_aliases(root: Path) -> tuple[str, ...]:
+    """Read installed plugin manifests without importing plugins.
+
+    Detect new providers which the historical static five-provider counter
+    does not know. Ambiguous one-word generic aliases are rejected; full
+    dotted IDs are still eligible.
+    """
+    found = set(DEFAULT_PROVIDERS) | set(_LOC_PROVIDERS)
+    for manifest in sorted((root / "src" / "plugins").glob("*/cifereca-plugin.json")):
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        for descriptor in payload.get("plugins", []):
+            if not str(descriptor.get("type", "")).startswith("provider."):
+                continue
+            identifier = descriptor.get("id")
+            if type(identifier) is not str or not identifier.startswith("provider."):
+                continue
+            full = identifier.casefold()
+            found.add(full)
+            suffix = full.removeprefix("provider.")
+            if suffix not in _AMBIGUOUS_ALIASES:
+                found.add(suffix)
+            slug = manifest.parent.name.removeprefix("provider-").casefold()
+            if slug and slug not in _AMBIGUOUS_ALIASES:
+                found.add(slug)
+    return tuple(sorted(found))
+
+
+def _provider_pattern(names: tuple[str, ...]) -> re.Pattern[str]:
     # Provider strings in code, including whole identifier components and
     # aliases. Reject substring matches such as 'paris' in 'comparison'.
-    names = set(DEFAULT_PROVIDERS) | set(_LOC_PROVIDERS)
-    names |= {"bnf_pret", "bnf_catalogue"}
     return re.compile(
         r"(?<![a-z0-9])(?:" +
         "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True)) +
@@ -85,7 +113,9 @@ def extended_inventory(root: Path) -> dict[str, object]:
     signals_by_kind: Counter[str] = Counter()
     signal_by_provider: Counter[str] = Counter()
     candidates: dict[str, dict[str, object]] = {}
-    pattern = _provider_pattern()
+    provider_aliases = _installed_provider_aliases(root)
+    pattern = _provider_pattern(provider_aliases)
+    candidate_buckets: Counter[str] = Counter()
     source_root = root / "src" / "cifereca"
     for path in sorted(source_root.rglob("*.py")) if source_root.is_dir() else ():
         rel = path.relative_to(root).as_posix()
@@ -101,7 +131,7 @@ def extended_inventory(root: Path) -> dict[str, object]:
             totals["dedicated_physical_lines"] += len(lines)
             continue
 
-        signals = inspect_source(content)
+        signals = inspect_source(content, providers=provider_aliases)
         signal_lines: set[int] = set()
         for kind in _SIGNAL_KINDS:
             hits = {int(f["line"]) for f in signals[kind]}
@@ -161,6 +191,7 @@ def extended_inventory(root: Path) -> dict[str, object]:
         # Whole provider identifiers in module or directory names outside the
         # v1 dedicated scope are *review candidates*, never silently added LOC.
         if any(pattern.search(part) for part in path.relative_to(source_root).parts):
+            candidate_buckets.update(buckets)
             candidates[rel] = {
                 "physical_lines": len(lines),
                 "ast_signal_lines": buckets["ast_signal"],
@@ -173,6 +204,9 @@ def extended_inventory(root: Path) -> dict[str, object]:
                      "passive_code_mention", "other_code")))
     if partition != totals["core_physical_lines"]:
         raise AssertionError("core_physical_lines_partition_mismatch")
+    expanded_named_lines = sum(x["physical_lines"] for x in candidates.values())
+    expanded_generic_signal_lines = totals["ast_signal"] - candidate_buckets["ast_signal"]
+    expanded_named_total = totals["dedicated_physical_lines"] + expanded_named_lines
     return {
         "metric": "core.provider.explanatory-loc/2",
         "historical": {
@@ -184,6 +218,7 @@ def extended_inventory(root: Path) -> dict[str, object]:
                 "generic_files_with_provider_literal"],
             "parse_errors": historic["parse_errors"],
         },
+        "installed_provider_aliases_scanned": list(provider_aliases),
         "total_core_python_files": totals["core_files"],
         "total_core_python_physical_lines": totals["core_physical_lines"],
         "line_partition": {
@@ -197,6 +232,23 @@ def extended_inventory(root: Path) -> dict[str, object]:
             "generic_other_docstrings": totals["other_docstring"],
             "generic_blank": totals["blank"],
         },
+        "expanded_named_modules": {
+            "legacy_named_lines": totals["dedicated_physical_lines"],
+            "additional_named_lines": expanded_named_lines,
+            "all_named_lines": expanded_named_total,
+            "additional_named_files": len(candidates),
+            "all_named_files": historic["dedicated_files"] + len(candidates),
+        },
+        "remaining_generic_after_expanded_named_scope": {
+            "ast_signal_lines": expanded_generic_signal_lines,
+            "passive_code_mention_lines": (
+                totals["passive_code_mention"] -
+                candidate_buckets["passive_code_mention"]),
+            "passive_comment_lines": (
+                totals["passive_comment"] - candidate_buckets["passive_comment"]),
+            "passive_docstring_lines": (
+                totals["passive_docstring"] - candidate_buckets["passive_docstring"]),
+        },
         "generic_ast_signal_occurrences_by_kind": dict(sorted(signals_by_kind.items())),
         "generic_ast_signal_occurrences_by_provider_alias": dict(sorted(signal_by_provider.items())),
         "generic_reported_files": len(per_file),
@@ -207,6 +259,10 @@ def extended_inventory(root: Path) -> dict[str, object]:
             key=lambda e: (-e["ast_signal_lines"], -e["passive_code_mention_lines"], e["path"]),
         )[:30],
         "interpretation": (
+            "Expanded named modules are a second candidate perimeter, not a "
+            "claim of reachable provider logic. Exclude their lines from all "
+            "remaining generic buckets before addition. AST scanning also "
+            "uses installed provider manifests and may discover other aliases. "
             "Only dedicated_modules and the generic buckets partition all Core "
             "physical lines. Historical 'generic LOC' are raw substring-matching "
             "lines and overlap the buckets; DO NOT add them to the partition. "
