@@ -145,3 +145,21 @@ def test_kobo_legacy_search_action_is_never_promoted_by_owned_flag_or_v2_hint():
     host.service.can_direct_download.assert_not_called()
     session.snapshot.assert_not_called()
     session.selected.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", [
+    "kobo", "numilog", "paris", "bnf-pret", "synthetic-provider",
+])
+@pytest.mark.parametrize("check_required,detailed_format,expected", [
+    (False, "", "Télécharger"),
+    (True, "", "Vérifier et télécharger"),
+    (False, "EPUB", "Télécharger EPUB"),
+    (True, "EPUB", "Vérifier et télécharger"),
+])
+def test_selected_offer_label_never_dispatches_on_provider(
+    provider, check_required, detailed_format, expected,
+):
+    item = NS(source_provider=provider)
+    assert download_action_label(
+        item, check_required=check_required, detailed_format=detailed_format,
+    ) == expected
