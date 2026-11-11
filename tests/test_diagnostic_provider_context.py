@@ -109,10 +109,6 @@ def test_generic_categories_and_runtime_do_not_attest_provider(tmp_path):
 
 def test_retired_numilog_startup_log_does_not_gain_provider_provenance(tmp_path):
     diag = Diagnostics()
-    diag.add_core_kobo_backup_decision({
-        "status": "error", "persisted_enabled": True, "connected_kobo": 1,
-        "eligible_kobo": 1, "interval_minutes": 60,
-    })
     legacy = dict(phase="completed", cause_phase="manifest_fetch",
                   code="manifest_failed", status="failed",
                   task_kind="source-materialize",
@@ -132,9 +128,8 @@ def test_retired_numilog_startup_log_does_not_gain_provider_provenance(tmp_path)
         encoding="utf-8",
     )
     rows = query_diagnostic_events(diag, log_path=log_path)["events"]
-    assert {e["source"] for e in rows if e.get("provider_id") == "kobo"} == {
-        "app_log", "core_events",
-    }
+    # The retired Kobo TRACE is no longer a provenance-bearing Core fact.
+    assert not [e for e in rows if e.get("provider_id") == "kobo"]
     assert all(e.get("provider_id") != "numilog" for e in rows)
     assert "manifest_failed" not in json.dumps([
         e for e in rows if e.get("module") == "NUMILOG"
@@ -229,10 +224,11 @@ assert [p.descriptor.id for p in (paris, kobo, numilog)] == ["paris", "kobo", "n
 for plugin in (paris, kobo, numilog):
     assert registered_public_provider_id(registry, plugin.descriptor.id) == plugin.descriptor.id
 diag = Diagnostics()
-diag.add_core_kobo_backup_decision(dict(status="error", persisted_enabled=True,
-    connected_kobo=1, eligible_kobo=1, interval_minutes=60))
+diag.add_core_source_sync(kobo.descriptor.id,
+    phase="completed", status="failed", code="source_sync_failed")
 rows = query_diagnostic_events(diag, log_path=Path("unused"), source="core_events")["events"]
 assert {r["provider_id"] for r in rows} == {kobo.descriptor.id}
+assert all(r.get("detail", {}).get("operation_kind") == "source_sync" for r in rows)
 for plugin in (kobo, numilog):
     expected = 1 if plugin is kobo else 0
     assert query_diagnostic_events(diag, log_path=Path("unused"), source="core_events",
