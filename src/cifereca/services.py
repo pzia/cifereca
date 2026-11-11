@@ -45,7 +45,6 @@ from .epub_metadata import cached_cover_url
 from .core.covers import candidate as cover_candidate, resolve_cover
 from .config import Config
 from .diagnostics import Diagnostics, redact
-from .kobo import KoboAdeptError
 from .identities import Identity, IdentityPreferences, AdeptProfileResolver, AdeptProfileResolutionError
 from .core import adept_profiles
 from .locking import InterProcessLock, LockBusyError
@@ -3718,7 +3717,7 @@ class LibraryService:
                 adept_binding=adept_binding if acquisition.kind == "acsm" else None,
                 decision=decision,
             )
-        except (KoboAdeptError, UserFacingError) as exc:
+        except UserFacingError as exc:
             if retained_acsm is not None and retained_acsm.exists():
                 _TRACE_LOG.info("TRACE download acsm cleanup loan_ref=%s action=keep reason=adept_error", trace_ref)
             # A plugin's error code is not a public contract by itself.
