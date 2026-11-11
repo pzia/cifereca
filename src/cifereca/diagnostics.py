@@ -68,7 +68,6 @@ class DiagnosticEntry:
     verified_provider_connection_attempt: bool = False
     verified_source_sync: bool = False
     verified_kobo_adept: bool = False
-    verified_numilog_startup: bool = False
     verified_kobo_backup: bool = False
     verified_browser_recorder: bool = False
     verified_reconciliation: bool = False
@@ -501,31 +500,6 @@ class Diagnostics:
         with self._lock:
             self._items.clear()
 
-    def add_core_numilog_startup(self, detail: object) -> None:
-        """Core-only attested startup facts; generic add() is not provenance.
-
-        The startup producer already writes the independent canonical log.
-        This entry only publishes the same checked fields to the in-memory
-        collector, never a signed URL, exception or provider payload.
-        """
-        from .core.numilog_startup_diagnostics import public_fields
-
-        fields = public_fields(detail)
-        if not fields or not self.enabled:
-            return
-        status = ("error" if fields["status"] in {"failed", "partial"}
-                  else "warning" if fields["status"] == "blocked" else "ok")
-        if self.level == "errors" and status == "ok":
-            return
-        entry = DiagnosticEntry(
-            timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-            category="NUMILOG", operation="startup_materialization",
-            status=status, detail=fields, task_ref=fields.get("task_ref"),
-            verified_numilog_startup=True,
-        )
-        with self._lock:
-            self._items.append(entry)
-
     def add_core_kobo_backup_decision(self, detail: object) -> None:
         """Record only the closed Core opening decision as attested evidence.
 
@@ -735,8 +709,6 @@ class Diagnostics:
                     row.pop("verified_source_sync", None)
                 if row.get("verified_kobo_adept") is False:
                     row.pop("verified_kobo_adept", None)
-                if row.get("verified_numilog_startup") is False:
-                    row.pop("verified_numilog_startup", None)
                 if row.get("verified_kobo_backup") is False:
                     row.pop("verified_kobo_backup", None)
                 if row.get("verified_browser_recorder") is False:
