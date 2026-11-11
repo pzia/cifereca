@@ -223,3 +223,30 @@ def test_legacy_ebooksgratuits_html_notice_is_still_public():
            "friendly_url": detail_url}
     assert _target(host, row) == ("notice", detail_url)
     assert document_links(row)[0].url == detail_url
+
+@pytest.mark.parametrize("provider", [
+    "ebooksgratuits", "numilog", "kobo", "paris", "synthetic-provider",
+])
+@pytest.mark.parametrize("path", [
+    "/index.php/feed/search?q=book",
+    "/feed/book/42",
+    "/book/42.atom",
+    "/index.php/%2566eed/search",
+    "/Pages/Compte/MesLivres.aspx",
+])
+def test_non_notice_urls_are_rejected_for_every_provider(provider, path):
+    row = {"provider_id": provider, "friendly_url": "https://books.example" + path}
+    assert catalogue_notice_url(row, provider=provider) is None
+    assert document_links(row) == ()
+
+
+@pytest.mark.parametrize("provider", ["ebooksgratuits", "numilog", "synthetic-provider"])
+def test_generic_notice_screen_preserves_independent_html_alternate(provider):
+    row = {
+        "provider_id": provider,
+        "friendly_url": "https://books.example/feed/search?q=book",
+        "metadata": {"product_url": "https://books.example/notices/book-42"},
+    }
+    assert catalogue_notice_url(row, provider=provider) == "https://books.example/notices/book-42"
+    assert [link.url for link in document_links(row)] == ["https://books.example/notices/book-42"]
+
