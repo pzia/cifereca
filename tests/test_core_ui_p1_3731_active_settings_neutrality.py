@@ -45,9 +45,10 @@ def test_navigation_is_closed_to_all_provider_consent_side_effects():
 
 
 def test_legacy_kobo_compatibility_is_not_reexported_from_live_binder():
-    from cifereca.gui import settings_sync_actions, settings_sync_section
+    from cifereca.gui import settings_sync_actions
     assert not hasattr(settings_sync_actions, "kobo_backup_action_state")
-    assert hasattr(settings_sync_section, "kobo_backup_action_state")
+    assert not (GUI / "settings_sync_section.py").exists()
+    assert not (GUI / "settings_legacy_kobo_section.py").exists()
     from cifereca.gui.settings_neutral_sync_section import SyncSettingsControls
     assert "run_backup_now" not in SyncSettingsControls.__dict__
     assert "backup_status" not in SyncSettingsControls.__dict__

@@ -9,7 +9,7 @@ from scripts.ci_kobo_core_line_inventory import _category, inventory
 ROOT = Path(__file__).resolve().parents[1]
 # Contract-first baseline, 2026-11-08 after green #5032 and P0 W4 dead-helper extraction. Only decrease this
 # ceiling after cuts merge; never reclassify production code to hide growth.
-BASELINE = 7242
+BASELINE = 1228
 
 
 def test_kobo_dedicated_core_surface_never_grows_from_baseline():
@@ -20,7 +20,7 @@ def test_kobo_dedicated_core_surface_never_grows_from_baseline():
     assert result["dedicated_files"] == len(result["per_file"])
     assert result["groups"]["core"] > 0
     assert result["groups"]["kobo_subpackage"] > 0
-    assert result["groups"]["gui_legacy"] > 0
+    assert result["groups"]["gui_legacy"] == 0
     assert result["nonblank_noncomment_lines"] <= result["dedicated_lines"]
     assert result["outside_dedicated_kobo_literal_lines"] >= 0
 

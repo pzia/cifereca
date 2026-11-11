@@ -13,7 +13,6 @@ import pytest
 from cifereca.gui.settings_lifetime import SettingsPageLifetime
 from cifereca.gui.settings_model import SettingsRevisionState
 from cifereca.gui.settings_sync_actions import bind_settings_sync_actions
-from cifereca.gui.settings_sync_section import kobo_backup_action_state
 
 
 class Control:
@@ -127,19 +126,17 @@ def test_navigation_reentrant_disposal_never_starts_background_work():
     host.run_kobo_backup.assert_not_called()
 
 
-def test_navigation_readiness_cannot_be_reused_as_download_authorization():
-    for persisted, draft, dirty, allowed in (
-        (True, True, False, True), (False, False, False, True),
-        (True, False, False, False), (True, True, True, False),
-        (False, True, False, False), ("true", True, False, False),
-        (1, True, False, False),
+def test_retired_global_kobo_settings_builder_is_not_installed():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
+    for name in (
+        "settings_sync_section.py",
+        "settings_legacy_kobo_section.py",
+        "settings_legacy_kobo.py",
     ):
-        label, ready = kobo_backup_action_state(
-            persisted_enabled=persisted, draft_enabled=draft, dirty=dirty,
-        )
-        assert ready is allowed
-        assert isinstance(label, str) and label
-        assert "télécharger maintenant" not in label.lower()
+        assert not (root / name).exists()
+    from cifereca.gui import settings_sync_actions
+    assert not hasattr(settings_sync_actions, "kobo_backup_action_state")
 
 
 def test_sync_navigation_does_not_depend_on_obsolete_kobo_switch_value():
