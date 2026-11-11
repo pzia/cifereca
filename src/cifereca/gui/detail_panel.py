@@ -1092,24 +1092,6 @@ class DetailPanel(Gtk.Box):
                     else "Emprunt indisponible pour l’identité et le compte "
                          "actifs, ou non pris en charge par cette source."
                 )
-                if item.source_provider == "bnf-pret":
-                    # #4082: bounded local SQLite observation, NOT a provider
-                    # fetch or a new permission. No result is cached across
-                    # identities, accounts, editions or detail renderings.
-                    from .bnf_borrow_claim_status import bnf_borrow_claim_message
-                    observer = getattr(
-                        self.window.service, "bnf_borrow_claim_observation", None,
-                    )
-                    current = getattr(self.window.service, "current_identity", None)
-                    identity_id = getattr(current, "identity_id", None)
-                    if callable(observer) and type(identity_id) is str and identity_id:
-                        try:
-                            observation = observer(
-                                item, expected_identity_id=identity_id,
-                            )
-                        except Exception:
-                            observation = None
-                        explanation = bnf_borrow_claim_message(observation) or explanation
                 if item.source_provider == "paris":
                     from .paris_borrow_status import paris_borrow_status_message
                     reader = getattr(
