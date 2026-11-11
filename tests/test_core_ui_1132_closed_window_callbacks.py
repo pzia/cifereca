@@ -101,7 +101,6 @@ def test_window_close_cancels_toast_timeout_once_before_closing_services():
         _closed=False, _settings_main_lifetime=None,
         _settings_standalone_lifetime=None, _diag_refresh="pending",
         config=config, get_width=lambda: 800, get_height=lambda: 600,
-        _kobo_backup_timer_id=None,
         _cancel_notification_hide=lambda: calls.append("cancel-toast"),
         _cancel_activity_hide=lambda: calls.append("cancel-activity"),
         _cached_book_unsubscribe=lambda: calls.append("unsubscribe"),

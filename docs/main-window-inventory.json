@@ -938,7 +938,6 @@
         "_identity_context_generation",
         "_install_css",
         "_install_shell_shortcuts",
-        "_kobo_backup_timer_id",
         "_last_finished_task_id",
         "_last_search_query",
         "_library_entries_cache",

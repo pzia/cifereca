@@ -45,14 +45,6 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     # GTK idle callback additionally checks the already-closed owner.
     from cifereca.gui import source_inventory_timer
     source_inventory_timer.stop(window, source_remove=source_remove)
-    timer_id = getattr(window, "_kobo_backup_timer_id", None)
-    window._kobo_backup_timer_id = None
-    if timer_id is not None:
-        try:
-            source_remove(timer_id)
-        except Exception:
-            # The source may already have been dispatched or removed.
-            pass
     try:
         # A notification timeout can already be queued when GTK is closed.
         # Remove the source as well as guarding its eventual callback.

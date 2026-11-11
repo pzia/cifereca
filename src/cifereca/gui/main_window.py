@@ -175,7 +175,6 @@ class MainWindow(Adw.ApplicationWindow):
         self._search_mode = "local"
         self._loaded_search_context = None
         self._search_local_objects: dict[str, dict[str, Any]] = {}
-        self._kobo_backup_timer_id: int | None = None
         self.main_shell: Gtk.Widget | None = None
         self.loan_objects: dict[str, Loan] = {}
         self.history_objects: dict[str, HistoryItem] = {}
