@@ -59,7 +59,7 @@ def _docstring_lines(tree: ast.Module) -> set[int]:
     return result
 
 
-_AMBIGUOUS_ALIASES = frozenset({"local", "library", "catalog", "catalogue", "provider"})
+_AMBIGUOUS_ALIASES = frozenset({"local", "library", "catalog", "catalogue", "provider", "reference"})
 
 
 def _installed_provider_aliases(root: Path) -> tuple[str, ...]:
