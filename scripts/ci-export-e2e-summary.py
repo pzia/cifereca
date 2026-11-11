@@ -250,6 +250,13 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         last = data.get("public_stage")
         if type(last) is str and last in _BOOK_DETAIL_STAGES:
             result["book_detail_last_stage"] = last
+        # The capture stage is a literal enum, never a Pillow/X11 error,
+        # private screenshot, file path or dynamic exception message.
+        capture_phase = data.get("capture_failure_phase")
+        if type(capture_phase) is str and capture_phase in {
+            "imagegrab", "display_geometry", "png_write",
+        }:
+            result["book_detail_capture_failure_phase"] = capture_phase
         line = data.get("callback_line")
         if type(line) is int:
             tree = ast.parse((ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8"))

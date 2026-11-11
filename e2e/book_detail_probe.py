@@ -137,13 +137,23 @@ def main():
         (out / "screen.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     def capture(name):
-        picture = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
-        assert picture.width == args.width, picture.size
-        if args.geometry_1300:
-            assert picture.height == 768, picture.size
+        try:
+            picture = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
+        except Exception:
+            # Closed, literal phase only; never export X11 errors or pixels.
+            report.setdefault("capture_failure_phase", "imagegrab")
+            raise
+        if picture.width != args.width or (
+                args.geometry_1300 and picture.height != 768):
+            report.setdefault("capture_failure_phase", "display_geometry")
+            raise AssertionError(picture.size)
         filename = out / f"{name}.png"
-        picture.save(filename)
-        shutil.copyfile(filename, out / "screen.png")
+        try:
+            picture.save(filename)
+            shutil.copyfile(filename, out / "screen.png")
+        except Exception:
+            report.setdefault("capture_failure_phase", "png_write")
+            raise
         report["steps"].append({
             "stage": name, "file": filename.name,
             "sha256": hashlib.sha256(filename.read_bytes()).hexdigest(),
