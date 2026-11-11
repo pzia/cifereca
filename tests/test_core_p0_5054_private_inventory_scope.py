@@ -8,7 +8,7 @@ from cifereca.models import SearchResult
 from cifereca.core.private_inventory_row_scope import (
     MAX_PRIVATE_ROWS, private_inventory_rows_match_scope,
 )
-from cifereca.core.numilog_private_rows import private_library_rows_valid
+from cifereca.core.private_inventory_row_scope import credential_scoped_private_inventory_rows_valid
 
 
 def _row(provider="fixture-store", credential="cred", collection="library",
@@ -59,10 +59,10 @@ def test_numilog_compatibility_requires_exact_hashed_credential_lid_and_variant(
         provider="numilog", credential=credential,
         scenario="NUMILOG_LIBRARY", record=record,
     )
-    assert private_library_rows_valid([result], credential)
-    assert not private_library_rows_valid([replace(result, source_collection="catalogue")], credential)
-    assert not private_library_rows_valid([replace(result, owned=False)], credential)
-    assert not private_library_rows_valid([replace(result, source_credential="foreign")], credential)
-    assert not private_library_rows_valid([replace(result, record_id="numilog:guess")], credential)
-    assert not private_library_rows_valid([replace(result, source_provider="fixture-store")], credential)
-    assert not private_library_rows_valid([result], "foreign")
+    assert credential_scoped_private_inventory_rows_valid([result], provider_id="numilog", credential_id=credential, collection="library", scenario="NUMILOG_LIBRARY")
+    assert not credential_scoped_private_inventory_rows_valid([replace(result, source_collection="catalogue")], provider_id="numilog", credential_id=credential, collection="library", scenario="NUMILOG_LIBRARY")
+    assert not credential_scoped_private_inventory_rows_valid([replace(result, owned=False)], provider_id="numilog", credential_id=credential, collection="library", scenario="NUMILOG_LIBRARY")
+    assert not credential_scoped_private_inventory_rows_valid([replace(result, source_credential="foreign")], provider_id="numilog", credential_id=credential, collection="library", scenario="NUMILOG_LIBRARY")
+    assert not credential_scoped_private_inventory_rows_valid([replace(result, record_id="numilog:guess")], provider_id="numilog", credential_id=credential, collection="library", scenario="NUMILOG_LIBRARY")
+    assert not credential_scoped_private_inventory_rows_valid([replace(result, source_provider="fixture-store")], provider_id="numilog", credential_id=credential, collection="library", scenario="NUMILOG_LIBRARY")
+    assert not credential_scoped_private_inventory_rows_valid([result], provider_id="numilog", credential_id="foreign", collection="library", scenario="NUMILOG_LIBRARY")

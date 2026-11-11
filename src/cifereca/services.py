@@ -1707,8 +1707,13 @@ class LibraryService:
                     )
                     continue
                 if provider_id == "numilog":
-                    from .core.numilog_private_rows import private_library_rows_valid
-                    if not private_library_rows_valid(rows, credential_id):
+                    from .core.private_inventory_row_scope import (
+                        credential_scoped_private_inventory_rows_valid,
+                    )
+                    if not credential_scoped_private_inventory_rows_valid(
+                        rows, provider_id=provider_id, credential_id=credential_id,
+                        collection="library", scenario="NUMILOG_LIBRARY",
+                    ):
                         result.blocked_sources += 1
                         _TRACE_LOG.warning(
                             "TRACE catalog personal-library inventory skipped "

@@ -38,3 +38,25 @@ def private_inventory_rows_match_scope(
         )
     except Exception:
         return False
+
+
+
+def credential_scoped_private_inventory_rows_valid(
+    rows: object, *, provider_id: str, credential_id: str,
+    collection: str, scenario: str,
+) -> bool:
+    """Structural provenance check; no provider-specific rights or I/O.
+
+    A provider account/session must already have been independently bound
+    before this purely descriptive, atomic batch check is used.
+    """
+    from .credential_scoped_record import exact_credential_scoped_record
+    return private_inventory_rows_match_scope(
+        rows, provider_id=provider_id, credential_id=credential_id,
+        collection=collection, scenario=scenario,
+        scoped_record_valid=lambda item: (
+            exact_credential_scoped_record(
+                item, provider_id=provider_id, credential_id=credential_id,
+            ) is not None
+        ),
+    )
