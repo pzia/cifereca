@@ -33,7 +33,6 @@ from . import acsm_cache
 from .core import adept_borrower, loan_artifact_state, adept_acsm_plan
 from .core import loan_return_verification
 from .core import adept_inventory_reconciliation
-from .core import kobo_backup
 from .core import sync_coordination, sync_projection
 from .core import library_projection, library_mutation
 from .core.source_context import source_context_epoch
@@ -3903,16 +3902,6 @@ class LibraryService:
             "catalog": scan,
             "storage_schema_version": self.storage.schema_version(),
         }
-
-    def kobo_backup_enabled(self) -> bool:
-        return kobo_backup.kobo_backup_enabled(self)
-
-    def kobo_backup_interval_minutes(self) -> int:
-        return kobo_backup.kobo_backup_interval_minutes(self)
-
-    def kobo_backup_diagnostic(self) -> dict[str, Any]:
-        """Summarise the persisted Kobo backup state without network access."""
-        return kobo_backup.kobo_backup_diagnostic(self)
 
     def synchronize_kobo_selected_edition(
         self, credential_id: str, edition_id: str, *,
