@@ -204,3 +204,65 @@ def test_owned_gtk_fixture_persists_exact_borrower_binding_before_entitlement():
     assert values["account_id"].attr == "unique_id"
     assert isinstance(values["credential_id"], ast.Attribute)
     assert values["credential_id"].attr == "credential_id"
+
+
+@pytest.mark.parametrize("code", [
+    "library_expander_unavailable", "library_author_first",
+    "library_author_second", "library_subject", "library_isbn",
+    "library_award", "library_keyword", "library_collection",
+    "library_public_format", "library_online_calls",
+])
+def test_only_closed_synthetic_field_code_is_published(code):
+    mod = exporter()
+    with TemporaryDirectory() as tmp:
+        source, report = write_case(
+            Path(tmp), "book-detail-1366", stage="verify_library",
+        )
+        data = json.loads(report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = code
+        report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        assert result["book_detail_failure_code"] == code
+        assert result["book_detail_last_stage"] == "verify_library"
+        public = repr(result)
+        for private in ("SECRET", "PRIVATE", "Bearer", "private.invalid", "/home"):
+            assert private not in public
+
+
+@pytest.mark.parametrize("bad", [
+    None, True, 17, "", "library_subject\\nSECRET",
+    "private:/home/PRIVATE", "Bearer SECRET", "library_custom_provider",
+])
+def test_untrusted_failure_code_is_never_exported(bad):
+    mod = exporter()
+    with TemporaryDirectory() as tmp:
+        source, report = write_case(
+            Path(tmp), "book-detail-1300", stage="verify_library",
+        )
+        data = json.loads(report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = bad
+        report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        assert "book_detail_failure_code" not in result
+
+
+def test_failure_code_cannot_leak_on_pass_or_other_scenario():
+    mod = exporter()
+    with TemporaryDirectory() as tmp:
+        source, report = write_case(
+            Path(tmp), "book-detail-1366", returncode=0,
+            stage="verify_library",
+        )
+        data = json.loads(report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = "library_isbn"
+        report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(source)["results"][0]
+        assert "book_detail_failure_code" not in result
+        other_source, other_report = write_case(
+            Path(tmp), "startup", stage="verify_library",
+        )
+        data = json.loads(other_report.read_text(encoding="utf-8"))
+        data["book_detail_failure_code"] = "library_isbn"
+        other_report.write_text(json.dumps(data), encoding="utf-8")
+        result = mod.safe_summary(other_source)["results"][0]
+        assert "book_detail_failure_code" not in result
