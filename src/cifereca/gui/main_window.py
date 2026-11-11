@@ -1573,9 +1573,6 @@ class MainWindow(Adw.ApplicationWindow):
     def _kobo_selected(self, row: BookListItem | None) -> None:
         self._library_selected(row)
 
-    def run_kobo_backup(self, manual: bool = True, control: Gtk.Widget | None = None) -> None:
-        return sync_controller.run_kobo_backup(self, manual, control)
-
     def choose_adept_loan(self, acquisition_id, loan, control):
         self.runner.submit("Lecture des prêts ADEPT…", lambda: self.service.adept_loan_choices(acquisition_id),
             lambda result: self._present_adept_loan_choices(acquisition_id, loan, result),
