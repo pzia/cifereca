@@ -38,4 +38,4 @@ def test_uncertain_existing_loan_exposes_read_only_followup_without_new_post():
     assert "Demande de prêt Paris déjà envoyée" in source
     assert "Ne réempruntez pas." in source
     assert "Vérifier le prêt sans réemprunter" in source
-    assert "cifereca-paris-borrow-followup" in source
+    assert "cifereca-borrow-followup" in source
