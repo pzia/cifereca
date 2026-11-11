@@ -131,11 +131,11 @@ def test_success_outcome_keeps_exact_direct_epub_contract_without_adept_access()
     assert "secret-title" not in repr(result)
 
 
-def test_success_outcome_preserves_adept_return_flag_without_inventing_rights():
+def test_success_outcome_never_advertises_retired_return_capability():
     loan = NS(id="loan-2")
     decision = NS(action="acquire", reason="force_refresh", source="provider")
     for binding, expected in [
-        ({"return_available": True}, True),
+        ({"return_available": True}, False),
         ({"return_available": False}, False),
         ({}, False),
     ]:
