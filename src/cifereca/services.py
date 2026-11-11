@@ -466,24 +466,8 @@ class LibraryService:
         )
 
     def can_borrow_paris(self, item: SearchResult) -> bool:
-        """Inert admission without a chained supplier-specific Core method."""
-        from .core.manual_library_borrow import (
-            manual_borrow_available, manual_borrow_diagnostic,
-        )
-        from .core.primary_source_binding import configured_primary_source_current
-
-        result = manual_borrow_diagnostic(
-            self, item, provider_id="paris", docbase="DILICOM",
-            primary_id="",
-            source_current=lambda service, row, identity: (
-                configured_primary_source_current(
-                    service, row, identity, provider_id="paris",
-                    selection_key="primary_paris_connection_id",
-                )
-            ),
-            available=manual_borrow_available, result_type=SearchResult,
-        )
-        return result["local_action_possible"] is True
+        """Read-only visibility derived from the single scoped diagnostic."""
+        return self.paris_borrow_diagnostic(item)["local_action_possible"] is True
 
     def paris_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
         """Read-only Core admission; provider eligibility always unknown."""
