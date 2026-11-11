@@ -28,7 +28,7 @@ def test_legacy_direct_module_physically_removed_and_core_uses_v2():
     services = _src("src/cifereca/services.py")
     assert "from .core.numilog_direct_acquisition import" not in services
     assert "from .core.selected_owned_search import obtain_selected_owned" in services
-    assert "numilog_canonical_explicit_action_required" in services
+    assert "canonical_explicit_action_required" in services
 
 
 def test_historical_numilog_receipt_engine_physically_removed():

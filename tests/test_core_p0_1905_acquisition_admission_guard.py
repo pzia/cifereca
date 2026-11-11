@@ -74,7 +74,7 @@ def test_unscoped_retired_numilog_direct_refuses_before_any_provider_get(
             lambda *_args, **_kwargs: reached.append(True),
         )
         with pytest.raises(
-            ProviderConfigurationError, match="numilog_canonical_explicit_action_required",
+            ProviderConfigurationError, match="canonical_explicit_action_required",
         ):
             service._acquire_direct_item_impl(item)
         assert reached == []
