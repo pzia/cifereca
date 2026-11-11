@@ -61,10 +61,23 @@ jobs:
           packages = sorted(src.glob("*.deb"))
           if not 11 <= len(packages) <= 300:
               raise SystemExit("Incomplete Ubuntu GTK dependency closure")
+          from urllib.parse import unquote
+          import importlib.util
+          spec = importlib.util.spec_from_file_location(
+              "validator", "scripts/ci-validate-gtk-relay-cache.py"
+          )
+          validator = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(validator)
           for package in packages:
               if not package.is_file() or package.is_symlink():
                   raise SystemExit("Unexpected package member")
-              copy2(package, dst / package.name)
+              name = unquote(package.name)
+              if not validator.DEB_NAME.fullmatch(name):
+                  raise SystemExit("Invalid Ubuntu package archive name")
+              target = dst / name
+              if target.exists():
+                  raise SystemExit("Duplicate Ubuntu package archive name")
+              copy2(package, target)
           (dst / ".gtk4-cache-profile.json").write_text(
               json.dumps({"distro":"ubuntu","codename":"noble","architecture":"amd64"},
                          sort_keys=True, separators=(",", ":")) + "\n",
