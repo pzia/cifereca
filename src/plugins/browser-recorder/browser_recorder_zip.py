@@ -963,10 +963,19 @@ def prepare_reviewed_zip(review) -> ReviewedBundlePlan:
     # Final safety assertion before any archive could be offered to a user:
     # even if an upstream review missed a secret, known secret values and
     # their encodings cannot appear in the assembled ZIP member payloads.
-    all_plain = b"\n".join(files.values()).decode("utf-8", "replace")
+    # Captured secrets can leak only through recording-derived members.
+    # The independently assembled public Core dev kit is not derived from
+    # captured data: short PIN substrings can coincidentally occur in its
+    # generated checksums, without representing disclosure.
+    capture_plain = b"\n".join(
+        data for name, data in files.items()
+        if not name.startswith("plugin-dev-kit/")
+    ).decode("utf-8", "replace")
     for secret in review._secret_values:
-        if any(form in all_plain for form in _variants(secret)):
+        if any(form in capture_plain for form in _variants(secret)):
             raise RecorderError("bundle_secret_risk")
+    # Keep the archive-wide JWT/private-key scan, including the public kit.
+    all_plain = b"\n".join(files.values()).decode("utf-8", "replace")
     if _JWT.search(all_plain) or re.search(
         r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", all_plain,
     ):
