@@ -285,6 +285,7 @@ def test_legacy_bnf_opt_in_does_not_override_source_disable(policy):
         assert not bridge.legacy_source_auto_in_transaction(
             conn, loan, "a" * 32,
         )
+        assert bridge.toggle_state(conn, loan) == "off"
 
 
 def test_generic_cas_policy_overrides_legacy_bnf_on(policy):
