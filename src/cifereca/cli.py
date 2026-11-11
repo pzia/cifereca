@@ -153,12 +153,6 @@ def main(argv: list[str] | None = None) -> int:
     adept_list = adept_sub.add_parser("list", help="Liste les liaisons ADEPT locales confirmées (hors réseau)")
     adept_list.add_argument("--credential", help="Limiter à une connexion Paris")
     adept_sub.add_parser("accounts", help="Affiche les comptes visibles après connexion Paris")
-    adept_audit = adept_sub.add_parser(
-        "audit", help="Audit local hors réseau des prêts Paris visibles sur plusieurs connexions"
-    )
-    adept_audit.add_argument(
-        "--credential", help="Filtre les prêts liés à cette connexion, sans masquer les autres provenances"
-    )
     adept_exact = adept_sub.add_parser(
         "audit-origin",
         help="Audit historique ADEPT hors réseau sur un prêt Paris et un item exacts",
@@ -733,11 +727,6 @@ def main(argv: list[str] | None = None) -> int:
                         for account in service.accounts
                         if str(account.provider_id).lower() == "paris"
                     ]
-                elif a.paris_adept_cmd == "audit":
-                    from .paris_adept_audit import build_paris_adept_audit
-                    result = build_paris_adept_audit(
-                        core.storage, credential_id=a.credential
-                    )
                 elif a.paris_adept_cmd == "audit-origin":
                     from .artifact_inspection import inspect_artifact
                     from .core.adept_origin_audit import inspect_paris_adept_origins
