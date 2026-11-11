@@ -173,9 +173,11 @@ def _apply_search_detail(
                                            "current_identity", None), "identity_id", None),
                account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
                source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    # Local import also works when the adapter body is bound by a headless host.
-    from cifereca.gui.search_details import _add_explicit_enrichment_action
-    _add_explicit_enrichment_action(self, selected_id, item, detail, context)
+    # The generic action requires an HTTPS detail hint. No optional GUI
+    # module is imported for rows without one (including headless hosts).
+    if getattr(item, "friendly_url", None):
+        from cifereca.gui.search_details import _add_explicit_enrichment_action
+        _add_explicit_enrichment_action(self, selected_id, item, detail, context)
 
 
 def _add_explicit_enrichment_action(
