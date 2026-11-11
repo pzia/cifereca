@@ -1,0 +1,30 @@
+name: P0 temporary Core/provider coupling baseline probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-provider-core-baseline-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provider-core-coupling:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact tested SHA
+        uses: actions/checkout@v4
+      - name: Measure physical and AST coupling without provider I/O
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_provider_core_coupling_report.py --json | tee "$RUNNER_TEMP/provider-core-coupling.json"
+          python3 -m json.tool "$RUNNER_TEMP/provider-core-coupling.json" >/dev/null
+          cp "$RUNNER_TEMP/provider-core-coupling.json" ./provider-core-coupling-baseline.json
+      - name: Publish baseline report
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-core-coupling-baseline
+          path: provider-core-coupling-baseline.json
+          retention-days: 2
