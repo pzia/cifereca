@@ -200,3 +200,31 @@ def test_generic_action_denies_ambiguous_consent_before_supplier_io(tmp_path, co
         assert state["calls"] == [] and state["mutations"] == 0
     finally:
         service.close()
+
+
+def test_mismatched_explicit_verification_modes_fail_before_supplier_io(tmp_path):
+    from cifereca.core.manual_library_borrow import manual_borrow
+
+    service, session, account, item = bnf_setup(tmp_path)
+    try:
+        result = manual_borrow(
+            service, item, provider_id="bnf-pret", docbase="BNF_PRET",
+            primary_id=None, verification="provider_observed",
+            expected_identity_id=account.identity_id, confirmed=True,
+        )
+        assert result["status"] == "blocked"
+        assert session.dispatches == session.reads == []
+    finally:
+        service.close()
+
+    service, session, account, item, state = paris_setup(tmp_path)
+    try:
+        result = manual_borrow(
+            service, item, provider_id="paris", docbase="DILICOM",
+            primary_id="", verification="active_only",
+            expected_identity_id=account.identity_id, confirmed=True,
+        )
+        assert result["status"] == "blocked"
+        assert state["calls"] == [] and state["mutations"] == 0
+    finally:
+        service.close()
