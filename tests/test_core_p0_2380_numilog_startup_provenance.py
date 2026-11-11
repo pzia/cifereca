@@ -34,33 +34,23 @@ def test_generic_numilog_startup_details_remain_masked(tmp_path):
     assert "NEVER_SHOW" not in json.dumps(output)
 
 
-def test_retired_worker_cannot_fabricate_current_download_facts():
-    from cifereca.core.diagnostic_numilog_projection import public_numilog_fields
-    assert public_numilog_fields(
-        "startup_materialization",
-        {"status": "complete", "downloaded": 1, "attempted": 1},
-    ) == {}
-
-
-def test_active_numilog_session_and_delivery_diagnostics_remain_filtered():
-    from cifereca.core.diagnostic_numilog_projection import (
-        public_numilog_fields, public_numilog_message,
-    )
-    session = public_numilog_fields(
-        "session_state", {"reason": "connect_failed", "connected": False,
-                          "secret": "https://private.invalid/?token=NEVER_SHOW"},
-    )
-    assert session == {"reason": "connect_failed", "connected": False}
-    assert public_numilog_message("session_state", session) is not None
-    delivery = public_numilog_fields(
-        "acquisition_delivery", {
+def test_retired_worker_cannot_fabricate_current_download_facts(tmp_path):
+    root = Path(__file__).resolve().parents[1] / "src/cifereca/core"
+    assert not (root / "diagnostic_numilog_projection.py").exists()
+    diag = Diagnostics(level="detailed")
+    for operation in ("startup_materialization", "session_state",
+                      "acquisition_delivery"):
+        diag.add("NUMILOG", operation, "error", detail={
             "phase": "completed", "code": "epub_complete",
-            "mime": "epub", "http_status": 200,
+            "connected": False, "reason": "connect_failed",
             "url": "https://private.invalid/?token=NEVER_SHOW",
-        },
+        }, level="detailed")
+    report = query_diagnostic_events(
+        diag, source="core_events", log_path=tmp_path / "unread",
     )
-    assert delivery == {
-        "phase": "completed", "code": "epub_complete",
-        "mime": "epub", "http_status": 200,
-    }
-    assert "NEVER_SHOW" not in public_numilog_message("acquisition_delivery", delivery)
+    assert report["total"] == 3
+    for row in report["events"]:
+        assert row["message"] == "[opération masquée]"
+        assert "detail" not in row
+        assert "provider_id" not in row
+    assert "NEVER_SHOW" not in json.dumps(report)

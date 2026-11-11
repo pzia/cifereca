@@ -140,7 +140,7 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             return ALL  # unknown or shared E2E helper
         elif path.startswith("src/plugins/provider-bnf-pret/"):
             selected.update(BNF_COVERS)
-        elif path.startswith("src/plugins/diagnostics-page/") or path == "src/cifereca/core/diagnostic_numilog_projection.py":
+        elif path.startswith("src/plugins/diagnostics-page/"):
             selected.update(DIAG)
         elif path.startswith("src/plugins/home-page/"):
             selected.update(HOME)

@@ -14,10 +14,6 @@ import re
 import stat
 from typing import Any
 
-from .diagnostic_numilog_projection import (
-    public_numilog_fields, public_numilog_message, public_numilog_session_log,
-    public_numilog_session_fields,
-)
 from .diagnostic_kobo_projection import (
     public_kobo_backup_decision, public_kobo_backup_log,
     public_kobo_backup_message,
@@ -234,10 +230,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_kobo_backup_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            numilog_session_detail = (
-                public_numilog_session_fields(match["body"])
-                if match["logger"] == "cifereca_numilog" else {}
-            )
             source_sync_detail = (
                 public_source_sync_log(match["body"])
                 if match["logger"] == "cifereca" else {}
@@ -298,10 +290,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 message = public_source_sync_message(source_sync_detail)
             elif kobo_detail:
                 message = public_kobo_backup_message(kobo_detail)
-            elif match["logger"] == "cifereca_numilog":
-                message = public_numilog_session_log(match["body"]) or (
-                    "[contenu libre masqué : consulter le journal local]"
-                )
             elif task_correlation:
                 message = task_correlation[0]
             elif trace and trace.group(1).lower() in _STRUCTURED_TERMS and trace.group(2).lower() in (_STRUCTURED_TERMS | {"core"}):
@@ -338,7 +326,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # text, guessed module names or timestamps as domain evidence.
             business_module = (
                 "KOBO" if kobo_detail else
-                "NUMILOG" if numilog_session_detail else
                 "SYNC" if source_sync_detail else
                 "PNB" if loan_download_detail and loan_download_detail["provider_id"] == "paris" else
                 "LOAN" if loan_download_detail or bnf_action_detail else
@@ -380,7 +367,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                    if audit_detail else {}),
                 **({"task_ref": audit_detail["task_ref"]}
                    if "task_ref" in audit_detail else {}),
-                **({"detail": numilog_session_detail} if numilog_session_detail else {}),
                 **({"detail": source_sync_detail, "status": source_sync_detail["status"]}
                    if source_sync_detail else {}),
                 **({"detail": loan_download_detail, "status": loan_download_detail["status"]}
@@ -614,18 +600,11 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 severity = ('info' if candidate['status']=='success' else
                             'error' if candidate['status']=='failed' else 'warning')
         if category == "NUMILOG":
-            # Retired startup pseudo-right observations have no trusted Core
-            # producer. Unknown operations remain masked; active Numilog
-            # session/delivery schemas still use closed field allowlists.
-            public_detail = public_numilog_fields(
-                operation, row.get("detail"), row.get("duration_ms"),
-            )
-            task_ref = row.get("task_ref")
-            if (operation in {"acquisition_delivery", "session_state"}
-                    and type(task_ref) is str
-                    and re.fullmatch(r"[0-9a-f]{12}", task_ref)):
-                public_detail["task_ref"] = task_ref
-            message = public_numilog_message(operation, public_detail) or "[opération masquée]"
+            # Provider-specific diagnostics are not an authority in Core.
+            # Only the canonical, provenance-checked generic observations
+            # above may publish structured details or attest provider IDs.
+            public_detail = {}
+            message = "[opération masquée]"
         # Do not infer the provider from a business category (PNB/PLUGIN).
         # Only typed observations with Core provenance attest this identity.
         # runtime.kobo-adept also serves Paris, Numilog and manual imports.

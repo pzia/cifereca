@@ -161,8 +161,7 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(set(mod.HOME).issubset(set(mod.ALL)))
 
     def test_diagnostics_all_seven(self):
-        for path in ("src/plugins/diagnostics-page/page.py",
-                     "src/cifereca/core/diagnostic_numilog_projection.py"):
+        for path in ("src/plugins/diagnostics-page/page.py",):
             self.assertEqual(set(mod.select([path])), set(mod.DIAG))
 
     def test_1599_detail_plugin_changes_select_gtk_smoke(self):
