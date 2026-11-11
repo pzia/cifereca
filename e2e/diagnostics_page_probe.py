@@ -989,9 +989,21 @@ def main():
         refresh = [w for w in walk(page[0]) if isinstance(w, Gtk.Button)
                    and w.get_tooltip_text() == "Actualiser les journaux sans synchronisation"]
         assert len(refresh) == 1
+        queries_before_refresh = len(broker.event_queries)
         refresh[0].emit("clicked")
+        def bulk_refresh_timeout():
+            # Synthetic fixture only: persist closed booleans for the
+            # privacy-safe exporter. The original timeout still raises.
+            report["bulk_refresh_observation"] = {
+                "refresh_mapped": bool(refresh[0].get_mapped()),
+                "refresh_sensitive": bool(refresh[0].get_sensitive()),
+                "fixture_enabled": broker.bulk is True,
+                "broker_queried": len(broker.event_queries) > queries_before_refresh,
+            }
+            save()
         until(lambda: find_label("50 événements affichés"),
-              lambda: keyboard_action("Erreurs + critiques (filtres)", wait_bulk_errors))
+              lambda: keyboard_action("Erreurs + critiques (filtres)", wait_bulk_errors),
+              on_timeout=bulk_refresh_timeout)
 
     def wait_bulk_errors():
         report["stage"] = "P0_2140_wait_57_errors"

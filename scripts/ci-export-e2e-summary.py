@@ -121,6 +121,23 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
             # A bounded index into the reviewed builder's children, never
             # widget labels, geometry, paths or arbitrary GTK object reprs.
             result["minimum_row"] = minimum_row
+        # The bulk-refresh timeout exposes only fixture and widget booleans.
+        # Never publish journal rows, labels, timing, errors or broker state.
+        observation = data.get("bulk_refresh_observation")
+        if (scenario == "diagnostics-large-1600"
+                and stage == "P0_2140_bulk_fixture"
+                and type(observation) is dict
+                and set(observation) == {
+                    "refresh_mapped", "refresh_sensitive", "fixture_enabled",
+                    "broker_queried",
+                }
+                and all(type(value) is bool for value in observation.values())):
+            result["bulk_refresh_observation"] = {
+                key: observation[key] for key in (
+                    "refresh_mapped", "refresh_sensitive", "fixture_enabled",
+                    "broker_queried",
+                )
+            }
         # #2095: only closed, fixture-derived diagnostic state is publishable
         # for the failed *real* MainWindow audit acceptance. In particular,
         # the raw subtitle, source ID, pointers and task exceptions never pass.
@@ -215,6 +232,7 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
     """Expose the last *closed* GUI callback stage, never raw failure data."""
     if scenario not in {
         "book-detail-1300", "book-detail-1366", "book-detail-1600",
+        "book-detail-1700",
     }:
         return {}
     root = source.resolve().parent / scenario
