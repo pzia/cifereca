@@ -23,31 +23,6 @@ def safe_model(obj: Any) -> dict[str, Any]:
     return data
 
 
-def _safe_kobo_resume_receipt(summary: dict[str, Any]) -> dict[str, Any]:
-    """Return only bounded, non-identifying counters for one explicit run.
-
-    The engine summary may include local paths, book titles, raw credentials,
-    error strings and provider metadata. None belongs in CLI output.
-    """
-    states = {"complete", "partial", "failed", "aborted", "cancelled", "attention_required"}
-    state = str(summary.get("status") or "")
-    result: dict[str, Any] = {
-        "scope": "account", "status": state if state in states else "unknown",
-        "resume_attempted": True,
-    }
-    for key in (
-        "manifest_items", "scanned", "attempted", "downloaded", "unchanged",
-        "completed", "pending", "attention_required", "skipped_archived", "errors", "remaining",
-        "reconcile_pending", "reconcile_skipped", "blocked_non_retryable",
-        "items_blocked_by_scope", "malformed_manifest_items",
-        "duplicate_manifest_items", "provider_rejected_manifest_items",
-    ):
-        value = summary.get(key)
-        if type(value) is int and 0 <= value <= 1_000_000:
-            result[key] = value
-    return result
-
-
 def _kobo_legacy_report_view(
     safe_report: dict[str, Any], *, observed_at: int | None = None,
 ) -> dict[str, Any]:
@@ -217,23 +192,6 @@ def main(argv: list[str] | None = None) -> int:
         "--verify-files", action="store_true",
         help="Inspecter et hacher les fichiers liés (peut prendre du temps)",
     )
-    kobo_resume = sub.add_parser(
-        "kobo-resume",
-        help="Reprise manuelle ciblée Kobo : peut télécharger des livres (confirmation requise)",
-    )
-    kobo_resume.add_argument("--credential", required=True, help="Identifiant de connexion Kobo")
-    kobo_resume.add_argument(
-        "--confirm-downloads", action="store_true",
-        help="J'autorise explicitement la reprise et les téléchargements de ce compte",
-    )
-    kobo_resume.add_argument(
-        "--retry-scope-blocked", action="store_true",
-        help="Réessayer les refus de délégation 403 après réautorisation Kobo-Vault",
-    )
-    kobo_resume.add_argument(
-        "--confirm-reauthorized", action="store_true",
-        help="Je confirme avoir réautorisé/reconnecté ce compte avant le réessai de scope",
-    )
     # P0 #4858 D3: one edition only, using Core's same selected-offer A->B.
     # The legacy kobo-resume command stays isolated from this route.
     selected_kobo = sub.add_parser(
@@ -338,15 +296,6 @@ def main(argv: list[str] | None = None) -> int:
     packages = psub.add_parser("packages", help="Liste les packages/versions installés")
     deps_repair = psub.add_parser("deps-repair", help="Résout les dépendances Python des plugins actifs dans le venv Core")
     a = p.parse_args(argv)
-    if a.cmd == "kobo-resume":
-        # Fail before even opening Core: an accidental invocation must not
-        # contact a provider, modify a database or initiate any transfer.
-        if not a.confirm_downloads:
-            p.error("kobo-resume exige --confirm-downloads avant tout transfert")
-        if a.retry_scope_blocked and not a.confirm_reauthorized:
-            p.error("--retry-scope-blocked exige --confirm-reauthorized après réautorisation")
-        if a.confirm_reauthorized and not a.retry_scope_blocked:
-            p.error("--confirm-reauthorized exige --retry-scope-blocked")
     if a.cmd == "paris-adept":
         if a.username or a.account:
             p.error("paris-adept exige --credential, pas --username ou --account")
@@ -1056,7 +1005,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         local_adept_commands = {
-            "kobo-sync-errors", "kobo-backup-errors", "kobo-resume-preview", "kobo-resume",
+            "kobo-sync-errors", "kobo-backup-errors", "kobo-resume-preview",
             "statistics", "catalog-scan", "catalog-list", "acquisition-ledger", "acquisition-reconcile",
         }
         if a.cmd not in local_adept_commands:
@@ -1125,19 +1074,6 @@ def main(argv: list[str] | None = None) -> int:
                     "acquisition_authorized": False,
                 }
                 exit_code = 2
-        elif a.cmd == "kobo-resume":
-            # Only after --confirm-downloads: activate the exact existing
-            # borrower in Core memory for modern canonical A→B. Partial ABI
-            # remains on the old bounded compatibility route; no other
-            # provider/account is connected or registered in SQLite.
-            service.connect_kobo_canonical(a.credential)
-            summary = service.sync_kobo_backup_account(
-                a.credential,
-                retry_scope_blocked=a.retry_scope_blocked,
-            )
-            result = _safe_kobo_resume_receipt(summary)
-            # Partial/attention batches must never look like completed CLI runs.
-            exit_code = 0 if result["status"] == "complete" else 2
         elif a.cmd == "statistics":
             result = [service.identity_statistics(i.identity_id) for i in service.identities if not a.identity or i.identity_id==a.identity]
         elif a.cmd == "catalog-scan":
@@ -1153,8 +1089,6 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return exit_code
     except KeyboardInterrupt:
-        if getattr(a, "cmd", None) in {"kobo-resume"} and not getattr(a, "quiet", False):
-            print("\n[Kobo] Synchronisation interrompue ; l’élément en cours sera repris au prochain lancement.", file=sys.stderr, flush=True)
         return 130
     finally:
         if kobo_trace_previous_level is not None:

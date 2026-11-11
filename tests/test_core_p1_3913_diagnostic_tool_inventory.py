@@ -75,7 +75,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
         "doctor", "sync", "list", "run", "acquisition-audit",
         "statistics", "catalog-list", "acquisition-ledger",
         "acquisition-reconcile", "kobo-resume-preview",
-        "kobo-resume", "kobo-reconcile-local",
+        "kobo-reconcile-local",
         "paris-adept", "audit-origin", "audit-canonical", "audit-transaction",
         "preview-resolution", "bind", "unbind", "plugin", "diagnose",
         "config-get", "config-set", "deps-repair", "identity-directory",
@@ -85,7 +85,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
         "--provider", "--identity", "--credential", "--account-id",
         "--confirm", "--json", "--report", "--verify-files",
         "--trace-export", "--confirm-trace-export", "--output",
-        "--refresh-manifest", "--confirm-downloads",
+        "--refresh-manifest",
         "--confirm-ownership",
     }
     assert required_commands <= commands
