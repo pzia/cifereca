@@ -7,6 +7,8 @@ native True semantics remain covered.
 from __future__ import annotations
 
 import ast
+import inspect
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -90,17 +92,20 @@ def test_verified_adobe_phase_keeps_separate_explicit_pnb_action(tmp_path):
         svc.close()
 
 
-def test_provider_return_entry_is_inert_before_any_adobe_or_pnb_check():
-    path = (Path(__file__).resolve().parents[1] /
-            "src/cifereca/core/provider_loan_return.py")
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    operation = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-                     and node.name == "return_digital")
-    assert isinstance(operation.body[1], ast.Raise)
-    source = ast.unparse(operation)
-    assert "loan_return_removed" in source
-    for forbidden in (
-        "adobe_return_attested", "verify_paris_return_inventory",
-        "loan_return_claim", "session.return_digital",
-    ):
-        assert forbidden not in source
+def test_provider_return_helper_is_removed_before_any_adobe_or_pnb_check():
+    from cifereca.services import LibraryService
+
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/core/provider_loan_return.py"
+    assert not path.exists()
+    for name in ("return_digital", "_return_digital_guarded"):
+        operation = getattr(LibraryService, name)
+        source = ast.parse(textwrap.dedent(inspect.getsource(operation)))
+        fn = next(node for node in source.body if isinstance(node, ast.FunctionDef))
+        assert isinstance(fn.body[-1], ast.Raise)
+        body = ast.unparse(fn)
+        assert "loan_return_removed" in body
+        for forbidden in (
+            "adobe_return_attested", "verify_paris_return_inventory",
+            "loan_return_claim", "session.return_digital",
+        ):
+            assert forbidden not in body

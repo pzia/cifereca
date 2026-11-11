@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from cifereca.core import provider_loan_return, return_adept_orchestrator
+from cifereca.core import return_adept_orchestrator
 from cifereca.plugin_api import AttentionRequired
 from cifereca.services import LibraryService
 
@@ -39,12 +39,12 @@ def test_legacy_service_return_facades_fail_before_all_access(method, kwargs):
     assert err.value.code == "loan_return_removed"
 
 
-def test_direct_provider_return_helper_cannot_bypass_service_guard():
-    with pytest.raises(AttentionRequired) as err:
-        provider_loan_return.return_digital(
-            Poison(), Poison(), explicit_retry=Poison(), _TRACE_LOG=Poison(),
-        )
-    assert err.value.code == "loan_return_removed"
+def test_retired_provider_return_helper_is_physically_absent():
+    from pathlib import Path
+    import cifereca.core
+
+    core_dir = Path(cifereca.core.__file__).resolve().parent
+    assert not (core_dir / "provider_loan_return.py").exists()
 
 
 def test_direct_adept_first_helper_cannot_bypass_service_guard():

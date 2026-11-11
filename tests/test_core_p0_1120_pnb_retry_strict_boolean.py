@@ -6,11 +6,12 @@ returns, even for native True, hostile truthy values or a direct helper.
 from __future__ import annotations
 
 import ast
+import inspect
+import textwrap
 from pathlib import Path
 
 import pytest
 
-from cifereca.core import provider_loan_return
 from cifereca.plugin_api import AttentionRequired
 from tests.test_core_0982_loan_return_reconciliation import Session, _library, _loan
 from tests.test_core_0984_adept_first_paris_reconcile import (
@@ -44,24 +45,6 @@ def test_retired_pnb_return_refuses_every_retry_flag_without_io(tmp_path, retry)
         service.close()
 
 
-@pytest.mark.parametrize("retry", [False, True, "false", 1, _HostileOverride()])
-def test_direct_provider_helper_does_not_bypass_retirement(tmp_path, retry):
-    loan = _loan()
-    session = Session([loan])
-    service = _library(tmp_path, session=session)
-    try:
-        with pytest.raises(AttentionRequired) as exc:
-            provider_loan_return.return_digital(
-                service, loan, explicit_retry=retry,
-                _TRACE_LOG=_HostileOverride(),
-            )
-        assert exc.value.code == "loan_return_removed"
-        assert session.posts == session.checks == []
-        assert service.loan_return_state(loan) is None
-    finally:
-        service.close()
-
-
 @pytest.mark.parametrize("retry", ["false", True, _HostileOverride()])
 def test_retired_adept_first_and_pnb_routes_cannot_be_reopened(tmp_path, retry):
     service, loan, paris = adobe_setup(tmp_path, paris_active=True)
@@ -79,16 +62,15 @@ def test_retired_adept_first_and_pnb_routes_cannot_be_reopened(tmp_path, retry):
         service.close()
 
 
-def test_return_helper_has_no_reachable_retry_claim_or_mutation():
-    path = Path(__file__).resolve().parents[1] / "src/cifereca/core/provider_loan_return.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    method = next(
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "return_digital"
-    )
-    assert isinstance(method.body[1], ast.Raise)
-    source = ast.unparse(method)
-    assert "loan_return_removed" in source
-    assert "loan_return_claim" not in source
-    assert "verify_return_digital" not in source
-    assert "session.return_digital" not in source
+def test_return_facade_has_no_reachable_retry_claim_or_mutation():
+    from cifereca.services import LibraryService
+
+    for name in ("return_digital", "_return_digital_guarded"):
+        source = ast.parse(textwrap.dedent(inspect.getsource(getattr(LibraryService, name))))
+        function = next(node for node in ast.walk(source) if isinstance(node, ast.FunctionDef))
+        assert isinstance(function.body[-1], ast.Raise)
+        unparsed = ast.unparse(function)
+        assert "loan_return_removed" in unparsed
+        assert "loan_return_claim" not in unparsed
+        assert "verify_return_digital" not in unparsed
+        assert "session.return_digital" not in unparsed

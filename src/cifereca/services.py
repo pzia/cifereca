@@ -7,7 +7,6 @@ from .core import loan_provider_delivery
 from .core import loan_completion_receipt, loan_initial_receipt
 from .core import loan_adept_profile_guard
 from .core import manual_acsm_import
-from .core import provider_loan_return
 from .core import return_adept_orchestrator
 
 import logging
