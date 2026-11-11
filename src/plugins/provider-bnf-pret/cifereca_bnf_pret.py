@@ -117,6 +117,37 @@ def _reader_acs4_offer_id(identity_id, credential_id, account_id, loan_id, resou
 
 
 class BnfProviderSession(ProviderSession):
+    # Pure data, inspectable without invoking any plugin getter or I/O.
+    # The Core's existing explicit-ACSM executor owns all locking, leases,
+    # admission, artifact inspection and staging cleanup.
+    loan_acsm_stage_profile = (
+        "bnf_html",
+        (
+            "bnf_explicit_confirmation_required",
+            "bnf_loan_scope_unproven",
+            "bnf_loan_token_unavailable",
+            "bnf_loan_token_invalid",
+            "bnf_acquisition_busy",
+        ),
+    )
+
+    def loan_stage_activity_reason(self, error: Exception) -> str:
+        """Closed provider activity verdict, not a transport exception."""
+        if (isinstance(error, ProviderError)
+                and error.args == ("bnf_selected_offer_scope_changed",)):
+            return "bnf_loan_not_observed"
+        if (isinstance(error, ProviderError)
+                and type(error.args) is tuple
+                and len(error.args) == 1
+                and type(error.args[0]) is str
+                and error.args[0] in {
+                    "auth_required", "access_denied", "rate_limited",
+                    "http_unavailable", "transport_unavailable",
+                    "operation_timeout",
+                }):
+            return "bnf_activity_" + error.args[0]
+        return "bnf_activity_unavailable"
+
     def __init__(self, *, client=None, diagnostics=None, identity_broker=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
         self.client = client or ReaderHTTPClient(diagnostics=diagnostics)

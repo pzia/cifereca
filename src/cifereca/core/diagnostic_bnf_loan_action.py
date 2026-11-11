@@ -49,6 +49,10 @@ IMPORT_CODES = frozenset({'complete', 'unchanged', 'adept_profile_required',
 
 
 class BnfLoanActionError(ProviderConfigurationError):
+    # Stable origin of this legacy public BnF action; no new Core supplier
+    # comparison string is introduced when resolving the provider profile.
+    provider_id = "bnf-pret"
+
     def __init__(self, code):
         self.code = code if type(code) is str and code in STAGE_CODES | IMPORT_CODES else 'bnf_action_failed'
         super().__init__(self.code)
