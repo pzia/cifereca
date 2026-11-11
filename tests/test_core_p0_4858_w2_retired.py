@@ -23,17 +23,9 @@ def test_w2_locked_entrypoints_physically_removed():
     assert not hasattr(LibraryService, '_sync_kobo_backup_account_locked')
 
 
-def test_public_sync_w2_refuses_before_lock_creation():
-    from cifereca.core.kobo_backup import sync_kobo_backup
-
-    with pytest.raises(ProviderConfigurationError, match="kobo_legacy_w2_retired_use_canonical_provider"):
-        sync_kobo_backup(
-            _NoLegacyAccess(),
-            credential_id="vault-1", retry_scope_blocked=True,
-            lock_factory=lambda *_args: pytest.fail("legacy lock must not be created"),
-            lock_path=lambda: pytest.fail("legacy lock path must not be resolved"),
-            cancelled=lambda: pytest.fail("legacy cancellation callback must not run"),
-        )
+def test_public_sync_w2_is_physically_absent():
+    from cifereca.core import kobo_backup
+    assert not hasattr(kobo_backup, "sync_kobo_backup")
 
 
 def test_d2_partial_abi_cannot_prepare_legacy_confirmation(case, monkeypatch):
@@ -57,11 +49,10 @@ def test_d2_partial_abi_cannot_prepare_legacy_confirmation(case, monkeypatch):
 
 
 def test_d3_legacy_direct_executor_is_removed():
-    from pathlib import Path
-    from cifereca.core.kobo_backup import _execute_kobo_acquisition
-
-    with pytest.raises(ProviderConfigurationError, match="kobo_legacy_direct_get_retired"):
-        _execute_kobo_acquisition(_NoLegacyAccess(), _NoLegacyAccess(), Path("."))
+    from cifereca.core import kobo_backup
+    from cifereca.services import LibraryService
+    assert not hasattr(kobo_backup, "_execute_kobo_acquisition")
+    assert not hasattr(LibraryService, "_execute_kobo_acquisition")
 
 
 def test_d4_retired_on_start_never_persists_attempt():
