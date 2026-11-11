@@ -73,24 +73,6 @@ def test_d4_retired_on_start_never_persists_attempt():
     assert not schedule.mark_on_start_attempt(_NoLegacyAccess(), _NoLegacyAccess())
 
 
-def test_d1_partial_abi_cannot_refresh_legacy_manifest(tmp_path, monkeypatch):
-    from tests.test_kobo_backup_guard import _service
-    from cifereca.core.kobo_backup import kobo_backup_preview
-
-    service = _service(tmp_path)
-    session = service._sessions[service._session_key("kobo", "vault-1")]
-    monkeypatch.setattr(
-        session, "backup_manifest",
-        lambda: pytest.fail("D1 must not read a legacy manifest"),
-    )
-    try:
-        with pytest.raises(ProviderConfigurationError, match="canonical_kobo_preview_abi_unavailable"):
-            kobo_backup_preview(service, "vault-1", refresh_manifest=True)
-        assert service.storage.backup_list("kobo") == []
-    finally:
-        service.close()
-
-
 @pytest.mark.parametrize("account_index", [0, 1, 2])
 @pytest.mark.parametrize("legacy_token", ["", "a" * 64, "not-a-token"])
 def test_all_bound_profiles_refuse_legacy_w2_confirmation_and_get(

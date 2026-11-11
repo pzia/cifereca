@@ -914,7 +914,7 @@ class SynchronizationBrokerImpl:
     def preview_local_materialization(
         self, source_id: str, *, verify_local_files: bool = False,
     ) -> SyncResult:
-        """Offline source preview: Kobo manifest or Numilog purchase evidence.
+        """Read-only source preview without Kobo historical pseudo-rights.
 
         Numilog is read-only, never a confirmation or an auto-backup policy.
         No credentials, product IDs, local paths or provider messages escape.
@@ -940,101 +940,8 @@ class SynchronizationBrokerImpl:
                 self, account, source_id,
                 verify_local_files=verify_local_files,
             )
-        if str(getattr(account, "provider_id", "")) != "kobo":
-            return rejected("not_supported")
-        credential = str(getattr(account, "credential_id", "") or "")
-        identity = str(getattr(account, "identity_id", "") or "")
-        if not credential or not identity:
-            return rejected("invalid_source")
-        try:
-            if self.service.storage.identity_for_connection("kobo", credential) != identity:
-                return rejected("invalid_source")
-        except (AttributeError, KeyError, ValueError, TypeError):
-            return rejected("invalid_source")
-        # A session's presence and its declared backup capability are
-        # checked; no automatic connect/reconnect is ever attempted here.
-        session = getattr(self.service, "_sessions", {}).get(
-            self.service._session_key("kobo", credential)
-        )
-        if not bool(getattr(getattr(session, "capabilities", None), "backup", False)):
-            return rejected("not_supported")
-        try:
-            # D1 P0: the public Sync-page broker must never reuse W2's
-            # private 0.7 backup_items projection, even on a partial Kobo
-            # ABI. Read existing canonical B evidence only; no live A/GET.
-            raw = self.service.kobo_backup_preview(
-                credential, refresh_manifest=False,
-                verify_local_files=verify_local_files,
-                offline_canonical_only=True,
-            )
-        except Exception:
-            # Provider/local errors can include bearer URLs and private
-            # paths. Never reflect the exception into UI/diagnostic output.
-            return rejected("preview_unavailable")
-        if (
-            not isinstance(raw, dict)
-            or raw.get("acquisition_authorized") is not False
-            or raw.get("manifest_refreshed") is not False
-            or raw.get("requires_manifest_validation") is not True
-            or raw.get("canonical_source") is not True
-            or raw.get("historical_canonical_only") is not True
-            or type(raw.get("known_item_count")) is not int
-            or raw["known_item_count"] != 0
-            or type(raw.get("manifest_items")) is not int
-            or raw["manifest_items"] != 0
-        ):
-            return rejected("preview_unavailable")
-        allowed = (
-            "already_local_linked", "already_local_verified",
-            "needs_reconciliation", "attention_required", "blocked_scope",
-            "blocked_unlinked", "not_downloadable", "candidate_unverified",
-            "potentially_missing", "invalid_manifest_items",
-        )
-        values = raw.get("counts")
-        if not isinstance(values, dict):
-            return rejected("preview_unavailable")
-        counts = {}
-        for field in allowed:
-            value = values.get(field)
-            if type(value) is not int or not 0 <= value <= 1_000_000:
-                return rejected("preview_unavailable")
-            counts[field] = value
-        # An old W2 status/sha/path must never leak back as a positive
-        # count through a future Core default-preview compatibility change.
-        if any(counts.values()):
-            return rejected("preview_unavailable")
-        historical = raw.get("historical_canonical")
-        if type(historical) is not dict:
-            return rejected("preview_unavailable")
-        recorded = historical.get("recorded_rights")
-        verified = historical.get("previously_published_files_physically_verified")
-        truncated = historical.get("inventory_truncated")
-        if (type(recorded) is not int or not 0 <= recorded <= 512
-                or type(verified) is not int or not 0 <= verified <= recorded
-                or type(truncated) is not bool
-                or historical.get("file_verification_requested") is not verify_local_files
-                or (not verify_local_files and verified != 0)):
-            return rejected("preview_unavailable")
-        return SyncResult(
-            ok=True, changed=0,
-            facts={
-                "phase": "local_materialization",
-                "status": "preview_only",
-                "read_only": True, "acquisition_authorized": False,
-                "manifest_refreshed": False,
-                "requires_manifest_validation": True,
-                "files_verified": verify_local_files,
-                "known_item_count": 0,
-                "counts": counts,
-                "canonical_source": True,
-                "historical_canonical_only": True,
-                "historical_canonical": {
-                    "recorded_rights": recorded,
-                    "physically_verified": verified,
-                    "inventory_truncated": truncated,
-                },
-            },
-        )
+        # Provider inventory previews belong to the canonical Sync contract.
+        return rejected("not_supported")
 
     def audit_local_reconciliation(self, source_id: str) -> SyncResult:
         """Retired W4 archive audit: never open old backup rows or local files.

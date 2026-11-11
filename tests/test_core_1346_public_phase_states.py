@@ -5,7 +5,35 @@ import json
 
 from cifereca.core.kobo_backup import _kobo_checkpoint_key
 from cifereca.plugin_api import SyncPhaseState
-from tests.test_core_1346_source_preflight import _broker
+from types import SimpleNamespace as NS
+
+from cifereca.brokers import SynchronizationBrokerImpl
+from tests.test_core039_contract_surface import Account, FakeService
+
+
+def _broker(*, broken_owner=False):
+    """Isolated synthetic source fixture; no retired D1 preview dependency."""
+    service = FakeService()
+    service.accounts.append(Account(
+        "reader-2", "kobo", "vault-secret", "kobo-reader",
+        "PRIVATE KOBO ACCOUNT",
+    ))
+    service._sessions[service._session_key("kobo", "vault-secret")] = NS(
+        connected=True,
+        capabilities=NS(
+            personal_library=True, backup=True,
+            local_materialization=True,
+            legacy_materialization_checkpoint=True,
+        ),
+    )
+    service.storage.identity_for_connection = lambda provider, credential: (
+        "other-identity" if broken_owner else "reader-2"
+    )
+    calls = []
+    broker = SynchronizationBrokerImpl(service)
+    target = next(row for row in broker.sources() if row.provider_id == "kobo")
+    return service, broker, target, calls
+
 
 
 def _phases(broker, identity="reader-2"):
