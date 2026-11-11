@@ -61,3 +61,9 @@ connexion avec un compte en mémoire ne suffit plus à lire un inventaire privé
 L'identifiant primaire amont vide reste admis s'il est réellement enregistré.
 La revérification après `library()` refuse une suppression ou réaffectation
 SQLite survenue pendant le GET. Aucun droit ni téléchargement n'est créé.
+
+## Contrat de forme des achats sélectionnés — #5054
+
+Lorsqu'une session de provider déclare `selected_purchase_branch`, elle doit déclarer aussi l'attribut **statique** `private_inventory_row_contract = (collection, scenario, "credential_scoped_record_v1")`. Le Core valide atomiquement chaque ligne `SearchResult` du lot : fournisseur exact, credential exact, collection et scénario déclarés, `owned is True`, `id == record_id`, ainsi que l'identifiant `provider:SHA256(credential)[:20]:lid:variant`.
+
+Contrat absent, inconnu ou malformé : **lot rejeté intégralement**, sans repli vers l'ancien miroir permissif. Les fournisseurs qui ne déclarent pas de branche d'achat sélectionnée conservent leurs garanties existantes. Ce contrôle structurel **n'atteste aucun droit historique, offre ou permission de télécharger** ; les gardes de compte/session/epoch et l'admission de la livraison sont indépendants.

@@ -7,6 +7,8 @@ a right by calling this helper.
 """
 from __future__ import annotations
 
+from inspect import getattr_static
+
 from ..models import SearchResult
 
 MAX_PRIVATE_ROWS = 100_000
@@ -60,3 +62,39 @@ def credential_scoped_private_inventory_rows_valid(
             ) is not None
         ),
     )
+
+
+def declared_private_inventory_batch_valid(
+    rows: object, *, session: object, provider_id: str, credential_id: str,
+) -> bool:
+    """Validate a provider-declared private-record shape without vendor logic.
+
+    A selected-purchase producer must declare its shape explicitly. Missing,
+    malformed or unknown declarations fail closed, rather than downgrading to
+    a permissive legacy mirror. Providers without selected-purchase support
+    retain their existing independent inventory contracts.
+
+    This is structural metadata only: it never attests ownership or an offer.
+    """
+    try:
+        branch = getattr_static(session, "selected_purchase_branch", None)
+        contract = getattr_static(session, "private_inventory_row_contract", None)
+        if branch is None and contract is None:
+            return True
+        if (type(contract) is not tuple or len(contract) != 3
+                or type(branch) is not str or not branch
+                or type(provider_id) is not str or not provider_id
+                or type(credential_id) is not str or not credential_id):
+            return False
+        collection, scenario, record_schema = contract
+        if (type(collection) is not str or not collection
+                or type(scenario) is not str or not scenario
+                or type(record_schema) is not str
+                or record_schema != "credential_scoped_record_v1"):
+            return False
+        return credential_scoped_private_inventory_rows_valid(
+            rows, provider_id=provider_id, credential_id=credential_id,
+            collection=collection, scenario=scenario,
+        )
+    except Exception:
+        return False

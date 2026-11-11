@@ -28,7 +28,7 @@ from cifereca_numilog_delivery_trace import DeliveryTrace, destination_category,
 # A descendant of the Core logger shares its canonical journal handler.
 _LOG = logging.getLogger("cifereca.plugin.provider.numilog")
 
-VERSION = '0.1.91'
+VERSION = '0.1.92'
 DESCRIPTOR = ProviderDescriptor(id='numilog',display_name='Numilog',
     description='Bibliothèque personnelle Numilog, EPUB direct et fulfillment ACSM via le Core.',state='ready',
     capabilities=ProviderCapabilities(authentication=True,multiple_credentials=True,
@@ -216,6 +216,10 @@ def _numilog_selected_offer_id(identity_id, credential_id, account_id,
 class NumilogSession(ProviderSession):
     # Provider-owned canonical branch for explicit, currently selected purchases.
     selected_purchase_branch = 'meslivres'
+    # Private metadata shape only, never evidence of a durable right.
+    private_inventory_row_contract = (
+        'library', 'NUMILOG_LIBRARY', 'credential_scoped_record_v1',
+    )
     def __init__(self, *, config, diagnostics, acquisition_broker=None, identity_broker=None, **kwargs):
         super().__init__(descriptor=DESCRIPTOR,**kwargs)
         self.diagnostics = diagnostics
