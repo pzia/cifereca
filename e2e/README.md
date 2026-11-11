@@ -334,3 +334,6 @@ les planches juxtaposant clair/sombre et `ux-checklist.csv` à remplir.
 Les captures demeurent **sur l'hôte GTK autorisé** et ne sont **jamais**
 des artefacts CI publics. Les planches servent au tri UX, les PNG originaux
 restent requis pour inspecter les détails ; aucun verdict UX n'est automatisé.
+
+
+<!-- P0 #5376: temporary full E2E baseline on unchanged main; do not merge. -->
