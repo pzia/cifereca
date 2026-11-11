@@ -69,13 +69,16 @@ def test_non_kobo_sources_and_disabled_actions_remain_centered(monkeypatch):
     # a large disabled Synchroniser button (#2141).
     assert [len(g.children[0].suffixes) for g in window._sync_sources_box.children] == [2, 2, 1]
     labels = _check_all_suffixes(window)
-    assert len(labels) == 9
-    # Numilog backup consent is a distinct, centered, default-disabled action.
+    assert len(labels) == 8
+    # The retired startup backup button cannot reappear. Inventory consent
+    # remains independent and properly aligned.
     numilog_group = next(
         group for group in window._sync_sources_box.children
         if group.children[0].title == "Compte Numilog"
     )
-    assert numilog_group.children[2].title == "Sauvegarde automatique des achats Numilog"
+    assert all(row.title != "Sauvegarde automatique des achats Numilog"
+               for row in numilog_group.children)
+    assert numilog_group.children[2].title == "Actualisation automatique des notices Numilog"
     assert not numilog_group.children[2].suffixes[0].sensitive
 
 

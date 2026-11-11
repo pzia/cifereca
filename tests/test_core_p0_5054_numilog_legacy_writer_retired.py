@@ -57,12 +57,6 @@ def test_retired_v1_startup_has_no_core_dispatch():
     assert "synchronize_scheduled_numilog_materialization" not in broker
 
 
-@pytest.mark.parametrize("mode", ("on_start", "manual", "", "unexpected"))
-def test_old_startup_optin_cannot_issue_new_consent(mode):
-    from cifereca.core.numilog_materialization_consent import prepare, confirm
-    assert prepare(NS(), "sync:test").ok is False
-    assert confirm(NS(), "sync:test", "old-token", mode=mode).ok is False
-
 
 def _item():
     return SearchResult(

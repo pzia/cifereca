@@ -283,18 +283,25 @@ def test_source_wide_auto_switch_replaces_six_individual_consents(
     store = service.storage
     # Equivalent persisted result of the Core source consent confirmation.
     # No exact-right authorization is created by this test.
-    assert store.numilog_materialization_change_consent(
-        source_id=sid, activate=enabled, expected_revision=None,
-    ) is True
+    # The canonical source-wide CAS is the sole acquisition consent.
+    # No legacy Numilog startup or pseudo-right consent is created.
+    state = broker.source_sync_consent(sid)
+    assert state["revision"] is None and state["configured"] is False
+    updated = broker.set_source_sync_consent(
+        sid, enabled=enabled, expected_revision=state["revision"],
+    )
+    assert updated["enabled"] is enabled and updated["configured"] is True
     assert broker.canonical_acquisition_choices(sid) == ()
     # The retired startup acquisition API no longer exists. Legacy consent
     # is not an authority to create a second provider-specific GET queue.
     assert not hasattr(broker, "synchronize_scheduled_numilog_materialization")
     assert content_gets(gets, urls) == []
     result = synchronize(service, account)
-    assert result["present_attested"] == 3
+    # An explicit canonical OFF fences even present-attestation reads;
+    # historical local files and placements remain untouched.
+    assert result["present_attested"] == (3 if enabled else 0)
     assert result["downloaded"] == (3 if enabled else 0)
-    assert result["pending"] == (0 if enabled else 3)
+    assert result["pending"] == (0 if enabled else 6)
     assert result["failed"] == result["blocked"] == 0
     assert content_gets(gets, urls) == (urls[3:] if enabled else [])
     assert {p: p.read_bytes() for p in paths} == before
@@ -302,7 +309,8 @@ def test_source_wide_auto_switch_replaces_six_individual_consents(
     assert len(runtime_calls) == (3 if enabled and kind == "acsm" else 0)
     again = synchronize(service, account)
     assert again["downloaded"] == 0
-    assert again["present_attested"] == (6 if enabled else 3)
+    assert again["present_attested"] == (6 if enabled else 0)
+    assert again["pending"] == (0 if enabled else 6)
     assert content_gets(gets, urls) == (urls[3:] if enabled else [])
 
 
@@ -320,12 +328,16 @@ def test_source_wide_revocation_blocks_existing_per_right_permission(
     service.set_canonical_acquisition_consent(account, keys[3], allowed=True)
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(account)
-    assert service.storage.numilog_materialization_change_consent(
-        source_id=sid, activate=False,
+    prior = broker.source_sync_consent(sid)
+    updated = broker.set_source_sync_consent(
+        sid, enabled=False, expected_revision=prior["revision"],
     )
+    assert updated["enabled"] is False
     result = synchronize(service, account)
-    assert result["present_attested"] == 3
-    assert result["pending"] == 3
+    # Canonical OFF vetoes all six candidate resource executions, including
+    # local present attestation; it never alters the six original placements.
+    assert result["present_attested"] == 0
+    assert result["pending"] == 6
     assert result["downloaded"] == 0
     assert content_gets(gets, urls) == []
     assert service.storage.placements() and len(service.storage.placements()) == 6
@@ -346,23 +358,29 @@ def test_revoke_then_reenable_during_delivery_cannot_revive_old_sync(
         LocalCatalog(service.storage, root).index_path(path, identity_id=account.identity_id)
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(account)
-    assert service.storage.numilog_materialization_change_consent(
-        source_id=sid, activate=True, expected_revision=None,
+    prior = broker.source_sync_consent(sid)
+    updated = broker.set_source_sync_consent(
+        sid, enabled=True, expected_revision=prior["revision"],
     )
+    assert updated["enabled"] is True
     refs_before = [p for p in service.storage.placements()]
     from cifereca.core import source_auto_consent_bridge as bridge
     before_epoch = bridge.consent_generation(service.storage, snapshot.scope)
     calls = []
     def revoke_while_delivering(source, offer):
         calls.append(source)
-        assert service.storage.numilog_materialization_change_consent(
-            source_id=sid, activate=False,
+        current_policy = broker.source_sync_consent(sid)
+        revoked = broker.set_source_sync_consent(
+            sid, enabled=False, expected_revision=current_policy["revision"],
         )
+        assert revoked["enabled"] is False
         if reopt_in:
-            revoked_epoch = bridge.consent_generation(service.storage, snapshot.scope)
-            assert service.storage.numilog_materialization_change_consent(
-                source_id=sid, activate=True, expected_revision=revoked_epoch,
+            # Re-enable with a fresh revision; an old in-flight click must
+            # not acquire under this new consent generation.
+            reenabled = broker.set_source_sync_consent(
+                sid, enabled=True, expected_revision=revoked["revision"],
             )
+            assert reenabled["enabled"] is True
         assert bridge.consent_generation(service.storage, snapshot.scope) != before_epoch
         path = root / "hugues" / "numilog" / "unpublished.epub"
         path.write_bytes(epub_bytes(99))

@@ -168,7 +168,6 @@ class SynchronizationBrokerImpl:
     service: Any
     _subscribers: list[Callable[[], None]] | None = None
     _materialization_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
-    _numilog_consent_plans: MaterializationPlans = field(default_factory=MaterializationPlans, repr=False)
     _scheduled_inventory_requested: set[str] = field(default_factory=set, repr=False)
     _scheduled_inventory_running: set[str] = field(default_factory=set, repr=False)
     _scheduled_inventory_lock: Any = field(default_factory=threading.Lock, repr=False)
@@ -599,17 +598,6 @@ class SynchronizationBrokerImpl:
         from .core.source_sync_consent import configured, set_source_enabled
         if configured(self.service, account):
             set_source_enabled(self.service, account, enabled, self._preference_key(source_id))
-        elif getattr(account, "provider_id", None) == "numilog":
-            if enabled:
-                # Old releases could leave a disabled source with an active
-                # consent after a crash in the former two-step revoke.
-                self.service.storage.numilog_materialization_enable_source(source_id)
-            else:
-                self.service.storage.numilog_materialization_disable_source(source_id)
-            # Invalidate stale SHA-preview proposals after either source
-            # transition, even when another account is selected in GTK.
-            with self._numilog_consent_plans.lock:
-                self._numilog_consent_plans.entries.clear()
         else:
             # Legacy Kobo/BnF acquisition consent has a pinned generation
             # distinct from this source enablement preference. Advance that
@@ -922,46 +910,6 @@ class SynchronizationBrokerImpl:
         )
         self._notify()
         return mode
-
-    def numilog_materialization_run_status(self, source_id: str) -> dict[str, Any]:
-        """Passive, privacy-preserving last run and next eligible opening."""
-        from .core.numilog_materialization_consent import policy_key
-        import re
-        if type(source_id) is not str or re.fullmatch(
-            r"sync:[0-9a-f]{24}", source_id,
-        ) is None:
-            raise ValueError("invalid_numilog_source")
-        account = self._find_account(source_id)
-        if getattr(account, "provider_id", None) != "numilog":
-            raise ValueError("not_a_numilog_source")
-        # No private library access, directory creation, acquisition or
-        # profile resolution: a disconnected owner can inspect history.
-        result = self.service.storage.numilog_materialization_run_status(source_id)
-        from .core.numilog_startup_diagnostics import read
-        detail = read(self.service.storage, source_id)
-        if detail:
-            result["diagnostic"] = detail
-        return result
-
-    def numilog_materialization_schedule(self, source_id: str) -> str:
-        """Read an independently confirmed Numilog policy. Defaults manual."""
-        from .core.numilog_materialization_consent import mode
-        return mode(self, source_id)
-
-    def prepare_numilog_materialization_consent(self, source_id: str) -> SyncResult:
-        """Explicit offline preview for opt-in at the next opening."""
-        from .core.numilog_materialization_consent import prepare
-        return prepare(self, source_id)
-
-    def confirm_numilog_materialization_consent(
-        self, source_id: str, confirmation_token: str, *, mode: str,
-    ) -> SyncResult:
-        from .core.numilog_materialization_consent import confirm
-        return confirm(self, source_id, confirmation_token, mode=mode)
-
-    def revoke_numilog_materialization_consent(self, source_id: str) -> str:
-        from .core.numilog_materialization_consent import revoke
-        return revoke(self, source_id)
 
     def preview_local_materialization(
         self, source_id: str, *, verify_local_files: bool = False,

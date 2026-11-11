@@ -112,11 +112,12 @@ def test_identity_switch_during_reader_cannot_publish_stale_catalogue_counts():
     assert not any(event[0] in {"sync-all", "sync-source"} for event in calls)
 
 
-def test_legacy_numilog_status_dict_never_overwrites_gtk_summary_widget():
-    # #3416 must coexist with legacy read-only Numilog status panels, whose
-    # handler also assigns a variable named 'summary' in the outer method.
-    from tests.test_core_p0_1905_numilog_consent_ui import _ui
-    window, _broker, calls, _dialogs, _state, _row = _ui(initial="on_start")
+def test_retired_numilog_backup_panel_cannot_overwrite_gtk_summary_widget():
+    from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
+    window, _broker, calls, _build, _page = _fixture(
+        sources=[_source(provider_id="numilog", source_id="numilog-one",
+                         sync_capabilities=("remote_inventory",))],
+    )
     window._refresh_sync_page()
     assert "Catalogues : état non vérifié" in window._sync_summary.label
     assert "Notices et droits" in window._sync_summary.label
