@@ -121,10 +121,14 @@ def search_detail_borrow_action_candidate(item: object, availability: str) -> bo
     """
     from ..models import SearchResult
 
-    if type(item) is not SearchResult or item.medium != "digital":
+    if (type(item) is not SearchResult or item.medium != "digital"
+            or type(item.source_provider) is not str or not item.source_provider
+            or type(item.record_id) is not str or not item.record_id
+            or type(item.docbase) is not str or not item.docbase):
         return False
-    if item.source_provider in {"numilog", "numilog-catalog", "kobo"}:
-        return False
+    # A source name is not borrowing evidence or an entitlement. The visible
+    # action is additionally gated by window.can_borrow_item(item), which
+    # performs the exact current account/session admission before any POST.
     metadata = item.metadata if type(item.metadata) is dict else {}
     if "manual_borrow_presentation" in metadata:
         hint = metadata["manual_borrow_presentation"]
