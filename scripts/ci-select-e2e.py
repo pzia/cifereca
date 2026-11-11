@@ -20,7 +20,6 @@ SYNC_PRODUCERS = frozenset((
     "src/cifereca/core/selected_source_offer.py",
     "src/cifereca/core/explicit_owned_canonical.py",
     "src/cifereca/core/loan_local_preparation.py",
-    "src/cifereca/core/provider_loan_renewal.py",
     "src/cifereca/core/loan_provider_delivery.py",
     "src/cifereca/core/manual_acsm_import.py",
     "src/cifereca/core/sync_coordination.py",
