@@ -284,7 +284,15 @@ class SelectionTests(unittest.TestCase):
             "gtk-recommendations": "recommendations_detail_probe.py",
             "gtk-bnf-covers": "bnf_cover_probe.py",
         }
+        # Optional UX reproductions remain targetable by name, but must not
+        # enter the mandatory impact graph. Every required scenario still
+        # has its source dependencies checked exhaustively.
+        self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX),
+                         set(runner.SCENARIOS))
         for scenario, descriptor in runner.SCENARIOS.items():
+            if scenario in mod.OPTIONAL_UX:
+                self.assertNotIn(scenario, mod.ALL)
+                continue
             filename = entrypoints.get(descriptor.get("runner"))
             if filename is None:
                 continue  # startup/core-navigation use the capture runner
