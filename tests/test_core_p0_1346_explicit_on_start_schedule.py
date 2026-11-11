@@ -40,10 +40,8 @@ def test_historical_global_flag_never_authorizes_startup_download(
         assert result["kobo_decision"]["scheduled_kobo"] == 0
         assert result["kobo"] == ({"status": "manual_only", "skipped": True}
                                  if legacy_enabled else None)
-        # Durable CLI projection must agree and contain no private values.
-        report = service.kobo_backup_diagnostic()["opening_decision"]
-        assert report["status"] == expected
-        assert report["scheduled_kobo"] == 0
+        # The live opening result is the only supported decision projection.
+        assert result["kobo_decision"]["persisted_enabled"] is legacy_enabled
     finally:
         service.close()
 
