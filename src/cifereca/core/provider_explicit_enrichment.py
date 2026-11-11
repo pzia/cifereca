@@ -73,12 +73,12 @@ def enrich_provider_detail_once(service, item: SearchResult, *,
         raise ProviderCapabilityError(_ERROR) from None
 
 
-def can_enrich_provider_detail_result(item: object, *, private_provider_id: str, public_provider_id: str) -> bool:
+def can_enrich_provider_detail_result(item: object, *, private_provider_id: str | None = None, public_provider_id: str | None = None) -> bool:
     """UI visibility hint only; provider will re-attest all source evidence."""
     if not isinstance(item, SearchResult):
         return False
     url = getattr(item, "friendly_url", None)
-    # This is only a UI hint. Core must not encode Numilog's hostname:
+    # This is only a UI hint. Core must not encode a supplier hostname:
     # the provider independently attests the product URL before any GET.
     # Keep a generic syntactic HTTPS gate to avoid advertising malformed links.
     if (type(url) is not str or not url or len(url) > 16384
@@ -94,14 +94,16 @@ def can_enrich_provider_detail_result(item: object, *, private_provider_id: str,
             return False
     except ValueError:
         return False
-    if item.source_provider == private_provider_id:
-        return (item.owned is True
-                and item.source_collection == "library"
-                and item.source_credential not in {"", "__public__"}
-                and item.download_url is None)
-    return (item.source_provider == public_provider_id
-            and item.source_credential == "__public__"
-            and item.source_collection == "public_catalog"
-            and item.owned is False and item.downloadable is False
-            and item.download_url is None)
+    private_shape = (item.owned is True
+                     and item.source_collection == "library"
+                     and item.source_credential not in {"", "__public__"}
+                     and item.download_url is None)
+    public_shape = (item.source_credential == "__public__"
+                    and item.source_collection == "public_catalog"
+                    and item.owned is False and item.downloadable is False
+                    and item.download_url is None)
+    return ((private_provider_id is None or item.source_provider == private_provider_id)
+            and private_shape) or (
+            (public_provider_id is None or item.source_provider == public_provider_id)
+            and public_shape)
 
