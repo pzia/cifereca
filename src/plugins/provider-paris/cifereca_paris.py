@@ -1702,6 +1702,33 @@ class ParisProviderSession(ProviderSession):
         finally:
             os.close(stage_fd)
 
+    def initial_loan_acsm_candidate(
+        self, loan: Loan, account: Account, target_dir: Path, *,
+        admission_current,
+    ) -> Path:
+        """Deliver a claimed loan's first one-shot ACSM; no new borrow.
+
+        Core has already durably confirmed the exact borrow checkpoint.
+        The provider alone recognizes the initial signed supplier offer.
+        Core subsequently validates/stores the local bytes and receipt.
+        """
+        if (not callable(admission_current) or type(loan) is not Loan
+                or type(loan.ebook_url) is not str or not loan.ebook_url):
+            raise ProviderConfigurationError("paris_initial_acsm_scope_required")
+        try:
+            first = urlparse(loan.ebook_url)
+            if (first.scheme != "https" or not first.hostname
+                    or not first.path.casefold().endswith(".acsm")
+                    or first.username is not None or first.password is not None):
+                raise ProviderConfigurationError("paris_initial_acsm_offer_invalid")
+        except ValueError:
+            raise ProviderConfigurationError("paris_initial_acsm_offer_invalid") from None
+        candidate, _private_hint = self.download_digital(
+            loan, account, target_dir, admission_current=admission_current,
+            initial_offer_only=True,
+        )
+        return candidate
+
     def download_digital(
         self, loan: Loan, account: Account, target_dir: Path, *,
         expected_right_id: str | None = None,
