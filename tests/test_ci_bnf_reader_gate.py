@@ -45,6 +45,7 @@ class BnfReaderGateTests(unittest.TestCase):
             'src/cifereca/brokers.py',
             'src/cifereca/services.py',
             'src/cifereca/core/library_projection.py',
+            'src/cifereca/core/library_local_inspection.py',
             'src/cifereca/core/observed_import_provenance.py',
             'src/cifereca/core/local_import_display_links.py',
         ):
