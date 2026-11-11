@@ -775,3 +775,7 @@ def test_gtk_replay_logs_only_closed_scenario_verdicts_and_preserves_failure():
     assert 'cat e2e-artifacts/summary.json' not in source
     assert 'cat e2e-artifacts/' not in source
     assert 'name: e2e-core-debug' not in source
+    assert 'uses: actions/upload-artifact@v7.0.2' in source
+    assert 'name: e2e-core-summary' in source
+    assert 'if-no-files-found: ignore' in source
+    assert 'retention-days: 2' in source
