@@ -465,30 +465,6 @@ class LibraryService:
             observations=observations, confirmed=confirmed, now=now,
         )
 
-    def paris_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
-        """Read-only Core admission; provider eligibility always unknown."""
-        from .core.manual_library_borrow import (
-            manual_borrow_available, manual_borrow_diagnostic,
-        )
-        from .core.primary_source_binding import configured_primary_source_current
-
-        result = manual_borrow_diagnostic(
-            self, item, provider_id="paris", docbase="DILICOM",
-            primary_id="",
-            source_current=lambda service, row, identity: (
-                configured_primary_source_current(
-                    service, row, identity, provider_id="paris",
-                    selection_key="primary_paris_connection_id",
-                )
-            ),
-            available=manual_borrow_available, result_type=SearchResult,
-        )
-        # Preserve the public UI's closed legacy reason without placing
-        # provider-specific diagnostics in the reusable Core admission.
-        if result["reason_code"] == "local_primary_source_binding_mismatch":
-            result["reason_code"] = "primary_paris_connection_mismatch_or_inactive"
-        return result
-
     def manual_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
         """Read-only scoped admission from the installed provider policy."""
         from .core.manual_borrow_contract import manual_borrow_action_diagnostic
