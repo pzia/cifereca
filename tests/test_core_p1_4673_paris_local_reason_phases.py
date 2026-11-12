@@ -13,7 +13,8 @@ from tests.test_paris_manual_borrow_dispatch import setup
 
 @pytest.mark.parametrize(("mode", "reason"), [
     ("wrong_primary_account", "local_primary_account_unverified"),
-    ("disconnected", "local_session_unavailable"),
+    # A disconnected session cannot supply a valid installed typed policy.
+    ("disconnected", "edition_or_source_unqualified"),
     ("previous_claim", "local_previous_attempt"),
     ("capability_unavailable", "local_borrow_capability_unavailable"),
     ("executor_unavailable", "local_borrow_executor_unavailable"),
