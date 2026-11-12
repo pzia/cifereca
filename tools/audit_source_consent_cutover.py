@@ -34,23 +34,65 @@ def inventory(database: Path) -> dict[str, object]:
         connection.execute("PRAGMA query_only=ON")
         connection.execute("BEGIN")
         rows = connection.execute(
-            "SELECT key FROM metadata WHERE key IS NOT NULL"
+            "SELECT key, value FROM metadata WHERE key IS NOT NULL"
         )
         counts = {name: 0 for name in _PREFIXES}
-        # BnF .revision rows share the same prefix: do not count as toggles.
-        for (key,) in rows:
+        # Exact matching is performed inside the SQLite snapshot. The output
+        # never contains the suffix, original value or individual row status.
+        legacy = {"numilog_purchase": {}, "bnf_loan": {}, "kobo_purchase": {}}
+        revisions = {"numilog_purchase": {}, "bnf_loan": {}, "kobo_purchase": {}}
+        active = {"numilog_purchase": "on_start:v1",
+                  "bnf_loan": "1", "kobo_purchase": "1"}
+        scanned = 0
+        for key, value in rows:
+            scanned += 1
+            if scanned > 1_000_000:
+                raise ValueError("inventory_too_large")
             if type(key) is not str:
                 continue
             for name, prefix in _PREFIXES.items():
-                if key.startswith(prefix):
-                    if name == "bnf_loan" and key.endswith(".revision"):
-                        continue
-                    if name == "kobo_purchase" and key.endswith(".revision"):
-                        continue
-                    counts[name] += 1
+                if not key.startswith(prefix):
+                    continue
+                suffix = key[len(prefix):]
+                if not suffix:
                     break
+                if name == "numilog_epoch":
+                    counts[name] += 1
+                    revisions["numilog_purchase"][suffix] = value
+                elif name in ("bnf_loan", "kobo_purchase"):
+                    if suffix.endswith(".revision"):
+                        revisions[name][suffix[:-len(".revision")]] = value
+                    else:
+                        counts[name] += 1
+                        legacy[name][suffix] = value
+                else:
+                    counts[name] += 1
+                    if name == "numilog_purchase":
+                        legacy[name][suffix] = value
+                break
+        classifications = {}
+        for name in legacy:
+            valid_on = 0
+            unversioned_on = 0
+            not_on = 0
+            for sid, value in legacy[name].items():
+                if value != active[name]:
+                    not_on += 1
+                elif (type(revisions[name].get(sid)) is str
+                      and len(revisions[name][sid]) == 32
+                      and all(c in "0123456789abcdef"
+                              for c in revisions[name][sid])):
+                    valid_on += 1
+                else:
+                    unversioned_on += 1
+            classifications[name] = {
+                "on_with_valid_revision": valid_on,
+                "on_missing_or_invalid_revision": unversioned_on,
+                "not_on": not_on,
+            }
         return {"schema": "cifereca.source-consent-inventory/1",
-                "read_only": True, "counts": counts}
+                "read_only": True, "counts": counts,
+                "legacy_modes": classifications}
     finally:
         connection.close()
 
