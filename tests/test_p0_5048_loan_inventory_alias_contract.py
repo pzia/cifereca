@@ -4,8 +4,16 @@ from dataclasses import replace
 import pytest
 
 from cifereca.models import Account, Loan
-from cifereca.providers.base import ProviderDescriptor
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 from cifereca.plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapshot
+
+
+def _descriptor(provider: str, alias: str | None = None) -> ProviderDescriptor:
+    return ProviderDescriptor(
+        id=provider, display_name=provider, description="Synthetic provider",
+        state="ready", capabilities=ProviderCapabilities(),
+        existing_primary_loan_account_alias=alias,
+    )
 
 
 def _account(provider: str, *, identity: str = "alice", borrower: str = "") -> Account:
@@ -29,7 +37,7 @@ def _loan(account: Account, borrower: str) -> Loan:
 @pytest.mark.parametrize("provider,alias", [("synthetic-a", "main"), ("synthetic-b", "primary")])
 def test_descriptor_declared_alias_is_accepted_for_exact_empty_borrower(provider, alias):
     account = _account(provider)
-    descriptor = ProviderDescriptor(id=provider, existing_primary_loan_account_alias=alias)
+    descriptor = _descriptor(provider, alias)
     scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
     snapshot = LoanInventorySnapshot(scope=scope, loans=(_loan(account, alias),))
     assert len(snapshot.loans) == 1
@@ -42,7 +50,7 @@ def test_descriptor_declared_alias_is_accepted_for_exact_empty_borrower(provider
 
 def test_crossed_owner_provider_credential_and_account_fail_closed():
     account = _account("synthetic-a")
-    desc = ProviderDescriptor(id=account.provider_id, existing_primary_loan_account_alias="main")
+    desc = _descriptor(account.provider_id, "main")
     scope = LoanInventoryScope.for_account(account, descriptor=desc)
     base = _loan(account, "main")
     for foreign in (
@@ -57,19 +65,19 @@ def test_crossed_owner_provider_credential_and_account_fail_closed():
 
 def test_alias_not_granted_to_linked_borrower_or_other_descriptor():
     linked = _account("synthetic-a", borrower="linked")
-    desc = ProviderDescriptor(id="synthetic-a", existing_primary_loan_account_alias="main")
+    desc = _descriptor("synthetic-a", "main")
     scope = LoanInventoryScope.for_account(linked, descriptor=desc)
     assert scope.primary_account_alias is None
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
         LoanInventorySnapshot(scope=scope, loans=(_loan(linked, "main"),))
     with pytest.raises(ValueError, match="invalid_loan_inventory_descriptor"):
-        LoanInventoryScope.for_account(linked, descriptor=ProviderDescriptor(id="synthetic-b"))
+        LoanInventoryScope.for_account(linked, descriptor=_descriptor("synthetic-b"))
 
 
 @pytest.mark.parametrize("alias", ["", "x\x00y", "x" * 1025])
 def test_malformed_descriptor_alias_refused(alias):
     account = _account("synthetic-a")
-    desc = ProviderDescriptor(id="synthetic-a", existing_primary_loan_account_alias=alias)
+    desc = _descriptor("synthetic-a", alias)
     with pytest.raises(ValueError, match="invalid_loan_inventory_primary_alias"):
         LoanInventoryScope.for_account(account, descriptor=desc)
 
@@ -78,7 +86,7 @@ def test_scope_requires_exact_account_and_no_manual_alias_for_linked_account():
     with pytest.raises(ValueError, match="invalid_loan_inventory_primary_alias"):
         LoanInventoryScope("alice", "synthetic-a", "credential-1", "linked", "main")
     account = _account("synthetic-a")
-    desc = ProviderDescriptor(id="synthetic-a")
+    desc = _descriptor("synthetic-a")
     scope = LoanInventoryScope.for_account(account, descriptor=desc)
     assert scope.primary_account_alias is None
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
