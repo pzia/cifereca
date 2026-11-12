@@ -57,7 +57,7 @@ def test_consented_exact_loan_stages_candidate_without_ledger_or_adept(connected
     service, session, account, loan, state, downloaded = connected_core
     before_rights = service.storage.entitlements()
     before_acquisitions = service.storage.acquisitions()
-    result = service.stage_bnf_loan_acsm(
+    result = service.stage_explicit_loan_acsm(
         loan, confirmed=True, expected_identity_id="default")
     assert result["status"] == "candidate_acsm"
     file = Path(result["path"])
@@ -77,7 +77,7 @@ def test_missing_candidate_reason_abi_refuses_before_any_get(
     with pytest.raises(
         ProviderConfigurationError, match="bnf_loan_token_unavailable",
     ):
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default",
         )
     assert not downloaded
@@ -100,7 +100,7 @@ def test_dynamic_candidate_reason_property_cannot_execute(
     with pytest.raises(
         ProviderConfigurationError, match="bnf_loan_token_unavailable",
     ):
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default",
         )
     assert seen == []
@@ -112,7 +112,7 @@ def test_no_consent_rejects_before_read_or_local_staging(connected_core):
     service, session, account, loan, state, downloaded = connected_core
     for consent in (False, None, 1, "yes"):
         with pytest.raises(ProviderConfigurationError, match="bnf_explicit_confirmation_required"):
-            service.stage_bnf_loan_acsm(
+            service.stage_explicit_loan_acsm(
                 loan, confirmed=consent, expected_identity_id="default")
     assert not downloaded
 
@@ -130,7 +130,7 @@ def test_identity_scope_never_falls_back_to_selected_profile(connected_core):
         (replace(loan, medium="physical"), "default"),
     ]:
         with pytest.raises(ProviderConfigurationError, match="bnf_loan_scope_unproven"):
-            service.stage_bnf_loan_acsm(
+            service.stage_explicit_loan_acsm(
                 candidate, confirmed=True, expected_identity_id=owner)
     assert not downloaded
 
@@ -141,7 +141,7 @@ def test_stale_live_activity_never_stages_even_if_old_right_remains(connected_co
     before = service.storage.entitlements()
     state["activity"] = '<section class="active-loans"></section>'
     with pytest.raises(ProviderConfigurationError, match="bnf_loan_not_observed"):
-        service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id="default")
+        service.stage_explicit_loan_acsm(loan, confirmed=True, expected_identity_id="default")
     assert before == service.storage.entitlements()
     assert not downloaded and not service.storage.acquisitions()
 
@@ -150,7 +150,7 @@ def test_closed_source_denies_before_network(connected_core):
     service, session, account, loan, state, downloaded = connected_core
     session.connected = False
     with pytest.raises(ProviderConfigurationError, match="bnf_loan_scope_unproven"):
-        service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id="default")
+        service.stage_explicit_loan_acsm(loan, confirmed=True, expected_identity_id="default")
     assert not downloaded
 
 
@@ -167,7 +167,7 @@ def test_untrusted_session_accounts_property_is_never_invoked_before_get(
 
     monkeypatch.setattr(type(session), "accounts", property(hostile_accounts))
     with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default",
         )
     assert reads == []
@@ -195,7 +195,7 @@ def test_selected_offer_property_getter_cannot_execute_during_preflight(
     with pytest.raises(
         ProviderConfigurationError, match="^bnf_loan_token_unavailable$",
     ) as exc:
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default",
         )
     assert "PRIVATE_URL_WITH_TOKEN" not in str(exc.value)
@@ -212,7 +212,7 @@ def test_duplicate_live_borrower_object_refuses_before_selected_offer_or_get(con
     try:
         session._accounts = [account, account]
         with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
-            service.stage_bnf_loan_acsm(
+            service.stage_explicit_loan_acsm(
                 loan, confirmed=True, expected_identity_id="default",
             )
         assert not downloaded
@@ -226,7 +226,7 @@ def test_identity_switch_before_confirmation_refuses_without_network(connected_c
     service, session, account, loan, state, downloaded = connected_core
     service.current_identity = service.identity_by_id("alex")
     with pytest.raises(ProviderConfigurationError, match="bnf_loan_scope_unproven"):
-        service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id="default")
+        service.stage_explicit_loan_acsm(loan, confirmed=True, expected_identity_id="default")
     assert not downloaded
 
 
@@ -256,7 +256,7 @@ def test_core_independently_refuses_invalid_loan_claim_even_if_provider_returns_
 
     monkeypatch.setattr(session, "download_digital", unverified_download)
     with pytest.raises(ProviderConfigurationError, match="^bnf_loan_token_invalid$"):
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default",
         )
     assert not downloaded
@@ -271,7 +271,7 @@ def test_core_refuses_fallback_to_other_credential_session_before_network(
     service, session, account, loan, state, downloaded = connected_core
     monkeypatch.setattr(session, "credential_id", "another-credential")
     with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default",
         )
     assert not downloaded
@@ -307,7 +307,7 @@ def test_source_rebound_during_token_get_disposes_candidate_without_rights(
     session_key = service._session_key("bnf-pret", account.credential_id)
     try:
         with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
-            service.stage_bnf_loan_acsm(
+            service.stage_explicit_loan_acsm(
                 loan, confirmed=True, expected_identity_id="default")
         assert len(downloaded) == 1
         assert len(staged_paths) == 1
@@ -338,7 +338,7 @@ def test_unexpected_token_inspector_failure_discards_private_acsm(
     with pytest.raises(
         ProviderConfigurationError, match="^bnf_loan_token_invalid$",
     ) as exc:
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default",
         )
     assert "secret" not in str(exc.value)
@@ -364,7 +364,7 @@ def test_url_bearing_candidate_is_rejected_and_deleted(connected_core, monkeypat
 
     monkeypatch.setattr(session, "download_digital", wrong_return)
     with pytest.raises(ProviderConfigurationError, match="^bnf_loan_token_invalid$"):
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default")
     assert len(files) == 1 and not files[0].exists()
     assert not downloaded and not service.storage.acquisitions()
@@ -382,7 +382,7 @@ def test_untrusted_artifact_outside_stage_is_never_deleted(
 
     monkeypatch.setattr(session, "download_digital", wrong_return)
     with pytest.raises(ProviderConfigurationError, match="^bnf_loan_token_invalid$"):
-        service.stage_bnf_loan_acsm(
+        service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id="default")
     assert unrelated.read_bytes() == TOKEN
     assert not downloaded and not service.storage.acquisitions()
@@ -433,7 +433,7 @@ def test_bnf_token_get_rejects_epoch_or_in_place_rebind_even_after_http_success(
 
         monkeypatch.setattr(session, "download_digital", interrupted)
         with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
-            service.stage_bnf_loan_acsm(
+            service.stage_explicit_loan_acsm(
                 loan, confirmed=True, expected_identity_id="default",
             )
         assert len(staged_paths) == 1
@@ -466,7 +466,7 @@ def test_epoch_revoked_after_staging_preparation_blocks_bnf_token_get(
     monkeypatch.setattr(service, "_acquisition_work_dir", changed_during_staging)
     try:
         with pytest.raises(ProviderConfigurationError, match="^bnf_loan_scope_unproven$"):
-            service.stage_bnf_loan_acsm(
+            service.stage_explicit_loan_acsm(
                 loan, confirmed=True, expected_identity_id="default",
             )
         assert not downloaded  # No private loan-token GET at all.
@@ -494,6 +494,6 @@ def test_selected_offer_abi_missing_fails_closed_before_signed_get(
     service, session, account, loan, state, downloaded = connected_core
     monkeypatch.setattr(session, "rights_selected_delivery_candidate", None)
     with pytest.raises(ProviderConfigurationError, match="bnf_loan_token_unavailable"):
-        service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id="default")
+        service.stage_explicit_loan_acsm(loan, confirmed=True, expected_identity_id="default")
     assert downloaded == []
     assert service.storage.acquisitions() == []
