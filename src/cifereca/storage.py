@@ -3021,6 +3021,47 @@ class Storage:
             db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (JOURNAL_KEY, json.dumps(committed)))
             db.execute("DELETE FROM cache WHERE namespace='search'")
 
+    def provider_cardinality_policies_set(self, descriptors) -> None:
+        """Admit current descriptors as durable SQLite connection policy.
+
+        The borrower/account column is a separate legacy source constraint,
+        not inferred from the configured credential cardinality. Tightening
+        limits checks already persisted rows in the *same* write transaction.
+        """
+        pending: dict[str, int | None] = {}
+        for descriptor in descriptors:
+            if getattr(descriptor, "state", None) != "ready":
+                continue
+            provider = getattr(descriptor, "id", None)
+            limit = getattr(descriptor, "max_accounts_per_identity", None)
+            if (type(provider) is not str or not provider.strip()
+                    or (limit is not None and (
+                        type(limit) is not int or limit < 1
+                    ))):
+                raise ValueError("invalid_provider_cardinality_descriptor")
+            provider = provider.strip().lower()
+            if provider in pending:
+                raise ValueError("duplicate_provider_cardinality_descriptor")
+            pending[provider] = limit
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for provider, limit in pending.items():
+                if limit is not None:
+                    violations = db.execute(
+                        "SELECT 1 FROM provider_connections WHERE provider_id=? "
+                        "GROUP BY identity_id HAVING COUNT(*)>? LIMIT 1",
+                        (provider, limit),
+                    ).fetchone()
+                    if violations:
+                        raise ValueError("provider_cardinality_policy_conflict")
+                db.execute(
+                    "INSERT INTO provider_cardinality_policies "
+                    "(provider_id,connection_limit,account_limit) VALUES(?,?,NULL) "
+                    "ON CONFLICT(provider_id) DO UPDATE "
+                    "SET connection_limit=excluded.connection_limit",
+                    (provider, limit),
+                )
+
     def provider_connection_put(
         self, item: dict[str, Any], *, max_accounts_per_identity: int | None = None,
     ) -> str:
