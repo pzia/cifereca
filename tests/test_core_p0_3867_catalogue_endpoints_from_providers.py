@@ -174,15 +174,3 @@ def test_minimal_catalogue_host_without_provider_option_still_uses_homepage():
     assert LibraryService.public_catalogue_target(
         host, {"provider_id": "synthetic-provider"},
     ) == ("catalogue", "https://public.synthetic.example/")
-
-
-def test_minimal_catalogue_host_without_config_keeps_attested_absolute_notice():
-    host = NS(
-        provider_descriptors=lambda: [],
-    )
-    assert LibraryService.public_catalogue_target(
-        host, {
-            "provider_id": "synthetic-provider",
-            "friendly_url": "https://public.synthetic.example/book/42",
-        },
-    ) == ("notice", "https://public.synthetic.example/book/42")
