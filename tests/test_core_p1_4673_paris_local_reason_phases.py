@@ -46,7 +46,7 @@ def test_diagnostic_phase_explains_exact_local_refusal(
             "reason_code": reason,
             "provider_eligibility": "unknown",
         }
-        assert service.can_borrow_paris(item) is False
+        assert service.can_borrow_manual(item) is False
         assert state["mutations"] == 0
         assert state["calls"] == []
     finally:
@@ -63,7 +63,7 @@ def test_success_and_empty_diagnostic_have_same_non_authorizing_boolean(tmp_path
         ) is True
         assert raw == {"reason_code": "local_action_available_provider_unknown"}
         assert service.paris_borrow_diagnostic(item)["local_action_possible"] is True
-        assert service.can_borrow_paris(item)
+        assert service.can_borrow_manual(item)
         assert state["mutations"] == 0 and state["calls"] == []
     finally:
         service.close()
