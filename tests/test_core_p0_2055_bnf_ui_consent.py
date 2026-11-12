@@ -58,8 +58,8 @@ def view(service, session, account, item):
 def request(window, item):
     _present_manual_borrow(
         window, item, None, TaskPriority=NS(USER_ACTION=object()),
-        label="BnF", available=window.service.can_borrow_bnf,
-        dispatch=window.service.borrow_bnf_manual,
+        label="BnF", available=window.service.can_borrow_manual,
+        dispatch=window.service.borrow_manual,
     )
     return DialogApi.instance
 
