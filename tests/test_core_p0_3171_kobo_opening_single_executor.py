@@ -168,3 +168,23 @@ def test_on_start_partial_abi_never_reenables_older_kobo_worker(tmp_path, monkey
         ) == "1"
     finally:
         service.close()
+
+
+def test_opening_canonical_account_convergence_is_supplier_neutral():
+    """No supplier branch in Core A→B execution; Kobo is a read-only legacy view."""
+    import ast
+    from pathlib import Path
+
+    path = Path(sync_coordination.__file__)
+    source = path.read_text(encoding="utf-8")
+    ast.parse(source)
+    # The account convergence phase may live in a separately named opening
+    # function. Inspect the exact scoped statement, not a file-wide substring.
+    target = source.split("if counts is not None:", 1)[1].split(
+        "completed = detail.setdefault", 1,
+    )[0]
+    assert 'account.provider_id == "kobo"' not in target
+    assert 'canonical_source_completion[' in target
+    assert '(account.provider_id, source_id)' in target
+    assert 'if provider_id == "kobo"' in source  # compatibility projection
+    assert '_run_observed_canonical_convergence(' in source
