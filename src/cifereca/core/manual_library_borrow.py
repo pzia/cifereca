@@ -256,6 +256,7 @@ def manual_borrow(
     expected_account: Account | None = None,
     additional_scope_current=None,
     verification: str | None = None,
+    observed_loan_account_alias: str | None = None,
 ) -> dict[str, object]:
     """Select the exact live lender account and admit at most one attempt.
 
@@ -277,6 +278,14 @@ def manual_borrow(
             or verification_mode not in {"active_only", "provider_observed"}
             or (primary_id is None and verification_mode != "active_only")
             or (primary_id == "" and verification_mode != "provider_observed")):
+        return _result("blocked", "borrow_scope_unverified")
+    # An observed account alias is a typed provider contract, never a public
+    # catalogue hint. Missing aliases mean the exact account.unique_id.
+    from re import fullmatch
+    if (observed_loan_account_alias is not None
+            and (type(observed_loan_account_alias) is not str
+                 or fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}",
+                              observed_loan_account_alias) is None)):
         return _result("blocked", "borrow_scope_unverified")
     # A provider session may be replaced/rebound without changing either the
     # selected profile or the account epoch. Pin this Core-wide source epoch
@@ -396,13 +405,14 @@ def manual_borrow(
                 or loan.source_provider != provider_id
                 or loan.source_credential != account.credential_id
                 or loan.source_account_id != (
-                    "primary" if primary_id == "" else account.unique_id)
+                    observed_loan_account_alias
+                    if observed_loan_account_alias is not None
+                    else account.unique_id)
                 or loan.identity_id != account.identity_id
                 or loan.provider != docbase or loan.medium != "digital"
-                # Paris returns the fresh current-inventory state verbatim
-                # (including numeric states). Its claimed-borrow ABI verifies
-                # that observation independently; no owned/active right is
-                # synthesized here. BnF's active-state requirement is retained.
+                # The installed provider's typed verification mode controls
+                # accepted observed states. No owned/active right is invented
+                # from a catalogue notice, delivery or HTTP success.
                 or (verification_mode == "active_only" and loan.state != "active")
                 or (verification_mode == "provider_observed" and loan.state in (
                     "returned", "expired", "inactive"))
