@@ -517,7 +517,8 @@ def disconnect_configured(self) -> None:
 
 
 def connect_source_preview(
-    self, provider_id: str, credential_id: str, *, required_capability: str | None = None,
+    self, provider_id: str, credential_id: str, *,
+    required_capability: str | None = None, error_label: str = "fournisseur",
 ) -> ProviderSession:
     """Connect exactly one configured provider source, with no registration writes."""
     provider_id = str(provider_id or "").strip().lower()
@@ -556,7 +557,7 @@ def connect_source_preview(
                     existing.capabilities, required_capability, False
                 ))):
             attempt.emit(self.diagnostics, "terminal", "failed", "session_invalid")
-            raise ProviderConfigurationError("Session fournisseur différente du compte demandé")
+            raise ProviderConfigurationError(f"Session {error_label} différente du compte demandé")
         attempt.emit(self.diagnostics, "session_reused", "success", "session_reused")
         attempt.emit(self.diagnostics, "terminal", "success", "connected")
         return existing
@@ -596,6 +597,7 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     """Legacy CLI compatibility; neutral preview enforces exact source scope."""
     return connect_source_preview(
         self, "kobo", credential_id, required_capability="backup",
+        error_label="Kobo",
     )
 
 
