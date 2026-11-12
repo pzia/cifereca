@@ -11,10 +11,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from inspect import getattr_static
+from re import fullmatch
 import logging
 from typing import Literal
 
 from cifereca.models import Account, Loan
+from cifereca.providers.base import ProviderDescriptor
 from .errors import Cancelled
 
 InventoryStatus = Literal["success", "partial", "failed", "cancelled"]
@@ -42,6 +44,11 @@ class LoanInventoryScope:
     provider_id: str
     credential_id: str
     account_id: str
+    # Optional, descriptor-attested convention for an existing empty-ID borrower.
+    # Never a wildcard or an acquisition/return permission.
+    primary_account_alias: str | None = None
+    # Distinguish an explicitly checked absent policy from unadapted legacy.
+    primary_alias_policy_checked: bool = False
 
     def __post_init__(self) -> None:
         if not all((
@@ -51,13 +58,39 @@ class LoanInventoryScope:
             _valid_token(self.account_id, empty=True),
         )):
             raise ValueError("invalid_loan_inventory_scope")
+        if type(self.primary_alias_policy_checked) is not bool:
+            raise ValueError("invalid_loan_inventory_alias_policy")
+        if self.primary_account_alias is not None and (
+            not self.primary_alias_policy_checked
+            or self.account_id != ""
+            or type(self.primary_account_alias) is not str
+            or fullmatch(r"[a-z][a-z0-9_-]{0,63}", self.primary_account_alias) is None
+        ):
+            raise ValueError("invalid_loan_inventory_primary_alias")
 
     @classmethod
-    def for_account(cls, account: Account) -> "LoanInventoryScope":
+    def for_account(
+        cls, account: Account, *,
+        descriptor: ProviderDescriptor | None = None,
+    ) -> "LoanInventoryScope":
+        """An alias is valid only from the exact installed descriptor, never a row."""
         if type(account) is not Account:
             raise ValueError("invalid_loan_inventory_account")
+        alias = None
+        if descriptor is not None:
+            if type(descriptor) is not ProviderDescriptor or descriptor.id != account.provider_id:
+                raise ValueError("invalid_loan_inventory_descriptor")
+            declared = descriptor.existing_primary_loan_account_alias
+            if declared is not None and (
+                type(declared) is not str
+                or fullmatch(r"[a-z][a-z0-9_-]{0,63}", declared) is None
+            ):
+                raise ValueError("invalid_loan_inventory_primary_alias")
+            if account.unique_id == "" and account.is_primary is True:
+                alias = declared
         return cls(account.identity_id, account.provider_id,
-                   account.credential_id, account.unique_id)
+                   account.credential_id, account.unique_id, alias,
+                   descriptor is not None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,10 +194,15 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
     if loan.medium not in ("digital", "physical", "unknown"):
         return False
     account = loan.source_account_id
-    # Paris' legacy "primary" alias is accepted ONLY for its explicit
-    # empty-ID main account, never as a wildcard for other borrowers.
+    # Prefer the exact descriptor-attested existing-borrower convention.
+    # Alias matching is descriptive only, never consent or a rights grant.
     allowed_accounts = {scope.account_id}
-    if scope.provider_id == "paris" and scope.account_id == "":
+    if scope.primary_account_alias is not None:
+        allowed_accounts.add(scope.primary_account_alias)
+    # Transitional producer-only compatibility. Remove with the Paris plugin
+    # cutover, after its snapshot constructor passes the installed descriptor.
+    elif (not scope.primary_alias_policy_checked
+          and scope.provider_id == "paris" and scope.account_id == ""):
         allowed_accounts.add("primary")
     return (
         loan.identity_id == scope.identity_id
@@ -174,9 +212,12 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
     )
 
 
-def legacy_loan_inventory(account: Account, rows: object) -> LoanInventorySnapshot:
+def legacy_loan_inventory(
+    account: Account, rows: object, *,
+    descriptor: ProviderDescriptor | None = None,
+) -> LoanInventorySnapshot:
     """Adapt a v1 list of positive Loan without inventing negative evidence."""
-    scope = LoanInventoryScope.for_account(account)
+    scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
     if type(rows) not in (list, tuple) or len(rows) > _MAX_LOANS:
         raise ValueError("invalid_legacy_loan_inventory")
     return LoanInventorySnapshot(
@@ -185,7 +226,10 @@ def legacy_loan_inventory(account: Account, rows: object) -> LoanInventorySnapsh
     )
 
 
-def read_loan_inventory(session: object, account: Account) -> LoanInventorySnapshot:
+def read_loan_inventory(
+    session: object, account: Account, *,
+    descriptor: ProviderDescriptor | None = None,
+) -> LoanInventorySnapshot:
     """Explicit opt-in I/O read: no action, synchronization or mutation.
 
     New providers may implement loan_inventory_snapshot(account). All others
@@ -193,7 +237,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
     responses or exceptions. This API is intentionally not wired to rights
     reconciliation until #2975 / #3122 prove its consumer invariants.
     """
-    scope = LoanInventoryScope.for_account(account)
+    scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
 
     def still_bound() -> bool:
         # This guards in-place session/account changes. Core adoption must
@@ -205,7 +249,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
         if closed is not None and closed is not False:
             return False
         return (
-            LoanInventoryScope.for_account(account) == scope
+            LoanInventoryScope.for_account(account, descriptor=descriptor) == scope
             and getattr(session, "connected", None) is True
             and getattr(session, "provider_id", None) == scope.provider_id
             and getattr(session, "credential_id", None) == scope.credential_id
@@ -251,7 +295,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
             return LoanInventorySnapshot(
                 scope=scope, loans=(), status="failed", reason_code="scope_changed",
             )
-        return legacy_loan_inventory(account, rows)
+        return legacy_loan_inventory(account, rows, descriptor=descriptor)
     except Cancelled:
         # An explicit provider/task cancellation is not a network failure.
         # Keep the envelope empty: partially read positive rows are not an
