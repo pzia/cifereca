@@ -202,7 +202,7 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
     submit_once()
 
 
-def present_paris_borrow_verification(window, item, control, *, TaskPriority):
+def present_borrow_verification(window, item, control, *, TaskPriority):
     """Explicit read-only follow-up: no borrow dispatch or claim mutation.
 
     The controller never sees or displays the persisted operation_id. It
@@ -214,7 +214,7 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
             or item.medium != "digital"
-            or not window.service.paris_borrow_followup_available(item)
+            or not window.service.can_verify_manual_borrow(item)
             or getattr(window, "_manual_borrow_pending", None) is not None
             or getattr(window, "_borrow_followup_pending", None) is not None):
         return
@@ -231,7 +231,7 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     except Exception:
         return
     scope = _capture_borrow_ui_scope(
-        window, item, account, session, provider_id="paris",
+        window, item, account, session, provider_id=item.source_provider,
     )
     if scope is None:
         return
@@ -241,7 +241,7 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     def current():
         try:
             return (scope_current()
-                    and window.service.paris_borrow_followup_available(selected) is True)
+                    and window.service.can_verify_manual_borrow(selected) is True)
         except Exception:
             return False
 
@@ -257,7 +257,7 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
     def work():
         if not current():
             return {"status": "blocked", "retry_borrow": False, "mutated": False}
-        return window.service.verify_paris_borrow_followup(selected)
+        return window.service.verify_manual_borrow_followup(selected)
 
     def done(result):
         release()
@@ -298,4 +298,4 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
         raise
 
 
-__all__ = ["present_paris_borrow_verification"]
+__all__ = ["present_borrow_verification"]
