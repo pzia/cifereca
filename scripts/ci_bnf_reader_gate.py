@@ -47,7 +47,7 @@ def selected(paths, root=ROOT, *, full=False):
         or path in CORE_BNF_PATHS
         or path in {'scripts/ci_bnf_reader_gate.py', 'scripts/bnf_borrow_dom_probe.py',
                     'tests/test_ci_bnf_reader_gate.py',
-                    '.github/workflows/pr-ci.yml', 'tests/test_bnf_pret_web_dom.py'}
+                    '.github/workflows/pr-ci.yml'}
         for path in paths
     )
     if relevant and not (root / TEST).is_file():
