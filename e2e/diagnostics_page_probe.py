@@ -611,9 +611,27 @@ def main():
         # an already selected GFile when changing the current name.
         exporter.dialog.set_current_name(target.name)
         assert exporter.dialog.set_file(Gio.File.new_for_path(str(target)))
+
+        def file_selection_timeout():
+            selected = exporter.dialog.get_file()
+            # Only synthetic, fixed-shape GTK state is exported on this
+            # failure; never the path, filename, widget label or exception.
+            report["capture_file_selection_timeout"] = {
+                "dialog_visible": bool(exporter.dialog.get_visible()),
+                "selected_file_present": selected is not None,
+                "selected_file_matches_fixture": (
+                    selected is not None and selected.get_path() == str(target)
+                ),
+                "current_name_matches_fixture": (
+                    exporter.dialog.get_current_name() == target.name
+                ),
+            }
+            save()
+
         until(lambda: exporter.dialog.get_file() is not None
               and exporter.dialog.get_file().get_path() == str(target),
-              lambda: capture_accept(exporter, target), seconds=5)
+              lambda: capture_accept(exporter, target), seconds=5,
+              on_timeout=file_selection_timeout)
 
     def capture_accept(exporter, target):
         assert exporter.dialog.get_file().get_path() == str(target)
