@@ -183,8 +183,8 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
     if loan.medium not in ("digital", "physical", "unknown"):
         return False
     account = loan.source_account_id
-    # Paris' legacy "primary" alias is accepted ONLY for its explicit
-    # empty-ID main account, never as a wildcard for other borrowers.
+    # Prefer the exact descriptor-attested existing-borrower convention.
+    # Alias matching is descriptive only, never consent or a rights grant.
     allowed_accounts = {scope.account_id}
     if scope.primary_account_alias is not None:
         allowed_accounts.add(scope.primary_account_alias)
