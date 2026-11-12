@@ -528,7 +528,7 @@ class LibraryService:
             # the shared Core still owns the lock, lease and ACSM inspection.
             if confirmed is not True:
                 raise LoanActionError("bnf_explicit_confirmation_required")
-            if (type(loan) is not Loan or loan.source_provider != 'bnf-pret'
+            if (type(loan) is not Loan or loan.source_provider != observation.provider_id
                     or loan.medium != "digital" or loan.state != "active"
                     or type(loan.source_credential) is not str
                     or not loan.source_credential
