@@ -28,7 +28,8 @@ class BnfReaderGateTests(unittest.TestCase):
     def test_http_parser_and_acceptance_changes_require_gate(self):
         self.transport()
         for path in ('cifereca_bnf_pret_http.py', 'cifereca_bnf_pret_web.py',
-                     'tests/test_http_provider.py', 'cifereca-plugin.json', 'WEB.md'):
+                     'tests/test_http_provider.py', 'tests/test_web_dom.py',
+                     'cifereca-plugin.json', 'WEB.md'):
             self.assertTrue(gate.selected([gate.PACKAGE + path], self.root))
 
     def test_other_provider_and_core_do_not_select_gate(self):
