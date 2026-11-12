@@ -2741,7 +2741,8 @@ class LibraryService:
                 # it never authorizes GET or synthesizes ownership.
                 link = item.download_url
                 return bool(
-                    session.capabilities.direct_download
+                    public_catalogue_source(item)
+                    and session.capabilities.direct_download
                     and item.downloadable is True
                     and type(link) is str
                     and bool(link)
