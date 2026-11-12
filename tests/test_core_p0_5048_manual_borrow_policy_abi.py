@@ -231,3 +231,60 @@ def test_mismatched_explicit_verification_modes_fail_before_supplier_io(tmp_path
         assert state["calls"] == [] and state["mutations"] == 0
     finally:
         service.close()
+
+
+def test_active_only_policy_never_offers_readonly_provider_observation(tmp_path):
+    """An uncertain spent claim cannot invent a rights-snapshot ABI."""
+    from cifereca.core.borrow_action_scope import borrow_claim_key
+
+    service, session, account, item = bnf_setup(tmp_path)
+    try:
+        assert service.can_verify_manual_borrow(item) is False
+        key = borrow_claim_key(account, item)
+        claimed, _ = service.storage.loan_borrow_claim_once(
+            key, "synthetic-bnf-observation-denied",
+        )
+        assert claimed
+        service.storage.loan_borrow_finish(
+            key, "synthetic-bnf-observation-denied",
+            status="verification_unavailable",
+        )
+        assert service.can_verify_manual_borrow(item) is False
+        before = service.storage.metadata_get(key)
+        result = service.verify_manual_borrow_followup(item)
+        assert result["status"] == "blocked"
+        assert result["retry_borrow"] is False
+        assert result["mutated"] is False
+        assert service.storage.metadata_get(key) == before
+        assert session.dispatches == session.reads == []
+    finally:
+        service.close()
+
+
+def test_followup_requires_valid_installed_policy_even_for_spent_claim(tmp_path):
+    from cifereca.core.borrow_action_scope import borrow_claim_key
+
+    service, session, account, item = bnf_setup(tmp_path)
+    try:
+        key = borrow_claim_key(account, item)
+        claimed, _ = service.storage.loan_borrow_claim_once(
+            key, "synthetic-policy-revoked",
+        )
+        assert claimed
+        service.storage.loan_borrow_finish(
+            key, "synthetic-policy-revoked", status="verification_unavailable",
+        )
+        from cifereca.core.manual_borrow_contract import (
+            manual_borrow_followup_diagnostic,
+        )
+        state = manual_borrow_followup_diagnostic(
+            service, replace(item, docbase="FORGED"),
+        )
+        assert state["reason_code"] == "local_admission_unavailable"
+        assert state["local_action_possible"] is False
+        assert not service.can_verify_manual_borrow(
+            replace(item, docbase="FORGED"),
+        )
+        assert session.dispatches == session.reads == []
+    finally:
+        service.close()
