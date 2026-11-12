@@ -46,9 +46,9 @@ def rig(tmp_path, monkeypatch):
         )
     assert has_complete_delivery_abi(session)
     monkeypatch.setattr(
-        provider_sessions, "connect_kobo_preview",
-        lambda got, credential: (
-            session if got is service and credential == "vault-1"
+        provider_sessions, "connect_source_preview",
+        lambda got, provider, credential, **_kw: (
+            session if got is service and provider == "kobo" and credential == "vault-1"
             else pytest.fail("only exact Kobo credential can be connected")
         ),
     )
@@ -70,7 +70,7 @@ def test_targeted_bind_existing_sql_borrower_is_in_memory_only(rig):
         service.storage.entitlements(),
     )
     previous_epoch = service._source_context_epoch
-    assert service.connect_kobo_canonical("vault-1") is session
+    assert service.connect_source_canonical("kobo", "vault-1") is session
     assert session.accounts[0].identity_id == "alice"
     assert service.accounts[-1] is session.accounts[0]
     assert service.accounts[-1].unique_id == "account"
@@ -82,7 +82,7 @@ def test_targeted_bind_existing_sql_borrower_is_in_memory_only(rig):
         service.storage.placements(),
         service.storage.entitlements(),
     ) == before
-    assert service.connect_kobo_canonical("vault-1") is session
+    assert service.connect_source_canonical("kobo", "vault-1") is session
     assert len([a for a in service.accounts if a.provider_id == "kobo"]) == 1
 
 
@@ -110,7 +110,7 @@ def test_targeted_bound_account_passes_generic_canonical_A_read(rig, monkeypatch
             row is service.accounts[-1] and row.provider_id == "kobo"
         ),
     )
-    service.connect_kobo_canonical("vault-1")
+    service.connect_source_canonical("kobo", "vault-1")
     result = read_account_rights_snapshot(service, service.accounts[-1])
     assert result.status == "partial"
     assert len(result.rights) == 1
@@ -166,8 +166,8 @@ def test_targeted_bind_refuses_ambiguous_or_unowned_source_without_core_mutation
             return valid
         monkeypatch.setattr(service.storage, "provider_scope_account_bound", switched)
     before = tuple(service.accounts)
-    with pytest.raises(ProviderConfigurationError, match="kobo_canonical_account_"):
-        service.connect_kobo_canonical("vault-1")
+    with pytest.raises(ProviderConfigurationError, match="source_canonical_account_"):
+        service.connect_source_canonical("kobo", "vault-1")
     assert tuple(service.accounts) == before
     assert service._source_context_epoch == original_epoch
     assert session.accounts[0].identity_id != "alice" or tamper == "duplicate_registered_account"
@@ -187,7 +187,7 @@ def test_partial_abi_connect_preserves_existing_kobo_legacy_behavior(
     original = tuple(service.accounts)
     epoch = service._source_context_epoch
     try:
-        assert service.connect_kobo_canonical("vault-1") is session
+        assert service.connect_source_canonical("kobo", "vault-1") is session
         assert tuple(service.accounts) == original
         assert service._source_context_epoch == epoch
     finally:
