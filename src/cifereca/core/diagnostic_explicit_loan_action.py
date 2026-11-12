@@ -190,6 +190,6 @@ class ActionObservation:
             task_ref = diagnostic_task_reference()
             if task_ref is not None:
                 fields["task_ref"] = task_ref
-            self.service.diagnostics.add_core_loan_acsm_action(fields)
+            self.service.diagnostics.add_core_explicit_loan_action(fields)
         except Exception:
             pass  # Observability must never affect the business action.
