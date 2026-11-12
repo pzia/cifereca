@@ -563,12 +563,20 @@ class SynchronizationBrokerImpl:
         from .core.source_sync_consent import configured, set_source_enabled
         if configured(self.service, account):
             set_source_enabled(self.service, account, enabled, self._preference_key(source_id))
+        elif enabled is False:
+            # A user-requested OFF is also a durable CAS acquisition
+            # revocation. Keep historical opt-ins inert: turning the
+            # inventory back ON must not silently resurrect legacy ON.
+            from .core.source_sync_consent import (
+                retire_legacy_acquisition_on_source_disable,
+            )
+            retire_legacy_acquisition_on_source_disable(
+                self.service, account, self._preference_key(source_id),
+            )
         else:
-            # Legacy Kobo/BnF acquisition consent has a pinned generation
-            # distinct from this source enablement preference. Advance that
-            # existing generation atomically with each source ON/OFF change,
-            # so OFF->ON cannot revive an in-flight legacy GET. Unknown
-            # inventory-only providers have no legacy acquisition generation.
+            # Legacy ON inventory is not new acquisition consent. Preserve
+            # the old generation fence for already-accepted in-flight work
+            # until all historical source policies have been migrated.
             from .core.source_auto_consent_bridge import _consent_generation_key
             from .core.source_sync_consent import scope_for_account
             revision_key = _consent_generation_key(scope_for_account(account))
