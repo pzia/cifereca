@@ -779,7 +779,7 @@ def main() -> int:
         result["p0_4673_local_reason"] = diagnosis["reason_code"]
         result["p0_4673_stage"] = "admission_" + identity
         assert diagnosis["local_action_possible"] is True
-        assert core.library.can_borrow_paris(book) is True
+        assert core.library.can_borrow_manual(book) is True
         result["p0_4673_stage"] = "button_" + identity
         actions = [
             button for button in window.search_page.detail._action_buttons
@@ -878,7 +878,7 @@ def main() -> int:
         assert book.metadata.get("catalogue_access") == "shared_read_only"
         assert book.owned is False and book.downloadable is False
         assert core.library.paris_borrow_diagnostic(book)["local_action_possible"] is False
-        assert core.library.can_borrow_paris(book) is False
+        assert core.library.can_borrow_manual(book) is False
         assert not any(
             getattr(button, "_cifereca_action_label", None) == "Emprunter"
             for button in window.search_page.detail._action_buttons
