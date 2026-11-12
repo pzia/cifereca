@@ -121,6 +121,9 @@ def _reader_acs4_offer_id(identity_id, credential_id, account_id, loan_id, resou
 
 
 class BnfProviderSession(ProviderSession):
+    # BnF has a single digital loan branch; no implicit primary borrower.
+    loan_absence_digital_branch = "bnf_html"
+
     # Pure data, inspectable without invoking any plugin getter or I/O.
     # The Core's existing explicit-ACSM executor owns all locking, leases,
     # admission, artifact inspection and staging cleanup.
