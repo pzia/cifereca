@@ -13,7 +13,7 @@ L'outil `tools/audit_source_consent_cutover.py` fournit une première mesure
 python3 tools/audit_source_consent_cutover.py /chemin/prive/vers/cifereca.sqlite3
 ```
 
-Sortie JSON `cifereca.source-consent-inventory/1` : nombres de clés legacy
+Sortie JSON `cifereca.source-consent-inventory/1` : compteur agrégé et classification `legacy_modes` (`on_with_valid_revision`, `on_missing_or_invalid_revision`, `not_on`) ; ces catégories ne constituent **jamais** une preuve de droit ni une instruction de migration ON. Nombres de clés legacy
 Numilog achat, Numilog epoch, BnF-Prêt, Kobo achat et CAS. Les lignes
 `.revision` ne sont pas comptées comme toggles BnF/Kobo. L'outil ouvre
 SQLite avec `mode=ro`, `query_only=ON` et un snapshot de lecture ;
