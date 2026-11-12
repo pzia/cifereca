@@ -87,9 +87,9 @@ def project_public_search_result(
         return None
     public = matches[0]
     # Contradictory declarations are not silently laundered into public rows.
-    if (public.owned not in (None, False) or type(public.owned) not in (bool, type(None))
-            or public.downloadable not in (None, False)
+    if (type(public.owned) not in (bool, type(None)) or public.owned is True
             or type(public.downloadable) not in (bool, type(None))
+            or public.downloadable is True
             or public.download_url is not None or public.source_account_id is not None
             or any(not _text(getattr(public, name), required=name == "title")
                    for name in _TEXT_FIELDS)

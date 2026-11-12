@@ -115,3 +115,14 @@ def test_hostile_capability_is_not_executed():
     assert project(Hostile(), item) is None
     assert project(ProviderSearchResponse([item], public_notices=(Hostile(),)), item) is None
     assert project(ProviderSearchResponse([item], public_notices=(PublicSearchNotice(Hostile()),)), item) is None
+
+
+def test_hostile_authority_scalar_is_not_compared_or_executed():
+    class Hostile:
+        def __eq__(self, other):
+            raise AssertionError('unexpected equality callback')
+    item = row()
+    for field in ('owned', 'downloadable'):
+        public = replace(item, **{field: Hostile()})
+        response = ProviderSearchResponse([item], public_notices=(PublicSearchNotice(public),))
+        assert project(response, item) is None
