@@ -219,7 +219,7 @@ def test_shared_paris_catalogue_result_stays_inert_even_when_owner_is_current(tm
         shared = replace(item, metadata={"catalogue_access": "shared_read_only"})
         assert service.can_borrow_manual(item)
         assert not service.can_borrow_manual(shared)
-        diagnostic = service.paris_borrow_diagnostic(shared)
+        diagnostic = service.manual_borrow_diagnostic(shared)
         assert diagnostic["local_action_possible"] is False
         assert diagnostic["reason_code"] == "edition_or_source_unqualified"
         result = attempt(service, account, shared)

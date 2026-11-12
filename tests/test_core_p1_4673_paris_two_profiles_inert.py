@@ -45,14 +45,14 @@ def test_two_profiles_never_reuse_other_account_or_edition(tmp_path):
         ):
             service.current_identity = service.identity_by_id(identity)
             assert service.current_identity is not None
-            ready = service.paris_borrow_diagnostic(allowed)
+            ready = service.manual_borrow_diagnostic(allowed)
             assert ready == {
                 "local_action_possible": True,
                 "reason_code": "local_action_available_provider_unknown",
                 "provider_eligibility": "unknown",
             }
             assert service.can_borrow_manual(allowed) is True
-            wrong_result = service.paris_borrow_diagnostic(wrong)
+            wrong_result = service.manual_borrow_diagnostic(wrong)
             assert wrong_result["local_action_possible"] is False
             assert wrong_result["provider_eligibility"] == "unknown"
             assert not service.can_borrow_manual(wrong)
@@ -73,14 +73,14 @@ def test_other_profile_never_inherits_removed_own_connection(tmp_path):
         account_b, session_b = _add_second_paris(service, account_a)
         item_b = replace(item_a, source_credential="card-B", id="paris:edition-b")
         service.current_identity = service.identity_by_id("alex")
-        assert service.paris_borrow_diagnostic(item_b)["local_action_possible"] is True
+        assert service.manual_borrow_diagnostic(item_b)["local_action_possible"] is True
         service.storage.provider_connection_put({
             "identity_id": "alex", "provider_id": "paris",
             "credential_id": "card-B", "label": "Paris B",
             "enabled": False, "metadata": {},
         })
-        rejected = service.paris_borrow_diagnostic(item_b)
-        assert rejected["reason_code"] == "primary_paris_connection_mismatch_or_inactive"
+        rejected = service.manual_borrow_diagnostic(item_b)
+        assert rejected["reason_code"] == "local_primary_source_binding_mismatch"
         assert service.can_borrow_manual(item_b) is False
         service.current_identity = service.identity_by_id("default")
         assert service.can_borrow_manual(item_a) is True

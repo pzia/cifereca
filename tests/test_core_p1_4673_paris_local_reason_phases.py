@@ -13,7 +13,8 @@ from tests.test_paris_manual_borrow_dispatch import setup
 
 @pytest.mark.parametrize(("mode", "reason"), [
     ("wrong_primary_account", "local_primary_account_unverified"),
-    ("disconnected", "local_session_unavailable"),
+    # A disconnected installation has no resolved ABI; never reach lender I/O.
+    ("disconnected", "edition_or_source_unqualified"),
     ("previous_claim", "local_previous_attempt"),
     ("capability_unavailable", "local_borrow_capability_unavailable"),
     ("executor_unavailable", "local_borrow_executor_unavailable"),
@@ -40,7 +41,7 @@ def test_diagnostic_phase_explains_exact_local_refusal(
                 manual_library_borrow, "getattr_static",
                 lambda *a, **kw: None,
             )
-        diagnosis = service.paris_borrow_diagnostic(item)
+        diagnosis = service.manual_borrow_diagnostic(item)
         assert diagnosis == {
             "local_action_possible": False,
             "reason_code": reason,
@@ -62,7 +63,7 @@ def test_success_and_empty_diagnostic_have_same_non_authorizing_boolean(tmp_path
             primary_id="", diagnostic=raw,
         ) is True
         assert raw == {"reason_code": "local_action_available_provider_unknown"}
-        assert service.paris_borrow_diagnostic(item)["local_action_possible"] is True
+        assert service.manual_borrow_diagnostic(item)["local_action_possible"] is True
         assert service.can_borrow_manual(item)
         assert state["mutations"] == 0 and state["calls"] == []
     finally:
