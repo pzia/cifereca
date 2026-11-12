@@ -3064,12 +3064,12 @@ class Storage:
             try:
                 db.execute(
                     "INSERT INTO provider_accounts(provider_account_id,connection_id,identity_id,provider_id,credential_id,account_id,label,is_primary,metadata_json,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_id,account_id) DO UPDATE SET identity_id=excluded.identity_id,"
-                "label=excluded.label,is_primary=excluded.is_primary,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
-                (provider_account_id, connection_id, identity_id, provider_id, credential_id, account_id,
-                 str(row.get("label") or account_id or "Compte principal"), int(bool(row.get("is_primary", False))),
-                 self._json_dump(row.get("metadata")), now, now),
-            )
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_id,account_id) DO UPDATE SET identity_id=excluded.identity_id,"
+                    "label=excluded.label,is_primary=excluded.is_primary,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                    (provider_account_id, connection_id, identity_id, provider_id, credential_id, account_id,
+                     str(row.get("label") or account_id or "Compte principal"), int(bool(row.get("is_primary", False))),
+                     self._json_dump(row.get("metadata")), now, now),
+                )
             except sqlite3.IntegrityError:
                 raise ValueError("provider_account_constraint_failed") from None
             actual = db.execute(
