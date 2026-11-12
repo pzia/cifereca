@@ -188,3 +188,23 @@ def test_opening_canonical_account_convergence_is_supplier_neutral():
     assert '(account.provider_id, source_id)' in target
     assert 'if provider_id == "kobo"' in source  # compatibility projection
     assert '_run_observed_canonical_convergence(' in source
+
+
+def test_opening_source_account_order_has_no_paris_supplier_preference():
+    """Core opening uses stable exact account coordinates, not brand priority."""
+    import ast
+    from pathlib import Path
+
+    source = Path(sync_coordination.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    opening = next(
+        fn for fn in tree.body
+        if isinstance(fn, ast.FunctionDef)
+        and fn.name == "_opening_sync_locked"
+    )
+    text = ast.get_source_segment(source, opening)
+    assert text is not None
+    assert '(0 if a.provider_id == "paris" else 1' not in text
+    assert 'key=lambda a: (a.provider_id, a.credential_id, a.unique_id)' in text
+    assert 'self.sync_source_enabled(a)' in text
+    assert 'source_outcomes[source_id] = "failed"' in text
