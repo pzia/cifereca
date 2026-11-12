@@ -141,7 +141,8 @@ def test_kobo_legacy_search_action_is_never_promoted_by_owned_flag_or_v2_hint():
     host._populate_search([item], announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
     assert row.options["action_label"] is None
-    assert "vérifier auprès du fournisseur" in row.meta
+    assert "Origine Kobo" not in row.meta
+    assert "Livre numérique" in row.meta
     host.service.can_direct_download.assert_not_called()
     session.snapshot.assert_not_called()
     session.selected.assert_not_called()
