@@ -837,6 +837,9 @@ def main():
 
     def finish_declaration():
         if args.width in (1366, 1600):
+            # SIGABRT may preclude Python's report/error handling. Bracket
+            # the only extra native acceptance at these display widths.
+            gtk_phase_2027("maint_transfer_start")
             exercise_native_transfer(parent=window[0], Gtk=Gtk, Adw=Adw,
                                      device=device[0], until=until, report=report,
                                      capture=capture, done=finish_transfer)
@@ -844,6 +847,8 @@ def main():
             finish_transfer()
 
     def finish_transfer():
+        if args.width in (1366, 1600):
+            gtk_phase_2027("maint_transfer_done")
         gtk_phase_2027("maint_done")
         report["status"] = "PASS"
         result[0] = 0
