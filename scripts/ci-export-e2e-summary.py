@@ -225,6 +225,8 @@ _BOOK_DETAIL_STAGES = frozenset({
     "component_lists",
     "component_identity",
     "component_identity_rendered",
+    "plugin_scroll_initial", "plugin_scroll_first_toggle",
+    "plugin_scroll_verify_first", "plugin_scroll_verify_second",
 })
 
 
