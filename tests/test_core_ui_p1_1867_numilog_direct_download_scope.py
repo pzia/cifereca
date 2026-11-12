@@ -240,3 +240,34 @@ def test_private_ownership_is_independent_of_local_offer_qualification():
     assert result_row(wrong_scope, purchase_evidence=_proof(),
                       identity_id="alice")["state"] == "remote_owned"
     assert NumilogOfferFixture().can_direct(wrong_scope) is False
+
+
+def test_private_hint_is_supplier_neutral_and_fails_closed_without_exact_proof():
+    from cifereca.gui.offer_actions import private_notice_download_hint_allowed
+    purchase = private_purchase()
+    generic = replace(purchase, source_provider="fictional-store")
+    assert private_notice_download_hint_allowed(generic) is False
+    assert private_notice_download_hint_allowed(
+        generic, identity_id="alice",
+        purchase_evidence=SearchOwnedEvidence(
+            "alice", frozenset({(
+                "fictional-store", generic.source_credential,
+                generic.source_account_id, generic.record_id, "",
+            )}),
+        ),
+    ) is True
+    assert private_notice_download_hint_allowed(
+        generic, identity_id="bob",
+        purchase_evidence=SearchOwnedEvidence(
+            "alice", frozenset({(
+                "fictional-store", generic.source_credential,
+                generic.source_account_id, generic.record_id, "",
+            )}),
+        ),
+    ) is False
+    assert private_notice_download_hint_allowed(
+        replace(generic, source_collection="public_catalog"),
+    ) is False
+    assert private_notice_download_hint_allowed(
+        replace(generic, metadata={"search_provenance": "known_catalog_stale"}),
+    ) is False

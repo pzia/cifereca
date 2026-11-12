@@ -23,7 +23,8 @@ def test_search_list_no_longer_promotes_kobo_specific_notice_text():
 def test_search_download_guard_keeps_exact_kobo_and_public_supplier_exclusions():
     source = SEARCH.read_text(encoding="utf-8")
     assert 'item.source_provider in {"kobo", "numilog-catalog"}' in source
-    assert 'item.source_provider == "numilog"' in source
+    assert 'item.source_provider == "numilog"' not in source
+    assert "private_notice_download_hint_allowed(" in source
     assert 'self.service.can_direct_download(item)' in source
     assert "if placement:" in source
     assert "elif direct:" in source

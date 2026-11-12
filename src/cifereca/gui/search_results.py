@@ -286,10 +286,17 @@ def _render_search_results(self) -> int:
         # Public Numilog has neither an authenticated download entitlement
         # nor an acquisition action. Never consult the direct-download broker
         # for this source, including malformed remote flags.
+        from cifereca.gui.offer_actions import private_notice_download_hint_allowed
+        private_hint_ok = private_notice_download_hint_allowed(
+            item,
+            purchase_evidence=getattr(self, "_search_purchase_evidence", None),
+            identity_id=identity_id,
+            account_context_epoch=getattr(self.service, "_account_context_epoch", None),
+            source_context_epoch=getattr(self.service, "_source_context_epoch", None),
+        )
         direct = (
             False if (stale_known or item.source_provider in {"kobo", "numilog-catalog"}
-                           or (item.source_provider == "numilog"
-                               and project(item)["state"] != "remote_owned"))
+                      or not private_hint_ok)
             else self.service.can_direct_download(item)
         )
         # An installed v2 interface is a preflight hint, not an attested offer.
