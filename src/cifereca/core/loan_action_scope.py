@@ -7,12 +7,12 @@ grant. It performs no network, storage mutation or ADEPT operation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from re import fullmatch
 from inspect import getattr_static
 from typing import Any
 
 from ..models import Account, Loan
 from ..providers.base import ProviderDescriptor, ProviderSession
+from ..plugin_api.loan_scope import loan_matches_account
 
 
 def _inert_session_state(session: object) -> dict[str, Any] | None:
@@ -127,19 +127,7 @@ class LoanActionScopeLease:
                     or descriptor is not self._descriptor
                     or descriptor.id != provider):
                 return False
-            alias = descriptor.existing_primary_loan_account_alias
-            if (alias is not None and (
-                    type(alias) is not str
-                    or fullmatch(r"[a-z][a-z0-9_-]{0,63}", alias) is None)):
-                return False
-            allowed_borrowers = {borrower}
-            if (alias is not None and account.is_primary is True
-                    and borrower == ""):
-                allowed_borrowers.add(alias)
-            if (loan.identity_id != identity_id
-                    or loan.source_provider != provider
-                    or loan.source_credential != credential
-                    or loan.source_account_id not in allowed_borrowers
+            if (not loan_matches_account(loan, account, descriptor)
                     or type(loan.id) is not str or not loan.id
                     or session_state.get("connected") is not True
                     or session_state.get("provider_id") != provider
