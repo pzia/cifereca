@@ -52,3 +52,40 @@ def validate_provider_account_limits(
         if len(seen[key]) > limits[provider]:
             # No identifiers, tokens, labels, or exception from the provider.
             raise ProviderAccountLimitError("Provider account limit exceeded")
+
+
+def projectable_provider_connections(
+    rows: object, *, default_identity: str,
+    known_identities: Iterable[str],
+    admitted_provider_ids: Iterable[str] = (),
+) -> list[tuple[dict, str, str, str]]:
+    """Return only bindings safe to project at this lifecycle stage.
+
+    Before plugin activation, two distinct credentials scoped to the same
+    provider and identity are *ambiguous*: a provider may declare a maximum
+    of one, but its descriptor is unavailable. Keep both config rows intact
+    and publish neither SQLite binding until that provider has been checked.
+    A provider admitted after descriptor validation may have multiple rows.
+    """
+    if type(rows) not in (list, tuple):
+        raise ProviderAccountLimitError("Invalid configured provider accounts")
+    known = set(known_identities)
+    admitted = {str(value).strip().lower() for value in admitted_provider_ids}
+    parsed: list[tuple[dict, str, str, str]] = []
+    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for row in rows:
+        if type(row) is not dict:
+            continue
+        provider = str(row.get("provider") or "").strip().lower()
+        credential = str(row.get("id") or "").strip()
+        if not provider or not credential:
+            continue
+        identity = str(row.get("identity_id") or default_identity).strip()
+        if identity not in known:
+            identity = default_identity
+        parsed.append((row, provider, credential, identity))
+        seen[(provider, identity)].add(credential)
+    return [
+        item for item in parsed
+        if len(seen[(item[1], item[3])]) == 1 or item[1] in admitted
+    ]

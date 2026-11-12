@@ -175,9 +175,15 @@ def test_service_rejects_two_kobo_vault_accounts_for_same_identity():
             {"id": "vault-a", "provider": "kobo", "identity_id": "alice", "label": "A", "enabled": True},
             {"id": "vault-b", "provider": "kobo", "identity_id": "alice", "label": "B", "enabled": True},
         ])
-        from cifereca.providers import ProviderConfigurationError
-        with pytest.raises(ProviderConfigurationError):
-            LibraryService(config, Storage(root / "db.sqlite3"), Diagnostics())
+        # Provider descriptors are not loaded in LibraryService.__init__.
+        # Keep both config entries but quarantine the ambiguous scope from
+        # SQLite until the provider's declared cardinality is validated.
+        storage = Storage(root / "db.sqlite3")
+        service = LibraryService(config, storage, Diagnostics())
+        assert len(config.provider_accounts("kobo")) == 2
+        assert not [row for row in storage.provider_connections()
+                    if row["provider_id"] == "kobo"]
+        assert service.registry.descriptors() == []
 
 
 def test_v4_ambiguous_kobo_rows_migrate_to_distinct_identities_without_data_loss():
