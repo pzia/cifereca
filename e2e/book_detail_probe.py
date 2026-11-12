@@ -981,9 +981,16 @@ def main():
         # Same real MainWindow and synthetic 36-plugin GTK acceptance as before.
         # Run it in a dedicated scenario rather than after the detail fixture.
         from plugin_manager_scroll_contract import verify_plugin_scroll
+        def closed_checkpoint(stage):
+            # Only the fixed synthetic fixture's reviewed milestones are
+            # retained; no GTK values, account identifiers or exception text.
+            report["plugin_scroll_checkpoint"] = stage
+            save()
+
         verify_plugin_scroll(
             window, later, complete_plugin_scroll,
             width=1024 if args.width == 1366 else 1366,
+            checkpoint=closed_checkpoint,
         )
 
     class Application(Adw.Application):
