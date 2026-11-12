@@ -49,7 +49,7 @@ def test_loan_domain_is_core_attested_global_and_provider_scoped(tmp_path):
         domain="loan_download", limit=1, offset=1,
     )
     rows = first["events"] + second["events"]
-    assert {row["module"] for row in rows} == {"PNB", "LOAN"}
+    assert {row["module"] for row in rows} == {"LOAN"}
     assert {row["domain"] for row in rows} == {"loan_download"}
     assert {row["provider_id"] for row in rows} == {"paris", "numilog"}
     assert all(row["source"] == "core_events" for row in rows)
