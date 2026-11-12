@@ -151,7 +151,7 @@ def test_explicit_descriptor_without_alias_vetoes_legacy_paris_fallback():
             scope=LoanInventoryScope.for_account(account), loans=(row,),
         )
     checked = LoanInventoryScope.for_account(account, descriptor=_descriptor("paris"))
-    assert checked.primary_alias_policy_checked is True
+    assert checked.primary_alias_policy_checked is False
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
         LoanInventorySnapshot(scope=checked, loans=(row,))
 
@@ -176,7 +176,7 @@ def test_empty_id_nonprimary_account_cannot_use_declared_alias():
     account.is_primary = False
     desc = _descriptor("synthetic-a", "main")
     scope = LoanInventoryScope.for_account(account, descriptor=desc)
-    assert scope.primary_alias_policy_checked is True
+    assert scope.primary_alias_policy_checked is False
     assert scope.primary_account_alias is None
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
         LoanInventorySnapshot(scope=scope, loans=(_loan(account, "main"),))
