@@ -18,7 +18,7 @@ import pytest
 
 from cifereca.brokers import IdentityBrokerImpl
 from cifereca.core.borrow_action_scope import borrow_claim_key
-from cifereca.gui.bnf_borrow_controller import _present_manual_borrow
+from cifereca.gui.manual_borrow_controller import _present_manual_borrow
 from cifereca.models import Account, SearchResult
 from tests.test_sync_state_contract import _service
 from tests.test_core_p0_2055_bnf_ui_consent import DialogApi, view
