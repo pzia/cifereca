@@ -498,3 +498,19 @@ def test_selected_offer_abi_missing_fails_closed_before_signed_get(
         service.stage_explicit_loan_acsm(loan, confirmed=True, expected_identity_id="default")
     assert downloaded == []
     assert service.storage.acquisitions() == []
+
+
+def test_synthetic_provider_without_selected_offer_abi_refuses_before_get(
+    connected_core,
+):
+    """An arbitrary Loan provider is never a fallback to BnF's connected session."""
+    service, _session, _account, loan, _state, downloaded = connected_core
+    fake = replace(loan, source_provider="synthetic-provider")
+    before = service.storage.acquisitions()
+    with pytest.raises(ProviderConfigurationError, match="synthetic_loan_scope_unproven"):
+        service.stage_explicit_loan_acsm(
+            fake, confirmed=True, expected_identity_id="default",
+        )
+    assert downloaded == []
+    assert service.storage.acquisitions() == before
+    assert service.storage.placements() == []
