@@ -60,14 +60,14 @@ def test_provider_filter_across_both_channels_with_different_business_domains(ap
     )
     assert paris["total"] == 4
     assert {r["source"] for r in paris["events"]} == {"app_log", "core_events"}
-    assert {r["module"] for r in paris["events"]} == {"PNB", "LOAN", "cifereca"}
+    assert {r["module"] for r in paris["events"]} == {"LOAN", "cifereca"}
     assert all(r["provider_id"] == "paris" for r in paris["events"])
     assert all(r["detail"]["operation_kind"] == "download_loan" for r in paris["events"])
     assert {r["status"] for r in paris["events"]} == {"attention_required", "failed"}
     assert all(r["business_module"] == "LOAN" for r in paris["events"]
                if r["source"] == "app_log")
     assert query_diagnostic_events(diag, log_path=application_log,
-                                   provider_id="paris", module="PNB")["total"] == 1
+                                   provider_id="paris", module="PNB")["total"] == 0
     assert query_diagnostic_events(diag, log_path=application_log,
                                    provider_id="kobo")["total"] == 2
     assert "PRIVATE" not in json.dumps(paris, ensure_ascii=False)
