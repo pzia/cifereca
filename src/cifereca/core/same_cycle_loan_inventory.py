@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from inspect import getattr_static
 from typing import Any
 
 from ..models import Account
@@ -30,7 +31,7 @@ def opening_scoped_loan_inventory(service, account, session, snapshot):
     allowed = (
         type(account) is Account
         and type(snapshot) is LoanInventorySnapshot
-        and snapshot.scope == LoanInventoryScope.for_account(account)
+        and snapshot.scope == LoanInventoryScope.for_account(account, descriptor=getattr_static(session, "descriptor", None))
         and snapshot.status == "success"
         and bool(snapshot.branches)
         and all(
@@ -65,7 +66,7 @@ def current_scoped_loan_inventory(service, account, session) -> LoanInventorySna
             or snapshot.status != "success"):
         return None
     try:
-        if snapshot.scope != LoanInventoryScope.for_account(account):
+        if snapshot.scope != LoanInventoryScope.for_account(account, descriptor=getattr_static(session, "descriptor", None)):
             return None
     except (TypeError, ValueError, AttributeError):
         return None
