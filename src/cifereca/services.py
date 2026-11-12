@@ -1145,6 +1145,26 @@ class LibraryService:
     def disconnect_configured(self) -> None:
         return provider_sessions.disconnect_configured(self)
 
+    def connect_source_preview(
+        self, provider_id: str, credential_id: str, *,
+        required_capability: str | None = None,
+    ) -> ProviderSession:
+        """Connect precisely one configured source without creating bindings."""
+        return provider_sessions.connect_source_preview(
+            self, provider_id, credential_id,
+            required_capability=required_capability,
+        )
+
+    def connect_source_canonical(
+        self, provider_id: str, credential_id: str, *,
+        required_capability: str | None = None,
+    ) -> ProviderSession:
+        """Promote only the exact confirmed, persisted borrower in Core memory."""
+        return provider_sessions.connect_source_canonical(
+            self, provider_id, credential_id,
+            required_capability=required_capability,
+        )
+
     def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
         """Connect only one configured Kobo session for explicit manifest preview.
 
