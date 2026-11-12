@@ -57,3 +57,27 @@ def test_generic_plugin_diagnostic_cannot_claim_core_action_attestation():
     assert not unverified.get("verified_loan_acsm_action")
     diag.add_core_loan_acsm_action(value)
     assert diag.snapshot()[-1]["verified_loan_acsm_action"] is True
+
+
+def test_all_three_supplier_specific_core_gui_modules_are_physically_gone():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    retired = (
+        "src/cifereca/gui/bnf_borrow_controller.py",
+        "src/cifereca/gui/bnf_acsm_action_controller.py",
+        "src/cifereca/core/diagnostic_bnf_loan_action.py",
+    )
+    assert all(not (root / path).exists() for path in retired)
+    for path in (
+        "src/cifereca/gui/manual_borrow_controller.py",
+        "src/cifereca/gui/explicit_loan_acsm_controller.py",
+        "src/cifereca/core/diagnostic_explicit_loan_action.py",
+    ):
+        text = (root / path).read_text(encoding="utf-8")
+        assert "bnf-pret" not in text
+        assert "cifereca_bnf" not in text
+    for path in (root / "src/cifereca").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "from .bnf_borrow_controller" not in text
+        assert "from .bnf_acsm_action_controller" not in text
+        assert "from .diagnostic_bnf_loan_action" not in text
