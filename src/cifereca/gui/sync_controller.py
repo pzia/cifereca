@@ -259,8 +259,10 @@ def _refresh_sync_page(self) -> None:
     # #3105: a configured Paris credential with a failed/absent session is
     # NOT a SyncSourceRef. Only a separate, inert configuration row may show it.
     # The helper reads local config only, scoped to this identity.
-    from cifereca.core.sync_connection_visibility import unavailable_paris_connections
-    unavailable_paris = unavailable_paris_connections(self.service, scope.identity_id)
+    from cifereca.core.sync_connection_visibility import unavailable_configured_connections
+    unavailable_paris = unavailable_configured_connections(
+        self.service, scope.identity_id, provider_id="paris",
+    )
     if not sync_action_scope_current(self, scope):
         return
     # A configured but disconnected credential is intentionally NOT a
