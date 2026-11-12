@@ -138,6 +138,23 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
                     "broker_queried",
                 )
             }
+        # #5376: a bulk button may fail the 4s real GTK focus retry,
+        # independently of the preceding refresh. Exact boolean-only data.
+        focus = data.get("bulk_focus_observation")
+        if (scenario == "diagnostics-large-1600"
+                and stage == "P0_2140_bulk_fixture"
+                and type(focus) is dict
+                and set(focus) == {
+                    "button_mapped", "button_sensitive", "toplevel_active",
+                    "button_focused", "toplevel_focus_is_button",
+                }
+                and all(type(value) is bool for value in focus.values())):
+            result["bulk_focus_observation"] = {
+                key: focus[key] for key in (
+                    "button_mapped", "button_sensitive", "toplevel_active",
+                    "button_focused", "toplevel_focus_is_button",
+                )
+            }
         # #2095: only closed, fixture-derived diagnostic state is publishable
         # for the failed *real* MainWindow audit acceptance. In particular,
         # the raw subtitle, source ID, pointers and task exceptions never pass.
