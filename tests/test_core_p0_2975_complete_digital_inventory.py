@@ -31,6 +31,20 @@ def snapshot(a, loans=(), *, status="success", coverage="complete", extra=()):
     )
 
 
+def bound_session(a, *, branch, alias=None, connected=True,
+                  provider=None, credential=None):
+    """Static provider-owned declaration + exact live source identity."""
+    cls = type("SyntheticProofSession", (), {
+        "loan_absence_digital_branch": branch,
+        "loan_absence_primary_account_alias": alias,
+    })
+    instance = cls()
+    instance.connected = connected
+    instance.provider_id = a.provider_id if provider is None else provider
+    instance.credential_id = a.credential_id if credential is None else credential
+    return instance
+
+
 @pytest.mark.parametrize("provider", ["paris", "bnf-pret"])
 def test_opening_realizes_only_exact_complete_borrower(
     tmp_path, provider,
@@ -71,10 +85,7 @@ def test_unproven_typed_coverage_cannot_close_existing_loan(tmp_path, condition)
     else:
         status = "failed"
     evidence = snapshot(a, status=status, coverage=coverage, extra=extra)
-    proof_session = type("ParisProofSession", (), {
-        "loan_absence_digital_branch": "dilicom",
-        "loan_absence_primary_account_alias": "primary",
-    })()
+    proof_session = bound_session(a, branch="dilicom", alias="primary")
     assert _complete_digital_loan_scope(a, evidence, proof_session) is None
     service = _service(tmp_path)
     try:
@@ -116,7 +127,11 @@ def test_no_digital_absence_permission_without_static_provider_declaration():
             reads.append("dynamic_property_executed")
             raise RuntimeError("PRIVATE signed token")
 
-    assert _complete_digital_loan_scope(a, evidence, HostileSession()) is None
+    hostile = HostileSession()
+    hostile.connected = True
+    hostile.provider_id = a.provider_id
+    hostile.credential_id = a.credential_id
+    assert _complete_digital_loan_scope(a, evidence, hostile) is None
     assert reads == []
 
 
@@ -124,27 +139,32 @@ def test_synthetic_provider_can_opt_into_exact_branch_without_core_dispatch():
     a = account("synthetic-loans", borrower="reader-1")
     evidence = snapshot(a)
 
-    class SyntheticSession:
-        loan_absence_digital_branch = "bnf_html"
-
-    assert _complete_digital_loan_scope(a, evidence, SyntheticSession()) == (
+    synthetic = bound_session(a, branch="bnf_html")
+    assert _complete_digital_loan_scope(a, evidence, synthetic) == (
         "synthetic-loans", a.credential_id, "reader-1",
     )
-    wrong = type("WrongBranch", (), {"loan_absence_digital_branch": "other"})()
+    wrong = bound_session(a, branch="other")
     assert _complete_digital_loan_scope(a, evidence, wrong) is None
 
 
 def test_ambiguous_primary_alias_is_not_created_without_explicit_plugin_contract():
     a = account()
     evidence = snapshot(a)
-    missing_alias = type("NoAlias", (), {
-        "loan_absence_digital_branch": "dilicom",
-    })()
+    missing_alias = bound_session(a, branch="dilicom")
     assert _complete_digital_loan_scope(a, evidence, missing_alias) is None
-    explicit_alias = type("DeclaredAlias", (), {
-        "loan_absence_digital_branch": "dilicom",
-        "loan_absence_primary_account_alias": "primary",
-    })()
+    explicit_alias = bound_session(a, branch="dilicom", alias="primary")
     assert _complete_digital_loan_scope(a, evidence, explicit_alias) == (
         "paris", a.credential_id, "primary",
     )
+
+
+@pytest.mark.parametrize("changes", [
+    {"connected": False},
+    {"provider": "foreign-provider"},
+    {"credential": "other-credential"},
+])
+def test_revoked_or_cross_bound_session_cannot_realize_negative_loan(changes):
+    a = account("synthetic-loans", borrower="reader")
+    observed = snapshot(a)
+    candidate = bound_session(a, branch="bnf_html", **changes)
+    assert _complete_digital_loan_scope(a, observed, candidate) is None
