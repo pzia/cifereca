@@ -272,7 +272,7 @@ def test_bnf_failure_preserves_typed_context_as_single_journal_event(tmp_path, m
     assert result["total"] == 1
     event, = result["events"]
     assert event["module"] == "LOAN"
-    assert event["operation"] == "bnf_loan_action"
+    assert event["operation"] == "loan_acsm_action"
     assert event["duration_ms"] == 10
     assert event["detail"]["provider_id"] == "bnf-pret"
     assert event["detail"]["reason_code"] == "bnf_access_denied"
