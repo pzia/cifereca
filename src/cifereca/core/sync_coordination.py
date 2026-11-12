@@ -162,7 +162,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # Only a typed snapshot with explicit complete digital coverage
         # may prove absence. Legacy, unknown and partial stay positive-only.
         complete_scope = (
-            _complete_digital_loan_scope(account, snapshot)
+            _complete_digital_loan_scope(account, snapshot, session)
             if snapshot is not None else None
         )
         if loans or complete_scope is not None:
@@ -829,20 +829,25 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
 
 
 def _complete_digital_loan_scope(
-    account: Account, snapshot: Any,
+    account: Account, snapshot: Any, session: Any = None,
 ) -> tuple[str, str, str] | None:
-    """Only exact, exhaustive digital branches can authorize missing-loan writes.
+    """Accept a typed negative loan observation only from an opted-in adapter.
 
-    Paris and BnF have one known digital upstream each. A second digital or
-    unclassified branch prevents whole-medium absence from being proven.
+    The provider class explicitly declares its single digital upstream.
+    Missing, dynamic or malformed declarations are NOT absence evidence.
+    Multiple/unknown digital branches and incomplete pagination fail closed.
     """
+    from inspect import getattr_static
     from ..plugin_api.loan_inventory import (
         LoanInventoryScope, LoanInventorySnapshot,
     )
-    expected = {"paris": "dilicom", "bnf-pret": "bnf_html"}.get(
-        account.provider_id if type(account) is Account else None,
-    )
-    if (expected is None or type(snapshot) is not LoanInventorySnapshot
+    if type(account) is not Account or session is None:
+        return None
+    expected = getattr_static(type(session), "loan_absence_digital_branch", None)
+    if (type(expected) is not str or not 0 < len(expected) <= 64
+            or not all(c.isascii() and (c.isalnum() or c in "_-")
+                       for c in expected)
+            or type(snapshot) is not LoanInventorySnapshot
             or snapshot.scope != LoanInventoryScope.for_account(account)
             or snapshot.status != "success"
             or not snapshot.branch_claims_complete(expected, "digital")):
@@ -851,13 +856,19 @@ def _complete_digital_loan_scope(
             or {branch.upstream for branch in snapshot.branches
                 if branch.medium == "digital"} != {expected}):
         return None
-    if account.provider_id == "paris" and account.unique_id == "":
-        if account.is_primary is not True:
+    if type(account.unique_id) is not str:
+        return None
+    if not account.unique_id:
+        alias = getattr_static(
+            type(session), "loan_absence_primary_account_alias", None,
+        )
+        if (account.is_primary is not True or type(alias) is not str
+                or not 0 < len(alias) <= 64
+                or not all(c.isascii() and (c.isalnum() or c in "_-")
+                           for c in alias)):
             return None
-        borrower = "primary"
+        borrower = alias
     else:
-        if not account.unique_id:
-            return None
         borrower = account.unique_id
     return account.provider_id, account.credential_id, borrower
 
@@ -1105,7 +1116,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         typed_observations.append(
                             (account, session, typed_scope, list(account_loans)),
                         )
-                        complete_scope = _complete_digital_loan_scope(account, snapshot)
+                        complete_scope = _complete_digital_loan_scope(account, snapshot, session)
                         if complete_scope is not None and not inventory_partial:
                             complete_by_source[source_id] = complete_scope
 
