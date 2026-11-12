@@ -181,8 +181,8 @@ def test_partial_abi_connect_preserves_existing_kobo_legacy_behavior(
     session = service._sessions[service._session_key("kobo", "vault-1")]
     assert not has_complete_delivery_abi(session)
     monkeypatch.setattr(
-        provider_sessions, "connect_kobo_preview",
-        lambda _service, _credential: session,
+        provider_sessions, "connect_source_preview",
+        lambda _service, _provider, _credential, **_kw: session,
     )
     original = tuple(service.accounts)
     epoch = service._source_context_epoch
