@@ -28,7 +28,7 @@ def test_native_bnf_actions_are_distinct_and_explain_safe_failure(connected_core
     import gi
     gi.require_version('Gtk','4.0');gi.require_version('Adw','1')
     from gi.repository import Adw,GLib,Gtk
-    from cifereca.gui.bnf_acsm_action_controller import prepare_bnf_acsm
+    from cifereca.gui.explicit_loan_acsm_controller import prepare_explicit_loan_acsm
     from cifereca.gui.task_runner import TaskRunner,TaskPriority
     import cifereca.services as facade
     root=Path(__file__).resolve().parents[1]
@@ -76,7 +76,7 @@ def test_native_bnf_actions_are_distinct_and_explain_safe_failure(connected_core
     window._task_started=lambda *_a:False
     window._task_finished=lambda *_a:False
     window.runner=TaskRunner(window)
-    button.connect('clicked',lambda _b:prepare_bnf_acsm(window,loan,button,Adw=Adw,TaskPriority=TaskPriority))
+    button.connect('clicked',lambda _b:prepare_explicit_loan_acsm(window,loan,button,Adw=Adw,TaskPriority=TaskPriority,stage=service.stage_bnf_loan_acsm,importer=service.import_bnf_loan_acsm))
     window.present();device=X11Input()
     def wait(predicate):
         loop=GLib.MainLoop();ticks=[0]
