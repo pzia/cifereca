@@ -817,3 +817,31 @@ def test_book_detail_failed_callback_timings_are_bounded_and_private():
         source.write_text(json.dumps([{"scenario": "book-detail-960", "returncode": 0}]))
         report.write_text(json.dumps({"failure_elapsed_seconds": 8.0}))
         assert "book_detail_failure_elapsed_seconds" not in module.safe_summary(source)["results"][0]
+
+
+def test_plugin_scroll_cross_module_callbacks_have_closed_public_stages():
+    """Diagnose the 36-plugin fixture without exposing its GTK data."""
+    module = _module()
+    stages = (
+        "plugin_scroll_initial",
+        "plugin_scroll_first_toggle",
+        "plugin_scroll_verify_first",
+        "plugin_scroll_verify_second",
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        report = root / "book-detail-1366" / "book-detail-1366" / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": "book-detail-1366", "returncode": 1}]))
+        for stage in stages:
+            report.write_text(json.dumps({
+                "public_stage": stage,
+                "callback_start_elapsed_seconds": 7.0,
+                "error": "PRIVATE-SESSION",
+            }))
+            out = module.safe_summary(source)["results"][0]
+            assert out["book_detail_last_stage"] == stage
+            assert "PRIVATE" not in repr(out)
+        report.write_text(json.dumps({"public_stage": "PRIVATE-SESSION"}))
+        assert "book_detail_last_stage" not in module.safe_summary(source)["results"][0]
