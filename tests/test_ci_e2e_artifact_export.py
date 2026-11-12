@@ -779,3 +779,41 @@ def test_gtk_replay_logs_only_closed_scenario_verdicts_and_preserves_failure():
     assert 'name: e2e-core-summary' in source
     assert 'if-no-files-found: ignore' in source
     assert 'retention-days: 2' in source
+
+
+def test_book_detail_failed_callback_timings_are_bounded_and_private():
+    """Only finite synthetic durations on FAIL; no raw GTK data or secrets."""
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        report = root / "book-detail-960" / "book-detail-960" / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": "book-detail-960", "returncode": 1}]))
+        report.write_text(json.dumps({
+            "public_stage": "callback_other",
+            "callback_start_elapsed_seconds": 7.125,
+            "failure_elapsed_seconds": 7.25,
+            "failed_callback_duration_seconds": 0.125,
+            "error": "PRIVATE-ACCOUNT-TOKEN",
+        }))
+        result = module.safe_summary(source)["results"][0]
+        assert result["book_detail_last_stage"] == "callback_other"
+        assert result["book_detail_callback_start_seconds"] == 7.125
+        assert result["book_detail_failure_elapsed_seconds"] == 7.25
+        assert result["book_detail_failed_callback_seconds"] == 0.125
+        assert "PRIVATE" not in repr(result)
+        for invalid in (True, -1, 41, "8", None, float("inf"), float("nan")):
+            report.write_text(json.dumps({
+                "callback_start_elapsed_seconds": invalid,
+                "failure_elapsed_seconds": invalid,
+                "failed_callback_duration_seconds": invalid,
+                "error": "PRIVATE-ACCOUNT-TOKEN",
+            }))
+            result = module.safe_summary(source)["results"][0]
+            assert not any(key.startswith("book_detail_") and key.endswith("_seconds")
+                           for key in result)
+            assert "PRIVATE" not in repr(result)
+        source.write_text(json.dumps([{"scenario": "book-detail-960", "returncode": 0}]))
+        report.write_text(json.dumps({"failure_elapsed_seconds": 8.0}))
+        assert "book_detail_failure_elapsed_seconds" not in module.safe_summary(source)["results"][0]
