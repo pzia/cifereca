@@ -65,6 +65,14 @@ def private_catalogue_masquerade():
 class NumilogOfferFixture:
     def __init__(self, *, identity="alice", accounts=None):
         self.current_identity = NS(identity_id=identity)
+        # The private selected-offer UI requires a durable exact owner.
+        # Account-list metadata alone is not a substitute for this binding.
+        self.storage = NS(
+            identity_for_connection=lambda provider, credential: (
+                "alice" if (provider, credential) == ("numilog", CREDENTIAL)
+                else None
+            ),
+        )
         self.accounts = (
             [NS(identity_id="alice", provider_id="numilog", credential_id=CREDENTIAL)]
             if accounts is None else accounts
