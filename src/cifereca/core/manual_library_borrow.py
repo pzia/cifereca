@@ -256,6 +256,7 @@ def manual_borrow(
     expected_account: Account | None = None,
     additional_scope_current=None,
     verification: str | None = None,
+    observed_account_alias: str | None = None,
 ) -> dict[str, object]:
     """Select the exact live lender account and admit at most one attempt.
 
@@ -277,6 +278,14 @@ def manual_borrow(
             or verification_mode not in {"active_only", "provider_observed"}
             or (primary_id is None and verification_mode != "active_only")
             or (primary_id == "" and verification_mode != "provider_observed")):
+        return _result("blocked", "borrow_scope_unverified")
+    # A supplier's remote loan-account alias is declared by its installed
+    # immutable policy, never guessed from the Core primary-account sentinel.
+    if ((primary_id is None and observed_account_alias is not None)
+            or (primary_id == "" and observed_account_alias is None)
+            or (observed_account_alias is not None
+                and (type(observed_account_alias) is not str
+                     or not observed_account_alias))):
         return _result("blocked", "borrow_scope_unverified")
     # A provider session may be replaced/rebound without changing either the
     # selected profile or the account epoch. Pin this Core-wide source epoch
@@ -396,7 +405,8 @@ def manual_borrow(
                 or loan.source_provider != provider_id
                 or loan.source_credential != account.credential_id
                 or loan.source_account_id != (
-                    "primary" if primary_id == "" else account.unique_id)
+                    observed_account_alias
+                    if observed_account_alias is not None else account.unique_id)
                 or loan.identity_id != account.identity_id
                 or loan.provider != docbase or loan.medium != "digital"
                 # Paris returns the fresh current-inventory state verbatim
