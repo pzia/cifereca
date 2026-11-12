@@ -1115,19 +1115,6 @@ class DetailPanel(Gtk.Box):
                 row.set_subtitle(explanation)
                 action.add(row)
                 self._append_content(action)
-        elif item.source_provider == "kobo" and item.owned:
-            action = Adw.PreferencesGroup()
-            action.set_title("Acquisition locale")
-            row = Adw.ActionRow()
-            # A raw Kobo catalogue owned=True cannot attest an entitlement.
-            # The search list checks the Core identity-scoped rights ledger.
-            row.set_title("Sauvegarde Kobo non disponible")
-            row.set_subtitle(
-                "La propriété et le téléchargement doivent être attestés "
-                "pour ce compte avant de proposer une sauvegarde locale."
-            )
-            action.add(row)
-            self._append_content(action)
         self._decorate(item)
         if direct_download and not detail.holdings:
             return
