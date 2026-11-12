@@ -120,6 +120,8 @@ def test_neutral_borrow_rejects_mismatched_account_provider_before_queue(account
         current_identity=NS(identity_id="alice"), _account_context_epoch=1,
         accounts=[account],
         _session_for_source=lambda *_: session,
+        can_borrow_manual=lambda _item: True,
+        borrow_manual=lambda *_args, **_kw: pytest.fail("foreign source dispatched"),
     )
     window = NS(
         _closed=False, service=service,
@@ -147,6 +149,8 @@ def test_shared_borrow_rejects_foreign_credential_before_queue():
         current_identity=NS(identity_id="alice"), _account_context_epoch=1,
         accounts=[account],
         _session_for_source=lambda *_: session,
+        can_borrow_manual=lambda _item: True,
+        borrow_manual=lambda *_args, **_kw: pytest.fail("foreign source dispatched"),
     )
     window = NS(
         _closed=False, service=service,
