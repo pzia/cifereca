@@ -1369,13 +1369,9 @@ class LocalInspectionController:
             # Provider-specific proof, never a shared ISBN or inferred right.
             # The Core will replay the exact transaction under its own lock.
             proof_notice = (
-                'Le Core vérifiera à nouveau le droit Kobo personnel, '
-                'la sauvegarde antérieure, la révision, le compte et le SHA '
-                'du fichier sous verrou avant de restaurer le lien dans SQLite. '
-                if selected_provider[0] == 'kobo' else
-                'Le Core vérifiera à nouveau la preuve d’achat Numilog et '
-                'le fichier EPUB sous verrou avant de créer un seul placement '
-                'dans SQLite. '
+                'Le Core revérifiera sous verrou les preuves du droit, '
+                'du fichier et du compte exact avant d’enregistrer '
+                'le placement dans SQLite. '
             )
             dialog = Adw.MessageDialog.new(
                 window, 'Confirmer ce placement local ?',
@@ -1439,9 +1435,7 @@ class LocalInspectionController:
                         pair_undo.set_visible(can_undo)
                         pair_undo.set_sensitive(can_undo)
                         pair_explanation.set_text(
-                            ('Placement local Kobo enregistré. '
-                             if selected_provider[0] == 'kobo' else
-                             'Placement local Numilog enregistré. ')
+                            'Placement local enregistré. '
                             + 'Fichier original et droit inchangés. Cette vue '
                             'des preuves est désormais périmée : '
                             'aucune autre sélection possible. '
@@ -1538,9 +1532,7 @@ class LocalInspectionController:
                     notice.present()
                     return
                 dialog = Adw.MessageDialog.new(
-                    window, ('Annuler le placement Kobo ?'
-                             if selected_provider[0] == 'kobo'
-                             else 'Annuler le placement Numilog ?'),
+                    window, 'Annuler le placement local ?',
                     'Seul le dernier placement enregistré pendant cette '
                     'session sera annulé, si ses preuves sont toujours '
                     'cohérentes. Le fichier EPUB et le droit sont conservés. '
