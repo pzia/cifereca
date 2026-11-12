@@ -82,6 +82,33 @@ def manual_borrow_action_available(service, item: SearchResult) -> bool:
     return result.get("local_action_possible") is True
 
 
+
+def manual_borrow_followup_diagnostic(service, item: SearchResult) -> dict[str, object]:
+    """Inert, supplier-neutral readiness for observing one spent manual claim.
+
+    Only an installed, exact, versioned policy requiring independent provider
+    observation may enable this readonly operation. No claimed borrow rights
+    or permissions are inferred, and no claim is changed or created here.
+    """
+    from .manual_library_borrow import manual_borrow_diagnostic
+    policy = resolved_manual_borrow_policy(service, item)
+    if policy is None or policy.verification != "provider_observed":
+        return {
+            "local_action_possible": False,
+            "reason_code": "local_admission_unavailable",
+            "provider_eligibility": "unknown",
+        }
+    return manual_borrow_diagnostic(
+        service, item, provider_id=item.source_provider,
+        docbase=policy.docbase, primary_id=policy.primary_borrower_id,
+        source_current=lambda service_, item_, identity: (
+            resolved_manual_borrow_policy(service_, item_) == policy
+            and _selected_primary_source_current(
+                service_, item_, identity, policy,
+            ) is True
+        ),
+    )
+
 def manual_borrow_action(
     service, item: SearchResult, *, expected_identity_id: str,
     confirmed: bool = False, expected_context_epoch: int | None = None,
