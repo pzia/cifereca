@@ -1894,9 +1894,35 @@ class LibraryService:
         if not force:
             cached = self.storage.cache_get("holdings", key)
             if isinstance(cached, dict):
+                # A cached rights-bearing response must not outlive a source
+                # owner transfer or an active identity change mid-cache-read.
+                if not private_source_owner_matches(self, item):
+                    return ItemDetail(
+                        record_id=item.record_id, docbase=item.docbase,
+                        title=item.title, author=item.author,
+                        type=item.type, year=item.published_at,
+                        thumbnail_url=item.thumbnail_url,
+                        availability_status="unknown",
+                        availability_label="Catalogue partagé · droits non consultés",
+                        holdings=[], source_provider=item.source_provider,
+                        source_credential=item.source_credential,
+                    )
                 cached["holdings"] = [Holding(**x) for x in cached.get("holdings", [])]
                 return ItemDetail(**cached)
         detail = self._session_for_source(item.source_provider, item.source_credential).holdings(item, search_terms)
+        # Provider I/O can complete after A→B→A or a SQLite rebind.
+        # A revoked read must not publish or cache private borrower details.
+        if not private_source_owner_matches(self, item):
+            return ItemDetail(
+                record_id=item.record_id, docbase=item.docbase,
+                title=item.title, author=item.author,
+                type=item.type, year=item.published_at,
+                thumbnail_url=item.thumbnail_url,
+                availability_status="unknown",
+                availability_label="Catalogue partagé · droits non consultés",
+                holdings=[], source_provider=item.source_provider,
+                source_credential=item.source_credential,
+            )
         self.storage.cache_put("holdings", key, asdict(detail), ttl)
         return detail
 
