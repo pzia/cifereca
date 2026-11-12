@@ -218,6 +218,10 @@ class ProviderDescriptor:
     search_status_notices: tuple[tuple[str, str], ...] = ()
     # Opt-in static plugin contract. This is not a grant of borrower rights.
     manual_borrow_policy: ManualBorrowPolicy | None = None
+    # Read-only provenance convention for *existing* primary-account loans.
+    # Separate from ManualBorrowPolicy (which admits new borrow attempts).
+    # None requires the exact Account.unique_id; never a permission to mutate.
+    existing_primary_loan_account_alias: str | None = None
 
 
 class ProviderSession(ABC):
