@@ -155,6 +155,22 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
                     "button_focused", "toplevel_focus_is_button",
                 )
             }
+        chooser = data.get("capture_file_selection_timeout")
+        if (scenario == "diagnostics-1366"
+                and type(chooser) is dict
+                and set(chooser) == {
+                    "dialog_visible", "selected_file_present",
+                    "selected_file_matches_fixture",
+                    "current_name_matches_fixture",
+                }
+                and all(type(value) is bool for value in chooser.values())):
+            result["capture_file_selection_timeout"] = {
+                key: chooser[key] for key in (
+                    "dialog_visible", "selected_file_present",
+                    "selected_file_matches_fixture",
+                    "current_name_matches_fixture",
+                )
+            }
         # #2095: only closed, fixture-derived diagnostic state is publishable
         # for the failed *real* MainWindow audit acceptance. In particular,
         # the raw subtitle, source ID, pointers and task exceptions never pass.
