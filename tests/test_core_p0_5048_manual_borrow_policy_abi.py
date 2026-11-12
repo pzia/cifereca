@@ -298,3 +298,19 @@ def test_missing_or_inconsistent_observed_account_policy_fails_before_post(tmp_p
         session.descriptor = original
     finally:
         service.close()
+
+
+def test_core_observed_account_verification_has_no_paris_primary_sentinel():
+    from pathlib import Path
+    import ast
+    import inspect
+    from cifereca.core.manual_library_borrow import manual_borrow
+
+    source = inspect.getsource(manual_borrow)
+    tree = ast.parse(source)
+    assert not any(
+        isinstance(node, ast.Constant) and node.value == "primary"
+        for node in ast.walk(tree)
+    )
+    assert "loan.source_account_id != observed_account_id" in source
+    assert "policy.observed_primary_account_alias" in source
