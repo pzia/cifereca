@@ -919,7 +919,7 @@ def main() -> int:
                     }:
                         local_reasons = frozenset({
                             "local_action_available_provider_unknown",
-                            "primary_paris_connection_mismatch_or_inactive",
+                            "local_primary_source_binding_mismatch",
                             "local_edition_scope_invalid",
                             "local_provider_or_identity_unavailable",
                             "local_session_unavailable",
