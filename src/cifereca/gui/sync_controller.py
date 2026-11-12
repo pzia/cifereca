@@ -1044,7 +1044,7 @@ def _refresh_sync_page(self) -> None:
                         == expected_identity
                 )
 
-            inventory_provider = "Numilog" if source.provider_id == "numilog" else "Kobo"
+            inventory_provider = str(source.provider_id).replace("-", " ").title()
             # #1346/#1905: an independent private-store policy for refreshing remote
             # inventory and rights. Never re-use the local acquisition toggle:
             # reading this policy makes no network request or download.
