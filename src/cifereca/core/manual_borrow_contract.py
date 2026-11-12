@@ -75,16 +75,24 @@ def manual_borrow_action_diagnostic(
             "reason_code": "edition_or_source_unqualified",
             "provider_eligibility": "unknown",
         }
-    return manual_borrow_diagnostic(
-        service, item, provider_id=item.source_provider,
-        docbase=policy.docbase, primary_id=policy.primary_borrower_id,
-        source_current=lambda service_, item_, identity: (
-            resolved_manual_borrow_policy(service_, item_) == policy
-            and _selected_primary_source_current(
-                service_, item_, identity, policy,
-            ) is True
-        ),
-    )
+    try:
+        return manual_borrow_diagnostic(
+            service, item, provider_id=item.source_provider,
+            docbase=policy.docbase, primary_id=policy.primary_borrower_id,
+            source_current=lambda service_, item_, identity: (
+                resolved_manual_borrow_policy(service_, item_) == policy
+                and _selected_primary_source_current(
+                    service_, item_, identity, policy,
+                ) is True
+            ),
+        )
+    except Exception:
+        # Never publish a supplier error, account identifier or private URL.
+        return {
+            "local_action_possible": False,
+            "reason_code": "local_admission_unavailable",
+            "provider_eligibility": "unknown",
+        }
 
 
 def manual_borrow_action_available(service, item: SearchResult) -> bool:
