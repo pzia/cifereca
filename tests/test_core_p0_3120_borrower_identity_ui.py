@@ -156,8 +156,8 @@ def test_generic_policy_enters_only_shared_controller(monkeypatch):
     ui.borrow_search_item(item)
     present.assert_called_once()
     assert present.call_args.args[1] is item
-    assert present.call_args.kwargs["available"] is ui.service.can_borrow_manual
-    assert present.call_args.kwargs["dispatch"] is ui.service.borrow_manual
+    assert "available" not in present.call_args.kwargs
+    assert "dispatch" not in present.call_args.kwargs
     assert queued == []
     state.session.borrow.assert_not_called()
     ui.service.borrow_manual.assert_not_called()
