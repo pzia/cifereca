@@ -1351,10 +1351,12 @@ class LibraryService:
         # Any installed supplier can advertise an explicit per-credential
         # public catalogue URL. This is a navigation hint, never a right,
         # download endpoint or supplier URL invented by Core.
-        base = self.config.provider_option(
-            provider, 'catalogue_url', None,
-            credential_id=row.get('source_credential'),
-        ) or base
+        provider_option = getattr(getattr(self, 'config', None), 'provider_option', None)
+        if callable(provider_option):
+            base = provider_option(
+                provider, 'catalogue_url', None,
+                credential_id=row.get('source_credential'),
+            ) or base
         if provider == 'paris':
             # Preserve the legacy Paris base_url's precedence over an explicit
             # catalogue option and the provider descriptor homepage.
