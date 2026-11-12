@@ -11,7 +11,14 @@ def test_gtk_e2e_bootstrap_reuses_preinstalled_runtime_before_apt_refresh():
     assert "dpkg-query" in source
     assert "command -v xvfb-run" in source
     assert "command -v dbus-run-session" in source
-    assert source.index("sudo apt-get install") < source.index("sudo apt-get update")
+    assert source.index('apt-get "${apt_options[@]}" install') < source.index('apt-get "${alternate_options[@]}" update')
+    assert "sudo timeout --signal=TERM --kill-after=10s 75s" in source
+    assert "sudo timeout --signal=TERM --kill-after=10s 90s" in source
+    assert "sudo timeout --signal=TERM --kill-after=10s 150s" in source
+    assert "signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg" in source
+    assert "http://archive.ubuntu.com/ubuntu" in source
+    assert "http://security.ubuntu.com/ubuntu" in source
+    assert "VERSION_CODENAME:-" in source
 
 
 def test_pr_ci_does_not_bootstrap_or_run_gtk_e2e():
