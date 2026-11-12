@@ -129,7 +129,8 @@ def test_identity_scope_never_falls_back_to_selected_profile(connected_core):
         (replace(loan, state="returned"), "default"),
         (replace(loan, medium="physical"), "default"),
     ]:
-        with pytest.raises(ProviderConfigurationError, match="bnf_loan_scope_unproven"):
+        code_prefix = candidate.source_provider.split("-", 1)[0]
+        with pytest.raises(ProviderConfigurationError, match=code_prefix + "_loan_scope_unproven"):
             service.stage_explicit_loan_acsm(
                 candidate, confirmed=True, expected_identity_id=owner)
     assert not downloaded
