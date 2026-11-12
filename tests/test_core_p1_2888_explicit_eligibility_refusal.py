@@ -70,7 +70,7 @@ def test_one_exact_refusal_from_existing_eligibility_at_admission(code, tmp_path
     assert checks == [code, code]  # admission + local explanation; zero provider GETs
     (row,) = service.diagnostics.snapshot()
     assert row["verified_loan_download"] is True
-    assert row["category"] == "PNB"
+    assert row["category"] == "LOAN"
     assert row["operation"] == "download_loan"
     assert row["detail"]["provider_id"] == "paris"
     assert row["detail"]["status"] == "refused"

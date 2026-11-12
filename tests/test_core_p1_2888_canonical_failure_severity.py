@@ -54,7 +54,7 @@ def test_canonical_error_filter_contains_explicit_download_failures(tmp_path):
         assert events[status]["severity"] == severity
         assert events[status]["operation"] == "download_loan"
         assert events[status]["detail"]["code"] == code
-        assert events[status]["module"] == "PNB"
+        assert events[status]["module"] == "LOAN"
     failures = query_journal(path, provider_id="paris", severity="error")
     assert failures["total"] == 2
     assert {event["status"] for event in failures["events"]} == {

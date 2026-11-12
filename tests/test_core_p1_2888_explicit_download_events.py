@@ -71,7 +71,7 @@ def test_exactly_one_attested_terminal_from_explicit_action_only(
     records = service.diagnostics.snapshot()
     assert len(records) == 1
     event = records[0]
-    assert event["category"] == "PNB"
+    assert event["category"] == "LOAN"
     assert event["operation"] == "download_loan"
     assert event["verified_loan_download"] is True
     assert event["detail"]["provider_id"] == "paris"
