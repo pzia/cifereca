@@ -600,30 +600,31 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
 
 
 
-def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
-    """Bind one *confirmed* Kobo CLI source to its exact persisted Core owner.
+def bind_confirmed_source_account(
+    self, provider_id: str, credential_id: str, session: ProviderSession, *,
+    error_prefix: str = "source_canonical_account_",
+) -> ProviderSession:
+    """Admit one exact, already persisted borrower without writes or network.
 
-    Preview alone must never register an Account. Complete A→B execution
-    requires one live Account matching an enabled configured credential and
-    an exact SQLite borrower. No entitlement or provider-account row is
-    created here; all later rights/offer/commit stages re-admit their scope.
+    Caller must obtain a targeted session. Complete rights/delivery ABI is
+    required to mutate the Core account registry; otherwise preview only.
     """
     from .canonical_delivery_abi import has_complete_delivery_abi
-
-    # The existing connector authenticates only this selected credential.
-    # For an incomplete ABI retain the old (non-canonical) routing unchanged.
-    session = connect_kobo_preview(self, credential_id)
+    provider_id = str(provider_id or "").strip().lower()
+    credential_id = str(credential_id or "").strip()
+    if not provider_id or not credential_id:
+        raise ProviderConfigurationError(error_prefix + "unavailable")
     if not has_complete_delivery_abi(session):
         return session
-    key = self._session_key("kobo", credential_id)
+    key = self._session_key(provider_id, credential_id)
     roster = session.accounts
     if (not isinstance(roster, (list, tuple))
             or len(roster) != 1 or type(roster[0]) is not Account
             or session.connected is not True
-            or session.provider_id != "kobo"
+            or session.provider_id != provider_id
             or session.credential_id != credential_id
             or self._sessions.get(key) is not session):
-        raise ProviderConfigurationError("kobo_canonical_account_unavailable")
+        raise ProviderConfigurationError(error_prefix + "unavailable")
     account = roster[0]
     original_scope = (
         account.identity_id, account.provider_id,
@@ -633,16 +634,16 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
     core_epoch = getattr(self, "_source_context_epoch", 0)
     registry = self.accounts
     if type(registry) is not list:
-        raise ProviderConfigurationError("kobo_canonical_account_unavailable")
+        raise ProviderConfigurationError(error_prefix + "unavailable")
     registry_snapshot = tuple(registry)
-    owner = self.storage.identity_for_connection("kobo", credential_id)
+    owner = self.storage.identity_for_connection(provider_id, credential_id)
     # A credential rebound in Config but not in SQLite must not inherit the
     # old account's consent. Missing or multiple enabled rows are ambiguous.
     try:
         configured_rows = [
             row for row in self.config.provider_accounts(enabled_only=True)
             if type(row) is dict
-            and str(row.get("provider") or "").strip().lower() == "kobo"
+            and str(row.get("provider") or "").strip().lower() == provider_id
             and str(row.get("id") or "").strip() == credential_id
         ]
         configured_owner = (
@@ -655,21 +656,21 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
         configured_owner = None
     if (type(owner) is not str or not owner
             or configured_owner != owner
-            or account.provider_id != "kobo"
+            or account.provider_id != provider_id
             or account.credential_id != credential_id
             or type(account.unique_id) is not str
             or account.identity_id not in {owner, "default"}
             or self.identity_by_id(owner) is None
             or self.storage.provider_scope_account_bound(
-                identity_id=owner, provider_id="kobo",
+                identity_id=owner, provider_id=provider_id,
                 credential_id=credential_id, account_id=account.unique_id,
             ) is not True):
-        raise ProviderConfigurationError("kobo_canonical_account_unavailable")
+        raise ProviderConfigurationError(error_prefix + "unavailable")
     # In particular do not replace the local/Paris primary account merely
     # because this one confirmed Kobo command needs a scoped reader.
     existing = [
         row for row in registry
-        if getattr(row, "provider_id", None) == "kobo"
+        if getattr(row, "provider_id", None) == provider_id
         and getattr(row, "credential_id", None) == credential_id
     ]
     if (len(existing) > 1 or (
@@ -678,7 +679,7 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
                 or existing[0].identity_id != owner
                 or existing[0].unique_id != account.unique_id
             ))):
-        raise ProviderConfigurationError("kobo_canonical_account_ambiguous")
+        raise ProviderConfigurationError(error_prefix + "ambiguous")
     # Recheck mutable objects after SQLite/config IO and before any Core
     # mutation. The later canonical executor separately rechecks owner,
     # session epoch, borrower and source-wide CAS consent before GET/commit.
@@ -697,15 +698,35 @@ def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
             ) != original_scope
             or len([
                 row for row in registry
-                if getattr(row, "provider_id", None) == "kobo"
+                if getattr(row, "provider_id", None) == provider_id
                 and getattr(row, "credential_id", None) == credential_id
             ]) != len(existing)):
-        raise ProviderConfigurationError("kobo_canonical_account_changed")
+        raise ProviderConfigurationError(error_prefix + "changed")
     account.identity_id = owner
     if not existing:
         registry.append(account)
     self._source_context_epoch = core_epoch + 1
     return session
+
+
+def connect_source_canonical(
+    self, provider_id: str, credential_id: str, *,
+    required_capability: str | None = None,
+) -> ProviderSession:
+    """Preview then bind a confirmed exact source without provider dispatch."""
+    session = connect_source_preview(
+        self, provider_id, credential_id, required_capability=required_capability,
+    )
+    return bind_confirmed_source_account(self, provider_id, credential_id, session)
+
+
+def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
+    """Legacy CLI adapter retaining Kobo error codes and preview routing."""
+    session = connect_kobo_preview(self, credential_id)
+    return bind_confirmed_source_account(
+        self, "kobo", credential_id, session,
+        error_prefix="kobo_canonical_account_",
+    )
 
 
 # Closed reason vocabulary: provider exception text, types, URLs and tokens
