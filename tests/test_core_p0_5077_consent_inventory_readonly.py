@@ -34,7 +34,7 @@ def test_readonly_inventory_counts_without_leaking_source_ids(tmp_path, capsys):
     assert secret not in output.out + output.err
     assert "invalid:secret" not in output.out + output.err
     assert json.loads(output.out) == {
-        "schema": "cifereca.source-consent-inventory/1",
+        "schema": "cifereca.private-id-gamma-908onsent-inventory/1",
         "read_only": True,
         "counts": {
             "numilog_purchase": 1, "numilog_epoch": 1,
@@ -68,11 +68,11 @@ def test_legacy_on_without_revision_is_counted_but_not_promoted(tmp_path, capsys
     with sqlite3.connect(path) as db:
         db.execute("CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT)")
         db.executemany("INSERT INTO metadata(key,value) VALUES(?,?)", [
-            ("sync.source.numilog.materialization.consent.v1.source-a", "on_start:v1"),
-            ("sync.source.numilog.materialization.epoch.v1.source-a", "UPPERCASE-INVALID"),
-            ("sync.source.bnf_auto.source-b", "1"),
-            ("sync.source.materialization.on_start.source-c", "0"),
-            ("sync.source.materialization.on_start.source-d", "1"),
+            ("sync.source.numilog.materialization.consent.v1.private-id-alpha-906", "on_start:v1"),
+            ("sync.source.numilog.materialization.epoch.v1.private-id-alpha-906", "UPPERCASE-INVALID"),
+            ("sync.source.bnf_auto.private-id-beta-907", "1"),
+            ("sync.source.materialization.on_start.private-id-gamma-908", "0"),
+            ("sync.source.materialization.on_start.private-id-delta-909", "1"),
         ])
     assert module.main([str(path)]) == 0
     result = json.loads(capsys.readouterr().out)
@@ -84,7 +84,7 @@ def test_legacy_on_without_revision_is_counted_but_not_promoted(tmp_path, capsys
         "kobo_purchase": {"on_with_valid_revision": 0,
                           "on_missing_or_invalid_revision": 1, "not_on": 1},
     }
-    assert "source-a" not in json.dumps(result)
-    assert "source-b" not in json.dumps(result)
-    assert "source-c" not in json.dumps(result)
-    assert "source-d" not in json.dumps(result)
+    assert "private-id-alpha-906" not in json.dumps(result)
+    assert "private-id-beta-907" not in json.dumps(result)
+    assert "private-id-gamma-908" not in json.dumps(result)
+    assert "private-id-delta-909" not in json.dumps(result)
