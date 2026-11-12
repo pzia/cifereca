@@ -56,6 +56,14 @@ def loan_cache_observations(
             or len(cached_loans) > _MAX_LOANS):
         return unavailable
 
+    # The selected provider's descriptor is metadata, not a borrower grant.
+    # A crossed or malformed declaration must never crash passive Settings.
+    if descriptor is not None and (
+        type(descriptor) is not ProviderDescriptor
+        or descriptor.id != provider_id
+    ):
+        return unavailable
+
     accounts: dict[str, Account] = {}
     for account in observed_borrowers:
         if type(account) is not Account:
