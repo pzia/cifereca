@@ -609,7 +609,7 @@ class NativeAbortDiagnosisTests(unittest.TestCase):
                              "maint_declaration_dialog_open")
             self.assertEqual(out["native_failure_kind"], "unclassified_native_abort")
             for boundary in ("maint_transfer_start", "maint_transfer_done"):
-                log.write_bytes(("CIFERECA_E2E_GTK_PHASE:" + boundary + "\\n").replace("\\n", "\n").encode())
+                log.write_bytes(f"CIFERECA_E2E_GTK_PHASE:{boundary}\n".encode())
                 self.assertEqual(
                     module.safe_summary(source)["results"][0]["maintenance_native_last_phase"],
                     boundary,
