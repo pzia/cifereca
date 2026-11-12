@@ -171,6 +171,7 @@ DESCRIPTOR = ProviderDescriptor(
         docbase="DILICOM", primary_borrower_id="",
         source_selection_key="primary_paris_connection_id",
         verification="provider_observed",
+        observed_primary_account_alias="primary",
     ),
     display_name="Bibliothèques de Paris",
     description="Catalogue, compte lecteur et prêt numérique PNB des Bibliothèques de Paris.",
