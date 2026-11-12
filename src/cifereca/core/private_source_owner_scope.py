@@ -34,6 +34,6 @@ def public_catalogue_source(item: object) -> bool:
     nor an unauthenticated row proves a downloadable item or private right.
     """
     return (
-        getattr(item, "source_collection", None) == "public"
+        getattr(item, "source_collection", None) in ("public", "public_catalog")
         and getattr(item, "owned", None) is False
     )
