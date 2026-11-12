@@ -1214,12 +1214,19 @@ def connect_configured(self, *, logger, caller_category: str = "other",
             registration_returned = False
             try:
                 self._sessions[key] = session
-                connection_id = self.storage.provider_connection_put({
+                binding = {
                     "identity_id": identity_id, "provider_id": provider_id,
                     "credential_id": credential_id,
                     "label": str(row.get("label") or plugin.descriptor.display_name),
                     "enabled": True,
-                })
+                }
+                admitted_limit = getattr(plugin.descriptor, "max_accounts_per_identity", None)
+                if admitted_limit is None:
+                    connection_id = self.storage.provider_connection_put(binding)
+                else:
+                    connection_id = self.storage.provider_connection_put(
+                        binding, max_accounts_per_identity=admitted_limit,
+                    )
                 for account in accounts:
                     account.identity_id = identity_id
                     self.storage.provider_account_put({
