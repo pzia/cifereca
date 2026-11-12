@@ -9,7 +9,7 @@ class ProviderAccountLimitError(ValueError):
     """Closed, non-sensitive configuration refusal."""
 
 
-def validate_provider_account_limits(rows: object, descriptors: Iterable[object]) -> None:
+def validate_provider_account_limits(\n    rows: object, descriptors: Iterable[object], *,\n    default_identity: str = "default", known_identities: Iterable[str] = (),\n) -> None:
     """Fail closed for configured providers whose descriptor declares a limit.
 
     Account scope is (provider, identity). A duplicated record for the same
@@ -30,7 +30,7 @@ def validate_provider_account_limits(rows: object, descriptors: Iterable[object]
             if type(limit) is not int or limit < 1:
                 raise ProviderAccountLimitError("Invalid provider account limit")
             limits[provider] = limit
-    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
+    known = set(known_identities)\n    seen: dict[tuple[str, str], set[str]] = defaultdict(set)
     for row in rows:
         if type(row) is not dict:
             continue
@@ -40,7 +40,7 @@ def validate_provider_account_limits(rows: object, descriptors: Iterable[object]
         credential = str(row.get("id") or "").strip()
         if not credential:
             continue
-        identity = str(row.get("identity_id") or "default").strip() or "default"
+        identity = str(row.get("identity_id") or default_identity).strip()\n        if known and identity not in known:\n            identity = default_identity
         key = (provider, identity)
         seen[key].add(credential)
         if len(seen[key]) > limits[provider]:
