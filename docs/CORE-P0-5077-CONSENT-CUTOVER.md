@@ -4,6 +4,25 @@ Date de l'audit : 2026-11-12. Dépôt : `pzia/cifereca`, référence `main`.
 Ce document est un **plan de cutover vérifiable**, pas une migration exécutée.
 Parent #5048 ; coordination #3171, #3719, #5054, #5055, #5518.
 
+## Phase A — commande de diagnostic en lecture seule
+
+L'outil `tools/audit_source_consent_cutover.py` fournit une première mesure
+**agrégée**, sans valeurs ni identifiants de compte :
+
+```bash
+python3 tools/audit_source_consent_cutover.py /chemin/prive/vers/cifereca.sqlite3
+```
+
+Sortie JSON `cifereca.source-consent-inventory/1` : nombres de clés legacy
+Numilog achat, Numilog epoch, BnF-Prêt, Kobo achat et CAS. Les lignes
+`.revision` ne sont pas comptées comme toggles BnF/Kobo. L'outil ouvre
+SQLite avec `mode=ro`, `query_only=ON` et un snapshot de lecture ;
+il ne migre rien et ne produit aucun consentement. Sur base absente,
+illisible ou schéma non reconnu, code retour 2 et diagnostic constant
+sans divulgation du chemin. Exécuter sur une copie cohérente de la base
+si un service utilise simultanément SQLite/WAL. Les compteurs seuls
+ne prouvent ni l'opt-in exact ni l'éligibilité d'une migration.
+
 ## Invariants non négociables
 
 1. La préférence d'inventaire ON ne devient **jamais** consentement d'acquisition ; ni catalogue, ni ancien droit, ni fichier local ne donnent une permission.
