@@ -26,6 +26,11 @@ from tests.test_paris_manual_borrow_dispatch import setup as paris_setup
     {"docbase": "DILICOM", "verification": "provider_observed"},
     {"docbase": "DILICOM", "source_selection_key": "bad/key"},
     {"docbase": "DILICOM", "source_selection_key": 17},
+    {"docbase": "DILICOM", "primary_borrower_id": "",
+     "verification": "provider_observed"},
+    {"docbase": "DILICOM", "primary_borrower_id": "",
+     "verification": "provider_observed", "observed_account_alias": "INVALID/ID"},
+    {"docbase": "BNF_PRET", "observed_account_alias": "primary"},
 ])
 def test_manual_borrow_policy_rejects_malformed_or_unsupported_abi(fields):
     with pytest.raises(ValueError, match="invalid_manual_borrow_policy"):
@@ -41,7 +46,7 @@ def test_manual_borrow_policy_defaults_are_inert():
     assert ManualBorrowPolicy("BNF_PRET").verification == "active_only"
     assert ManualBorrowPolicy(
         "DILICOM", primary_borrower_id="", verification="provider_observed",
-            observed_account_alias="primary",
+        observed_account_alias="primary",
     ).primary_borrower_id == ""
 
 
@@ -215,7 +220,6 @@ def test_mismatched_explicit_verification_modes_fail_before_supplier_io(tmp_path
         result = manual_borrow(
             service, item, provider_id="bnf-pret", docbase="BNF_PRET",
             primary_id=None, verification="provider_observed",
-            observed_account_alias="primary",
             expected_identity_id=account.identity_id, confirmed=True,
         )
         assert result["status"] == "blocked"
@@ -231,6 +235,73 @@ def test_mismatched_explicit_verification_modes_fail_before_supplier_io(tmp_path
             expected_identity_id=account.identity_id, confirmed=True,
         )
         assert result["status"] == "blocked"
+        assert state["calls"] == [] and state["mutations"] == 0
+    finally:
+        service.close()
+
+
+def test_paris_remote_account_alias_mismatch_never_confirms_or_replays(tmp_path):
+    """A remote account alias is provider-owned, never inferred by Core."""
+    service, session, account, item, state = paris_setup(tmp_path)
+    try:
+        original = session.descriptor.manual_borrow_policy
+        assert original is not None
+        assert original.observed_account_alias == "primary"
+        # A version-compatible but wrong provider declaration cannot turn
+        # a real Paris loan into a verified loan for another remote account.
+        session.descriptor = replace(
+            session.descriptor,
+            manual_borrow_policy=replace(
+                original, observed_account_alias="foreign_reader",
+            ),
+        )
+        assert resolved_manual_borrow_policy(service, item) == (
+            session.descriptor.manual_borrow_policy
+        )
+        first = service.borrow_manual(
+            item, expected_identity_id=account.identity_id,
+            confirmed=True, expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        assert first["status"] == "verification_unavailable"
+        assert first["provider_verified"] is False
+        assert state["mutations"] == 1
+        key = __import__(
+            "cifereca.core.borrow_action_scope", fromlist=["borrow_claim_key"],
+        ).borrow_claim_key(account, item)
+        assert service.storage.loan_borrow_state(key)["status"] == (
+            "verification_unavailable"
+        )
+        second = service.borrow_manual(
+            item, expected_identity_id=account.identity_id,
+            confirmed=True, expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        assert second["reason_code"] == "borrow_previous_attempt"
+        assert state["mutations"] == 1
+        assert service.storage.entitlements(provider_id="paris") == []
+    finally:
+        service.close()
+
+
+def test_core_explicit_primary_id_cannot_guess_remote_alias(tmp_path):
+    """No provider or request may reconstruct 'primary' from an empty ID."""
+    from cifereca.core.manual_library_borrow import manual_borrow
+
+    service, session, account, item, state = paris_setup(tmp_path)
+    try:
+        result = manual_borrow(
+            service, item, provider_id=item.source_provider,
+            docbase=item.docbase, primary_id="",
+            verification="provider_observed",
+            expected_identity_id=account.identity_id, confirmed=True,
+        )
+        assert result == {
+            "status": "blocked",
+            "reason_code": "borrow_scope_unverified",
+            "provider_verified": False,
+            "retry": "manual_only",
+        }
         assert state["calls"] == [] and state["mutations"] == 0
     finally:
         service.close()
