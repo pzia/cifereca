@@ -14,6 +14,7 @@ import pytest
 from cifereca.core import sync_coordination
 from cifereca.core.diagnostic_source_sync import public_log_fields, log_message
 from cifereca.models import Account, Loan
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 from cifereca.providers import ProviderConfigurationError
 from tests.test_sync_state_contract import _service
 
@@ -53,6 +54,11 @@ def _fixture(tmp_path, monkeypatch):
     })
     session = typed_session(
         provider_id="paris", credential_id="cred", connected=True,
+        descriptor=ProviderDescriptor(
+            id="paris", display_name="Paris", description="Synthetic source",
+            state="ready", capabilities=ProviderCapabilities(loans=True),
+            existing_primary_loan_account_alias="primary",
+        ),
         capabilities=NS(loans=True, personal_library=False),
         last_loan_errors=[], loans=lambda account: list(inputs[account.unique_id]),
     )
