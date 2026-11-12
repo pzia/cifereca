@@ -125,6 +125,29 @@ def toggle_state(db, source: SourceKey):
 
 
 
+
+def legacy_source_consent_switch_present(storage, scope) -> bool:
+    """Whether an exact historical *acquisition* switch exists, never its grant.
+
+    A source with no legacy acquisition preference must retain ordinary
+    inventory-only toggles: do not manufacture a generic policy for it.
+    The literal-primary ambiguity can only be cleared by explicit fresh CAS.
+    """
+    try:
+        specs = [
+            spec for (provider, _kind), spec in _POLICIES.items()
+            if provider == scope.provider_id
+        ]
+        if len(specs) != 1:
+            return False
+        prefix, _active, _revision = specs[0]
+        return storage.metadata_get(prefix + _source_id(scope)) is not None
+    except Exception:
+        # A broken legacy preference cannot be used as migration evidence.
+        return False
+
+
+
 def _consent_generation_key(scope):
     """Read the exact legacy epoch key from the same compatibility policy.
 

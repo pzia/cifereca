@@ -176,6 +176,44 @@ def set_source_sync_consent(service, account, *, enabled, expected_revision):
     return source_sync_consent(service, account)
 
 
+
+def retire_legacy_acquisition_on_source_disable(service, account, preference_key):
+    """Atomically migrate a *user-requested source OFF* to canonical CAS OFF.
+
+    A legacy ON must not survive an inventory OFF -> ON roundtrip. This never
+    promotes historic ON into canonical consent, creates no source right and
+    never rewrites a historical policy/epoch. Existing legacy readers observe
+    canonical OFF before any further supplier I/O.
+    """
+    from .source_acquisition_consent import _context, _bound
+
+    scope = scope_for_account(account)
+    if type(preference_key) is not str or preference_key != source_enablement_key(scope):
+        raise ValueError('source_sync_toggle_scope_mismatch')
+    storage, coords, current = _context(service, account)
+    with storage._lock, storage._connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if not current() or not _bound(db, coords, enabled=False):
+            raise ValueError('source_sync_consent_scope_changed')
+        state = policy_in_transaction(db, scope)
+        if state.configured:
+            # The broker resolves the canonical policy separately. A stale
+            # legacy writer must never overwrite a concurrent ON/OFF/invalid
+            # revision or erase its CAS history.
+            raise ValueError('source_sync_consent_changed')
+        payload = json.dumps({
+            'schema': _SCHEMA, 'scope': list(coords), 'enabled': False,
+            'revision': secrets.token_hex(16),
+        }, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
+        for key, value in ((preference_key, '0'), (policy_key(scope), payload)):
+            db.execute('INSERT INTO metadata(key,value) VALUES(?,?) '
+                       'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                       (key, value))
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+
+
+
 def set_source_enabled(service, account, enabled, preference_key):
     """Atomic source disable + consent invalidation for configured sources.
 
