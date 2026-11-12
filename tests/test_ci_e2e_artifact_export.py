@@ -779,3 +779,48 @@ def test_gtk_replay_logs_only_closed_scenario_verdicts_and_preserves_failure():
     assert 'name: e2e-core-summary' in source
     assert 'if-no-files-found: ignore' in source
     assert 'retention-days: 2' in source
+
+
+def test_bulk_focus_diagnostics_exports_only_closed_boolean_state():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "diagnostics-large-1600"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        evidence = {
+            "button_mapped": True, "button_sensitive": True,
+            "toplevel_active": False, "button_focused": False,
+            "toplevel_focus_is_button": False,
+        }
+        report.write_text(json.dumps({
+            "stage": "P0_2140_bulk_fixture",
+            "bulk_focus_observation": evidence,
+            "error": "PRIVATE-ACCOUNT-URL",
+        }))
+        output = module.safe_summary(source)["results"][0]
+        assert output["bulk_focus_observation"] == evidence
+        assert "PRIVATE" not in repr(output)
+        for bad in (
+            {**evidence, "button_mapped": 1},
+            {**evidence, "toplevel_active": "PRIVATE"},
+            {**evidence, "extra": "PRIVATE"},
+            [evidence],
+        ):
+            report.write_text(json.dumps({
+                "stage": "P0_2140_bulk_fixture",
+                "bulk_focus_observation": bad,
+            }))
+            assert "bulk_focus_observation" not in module.safe_summary(source)["results"][0]
+        report.write_text(json.dumps({
+            "stage": "P0_2140_wait_57_errors",
+            "bulk_focus_observation": evidence,
+        }))
+        assert "bulk_focus_observation" not in module.safe_summary(source)["results"][0]
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({
+            "stage": "P0_2140_bulk_fixture", "bulk_focus_observation": evidence,
+        }))
+        assert "bulk_focus_observation" not in module.safe_summary(source)["results"][0]
