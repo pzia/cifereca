@@ -97,7 +97,7 @@ def real_session_service(tmp_path, *, post_status=200, after=AFTER,
 def test_full_coreui_core_real_provider_one_confirmed_post(tmp_path):
     service, session, account, item, state = real_session_service(tmp_path)
     try:
-        assert service.can_borrow_bnf(item) is True
+        assert service.can_borrow_manual(item) is True
         window, errors, messages, refreshes = view(
             service, session, account, item,
         )
@@ -120,7 +120,7 @@ def test_full_coreui_core_real_provider_one_confirmed_post(tmp_path):
             ("POST", "/loans/activation"),
             ("GET", "/my_profile/activity"),
         ]
-        assert service.can_borrow_bnf(item) is False
+        assert service.can_borrow_manual(item) is False
         row = service.storage.loan_borrow_state(
             borrow_claim_key(account, item))
         assert row["status"] == "confirmed"
@@ -146,22 +146,22 @@ def test_real_provider_refusal_is_not_retried_or_claimed_success(tmp_path):
         tmp_path, post_status=403,
     )
     try:
-        outcome = service.borrow_bnf_manual(
+        outcome = service.borrow_manual(
             item, expected_identity_id="default",
-            confirmed=True, site_checked=True,
+            confirmed=True,
             expected_context_epoch=service._account_context_epoch,
             expected_account=account,
         )
         assert outcome["status"] == "verification_unavailable"
         assert outcome["provider_verified"] is False
         assert state["post"] == 1
-        assert service.can_borrow_bnf(item) is False
+        assert service.can_borrow_manual(item) is False
         row = service.storage.loan_borrow_state(
             borrow_claim_key(account, item))
         assert row["status"] == "verification_unavailable"
-        retry = service.borrow_bnf_manual(
+        retry = service.borrow_manual(
             item, expected_identity_id="default",
-            confirmed=True, site_checked=True,
+            confirmed=True,
         )
         assert retry["reason_code"] == "borrow_previous_attempt"
         assert state["post"] == 1
@@ -174,13 +174,13 @@ def test_real_provider_without_explicit_click_never_reads_or_claims(tmp_path):
     service, session, account, item, state = real_session_service(tmp_path)
     try:
         for confirmed in (False, None, "true", 1):
-            outcome = service.borrow_bnf_manual(
+            outcome = service.borrow_manual(
                 item, expected_identity_id="default", confirmed=confirmed,
             )
             assert outcome["reason_code"] == "borrow_confirmation_required"
         assert state["calls"] == []
         assert state["post"] == 0
-        assert service.can_borrow_bnf(item)
+        assert service.can_borrow_manual(item)
         assert service.storage.loan_borrow_state(
             borrow_claim_key(account, item)) is None
     finally:
@@ -196,9 +196,9 @@ def test_disabled_book_control_before_post_frees_claim_for_later_human_action(tm
         tmp_path, detail=disabled,
     )
     try:
-        outcome = service.borrow_bnf_manual(
+        outcome = service.borrow_manual(
             item, expected_identity_id="default",
-            confirmed=True, site_checked=True,
+            confirmed=True,
             expected_context_epoch=service._account_context_epoch,
             expected_account=account,
         )
@@ -211,7 +211,7 @@ def test_disabled_book_control_before_post_frees_claim_for_later_human_action(tm
         ]
         key = borrow_claim_key(account, item)
         assert service.storage.metadata_get(key) is None
-        assert service.can_borrow_bnf(item) is True
+        assert service.can_borrow_manual(item) is True
         assert not service.storage.acquisitions()
         assert not service.storage.entitlements(provider_id="bnf-pret")
     finally:
