@@ -46,6 +46,10 @@ def test_all_four_retired_manual_operations_are_read_only_without_proofs():
         _manual_undo_pending=None,
         _manual_undo=None,
         _manual_service=None,
+        preflight_manual_link=lambda *_: NS(status="unavailable"),
+    )
+    host._refuse_obsolete_manual_attachment = (
+        lambda *args: LocalInspection._refuse_obsolete_manual_attachment(host, *args)
     )
     preview = LocalInspection.preview_manual_attachment(host, "right:1", "file:1")
     confirm = LocalInspection.confirm_manual_attachment(
