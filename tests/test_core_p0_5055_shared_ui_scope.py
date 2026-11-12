@@ -1,7 +1,7 @@
 """#5055: shared borrower and follow-up UI leases must pin the exact source."""
 from types import SimpleNamespace as NS
 
-from cifereca.gui.bnf_borrow_controller import _capture_borrow_ui_scope
+from cifereca.gui.manual_borrow_controller import _capture_borrow_ui_scope
 
 
 def _context():
@@ -82,6 +82,6 @@ def test_shared_lease_rejects_wrong_credential_and_revokes_rebound_session():
 
 
 def test_after_manual_abi_cutover_all_exports_are_live():
-    from cifereca.gui import bnf_borrow_controller as controller
+    from cifereca.gui import manual_borrow_controller as controller
     assert controller.__all__ == ["present_manual_borrow_verification"]
     assert all(callable(getattr(controller, key)) for key in controller.__all__)
