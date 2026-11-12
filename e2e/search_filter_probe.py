@@ -775,7 +775,7 @@ def main() -> int:
         assert book.source_credential == source.credential_id
         # Read-only, exact Core diagnostic: no supplier GET or POST. Publish
         # only the closed code through a source-reviewed allowlist in runner.
-        diagnosis = core.library.paris_borrow_diagnostic(book)
+        diagnosis = core.library.manual_borrow_diagnostic(book)
         result["p0_4673_local_reason"] = diagnosis["reason_code"]
         result["p0_4673_stage"] = "admission_" + identity
         assert diagnosis["local_action_possible"] is True
@@ -877,7 +877,7 @@ def main() -> int:
         assert book.source_credential == "card-camille"
         assert book.metadata.get("catalogue_access") == "shared_read_only"
         assert book.owned is False and book.downloadable is False
-        assert core.library.paris_borrow_diagnostic(book)["local_action_possible"] is False
+        assert core.library.manual_borrow_diagnostic(book)["local_action_possible"] is False
         assert core.library.can_borrow_manual(book) is False
         assert not any(
             getattr(button, "_cifereca_action_label", None) == "Emprunter"
