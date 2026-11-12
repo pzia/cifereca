@@ -303,29 +303,6 @@ class LibraryService:
             expected_account=expected_account,
         )
 
-    def can_borrow_bnf(self, item: SearchResult) -> bool:
-        """Inert BnF action visibility, never a borrower permission."""
-        from .core.manual_library_borrow import manual_borrow_available
-        return manual_borrow_available(
-            self, item, provider_id="bnf-pret", docbase="BNF_PRET",
-        )
-
-    def borrow_bnf_manual(
-        self, item: SearchResult, *, expected_identity_id: str,
-        confirmed: bool = False, site_checked: bool = False,
-        expected_context_epoch: int | None = None,
-        expected_account: Account | None = None,
-    ) -> dict[str, object]:
-        """Core-owned explicit BnF action; never use the legacy borrow()."""
-        from .core.manual_library_borrow import manual_borrow
-        return manual_borrow(
-            self, item, provider_id="bnf-pret", docbase="BNF_PRET",
-            expected_identity_id=expected_identity_id,
-            confirmed=confirmed, site_checked=site_checked,
-            expected_context_epoch=expected_context_epoch,
-            expected_account=expected_account,
-        )
-
     def resolve_cross_profile_lender_placement(
         self, *, requesting_identity_id: str,
         borrowing_account: Account, exact_notice: SearchResult,
