@@ -37,9 +37,8 @@ def attach_plugin_manager(self, manager: Any) -> list[str]:
         service = manager.service(status.descriptor.id)
         if isinstance(service, ProviderPlugin):
             candidates.append((status.descriptor.id, service))
-    # Validate the *future* registry against configured credentials before
-    # publishing any replacement plugin. The constructor has no descriptors,
-    # so bootstrap's existing conservative legacy guard remains in force.
+    # Validate before publishing replacement plugins; bootstrap retains
+    # its conservative guard until descriptors become available.
     descriptors = {
         plugin.descriptor.id.strip().lower(): plugin.descriptor
         for plugin in self.registry.all()
@@ -743,8 +742,7 @@ def _configured_rows_for_source(rows, *, source_scope, default_identity):
         return rows
     if (type(source_scope) is not tuple or len(source_scope) != 3
             or any(type(v) is not str or not v or len(v) > 256
-                   or any(c in v for c in "\x00\r
-")
+                   or any(c in v for c in "\x00\r\n")
                    for v in source_scope)):
         raise ValueError("selected_source_invalid_scope")
     identity, provider, credential = source_scope
