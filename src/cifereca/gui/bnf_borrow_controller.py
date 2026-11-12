@@ -298,5 +298,4 @@ def present_paris_borrow_verification(window, item, control, *, TaskPriority):
         raise
 
 
-__all__ = ["present_bnf_borrow", "present_paris_borrow",
-           "present_paris_borrow_verification"]
+__all__ = ["present_paris_borrow_verification"]
