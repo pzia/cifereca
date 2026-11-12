@@ -36,4 +36,5 @@ jobs:
           path: |
             provider-ast-responsibilities.json
             provider-core-loc.json
-          retention-days: 30
+          retention-days: 2
+          if-no-files-found: error
