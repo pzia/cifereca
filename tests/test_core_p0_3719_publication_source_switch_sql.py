@@ -21,7 +21,7 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 def publication(tmp_path):
     db = Storage(tmp_path / "state.sqlite")
     try:
-        assert db.schema_version() == 14
+        assert db.schema_version() == 15
         yield db, tmp_path / "EBooks", tmp_path
     finally:
         db.close()
