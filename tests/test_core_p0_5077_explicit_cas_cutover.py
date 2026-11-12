@@ -6,6 +6,7 @@ automatically migrate a historical ON into CAS ON.
 from cifereca.core import source_auto_consent_bridge as bridge
 from cifereca.core.source_sync_consent import read_policy
 from cifereca.core.source_acquisition_consent import consent_current_in_transaction
+from tests.test_core_p0_3171_canonical_sync_stage import rig
 from tests.test_core_p0_3719_v2_execution import v2
 from tests.test_core_p0_3719_source_sync_consent import source, change
 
