@@ -69,7 +69,7 @@ def unavailable_configured_connections(
             continue
         if row.get("identity_id") != identity_id:
             continue
-        if str(row.get("provider") or "").strip().lower() != "paris":
+        if str(row.get("provider") or "").strip().lower() != provider_id:
             continue
         credential = row.get("id")
         credential = credential if type(credential) is str and 0 < len(credential) <= 256 else ""
