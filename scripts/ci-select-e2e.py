@@ -94,7 +94,9 @@ PROBES = {
     "e2e/capture_session_gtk_probe.py": CAPTURE_GTK,
     "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366"),
     "e2e/book_detail_probe.py": BOOK_DETAIL + PLUGIN_SCROLL,
-    "e2e/plugin_manager_scroll_contract.py": PLUGIN_SCROLL,
+    # Conservative AST import-graph rule: the shared detail probe imports
+    # this helper conditionally, so keep detail consumers selected too.
+    "e2e/plugin_manager_scroll_contract.py": BOOK_DETAIL + PLUGIN_SCROLL,
     "e2e/bnf_cover_probe.py": BNF_COVERS,
     "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK + THEME,
     "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
