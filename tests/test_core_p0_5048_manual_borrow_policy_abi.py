@@ -41,6 +41,7 @@ def test_manual_borrow_policy_defaults_are_inert():
     assert ManualBorrowPolicy("BNF_PRET").verification == "active_only"
     assert ManualBorrowPolicy(
         "DILICOM", primary_borrower_id="", verification="provider_observed",
+            observed_account_alias="primary",
     ).primary_borrower_id == ""
 
 
@@ -82,6 +83,7 @@ def test_paris_declared_policy_preserves_existing_exact_source_admission(tmp_pat
             "DILICOM", primary_borrower_id="",
             source_selection_key="primary_paris_connection_id",
             verification="provider_observed",
+            observed_account_alias="primary",
         )
         assert resolved_manual_borrow_policy(service, item) == policy
         # Preserve the positive exact-source test after deleting the legacy
@@ -213,6 +215,7 @@ def test_mismatched_explicit_verification_modes_fail_before_supplier_io(tmp_path
         result = manual_borrow(
             service, item, provider_id="bnf-pret", docbase="BNF_PRET",
             primary_id=None, verification="provider_observed",
+            observed_account_alias="primary",
             expected_identity_id=account.identity_id, confirmed=True,
         )
         assert result["status"] == "blocked"
