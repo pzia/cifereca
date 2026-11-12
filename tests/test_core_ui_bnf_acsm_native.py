@@ -36,12 +36,12 @@ def test_native_bnf_actions_are_distinct_and_explain_safe_failure(connected_core
     from x11_input import X11Input
     service,session,account,loan,state,downloaded=connected_core
     candidates=[]
-    original_stage=service.stage_bnf_loan_acsm
+    original_stage=service.stage_explicit_loan_acsm
     def observed_stage(*args,**kwargs):
         result=original_stage(*args,**kwargs)
         if result.get('status')=='candidate_acsm':candidates.append(Path(result['path']))
         return result
-    monkeypatch.setattr(service,'stage_bnf_loan_acsm',observed_stage)
+    monkeypatch.setattr(service,'stage_explicit_loan_acsm',observed_stage)
     monkeypatch.setattr(facade,'data_dir',lambda:tmp_path/'data')
     if outcome=='http_refused':
         original=session.client.http._transport.handler
@@ -76,7 +76,7 @@ def test_native_bnf_actions_are_distinct_and_explain_safe_failure(connected_core
     window._task_started=lambda *_a:False
     window._task_finished=lambda *_a:False
     window.runner=TaskRunner(window)
-    button.connect('clicked',lambda _b:prepare_explicit_loan_acsm(window,loan,button,Adw=Adw,TaskPriority=TaskPriority,stage=service.stage_bnf_loan_acsm,importer=service.import_bnf_loan_acsm))
+    button.connect('clicked',lambda _b:prepare_explicit_loan_acsm(window,loan,button,Adw=Adw,TaskPriority=TaskPriority,stage=service.stage_explicit_loan_acsm,importer=service.import_bnf_loan_acsm))
     window.present();device=X11Input()
     def wait(predicate):
         loop=GLib.MainLoop();ticks=[0]
