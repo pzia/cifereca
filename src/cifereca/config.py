@@ -104,24 +104,6 @@ class Config:
                 except OSError:
                     pass
 
-        # 0.3.1: Gallica devient un provider anonyme prêt. L'ajout est fait
-        # une seule fois dans l'état de configuration, y compris pour une
-        # installation neuve. Il sera persisté au prochain save().
-        if not bool(self.get("providers.gallica_migration_031", False)):
-            rows = self.provider_accounts()
-            if not any(str(x.get("provider") or "").lower() == "gallica" for x in rows):
-                rows.append({
-                    "id": "gallica-public",
-                    "provider": "gallica",
-                    "label": "Gallica",
-                    "enabled": True,
-                    "anonymous": True,
-                    "credentials": {},
-                    "options": {},  # Gallica plugin owns its OPDS endpoint default.
-                })
-                self.set("providers.accounts", rows)
-            self.set("providers.gallica_migration_031", True)
-
         # 0.8.1: identities become first-class. Existing provider connections are
         # attached conservatively to one stable default identity; no filesystem
         # move is performed by this configuration migration.
