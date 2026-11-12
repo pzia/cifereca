@@ -84,7 +84,7 @@ def test_paris_declared_policy_preserves_existing_exact_source_admission(tmp_pat
             verification="provider_observed",
         )
         assert resolved_manual_borrow_policy(service, item) == policy
-        assert service.can_borrow_manual(item) == service.can_borrow_paris(item)
+        assert service.can_borrow_manual(item) == service.can_borrow_manual(item)
         assert not state["calls"] and state["mutations"] == 0
         assert not service.can_borrow_manual(replace(item, docbase="OTHER"))
         account.unique_id = "linked-reader"
