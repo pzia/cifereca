@@ -45,13 +45,7 @@ def requires_selected_offer_check(service: Any, item: Any) -> bool:
 def download_action_label(
     item: Any, *, check_required: bool, detailed_format: str = "",
 ) -> str:
-    """Conservative UX claim; only branding, never qualification, is vendor-specific."""
-    if getattr(item, "source_provider", None) == "kobo":
-        return ("Vérifier et sauvegarder via kobo-adept"
-                if check_required and detailed_format
-                else "Vérifier et sauvegarder" if check_required
-                else "Sauvegarder via kobo-adept" if detailed_format
-                else "Sauvegarder")
+    """Provider-neutral hint; qualification and consent remain in Core."""
     if check_required:
         return "Vérifier et télécharger"
     return f"Télécharger {detailed_format}" if detailed_format else "Télécharger"
