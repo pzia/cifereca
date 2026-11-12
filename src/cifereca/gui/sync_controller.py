@@ -1037,7 +1037,12 @@ def _refresh_sync_page(self) -> None:
         else:
             group.add(sync_action_row(row))
 
-        if source.provider_id in {"kobo", "numilog"}:
+        # Legacy fallback only: the broker's declared private-inventory
+        # capability, never supplier branding, selects this read-only policy UI.
+        # Malformed/missing declarations do not create schedule controls.
+        inventory_capabilities = getattr(source, "sync_capabilities", ())
+        if (type(inventory_capabilities) in (tuple, list)
+                and "remote_inventory" in inventory_capabilities):
             # Inventory consent is separate from local materialization.
             def inventory_current(expected_identity=source.identity_id, captured_scope=scope):
                 return (

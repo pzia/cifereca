@@ -1231,11 +1231,12 @@ def main() -> int:
             # disabled Kobo account; no remote provider is installed here.
             SyncSourceRef("p0-kobo-audit", "camille", "kobo", "fictitious-credential",
                           "Kobo audit hors ligne", enabled=False,
-                          connected=False, status="failed"),
+                          connected=False, status="failed",
+                          sync_capabilities=("remote_inventory",)),
             *[SyncSourceRef(
                 f"p0-kobo-target-{number}", "camille", "kobo",
                 f"fictitious-target-{number}", f"Kobo ciblé {number}",
-                sync_capabilities=("local_materialization",),
+                sync_capabilities=("local_materialization", "remote_inventory"),
             ) for number in (1, 2, 3)],
             SyncSourceRef("p0-numilog-inventory", "camille", "numilog", "fictitious-numilog",
                           "Achats Numilog fictifs", sync_capabilities=("remote_inventory", "entitlements")),
@@ -1553,8 +1554,10 @@ def main() -> int:
         # Eleven sources and four Kobo accounts; the retired W4 local SHA
         # audit row was physically removed from each Kobo group. Canonical
         # preview, confirmed materialization and consent rows remain.
-        # The synthetic broker declines Kobo scheduling; those rows remain
-        # inert. Numilog inventory consent is exercised separately below.
+        # These four synthetic Kobo sources explicitly declare remote_inventory,
+        # so the capability-based scheduler still displays four inert policy
+        # rows when the synthetic broker lacks scheduling APIs. No supplier ID
+        # is itself a scheduling permission; Numilog is checked separately.
         # #1905 adds one distinct Numilog *book backup* consent row.
         # The synthetic broker has no consent APIs: the CTA must be inert.
         # Four retired Kobo W2 startup rows have been physically removed.

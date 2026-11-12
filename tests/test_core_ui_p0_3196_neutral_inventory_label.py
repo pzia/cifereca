@@ -32,7 +32,8 @@ def test_inventory_label_is_derived_without_kobo_numilog_branch():
 
 def test_inventory_scheduling_and_consent_guards_are_unchanged():
     source = SOURCE.read_text(encoding="utf-8")
-    assert 'if source.provider_id in {"kobo", "numilog"}:' in source
+    assert 'if source.provider_id in {"kobo", "numilog"}:' not in source
+    assert '"remote_inventory" in inventory_capabilities' in source
     assert 'inventory_reader = getattr(broker, "inventory_refresh_schedule", None)' in source
     assert 'inventory_writer = getattr(broker, "set_inventory_refresh_schedule", None)' in source
     assert '"remote_inventory" in source.sync_capabilities' in source

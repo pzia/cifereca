@@ -31,7 +31,10 @@ def _check_all_suffixes(window):
 
 def test_kobo_actions_are_centered_even_with_multiline_subtitles(monkeypatch):
     _capture_alignment(monkeypatch)
-    source = harness._source(label="Compte Kobo avec un nom suffisamment long")
+    source = harness._source(
+        label="Compte Kobo avec un nom suffisamment long",
+        sync_capabilities=("local_materialization", "remote_inventory"),
+    )
     window, _broker, calls, _build, _page = harness._fixture(sources=[source])
     group = window._sync_sources_box.children[0]
 
@@ -70,7 +73,9 @@ def test_non_kobo_sources_and_disabled_actions_remain_centered(monkeypatch):
     # a large disabled Synchroniser button (#2141).
     assert [len(g.children[0].suffixes) for g in window._sync_sources_box.children] == [2, 2, 1]
     labels = _check_all_suffixes(window)
-    assert len(labels) == 6
+    # Paris also advertises remote_inventory; its consent control is now
+    # present rather than being suppressed by a supplier-name dispatch.
+    assert len(labels) == 7
     # The retired startup backup button cannot reappear. Inventory consent
     # remains independent and properly aligned.
     numilog_group = next(
