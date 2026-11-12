@@ -283,3 +283,56 @@ def test_followup_rejects_cross_source_account_before_queue(tmp_path, mismatch):
         assert errors == messages == refreshes == []
     finally:
         service.close()
+
+
+def test_readonly_followup_lease_uses_notice_provider_not_paris_literal():
+    """P0 #5048: GUI scope is neutral; the Core decides provider eligibility."""
+    from cifereca.gui.bnf_borrow_controller import _capture_borrow_ui_scope
+
+    account = NS(
+        identity_id="reader", provider_id="synthetic", credential_id="credential",
+        unique_id="reader-1", is_primary=True,
+    )
+    item = NS(
+        id="row-1", record_id="edition-1", docbase="SYNTHETIC",
+        medium="digital", source_provider="synthetic",
+        source_credential="credential", source_collection="catalogue",
+        title="Book",
+    )
+    session = NS(connected=True, _epoch=7)
+    service = NS(
+        current_identity=NS(identity_id="reader"), _account_context_epoch=4,
+        accounts=[account],
+        _session_for_source=lambda provider, credential: (
+            session if (provider, credential) == ("synthetic", "credential")
+            else None
+        ),
+    )
+    window = NS(
+        service=service, _closed=False, _identity_context_generation=3,
+        _account_context_generation=5, _selected_search_id="row-1",
+        _search_detail_request_generation=6,
+    )
+    lease = _capture_borrow_ui_scope(
+        window, item, account, session, provider_id=item.source_provider,
+    )
+    assert lease is not None and lease[2]() is True
+    item.source_provider = "foreign"
+    assert lease[2]() is False
+
+
+def test_followup_controller_never_pins_paris_literal():
+    src = (Path(__file__).resolve().parents[1]
+           / "src/cifereca/gui/bnf_borrow_controller.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                and n.name == "present_manual_borrow_verification")
+    calls = [
+        node for node in ast.walk(func)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_capture_borrow_ui_scope"
+    ]
+    assert len(calls) == 1
+    provider = next(k.value for k in calls[0].keywords if k.arg == "provider_id")
+    assert ast.unparse(provider) == "item.source_provider"
