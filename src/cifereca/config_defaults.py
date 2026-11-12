@@ -27,7 +27,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "providers": {
         "accounts": [],
         "settings": {},
-        "gallica_migration_031": False,
     },
     "downloads": {
         "directory": "",
