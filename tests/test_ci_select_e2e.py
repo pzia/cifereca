@@ -69,7 +69,7 @@ class SelectionTests(unittest.TestCase):
             self.assertTrue(scenario["plugin_scroll_only"])
             self.assertEqual(scenario["width"], width)
         self.assertEqual(
-            mod.select(["e2e/plugin_manager_scroll_contract.py"]), mod.PLUGIN_SCROLL)
+            mod.select(["e2e/plugin_manager_scroll_contract.py"]), mod.BOOK_DETAIL + mod.PLUGIN_SCROLL)
         self.assertEqual(
             mod.select(["src/cifereca/gui/plugin_manager_page.py"]), mod.PLUGIN_SCROLL)
         self.assertEqual(
