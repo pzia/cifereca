@@ -18,7 +18,7 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # Schema history is deliberately explicit from 0.7.10 onward.  Databases created
 # before that release had no schema_version metadata; they are treated as v0 and
 # migrated forward transactionally.
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 BASE_SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -1419,6 +1419,113 @@ class Storage:
                 db.execute("RELEASE SAVEPOINT migration_v14")
                 raise
             version = 14
+
+        if version < 15:
+            db.execute("SAVEPOINT migration_v15")
+            try:
+                # Historic provider-specific indexes are replaced only after
+                # the equivalent generic, persistent SQL guards are installed.
+                # Their old per-provider scope is seeded as migration data;
+                # neither the writer nor Core dispatches by this provider ID.
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS provider_cardinality_policies (
+                        provider_id TEXT PRIMARY KEY,
+                        connection_limit INTEGER
+                            CHECK(connection_limit IS NULL OR connection_limit >= 1),
+                        account_limit INTEGER
+                            CHECK(account_limit IS NULL OR account_limit >= 1)
+                    )
+                """)
+                db.execute(
+                    "INSERT OR IGNORE INTO provider_cardinality_policies "
+                    "(provider_id,connection_limit,account_limit) VALUES('kobo',1,1)"
+                )
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_provider_connection_limit_insert
+                    BEFORE INSERT ON provider_connections
+                    WHEN EXISTS (
+                        SELECT 1 FROM provider_cardinality_policies AS policy
+                        WHERE policy.provider_id=NEW.provider_id
+                        AND policy.connection_limit IS NOT NULL
+                        AND NOT EXISTS (
+                            SELECT 1 FROM provider_connections
+                            WHERE provider_id=NEW.provider_id
+                              AND credential_id=NEW.credential_id
+                        )
+                        AND (
+                            SELECT COUNT(*) FROM provider_connections
+                            WHERE provider_id=NEW.provider_id
+                              AND identity_id=NEW.identity_id
+                        ) >= policy.connection_limit
+                    )
+                    BEGIN SELECT RAISE(ABORT,'provider_connection_limit_exceeded'); END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_provider_connection_limit_update
+                    BEFORE UPDATE OF identity_id,provider_id,credential_id
+                    ON provider_connections
+                    WHEN EXISTS (
+                        SELECT 1 FROM provider_cardinality_policies AS policy
+                        WHERE policy.provider_id=NEW.provider_id
+                        AND policy.connection_limit IS NOT NULL
+                        AND (
+                            SELECT COUNT(*) FROM provider_connections
+                            WHERE provider_id=NEW.provider_id
+                              AND identity_id=NEW.identity_id
+                              AND connection_id<>OLD.connection_id
+                        ) >= policy.connection_limit
+                    )
+                    BEGIN SELECT RAISE(ABORT,'provider_connection_limit_exceeded'); END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_provider_account_limit_insert
+                    BEFORE INSERT ON provider_accounts
+                    WHEN EXISTS (
+                        SELECT 1 FROM provider_cardinality_policies AS policy
+                        WHERE policy.provider_id=NEW.provider_id
+                        AND policy.account_limit IS NOT NULL
+                        AND NOT EXISTS (
+                            SELECT 1 FROM provider_accounts
+                            WHERE connection_id=NEW.connection_id
+                              AND account_id=NEW.account_id
+                        )
+                        AND (
+                            SELECT COUNT(*) FROM provider_accounts
+                            WHERE provider_id=NEW.provider_id
+                              AND identity_id=NEW.identity_id
+                        ) >= policy.account_limit
+                    )
+                    BEGIN SELECT RAISE(ABORT,'provider_upstream_account_limit_exceeded'); END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_provider_account_limit_update
+                    BEFORE UPDATE OF identity_id,provider_id,credential_id,account_id,
+                                     connection_id
+                    ON provider_accounts
+                    WHEN EXISTS (
+                        SELECT 1 FROM provider_cardinality_policies AS policy
+                        WHERE policy.provider_id=NEW.provider_id
+                        AND policy.account_limit IS NOT NULL
+                        AND (
+                            SELECT COUNT(*) FROM provider_accounts
+                            WHERE provider_id=NEW.provider_id
+                              AND identity_id=NEW.identity_id
+                              AND provider_account_id<>OLD.provider_account_id
+                        ) >= policy.account_limit
+                    )
+                    BEGIN SELECT RAISE(ABORT,'provider_upstream_account_limit_exceeded'); END
+                """)
+                # All writes are serialized on this migration transaction:
+                # there is no instant when neither the index nor trigger acts.
+                db.execute("DROP INDEX IF EXISTS uq_kobo_connection_identity")
+                db.execute("DROP INDEX IF EXISTS uq_kobo_account_identity")
+                cls._write_schema_version(db, 15)
+                db.execute("RELEASE SAVEPOINT migration_v15")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v15")
+                db.execute("RELEASE SAVEPOINT migration_v15")
+                raise
+            version = 15
 
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
