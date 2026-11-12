@@ -151,7 +151,7 @@ def setup(tmp_path, *, result="acsm", existing=False, loan_state="active"):
 
 
 def attempt(service, account, item, **kwargs):
-    return service.borrow_paris_manual(
+    return service.borrow_manual(
         item, expected_identity_id=account.identity_id, confirmed=True,
         expected_account=account, expected_context_epoch=service._account_context_epoch,
         **kwargs,
@@ -176,7 +176,7 @@ def test_single_manual_action_confirms_current_loan_independently_of_acsm(tmp_pa
 
     session.download_digital = observed_download
     try:
-        assert service.can_borrow_paris(item)
+        assert service.can_borrow_manual(item)
         assert state["calls"] == []  # availability is inert
         outcome = attempt(service, account, item)
         assert outcome["status"] == "confirmed" and outcome["provider_verified"] is True
@@ -189,7 +189,7 @@ def test_single_manual_action_confirms_current_loan_independently_of_acsm(tmp_pa
         assert row["verified_loan_id"] == "loan-exact" and row["status"] == "confirmed"
         assert service.storage.entitlements(provider_id="paris") == []
         assert service.storage.acquisitions() == []
-        assert service.can_borrow_paris(item) is False
+        assert service.can_borrow_manual(item) is False
         assert attempt(service, account, replace(item, id="fresh-ui-row"))["reason_code"] == "borrow_previous_attempt"
         assert state["mutations"] == 1
     finally:
@@ -261,7 +261,7 @@ def test_restart_never_replays_confirmed_or_uncertain_mutation(tmp_path, result)
         service.close()
     restarted, _, account, item, state = setup(tmp_path)
     try:
-        assert not restarted.can_borrow_paris(replace(item, id="new-result-row"))
+        assert not restarted.can_borrow_manual(replace(item, id="new-result-row"))
         assert attempt(restarted, account, item)["reason_code"] == "borrow_previous_attempt"
         assert state["calls"] == []
     finally:
@@ -274,7 +274,7 @@ def test_proven_unsent_failure_releases_only_its_claim_for_new_manual_click(tmp_
         assert attempt(service, account, item)["reason_code"] == "borrow_not_submitted"
         assert state["mutations"] == 0
         assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
-        assert service.can_borrow_paris(item)
+        assert service.can_borrow_manual(item)
     finally:
         service.close()
 
@@ -287,7 +287,7 @@ def test_foreign_source_or_branch_is_rejected_before_read_or_claim(tmp_path, fie
     service, _, account, item, state = setup(tmp_path)
     try:
         candidate = replace(item, **{field: value})
-        assert not service.can_borrow_paris(candidate)
+        assert not service.can_borrow_manual(candidate)
         assert attempt(service, account, candidate)["status"] == "blocked"
         assert state["calls"] == []
         assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
@@ -299,7 +299,7 @@ def test_foreign_source_or_branch_is_rejected_before_read_or_claim(tmp_path, fie
 def test_confirmation_must_be_exact_true_before_any_provider_io(tmp_path, confirmation):
     service, _, account, item, state = setup(tmp_path)
     try:
-        assert service.borrow_paris_manual(item, expected_identity_id="default",
+        assert service.borrow_manual(item, expected_identity_id="default",
             confirmed=confirmation)["reason_code"] == "borrow_confirmation_required"
         assert state["calls"] == []
     finally:
