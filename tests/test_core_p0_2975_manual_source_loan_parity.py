@@ -47,7 +47,11 @@ def _fixture(tmp_path, monkeypatch):
     )
     service.accounts = [primary, paired, other]
     inputs = {"": [_loan()], "paired": [], "foreign": []}
-    session = NS(
+    typed_session = type("SyntheticParisLoanSession", (NS,), {
+        "loan_absence_digital_branch": "dilicom",
+        "loan_absence_primary_account_alias": "primary",
+    })
+    session = typed_session(
         provider_id="paris", credential_id="cred", connected=True,
         capabilities=NS(loans=True, personal_library=False),
         last_loan_errors=[], loans=lambda account: list(inputs[account.unique_id]),
