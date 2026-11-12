@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
+from inspect import getattr_static
 import hashlib
 import json
 import re
@@ -19,6 +20,8 @@ import uuid
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..storage import CURRENT_SCHEMA_VERSION, Storage
+from ..providers.base import ProviderDescriptor
+from ..providers.registry import ProviderRegistry
 from .library_audit_roots import configured_identity_roots
 from .library_fresh_file_check import revalidate_observed_file
 from .library_inventory import FileObservation
@@ -59,29 +62,48 @@ def _file(observation):
             'size': observation.size, 'fingerprint': list(observation.fingerprint)}
 
 
-def _account_current(accounts, scope):
-    """Exact live borrower, including Paris's empty-UID primary sentinel.
+def _installed_descriptor(service, provider_id):
+    """Read only the installed Core registry, never an account or plugin getter."""
+    registry = getattr_static(service, 'registry', None)
+    if type(registry) is not ProviderRegistry or type(provider_id) is not str:
+        return None
+    plugin = registry.maybe_get(provider_id)
+    descriptor = getattr_static(plugin, 'descriptor', None)
+    return (descriptor if type(descriptor) is ProviderDescriptor
+            and descriptor.id == provider_id else None)
 
-    Multiple paired borrowers on the same credential are legitimate. Only an
-    ambiguity for the *selected* borrower coordinate fails closed. Reused by
-    both write previews and read-only history; never infer a right from a name.
+
+def _account_current(accounts, scope, *, descriptor=None):
+    """Exact live borrower; a primary alias requires the installed descriptor.
+
+    The alias describes a pre-existing account only. Neither a provider name
+    nor an arbitrary stored declaration can establish its ownership or rights.
+    Ambiguous primary/linked borrowers remain refused for every provider.
     """
-    def borrower(account):
-        uid = account.unique_id
-        if (scope['provider_id'] == 'paris'
-                and uid == '' and account.is_primary is True):
-            return 'primary'
-        return uid
+    from re import fullmatch
+    alias = None
+    if type(descriptor) is ProviderDescriptor and descriptor.id == scope['provider_id']:
+        candidate = descriptor.existing_primary_loan_account_alias
+        if (candidate is not None and type(candidate) is str
+                and fullmatch(r'[a-z][a-z0-9_-]{0,63}', candidate) is not None):
+            alias = candidate
+
+    def matches_borrower(account):
+        uid = getattr(account, 'unique_id', None)
+        return (type(uid) is str and (
+            uid == scope['account_id']
+            or (uid == '' and getattr(account, 'is_primary', None) is True
+                and alias is not None and alias == scope['account_id'])
+        ))
 
     matches = [
         account for account in accounts
-        if account.provider_id == scope['provider_id']
-        and account.credential_id == scope['credential_id']
-        and borrower(account) == scope['account_id']
+        if getattr(account, 'provider_id', None) == scope['provider_id']
+        and getattr(account, 'credential_id', None) == scope['credential_id']
+        and matches_borrower(account)
     ]
     return (len(matches) == 1
             and matches[0].identity_id == scope['identity_id'])
-
 
 def _scope(service, scope, *, require_live_account=True):
     _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS), 'invalid_scope')
@@ -92,9 +114,11 @@ def _scope(service, scope, *, require_live_account=True):
     accounts, identities = service.accounts, service.identities
     epoch, data = service._account_context_epoch, config.data
     roots = configured_identity_roots(config, scope['identity_id'])[scope['identity_id']]
+    descriptor = _installed_descriptor(service, scope['provider_id'])
 
     def account_matches():
-        return _account_current(service.accounts, scope)
+        return (descriptor is _installed_descriptor(service, scope['provider_id'])
+                and _account_current(service.accounts, scope, descriptor=descriptor))
 
     # Creation/confirmation still requires the exact live borrower. A
     # read-only historical inspection needs only its owning *local identity*:
