@@ -157,6 +157,9 @@ class ManualBorrowPolicy:
     primary_borrower_id: str | None = None
     source_selection_key: str | None = None
     verification: Literal["active_only", "provider_observed"] = "active_only"
+    # Provider-supplied observed account alias (e.g. a remote "primary" slot).
+    # None means the exact registered account.unique_id is used.
+    observed_account_alias: str | None = None
     schema: str = "cifereca.manual-borrow/1"
 
     def __post_init__(self) -> None:
@@ -173,6 +176,14 @@ class ManualBorrowPolicy:
                     and (type(self.source_selection_key) is not str
                          or fullmatch(r"[a-z][a-z0-9_]{0,63}",
                                       self.source_selection_key) is None))
+                or (self.observed_account_alias is not None
+                    and (type(self.observed_account_alias) is not str
+                         or fullmatch(r"[a-z][a-z0-9_-]{0,63}",
+                                      self.observed_account_alias) is None))
+                or (self.primary_borrower_id is None
+                    and self.observed_account_alias is not None)
+                or (self.primary_borrower_id == ""
+                    and self.observed_account_alias is None)
                 or type(self.verification) is not str
                 or self.verification not in ("active_only", "provider_observed")
                 or (self.primary_borrower_id is None
