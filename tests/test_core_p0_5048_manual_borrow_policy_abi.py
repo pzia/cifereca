@@ -26,6 +26,9 @@ from tests.test_paris_manual_borrow_dispatch import setup as paris_setup
     {"docbase": "DILICOM", "verification": "provider_observed"},
     {"docbase": "DILICOM", "source_selection_key": "bad/key"},
     {"docbase": "DILICOM", "source_selection_key": 17},
+    {"docbase": "DILICOM", "observed_primary_account_alias": "primary"},
+    {"docbase": "DILICOM", "primary_borrower_id": "",
+     "verification": "provider_observed", "observed_primary_account_alias": "bad/path"},
 ])
 def test_manual_borrow_policy_rejects_malformed_or_unsupported_abi(fields):
     with pytest.raises(ValueError, match="invalid_manual_borrow_policy"):
@@ -82,6 +85,7 @@ def test_paris_declared_policy_preserves_existing_exact_source_admission(tmp_pat
             "DILICOM", primary_borrower_id="",
             source_selection_key="primary_paris_connection_id",
             verification="provider_observed",
+            observed_primary_account_alias="primary",
         )
         assert resolved_manual_borrow_policy(service, item) == policy
         # Preserve the positive exact-source test after deleting the legacy
