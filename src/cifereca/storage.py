@@ -512,6 +512,8 @@ class Storage:
         v14: empty, additive canonical SourceReference and OriginLink storage.
             Legacy entitlements/backup_items remain untouched; their migration
             needs exact source/branch proofs and independent guarded writers.
+        v15: persistent, provider-neutral account cardinality policies and
+            SQL triggers, atomically replacing historical supplier indexes.
         """
         version = cls._read_schema_version(db)
         _TRACE_LOG.info("TRACE storage migrate begin from=%s target=%s", version, CURRENT_SCHEMA_VERSION)
