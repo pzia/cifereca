@@ -26,6 +26,7 @@ class OfflineParisSession(ProviderSession):
                     docbase="DILICOM", primary_borrower_id="",
                     source_selection_key="primary_paris_connection_id",
                     verification="provider_observed",
+                    observed_primary_account_alias="primary",
                 ),
                 capabilities=ProviderCapabilities(
                     search=True, holdings=True, borrow=True,
