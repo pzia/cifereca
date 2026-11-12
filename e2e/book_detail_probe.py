@@ -246,6 +246,7 @@ def main():
             return
         report["status"] = "FAIL"
         report["error"] = str(exc)
+        report["failure_elapsed_seconds"] = round(monotonic() - started, 3)
         if window:
             try:
                 capture("failure")
@@ -273,13 +274,16 @@ def main():
             report["public_stage"] = (
                 name if name in _PUBLIC_STAGE_CODES else "callback_other"
             )
+            report["callback_start_elapsed_seconds"] = round(monotonic() - started, 3)
             if type(line) is int:
                 report["callback_line"] = line
             else:
                 report.pop("callback_line", None)
+            callback_started = monotonic()
             try:
                 fn()
             except Exception as exc:
+                report["failed_callback_duration_seconds"] = round(monotonic() - callback_started, 3)
                 fail(f"{type(exc).__name__}: {exc}")
             return False
         GLib.timeout_add(ms, run)
