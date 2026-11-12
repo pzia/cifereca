@@ -1348,17 +1348,17 @@ class LibraryService:
         provider = str(row.get('provider_id') or row.get('source_provider') or '')
         descriptor = next((d for d in self.provider_descriptors() if d.id == provider), None)
         base = descriptor.homepage if descriptor else None
+        # Any installed supplier can advertise an explicit per-credential
+        # public catalogue URL. This is a navigation hint, never a right,
+        # download endpoint or supplier URL invented by Core.
+        base = self.config.provider_option(
+            provider, 'catalogue_url', None,
+            credential_id=row.get('source_credential'),
+        ) or base
         if provider == 'paris':
-            # Explicit legacy/connection settings take precedence, but the
-            # provider descriptor is authoritative for a fresh installation.
+            # Preserve the legacy Paris base_url's precedence over an explicit
+            # catalogue option and the provider descriptor homepage.
             base = self.config.paris_base_url(row.get('source_credential')) or base
-        elif provider == 'kobo':
-            # Provider-owned homepage or explicit per-account catalogue
-            # option; Core must never supply a Kobo service endpoint.
-            base = self.config.provider_option(
-                'kobo', 'catalogue_url', None,
-                credential_id=row.get('source_credential'),
-            ) or base
 
         notice = catalogue_notice_url(row, base=base, provider=provider)
         if notice:
