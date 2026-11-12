@@ -792,7 +792,7 @@ def test_plugin_scroll_failure_exports_only_closed_fixture_checkpoint():
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
         stages = (
             "initial_scroll", "first_toggle", "first_grab_focus",
-            "first_toggle_geometry", "first_toggle_scroll",
+            "first_scroll_request", "first_toggle_geometry", "first_toggle_scroll",
             "first_toggle_set_inactive", "first_toggle_callback",
             "first_geometry", "first_scroll",
             "first_anchor", "first_switch", "first_focus", "second_geometry",
