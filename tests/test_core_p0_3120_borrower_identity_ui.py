@@ -170,7 +170,7 @@ def test_readonly_followup_never_enters_manual_or_legacy_path(monkeypatch):
     verify = Mock()
     mutate = Mock()
     monkeypatch.setattr(
-        bnf_borrow_controller, "present_paris_borrow_verification", verify,
+        bnf_borrow_controller, "present_manual_borrow_verification", verify,
     )
     monkeypatch.setattr(bnf_borrow_controller, "_present_manual_borrow", mutate)
     control = NS(get_name=lambda: "cifereca-borrow-followup")
