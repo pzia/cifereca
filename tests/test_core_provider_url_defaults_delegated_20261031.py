@@ -9,9 +9,8 @@ def test_new_core_config_has_no_supplier_urls(tmp_path):
     config = Config(tmp_path / "new-config.json")
     assert DEFAULT_CONFIG["base_url"] == ""
     assert config.paris_base_url() == ""
-    rows = config.provider_accounts("gallica")
-    assert len(rows) == 1
-    assert rows[0]["options"] == {}
+    # Public catalogue availability must not fabricate a private connection.
+    assert config.provider_accounts("gallica") == []
     assert "https://" not in json.dumps(config.data)
 
 
