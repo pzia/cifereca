@@ -102,3 +102,65 @@ def test_configured_supplier_delivery_url_cannot_become_catalogue_fallback():
     assert LibraryService.public_catalogue_target(
         host, {"provider_id": "kobo", "source_credential": "alice"},
     ) is None
+
+
+
+def test_synthetic_provider_explicit_credential_catalogue_option():
+    config = Config(options={
+        ("synthetic-provider", "catalogue_url", "alice"):
+            "https://alice.synthetic.example/",
+    })
+    host = _host(
+        "synthetic-provider", homepage="https://public.synthetic.example/",
+        config=config,
+    )
+    assert LibraryService.public_catalogue_target(
+        host, {"provider_id": "synthetic-provider", "source_credential": "alice"},
+    ) == ("catalogue", "https://alice.synthetic.example/")
+    assert LibraryService.public_catalogue_target(
+        host, {"provider_id": "synthetic-provider", "source_credential": "bob"},
+    ) == ("catalogue", "https://public.synthetic.example/")
+
+
+def test_paris_legacy_explicit_base_precedes_generic_catalogue_option():
+    config = Config(
+        paris="https://legacy.paris.example/",
+        options={("paris", "catalogue_url", "alice"):
+                 "https://configured.paris.example/"},
+    )
+    host = _host("paris", "https://provider.paris.example/", config=config)
+    assert LibraryService.public_catalogue_target(
+        host, {"provider_id": "paris", "source_credential": "alice",
+               "friendly_url": "/notice/42"},
+    ) == ("notice", "https://legacy.paris.example/notice/42")
+
+
+def test_unknown_provider_delivery_url_rejected_as_catalogue():
+    config = Config(options={
+        ("synthetic-provider", "catalogue_url", "alice"):
+            "https://cdn.synthetic.example/asset.acsm?token=private",
+    })
+    host = _host("synthetic-provider", config=config)
+    assert LibraryService.public_catalogue_target(
+        host, {"provider_id": "synthetic-provider", "source_credential": "alice"},
+    ) is None
+
+
+def test_catalogue_option_never_special_cases_kobo_in_core():
+    import ast
+    from pathlib import Path
+    source = (
+        Path(__file__).resolve().parents[1] / "src/cifereca/services.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    method = next(
+        item for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "LibraryService"
+        for item in node.body
+        if isinstance(item, ast.FunctionDef)
+        and item.name == "public_catalogue_target"
+    )
+    source_method = ast.get_source_segment(source, method)
+    assert "elif provider == 'kobo':" not in source_method
+    assert "provider, 'catalogue_url', None" in source_method
+    assert "if provider == 'paris':" in source_method
