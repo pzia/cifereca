@@ -158,6 +158,8 @@ class ManualBorrowPolicy:
     source_selection_key: str | None = None
     verification: Literal["active_only", "provider_observed"] = "active_only"
     schema: str = "cifereca.manual-borrow/1"
+    # Observed loan account alias is plugin-owned, never inferred by Core.
+    observed_loan_account_alias: str | None = None
 
     def __post_init__(self) -> None:
         from re import fullmatch
@@ -178,7 +180,11 @@ class ManualBorrowPolicy:
                 or (self.primary_borrower_id is None
                     and self.verification != "active_only")
                 or (self.primary_borrower_id == ""
-                    and self.verification != "provider_observed")):
+                    and self.verification != "provider_observed")
+                or (self.observed_loan_account_alias is not None
+                    and (type(self.observed_loan_account_alias) is not str
+                         or fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}",
+                                      self.observed_loan_account_alias) is None))):
             raise ValueError("invalid_manual_borrow_policy")
 
 
