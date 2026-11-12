@@ -58,7 +58,10 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     entitlement_inventory = self.storage.entitlements(
         provider_id=loan.source_provider, state="active"
     )
-    if str(loan.source_provider).lower() == "paris" and self._cross_identity_loan_conflict(
+    # An upstream loan cannot be silently re-used across local identities,
+    # regardless of provider. The two inventories are already provider-scoped;
+    # this check is only a veto, never proof of a right or an ADEPT grant.
+    if self._cross_identity_loan_conflict(
         self.storage.acquisitions(provider_id=loan.source_provider),
         provider_loan_id=loan.id, identity_id=identity.identity_id,
         entitlements=entitlement_inventory,
