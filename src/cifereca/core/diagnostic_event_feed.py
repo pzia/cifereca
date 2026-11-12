@@ -29,10 +29,10 @@ from .diagnostic_loan_download import (
     public_fields as public_loan_download_fields,
     public_log_fields as public_loan_download_log,
 )
-from .diagnostic_bnf_loan_action import (
-    public_fields as public_bnf_action_fields,
-    public_log_fields as public_bnf_action_log,
-    public_message as public_bnf_action_message,
+from .diagnostic_explicit_loan_action import (
+    public_fields as public_loan_action_fields,
+    public_log_fields as public_loan_action_log,
+    public_message as public_loan_action_message,
 )
 from .diagnostic_source_sync import (
     public_fields as public_source_sync_fields,
@@ -236,8 +236,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 public_loan_download_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
-            bnf_action_detail = (
-                public_bnf_action_log(match["body"])
+            loan_acsm_action_detail = (
+                public_loan_action_log(match["body"])
                 if match["logger"] == "cifereca" else {}
             )
             adept_detail = (
@@ -267,8 +267,8 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 audit_detail = {}
             if connect_attempt_detail:
                 message = "connexion fournisseur · " + connect_attempt_detail["phase"]
-            elif bnf_action_detail:
-                message = public_bnf_action_message(bnf_action_detail)
+            elif loan_acsm_action_detail:
+                message = public_loan_action_message(loan_acsm_action_detail)
             elif loan_download_detail:
                 message = "Téléchargement du prêt · " + loan_download_detail["status"] + " · " + loan_download_detail["code"]
             elif audit_detail:
@@ -323,7 +323,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             business_module = (
                 "SYNC" if source_sync_detail else
                 "PNB" if loan_download_detail and loan_download_detail["provider_id"] == "paris" else
-                "LOAN" if loan_download_detail or bnf_action_detail else
+                "LOAN" if loan_download_detail or loan_acsm_action_detail else
                 "ADEPT" if adept_detail else
                 "PLUGIN" if connection_detail or connection_success_detail or connect_attempt_detail else
                 "LIBRARY" if audit_detail else None
@@ -338,7 +338,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 or connection_success_detail.get("provider_id")
                 or source_sync_detail.get("provider_id")
                 or loan_download_detail.get("provider_id")
-                or bnf_action_detail.get("provider_id")
+                or loan_acsm_action_detail.get("provider_id")
             )
             events.append({
                 "timestamp": ts,
@@ -366,10 +366,10 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                    if loan_download_detail else {}),
                 **({"task_ref": loan_download_detail["task_ref"]}
                    if "task_ref" in loan_download_detail else {}),
-                **({"detail": bnf_action_detail, "status": bnf_action_detail["status"],
-                    **({"task_ref": bnf_action_detail["task_ref"]}
-                       if "task_ref" in bnf_action_detail else {})}
-                   if bnf_action_detail else {}),
+                **({"detail": loan_acsm_action_detail, "status": loan_acsm_action_detail["status"],
+                    **({"task_ref": loan_acsm_action_detail["task_ref"]}
+                       if "task_ref" in loan_acsm_action_detail else {})}
+                   if loan_acsm_action_detail else {}),
                 **({"detail": adept_detail, "status": adept_detail["status"]} if adept_detail else {}),
                 **({"task_ref": task_correlation[1]} if task_correlation else {}),
                 # Neither the rotation suffix nor a moving tail line index
@@ -540,7 +540,7 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                             else "warning")
         source_sync_detail = {}
         loan_download_detail = {}
-        bnf_action_detail = {}
+        loan_acsm_action_detail = {}
         adept_detail = {}
         if (category == "ADEPT" and operation == "kobo adept"
                 and type(diagnostics) is Diagnostics and row.get("verified_kobo_adept") is True):
@@ -575,15 +575,15 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 severity = ("info" if candidate["status"] == "success"
                             else "error" if candidate["status"] in {"failed", "refused"}
                             else "warning")
-        if (category == 'LOAN' and operation == 'bnf_loan_action'
+        if (category == 'LOAN' and operation == 'loan_acsm_action'
                 and type(diagnostics) is Diagnostics
-                and row.get('verified_bnf_loan_action') is True):
-            candidate = public_bnf_action_fields(row.get('detail'))
+                and row.get('verified_loan_acsm_action') is True):
+            candidate = public_loan_action_fields(row.get('detail'))
             if candidate and status == ('ok' if candidate['status']=='success' else candidate['status']):
-                bnf_action_detail = candidate
+                loan_acsm_action_detail = candidate
                 public_detail = candidate
                 business_domain = 'loan_download'
-                message = public_bnf_action_message(candidate)
+                message = public_loan_action_message(candidate)
                 severity = ('info' if candidate['status']=='success' else
                             'error' if candidate['status']=='failed' else 'warning')
         # An arbitrary supplier-named category cannot publish even a
@@ -596,11 +596,11 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         # Only typed observations with Core provenance attest this identity.
         # runtime.kobo-adept also serves Paris, Numilog and manual imports.
         attested_provider_id = None
-        if bnf_action_detail:
+        if loan_acsm_action_detail:
             # This field passed the closed Core action-observation schema.
             # Attribution follows its validated provenance, not a brand
             # constant in the generic event projection.
-            attested_provider_id = bnf_action_detail["provider_id"]
+            attested_provider_id = loan_acsm_action_detail["provider_id"]
         elif loan_download_detail:
             attested_provider_id = loan_download_detail["provider_id"]
         elif source_sync_detail:
@@ -642,13 +642,13 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
             "severity": severity,
             "message": message,
             **({"detail": public_detail} if public_detail else {}),
-            **({"task_ref": bnf_action_detail['task_ref']}
-               if 'task_ref' in bnf_action_detail else {}),
+            **({"task_ref": loan_acsm_action_detail['task_ref']}
+               if 'task_ref' in loan_acsm_action_detail else {}),
             **({"task_ref": loan_download_detail["task_ref"]}
                if "task_ref" in loan_download_detail else {}),
             **({"task_ref": reconciliation_detail["task_ref"]}
                if "task_ref" in reconciliation_detail else {}),
-            "status": bnf_action_detail['status'] if bnf_action_detail else loan_download_detail["status"] if loan_download_detail else reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
+            "status": loan_acsm_action_detail['status'] if loan_acsm_action_detail else loan_download_detail["status"] if loan_download_detail else reconciliation_detail["status"] if reconciliation_detail else adept_detail["status"] if adept_detail else source_sync_detail["status"] if source_sync_detail else (
                 status if status in {"ok", "error", "failed", "warning",
                                          "attention_required", "partial", "success"}
                 else "unknown"),
