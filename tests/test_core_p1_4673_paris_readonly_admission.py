@@ -147,4 +147,7 @@ def test_retired_paris_manual_facades_are_physically_absent():
     assert "borrow_manual" in methods
     # The readonly diagnosis still gates spent claims, not a new borrow POST.
     assert "paris_borrow_diagnostic" in methods
-    assert "paris_borrow_followup_available" in methods
+    assert "paris_borrow_followup_available" not in methods
+    assert "verify_paris_borrow_followup" not in methods
+    assert "manual_borrow_followup_available" in methods
+    assert "verify_manual_borrow_followup" in methods

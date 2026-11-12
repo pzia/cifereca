@@ -1060,7 +1060,7 @@ class DetailPanel(Gtk.Box):
         # "Empruntable" on the public catalogue. The previously submitted
         # request still needs a read-only follow-up after restart.
         followup_reader = getattr(
-            self.window.service, "paris_borrow_followup_available", None,
+            self.window.service, "manual_borrow_followup_available", None,
         )
         try:
             pending_followup = (

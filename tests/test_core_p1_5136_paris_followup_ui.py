@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from cifereca.core.borrow_action_scope import borrow_claim_key
-from cifereca.gui.bnf_borrow_controller import present_paris_borrow_verification
+from cifereca.gui.bnf_borrow_controller import present_manual_borrow_verification
 from tests.test_core_p1_5136_paris_borrow_later_verification import _pending, _snapshot
 from tests.test_core_p0_2055_bnf_ui_consent import view
 from tests.test_paris_manual_borrow_dispatch import setup
@@ -39,7 +39,7 @@ class ReadOnlyTasks:
 
 
 def _run(window, item, control=None):
-    present_paris_borrow_verification(
+    present_manual_borrow_verification(
         window, item, control, TaskPriority=NS(USER_ACTION=40),
     )
 
@@ -54,7 +54,7 @@ def test_check_after_timeout_uses_same_spent_claim_without_second_post(tmp_path)
     window, errors, messages, refreshes = view(service, session, account, item)
     window.runner = ReadOnlyTasks()
     try:
-        assert service.paris_borrow_followup_available(item)
+        assert service.manual_borrow_followup_available(item)
         assert not service.can_borrow_manual(item)
         _run(window, item)
         _run(window, item)
@@ -116,8 +116,8 @@ def test_followup_after_cold_restart_is_available_without_reborrow(tmp_path):
     )
     session.borrow_explicit_with_claim = lambda *_a, **_kw: pytest.fail("reborrow")
     try:
-        assert service.paris_borrow_followup_available(item) is True
-        verdict = service.verify_paris_borrow_followup(item)
+        assert service.manual_borrow_followup_available(item) is True
+        verdict = service.verify_manual_borrow_followup(item)
         assert verdict["status"] == "observed_current_loan"
         assert fresh["calls"] == [] and fresh["mutations"] == 0
         assert checks == [account]
@@ -166,7 +166,7 @@ def test_linked_reader_cannot_reuse_primary_followup_claim(tmp_path):
         # The account remains registered and source-matched, but the
         # primary borrower scope is no longer the one in the spent claim.
         account.unique_id = "other-reader"
-        assert not service.paris_borrow_followup_available(item)
+        assert not service.manual_borrow_followup_available(item)
         _run(window, item)
         assert window.runner.tasks == []
         assert state["mutations"] == 1
@@ -178,22 +178,22 @@ def test_linked_reader_cannot_reuse_primary_followup_claim(tmp_path):
 def test_other_scope_or_confirmed_checkpoint_never_offers_followup(tmp_path):
     service, session, account, item, state, op = _pending(tmp_path)
     try:
-        assert not service.paris_borrow_followup_available(
+        assert not service.manual_borrow_followup_available(
             replace(item, source_credential="other"),
         )
-        assert not service.paris_borrow_followup_available(
+        assert not service.manual_borrow_followup_available(
             replace(item, record_id="another"),
         )
-        assert not service.paris_borrow_followup_available(
+        assert not service.manual_borrow_followup_available(
             replace(item, docbase="SYRACUSE"),
         )
-        assert not service.paris_borrow_followup_available(
+        assert not service.manual_borrow_followup_available(
             replace(item, source_provider="bnf-pret"),
         )
-        assert not service.paris_borrow_followup_available(
+        assert not service.manual_borrow_followup_available(
             replace(item, metadata={"catalogue_access": "shared_read_only"}),
         )
-        assert service.verify_paris_borrow_followup(
+        assert service.verify_manual_borrow_followup(
             replace(item, record_id="another"),
         )["status"] == "blocked"
         assert state["mutations"] == 1
@@ -206,7 +206,7 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
     src = (Path(__file__).resolve().parents[1]
            / "src/cifereca/gui/detail_panel.py").read_text(encoding="utf-8")
     assert '"Vérifier le prêt sans réemprunter"' in src
-    assert "paris_borrow_followup_available" in src
+    assert "manual_borrow_followup_available" in src
     assert 'availability = "Empruntable"' not in src
     assert "elif pending_followup or search_detail_borrow_action_candidate(item, availability):" in src
     assert "if not pending_followup and self.window.can_borrow_item(item):" in src
@@ -214,12 +214,12 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
     assert 'verify.set_name("cifereca-borrow-followup")' in src
     router = (Path(__file__).resolve().parents[1]
               / "src/cifereca/gui/main_window.py").read_text(encoding="utf-8")
-    assert "present_paris_borrow_verification(" in router
+    assert "present_manual_borrow_verification(" in router
     assert "if verification_only:" in router
     method = (Path(__file__).resolve().parents[1]
               / "src/cifereca/gui/bnf_borrow_controller.py").read_text(encoding="utf-8")
-    body = method.split("def present_paris_borrow_verification(", 1)[1]
-    assert "verify_paris_borrow_followup(" in body
+    body = method.split("def present_manual_borrow_verification(", 1)[1]
+    assert "verify_manual_borrow_followup(" in body
     assert "borrow_paris_manual(" not in body
     assert "borrow_explicit_with_claim(" not in body
 
@@ -272,7 +272,7 @@ def test_followup_rejects_cross_source_account_before_queue(tmp_path, mismatch):
     window.runner = ReadOnlyTasks()
     try:
         # A cached local readiness decision cannot authorize a changed account.
-        service.paris_borrow_followup_available = lambda _item: True
+        service.manual_borrow_followup_available = lambda _item: True
         if mismatch == "provider":
             account.provider_id = "synthetic-foreign"
         else:
