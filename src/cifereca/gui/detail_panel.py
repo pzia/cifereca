@@ -696,16 +696,22 @@ class DetailPanel(Gtk.Box):
         self._actions(buttons)
 
     def _direct_download_action(self, item: SearchResult) -> None:
-        from cifereca.gui.offer_actions import requires_selected_offer_check, download_action_label
-        # The GUI must never turn a public Numilog notice into a download
-        # merely because a mocked/legacy provider reports direct_download.
-        if (item.source_provider == "numilog-catalog"
-                or (item.source_provider == "numilog"
-                    and result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
-                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
-                                       "identity_id", None),
-                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
-                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))["state"] != "remote_owned")):
+        from cifereca.gui.offer_actions import (
+            requires_selected_offer_check, download_action_label,
+            private_notice_download_hint_allowed,
+        )
+        # Supplier-neutral private provenance guard; a public catalogue's
+        # existing independent delivery policy is intentionally unchanged.
+        if item.source_provider == "numilog-catalog":
+            return
+        if not private_notice_download_hint_allowed(
+            item,
+            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+            identity_id=getattr(getattr(self.window.service, "current_identity", None),
+                                "identity_id", None),
+            account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+            source_context_epoch=getattr(self.window.service, "_source_context_epoch", None),
+        ):
             return
         if not self.window.service.can_direct_download(item):
             return
@@ -1046,15 +1052,19 @@ class DetailPanel(Gtk.Box):
                    source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
             metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
+        from .offer_actions import private_notice_download_hint_allowed
+        private_hint_ok = private_notice_download_hint_allowed(
+            item,
+            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+            identity_id=getattr(getattr(self.window.service, "current_identity", None),
+                                "identity_id", None),
+            account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
+            source_context_epoch=getattr(self.window.service, "_source_context_epoch", None),
+        )
         direct_download = (
-            False if (item.source_provider == "numilog-catalog"
-                      or (item.source_provider == "numilog"
-                          and result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
-                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
-                                       "identity_id", None),
-                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
-                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))["state"] != "remote_owned"))
-            else self.window.service.can_direct_download(item)
+            self.window.service.can_direct_download(item)
+            if private_hint_ok and item.source_provider != "numilog-catalog"
+            else False
         )
         # A spent, uncertain loan may no longer be advertised as
         # "Empruntable" on the public catalogue. The previously submitted
