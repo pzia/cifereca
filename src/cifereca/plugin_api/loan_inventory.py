@@ -199,11 +199,6 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
     allowed_accounts = {scope.account_id}
     if scope.primary_account_alias is not None:
         allowed_accounts.add(scope.primary_account_alias)
-    # Transitional producer-only compatibility. Remove with the Paris plugin
-    # cutover, after its snapshot constructor passes the installed descriptor.
-    elif (not scope.primary_alias_policy_checked
-          and scope.provider_id == "paris" and scope.account_id == ""):
-        allowed_accounts.add("primary")
     return (
         loan.identity_id == scope.identity_id
         and loan.source_provider == scope.provider_id
