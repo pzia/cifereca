@@ -38,7 +38,7 @@ def test_opening_exception_is_safe_in_log_export_and_sqlite(tmp_path, monkeypatc
         assert _state(service, paris)["status"] == "failed"
         assert _state(service, kobo)["status"] == "success"
         assert _state(service, numilog)["status"] == "success"
-        assert calls == ["paris", "kobo", "numilog"]
+        assert calls == ["kobo", "paris", "numilog"]
         visible = (json.dumps(result) + json.dumps(persisted)
                    + service.diagnostics.text("test") + caplog.text)
         assert "SECRET_OPENING_LOANS" not in visible
