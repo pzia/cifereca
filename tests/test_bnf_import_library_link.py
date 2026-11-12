@@ -36,7 +36,7 @@ def bnf_importer(connected_core, tmp_path, monkeypatch, request):
 def test_bnf_import_and_observed_loan_have_one_library_row(bnf_importer, request):
     service, loan, requests = bnf_importer
     service._persist_active_loans('default', [loan])
-    source = Path(service.stage_bnf_loan_acsm(
+    source = Path(service.stage_explicit_loan_acsm(
         loan, confirmed=True, expected_identity_id='default')['path'])
     rights = service.storage.entitlements()
     result = service.import_bnf_loan_acsm(
