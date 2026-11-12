@@ -577,45 +577,45 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
                   and row.get('provider_id')==provider_id and row.get('credential_id')==credential_id
                   and str(row.get('item_id') or '')==str(item_id)
                   and (account_id is None or row.get('account_id')==account_id)}
-    if provider_id == 'kobo':
-        # The single-item reader is also used to admit an exact-account
-        # targeted action. Once an edition is typed, the legacy ledger
-        # cannot provide either a public alias or positive local proof.
-        with self.storage._lock, self.storage._connect() as db:
-            typed = db.execute(
-                "SELECT identity_id,account_id FROM source_references "
-                "WHERE provider_id='kobo' AND credential_id=? "
-                "AND edition_id=? LIMIT 1001",
-                (credential_id, str(item_id)),
-            ).fetchall()
-        if typed:
-            if len(typed) > 1000:
-                return None
-            matching = [
-                row for row in typed
-                if row[0] == identity_id and (
-                    account_id is None or row[1] == account_id
+    # A typed source reference supersedes the old account-free receipt
+    # for EVERY provider. Source identity/borrower/edition must resolve to
+    # exactly one Core SourceReference and independently verified OriginLink.
+    # No supplier identifier can opt out of this negative provenance guard.
+    with self.storage._lock, self.storage._connect() as db:
+        typed = db.execute(
+            "SELECT identity_id,account_id FROM source_references "
+            "WHERE provider_id=? AND credential_id=? "
+            "AND edition_id=? LIMIT 1001",
+            (provider_id, credential_id, str(item_id)),
+        ).fetchall()
+    if typed:
+        if len(typed) > 1000:
+            return None
+        matching = [
+            row for row in typed
+            if row[0] == identity_id and (
+                account_id is None or row[1] == account_id
+            )
+        ]
+        if len(matching) != 1 or (account_id is None and len(typed) != 1):
+            return None
+        exact_account = matching[0][1]
+        origins = {
+            artifact for artifact, owner, provider, credential,
+            account, edition, _kind in (
+                _verified_provider_origin_coordinates(
+                    self.storage, identity_id=identity_id,
+                    with_kind=True,
                 )
-            ]
-            if len(matching) != 1 or (account_id is None and len(typed) != 1):
-                return None
-            exact_account = matching[0][1]
-            origins = {
-                artifact for artifact, owner, provider, credential,
-                account, edition, _kind in (
-                    _verified_provider_origin_coordinates(
-                        self.storage, identity_id=identity_id,
-                        with_kind=True,
-                    )
-                )
-                if (owner, provider, credential, account, edition) == (
-                    identity_id, 'kobo', credential_id,
-                    exact_account, str(item_id),
-                )
-            }
-            if len(origins) != 1:
-                return None
-            artifact_ids = origins
+            )
+            if (owner, provider, credential, account, edition) == (
+                identity_id, provider_id, credential_id,
+                exact_account, str(item_id),
+            )
+        }
+        if len(origins) != 1:
+            return None
+        artifact_ids = origins
     rows=[row for row in self.storage.placements() if row.get('state')=='present'
           and row.get('identity_id')==identity_id and row.get('artifact_id') in artifact_ids]
     if len(rows)!=1:return None
@@ -667,32 +667,32 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
 
 
 def local_placements_for_sources(self, identity_id):
-    """Read-only search aliases; typed Kobo sources require provider provenance.
+    """Read-only search aliases; typed sources require canonical provenance.
 
     The old 0.7 acquisition ledger has no canonical right/borrower binding.
     It remains a compatibility read only for editions with no typed source.
     """
-    # A typed Kobo edition is identified by credential + edition, even if
+    # A typed private edition is identified by provider, credential and edition, even if
     # the SourceReference belongs to another borrower or identity. The
     # catalogue's account-free search key cannot choose between sources.
     with self.storage._lock, self.storage._connect() as db:
         typed_rows = db.execute(
-            "SELECT identity_id,credential_id,account_id,edition_id "
-            "FROM source_references WHERE provider_id='kobo' "
+            "SELECT identity_id,provider_id,credential_id,account_id,edition_id "
+            "FROM source_references "
             "ORDER BY source_reference_id LIMIT 100001"
         ).fetchall()
     if len(typed_rows) > 100000:
         # A truncated typed-source set must never reactivate an old alias.
         return {}
     typed_scopes = {}
-    for owner, credential, account, edition in typed_rows:
-        key = ("kobo", credential, edition)
+    for owner, provider, credential, account, edition in typed_rows:
+        key = (provider, credential, edition)
         # Keep all rows, including multiple rights of one borrower. A
         # three-coordinate public search key cannot pick a unique origin.
         typed_scopes.setdefault(key, []).append((owner, account))
 
     # Provider OriginLinks, not legacy acquisition rows, authorize the
-    # physical association of an already-typed Kobo search key. The helper
+    # physical association of an already-typed private search key. The helper
     # checks Core origin/SourceReference evidence, artifact identity and
     # current owner; local_book_path below independently checks physical B.
     canonical_artifacts = {}
@@ -705,7 +705,7 @@ def local_placements_for_sources(self, identity_id):
     )
     for artifact, owner, provider, credential, account, edition, _kind in current_origins:
         key = (provider, credential, edition)
-        if provider == "kobo" and key in typed_scopes:
+        if key in typed_scopes:
             canonical_artifacts.setdefault(key, set()).add(
                 (owner, account, artifact),
             )
