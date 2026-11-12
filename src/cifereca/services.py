@@ -1355,9 +1355,13 @@ class LibraryService:
         rows: list[Loan] = []
         seen: set[tuple[str, str, str, str]] = set()
         accounts = self.accounts_for_identity(identity_id)
-        # 0.8.2 opening policy: Paris library accounts first, then the other
-        # providers in stable order. A failure remains isolated by the caller.
-        accounts = sorted(accounts, key=lambda a: (0 if a.provider_id == "paris" else 1, a.provider_id, a.credential_id, a.unique_id))
+        # Stable source-coordinate order, independent of provider branding.
+        # Rendering still sorts loans by due date and title. All account reads
+        # retain their exact identity, connection, and generation checks.
+        accounts = sorted(
+            accounts,
+            key=lambda a: (a.provider_id, a.credential_id, a.unique_id),
+        )
         for account in accounts:
             session = self._session_for_account(account)
             if not session.capabilities.loans:
