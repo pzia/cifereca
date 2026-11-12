@@ -164,3 +164,25 @@ def test_catalogue_option_never_special_cases_kobo_in_core():
     assert "elif provider == 'kobo':" not in source_method
     assert "provider, 'catalogue_url', None" in source_method
     assert "if provider == 'paris':" in source_method
+
+
+def test_minimal_catalogue_host_without_provider_option_still_uses_homepage():
+    host = _host(
+        "synthetic-provider", homepage="https://public.synthetic.example/",
+        config=NS(get=lambda _key, default: default),
+    )
+    assert LibraryService.public_catalogue_target(
+        host, {"provider_id": "synthetic-provider"},
+    ) == ("catalogue", "https://public.synthetic.example/")
+
+
+def test_minimal_catalogue_host_without_config_keeps_attested_absolute_notice():
+    host = NS(
+        provider_descriptors=lambda: [],
+    )
+    assert LibraryService.public_catalogue_target(
+        host, {
+            "provider_id": "synthetic-provider",
+            "friendly_url": "https://public.synthetic.example/book/42",
+        },
+    ) == ("notice", "https://public.synthetic.example/book/42")
