@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from cifereca.core.borrow_action_scope import borrow_claim_key
-from cifereca.gui.bnf_borrow_controller import present_manual_borrow_verification
+from cifereca.gui.manual_borrow_controller import present_manual_borrow_verification
 from tests.test_core_p1_5136_paris_borrow_later_verification import _pending, _snapshot
 from tests.test_core_p0_2055_bnf_ui_consent import view
 from tests.test_paris_manual_borrow_dispatch import setup
@@ -217,7 +217,7 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
     assert "present_manual_borrow_verification(" in router
     assert "if verification_only:" in router
     method = (Path(__file__).resolve().parents[1]
-              / "src/cifereca/gui/bnf_borrow_controller.py").read_text(encoding="utf-8")
+              / "src/cifereca/gui/manual_borrow_controller.py").read_text(encoding="utf-8")
     body = method.split("def present_manual_borrow_verification(", 1)[1]
     assert "verify_manual_borrow_followup(" in body
     assert "borrow_paris_manual(" not in body
@@ -287,7 +287,7 @@ def test_followup_rejects_cross_source_account_before_queue(tmp_path, mismatch):
 
 def test_readonly_followup_lease_uses_notice_provider_not_paris_literal():
     """P0 #5048: GUI scope is neutral; the Core decides provider eligibility."""
-    from cifereca.gui.bnf_borrow_controller import _capture_borrow_ui_scope
+    from cifereca.gui.manual_borrow_controller import _capture_borrow_ui_scope
 
     account = NS(
         identity_id="reader", provider_id="synthetic", credential_id="credential",
@@ -323,7 +323,7 @@ def test_readonly_followup_lease_uses_notice_provider_not_paris_literal():
 
 def test_followup_controller_never_pins_paris_literal():
     src = (Path(__file__).resolve().parents[1]
-           / "src/cifereca/gui/bnf_borrow_controller.py").read_text(encoding="utf-8")
+           / "src/cifereca/gui/manual_borrow_controller.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
     func = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name == "present_manual_borrow_verification")
