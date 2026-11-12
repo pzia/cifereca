@@ -792,6 +792,7 @@ class LibraryService:
                 known_identities=known,
                 admitted_provider_ids=(
                     descriptor.id for descriptor in descriptors
+                    if getattr(descriptor, "state", None) == "ready"
                 ),
             )
         except ProviderAccountLimitError as exc:
