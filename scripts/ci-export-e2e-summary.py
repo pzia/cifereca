@@ -391,6 +391,7 @@ _MAINTENANCE_ABORT_PHASES = frozenset({
     "maint_declaration_dialog_open", "maint_declaration_right_selected",
     "maint_declaration_expander_open", "maint_declaration_preview_dialog",
     "maint_declaration_committed", "maint_declaration_revoked",
+    "maint_transfer_start", "maint_transfer_done",
 })
 
 
