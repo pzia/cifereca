@@ -208,3 +208,61 @@ def test_late_failure_does_not_pop_up_in_another_identity():
     w._identity_context_generation+=1
     pending[0][3](RuntimeError('private error'))
     w.show_error.assert_not_called()
+
+
+def test_synthetic_lender_uses_same_two_consent_contract_without_supplier_dispatch():
+    w, actions = window()
+    Dialog.shown.clear()
+    loan = NS(
+        source_provider="synthetic-lender", identity_id="default",
+        source_credential="card", source_account_id="borrower",
+        id="synthetic-loan", record_id="synthetic-edition",
+        state="active", medium="digital", title="Synthetic",
+    )
+    prepare_explicit_loan_acsm(
+        w, loan, None, Adw=NS(MessageDialog=Dialog),
+        TaskPriority=NS(USER_ACTION=1),
+        stage=w.service.stage_bnf_loan_acsm,
+        importer=w.service.import_bnf_loan_acsm,
+    )
+    assert len(Dialog.shown) == 1
+    Dialog.shown[0].respond("get")
+    assert w.service.stage_bnf_loan_acsm.call_args.args[0].source_provider == "synthetic-lender"
+    assert len(Dialog.shown) == 2
+    Dialog.shown[1].respond("import")
+    assert w.service.import_bnf_loan_acsm.call_count == 1
+    assert actions == [
+        ("Récupération du jeton ACSM…", "loan-acquisition"),
+        ("Import ADEPT du prêt…", "acsm-import"),
+    ]
+
+
+def test_service_replacement_between_consent_and_work_cannot_dispatch():
+    w, _ = window()
+    start(w)
+    previous = w.service
+    w.service = NS(**vars(previous))
+    Dialog.shown[0].respond("get")
+    previous.stage_bnf_loan_acsm.assert_not_called()
+    previous.import_bnf_loan_acsm.assert_not_called()
+
+
+def test_missing_actions_and_malformed_loan_fail_closed_before_any_dialog():
+    w, _ = window()
+    Dialog.shown.clear()
+    loan = NS(identity_id="default", source_provider="synthetic")
+    prepare_explicit_loan_acsm(
+        w, loan, None, Adw=NS(MessageDialog=Dialog),
+        TaskPriority=NS(USER_ACTION=1),
+        stage=w.service.stage_bnf_loan_acsm,
+        importer=w.service.import_bnf_loan_acsm,
+    )
+    assert not Dialog.shown
+    assert not w.service.stage_bnf_loan_acsm.called
+    assert not w.service.import_bnf_loan_acsm.called
+    prepare_explicit_loan_acsm(
+        w, loan, None, Adw=NS(MessageDialog=Dialog),
+        TaskPriority=NS(USER_ACTION=1),
+        stage=None, importer=None,
+    )
+    assert not Dialog.shown
