@@ -7,6 +7,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.models import Account, Loan
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 from cifereca.plugin_api import (
     INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage,
     LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory,
@@ -61,7 +62,16 @@ def test_public_api_scope_primary_empty_and_defensive_positive_rows():
 
 def test_paris_primary_alias_is_narrow_not_a_wildcard():
     a = account()
-    assert len(legacy_loan_inventory(a, [loan(a, account_id="primary")]).loans) == 1
+    with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
+        legacy_loan_inventory(a, [loan(a, account_id="primary")])
+    declared = ProviderDescriptor(
+        id="paris", display_name="Paris", description="Loan account alias",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    assert len(legacy_loan_inventory(
+        a, [loan(a, account_id="primary")], descriptor=declared,
+    ).loans) == 1
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
         legacy_loan_inventory(a, [loan(a, account_id="linked")])
     linked = account(borrower="linked")
