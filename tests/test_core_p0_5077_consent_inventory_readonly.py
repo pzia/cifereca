@@ -34,7 +34,7 @@ def test_readonly_inventory_counts_without_leaking_source_ids(tmp_path, capsys):
     assert secret not in output.out + output.err
     assert "invalid:secret" not in output.out + output.err
     assert json.loads(output.out) == {
-        "schema": "cifereca.private-id-gamma-908onsent-inventory/1",
+        "schema": "cifereca.source-consent-inventory/1",
         "read_only": True,
         "counts": {
             "numilog_purchase": 1, "numilog_epoch": 1,
