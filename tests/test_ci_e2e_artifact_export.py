@@ -779,3 +779,38 @@ def test_gtk_replay_logs_only_closed_scenario_verdicts_and_preserves_failure():
     assert 'name: e2e-core-summary' in source
     assert 'if-no-files-found: ignore' in source
     assert 'retention-days: 2' in source
+
+
+def test_plugin_scroll_failure_exports_only_closed_fixture_checkpoint():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "plugin-manager-scroll-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        stages = (
+            "initial_scroll", "first_toggle", "first_grab_focus",
+            "first_scroll_request", "first_toggle_geometry", "first_toggle_scroll",
+            "first_toggle_set_inactive", "first_toggle_callback",
+            "first_geometry", "first_scroll",
+            "first_anchor", "first_switch", "first_focus", "second_geometry",
+        )
+        for stage in stages:
+            report.write_text(json.dumps({
+                "plugin_scroll_checkpoint": stage,
+                "error": "PRIVATE-CREDENTIAL-URL",
+            }))
+            out = module.safe_summary(source)["results"][0]
+            assert out["plugin_scroll_last_check"] == stage
+            assert "PRIVATE" not in repr(out)
+        for invalid in (True, 12, None, "PRIVATE-CREDENTIAL-URL"):
+            report.write_text(json.dumps({"plugin_scroll_checkpoint": invalid}))
+            out = module.safe_summary(source)["results"][0]
+            assert "plugin_scroll_last_check" not in out
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({"plugin_scroll_checkpoint": "first_focus"}))
+        assert "plugin_scroll_last_check" not in module.safe_summary(source)["results"][0]
+        source.write_text(json.dumps([{"scenario": "startup", "returncode": 1}]))
+        assert "plugin_scroll_last_check" not in module.safe_summary(source)["results"][0]

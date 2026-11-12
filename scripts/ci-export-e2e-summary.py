@@ -272,6 +272,38 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
     return {}
 
 
+# Only these source-defined synthetic phases may leave the GTK runner.
+_PLUGIN_SCROLL_STAGES = frozenset({
+    "initial_scroll", "first_toggle", "first_grab_focus",
+    "first_scroll_request", "first_toggle_geometry", "first_toggle_scroll",
+    "first_toggle_set_inactive", "first_toggle_callback",
+    "first_geometry", "first_scroll",
+    "first_anchor", "first_switch", "first_focus", "second_geometry",
+})
+
+
+def _failed_plugin_scroll_checkpoint(source: Path, scenario: str) -> dict:
+    if scenario not in {"plugin-manager-scroll-1024", "plugin-manager-scroll-1366"}:
+        return {}
+    root = source.resolve().parent / scenario
+    nested = root / scenario
+    report = nested / "screen.json"
+    try:
+        if any(path.is_symlink() for path in (root, nested, report)):
+            return {}
+        if not report.is_file() or report.stat().st_size > MAX_BYTES:
+            return {}
+        data = json.loads(report.read_text(encoding="utf-8"))
+        if type(data) is not dict:
+            return {}
+        stage = data.get("plugin_scroll_checkpoint")
+        if type(stage) is str and stage in _PLUGIN_SCROLL_STAGES:
+            return {"plugin_scroll_last_check": stage}
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        pass
+    return {}
+
+
 def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
     """Share *only* a constant reached step from the synthetic GTK recipe.
 
@@ -482,6 +514,7 @@ def safe_summary(source: Path) -> dict:
         if code != 0:
             row.update(_failed_diagnostic(source, scenario))
             row.update(_failed_book_detail_checkpoint(source, scenario))
+            row.update(_failed_plugin_scroll_checkpoint(source, scenario))
             row.update(_failed_maintenance_checkpoint(source, scenario))
             row.update(_native_abort_diagnosis(source, scenario, code))
         rows.append(row)

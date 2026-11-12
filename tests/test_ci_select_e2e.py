@@ -27,8 +27,9 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX), set(runner.SCENARIOS))
         self.assertEqual(set(mod.ALL) & set(mod.OPTIONAL_UX), set())
         self.assertEqual(mod.OPTIONAL_UX, ("book-detail-1700",))
-        self.assertEqual(len(mod.ALL), 43)
+        self.assertEqual(len(mod.ALL), 45)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
+        self.assertEqual(mod.PLUGIN_SCROLL, ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["height"], 768)
         self.assertEqual(runner.SCENARIOS["recommendations-detail-1024"]["width"], 1024)
@@ -54,6 +55,28 @@ class SelectionTests(unittest.TestCase):
                          ["book-detail-1700"])
         self.assertEqual(runner.SCENARIOS["book-detail-1300"]["height"], 768)
         self.assertTrue(runner.SCENARIOS["book-detail-1300"]["geometry_1300"])
+
+    def test_plugin_manager_scroll_is_standalone_and_selected_by_own_fixture(self):
+        runner_spec = importlib.util.spec_from_file_location("runner", ROOT / "e2e/run.py")
+        runner = importlib.util.module_from_spec(runner_spec)
+        runner_spec.loader.exec_module(runner)
+        for name, width in (
+            ("plugin-manager-scroll-1024", 1366),
+            ("plugin-manager-scroll-1366", 1600),
+        ):
+            scenario = runner.SCENARIOS[name]
+            self.assertEqual(scenario["runner"], "gtk-detail")
+            self.assertTrue(scenario["plugin_scroll_only"])
+            self.assertEqual(scenario["width"], width)
+        self.assertEqual(
+            mod.select(["e2e/plugin_manager_scroll_contract.py"]), mod.BOOK_DETAIL + mod.PLUGIN_SCROLL)
+        self.assertEqual(
+            mod.select(["src/cifereca/gui/plugin_manager_page.py"]), mod.PLUGIN_SCROLL)
+        self.assertEqual(
+            mod.select(["e2e/book_detail_probe.py"]),
+            tuple(name for name in mod.ALL if name in mod.BOOK_DETAIL + mod.PLUGIN_SCROLL))
+        self.assertTrue(set(mod.PLUGIN_SCROLL).issubset(set(mod.CORE)))
+        self.assertFalse(set(mod.PLUGIN_SCROLL) & set(mod.BOOK_DETAIL))
 
     def test_renewal_preflight_selects_exact_loan_detail_gtk_probes(self):
         self.assertEqual(
@@ -251,7 +274,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_1269_query_model_keeps_book_detail_consumers(self):
         selected = mod.select(["src/cifereca/gui/query_model.py"])
-        self.assertEqual(set(selected), set(mod.SEARCH_GTK + mod.BOOK_DETAIL + mod.BNF_COVERS))
+        self.assertEqual(set(selected), set(mod.SEARCH_GTK + mod.BOOK_DETAIL + mod.PLUGIN_SCROLL + mod.BNF_COVERS))
 
     def test_1269_mainwindow_imports_cover_core_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])

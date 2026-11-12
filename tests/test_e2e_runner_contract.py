@@ -22,12 +22,34 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
     assert [name for name, _ in runner.select(None, "core")] == [
         "search-filter-p0", "search-filter-1024", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700",
+        "plugin-manager-scroll-1024", "plugin-manager-scroll-1366",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
         "maintenance-tools-920", "maintenance-tools-1024", "maintenance-tools-1280", "maintenance-tools-1366", "maintenance-tools-1600", "maintenance-tools-1728",
         "task-busy-settings-1366", "capture-session-gtk-1366", "startup", "core-navigation", "public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366",
         "modern-light-1366", "modern-light-1600",
     ]
+
+
+def test_plugin_scroll_contract_is_isolated_from_bibliographic_probe():
+    runner = _module()
+    for suffix in ("1024", "1366"):
+        scenario = runner.SCENARIOS["plugin-manager-scroll-" + suffix]
+        assert scenario["runner"] == "gtk-detail"
+        assert scenario["plugin_scroll_only"] is True
+    probe = (ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8")
+    assert 'if args.plugin_scroll_only:' in probe
+    assert 'later(450, start_plugin_scroll)' in probe
+    assert 'later(450, search_initial)' in probe
+    assert 'verify_plugin_scroll(' in probe
+    assert 'report["checks"]["P0_908_plugin_scroll_independent"] = True' in probe
+    # Both widths remain under CI; the detail's finish path does not trigger
+    # the unrelated plugin-manager test anymore.
+    assert 'if not args.component_contracts:' in probe
+    detail_tail = probe.split('if not args.component_contracts:', 1)[1].split(
+        'p.empty("Résumé réellement long"', 1)[0]
+    assert "finish()" in detail_tail
+    assert "verify_plugin_scroll" not in detail_tail
 
 
 def test_p1_3687_search_filter_real_1024_and_original_baseline():

@@ -56,10 +56,15 @@ class FixtureManager:
         row.state = "ready" if enabled else "disabled"
 
 
-def verify_plugin_scroll(window, later, done, *, width: int):
+def verify_plugin_scroll(window, later, done, *, width: int, checkpoint=None):
     """Exercise a real mapped GtkScrolledWindow across two toggle rebuilds."""
     assert width in (1024, 1366)
     manager = FixtureManager()
+
+    def mark(stage):
+        # Fixed identifiers from this synthetic acceptance, never widget data.
+        if checkpoint is not None:
+            checkpoint(stage)
     changed = []
     shell = Gtk.Stack()
 
@@ -91,6 +96,7 @@ def verify_plugin_scroll(window, later, done, *, width: int):
         return bounds.get_y(), page.get_vadjustment().get_value()
 
     def initial_scroll():
+        mark("initial_scroll")
         adjustment = page.get_vadjustment()
         assert len(page._plugin_widgets) == 36
         assert adjustment.get_upper() - adjustment.get_page_size() > 500, (
@@ -104,23 +110,49 @@ def verify_plugin_scroll(window, later, done, *, width: int):
         later(180, first_toggle)
 
     def first_toggle():
+        mark("first_toggle")
         switch = page._plugin_switches[target]
+        mark("first_grab_focus")
         assert switch.grab_focus() is not False
+        # GTK may scroll the newly focused widget into view and override the
+        # explicit scroll requested by initial_scroll(). Reapply the test's
+        # middle-of-list starting position *after* the focus transition and
+        # verify the actual allocation on the next main-loop iteration.
+        mark("first_scroll_request")
+        row_y, _ = geometry()
+        adjustment = page.get_vadjustment()
+        adjustment.set_value(min(
+            row_y - 170,
+            adjustment.get_upper() - adjustment.get_page_size(),
+        ))
+        later(100, first_toggle_ready)
+
+    def first_toggle_ready():
+        mark("first_toggle_geometry")
         row_y, scroll = geometry()
+        mark("first_toggle_scroll")
         assert scroll > 250, "GTK plugin list did not scroll to middle"
         state["offset"] = row_y - scroll
+        switch = page._plugin_switches[target]
+        mark("first_toggle_set_inactive")
         switch.set_active(False)
+        mark("first_toggle_callback")
         assert manager.calls == [(target, False)]
         later(200, verify_first_toggle)
 
     def verify_first_toggle():
+        mark("first_geometry")
         row_y, scroll = geometry()
+        mark("first_scroll")
         assert scroll > 250, "Viewport reset to top after deactivation"
+        mark("first_anchor")
         assert abs(row_y - scroll - state["offset"]) <= 60, (
             "GTK plugin row lost its visual anchor"
         )
         switch = page._plugin_switches[target]
+        mark("first_switch")
         assert not switch.get_active(), "Plugin state did not reflect deactivation"
+        mark("first_focus")
         assert switch.has_focus(), "GTK focus lost by switch reconstruction"
         state["offset"] = row_y - scroll
         switch.set_active(True)
@@ -128,6 +160,7 @@ def verify_plugin_scroll(window, later, done, *, width: int):
         later(200, verify_second_toggle)
 
     def verify_second_toggle():
+        mark("second_geometry")
         row_y, scroll = geometry()
         assert scroll > 250, "Viewport reset to top after activation"
         assert abs(row_y - scroll - state["offset"]) <= 60, (
