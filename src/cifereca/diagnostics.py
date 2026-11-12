@@ -161,9 +161,9 @@ class Diagnostics:
             # change the provider/business result or stringify hostile data.
             pass
 
-    def add_core_bnf_loan_action(self, event: object) -> None:
+    def add_core_loan_acsm_action(self, event: object) -> None:
         """Core-attested terminal fact, never a generic plugin diagnostic."""
-        from .core.diagnostic_bnf_loan_action import public_fields, log_message
+        from .core.diagnostic_explicit_loan_action import public_fields, log_message
         fields = public_fields(event)
         if not fields:
             return
@@ -171,10 +171,10 @@ class Diagnostics:
         if self.enabled and (self.level != 'errors' or status != 'success'):
             entry = DiagnosticEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
-                category='LOAN', operation='bnf_loan_action',
+                category='LOAN', operation='loan_acsm_action',
                 status='ok' if status == 'success' else status,
                 duration_ms=fields['duration_ms'], detail=fields,
-                verified_bnf_loan_action=True,
+                verified_loan_acsm_action=True,
             )
             with self._lock:
                 self._items.append(entry)
@@ -184,7 +184,7 @@ class Diagnostics:
             logging.getLogger('cifereca').log(
                 severity, '%s', message,
                 extra=_core_journal_record(
-                    'LOAN', 'bnf_loan_action',
+                    'LOAN', 'loan_acsm_action',
                     'ok' if status == 'success' else status, message, fields,
                 ),
             )
