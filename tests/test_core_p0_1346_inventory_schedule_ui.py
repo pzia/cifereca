@@ -152,9 +152,17 @@ def test_noneligible_source_cannot_obtain_new_scheduled_consent(
         if capability else ("local_materialization",),
     )
     w, broker, calls, modes, downloads = fixture(monkeypatch, sources=[src])
-    button, _row = controls(w)
-    assert not button.sensitive
-    button.click()
+    if not capability:
+        # An undeclared inventory capability cannot expose an inert consent
+        # button: the entire schedule row is absent.
+        assert all(
+            not row.title.startswith("Actualisation automatique des notices")
+            for row in w._sync_sources_box.children[0].children
+        )
+    else:
+        button, _row = controls(w)
+        assert not button.sensitive
+        button.click()
     assert modes == downloads == {}
     assert Dialog.shown == []
     assert not any(c[0].endswith("-write") for c in calls)
@@ -210,7 +218,13 @@ def test_invalid_or_secret_bearing_broker_policy_never_reflected_in_gtk(monkeypa
 
 
 def test_page_no_optional_broker_adds_only_inert_row(monkeypatch):
-    w, broker, calls, _build, _page = harness._fixture()
+    # Explicit inventory capability, but no optional broker API: show an
+    # inert policy row without inventing a scheduling permission.
+    w, broker, calls, _build, _page = harness._fixture(sources=[
+        harness._source(
+            sync_capabilities=("remote_inventory", "local_materialization"),
+        ),
+    ])
     button, row = controls(w)
     assert not button.sensitive
     assert "indisponible" in row.subtitle
