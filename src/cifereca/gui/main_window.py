@@ -1714,8 +1714,7 @@ class MainWindow(Adw.ApplicationWindow):
         _present_manual_borrow(
             self, item, control, TaskPriority=TaskPriority,
             label=self.service.provider_display_name(item.source_provider),
-            available=self.service.can_borrow_manual,
-            dispatch=self.service.borrow_manual, expected_account=account,
+            expected_account=account,
         )
 
     def download_direct_item(self, item: SearchResult, control: Gtk.Widget | None = None) -> None:
