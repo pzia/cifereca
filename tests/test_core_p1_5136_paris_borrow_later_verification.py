@@ -157,7 +157,7 @@ def test_generic_followup_accepts_linked_primary_only_with_exact_spent_claim(tmp
         ) is not None
         # Provider-specific policy remains in the Paris service and rejects
         # linked borrower IDs; Core's generic machinery doesn't hardcode it.
-        assert not service.paris_borrow_followup_available(item)
+        assert not service.manual_borrow_followup_available(item)
         assert borrow_followup_available(
             service, item, readiness=neutral_readiness,
         )
