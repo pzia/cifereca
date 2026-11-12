@@ -72,8 +72,17 @@ def public_refusal_code(provider: object, exc: BaseException) -> str | None:
     return code if code in _LABELS[provider] else None
 
 
+_GENERIC_READ_ONLY_REASONS = {
+    'canonical_source_validation_required':
+        "Le rapprochement local historique est désactivé. "
+        "Utilisez une acquisition canonique attestée pour la source exacte.",
+}
+
+
 def public_refusal_label(provider: object, code: object) -> str | None:
     """Only fixed, locally authored text; no free-form private error prose."""
     if type(provider) is not str or type(code) is not str:
         return None
+    if code in _GENERIC_READ_ONLY_REASONS:
+        return _GENERIC_READ_ONLY_REASONS[code]
     return _LABELS.get(provider, {}).get(code)

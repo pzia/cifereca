@@ -472,7 +472,6 @@ class LocalInspection:
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
         self._kobo_right_proofs = {}
-        self._kobo_right_scopes = {}
         self._manual_file_proofs = {}
         self._manual_right_scopes = {}
         self._manual_file_observations = {}
@@ -901,8 +900,6 @@ class LocalInspection:
                                   or len(backup_rows) != 1),
                     'signature': backup_signature,
                 }
-                if kobo_attested:
-                    self._kobo_right_scopes[f'right:{index}'] = scope
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
                     right.get('provider_id') == 'numilog'
@@ -1290,7 +1287,6 @@ class LocalInspection:
         self._file_facets.clear()
         self._manual_right_proofs.clear()
         self._kobo_right_proofs.clear()
-        self._kobo_right_scopes.clear()
         self._manual_file_proofs.clear()
         self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
@@ -1795,157 +1791,53 @@ class LocalInspection:
                     'rights_mutations': 0, 'placement_mutations': 0, 'file_mutations': 0}
         return {'status': 'unavailable', 'read_only': True}
 
-    def _kobo_transaction_inputs(self, right_key, file_key):
-        """Private exact identifiers only; never an authorization by title/ISBN."""
-        if (not self.valid() or self._manual_service is None
-                or type(right_key) is not str or type(file_key) is not str
-                or self._cases.get(right_key) is None
-                or self._cases[right_key].provider != 'kobo'
-                or self.preflight_manual_link(right_key, file_key).status
-                   != 'eligible_for_fresh_validation'):
-            return None
-        scope = self._kobo_right_scopes.get(right_key)
-        observation = self._manual_file_observations.get(file_key)
-        if (scope is None or observation is None or len(scope) != 5
-                or scope[0] != self._manual_identity or scope[1] != 'kobo'
-                or not all(type(value) is str and value for value in scope)
-                or type(observation.sha256) is not str
-                or len(observation.sha256) != 64
-                or any(ch not in '0123456789abcdef' for ch in observation.sha256)
-                or type(observation.path) is not str
-                or not observation.path.startswith('/')):
-            return None
-        return {
-            'identity_id': scope[0],
-            'credential_id': scope[2],
-            'account_id': scope[3],
-            'item_id': scope[4],
-            'expected_sha256': observation.sha256,
-            'path': observation.path,
-        }
+    def _refuse_obsolete_manual_attachment(self, right_key, file_key):
+        """No legacy file/right pairing may grant a canonical acquisition.
 
-    def preview_manual_attachment(self, right_key, file_key, *, cancelled=lambda: False):
-        """Fresh SQL/no-follow SHA preview, kept exclusively inside CoreUI.
-
-        No token is exposed in the return or public audit. A later explicit
-        GUI confirmation must call confirm_manual_attachment on this exact
-        active session; the token is single-use and held in private memory.
+        The old Kobo and Numilog writers are retired. A fresh, exact provider
+        acquisition must be performed by the canonical source workflow.
+        This read-only gate is provider-neutral and never issues a token.
         """
-        self.revoke_manual_attachment_preview()
-        generation = self._manual_preview_generation
-        case = self._cases.get(right_key) if self.valid() else None
-        if case is not None and case.provider == 'kobo':
-            if self._kobo_transaction_inputs(right_key, file_key) is None:
-                return {'status': 'unavailable', 'read_only': True}
-            # P0 #4859 W4: a matching 0.7 SHA, entitlement or historical
-            # receipt is NOT a provider-attested A→B delivery. Never issue
-            # a positive legacy reconciliation token from the GUI.
+        review = self.preflight_manual_link(right_key, file_key)
+        if review.status == 'eligible_for_fresh_validation':
             return {
                 'status': 'blocked', 'read_only': True,
-                'reason_code': 'kobo_canonical_evidence_required',
-            }
-        # #5054: the historic Numilog file/receipt reconciliation writer is
-        # retired. Re-download through a currently attested canonical provider
-        # entitlement instead; never attach by matching old local metadata.
-        if (case is not None and right_key in self._manual_right_scopes
-                and self.preflight_manual_link(right_key, file_key).status
-                == 'eligible_for_fresh_validation'):
-            return {
-                'status': 'blocked', 'read_only': True,
-                'reason_code': 'numilog_canonical_redownload_required',
+                'reason_code': 'canonical_source_validation_required',
             }
         return {'status': 'unavailable', 'read_only': True}
+
+    def preview_manual_attachment(self, right_key, file_key, *, cancelled=lambda: False):
+        """Compatibility preview: never issue an obsolete local-pair token."""
+        self.revoke_manual_attachment_preview()
+        return self._refuse_obsolete_manual_attachment(right_key, file_key)
 
     def confirm_manual_attachment(self, right_key, file_key, *,
                                   user_confirmed=False, cancelled=lambda: False):
-        """One explicit action; still rechecks all Core evidence under lock."""
+        """Consume any stale token but never authorize a retired writer."""
         pending, self._manual_pending = self._manual_pending, None
-        generation = self._manual_preview_generation
         if (user_confirmed is not True or pending is None
                 or pending[:2] != (right_key, file_key)):
             return {'status': 'unavailable', 'read_only': True}
-        case = self._cases.get(right_key) if self.valid() else None
-        if case is not None and case.provider == 'kobo':
-            if self._kobo_transaction_inputs(right_key, file_key) is None:
-                return {'status': 'unavailable', 'read_only': True}
-            # Deny even a private token retained from the previous W4
-            # implementation. No backup_items/ledger/Placement mutation.
-            return {
-                'status': 'blocked', 'read_only': True,
-                'reason_code': 'kobo_canonical_evidence_required',
-            }
-        # #5054: the historic Numilog file/receipt reconciliation writer is
-        # retired. Re-download through a currently attested canonical provider
-        # entitlement instead; never attach by matching old local metadata.
-        if (case is not None and right_key in self._manual_right_scopes
-                and self.preflight_manual_link(right_key, file_key).status
-                == 'eligible_for_fresh_validation'):
-            return {
-                'status': 'blocked', 'read_only': True,
-                'reason_code': 'numilog_canonical_redownload_required',
-            }
-        return {'status': 'unavailable', 'read_only': True}
+        return self._refuse_obsolete_manual_attachment(right_key, file_key)
 
     def preview_manual_undo(self, right_key, file_key, *, cancelled=lambda: False):
-        """Review undo only for the last operation of THIS live session."""
+        """No historical local-pair undo can reverse canonical provenance."""
         self.revoke_manual_attachment_preview()
-        generation = self._manual_preview_generation
         previous = self._manual_undo
         if (previous is None or previous[:2] != (right_key, file_key)
                 or self._manual_service is None):
             return {'status': 'unavailable', 'read_only': True}
-        case = self._cases.get(right_key) if self.valid() else None
-        if case is not None and case.provider == 'kobo':
-            if self._kobo_transaction_inputs(right_key, file_key) is None:
-                return {'status': 'unavailable', 'read_only': True}
-            # A historical 0.7 journal cannot authorize reversing an
-            # independently published OriginLink or a later Placement.
-            return {
-                'status': 'blocked', 'read_only': True,
-                'reason_code': 'kobo_canonical_evidence_required',
-            }
-        # #5054: the historic Numilog file/receipt reconciliation writer is
-        # retired. Re-download through a currently attested canonical provider
-        # entitlement instead; never attach by matching old local metadata.
-        if (case is not None and right_key in self._manual_right_scopes
-                and self.preflight_manual_link(right_key, file_key).status
-                == 'eligible_for_fresh_validation'):
-            return {
-                'status': 'blocked', 'read_only': True,
-                'reason_code': 'numilog_canonical_redownload_required',
-            }
-        return {'status': 'unavailable', 'read_only': True}
+        return self._refuse_obsolete_manual_attachment(right_key, file_key)
 
     def confirm_manual_undo(self, right_key, file_key, *,
                             user_confirmed=False, cancelled=lambda: False):
-        """Consume the second token once; Core independently checks the journal."""
+        """Consume stale undo tokens; no link, placement or right mutation."""
         pending, self._manual_undo_pending = self._manual_undo_pending, None
-        generation = self._manual_preview_generation
         if (user_confirmed is not True or pending is None
                 or pending[:2] != (right_key, file_key)
                 or self._manual_undo != pending[:3]):
             return {'status': 'unavailable', 'read_only': True}
-        case = self._cases.get(right_key) if self.valid() else None
-        if case is not None and case.provider == 'kobo':
-            if self._kobo_transaction_inputs(right_key, file_key) is None:
-                return {'status': 'unavailable', 'read_only': True}
-            # Ignore stale legacy W4 undo tokens; only independently
-            # attested canonical B repairs may change a Placement.
-            return {
-                'status': 'blocked', 'read_only': True,
-                'reason_code': 'kobo_canonical_evidence_required',
-            }
-        # #5054: the historic Numilog file/receipt reconciliation writer is
-        # retired. Re-download through a currently attested canonical provider
-        # entitlement instead; never attach by matching old local metadata.
-        if (case is not None and right_key in self._manual_right_scopes
-                and self.preflight_manual_link(right_key, file_key).status
-                == 'eligible_for_fresh_validation'):
-            return {
-                'status': 'blocked', 'read_only': True,
-                'reason_code': 'numilog_canonical_redownload_required',
-            }
-        return {'status': 'unavailable', 'read_only': True}
+        return self._refuse_obsolete_manual_attachment(right_key, file_key)
 
     def candidate_files(self, right_key):
         """Only local, metadata_only cross-reference hints; never an action plan.

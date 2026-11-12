@@ -88,7 +88,7 @@ def test_direct_fresh_session_retired_numilog_link_is_readonly(rig):
               ("placements", "entitlements", "acquisition_ledger", "artifacts")}
     result = session.preview_manual_attachment(right, file)
     assert result == {"status": "blocked", "read_only": True,
-                      "reason_code": "numilog_canonical_redownload_required"}
+                      "reason_code": "canonical_source_validation_required"}
     assert session.confirm_manual_attachment(right, file, user_confirmed=True)["status"] == "unavailable"
     assert session.preview_manual_undo(right, file)["status"] == "unavailable"
     assert session.confirm_manual_undo(right, file, user_confirmed=True)["status"] == "unavailable"
