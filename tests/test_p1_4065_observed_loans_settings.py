@@ -253,3 +253,29 @@ def test_settings_callsite_reads_core_cache_only_without_inventory_or_provider_i
     assert "httpx" not in helper.lower()
     assert "requests.get(" not in helper.lower()
     assert "synchronize" not in helper.lower()
+
+
+def test_crossed_descriptor_never_attributes_private_cache_or_crashes():
+    foreign = ProviderDescriptor(
+        id="other-provider", display_name="Other",
+        description="Synthetic crossed source", state="ready",
+        capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    out = projection(
+        (account(provider="paris"),),
+        (loan("alias", provider="paris", borrower="primary"),),
+        provider="paris", descriptor=foreign,
+    )
+    assert len(out) == 1
+    assert "indisponible" in out[0][1]
+    assert "PRIVATE" not in str(out)
+
+
+def test_paris_alias_without_descriptor_is_not_implicitly_attributed():
+    out = projection(
+        (account(provider="paris"),),
+        (loan("alias", provider="paris", borrower="primary"),),
+        provider="paris",
+    )
+    assert "Numériques : non vérifiés" in out[0][1]
