@@ -961,10 +961,10 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     expired_before = self.acquisition_reconciler.realize_expired_loans()
     summaries: list[dict[str, Any]] = []
     all_loans: list[Loan] = []
-    # One opening cycle must not schedule a second Kobo GET after Core A→B.
-    # Exact scoped IDs are safer than a credential-only flag (multi-profiles).
-    # Value records whether Core convergence completed without pending errors.
-    canonical_kobo_sources: dict[str, bool] = {}
+    # Canonical convergence is recorded for every exact source, not dispatched
+    # by supplier. A retired compatibility projection must never schedule a
+    # second acquisition after the Core A→B executor.
+    canonical_source_completion: dict[tuple[str, str], bool] = {}
     # Device/profile state is provider-owned by Kobo-Adept. Read it once per
     # opening sync and only project it into the dashboard summary; Paris does
     # not persist a competing device inventory.
@@ -1219,15 +1219,16 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             and canonical.get("pending", 0) > 0):
                         inventory_partial = True
                     if counts is not None:
-                        # The canonical executor has already decided acquisition
-                        # for this exact Kobo source (including pending/blocked).
-                        # A legacy worker must not make a second decision/GET.
-                        if account.provider_id == "kobo":
-                            canonical_kobo_sources[source_id] = not any(
-                                counts[name] for name in (
-                                    "pending", "blocked", "failed", "cancelled"
-                                )
+                        # Every exact source has already received its one
+                        # canonical acquisition decision, including pending.
+                        # Record only passive outcomes; no legacy worker/GET.
+                        canonical_source_completion[
+                            (account.provider_id, source_id)
+                        ] = not any(
+                            counts[name] for name in (
+                                "pending", "blocked", "failed", "cancelled"
                             )
+                        )
                         completed = detail.setdefault("canonical_execution", {
                             status: 0 for status in counts
                         })
@@ -1478,6 +1479,14 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     # canonical source Sync above. Never schedule legacy W2 by the historical
     # on_start preference or refresh its 0.7 retry clock/checkpoint.
     kobo_decision = _kobo_opening_decision(self, deep=deep)
+    # Historical CLI/TRACE compatibility only; no provider-specific branch
+    # participates in the canonical source execution above.
+    canonical_kobo_sources = {
+        source_id: complete
+        for (provider_id, source_id), complete
+        in canonical_source_completion.items()
+        if provider_id == "kobo"
+    }
     if canonical_kobo_sources:
         canonical_ok = all(canonical_kobo_sources.values())
         kobo_summary: dict[str, Any] | None = {
