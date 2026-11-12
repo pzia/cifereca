@@ -46,6 +46,8 @@ class LoanInventoryScope:
     # Optional, descriptor-attested convention for an existing empty-ID borrower.
     # Never a wildcard or an acquisition/return permission.
     primary_account_alias: str | None = None
+    # Distinguish an explicitly checked absent policy from unadapted legacy.
+    primary_alias_policy_checked: bool = False
 
     def __post_init__(self) -> None:
         if not all((
@@ -55,8 +57,11 @@ class LoanInventoryScope:
             _valid_token(self.account_id, empty=True),
         )):
             raise ValueError("invalid_loan_inventory_scope")
+        if type(self.primary_alias_policy_checked) is not bool:
+            raise ValueError("invalid_loan_inventory_alias_policy")
         if self.primary_account_alias is not None and (
-            self.account_id != ""
+            not self.primary_alias_policy_checked
+            or self.account_id != ""
             or not _valid_token(self.primary_account_alias)
             or self.primary_account_alias == self.account_id
         ):
@@ -79,7 +84,8 @@ class LoanInventoryScope:
                 if alias is not None and not _valid_token(alias):
                     raise ValueError("invalid_loan_inventory_primary_alias")
         return cls(account.identity_id, account.provider_id,
-                   account.credential_id, account.unique_id, alias)
+                   account.credential_id, account.unique_id, alias,
+                   descriptor is not None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,7 +196,8 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
         allowed_accounts.add(scope.primary_account_alias)
     # Transitional producer-only compatibility. Remove with the Paris plugin
     # cutover, after its snapshot constructor passes the installed descriptor.
-    elif scope.provider_id == "paris" and scope.account_id == "":
+    elif (not scope.primary_alias_policy_checked
+          and scope.provider_id == "paris" and scope.account_id == ""):
         allowed_accounts.add("primary")
     return (
         loan.identity_id == scope.identity_id
