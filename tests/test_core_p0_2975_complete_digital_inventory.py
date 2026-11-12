@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 from cifereca.core.sync_coordination import _complete_digital_loan_scope
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 from cifereca.plugin_api import (
     LoanBranchCoverage, LoanInventoryScope, LoanInventorySnapshot,
 )
@@ -42,6 +43,13 @@ def bound_session(a, *, branch, alias=None, connected=True,
     instance.connected = connected
     instance.provider_id = a.provider_id if provider is None else provider
     instance.credential_id = a.credential_id if credential is None else credential
+    if alias is not None:
+        instance.descriptor = ProviderDescriptor(
+            id=instance.provider_id, display_name="Synthetic source",
+            description="Explicit absence-evidence borrower alias", state="ready",
+            capabilities=ProviderCapabilities(loans=True),
+            existing_primary_loan_account_alias=alias,
+        )
     return instance
 
 
