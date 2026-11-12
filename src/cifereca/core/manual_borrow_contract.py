@@ -106,7 +106,7 @@ def manual_borrow_action(
 
     if not still_bound():
         return {
-            "status": "blocked", "reason_code": "borrow_scope_unverified",
+            "status": "blocked", "reason_code": "borrow_scope_changed",
             "provider_verified": False, "retry": "manual_only",
         }
     return manual_borrow(
