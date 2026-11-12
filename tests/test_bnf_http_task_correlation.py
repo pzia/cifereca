@@ -6,7 +6,7 @@ import threading
 import httpx
 import pytest
 
-from cifereca.core.diagnostic_bnf_loan_action import BnfLoanActionError
+from cifereca.core.diagnostic_explicit_loan_action import LoanActionError
 from cifereca.core.diagnostic_journal import query_journal
 from cifereca.diagnostic_task_context import diagnostic_task_reference
 from cifereca.diagnostics import Diagnostics
@@ -51,12 +51,12 @@ def test_real_core_http_and_terminal_share_worker_reference(
     try:
         future = pool.submit(0, lambda: service.stage_bnf_loan_acsm(
             loan, confirmed=True, expected_identity_id='default'))
-        with pytest.raises(BnfLoanActionError):
+        with pytest.raises(LoanActionError):
             future.result(timeout=5)
         sink.flush()
         rows = query_journal(path, provider_id='bnf-pret', limit=100)['events']
         http = [r for r in rows if r.get('operation') == 'BnF HTTP']
-        terminal = [r for r in rows if r.get('operation') == 'bnf_loan_action']
+        terminal = [r for r in rows if r.get('operation') == 'loan_acsm_action']
         assert http and len(terminal) == 1
         ref = terminal[0]['task_ref']
         assert all(row['task_ref'] == ref for row in http)
