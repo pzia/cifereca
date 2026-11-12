@@ -10,6 +10,7 @@ from inspect import getattr_static, isfunction
 from uuid import uuid4
 
 from ..models import Account, Loan, SearchResult
+from ..providers.base import ManualBorrowPolicy
 from ..plugin_api import LendingActionAdmission, BorrowRequestNotSubmitted
 from ..plugin_api.lending_capabilities import assess_lending_operation
 from .borrow_action_scope import capture_borrow_action_scope, borrow_claim_key
@@ -310,6 +311,14 @@ def manual_borrow(
             return _result("blocked", "borrow_capability_unavailable")
         session = service._session_for_source(
             provider_id, item.source_credential)
+        # Loan-account projection is provider ABI data, not a Core supplier
+        # branch. A missing, rebound or inconsistent policy cannot verify.
+        policy = getattr(session.descriptor, "manual_borrow_policy", None)
+        if (type(policy) is not ManualBorrowPolicy
+                or policy.docbase != docbase
+                or policy.primary_borrower_id != primary_id
+                or policy.verification != verification_mode):
+            return _result("blocked", "borrow_scope_unverified")
         state = _inert_session_state(session)
         registered = _inert_session_accounts(session)
         if state is None or registered is None:
@@ -326,6 +335,11 @@ def manual_borrow(
         if len(candidates) != 1:
             return _result("blocked", "borrow_scope_unverified")
         account = candidates[0]
+        observed_account_id = (
+            policy.observed_primary_account_alias
+            if policy.observed_primary_account_alias is not None
+            else account.unique_id
+        )
         if expected_account is not None and account is not expected_account:
             return _result("blocked", "borrow_scope_changed")
         lease = capture_borrow_action_scope(
@@ -339,6 +353,8 @@ def manual_borrow(
                     == source_epoch and lease.current(service) and (
                 expected_context_epoch is None
                 or service._account_context_epoch == expected_context_epoch)
+                and getattr(session.descriptor, "manual_borrow_policy", None)
+                    == policy
                 and (additional_scope_current is None
                      or additional_scope_current() is True))
         # Canonical installed PluginManager descriptor is the manifest source;
@@ -395,8 +411,7 @@ def manual_borrow(
                 or loan.record_id != item.record_id
                 or loan.source_provider != provider_id
                 or loan.source_credential != account.credential_id
-                or loan.source_account_id != (
-                    "primary" if primary_id == "" else account.unique_id)
+                or loan.source_account_id != observed_account_id
                 or loan.identity_id != account.identity_id
                 or loan.provider != docbase or loan.medium != "digital"
                 # Paris returns the fresh current-inventory state verbatim
