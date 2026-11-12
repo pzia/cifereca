@@ -252,3 +252,41 @@ def set_source_enabled(service, account, enabled, preference_key):
         if not current():
             raise ValueError('source_sync_consent_scope_changed')
 
+
+
+def set_inventory_source_enabled(service, account, enabled, preference_key):
+    """Provider-neutral inventory toggle with a fail-closed legacy cutover.
+
+    Only an explicit OFF of a persisted historical acquisition switch
+    creates CAS OFF. ON never migrates an old preference to canonical ON.
+    Legacy epoch writing remains temporary until #5077 can remove the
+    compatibility readers without breaking already-started operations.
+    """
+    if type(enabled) is not bool:
+        raise ValueError("invalid source enabled preference")
+    scope = scope_for_account(account)
+    if preference_key != source_enablement_key(scope):
+        raise ValueError('source_sync_toggle_scope_mismatch')
+    if configured(service, account):
+        return set_source_enabled(service, account, enabled, preference_key)
+
+    from .source_auto_consent_bridge import (
+        _consent_generation_key, legacy_source_consent_switch_present,
+    )
+    if enabled is False and legacy_source_consent_switch_present(
+        service.storage, scope,
+    ):
+        return retire_legacy_acquisition_on_source_disable(
+            service, account, preference_key,
+        )
+
+    # An inventory-only source must not acquire a CAS policy merely because
+    # its visibility was toggled. Preserve the legacy generation fence until
+    # the historical producer and consumers have all been migrated.
+    revision_key = _consent_generation_key(scope)
+    if revision_key is not None:
+        service.storage.metadata_set_with_revision(
+            preference_key, '1' if enabled else '0', revision_key,
+        )
+    else:
+        service.storage.metadata_set(preference_key, '1' if enabled else '0')
