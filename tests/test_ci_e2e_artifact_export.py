@@ -761,3 +761,21 @@ def test_2095_failed_kobo_audit_exports_only_closed_physical_click_state():
             "scenario": "startup", "returncode": 1,
         }]), encoding="utf-8")
         assert "kobo_audit_observation" not in module.safe_summary(source)["results"][0]
+
+
+def test_gtk_replay_logs_only_closed_scenario_verdicts_and_preserves_failure():
+    """Human-readable CI diagnosis must not expose raw GTK or account data."""
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert 'echo "CIFERECA_E2E_VERDICT:PASS:$scenario"' in source
+    assert 'echo "CIFERECA_E2E_VERDICT:FAIL:$scenario"' in source
+    assert 'if /usr/bin/python3 e2e/run.py --scenario "$scenario"' in source
+    assert 'failed=1' in source
+    assert 'exit "$failed"' in source
+    assert 'exit "$status"' in source
+    assert 'cat e2e-artifacts/summary.json' not in source
+    assert 'cat e2e-artifacts/' not in source
+    assert 'name: e2e-core-debug' not in source
+    assert 'uses: actions/upload-artifact@v7.0.2' in source
+    assert 'name: e2e-core-summary' in source
+    assert 'if-no-files-found: ignore' in source
+    assert 'retention-days: 2' in source

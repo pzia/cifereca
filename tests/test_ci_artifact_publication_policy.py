@@ -11,11 +11,12 @@ import re
 ROOT = Path(__file__).resolve().parents[1] / ".github/workflows"
 
 NODE24_ARTIFACT_WORKFLOWS = frozenset({
-    "e2e-smoke.yml",
     "gtk-smoke.yml",
     "package-plugins.yml",
     "plugins-only-preview.yml",
 })
+# E2E-only v7 experiment; all other artifact upload producers stay pinned.
+EXACT_ARTIFACT_ACTIONS = {"e2e-smoke.yml": "v7.0.2"}
 
 EXPECTED = {
     "gtk-ubuntu24-cache-asset.yml": (
@@ -58,7 +59,7 @@ EXPECTED = {
 }
 
 
-def _uploads(source: str, *, action_major: int) -> tuple[tuple[tuple[str, ...], int], ...]:
+def _uploads(source: str, *, action_version: str) -> tuple[tuple[tuple[str, ...], int], ...]:
     # Each step has six-space indentation. A new, differently laid out
     # artifact action must be reviewed rather than silently accepted.
     blocks = re.split(r"(?m)^      - ", source)[1:]
@@ -67,7 +68,7 @@ def _uploads(source: str, *, action_major: int) -> tuple[tuple[tuple[str, ...], 
     for block in blocks:
         if "actions/upload-artifact@" not in block:
             continue
-        assert re.search(rf"(?m)^\s*uses: actions/upload-artifact@v{action_major}\s*$", block)
+        assert re.search(rf"(?m)^\s*uses: actions/upload-artifact@{re.escape(action_version)}\s*$", block)
         assert block.count("actions/upload-artifact@") == 1
         lines = block.splitlines()
         pos = next(
@@ -99,8 +100,10 @@ def _uploads(source: str, *, action_major: int) -> tuple[tuple[tuple[str, ...], 
 def test_all_workflow_uploads_have_fixed_allowlisted_paths_and_two_day_retention():
     seen = {}
     for workflow in (*ROOT.glob("*.yml"), *ROOT.glob("*.yaml")):
-        major = 6 if workflow.name in NODE24_ARTIFACT_WORKFLOWS else 4
-        uploads = _uploads(workflow.read_text(encoding="utf-8"), action_major=major)
+        version = EXACT_ARTIFACT_ACTIONS.get(
+            workflow.name, "v6" if workflow.name in NODE24_ARTIFACT_WORKFLOWS else "v4"
+        )
+        uploads = _uploads(workflow.read_text(encoding="utf-8"), action_version=version)
         if uploads:
             seen[workflow.name] = tuple(paths for paths, days in uploads)
             assert all(days == 2 for _, days in uploads), workflow.name

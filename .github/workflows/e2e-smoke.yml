@@ -119,7 +119,10 @@ jobs:
             failed=0
             for scenario in $E2E_SCENARIOS; do
               echo "::group::GTK/XTEST $scenario"
-              if ! /usr/bin/python3 e2e/run.py --scenario "$scenario" --out "e2e-artifacts/$scenario"; then
+              if /usr/bin/python3 e2e/run.py --scenario "$scenario" --out "e2e-artifacts/$scenario"; then
+                echo "CIFERECA_E2E_VERDICT:PASS:$scenario"
+              else
+                echo "CIFERECA_E2E_VERDICT:FAIL:$scenario"
                 failed=1
               fi
               echo "::endgroup::"
@@ -171,7 +174,9 @@ jobs:
 
       - name: Upload privacy-safe E2E verdicts only
         if: always()
-        uses: actions/upload-artifact@v6
+        # Test the reviewed v7 transport against recurring v6 upload failures.
+        # This remains a required step; a publication failure still fails CI.
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: e2e-core-summary
           path: ${{ runner.temp }}/cifereca-e2e-public/summary.json
