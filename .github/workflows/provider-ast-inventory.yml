@@ -27,9 +27,13 @@ jobs:
           set -euo pipefail
           python3 -m scripts.ci_provider_ast_function_worklist
           python3 -m scripts.ci_provider_ast_function_worklist --json > provider-ast-responsibilities.json
+          python3 -m scripts.ci_provider_core_coupling_report
+          python3 -m scripts.ci_provider_core_coupling_report --json > provider-core-loc.json
       - name: Archive inspectable per-line worklist
         uses: actions/upload-artifact@v4
         with:
           name: provider-ast-responsibilities
-          path: provider-ast-responsibilities.json
+          path: |
+            provider-ast-responsibilities.json
+            provider-core-loc.json
           retention-days: 30
