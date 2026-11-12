@@ -49,6 +49,7 @@ class FakeParis(ProviderSession):
         descriptor = ProviderDescriptor(
             id="paris", display_name="Synthetic Paris", description="Test",
             state="ready",
+            existing_primary_loan_account_alias="primary",
             capabilities=ProviderCapabilities(loans=True, renew_loan=True),
         )
         super().__init__(
