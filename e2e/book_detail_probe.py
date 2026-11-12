@@ -37,7 +37,7 @@ from cifereca.gui.main_window import MainWindow
 # Public diagnostic checkpoint names are reviewed *function identifiers*, not
 # supplier metadata or private widget labels. Every new checkpoint requires a
 # deliberate source update; no provider callback can create a public name.
-_PUBLIC_STAGE_CODES = frozenset(["activation","callback_other","search_initial","wait_search","search_detail","expanded_search","verify_tab_order","click_copy","read_clipboard","search_isbn","click_isbn","verify_isbn","library_select","verify_library","finish","reset_library_detail_for_security_audit","security_detail_expanders","audit_mixed_security_values","audit_mixed_security_values_rendered","audit_all_private_values","audit_all_private_values_rendered","begin_stale_public_detail","stale_public_detail_rendered","component_summaries","component_summary_short","component_summary_six_lines","component_summary_seven_lines","component_expand","component_collapse","component_click_collapse","component_overflow","component_open_overflow","component_click_hidden","component_lists","component_identity","component_identity_rendered"])
+_PUBLIC_STAGE_CODES = frozenset(["activation","callback_other","search_initial","wait_search","search_detail","expanded_search","verify_tab_order","click_copy","read_clipboard","search_isbn","click_isbn","verify_isbn","library_select","verify_library","finish","reset_library_detail_for_security_audit","security_detail_expanders","audit_mixed_security_values","audit_mixed_security_values_rendered","audit_all_private_values","audit_all_private_values_rendered","begin_stale_public_detail","stale_public_detail_rendered","component_summaries","component_summary_short","component_summary_six_lines","component_summary_seven_lines","component_expand","component_collapse","component_click_collapse","component_overflow","component_open_overflow","component_click_hidden","component_lists","component_identity","component_identity_rendered", "plugin_scroll_initial", "plugin_scroll_first_toggle", "plugin_scroll_verify_first", "plugin_scroll_verify_second"])
 
 TITLE = "Camille, le détail UX"
 METADATA = {
@@ -831,8 +831,23 @@ def main():
             # #908: the same Core E2E checks a real GTK 36-module inventory
             # at 1024/1366 pixels without touching installed plugins.
             from plugin_manager_scroll_contract import verify_plugin_scroll
+            # The 36-plugin GTK fixture lives in another module. Its
+            # callbacks previously appeared as uninformative callback_other,
+            # because later() deliberately rejects foreign source lines.
+            # Preserve the real test, but pass explicit reviewed stage names.
+            plugin_stages = {
+                "initial_scroll": "plugin_scroll_initial",
+                "first_toggle": "plugin_scroll_first_toggle",
+                "verify_first_toggle": "plugin_scroll_verify_first",
+                "verify_second_toggle": "plugin_scroll_verify_second",
+            }
+
+            def plugin_later(ms, callback):
+                stage = plugin_stages.get(getattr(callback, "__name__", ""), "callback_other")
+                later(ms, callback, public_stage=stage)
+
             verify_plugin_scroll(
-                window, later, finish,
+                window, plugin_later, finish,
                 width=1024 if args.width == 1366 else 1366,
             )
             return
