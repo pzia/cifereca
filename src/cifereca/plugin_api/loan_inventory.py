@@ -200,9 +200,12 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
     )
 
 
-def legacy_loan_inventory(account: Account, rows: object) -> LoanInventorySnapshot:
+def legacy_loan_inventory(
+    account: Account, rows: object, *,
+    descriptor: ProviderDescriptor | None = None,
+) -> LoanInventorySnapshot:
     """Adapt a v1 list of positive Loan without inventing negative evidence."""
-    scope = LoanInventoryScope.for_account(account)
+    scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
     if type(rows) not in (list, tuple) or len(rows) > _MAX_LOANS:
         raise ValueError("invalid_legacy_loan_inventory")
     return LoanInventorySnapshot(
@@ -211,7 +214,10 @@ def legacy_loan_inventory(account: Account, rows: object) -> LoanInventorySnapsh
     )
 
 
-def read_loan_inventory(session: object, account: Account) -> LoanInventorySnapshot:
+def read_loan_inventory(
+    session: object, account: Account, *,
+    descriptor: ProviderDescriptor | None = None,
+) -> LoanInventorySnapshot:
     """Explicit opt-in I/O read: no action, synchronization or mutation.
 
     New providers may implement loan_inventory_snapshot(account). All others
@@ -219,7 +225,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
     responses or exceptions. This API is intentionally not wired to rights
     reconciliation until #2975 / #3122 prove its consumer invariants.
     """
-    scope = LoanInventoryScope.for_account(account)
+    scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
 
     def still_bound() -> bool:
         # This guards in-place session/account changes. Core adoption must
@@ -231,7 +237,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
         if closed is not None and closed is not False:
             return False
         return (
-            LoanInventoryScope.for_account(account) == scope
+            LoanInventoryScope.for_account(account, descriptor=descriptor) == scope
             and getattr(session, "connected", None) is True
             and getattr(session, "provider_id", None) == scope.provider_id
             and getattr(session, "credential_id", None) == scope.credential_id
@@ -277,7 +283,7 @@ def read_loan_inventory(session: object, account: Account) -> LoanInventorySnaps
             return LoanInventorySnapshot(
                 scope=scope, loans=(), status="failed", reason_code="scope_changed",
             )
-        return legacy_loan_inventory(account, rows)
+        return legacy_loan_inventory(account, rows, descriptor=descriptor)
     except Cancelled:
         # An explicit provider/task cancellation is not a network failure.
         # Keep the envelope empty: partially read positive rows are not an
