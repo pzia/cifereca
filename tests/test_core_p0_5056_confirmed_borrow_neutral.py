@@ -8,7 +8,7 @@ import pytest
 
 
 CONTROLLER = (Path(__file__).resolve().parents[1] /
-              "src/cifereca/gui/bnf_borrow_controller.py")
+              "src/cifereca/gui/manual_borrow_controller.py")
 
 
 class Account:
@@ -37,7 +37,7 @@ def _controller():
     method = next(n for n in tree.body
                   if isinstance(n, ast.FunctionDef)
                   and n.name == "_present_manual_borrow")
-    from cifereca.gui.bnf_borrow_controller import _capture_borrow_ui_scope
+    from cifereca.gui.manual_borrow_controller import _capture_borrow_ui_scope
     namespace = {
         "Account": Account, "SearchResult": SearchResult, "copy": copy,
         "_capture_borrow_ui_scope": _capture_borrow_ui_scope,
