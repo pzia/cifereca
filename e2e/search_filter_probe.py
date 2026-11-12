@@ -33,7 +33,7 @@ from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 from cifereca.models import Account, SearchResult, ItemDetail
 from cifereca.providers.base import (
-    ProviderSession, ProviderDescriptor, ProviderCapabilities,
+    ProviderSession, ProviderDescriptor, ProviderCapabilities, ManualBorrowPolicy,
 )
 from cifereca.plugin_api import (
     CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
@@ -49,6 +49,13 @@ class _OfflineParisSession(ProviderSession):
                 id="paris", display_name="Bibliothèques de Paris",
                 description="Fixture GTK sans réseau", state="ready",
                 capabilities=ProviderCapabilities(search=True, holdings=True, borrow=True),
+                # The real Paris plugin publishes this ABI. Keep synthetic
+                # GTK acceptance in parity without granting any new right.
+                manual_borrow_policy=ManualBorrowPolicy(
+                    docbase="DILICOM", primary_borrower_id="",
+                    source_selection_key="primary_paris_connection_id",
+                    verification="provider_observed",
+                ),
             ),
             credential_id=credential, label="Paris hors ligne",
             credentials={}, options={},

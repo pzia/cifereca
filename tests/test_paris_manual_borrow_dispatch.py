@@ -18,7 +18,7 @@ import pytest
 
 from cifereca.brokers import IdentityBrokerImpl
 from cifereca.core.borrow_action_scope import borrow_claim_key
-from cifereca.gui.bnf_borrow_controller import present_paris_borrow
+from cifereca.gui.bnf_borrow_controller import _present_manual_borrow
 from cifereca.models import Account, SearchResult
 from tests.test_sync_state_contract import _service
 from tests.test_core_p0_2055_bnf_ui_consent import DialogApi, view
@@ -28,6 +28,15 @@ PROVIDER = ROOT / "src/plugins/provider-paris"
 if str(PROVIDER) not in sys.path:
     sys.path.insert(0, str(PROVIDER))
 from cifereca_paris import ParisProviderSession
+
+
+def _present_test_manual_borrow(window, item, control, *, Adw, TaskPriority, account=None):
+    # Test the generic controller with the original exact Paris Core contract.
+    return _present_manual_borrow(
+        window, item, control, TaskPriority=TaskPriority,
+        label="Paris", available=window.service.can_borrow_paris,
+        dispatch=window.service.borrow_paris_manual, expected_account=account,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -327,7 +336,7 @@ def test_ui_click_queues_once_and_confirms_through_real_core_and_adapter(tmp_pat
     try:
         window, errors, messages, refreshes = view(service, session, account, item)
         for _ in range(2):
-            present_paris_borrow(window, item, None, Adw=DialogApi,
+            _present_test_manual_borrow(window, item, None, Adw=DialogApi,
                                  TaskPriority=NS(USER_ACTION=object()))
         assert len(window.runner.tasks) == 1 and state["calls"] == []
         assert window.runner.complete_one()["status"] == "confirmed"
@@ -343,7 +352,7 @@ def test_ui_change_before_queued_work_creates_no_claim(tmp_path, change):
     service, session, account, item, state = setup(tmp_path)
     try:
         window, errors, messages, refreshes = view(service, session, account, item)
-        present_paris_borrow(window, item, None, Adw=DialogApi,
+        _present_test_manual_borrow(window, item, None, Adw=DialogApi,
                              TaskPriority=NS(USER_ACTION=object()))
         assert len(window.runner.tasks) == 1
         if change == "selection":
@@ -400,7 +409,7 @@ def test_ui_never_remaps_explicit_foreign_account_to_primary(tmp_path):
     service, session, account, item, state = setup(tmp_path)
     try:
         window, errors, messages, refreshes = view(service, session, account, item)
-        present_paris_borrow(window, item, None, Adw=DialogApi,
+        _present_test_manual_borrow(window, item, None, Adw=DialogApi,
                              TaskPriority=NS(USER_ACTION=object()),
                              account=replace(account, unique_id="linked-reader"))
         assert not window.runner.tasks and state["calls"] == []
