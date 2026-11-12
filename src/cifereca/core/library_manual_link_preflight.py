@@ -138,11 +138,12 @@ def review_local_pair(
         blockers.add("audit_incomplete")
     if right.get("attested") is not True:
         blockers.add("right_not_attested")
-    if right.get("ambiguous") is True:
+    # Absence or malformed ambiguity evidence is not a negative attestation.
+    if right.get("ambiguous") is not False:
         blockers.add("right_scope_ambiguous")
     if file.get("verified") is not True or _strict_signature(file.get("signature")) is None:
         blockers.add("file_unverified")
-    if right.get("ledger_conflict") is True:
+    if right.get("ledger_conflict") is not False:
         blockers.add("acquisition_conflict")
     ledgers = right.get("ledger_count")
     if type(ledgers) is not int or ledgers < 0 or ledgers > 100_000:
@@ -213,7 +214,8 @@ def review_kobo_candidate(
     blockers = set()
     if audit_complete is not True:
         blockers.add("audit_incomplete")
-    if type(right) is not dict or right.get("attested") is not True or right.get("ambiguous") is True:
+    if (type(right) is not dict or right.get("attested") is not True
+            or right.get("ambiguous") is not False):
         blockers.add("kobo_personal_right_unverified")
     signature = _strict_signature(file.get("signature")) if type(file) is dict else None
     if type(file) is not dict or file.get("verified") is not True or signature is None:
