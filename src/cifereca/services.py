@@ -1868,31 +1868,21 @@ class LibraryService:
                 holdings=[], source_provider=item.source_provider,
                 source_credential=item.source_credential,
             )
-        # An authenticated Paris catalogue may be browsed from another local
-        # profile, but GetRecord/holdings may contain borrower-specific
-        # CanLoan or availability. Never call B's account or reuse a cached
-        # rights-bearing detail when the selected reader is A.
-        if item.source_provider == "paris":
-            active = getattr(self.current_identity, "identity_id", None)
-            try:
-                owner = self.storage.identity_for_connection(
-                    "paris", item.source_credential,
-                )
-            except (AttributeError, LookupError, TypeError, ValueError):
-                owner = None
-            metadata = item.metadata if type(item.metadata) is dict else {}
-            if (type(active) is not str or not active or owner != active
-                    or metadata.get("catalogue_access") == "shared_read_only"):
-                return ItemDetail(
-                    record_id=item.record_id, docbase=item.docbase,
-                    title=item.title, author=item.author,
-                    type=item.type, year=item.published_at,
-                    thumbnail_url=item.thumbnail_url,
-                    availability_status="unknown",
-                    availability_label="Catalogue partagé · droits non consultés",
-                    holdings=[], source_provider="paris",
-                    source_credential=item.source_credential,
-                )
+        # Private holdings are borrower-sensitive for every authenticated
+        # source, regardless of provider identity. An absent/rebound
+        # connection can never authorize a private GET or a cached detail.
+        from .core.private_source_owner_scope import private_source_owner_matches
+        if not private_source_owner_matches(self, item):
+            return ItemDetail(
+                record_id=item.record_id, docbase=item.docbase,
+                title=item.title, author=item.author,
+                type=item.type, year=item.published_at,
+                thumbnail_url=item.thumbnail_url,
+                availability_status="unknown",
+                availability_label="Catalogue partagé · droits non consultés",
+                holdings=[], source_provider=item.source_provider,
+                source_credential=item.source_credential,
+            )
         # Identical record IDs can belong to different collections. Scope
         # cached availability and offers to the exact source and profile.
         key = json.dumps((
@@ -2683,19 +2673,12 @@ class LibraryService:
         """
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             return False
-        if item.source_provider == "paris":
-            # Catalogue provenance (including a manually cached old row)
-            # must never become a foreign account's download permission.
-            active = getattr(self.current_identity, "identity_id", None)
-            try:
-                owner = self.storage.identity_for_connection(
-                    "paris", item.source_credential,
-                )
-            except (AttributeError, LookupError, TypeError, ValueError):
-                owner = None
-            if (type(active) is not str or not active or owner != active
-                    or (type(item.metadata) is dict
-                        and item.metadata.get("catalogue_access") == "shared_read_only")):
+        # An authenticated/private offer must belong to the selected local
+        # identity before invoking any session or offering an acquisition.
+        # Public catalogue delivery is separately scoped by its sentinel.
+        if item.source_credential != "__public__":
+            from .core.private_source_owner_scope import private_source_owner_matches
+            if not private_source_owner_matches(self, item):
                 return False
         try:
             from .core.private_inventory_row_scope import selected_private_offer_hint
