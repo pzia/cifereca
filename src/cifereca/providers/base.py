@@ -158,6 +158,9 @@ class ManualBorrowPolicy:
     source_selection_key: str | None = None
     verification: Literal["active_only", "provider_observed"] = "active_only"
     schema: str = "cifereca.manual-borrow/1"
+    # Provider-declared loan inventory account alias for a primary borrower.
+    # None means the exact connected account.unique_id; never inferred in Core.
+    observed_primary_account_alias: str | None = None
 
     def __post_init__(self) -> None:
         from re import fullmatch
@@ -175,6 +178,11 @@ class ManualBorrowPolicy:
                                       self.source_selection_key) is None))
                 or type(self.verification) is not str
                 or self.verification not in ("active_only", "provider_observed")
+                or (self.observed_primary_account_alias is not None
+                    and (type(self.observed_primary_account_alias) is not str
+                         or fullmatch(r"[a-z][a-z0-9_-]{0,63}",
+                                      self.observed_primary_account_alias) is None
+                         or self.primary_borrower_id != ""))
                 or (self.primary_borrower_id is None
                     and self.verification != "active_only")
                 or (self.primary_borrower_id == ""
