@@ -53,6 +53,9 @@ def attach_plugin_manager(self, manager: Any) -> list[str]:
         )
     except ProviderAccountLimitError as exc:
         raise ProviderConfigurationError(str(exc)) from None
+    # Commit account bindings only after a descriptor's declared cardinality
+    # has been verified. The bootstrap kept all ambiguous groups quarantined.
+    self._project_configured_provider_connections(descriptors=descriptors.values())
     for plugin_id, service in candidates:
         self.registry.register(service, replace=True)
         self._provider_plugin_ids[service.descriptor.id] = plugin_id
