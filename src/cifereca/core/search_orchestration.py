@@ -627,11 +627,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     # The broker can replace/reconnect a provider without changing identity
     # or creating another search. Its in-flight old results are then revoked.
     source_leases: tuple[tuple[object, tuple[object, object, object] | None], ...] = ()
-    paris_owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
+    owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
     shared_paris_sessions: set[int] = set()
-    numilog_owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
     shared_numilog_sessions: set[int] = set()
-    kobo_owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
     shared_kobo_sessions: set[int] = set()
 
     def sources_current() -> bool:
@@ -653,13 +651,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     or not _search_credential_enabled(self, session)):
                 return False
         if any(_private_search_owner(self, session) != owner
-               for session, owner in paris_owner_leases):
-            return False
-        if any(_private_search_owner(self, session) != owner
-               for session, owner in numilog_owner_leases):
-            return False
-        if any(_private_search_owner(self, session) != owner
-               for session, owner in kobo_owner_leases):
+               for session, owner in owner_leases):
             return False
         return True
 
@@ -698,31 +690,28 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     paris_source_selected = any(
         session.provider_id == "paris" for session in searchable
     )
-    paris_owner_leases = tuple(
-        (session, _private_search_owner(self, session))
-        for session in searchable if session.provider_id == "paris"
-    )
-    active_id = getattr(identity, "identity_id", None)
-    shared_paris_sessions = {
-        id(session) for session, owner in paris_owner_leases if owner != active_id
-    }
-    # One exact SQL owner read per private-library session; vendor-specific
-    # catalogue projections below still preserve their own safe row grammar.
-    private_owner_leases = tuple(
+    # A single exact SQL owner snapshot per selected session, regardless
+    # of provider. All snapshots are rechecked before publishing results.
+    # Vendor-specific public-row grammars below remain independently guarded.
+    owner_leases = tuple(
         (session, _private_search_owner(self, session))
         for session in searchable
-        if session.provider_id in {"numilog", "kobo"}
     )
-    private_owner_groups = {"numilog": [], "kobo": []}
-    for session, owner in private_owner_leases:
-        private_owner_groups[session.provider_id].append((session, owner))
-    numilog_owner_leases = tuple(private_owner_groups["numilog"])
-    kobo_owner_leases = tuple(private_owner_groups["kobo"])
+    active_id = getattr(identity, "identity_id", None)
+    foreign_owner_sessions = {
+        id(session) for session, owner in owner_leases if owner != active_id
+    }
+    shared_paris_sessions = {
+        id(session) for session in searchable
+        if session.provider_id == "paris" and id(session) in foreign_owner_sessions
+    }
     shared_numilog_sessions = {
-        id(session) for session, owner in numilog_owner_leases if owner != active_id
+        id(session) for session in searchable
+        if session.provider_id == "numilog" and id(session) in foreign_owner_sessions
     }
     shared_kobo_sessions = {
-        id(session) for session, owner in kobo_owner_leases if owner != active_id
+        id(session) for session in searchable
+        if session.provider_id == "kobo" and id(session) in foreign_owner_sessions
     }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
@@ -1315,31 +1304,28 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     paris_source_selected = any(
         session.provider_id == "paris" for session in searchable
     )
-    paris_owner_leases = tuple(
-        (session, _private_search_owner(self, session))
-        for session in searchable if session.provider_id == "paris"
-    )
-    active_id = getattr(identity, "identity_id", None)
-    shared_paris_sessions = {
-        id(session) for session, owner in paris_owner_leases if owner != active_id
-    }
-    # One exact SQL owner read per private-library session; vendor-specific
-    # catalogue projections below still preserve their own safe row grammar.
-    private_owner_leases = tuple(
+    # A single exact SQL owner snapshot per selected session, regardless
+    # of provider. All snapshots are rechecked before publishing results.
+    # Vendor-specific public-row grammars below remain independently guarded.
+    owner_leases = tuple(
         (session, _private_search_owner(self, session))
         for session in searchable
-        if session.provider_id in {"numilog", "kobo"}
     )
-    private_owner_groups = {"numilog": [], "kobo": []}
-    for session, owner in private_owner_leases:
-        private_owner_groups[session.provider_id].append((session, owner))
-    numilog_owner_leases = tuple(private_owner_groups["numilog"])
-    kobo_owner_leases = tuple(private_owner_groups["kobo"])
+    active_id = getattr(identity, "identity_id", None)
+    foreign_owner_sessions = {
+        id(session) for session, owner in owner_leases if owner != active_id
+    }
+    shared_paris_sessions = {
+        id(session) for session in searchable
+        if session.provider_id == "paris" and id(session) in foreign_owner_sessions
+    }
     shared_numilog_sessions = {
-        id(session) for session, owner in numilog_owner_leases if owner != active_id
+        id(session) for session in searchable
+        if session.provider_id == "numilog" and id(session) in foreign_owner_sessions
     }
     shared_kobo_sessions = {
-        id(session) for session, owner in kobo_owner_leases if owner != active_id
+        id(session) for session in searchable
+        if session.provider_id == "kobo" and id(session) in foreign_owner_sessions
     }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
@@ -1377,13 +1363,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     or not _search_credential_enabled(self, session)):
                 return False
         if any(_private_search_owner(self, session) != owner
-               for session, owner in paris_owner_leases):
-            return False
-        if any(_private_search_owner(self, session) != owner
-               for session, owner in numilog_owner_leases):
-            return False
-        if any(_private_search_owner(self, session) != owner
-               for session, owner in kobo_owner_leases):
+               for session, owner in owner_leases):
             return False
         return True
 
