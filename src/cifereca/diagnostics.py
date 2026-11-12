@@ -220,7 +220,7 @@ class Diagnostics:
         if record:
             entry = DiagnosticEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-                category="PNB" if fields["provider_id"] == "paris" else "LOAN",
+                category="LOAN",
                 operation="download_loan", status="ok" if status == "success" else status,
                 duration_ms=fields["duration_ms"], detail=fields,
                 task_ref=fields.get("task_ref"),
@@ -235,7 +235,7 @@ class Diagnostics:
                 logger.log(
                     severity, "%s", message,
                     extra=_core_journal_record(
-                        "PNB" if fields["provider_id"] == "paris" else "LOAN",
+                        "LOAN",
                         "download_loan", "ok" if status == "success" else status,
                         message, fields,
                     ),
