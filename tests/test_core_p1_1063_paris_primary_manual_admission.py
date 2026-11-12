@@ -39,7 +39,7 @@ def select(service, credential):
 def test_single_paris_connection_legacy_unselected_still_works(tmp_path):
     service, _session, account, item, state = setup(tmp_path)
     try:
-        assert service.can_borrow_paris(item)
+        assert service.can_borrow_manual(item)
         assert attempt(service, account, item)["status"] == "confirmed"
         assert state["mutations"] == 1
     finally:
@@ -50,7 +50,7 @@ def test_two_sources_need_selection_and_selected_one_is_only_borrower(tmp_path):
     service, _session, account, item, state = setup(tmp_path)
     try:
         add_secondary(service)
-        assert not service.can_borrow_paris(item)
+        assert not service.can_borrow_manual(item)
         outcome = attempt(service, account, item)
         assert (outcome["status"], outcome["reason_code"]) == (
             "blocked", "borrow_scope_changed",
@@ -59,12 +59,12 @@ def test_two_sources_need_selection_and_selected_one_is_only_borrower(tmp_path):
         assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
 
         select(service, "card-B")
-        assert not service.can_borrow_paris(item)
+        assert not service.can_borrow_manual(item)
         assert attempt(service, account, item)["status"] == "blocked"
         assert not state["calls"]
 
         select(service, "card-A")
-        assert service.can_borrow_paris(item)
+        assert service.can_borrow_manual(item)
         assert attempt(service, account, item)["status"] == "confirmed"
         assert state["mutations"] == 1
     finally:
@@ -165,7 +165,7 @@ def test_invalid_saved_primary_never_admits_action(tmp_path, change):
             select(service, "card-absent")
         else:
             select(service, True)
-        assert not service.can_borrow_paris(item)
+        assert not service.can_borrow_manual(item)
         result = attempt(service, account, item)
         assert result["status"] == "blocked"
         assert not state["calls"]
@@ -217,8 +217,8 @@ def test_shared_paris_catalogue_result_stays_inert_even_when_owner_is_current(tm
     service, _session, account, item, state = setup(tmp_path)
     try:
         shared = replace(item, metadata={"catalogue_access": "shared_read_only"})
-        assert service.can_borrow_paris(item)
-        assert not service.can_borrow_paris(shared)
+        assert service.can_borrow_manual(item)
+        assert not service.can_borrow_manual(shared)
         diagnostic = service.paris_borrow_diagnostic(shared)
         assert diagnostic["local_action_possible"] is False
         assert diagnostic["reason_code"] == "edition_or_source_unqualified"
