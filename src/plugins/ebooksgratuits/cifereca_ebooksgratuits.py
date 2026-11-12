@@ -327,6 +327,11 @@ def _public_epub_filename(title, acquisition_url):
 
 
 class EbooksSession(ProviderSession):
+    # Inert, class-level admission policy. Discovery/search results alone are
+    # not a proven downloadable EPUB offer. Core reads this via getattr_static,
+    # without invoking any provider getter or network side effect.
+    exact_catalogue_download_offer_required = True
+
     def __init__(self,*,config,diagnostics,transport=None,**kw):
         super().__init__(descriptor=DESCRIPTOR,**kw)
         self.transport=transport
