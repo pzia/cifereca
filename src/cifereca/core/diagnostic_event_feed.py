@@ -322,7 +322,6 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # text, guessed module names or timestamps as domain evidence.
             business_module = (
                 "SYNC" if source_sync_detail else
-                "PNB" if loan_download_detail and loan_download_detail["provider_id"] == "paris" else
                 "LOAN" if loan_download_detail or loan_acsm_action_detail else
                 "ADEPT" if adept_detail else
                 "PLUGIN" if connection_detail or connection_success_detail or connect_attempt_detail else
@@ -562,9 +561,12 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 and type(diagnostics) is Diagnostics
                 and row.get("verified_loan_download") is True):
             candidate = public_loan_download_fields(row.get("detail"))
-            if (candidate and category == (
-                "PNB" if candidate["provider_id"] == "paris" else "LOAN"
-            ) and status == (
+            # New Core events use LOAN for every provider. Accept the old
+            # Paris-only PNB category solely for previously stored attested
+            # events; a foreign provider cannot claim the legacy exception.
+            if (candidate and (category == "LOAN" or (
+                category == "PNB" and candidate["provider_id"] == "paris"
+            )) and status == (
                 "ok" if candidate["status"] == "success" else candidate["status"]
             )):
                 loan_download_detail = candidate

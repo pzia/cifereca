@@ -49,7 +49,7 @@ def test_loan_domain_is_core_attested_global_and_provider_scoped(tmp_path):
         domain="loan_download", limit=1, offset=1,
     )
     rows = first["events"] + second["events"]
-    assert {row["module"] for row in rows} == {"PNB", "LOAN"}
+    assert {row["module"] for row in rows} == {"LOAN"}
     assert {row["domain"] for row in rows} == {"loan_download"}
     assert {row["provider_id"] for row in rows} == {"paris", "numilog"}
     assert all(row["source"] == "core_events" for row in rows)
@@ -97,3 +97,46 @@ def test_unknown_business_domain_fails_closed(tmp_path, invalid):
         query_diagnostic_events(
             Diagnostics(), log_path=tmp_path / "missing.log", domain=invalid,
         )
+
+
+def test_legacy_paris_pnb_is_readable_but_not_new_producer_category(tmp_path):
+    """Only prior Core-attested Paris records may retain the PNB category."""
+    from dataclasses import replace
+
+    diagnostics = Diagnostics(enabled=True)
+    diagnostics.add_core_loan_download(
+        terminal("paris", status="failed", code="provider_failure")
+    )
+    diagnostics.add_core_loan_download(
+        terminal("numilog", status="success", code="completed")
+    )
+    with diagnostics._lock:
+        paris, other = diagnostics._items
+        assert paris.category == "LOAN" and other.category == "LOAN"
+        diagnostics._items[0] = replace(paris, category="PNB")
+        diagnostics._items[1] = replace(other, category="PNB")
+
+    report = query_diagnostic_events(
+        diagnostics, log_path=tmp_path / "missing.log",
+        domain="loan_download", source="core_events",
+    )
+    assert report["total"] == 1
+    (event,) = report["events"]
+    assert event["module"] == "PNB"
+    assert event["provider_id"] == "paris"
+    assert event["domain"] == "loan_download"
+
+
+def test_new_paris_download_is_in_neutral_loan_domain(tmp_path):
+    diagnostics = Diagnostics(enabled=True)
+    diagnostics.add_core_loan_download(
+        terminal("paris", status="failed", code="provider_failure")
+    )
+    (row,) = diagnostics.snapshot()
+    assert row["category"] == "LOAN"
+    report = query_diagnostic_events(
+        diagnostics, log_path=tmp_path / "missing.log",
+        domain="loan_download", source="core_events", provider_id="paris",
+    )
+    assert report["total"] == 1
+    assert report["events"][0]["module"] == "LOAN"
