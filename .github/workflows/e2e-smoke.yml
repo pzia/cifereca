@@ -6,6 +6,7 @@ on:
     paths:
       - 'e2e/**'
       - 'src/cifereca/gui/**'
+      - 'src/cifereca/plugin_api/**'
       - 'src/cifereca/brokers.py'
       - 'src/cifereca/core/source_materialization.py'
       - 'src/cifereca/core/search_orchestration.py'
