@@ -152,5 +152,6 @@ def manual_borrow_action(
         expected_identity_id=expected_identity_id, confirmed=confirmed,
         expected_context_epoch=expected_context_epoch,
         expected_account=expected_account, verification=policy.verification,
+        observed_loan_account_alias=policy.observed_loan_account_alias,
         additional_scope_current=still_bound,
     )

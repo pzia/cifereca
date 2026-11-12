@@ -82,6 +82,7 @@ def test_paris_declared_policy_preserves_existing_exact_source_admission(tmp_pat
             "DILICOM", primary_borrower_id="",
             source_selection_key="primary_paris_connection_id",
             verification="provider_observed",
+            observed_loan_account_alias="primary",
         )
         assert resolved_manual_borrow_policy(service, item) == policy
         # Preserve the positive exact-source test after deleting the legacy
@@ -203,6 +204,91 @@ def test_generic_action_denies_ambiguous_consent_before_supplier_io(tmp_path, co
         assert state["calls"] == [] and state["mutations"] == 0
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("alias", ["", "bad/alias", "bad alias", 4, True, "!" * 130])
+def test_provider_loan_account_alias_rejects_invalid_contract(alias):
+    with pytest.raises(ValueError, match="invalid_manual_borrow_policy"):
+        ManualBorrowPolicy(
+            "DILICOM", primary_borrower_id="",
+            verification="provider_observed",
+            observed_loan_account_alias=alias,
+        )
+
+
+def test_bnf_and_paris_observed_loan_account_id_are_plugin_owned(tmp_path):
+    service, session, account, item = bnf_setup(tmp_path)
+    try:
+        session.descriptor = replace(
+            session.descriptor,
+            manual_borrow_policy=ManualBorrowPolicy("BNF_PRET"),
+        )
+        policy = resolved_manual_borrow_policy(service, item)
+        assert policy is not None
+        assert policy.observed_loan_account_alias is None
+    finally:
+        service.close()
+
+    service, session, account, item, state = paris_setup(tmp_path)
+    try:
+        policy = resolved_manual_borrow_policy(service, item)
+        assert policy is not None
+        assert policy.observed_loan_account_alias == "primary"
+        result = service.borrow_manual(
+            item, expected_identity_id=account.identity_id,
+            confirmed=True, expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        assert result["status"] == "confirmed"
+        assert result["provider_verified"] is True
+        assert state["mutations"] == 1
+        assert service.storage.entitlements(provider_id="paris") == []
+    finally:
+        service.close()
+
+
+def test_wrong_observed_account_alias_never_confirms_loan(tmp_path):
+    service, session, account, item, state = paris_setup(tmp_path)
+    try:
+        session.descriptor = replace(
+            session.descriptor,
+            manual_borrow_policy=replace(
+                session.descriptor.manual_borrow_policy,
+                observed_loan_account_alias="foreign-account",
+            ),
+        )
+        result = service.borrow_manual(
+            item, expected_identity_id=account.identity_id,
+            confirmed=True, expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        assert result["status"] == "verification_unavailable"
+        assert result["provider_verified"] is False
+        assert state["mutations"] == 1
+        again = service.borrow_manual(
+            item, expected_identity_id=account.identity_id,
+            confirmed=True, expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        assert again["reason_code"] == "borrow_previous_attempt"
+        assert state["mutations"] == 1
+        assert service.storage.entitlements(provider_id="paris") == []
+    finally:
+        service.close()
+
+
+def test_generic_executor_never_infers_primary_alias_from_empty_id():
+    import ast
+    from pathlib import Path
+
+    code = (Path(__file__).resolve().parents[1]
+            / "src/cifereca/core/manual_library_borrow.py").read_text(encoding="utf-8")
+    tree = ast.parse(code)
+    func = next(node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == "manual_borrow")
+    normalized = ast.unparse(func)
+    assert "'primary' if primary_id == ''" not in normalized
+    assert "observed_loan_account_alias" in normalized
 
 
 def test_mismatched_explicit_verification_modes_fail_before_supplier_io(tmp_path):
