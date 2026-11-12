@@ -20,6 +20,16 @@ _CURRENT: ContextVar[tuple[Any, Account, Any, LoanInventorySnapshot, object] | N
 )
 
 
+def _session_inventory_scope(account: Account, session: Any) -> LoanInventoryScope | None:
+    """Static descriptor read; invalid provenance never admits a lease."""
+    try:
+        return LoanInventoryScope.for_account(
+            account, descriptor=getattr_static(session, "descriptor", None),
+        )
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 @contextmanager
 def opening_scoped_loan_inventory(service, account, session, snapshot):
     """Offer exactly one frozen typed inventory during the next rights phase.
@@ -31,7 +41,7 @@ def opening_scoped_loan_inventory(service, account, session, snapshot):
     allowed = (
         type(account) is Account
         and type(snapshot) is LoanInventorySnapshot
-        and snapshot.scope == LoanInventoryScope.for_account(account, descriptor=getattr_static(session, "descriptor", None))
+        and snapshot.scope == _session_inventory_scope(account, session)
         and snapshot.status == "success"
         and bool(snapshot.branches)
         and all(
@@ -66,7 +76,7 @@ def current_scoped_loan_inventory(service, account, session) -> LoanInventorySna
             or snapshot.status != "success"):
         return None
     try:
-        if snapshot.scope != LoanInventoryScope.for_account(account, descriptor=getattr_static(session, "descriptor", None)):
+        if snapshot.scope != _session_inventory_scope(account, session):
             return None
     except (TypeError, ValueError, AttributeError):
         return None
