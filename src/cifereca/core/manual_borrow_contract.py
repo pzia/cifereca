@@ -58,6 +58,35 @@ def _selected_primary_source_current(service, item, identity_id, policy):
     )
 
 
+def manual_borrow_action_diagnostic(
+    service, item: SearchResult,
+) -> dict[str, object]:
+    """Inert, provider-neutral scoped admission for new or spent requests.
+
+    This result never attests subscription, quota, lender permission or
+    completed borrowing. The resolved installed policy, not the public
+    catalogue, defines the account and edition scope.
+    """
+    from .manual_library_borrow import manual_borrow_diagnostic
+    policy = resolved_manual_borrow_policy(service, item)
+    if policy is None:
+        return {
+            "local_action_possible": False,
+            "reason_code": "edition_or_source_unqualified",
+            "provider_eligibility": "unknown",
+        }
+    return manual_borrow_diagnostic(
+        service, item, provider_id=item.source_provider,
+        docbase=policy.docbase, primary_id=policy.primary_borrower_id,
+        source_current=lambda service_, item_, identity: (
+            resolved_manual_borrow_policy(service_, item_) == policy
+            and _selected_primary_source_current(
+                service_, item_, identity, policy,
+            ) is True
+        ),
+    )
+
+
 def manual_borrow_action_available(service, item: SearchResult) -> bool:
     """Inert visibility; supplier quota/offer/permission remain unknown."""
     from .manual_library_borrow import (
