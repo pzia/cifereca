@@ -114,11 +114,26 @@ def verify_plugin_scroll(window, later, done, *, width: int, checkpoint=None):
         switch = page._plugin_switches[target]
         mark("first_grab_focus")
         assert switch.grab_focus() is not False
+        # GTK may scroll the newly focused widget into view and override the
+        # explicit scroll requested by initial_scroll(). Reapply the test's
+        # middle-of-list starting position *after* the focus transition and
+        # verify the actual allocation on the next main-loop iteration.
+        mark("first_scroll_request")
+        row_y, _ = geometry()
+        adjustment = page.get_vadjustment()
+        adjustment.set_value(min(
+            row_y - 170,
+            adjustment.get_upper() - adjustment.get_page_size(),
+        ))
+        later(100, first_toggle_ready)
+
+    def first_toggle_ready():
         mark("first_toggle_geometry")
         row_y, scroll = geometry()
         mark("first_toggle_scroll")
         assert scroll > 250, "GTK plugin list did not scroll to middle"
         state["offset"] = row_y - scroll
+        switch = page._plugin_switches[target]
         mark("first_toggle_set_inactive")
         switch.set_active(False)
         mark("first_toggle_callback")
