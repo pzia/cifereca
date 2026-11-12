@@ -13,7 +13,6 @@ from cifereca.core import manual_library_borrow, primary_source_binding
 
 class Probe:
     paris_borrow_diagnostic = services.LibraryService.paris_borrow_diagnostic
-    can_borrow_paris = services.LibraryService.can_borrow_paris
 
 
 class FakeResult:
@@ -68,8 +67,8 @@ def test_readiness_is_not_provider_permission_even_when_local_action_possible(ha
         "reason_code": "local_action_available_provider_unknown",
         "provider_eligibility": "unknown",
     }
-    assert service.can_borrow_paris(item) is True
-    assert counters == {"scope": 2, "local": 2}
+    assert evidence["local_action_possible"] is True
+    assert counters == {"scope": 1, "local": 1}
 
 
 @pytest.mark.parametrize(("change", "reason"), [
@@ -111,7 +110,6 @@ def test_local_rejection_never_claims_remote_ineligibility(harness):
     evidence = service.paris_borrow_diagnostic(FakeResult())
     assert evidence["reason_code"] == "local_admission_unavailable"
     assert evidence["provider_eligibility"] == "unknown"
-    assert service.can_borrow_paris(FakeResult()) is False
 
 
 def test_exception_fails_closed_without_leaking_private_data(harness, monkeypatch):
@@ -128,3 +126,25 @@ def test_exception_fails_closed_without_leaking_private_data(harness, monkeypatc
         "provider_eligibility": "unknown",
     }
     assert "sensitive" not in str(evidence)
+
+
+def test_retired_paris_manual_facades_are_physically_absent():
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "src/cifereca/services.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    owner = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef)
+        and node.name == "LibraryService"
+    )
+    methods = {
+        node.name for node in owner.body if isinstance(node, ast.FunctionDef)
+    }
+    assert "can_borrow_paris" not in methods
+    assert "borrow_paris_manual" not in methods
+    assert "can_borrow_manual" in methods
+    assert "borrow_manual" in methods
+    # The readonly diagnosis still gates spent claims, not a new borrow POST.
+    assert "paris_borrow_diagnostic" in methods
+    assert "paris_borrow_followup_available" in methods
