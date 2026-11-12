@@ -515,20 +515,20 @@ class LibraryService:
         No entitlement, acquisition, ADEPT or borrowed-state mutation.
         """
         from inspect import getattr_static, isfunction
-        from .core.diagnostic_bnf_loan_action import (
-            ActionObservation, BnfLoanActionError, STAGE_CODES,
+        from .core.diagnostic_explicit_loan_action import (
+            ActionObservation, LoanActionError, valid_stage_code,
         )
         from .core.explicit_loan_acsm import stage_explicit_loan_acsm
 
-        observation = ActionObservation(self, 'stage_loan_token')
+        observation = ActionObservation(self, 'stage_loan_token', provider_id='bnf-pret')
         try:
             # The Core validates the exact origin and consent before dispatch:
             # a missing/wrong provider must not observe or execute a private
             # session getter. The plugin supplies only the BnF branch/reasons;
             # the shared Core still owns the lock, lease and ACSM inspection.
             if confirmed is not True:
-                raise BnfLoanActionError("bnf_explicit_confirmation_required")
-            if (type(loan) is not Loan or loan.source_provider != BnfLoanActionError.provider_id
+                raise LoanActionError("bnf_explicit_confirmation_required")
+            if (type(loan) is not Loan or loan.source_provider != 'bnf-pret'
                     or loan.medium != "digital" or loan.state != "active"
                     or type(loan.source_credential) is not str
                     or not loan.source_credential
@@ -539,13 +539,13 @@ class LibraryService:
                     or type(loan.record_id) is not str or not loan.record_id
                     or type(expected_identity_id) is not str
                     or expected_identity_id != loan.identity_id):
-                raise BnfLoanActionError("bnf_loan_scope_unproven")
+                raise LoanActionError("bnf_loan_scope_unproven")
             try:
                 session = self._session_for_source(
                     loan.source_provider, loan.source_credential,
                 )
             except Exception:
-                raise BnfLoanActionError("bnf_loan_scope_unproven") from None
+                raise LoanActionError("bnf_loan_scope_unproven") from None
             profile = getattr_static(
                 type(session), "loan_acsm_stage_profile", None,
             )
@@ -558,11 +558,11 @@ class LibraryService:
             if (type(profile) is not tuple or len(profile) != 2
                     or type(profile[0]) is not str or not profile[0]
                     or type(profile[1]) is not tuple or len(profile[1]) != 5
-                    or any(type(code) is not str or code not in STAGE_CODES
+                    or any(type(code) is not str or not valid_stage_code(code, loan.source_provider)
                            for code in profile[1])
                     or not isfunction(activity_reason)
                     or not isfunction(candidate_reason)):
-                raise BnfLoanActionError("bnf_loan_token_unavailable")
+                raise LoanActionError("bnf_loan_token_unavailable")
             reason_codes = dict(zip(
                 ("confirmation", "scope", "unavailable", "invalid", "busy"),
                 profile[1],
@@ -575,7 +575,7 @@ class LibraryService:
                 inspect_artifact=inspect_artifact,
                 expected_provider_id=loan.source_provider,
                 selected_branch=profile[0],
-                action_error_type=BnfLoanActionError,
+                action_error_type=LoanActionError,
                 error_codes=reason_codes,
                 classify_activity_error=lambda error: activity_reason(
                     session, error,
@@ -585,13 +585,13 @@ class LibraryService:
                 ),
                 observe_phase=observation.at,
             )
-        except BnfLoanActionError as exc:
+        except LoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
         except Exception as exc:
             code = 'bnf_local_staging_failed' if isinstance(exc, OSError) else 'bnf_action_failed'
             observation.emit('failed', code)
-            raise BnfLoanActionError(code) from None
+            raise LoanActionError(code) from None
         observation.emit('success', 'candidate_acsm')
         return result
 
@@ -604,13 +604,13 @@ class LibraryService:
         Physical placement identifies BnF as the observed source. The ledger
         and DRM execution remain manual; neither establishes a BnF right.
         """
-        from .core.diagnostic_bnf_loan_action import ActionObservation, BnfLoanActionError
-        observation = ActionObservation(self, 'import_acsm')
+        from .core.diagnostic_explicit_loan_action import ActionObservation, LoanActionError
+        observation = ActionObservation(self, 'import_acsm', provider_id='bnf-pret')
         try:
             if (type(expected_identity_id) is not str or not expected_identity_id
                     or self.current_identity is None
                     or self.current_identity.identity_id != expected_identity_id):
-                raise BnfLoanActionError('bnf_loan_scope_unproven')
+                raise LoanActionError('bnf_loan_scope_unproven')
             if (type(loan) is not Loan or loan.source_provider != 'bnf-pret'
                     or loan.identity_id != expected_identity_id
                     or loan.medium != 'digital' or loan.state != 'active'
@@ -618,7 +618,7 @@ class LibraryService:
                     or not loan.source_account_id
                     or self.storage.identity_for_connection(
                         'bnf-pret', loan.source_credential) != expected_identity_id):
-                raise BnfLoanActionError('bnf_loan_scope_unproven')
+                raise LoanActionError('bnf_loan_scope_unproven')
             try:
                 account = self._account_for_loan(loan)
                 expected = self._acquisition_work_dir(expected_identity_id, 'bnf-pret', loan.id)
@@ -631,11 +631,11 @@ class LibraryService:
                         or candidate.parent.resolve() != expected.resolve()
                         or not candidate.name.startswith('bnf-loan-')
                         or candidate.suffix.casefold() != '.acsm'):
-                    raise BnfLoanActionError('bnf_loan_scope_unproven')
-            except BnfLoanActionError:
+                    raise LoanActionError('bnf_loan_scope_unproven')
+            except LoanActionError:
                 raise
             except Exception:
-                raise BnfLoanActionError('bnf_loan_scope_unproven') from None
+                raise LoanActionError('bnf_loan_scope_unproven') from None
             from .core.observed_loan_scope import observed_loan
             from .core.observed_import_provenance import remember_observed_import
             display_scope = observed_loan(loan)
@@ -647,12 +647,12 @@ class LibraryService:
                 self, result, display_scope, provider_id='bnf-pret',
                 provenance_field='bnf_observed_loan',
             )
-        except BnfLoanActionError as exc:
+        except LoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
         except Exception:
             observation.emit('failed', 'bnf_import_failed')
-            raise BnfLoanActionError('bnf_import_failed') from None
+            raise LoanActionError('bnf_import_failed') from None
         status = result.get('status') if type(result) is dict else None
         if status in {'complete', 'unchanged'}:
             observation.emit('success', status)
