@@ -1871,8 +1871,10 @@ class LibraryService:
         # Private holdings are borrower-sensitive for every authenticated
         # source, regardless of provider identity. An absent/rebound
         # connection can never authorize a private GET or a cached detail.
-        from .core.private_source_owner_scope import private_source_owner_matches
-        if not private_source_owner_matches(self, item):
+        from .core.private_source_owner_scope import (
+            private_source_owner_matches, public_catalogue_source,
+        )
+        if not public_catalogue_source(item) and not private_source_owner_matches(self, item):
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
@@ -1896,7 +1898,7 @@ class LibraryService:
             if isinstance(cached, dict):
                 # A cached rights-bearing response must not outlive a source
                 # owner transfer or an active identity change mid-cache-read.
-                if not private_source_owner_matches(self, item):
+                if not public_catalogue_source(item) and not private_source_owner_matches(self, item):
                     return ItemDetail(
                         record_id=item.record_id, docbase=item.docbase,
                         title=item.title, author=item.author,
@@ -1912,7 +1914,7 @@ class LibraryService:
         detail = self._session_for_source(item.source_provider, item.source_credential).holdings(item, search_terms)
         # Provider I/O can complete after A→B→A or a SQLite rebind.
         # A revoked read must not publish or cache private borrower details.
-        if not private_source_owner_matches(self, item):
+        if not public_catalogue_source(item) and not private_source_owner_matches(self, item):
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
@@ -2702,10 +2704,13 @@ class LibraryService:
         # An authenticated/private offer must belong to the selected local
         # identity before invoking any session or offering an acquisition.
         # Public catalogue delivery is separately scoped by its sentinel.
-        if item.source_credential != "__public__":
-            from .core.private_source_owner_scope import private_source_owner_matches
-            if not private_source_owner_matches(self, item):
-                return False
+        from .core.private_source_owner_scope import (
+            private_source_owner_matches, public_catalogue_source,
+        )
+        if (item.source_credential != "__public__"
+                and not public_catalogue_source(item)
+                and not private_source_owner_matches(self, item)):
+            return False
         try:
             from .core.private_inventory_row_scope import selected_private_offer_hint
             private_hint = selected_private_offer_hint(self, item)
