@@ -120,3 +120,83 @@ def test_policy_rejects_invalid_cap_without_mutation(tmp_path):
             "WHERE provider_id='synthetic'"
         ).fetchone() == (0,)
     storage.close()
+
+
+def _recreate_v14_indexes(path):
+    """Synthetic v14 checkout, no user data erased."""
+    with sqlite3.connect(path) as sql:
+        for trigger in (
+            "trg_provider_connection_limit_insert",
+            "trg_provider_connection_limit_update",
+            "trg_provider_account_limit_insert",
+            "trg_provider_account_limit_update",
+        ):
+            sql.execute("DROP TRIGGER IF EXISTS " + trigger)
+        sql.execute("DROP TABLE IF EXISTS provider_cardinality_policies")
+        sql.execute(
+            "CREATE UNIQUE INDEX uq_kobo_connection_identity "
+            "ON provider_connections(identity_id) WHERE provider_id='kobo'"
+        )
+        sql.execute(
+            "CREATE UNIQUE INDEX uq_kobo_account_identity "
+            "ON provider_accounts(identity_id) WHERE provider_id='kobo'"
+        )
+        sql.execute(
+            "UPDATE metadata SET value='14' WHERE key='schema_version'"
+        )
+
+
+def test_v14_upgrade_keeps_existing_bindings_and_removes_old_indexes(tmp_path):
+    path = tmp_path / "upgrade.sqlite3"
+    storage = Storage(path)
+    storage.provider_connection_put(connection("kobo", "existing"))
+    storage.close()
+    _recreate_v14_indexes(path)
+    upgraded = Storage(path)
+    assert upgraded.schema_version() == 15
+    assert len(upgraded.provider_connections()) == 1
+    with sqlite3.connect(path) as sql:
+        assert sql.execute(
+            "SELECT connection_limit FROM provider_cardinality_policies "
+            "WHERE provider_id='kobo'"
+        ).fetchone() == (1,)
+        assert "uq_kobo_connection_identity" not in {
+            row[1] for row in sql.execute(
+                "PRAGMA index_list('provider_connections')"
+            )
+        }
+    upgraded.close()
+
+
+def test_v15_migration_failure_rolls_back_indexes_atomically(tmp_path, monkeypatch):
+    path = tmp_path / "rollback.sqlite3"
+    storage = Storage(path)
+    storage.close()
+    _recreate_v14_indexes(path)
+    original = Storage._write_schema_version
+
+    def reject_v15(db, version):
+        if version == 15:
+            raise RuntimeError("synthetic_version_write_failure")
+        return original(db, version)
+
+    monkeypatch.setattr(Storage, "_write_schema_version", staticmethod(reject_v15))
+    with pytest.raises(RuntimeError, match="synthetic_version_write_failure"):
+        Storage(path)
+    with sqlite3.connect(path) as sql:
+        assert sql.execute(
+            "SELECT value FROM metadata WHERE key='schema_version'"
+        ).fetchone() == ("14",)
+        assert "uq_kobo_connection_identity" in {
+            row[1] for row in sql.execute(
+                "PRAGMA index_list('provider_connections')"
+            )
+        }
+        assert sql.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='provider_cardinality_policies'"
+        ).fetchone() is None
+    monkeypatch.setattr(Storage, "_write_schema_version", original)
+    recovered = Storage(path)
+    assert recovered.schema_version() == 15
+    recovered.close()
