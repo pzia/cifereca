@@ -19,6 +19,10 @@ NODE24_ARTIFACT_WORKFLOWS = frozenset({
 EXACT_ARTIFACT_ACTIONS = {"e2e-smoke.yml": "v7.0.2"}
 
 EXPECTED = {
+    "provider-ast-inventory.yml": (
+        ("provider-ast-responsibilities.json", "provider-core-loc.json"),
+    ),
+
     "gtk-ubuntu24-cache-asset.yml": (
         (
             ".gtk-publish/gtk4-deb-cache-ubuntu24-noble-amd64.tar.gz",
