@@ -11,6 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from inspect import getattr_static
+from re import fullmatch
 import logging
 from typing import Literal
 
@@ -62,8 +63,8 @@ class LoanInventoryScope:
         if self.primary_account_alias is not None and (
             not self.primary_alias_policy_checked
             or self.account_id != ""
-            or not _valid_token(self.primary_account_alias)
-            or self.primary_account_alias == self.account_id
+            or type(self.primary_account_alias) is not str
+            or fullmatch(r"[a-z][a-z0-9_-]{0,63}", self.primary_account_alias) is None
         ):
             raise ValueError("invalid_loan_inventory_primary_alias")
 
@@ -79,10 +80,14 @@ class LoanInventoryScope:
         if descriptor is not None:
             if type(descriptor) is not ProviderDescriptor or descriptor.id != account.provider_id:
                 raise ValueError("invalid_loan_inventory_descriptor")
-            if account.unique_id == "":
-                alias = descriptor.existing_primary_loan_account_alias
-                if alias is not None and not _valid_token(alias):
-                    raise ValueError("invalid_loan_inventory_primary_alias")
+            declared = descriptor.existing_primary_loan_account_alias
+            if declared is not None and (
+                type(declared) is not str
+                or fullmatch(r"[a-z][a-z0-9_-]{0,63}", declared) is None
+            ):
+                raise ValueError("invalid_loan_inventory_primary_alias")
+            if account.unique_id == "" and account.is_primary is True:
+                alias = declared
         return cls(account.identity_id, account.provider_id,
                    account.credential_id, account.unique_id, alias,
                    descriptor is not None)
