@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from types import SimpleNamespace
+
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 
 import pytest
 
@@ -20,6 +23,13 @@ from tests.test_library_reconciliation import epub
 @pytest.fixture
 def paris_borrowers(rig, tmp_path):
     service, book, root, right, _ = rig
+    # The installed provider, not the Core or a loan row, declares the
+    # legacy empty-ID primary borrower alias.
+    service.registry.register(SimpleNamespace(descriptor=ProviderDescriptor(
+        id="paris", display_name="Synthetic Paris", description="Local test",
+        state="ready", capabilities=ProviderCapabilities(),
+        existing_primary_loan_account_alias="primary",
+    )))
     # Exactly the provider-paris shape: primary has an empty upstream UID,
     # whereas its stored Loan/entitlement account coordinate is "primary".
     primary = Account(

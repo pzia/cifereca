@@ -14,7 +14,7 @@ from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from .library_audit_roots import configured_identity_roots
 from .library_declared_links import (
-    DeclarationRejected, _SCOPE_FIELDS, _account_current,
+    DeclarationRejected, _SCOPE_FIELDS, _account_current, _installed_descriptor,
     _collisions, _context, _records, _require, _right_state, _text, _transaction,
 )
 from .library_fresh_file_check import revalidate_observed_file
@@ -63,6 +63,7 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
         epoch = source_context_epoch(service)
         identity = service.identity_by_id(identity_id)
         roots = configured_identity_roots(config, identity_id)[identity_id]
+        descriptor = _installed_descriptor(service, provider_id)
 
         def valid():
             return (service.storage is storage and service.config is config
@@ -71,7 +72,8 @@ def verify_declared_presence(service, *, identity_id, provider_id, credential_id
                     and source_context_epoch(service) == epoch
                     and identity is not None
                     and service.identity_by_id(identity_id) is identity
-                    and _account_current(service.accounts, scope)
+                    and descriptor is _installed_descriptor(service, provider_id)
+                    and _account_current(service.accounts, scope, descriptor=descriptor)
                     and configured_identity_roots(config, identity_id)[identity_id] == roots
                     and not cancelled())
 
