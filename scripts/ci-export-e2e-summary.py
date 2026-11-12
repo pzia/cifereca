@@ -138,6 +138,24 @@ def _failed_diagnostic(source: Path, scenario: str) -> dict:
                     "broker_queried",
                 )
             }
+        # #5376: the GTK bulk-action focus retry can expire after the
+        # 50-event refresh already succeeded. Publish only closed booleans
+        # to distinguish inactive toplevel, missing mapping and lost focus.
+        observation = data.get("bulk_focus_observation")
+        if (scenario == "diagnostics-large-1600"
+                and stage == "P0_2140_bulk_fixture"
+                and type(observation) is dict
+                and set(observation) == {
+                    "button_mapped", "button_sensitive", "toplevel_active",
+                    "button_focused", "toplevel_focus_is_button",
+                }
+                and all(type(value) is bool for value in observation.values())):
+            result["bulk_focus_observation"] = {
+                key: observation[key] for key in (
+                    "button_mapped", "button_sensitive", "toplevel_active",
+                    "button_focused", "toplevel_focus_is_button",
+                )
+            }
         # #2095: only closed, fixture-derived diagnostic state is publishable
         # for the failed *real* MainWindow audit acceptance. In particular,
         # the raw subtitle, source ID, pointers and task exceptions never pass.
