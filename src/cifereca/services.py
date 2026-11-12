@@ -280,6 +280,29 @@ class LibraryService:
     def can_download_loan(self, loan: Loan) -> bool:
         return self.loan_download_eligibility(loan)["available"] is True
 
+    def manual_borrow_policy(self, item: SearchResult):
+        """Static installed-plugin manual-borrow ABI; never a permission."""
+        from .core.manual_borrow_contract import resolved_manual_borrow_policy
+        return resolved_manual_borrow_policy(self, item)
+
+    def can_borrow_manual(self, item: SearchResult) -> bool:
+        """Generic inert availability, with exact provider-owned scope."""
+        from .core.manual_borrow_contract import manual_borrow_action_available
+        return manual_borrow_action_available(self, item)
+
+    def borrow_manual(
+        self, item: SearchResult, *, expected_identity_id: str,
+        confirmed: bool = False, expected_context_epoch: int | None = None,
+        expected_account: Account | None = None,
+    ) -> dict[str, object]:
+        """Only the durable, one-shot Core borrower may issue a provider POST."""
+        from .core.manual_borrow_contract import manual_borrow_action
+        return manual_borrow_action(
+            self, item, expected_identity_id=expected_identity_id,
+            confirmed=confirmed, expected_context_epoch=expected_context_epoch,
+            expected_account=expected_account,
+        )
+
     def can_borrow_bnf(self, item: SearchResult) -> bool:
         """Inert BnF action visibility, never a borrower permission."""
         from .core.manual_library_borrow import manual_borrow_available

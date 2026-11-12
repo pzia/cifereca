@@ -255,6 +255,7 @@ def manual_borrow(
     expected_context_epoch: int | None = None,
     expected_account: Account | None = None,
     additional_scope_current=None,
+    verification: str | None = None,
 ) -> dict[str, object]:
     """Select the exact live lender account and admit at most one attempt.
 
@@ -266,6 +267,17 @@ def manual_borrow(
     """
     if confirmed is not True:
         return _result("blocked", "borrow_confirmation_required")
+    # The versioned plugin ABI supplies a checked verification convention.
+    # Legacy source-specific callers retain their previous default until cutover.
+    verification_mode = (
+        ("active_only" if primary_id is None else "provider_observed")
+        if verification is None else verification
+    )
+    if (type(verification_mode) is not str
+            or verification_mode not in {"active_only", "provider_observed"}
+            or (primary_id is None and verification_mode != "active_only")
+            or (primary_id == "" and verification_mode != "provider_observed")):
+        return _result("blocked", "borrow_scope_unverified")
     # A provider session may be replaced/rebound without changing either the
     # selected profile or the account epoch. Pin this Core-wide source epoch
     # before provider inspection and revoke at every later mutating boundary.
@@ -391,8 +403,8 @@ def manual_borrow(
                 # (including numeric states). Its claimed-borrow ABI verifies
                 # that observation independently; no owned/active right is
                 # synthesized here. BnF's active-state requirement is retained.
-                or (primary_id is None and loan.state != "active")
-                or (primary_id is not None and loan.state in (
+                or (verification_mode == "active_only" and loan.state != "active")
+                or (verification_mode == "provider_observed" and loan.state in (
                     "returned", "expired", "inactive"))
                 or type(loan.id) is not str or not loan.id):
             raise ValueError("loan_verification_unavailable")

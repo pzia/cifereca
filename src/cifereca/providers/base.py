@@ -145,6 +145,43 @@ class BorrowerScopedOptionField:
     help_text: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class ManualBorrowPolicy:
+    """Versioned provider declaration, never a permission to issue a loan.
+
+    The Core independently checks the installed manifest, live session,
+    account and source, durable one-shot claim, consent and observed result.
+    Missing/invalid contracts fail closed; no catalogue metadata is trusted.
+    """
+    docbase: str
+    primary_borrower_id: str | None = None
+    source_selection_key: str | None = None
+    verification: Literal["active_only", "provider_observed"] = "active_only"
+    schema: str = "cifereca.manual-borrow/1"
+
+    def __post_init__(self) -> None:
+        from re import fullmatch
+
+        if (type(self.schema) is not str
+                or self.schema != "cifereca.manual-borrow/1"
+                or type(self.docbase) is not str
+                or fullmatch(r"[A-Z][A-Z0-9_]{0,63}", self.docbase) is None
+                or (self.primary_borrower_id is not None
+                    and (type(self.primary_borrower_id) is not str
+                         or self.primary_borrower_id != ""))
+                or (self.source_selection_key is not None
+                    and (type(self.source_selection_key) is not str
+                         or fullmatch(r"[a-z][a-z0-9_]{0,63}",
+                                      self.source_selection_key) is None))
+                or type(self.verification) is not str
+                or self.verification not in ("active_only", "provider_observed")
+                or (self.primary_borrower_id is None
+                    and self.verification != "active_only")
+                or (self.primary_borrower_id == ""
+                    and self.verification != "provider_observed")):
+            raise ValueError("invalid_manual_borrow_policy")
+
+
 @dataclass(frozen=True)
 class ProviderDescriptor:
     id: str
@@ -173,6 +210,8 @@ class ProviderDescriptor:
     # Optional, strictly versioned presentational contribution. Never rights.
     search_status_notice_schema: str = ""
     search_status_notices: tuple[tuple[str, str], ...] = ()
+    # Opt-in static plugin contract. This is not a grant of borrower rights.
+    manual_borrow_policy: ManualBorrowPolicy | None = None
 
 
 class ProviderSession(ABC):
