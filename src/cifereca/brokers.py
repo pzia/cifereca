@@ -563,32 +563,37 @@ class SynchronizationBrokerImpl:
         from .core.source_sync_consent import configured, set_source_enabled
         if configured(self.service, account):
             set_source_enabled(self.service, account, enabled, self._preference_key(source_id))
-        elif enabled is False:
-            # A user-requested OFF is also a durable CAS acquisition
-            # revocation. Keep historical opt-ins inert: turning the
-            # inventory back ON must not silently resurrect legacy ON.
-            from .core.source_sync_consent import (
-                retire_legacy_acquisition_on_source_disable,
-            )
-            retire_legacy_acquisition_on_source_disable(
-                self.service, account, self._preference_key(source_id),
-            )
         else:
-            # Legacy ON inventory is not new acquisition consent. Preserve
-            # the old generation fence for already-accepted in-flight work
-            # until all historical source policies have been migrated.
-            from .core.source_auto_consent_bridge import _consent_generation_key
+            from .core.source_auto_consent_bridge import (
+                _consent_generation_key, legacy_source_consent_switch_present,
+            )
             from .core.source_sync_consent import scope_for_account
-            revision_key = _consent_generation_key(scope_for_account(account))
-            if revision_key is not None:
-                self.service.storage.metadata_set_with_revision(
-                    self._preference_key(source_id),
-                    "1" if enabled else "0", revision_key,
+            scope = scope_for_account(account)
+            if enabled is False and legacy_source_consent_switch_present(
+                self.service.storage, scope,
+            ):
+                # Only a persisted historical acquisition switch needs a
+                # permanent CAS OFF. Never convert a pure inventory-only
+                # source into a configured acquisition policy.
+                from .core.source_sync_consent import (
+                    retire_legacy_acquisition_on_source_disable,
+                )
+                retire_legacy_acquisition_on_source_disable(
+                    self.service, account, self._preference_key(source_id),
                 )
             else:
-                self.service.storage.metadata_set(
-                    self._preference_key(source_id), "1" if enabled else "0",
-                )
+                # Preserve the old generation fence for existing legacy
+                # actions while no canonical acquisition policy is set.
+                revision_key = _consent_generation_key(scope)
+                if revision_key is not None:
+                    self.service.storage.metadata_set_with_revision(
+                        self._preference_key(source_id),
+                        "1" if enabled else "0", revision_key,
+                    )
+                else:
+                    self.service.storage.metadata_set(
+                        self._preference_key(source_id), "1" if enabled else "0",
+                    )
         self._notify()
         return self._ref(account)
 
