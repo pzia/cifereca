@@ -1,0 +1,29 @@
+name: P0 Kobo AST recount temporary
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-kobo-ast-recount-temporary.yml'
+permissions:
+  contents: read
+jobs:
+  recount:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Count vendor AST
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_provider_core_coupling_report.py --json > "$RUNNER_TEMP/report.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          r=json.loads((Path(os.environ["RUNNER_TEMP"])/"report.json").read_text())
+          print("AST_UNIQUE=" + str(r["remaining_generic_after_expanded_named_scope"]["ast_signal_lines"]))
+          print("AST_KOBO=" + str(r["generic_ast_signal_occurrences_by_provider_alias"]["kobo"]))
+          PY
+      - uses: actions/upload-artifact@v6
+        with:
+          name: p0-kobo-ast-report
+          path: ${{ runner.temp }}/report.json
+          retention-days: 1
