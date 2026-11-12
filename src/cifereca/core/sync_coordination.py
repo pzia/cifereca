@@ -843,6 +843,12 @@ def _complete_digital_loan_scope(
     )
     if type(account) is not Account or session is None:
         return None
+    # Do not trust an already disconnected/replaced provider session, or
+    # invoke a dynamic descriptor merely to establish its claimed identity.
+    if (getattr_static(session, "connected", None) is not True
+            or getattr_static(session, "provider_id", None) != account.provider_id
+            or getattr_static(session, "credential_id", None) != account.credential_id):
+        return None
     expected = getattr_static(type(session), "loan_absence_digital_branch", None)
     if (type(expected) is not str or not 0 < len(expected) <= 64
             or not all(c.isascii() and (c.isalnum() or c in "_-")
