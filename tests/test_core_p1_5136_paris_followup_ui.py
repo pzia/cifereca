@@ -55,7 +55,7 @@ def test_check_after_timeout_uses_same_spent_claim_without_second_post(tmp_path)
     window.runner = ReadOnlyTasks()
     try:
         assert service.paris_borrow_followup_available(item)
-        assert not service.can_borrow_paris(item)
+        assert not service.can_borrow_manual(item)
         _run(window, item)
         _run(window, item)
         assert len(window.runner.tasks) == 1 and checks == []
@@ -121,7 +121,7 @@ def test_followup_after_cold_restart_is_available_without_reborrow(tmp_path):
         assert verdict["status"] == "observed_current_loan"
         assert fresh["calls"] == [] and fresh["mutations"] == 0
         assert checks == [account]
-        assert not service.can_borrow_paris(item)
+        assert not service.can_borrow_manual(item)
     finally:
         service.close()
 
