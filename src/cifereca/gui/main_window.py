@@ -1688,7 +1688,7 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
-        from .bnf_borrow_controller import (
+        from .manual_borrow_controller import (
             _present_manual_borrow, present_manual_borrow_verification,
         )
         # A read-only spent-claim verification must terminate before any
