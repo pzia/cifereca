@@ -30,11 +30,12 @@ BUSY_GTK = ("task-busy-settings-1366",)
 # not a supported CI acceptance target. It remains runnable explicitly via
 # `python3 e2e/run.py --scenario book-detail-1700 --out ...`.
 BOOK_DETAIL = ("book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600")
+PLUGIN_SCROLL = ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366")
 OPTIONAL_UX = ("book-detail-1700",)
 BNF_COVERS = ("bnf-covers-1366",)
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
 SEARCH_GTK = ("search-filter-p0", "search-filter-1024")
-CORE = SEARCH_GTK + BOOK_DETAIL + ("mainwindow-baseline-1366",
+CORE = SEARCH_GTK + BOOK_DETAIL + PLUGIN_SCROLL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600",) + CAPTURE_GTK + ("startup", "core-navigation") + LLM + MAINT + ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366")
 DIAG = ("diagnostics-1366", "diagnostics-raw-export-1366", "diagnostics-large-1600", "diagnostics-states-1366",
         "diagnostics-structured-1366", "diagnostics-volume-1366",
@@ -73,6 +74,7 @@ LOCAL_GUI = {
     "book_widgets.py": SEARCH_GTK + BOOK_DETAIL + RECOMMENDATIONS_GTK + BNF_COVERS,
     "cover_loader.py": BOOK_DETAIL + RECOMMENDATIONS_GTK + BNF_COVERS,
     "cover_preview.py": BOOK_DETAIL,
+    "plugin_manager_page.py": PLUGIN_SCROLL,
     "facet_text.py": SEARCH_GTK,
     "query_controls.py": SEARCH_GTK + ("core-navigation",),
     "query_model.py": SEARCH_GTK + BOOK_DETAIL + BNF_COVERS,
@@ -91,7 +93,8 @@ PROBES = {
     "e2e/task_busy_settings_probe.py": BUSY_GTK,
     "e2e/capture_session_gtk_probe.py": CAPTURE_GTK,
     "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366"),
-    "e2e/book_detail_probe.py": BOOK_DETAIL,
+    "e2e/book_detail_probe.py": BOOK_DETAIL + PLUGIN_SCROLL,
+    "e2e/plugin_manager_scroll_contract.py": PLUGIN_SCROLL,
     "e2e/bnf_cover_probe.py": BNF_COVERS,
     "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK + THEME,
     "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
