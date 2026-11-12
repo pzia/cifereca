@@ -342,7 +342,8 @@ def test_manual_gtk_dispatch_is_provider_neutral_abi_only():
         source.index("self.service.manual_borrow_policy(item)")
     )
     assert "_present_manual_borrow(" in source
-    assert "self.service.borrow_manual" in source
+    # The UI no longer injects an arbitrary executor into the controller.
+    assert "self.service.borrow_manual" not in source
     assert "if policy is None:" in source
     controller = Path(__file__).resolve().parents[1] / (
         "src/cifereca/gui/manual_borrow_controller.py"
@@ -353,6 +354,12 @@ def test_manual_gtk_dispatch_is_provider_neutral_abi_only():
         ).body if isinstance(node, ast.FunctionDef)
     }
     assert "_present_manual_borrow" in symbols
+    present = next(
+        node for node in ast.parse(controller.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_present_manual_borrow"
+    )
+    assert "dispatch" not in [arg.arg for arg in present.args.kwonlyargs]
+    assert "'borrow_manual'" in ast.unparse(present) or '"borrow_manual"' in ast.unparse(present)
     assert "present_bnf_borrow" not in symbols
     assert "present_paris_borrow" not in symbols
 
