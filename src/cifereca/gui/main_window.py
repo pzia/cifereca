@@ -1592,9 +1592,13 @@ class MainWindow(Adw.ApplicationWindow):
             lambda exc: self.show_error(str(exc), "Vérification ADEPT impossible"), control=control,
             priority=TaskPriority.USER_ACTION, kind="adept-inventory")
 
-    def prepare_bnf_acsm_for_loan(self, loan: Loan, control: Gtk.Widget | None = None) -> None:
-        from .bnf_acsm_action_controller import prepare_bnf_acsm
-        prepare_bnf_acsm(self, loan, control, Adw=Adw, TaskPriority=TaskPriority)
+    def prepare_explicit_loan_acsm_for_loan(self, loan: Loan, control: Gtk.Widget | None = None) -> None:
+        from .explicit_loan_acsm_controller import prepare_explicit_loan_acsm
+        prepare_explicit_loan_acsm(
+            self, loan, control, Adw=Adw, TaskPriority=TaskPriority,
+            stage=self.service.stage_bnf_loan_acsm,
+            importer=self.service.import_bnf_loan_acsm,
+        )
 
     def prepare_pnb_for_loan(self, loan: Loan, send: bool = False, control: Gtk.Widget | None = None) -> None:
         def work():
