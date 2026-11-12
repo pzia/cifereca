@@ -516,9 +516,12 @@ def disconnect_configured(self) -> None:
 
 
 
-def connect_source_preview(\n    self, provider_id: str, credential_id: str, *, required_capability: str | None = None,\n) -> ProviderSession:
+def connect_source_preview(
+    self, provider_id: str, credential_id: str, *, required_capability: str | None = None,
+) -> ProviderSession:
     """Connect exactly one configured provider source, with no registration writes."""
-    provider_id = str(provider_id or "").strip().lower()\n    credential_id = str(credential_id or "").strip()
+    provider_id = str(provider_id or "").strip().lower()
+    credential_id = str(credential_id or "").strip()
     bound_identity = (
         self.storage.identity_for_connection(provider_id, credential_id)
         if credential_id else None
@@ -533,7 +536,8 @@ def connect_source_preview(\n    self, provider_id: str, credential_id: str, *, 
         ),
         None,
     )
-    if (row is None or str(row.get("identity_id") or bound_identity).strip() != bound_identity):\n        raise ProviderConfigurationError("Compte fournisseur désactivé ou non configuré")
+    if (row is None or str(row.get("identity_id") or bound_identity).strip() != bound_identity):
+        raise ProviderConfigurationError("Compte fournisseur désactivé ou non configuré")
     plugin = self.registry.maybe_get(provider_id)
     if plugin is None or plugin.descriptor.state != "ready":
         raise ProviderConfigurationError("Provider fournisseur indisponible")
@@ -546,7 +550,11 @@ def connect_source_preview(\n    self, provider_id: str, credential_id: str, *, 
     key = self._session_key(provider_id, credential_id)
     existing = self._sessions.get(key)
     if existing is not None and existing.connected:
-        if (existing.provider_id != provider_id\n                or existing.credential_id != credential_id\n                or (required_capability is not None and not getattr(\n                    existing.capabilities, required_capability, False\n                ))):
+        if (existing.provider_id != provider_id
+                or existing.credential_id != credential_id
+                or (required_capability is not None and not getattr(
+                    existing.capabilities, required_capability, False
+                ))):
             attempt.emit(self.diagnostics, "terminal", "failed", "session_invalid")
             raise ProviderConfigurationError("Session fournisseur différente du compte demandé")
         attempt.emit(self.diagnostics, "session_reused", "success", "session_reused")
@@ -564,7 +572,9 @@ def connect_source_preview(\n    self, provider_id: str, credential_id: str, *, 
         session.connect()
         if (not session.connected or session.provider_id != provider_id
                 or session.credential_id != credential_id
-                or (required_capability is not None and not getattr(\n                    session.capabilities, required_capability, False\n                ))):
+                or (required_capability is not None and not getattr(
+                    session.capabilities, required_capability, False
+                ))):
             raise ProviderConfigurationError("Session fournisseur sans capacité de sauvegarde")
     except Exception:
         attempt.emit(self.diagnostics, "terminal", "failed", "connect_failed")
