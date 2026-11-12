@@ -900,3 +900,13 @@ def test_p0_5376_diagnostics_file_selector_timeout_exports_only_closed_booleans(
         assert "capture_file_selection_timeout" not in module.safe_summary(source)["results"][0]
         source.write_text(json.dumps([{"scenario": "diagnostics-large-1600", "returncode": 1}]))
         assert "capture_file_selection_timeout" not in module.safe_summary(source)["results"][0]
+
+
+class DiagnosticsFocusAndFileChooserPrivacyTests(unittest.TestCase):
+    """Execute the closed-evidence guards under unittest discover in CI."""
+
+    def test_bulk_focus_allowlist_is_enforced(self):
+        test_p0_5376_bulk_focus_public_evidence_is_closed_boolean_only()
+
+    def test_file_chooser_allowlist_is_enforced(self):
+        test_p0_5376_diagnostics_file_selector_timeout_exports_only_closed_booleans()
