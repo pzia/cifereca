@@ -38,7 +38,7 @@ def test_schema_v5_roundtrips_identity_connection_account_and_device():
         storage.adept_profile_binding_set("identity", "alice", "ade-alice")
         storage.device_binding_put({"device_id": "reader-1", "identity_id": "alice", "label": "Liseuse Alice"})
 
-        assert storage.schema_version() == 14
+        assert storage.schema_version() == 15
         assert storage.identity_get("alice")["reading_languages"] == ["fr", "en"]
         assert storage.identity_for_connection("kobo", "vault-a") == "alice"
         assert storage.provider_accounts(identity_id="alice")[0]["account_id"] == "reader-a"
@@ -110,7 +110,7 @@ def test_v3_database_migrates_to_v5_with_identity_tables_and_identity_columns():
         # the migration is intentionally idempotent when columns already exist.
         db.commit(); db.close()
         migrated = Storage(db_path)
-        assert migrated.schema_version() == 14
+        assert migrated.schema_version() == 15
         tables = {row[0] for row in sqlite3.connect(db_path).execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"identities", "provider_connections", "provider_accounts", "adept_profile_bindings", "device_bindings"} <= tables
 
@@ -194,6 +194,16 @@ def test_v4_ambiguous_kobo_rows_migrate_to_distinct_identities_without_data_loss
         db = sqlite3.connect(db_path)
         db.execute("DROP INDEX IF EXISTS uq_kobo_connection_identity")
         db.execute("DROP INDEX IF EXISTS uq_kobo_account_identity")
+        # Recreate the pre-v5 schema: v15 generic cardinality triggers must
+        # not interfere with intentionally ambiguous v4 seed rows.
+        for trigger in (
+            "trg_provider_connection_limit_insert",
+            "trg_provider_connection_limit_update",
+            "trg_provider_account_limit_insert",
+            "trg_provider_account_limit_update",
+        ):
+            db.execute("DROP TRIGGER IF EXISTS " + trigger)
+        db.execute("DROP TABLE IF EXISTS provider_cardinality_policies")
         db.execute("DROP INDEX IF EXISTS uq_ade_profile_identity")
         db.execute("UPDATE metadata SET value='4' WHERE key='schema_version'")
         now = 1
@@ -223,7 +233,7 @@ def test_v4_ambiguous_kobo_rows_migrate_to_distinct_identities_without_data_loss
         db.commit(); db.close()
 
         migrated = Storage(db_path)
-        assert migrated.schema_version() == 14
+        assert migrated.schema_version() == 15
         connections = migrated.provider_connections()
         kobo = [row for row in connections if row["provider_id"] == "kobo"]
         assert len(kobo) == 2
