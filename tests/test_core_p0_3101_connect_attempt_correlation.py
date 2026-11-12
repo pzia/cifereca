@@ -228,8 +228,8 @@ def _preview_rig():
 
 def test_kobo_preview_first_connect_then_real_session_reuse_with_distinct_refs():
     service, session, plugin = _preview_rig()
-    first = provider_sessions.connect_kobo_preview(service, "SECRET_KOBO")
-    second = provider_sessions.connect_kobo_preview(service, "SECRET_KOBO")
+    first = provider_sessions.connect_source_preview(service, "kobo", "SECRET_KOBO", required_capability="backup")
+    second = provider_sessions.connect_source_preview(service, "kobo", "SECRET_KOBO", required_capability="backup")
     assert first is second is session
     assert session.connect.call_count == 1
     assert plugin.create_session.call_count == 1
@@ -252,8 +252,8 @@ def test_kobo_preview_rejects_stale_reused_session_as_failed_request():
     service, session, plugin = _preview_rig()
     stale = NS(connected=True, provider_id="paris", credential_id="SECRET_KOBO")
     service._sessions["kobo:SECRET_KOBO"] = stale
-    with pytest.raises(Exception, match="Session Kobo différente"):
-        provider_sessions.connect_kobo_preview(service, "SECRET_KOBO")
+    with pytest.raises(Exception, match="Session fournisseur différente"):
+        provider_sessions.connect_source_preview(service, "kobo", "SECRET_KOBO", required_capability="backup")
     assert [e["phase"] for e in _rows(service.diagnostics)] == [
         "requested", "terminal",
     ]
