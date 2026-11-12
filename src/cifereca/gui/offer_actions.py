@@ -65,10 +65,14 @@ def private_notice_download_hint_allowed(
         return True
     if getattr(item, "download_url", None) is not None:
         return True
+    # A scoped private account record needs independently verified proof.
+    # An ordinary unscoped search notice can still enter the provider's
+    # existing independent offer-check policy; a capability is not a grant.
     if not (
-        getattr(item, "owned", None) is True
-        or getattr(item, "downloadable", None) is True
-        or getattr(item, "source_collection", None) == "library"
+        getattr(item, "source_collection", None) == "library"
+        or (getattr(item, "source_account_id", None)
+            and (getattr(item, "owned", None) is True
+                 or getattr(item, "downloadable", None) is True))
     ):
         return True
     if getattr(item, "source_collection", None) != "library":
