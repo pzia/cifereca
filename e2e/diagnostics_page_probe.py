@@ -955,6 +955,17 @@ def main():
                                  outer.get_upper() - outer.get_page_size())))
 
         def focus_timeout():
+            # Publish only the closed synthetic GTK state during the known
+            # bulk-selection stage; no label, title, geometry or private data.
+            if report.get("stage") == "P0_2140_bulk_fixture":
+                report["bulk_focus_observation"] = {
+                    "button_mapped": bool(button.get_mapped()),
+                    "button_sensitive": bool(button.get_sensitive()),
+                    "toplevel_active": bool(window[0].is_active()),
+                    "button_focused": bool(button.has_focus()),
+                    "toplevel_focus_is_button": window[0].get_focus() is button,
+                }
+                save()
             # The exporter reports only the assertion's source line.
             assert button.get_mapped(), "Bulk action is not mapped"
             assert button.get_sensitive(), "Bulk action is not sensitive"
