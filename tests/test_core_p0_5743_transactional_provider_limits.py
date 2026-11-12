@@ -89,12 +89,20 @@ def test_two_independent_storage_writers_cannot_bypass_limit(tmp_path):
     b.close()
 
 
-def test_historic_kobo_indexes_remain_effective_without_supplier_branch(tmp_path):
+def test_historic_kobo_scope_remains_guarded_without_supplier_branch(tmp_path):
     path = tmp_path / "legacy.sqlite3"
     storage = Storage(path)
     with sqlite3.connect(path) as db:
         indexes = {row[1] for row in db.execute("PRAGMA index_list('provider_connections')")}
-        assert "uq_kobo_connection_identity" in indexes
+        assert "uq_kobo_connection_identity" not in indexes
+        assert db.execute(
+            "SELECT connection_limit FROM provider_cardinality_policies "
+            "WHERE provider_id='kobo'"
+        ).fetchone() == (1,)
+        assert db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='trigger' "
+            "AND name='trg_provider_connection_limit_insert'"
+        ).fetchone() == (1,)
     first = storage.provider_connection_put(connection("kobo", "private-one"))
     with pytest.raises(ValueError) as error:
         storage.provider_connection_put(connection("kobo", "private-two"))
