@@ -125,3 +125,44 @@ def test_projection_budget_and_mid_projection_revocation_are_visible(scoped):
         return reads[0] < 5
     revoked = LocalInspection(audit,valid,'alice')
     assert not revoked.valid() and not revoked._cases
+
+
+def test_edition_collision_scope_never_crosses_private_identities_or_providers():
+    from cifereca.core.library_local_inspection import _private_edition_collision_counts
+
+    rights = [
+        dict(identity_id="alice", provider_id="synthetic", item_id="same",
+             credential_id="account-a"),
+        dict(identity_id="alice", provider_id="synthetic", item_id="same",
+             credential_id="account-b"),
+        dict(identity_id="alice", provider_id="other-provider", item_id="same"),
+        dict(identity_id="bob", provider_id="synthetic", item_id="same"),
+        dict(identity_id="alice", provider_id="synthetic", item_id=""),
+        dict(identity_id="alice", provider_id="", item_id="same"),
+        dict(identity_id="alice", provider_id="synthetic", item_id=None),
+        dict(identity_id="alice", provider_id="synthetic", item_id=123),
+    ]
+    result = _private_edition_collision_counts(rights, "alice")
+    assert result == {
+        ("alice", "synthetic", "same"): 2,
+        ("alice", "other-provider", "same"): 1,
+    }
+    assert _private_edition_collision_counts(rights, "bob") == {
+        ("bob", "synthetic", "same"): 1,
+    }
+    assert not _private_edition_collision_counts(rights, "")
+    assert not _private_edition_collision_counts(rights, None)
+
+
+def test_generic_collision_counter_cannot_create_a_positive_right():
+    from cifereca.core.library_local_inspection import _private_edition_collision_counts
+
+    # The helper observes only cardinality, never a purchase/placement grant.
+    result = _private_edition_collision_counts([
+        dict(identity_id="alice", provider_id="provider-a", item_id="ed1",
+             owned=True, attested_source="untrusted-provider-claim"),
+        dict(identity_id="alice", provider_id="provider-a", item_id="ed1",
+             owned=True, credential_id="second-credential"),
+    ], "alice")
+    assert result[("alice", "provider-a", "ed1")] == 2
+    assert all(len(key) == 3 for key in result)
