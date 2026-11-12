@@ -275,7 +275,13 @@ def read_loan_inventory(
                 return LoanInventorySnapshot(
                     scope=scope, loans=(), status="failed", reason_code="scope_changed",
                 )
-            if type(result) is not LoanInventorySnapshot or result.scope != scope:
+            # A historical typed producer may publish only the literal
+            # borrower scope. Its already-validated envelope cannot contain
+            # a descriptor-only alias, so upgrading the read envelope is safe
+            # and does not reintroduce provider-specific matching.
+            literal_scope = LoanInventoryScope.for_account(account)
+            if (type(result) is not LoanInventorySnapshot
+                    or result.scope not in (scope, literal_scope)):
                 raise ValueError("invalid_snapshot")
             # Revalidate every positive row even if the provider constructed
             # its own frozen envelope, then take a new defensive copy.
