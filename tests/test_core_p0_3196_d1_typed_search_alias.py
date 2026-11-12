@@ -279,3 +279,42 @@ def test_synthetic_provider_typed_scope_conflicts_never_borrow_origin(
         assert selected is not None
     else:
         assert selected is not None  # exact buyer survives a foreign owner
+
+
+@pytest.mark.parametrize("provider", ["synthetic-store", "numilog", "paris"])
+def test_bulk_typed_provider_blocks_unproven_legacy_alias_across_suppliers(
+    case, provider,
+):
+    service, artifact, placement, _ = case
+    _legacy(service, artifact, provider=provider)
+    key = (provider, "vault", "book")
+    assert service.local_placements_for_sources("alice")[key][
+        "placement_id"
+    ] == placement
+    _typed(service, provider=provider)
+    assert key not in service.local_placements_for_sources("alice")
+    _origin(service, artifact)
+    assert service.local_placements_for_sources("alice")[key][
+        "placement_id"
+    ] == placement
+    assert key not in service.local_placements_for_sources("bob")
+
+
+@pytest.mark.parametrize("other_scope", ["second-buyer", "second-identity", "second-right"])
+def test_bulk_typed_synthetic_provider_public_alias_is_never_guessed(
+    case, other_scope,
+):
+    service, artifact, _, _ = case
+    _legacy(service, artifact, provider="synthetic-store")
+    _typed(service, provider="synthetic-store")
+    _origin(service, artifact)
+    alternate = {
+        "second-buyer": {"account": "different"},
+        "second-identity": {"owner": "bob"},
+        "second-right": {"right": "different-right"},
+    }[other_scope]
+    _typed(service, provider="synthetic-store", source_id="another",
+           **alternate)
+    assert ("synthetic-store", "vault", "book") not in (
+        service.local_placements_for_sources("alice")
+    )
