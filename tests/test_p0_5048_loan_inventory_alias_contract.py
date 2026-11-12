@@ -140,3 +140,31 @@ def test_legacy_reader_uses_descriptor_without_second_provider_operation():
     result = read_loan_inventory(session, account, descriptor=desc)
     assert result.status == "partial" and len(result.loans) == 1
     assert calls == ["legacy"]
+
+
+def test_explicit_descriptor_without_alias_vetoes_legacy_paris_fallback():
+    account = _account("paris")
+    row = _loan(account, "primary")
+    # Legacy callers remain compatible until the Paris producer cutover.
+    assert len(LoanInventorySnapshot(
+        scope=LoanInventoryScope.for_account(account), loans=(row,),
+    ).loans) == 1
+    checked = LoanInventoryScope.for_account(account, descriptor=_descriptor("paris"))
+    assert checked.primary_alias_policy_checked is True
+    with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
+        LoanInventorySnapshot(scope=checked, loans=(row,))
+
+
+def test_explicit_descriptor_alias_takes_priority_over_paris_legacy():
+    account = _account("paris")
+    scope = LoanInventoryScope.for_account(account, descriptor=_descriptor("paris", "main"))
+    assert len(LoanInventorySnapshot(scope=scope, loans=(_loan(account, "main"),)).loans) == 1
+    with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
+        LoanInventorySnapshot(scope=scope, loans=(_loan(account, "primary"),))
+
+
+def test_scope_alias_cannot_be_injected_without_explicit_policy_marker():
+    with pytest.raises(ValueError, match="invalid_loan_inventory_primary_alias"):
+        LoanInventoryScope("alice", "synthetic-a", "credential-1", "", "main")
+    with pytest.raises(ValueError, match="invalid_loan_inventory_alias_policy"):
+        LoanInventoryScope("alice", "synthetic-a", "credential-1", "", None, 1)
