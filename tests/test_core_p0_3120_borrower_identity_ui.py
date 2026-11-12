@@ -145,34 +145,34 @@ def test_policy_lookup_error_fails_closed_without_legacy_post():
 
 
 def test_generic_policy_enters_only_shared_controller(monkeypatch):
-    from cifereca.gui import bnf_borrow_controller
+    from cifereca.gui import manual_borrow_controller
 
     ui, item, state, queued = _ui()
     ui.service.manual_borrow_policy.return_value = object()
     ui.service.can_borrow_manual.return_value = True
     present = Mock()
-    monkeypatch.setattr(bnf_borrow_controller, "_present_manual_borrow", present)
+    monkeypatch.setattr(manual_borrow_controller, "_present_manual_borrow", present)
     assert ui.can_borrow_item(item) is True
     ui.borrow_search_item(item)
     present.assert_called_once()
     assert present.call_args.args[1] is item
-    assert present.call_args.kwargs["available"] is ui.service.can_borrow_manual
-    assert present.call_args.kwargs["dispatch"] is ui.service.borrow_manual
+    assert "available" not in present.call_args.kwargs
+    assert "dispatch" not in present.call_args.kwargs
     assert queued == []
     state.session.borrow.assert_not_called()
     ui.service.borrow_manual.assert_not_called()
 
 
 def test_readonly_followup_never_enters_manual_or_legacy_path(monkeypatch):
-    from cifereca.gui import bnf_borrow_controller
+    from cifereca.gui import manual_borrow_controller
 
     ui, item, state, queued = _ui()
     verify = Mock()
     mutate = Mock()
     monkeypatch.setattr(
-        bnf_borrow_controller, "present_manual_borrow_verification", verify,
+        manual_borrow_controller, "present_manual_borrow_verification", verify,
     )
-    monkeypatch.setattr(bnf_borrow_controller, "_present_manual_borrow", mutate)
+    monkeypatch.setattr(manual_borrow_controller, "_present_manual_borrow", mutate)
     control = NS(get_name=lambda: "cifereca-borrow-followup")
     ui.borrow_search_item(item, control)
     verify.assert_called_once()

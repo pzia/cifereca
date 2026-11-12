@@ -18,7 +18,7 @@ import pytest
 
 from cifereca.brokers import IdentityBrokerImpl
 from cifereca.core.borrow_action_scope import borrow_claim_key
-from cifereca.gui.bnf_borrow_controller import _present_manual_borrow
+from cifereca.gui.manual_borrow_controller import _present_manual_borrow
 from cifereca.models import Account, SearchResult
 from tests.test_sync_state_contract import _service
 from tests.test_core_p0_2055_bnf_ui_consent import DialogApi, view
@@ -34,8 +34,7 @@ def _present_test_manual_borrow(window, item, control, *, Adw, TaskPriority, acc
     # Test the generic controller with the original exact Paris Core contract.
     return _present_manual_borrow(
         window, item, control, TaskPriority=TaskPriority,
-        label="Paris", available=window.service.can_borrow_manual,
-        dispatch=window.service.borrow_manual, expected_account=account,
+        label="Paris", expected_account=account,
     )
 
 

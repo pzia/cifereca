@@ -1,7 +1,8 @@
-"""Single-click BnF/Paris manual borrowing; all admission belongs to Core.
+"""Provider-neutral manual borrow and read-only claim follow-up UI.
 
-The historical BnF module name is kept for existing callers. Neither source
-may use the legacy borrow() path. No provider protocol or ADEPT runs here.
+The service owns typed eligibility and the durable one-shot claim. This
+controller holds a short-lived, exact notice/account/session/descriptor lease
+during queued GTK callbacks. It never speaks a lender protocol or runs ADEPT.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
     This is an inert guard only: no provider request, borrow permission or
     new right. Both a mutable attempt and a read-only follow-up use it.
     """
+    service = window.service
     identity_id = account.identity_id
     identity_gen = getattr(window, "_identity_context_generation", None)
     account_gen = getattr(window, "_account_context_generation", None)
@@ -23,6 +25,9 @@ def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
     detail_gen = getattr(window, "_search_detail_request_generation", None)
     credential_id = account.credential_id
     source_epoch = getattr(session, "_epoch", None)
+    # Installing a new plugin policy while a GTK callback is queued revokes
+    # the old choice, even if it retains the same provider and credential.
+    session_descriptor = getattr(session, "descriptor", None)
     notice_scope = (
         item.id, item.record_id, item.docbase, item.medium,
         item.source_provider, item.source_credential, item.source_collection,
@@ -42,6 +47,7 @@ def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
         try:
             return (
                 not getattr(window, "_closed", False)
+                and window.service is service
                 and window._identity_context_generation == identity_gen
                 and window._account_context_generation == account_gen
                 and window._selected_search_id == selection_id
@@ -51,6 +57,7 @@ def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
                 and window.service._account_context_epoch == core_epoch
                 and session.connected is True
                 and getattr(session, "_epoch", None) == source_epoch
+                and getattr(session, "descriptor", None) is session_descriptor
                 and window.service._session_for_source(
                     provider_id, credential_id) is session
                 and sum(row is account for row in window.service.accounts) == 1
@@ -68,12 +75,18 @@ def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
 
 
 def _present_manual_borrow(window, item, control, *, TaskPriority,
-                           label, available, dispatch, expected_account=None):
+                           label, expected_account=None):
     """Submit only a user-clicked, published and Core-admissible loan action.
 
     No second dialog or separate website attestation is required (#3121).
     The provider still decides quota and rights; Core guards one exact POST.
     """
+    # The executor and readiness check come exclusively from the bound Core
+    # service, not injected by a supplier-specific GTK callback.
+    available = getattr(window.service, "can_borrow_manual", None)
+    dispatch = getattr(window.service, "borrow_manual", None)
+    if not callable(available) or not callable(dispatch):
+        return
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
             or not isinstance(item.source_provider, str)
@@ -102,9 +115,7 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
     identity_id, core_epoch, current = scope
     selected = copy(item)
 
-    # The explicit click on "Emprunter" is the sole user gesture. Avoid a
-    # second confirmation dialog and prevent repeated queued requests even if
-    # a click arrives before TaskRunner can disable the control.
+    # The click is the only consent gesture; Core owns durable one-shot guard.
     if getattr(window, "_manual_borrow_pending", None) is not None:
         return
     token = object()

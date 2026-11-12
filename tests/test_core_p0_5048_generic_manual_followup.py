@@ -73,6 +73,6 @@ def test_service_has_no_paris_only_followup_facades():
         "manual_borrow_diagnostic", "manual_borrow_followup_available",
         "verify_manual_borrow_followup",
     } <= methods
-    gui = (root / "src/cifereca/gui/bnf_borrow_controller.py").read_text()
+    gui = (root / "src/cifereca/gui/manual_borrow_controller.py").read_text()
     assert "def present_paris_borrow_verification(" not in gui
     assert "def present_manual_borrow_verification(" in gui

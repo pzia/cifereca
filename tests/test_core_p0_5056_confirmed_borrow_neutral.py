@@ -8,7 +8,7 @@ import pytest
 
 
 CONTROLLER = (Path(__file__).resolve().parents[1] /
-              "src/cifereca/gui/bnf_borrow_controller.py")
+              "src/cifereca/gui/manual_borrow_controller.py")
 
 
 class Account:
@@ -37,7 +37,7 @@ def _controller():
     method = next(n for n in tree.body
                   if isinstance(n, ast.FunctionDef)
                   and n.name == "_present_manual_borrow")
-    from cifereca.gui.bnf_borrow_controller import _capture_borrow_ui_scope
+    from cifereca.gui.manual_borrow_controller import _capture_borrow_ui_scope
     namespace = {
         "Account": Account, "SearchResult": SearchResult, "copy": copy,
         "_capture_borrow_ui_scope": _capture_borrow_ui_scope,
@@ -61,6 +61,7 @@ def test_only_current_verified_borrow_reprojects_exact_detail(provider_id, outco
         _account_context_epoch=9,
         accounts=[account],
         _session_for_source=lambda provider, credential: session,
+        can_borrow_manual=lambda _item: True,
     )
     window = NS(
         _closed=False,
@@ -93,11 +94,11 @@ def test_only_current_verified_borrow_reprojects_exact_detail(provider_id, outco
         done(work())
 
     window.runner = NS(submit=submit)
+    service.borrow_manual = dispatch
     priority = NS(USER_ACTION="user")
     _controller()(
         window, item, object(), TaskPriority=priority,
         label="Fournisseur",
-        available=lambda _: True, dispatch=dispatch,
     )
     assert len(requests) == 1  # Never a second borrow POST.
     assert window._manual_borrow_pending is None
@@ -119,6 +120,8 @@ def test_neutral_borrow_rejects_mismatched_account_provider_before_queue(account
         current_identity=NS(identity_id="alice"), _account_context_epoch=1,
         accounts=[account],
         _session_for_source=lambda *_: session,
+        can_borrow_manual=lambda _item: True,
+        borrow_manual=lambda *_args, **_kw: pytest.fail("foreign source dispatched"),
     )
     window = NS(
         _closed=False, service=service,
@@ -128,8 +131,7 @@ def test_neutral_borrow_rejects_mismatched_account_provider_before_queue(account
     )
     _controller()(
         window, item, object(), TaskPriority=NS(USER_ACTION="user"),
-        label="Fournisseur", available=lambda _: True,
-        dispatch=lambda *_args, **_kw: pytest.fail("foreign borrower dispatched"),
+        label="Fournisseur",
     )
     assert queued == []
     assert window._manual_borrow_pending is None
@@ -147,6 +149,8 @@ def test_shared_borrow_rejects_foreign_credential_before_queue():
         current_identity=NS(identity_id="alice"), _account_context_epoch=1,
         accounts=[account],
         _session_for_source=lambda *_: session,
+        can_borrow_manual=lambda _item: True,
+        borrow_manual=lambda *_args, **_kw: pytest.fail("foreign source dispatched"),
     )
     window = NS(
         _closed=False, service=service,
@@ -156,8 +160,7 @@ def test_shared_borrow_rejects_foreign_credential_before_queue():
     )
     _controller()(
         window, item, object(), TaskPriority=NS(USER_ACTION="user"),
-        label="Fournisseur", available=lambda _: True,
-        dispatch=lambda *_args, **_kw: pytest.fail("foreign credential dispatched"),
+        label="Fournisseur",
     )
     assert queued == []
     assert window._manual_borrow_pending is None
