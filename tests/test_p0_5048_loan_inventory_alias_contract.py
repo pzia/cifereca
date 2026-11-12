@@ -76,7 +76,7 @@ def test_alias_not_granted_to_linked_borrower_or_other_descriptor():
         LoanInventoryScope.for_account(linked, descriptor=_descriptor("synthetic-b"))
 
 
-@pytest.mark.parametrize("alias", ["", "x\x00y", "x" * 1025])
+@pytest.mark.parametrize("alias", ["", "x\x00y", "x" * 1025, "Primary", "a.b", "-bad", "a" * 65])
 def test_malformed_descriptor_alias_refused(alias):
     account = _account("synthetic-a")
     desc = _descriptor("synthetic-a", alias)
@@ -168,3 +168,14 @@ def test_scope_alias_cannot_be_injected_without_explicit_policy_marker():
         LoanInventoryScope("alice", "synthetic-a", "credential-1", "", "main")
     with pytest.raises(ValueError, match="invalid_loan_inventory_alias_policy"):
         LoanInventoryScope("alice", "synthetic-a", "credential-1", "", None, 1)
+
+
+def test_empty_id_nonprimary_account_cannot_use_declared_alias():
+    account = _account("synthetic-a")
+    account.is_primary = False
+    desc = _descriptor("synthetic-a", "main")
+    scope = LoanInventoryScope.for_account(account, descriptor=desc)
+    assert scope.primary_alias_policy_checked is True
+    assert scope.primary_account_alias is None
+    with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
+        LoanInventorySnapshot(scope=scope, loans=(_loan(account, "main"),))
