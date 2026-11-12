@@ -10,7 +10,7 @@ from cifereca.plugin_api import (
     LoanBranchCoverage, LoanInventoryScope, LoanInventorySnapshot,
 )
 from tests.test_core_p1_3119_3122_opening_typed_inventory import (
-    account, attached, loan, result_for,
+    account, attached, loan, result_for, _declared_scope,
 )
 from tests.test_core_p0_2975_manual_source_loan_parity import (
     _fixture as explicit_fixture, _loan as explicit_loan, _right,
@@ -20,7 +20,7 @@ from tests.test_sync_state_contract import _service
 
 def snapshot(a, loans=(), *, status="success", coverage="complete", extra=()):
     return LoanInventorySnapshot(
-        scope=LoanInventoryScope.for_account(a), loans=tuple(loans),
+        scope=_declared_scope(a), loans=tuple(loans),
         status=status, branches=(
             LoanBranchCoverage(
                 upstream="dilicom" if a.provider_id == "paris" else "bnf_html",
