@@ -15,6 +15,7 @@ from re import fullmatch
 _SAFE_REASONS = frozenset({
     "activity_auth_required", "activity_url_refused", "activity_rate_limited",
     "activity_operation_timeout", "activity_unavailable",
+    "activity_http_unavailable", "activity_unrecognized_loans",
     "loan_scope_unproven", "loan_not_observed", "auth_required",
     "session_closed", "download_redirect_refused", "access_denied",
     "rate_limited", "invalid_loan_token", "loan_token_invalid",
