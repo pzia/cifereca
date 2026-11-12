@@ -77,7 +77,9 @@ LOCAL_GUI = {
     "plugin_manager_page.py": PLUGIN_SCROLL,
     "facet_text.py": SEARCH_GTK,
     "query_controls.py": SEARCH_GTK + ("core-navigation",),
-    "query_model.py": SEARCH_GTK + BOOK_DETAIL + BNF_COVERS,
+    # The dedicated plugin scroll scenarios use book_detail_probe.py, whose
+    # import graph includes query_model even when its short path skips search.
+    "query_model.py": SEARCH_GTK + BOOK_DETAIL + PLUGIN_SCROLL + BNF_COVERS,
     "search_intent.py": SEARCH_GTK,
     "settings_ai_actions.py": LLM,
     "settings_ai_section.py": LLM,
