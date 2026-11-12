@@ -593,15 +593,6 @@ def connect_source_preview(
     attempt.emit(self.diagnostics, "terminal", "success", "connected")
     return session
 
-def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
-    """Legacy CLI compatibility; neutral preview enforces exact source scope."""
-    return connect_source_preview(
-        self, "kobo", credential_id, required_capability="backup",
-        error_label="Kobo",
-    )
-
-
-
 def bind_confirmed_source_account(
     self, provider_id: str, credential_id: str, session: ProviderSession, *,
     error_prefix: str = "source_canonical_account_",
@@ -720,15 +711,6 @@ def connect_source_canonical(
         self, provider_id, credential_id, required_capability=required_capability,
     )
     return bind_confirmed_source_account(self, provider_id, credential_id, session)
-
-
-def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
-    """Legacy CLI adapter retaining Kobo error codes and preview routing."""
-    session = connect_kobo_preview(self, credential_id)
-    return bind_confirmed_source_account(
-        self, "kobo", credential_id, session,
-        error_prefix="kobo_canonical_account_",
-    )
 
 
 # Closed reason vocabulary: provider exception text, types, URLs and tokens

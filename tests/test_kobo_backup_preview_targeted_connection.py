@@ -63,11 +63,11 @@ def test_explicit_preview_connects_only_targeted_kobo_not_paris_or_other_kobo():
         {"provider": "kobo", "id": "vault-1", "credentials": {"token": "target"}},
     ]
     service, calls, sessions = _service(rows)
-    target = provider_sessions.connect_kobo_preview(service, "vault-1")
+    target = provider_sessions.connect_source_preview(service, "kobo", "vault-1", required_capability="backup")
     assert target is sessions["vault-1"]
     assert calls == [("create", "vault-1"), ("connect", "vault-1")]
     assert set(service._sessions) == {"kobo:vault-1"}
-    assert provider_sessions.connect_kobo_preview(service, "vault-1") is target
+    assert provider_sessions.connect_source_preview(service, "kobo", "vault-1", required_capability="backup") is target
     assert calls == [("create", "vault-1"), ("connect", "vault-1")]
 
 
@@ -79,7 +79,7 @@ def test_preview_refuses_unconfigured_or_other_identity_without_provider_traffic
         {"provider": "paris", "id": "paris-1"},
     ])
     with pytest.raises(ProviderConfigurationError):
-        provider_sessions.connect_kobo_preview(service, credential)
+        provider_sessions.connect_source_preview(service, "kobo", credential, required_capability="backup")
     assert calls == []
     assert service._sessions == {}
 
@@ -87,5 +87,5 @@ def test_preview_refuses_unconfigured_or_other_identity_without_provider_traffic
 def test_preview_refuses_disabled_kobo_without_provider_traffic():
     service, calls, _ = _service([])
     with pytest.raises(ProviderConfigurationError, match="désactivé"):
-        provider_sessions.connect_kobo_preview(service, "vault-1")
+        provider_sessions.connect_source_preview(service, "kobo", "vault-1", required_capability="backup")
     assert calls == []

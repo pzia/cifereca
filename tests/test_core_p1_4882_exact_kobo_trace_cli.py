@@ -38,7 +38,7 @@ def reset_level(monkeypatch, tmp_path):
 
 def _core(monkeypatch, calls):
     service = SimpleNamespace(
-        connect_kobo_canonical=lambda credential: calls.append(
+        connect_source_canonical=lambda provider, credential, **kw: calls.append(
             ("connect", credential, diagnostics_level(),
              HTTPX_TRANSPORT.trace_enabled())
         ),
@@ -107,11 +107,11 @@ def test_exact_cli_trace_writes_0600_private_journal_without_stdout_leak(
     calls = []
     service = _core(monkeypatch, calls)
     signed = "https://cdn.example/file.epub?signature=PRIVATE_SYNTHETIC"
-    def connect(credential):
+    def connect(provider, credential, **kw):
         logging.getLogger("cifereca").debug(
             "TRACE kobo private_candidate_url phase=offer url=%r", signed,
         )
-    service.connect_kobo_canonical = connect
+    service.connect_source_canonical = connect
     before = tuple(logging.getLogger("cifereca").handlers)
     assert cli.main([
         "kobo-sync-edition", "--credential", "synthetic",
