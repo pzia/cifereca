@@ -13,11 +13,12 @@ ROOT = Path(__file__).resolve().parents[1] / ".github/workflows"
 
 # Exact path expressions from the reviewed workflows (not globbed directories).
 NODE24_ARTIFACT_WORKFLOWS = frozenset({
-    "e2e-smoke.yml",
     "gtk-smoke.yml",
     "package-plugins.yml",
     "plugins-only-preview.yml",
 })
+# Explicit review for the bounded E2E-only v7 upload.
+EXACT_ARTIFACT_ACTIONS = {"e2e-smoke.yml": "v7.0.2"}
 
 PUBLIC_ARTIFACT_PATHS = {
     "gtk-ubuntu24-cache-asset.yml": (
@@ -72,8 +73,10 @@ def test_exact_public_artifact_allowlist_and_two_day_retention():
         if "actions/upload-artifact" not in data:
             continue
         # Every producer is intentionally reviewed, including manual jobs.
-        expected_major = 6 if workflow.name in NODE24_ARTIFACT_WORKFLOWS else 4
-        action = f"uses: actions/upload-artifact@v{expected_major}"
+        version = EXACT_ARTIFACT_ACTIONS.get(
+            workflow.name, "v6" if workflow.name in NODE24_ARTIFACT_WORKFLOWS else "v4"
+        )
+        action = f"uses: actions/upload-artifact@{version}"
         assert data.count("uses: actions/upload-artifact@") == 1, workflow.name
         assert data.count(action) == 1, workflow.name
         block = data.split(action, 1)[1].split(
