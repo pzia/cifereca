@@ -94,6 +94,18 @@ SCENARIOS = {
         "width": 1700,
         "height": 900,
     },
+    # #5376: 36-plugin acceptance was repeated inside every book-detail.
+    # Preserve both fixture widths as independent GTK scenarios.
+    "plugin-manager-scroll-1024": {
+        "plugin": "core", "fixture": "search-filters",
+        "description": "P0 #908/#5376: 36 plugin switches, scroll/focus at 1024px.",
+        "runner": "gtk-detail", "width": 1366, "plugin_scroll_only": True,
+    },
+    "plugin-manager-scroll-1366": {
+        "plugin": "core", "fixture": "search-filters",
+        "description": "P0 #908/#5376: 36 plugin switches, scroll/focus at 1366px.",
+        "runner": "gtk-detail", "width": 1600, "plugin_scroll_only": True,
+    },
     "mainwindow-baseline-1366": {
         "plugin": "core", "fixture": "search-filters",
         "description": "P0 #1123: MainWindow, async navigation, keyboard, two identities and normal close.",
@@ -620,6 +632,7 @@ def main() -> int:
                     args.python, str(ROOT / "e2e/book_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                     *(["--geometry-1300"] if scenario.get("geometry_1300") else []),
+                    *(["--plugin-scroll-only"] if scenario.get("plugin_scroll_only") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
                 # Keep the existing P0 baseline's 1280x1024 display stable.
