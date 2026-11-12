@@ -90,7 +90,7 @@ class LoanInventoryScope:
                 alias = declared
         return cls(account.identity_id, account.provider_id,
                    account.credential_id, account.unique_id, alias,
-                   descriptor is not None)
+                   alias is not None)
 
 
 @dataclass(frozen=True, slots=True)
