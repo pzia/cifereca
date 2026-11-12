@@ -119,7 +119,7 @@ def test_native_bnf_actions_are_distinct_and_explain_safe_failure(connected_core
             assert len(candidates)==1 and candidates[0].is_file()
             assert all(a['provider_id']=='manual' for a in service.storage.acquisitions())
         assert not refresh and not service.storage.entitlements()
-        facts=[r['detail'] for r in service.diagnostics.snapshot() if r.get('verified_bnf_loan_action')]
+        facts=[r['detail'] for r in service.diagnostics.snapshot() if r.get('verified_loan_acsm_action')]
         assert len(facts)==(1 if outcome=='http_refused' else 2)
         assert facts[0]['action']=='stage_loan_token'
         assert all('task_ref' in f for f in facts)
