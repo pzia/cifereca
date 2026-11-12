@@ -22,7 +22,7 @@ CORE_BNF_PATHS = frozenset({
     'src/cifereca/core/local_import_display_links.py',
     'src/cifereca/core/loan_action_scope.py',
     'src/cifereca/gui/bnf_acsm_action_controller.py',
-    'src/cifereca/gui/bnf_borrow_controller.py',
+    'src/cifereca/gui/manual_borrow_controller.py',
 })
 
 EXPLICIT_TESTS = (PACKAGE + 'tests/test_explicit_token_success.py',
