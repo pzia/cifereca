@@ -100,12 +100,12 @@ def test_two_account_offline_sessions_are_locally_actionable_for_owner_only(
         })
     try:
         service.select_identity(identity)
-        own = service.paris_borrow_diagnostic(_book("card-" + identity))
+        own = service.manual_borrow_diagnostic(_book("card-" + identity))
         # A closed reason only, no secrets and no remote supplier request.
         assert own["local_action_possible"] is True, own["reason_code"]
         assert own["reason_code"] == "local_action_available_provider_unknown"
         other = "bob" if identity == "alice" else "alice"
-        foreign = service.paris_borrow_diagnostic(_book("card-" + other))
+        foreign = service.manual_borrow_diagnostic(_book("card-" + other))
         assert foreign["local_action_possible"] is False
     finally:
         service.close()
