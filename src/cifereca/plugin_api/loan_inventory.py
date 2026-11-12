@@ -15,6 +15,7 @@ import logging
 from typing import Literal
 
 from cifereca.models import Account, Loan
+from cifereca.providers.base import ProviderDescriptor
 from .errors import Cancelled
 
 InventoryStatus = Literal["success", "partial", "failed", "cancelled"]
@@ -42,6 +43,9 @@ class LoanInventoryScope:
     provider_id: str
     credential_id: str
     account_id: str
+    # Optional, descriptor-attested convention for an existing empty-ID borrower.
+    # Never a wildcard or an acquisition/return permission.
+    primary_account_alias: str | None = None
 
     def __post_init__(self) -> None:
         if not all((
@@ -51,13 +55,31 @@ class LoanInventoryScope:
             _valid_token(self.account_id, empty=True),
         )):
             raise ValueError("invalid_loan_inventory_scope")
+        if self.primary_account_alias is not None and (
+            self.account_id != ""
+            or not _valid_token(self.primary_account_alias)
+            or self.primary_account_alias == self.account_id
+        ):
+            raise ValueError("invalid_loan_inventory_primary_alias")
 
     @classmethod
-    def for_account(cls, account: Account) -> "LoanInventoryScope":
+    def for_account(
+        cls, account: Account, *,
+        descriptor: ProviderDescriptor | None = None,
+    ) -> "LoanInventoryScope":
+        """An alias is valid only from the exact installed descriptor, never a row."""
         if type(account) is not Account:
             raise ValueError("invalid_loan_inventory_account")
+        alias = None
+        if descriptor is not None:
+            if type(descriptor) is not ProviderDescriptor or descriptor.id != account.provider_id:
+                raise ValueError("invalid_loan_inventory_descriptor")
+            if account.unique_id == "":
+                alias = descriptor.existing_primary_loan_account_alias
+                if alias is not None and not _valid_token(alias):
+                    raise ValueError("invalid_loan_inventory_primary_alias")
         return cls(account.identity_id, account.provider_id,
-                   account.credential_id, account.unique_id)
+                   account.credential_id, account.unique_id, alias)
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +186,11 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
     # Paris' legacy "primary" alias is accepted ONLY for its explicit
     # empty-ID main account, never as a wildcard for other borrowers.
     allowed_accounts = {scope.account_id}
-    if scope.provider_id == "paris" and scope.account_id == "":
+    if scope.primary_account_alias is not None:
+        allowed_accounts.add(scope.primary_account_alias)
+    # Transitional producer-only compatibility. Remove with the Paris plugin
+    # cutover, after its snapshot constructor passes the installed descriptor.
+    elif scope.provider_id == "paris" and scope.account_id == "":
         allowed_accounts.add("primary")
     return (
         loan.identity_id == scope.identity_id
