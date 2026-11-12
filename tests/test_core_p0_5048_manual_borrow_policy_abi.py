@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+import ast
+
+from cifereca.core.borrow_action_scope import borrow_claim_key
 from types import SimpleNamespace as NS
 
 import pytest
@@ -266,9 +270,7 @@ def test_paris_remote_account_alias_mismatch_never_confirms_or_replays(tmp_path)
         assert first["status"] == "verification_unavailable"
         assert first["provider_verified"] is False
         assert state["mutations"] == 1
-        key = __import__(
-            "cifereca.core.borrow_action_scope", fromlist=["borrow_claim_key"],
-        ).borrow_claim_key(account, item)
+        key = borrow_claim_key(account, item)
         assert service.storage.loan_borrow_state(key)["status"] == (
             "verification_unavailable"
         )
@@ -305,3 +307,20 @@ def test_core_explicit_primary_id_cannot_guess_remote_alias(tmp_path):
         assert state["calls"] == [] and state["mutations"] == 0
     finally:
         service.close()
+
+
+def test_core_manual_executor_contains_no_remote_primary_loan_alias_literal():
+    """The remote account identity convention must reside only in plugins."""
+    path = (Path(__file__).resolve().parents[1]
+            / "src/cifereca/core/manual_library_borrow.py")
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    function = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "manual_borrow"
+    )
+    constants = [node.value for node in ast.walk(function)
+                 if isinstance(node, ast.Constant) and type(node.value) is str]
+    assert "primary" not in constants
+    source = ast.unparse(function)
+    assert "observed_account_alias" in source
+    assert '"primary" if primary_id' not in source
