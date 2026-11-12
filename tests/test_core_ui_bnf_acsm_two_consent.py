@@ -158,9 +158,9 @@ def test_both_dialogs_reject_replayed_positive_responses():
 
 
 def test_stage_error_explains_safe_code_without_starting_adept():
-    from cifereca.core.diagnostic_bnf_loan_action import BnfLoanActionError
+    from cifereca.core.diagnostic_explicit_loan_action import LoanActionError
     w,_=window()
-    w.service.stage_bnf_loan_acsm.side_effect=BnfLoanActionError('bnf_access_denied')
+    w.service.stage_bnf_loan_acsm.side_effect=LoanActionError('bnf_access_denied')
     start(w)
     Dialog.shown[0].respond('get')
     message,title=w.show_error.call_args.args
@@ -173,12 +173,12 @@ def test_stage_error_explains_safe_code_without_starting_adept():
 
 def test_failed_activity_message_says_no_get_was_attempted():
     from cifereca.gui.explicit_loan_acsm_controller import action_error_message
-    from cifereca.core.diagnostic_bnf_loan_action import BnfLoanActionError
+    from cifereca.core.diagnostic_explicit_loan_action import LoanActionError
     for code in ('bnf_activity_auth_required',
                  'bnf_activity_http_unavailable',
                  'bnf_activity_unrecognized_loans',
                  'bnf_activity_unavailable'):
-        message=action_error_message(BnfLoanActionError(code))
+        message=action_error_message(LoanActionError(code))
         assert 'Aucun GET ACSM' in message
         assert 'Code : '+code in message
         assert '\\n' not in message
