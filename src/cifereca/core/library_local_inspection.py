@@ -1471,11 +1471,6 @@ class LocalInspection:
                                           for case in self._cases.values()),
                 'unverified_rights': by_state['rights_without_verified_file'],
                 'inactive_loans': by_state['loan_inactive'],
-                # Backward-compatible Paris-only counter for older clients.
-                'paris_inactive_loans': sum(
-                    case.provider == 'paris' and 'loan_inactive' in case.states
-                    for case in self._cases.values()
-                ),
                 'local_without_right': by_state['local_file_without_attested_right'],
                 'unverified_files': by_state['unverified_file'],
                 'inspection_limited': self._limited,

@@ -70,8 +70,8 @@ def test_closed_paris_loans_are_visible_without_inflating_active_rights(tmp_path
     assert summary["rights_active"] == 1
     assert summary["rights_unverified_total"] == 1
     assert summary["unverified_rights"] == 1
-    assert summary["paris_inactive_loans"] == 2
     assert summary["inactive_loans"] == 2
+    assert "paris_inactive_loans" not in summary
     assert session.page(provider="paris", state="rights_without_verified_file").total == 1
     closed = session.page(provider="paris", state="loan_inactive", limit=50)
     assert closed.total == 2
@@ -141,7 +141,7 @@ def test_future_provider_closed_loan_is_visible_and_read_only(tmp_path):
     session = LocalInspection(audit, lambda: True, "reader", roots=(root,))
     assert session.overview()["unverified_rights"] == 0
     assert session.overview()["inactive_loans"] == 1
-    assert session.overview()["paris_inactive_loans"] == 0
+    assert "paris_inactive_loans" not in session.overview()
     assert session.page(provider="fixture-lender", state="rights_without_verified_file").total == 0
     rows = session.page(provider="fixture-lender", state="loan_inactive").cases
     assert len(rows) == 1
