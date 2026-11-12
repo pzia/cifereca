@@ -155,7 +155,7 @@ def test_existing_manual_file_is_not_moved_or_given_bnf_provenance(bnf_importer)
 
 @pytest.mark.parametrize('corruption', ['invalid', 'different_pdf', 'symlink'])
 def test_reimport_revalidates_existing_bytes_without_new_fulfillment(bnf_importer, corruption):
-    from cifereca.core.diagnostic_bnf_loan_action import BnfLoanActionError
+    from cifereca.core.diagnostic_explicit_loan_action import LoanActionError
     service, loan, requests = bnf_importer
     result = imported(service, loan)
     path = Path(result['path'])
@@ -166,7 +166,7 @@ def test_reimport_revalidates_existing_bytes_without_new_fulfillment(bnf_importe
         path.symlink_to(target)
     else:
         path.write_bytes(b'broken' if corruption == 'invalid' else b'%PDF-1.4\n% changed\n%%EOF\n')
-    with pytest.raises(BnfLoanActionError, match='bnf_import_failed'):
+    with pytest.raises(LoanActionError, match='bnf_import_failed'):
         imported(service, loan)
     assert len(requests) == 1
 
