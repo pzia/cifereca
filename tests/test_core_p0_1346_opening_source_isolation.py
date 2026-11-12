@@ -63,7 +63,7 @@ def test_opening_provider_failure_does_not_poison_healthy_siblings_or_other_iden
         assert _state(service, paris).get("last_success", "") == ""
         assert _state(service, kobo)["last_success"]
         assert _state(service, numilog)["last_success"]
-        assert calls == ["paris", "kobo", "numilog"]
+        assert calls == ["kobo", "paris", "numilog"]
         for account in (paris, kobo, numilog):
             assert "SECRET_SIGNATURE" not in json.dumps(_state(service, account))
             assert "paris-private" not in json.dumps(_state(service, account))

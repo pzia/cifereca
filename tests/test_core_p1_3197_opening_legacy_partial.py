@@ -60,7 +60,7 @@ def test_opening_legacy_empty_does_not_claim_complete_or_close_positive_right(
         assert _state(service, paris)["status"] == "partial"
         assert _state(service, kobo)["status"] == "success"
         assert _state(service, numilog)["status"] == "success"
-        assert len(calls) == 3 and calls == [paris, kobo, numilog]
+        assert len(calls) == 3 and calls == [kobo, paris, numilog]
         assert getter_calls == []
         assert service.storage.entitlements(provider_id="paris") == before
         default = next(row for row in result["identities"]
