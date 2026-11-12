@@ -2,7 +2,7 @@
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
-from cifereca.gui.bnf_acsm_action_controller import prepare_bnf_acsm
+from cifereca.gui.explicit_loan_acsm_controller import prepare_explicit_loan_acsm
 
 
 class Dialog:
@@ -53,9 +53,11 @@ def window():
 
 def start(w):
     Dialog.shown.clear()
-    loan = NS(source_provider="bnf-pret", identity_id="default", title="Fiction", id="loan-a", record_id="book-a")
-    prepare_bnf_acsm(w, loan, None, Adw=NS(MessageDialog=Dialog),
-                     TaskPriority=NS(USER_ACTION=1))
+    loan = NS(source_provider="bnf-pret", identity_id="default", title="Fiction", id="loan-a", record_id="book-a", source_credential="card-a", source_account_id="reader", state="active", medium="digital")
+    prepare_explicit_loan_acsm(w, loan, None, Adw=NS(MessageDialog=Dialog),
+                               TaskPriority=NS(USER_ACTION=1),
+                               stage=w.service.stage_bnf_loan_acsm,
+                               importer=w.service.import_bnf_loan_acsm)
     return loan
 
 
@@ -79,7 +81,7 @@ def test_retrieval_does_not_automatically_import_without_second_consent():
     w.service.import_bnf_loan_acsm.assert_not_called()
     Dialog.shown[1].respond("cancel")
     w.service.import_bnf_loan_acsm.assert_not_called()
-    assert actions == [("Récupération du jeton BnF…", "loan-acquisition")]
+    assert actions == [("Récupération du jeton ACSM…", "loan-acquisition")]
 
 
 def test_double_consent_imports_via_manual_adept_without_creating_bnf_right():
@@ -93,8 +95,8 @@ def test_double_consent_imports_via_manual_adept_without_creating_bnf_right():
     assert kwargs.kwargs["title"] == "Fiction"
     assert kwargs.kwargs["loan"].id == "loan-a"
     assert actions == [
-        ("Récupération du jeton BnF…", "loan-acquisition"),
-        ("Import ADEPT du prêt BnF…", "acsm-import"),
+        ("Récupération du jeton ACSM…", "loan-acquisition"),
+        ("Import ADEPT du prêt…", "acsm-import"),
     ]
     w.refresh_library.assert_called_once_with(False)
 
@@ -150,8 +152,8 @@ def test_both_dialogs_reject_replayed_positive_responses():
     Dialog.shown[1].respond("import")
     assert w.service.import_bnf_loan_acsm.call_count == 1
     assert actions == [
-        ("Récupération du jeton BnF…", "loan-acquisition"),
-        ("Import ADEPT du prêt BnF…", "acsm-import"),
+        ("Récupération du jeton ACSM…", "loan-acquisition"),
+        ("Import ADEPT du prêt…", "acsm-import"),
     ]
 
 
@@ -162,28 +164,28 @@ def test_stage_error_explains_safe_code_without_starting_adept():
     start(w)
     Dialog.shown[0].respond('get')
     message,title=w.show_error.call_args.args
-    assert 'BnF a refusé' in message and 'Code : bnf_access_denied' in message
+    assert "L'accès au jeton est refusé" in message and 'Code : bnf_access_denied' in message
     assert '\n' not in message  # Keep the shared activity banner on one paragraph.
-    assert title=='Téléchargement BnF'
+    assert title=='Téléchargement ACSM'
     w.service.import_bnf_loan_acsm.assert_not_called()
     assert len(Dialog.shown)==1
 
 
 def test_failed_activity_message_says_no_get_was_attempted():
-    from cifereca.gui.bnf_acsm_action_controller import bnf_action_error_message
+    from cifereca.gui.explicit_loan_acsm_controller import action_error_message
     from cifereca.core.diagnostic_bnf_loan_action import BnfLoanActionError
     for code in ('bnf_activity_auth_required',
                  'bnf_activity_http_unavailable',
                  'bnf_activity_unrecognized_loans',
                  'bnf_activity_unavailable'):
-        message=bnf_action_error_message(BnfLoanActionError(code))
+        message=action_error_message(BnfLoanActionError(code))
         assert 'Aucun GET ACSM' in message
         assert 'Code : '+code in message
         assert '\\n' not in message
 
 
 def test_import_error_is_distinct_and_never_formats_private_exception():
-    from cifereca.gui.bnf_acsm_action_controller import bnf_action_error_message
+    from cifereca.gui.explicit_loan_acsm_controller import action_error_message
     w,_=window()
     w.service.import_bnf_loan_acsm.side_effect=RuntimeError('SECRET token=private')
     start(w)
@@ -191,10 +193,10 @@ def test_import_error_is_distinct_and_never_formats_private_exception():
     Dialog.shown[1].respond('import')
     message,title=w.show_error.call_args.args
     assert 'ADEPT a échoué' in message and 'jeton est conservé' in message
-    assert 'SECRET' not in message and title=='Import BnF'
+    assert 'SECRET' not in message and title=='Import ADEPT'
     class Hostile:
         def __str__(self):raise AssertionError('private exception must not be formatted')
-    assert 'Code : bnf_action_failed' in bnf_action_error_message(Hostile())
+    assert 'Code : loan_acsm_action_failed' in action_error_message(Hostile())
 
 
 def test_late_failure_does_not_pop_up_in_another_identity():
