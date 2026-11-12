@@ -516,45 +516,39 @@ def disconnect_configured(self) -> None:
 
 
 
-def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
-    """Connect only the requested Kobo credential for an opt-in manifest preview.
-
-    Unlike connect_configured(), this never touches other providers, account
-    refreshes, or SQLite connection/backup records. Offline preview does not
-    call this helper at all. The opened session is owned by LibraryService.
-    """
-    credential_id = str(credential_id or "").strip()
+def connect_source_preview(\n    self, provider_id: str, credential_id: str, *, required_capability: str | None = None,\n) -> ProviderSession:
+    """Connect exactly one configured provider source, with no registration writes."""
+    provider_id = str(provider_id or "").strip().lower()\n    credential_id = str(credential_id or "").strip()
     bound_identity = (
-        self.storage.identity_for_connection("kobo", credential_id)
+        self.storage.identity_for_connection(provider_id, credential_id)
         if credential_id else None
     )
-    if not credential_id or not bound_identity:
-        raise ProviderConfigurationError("Compte Kobo demandé non configuré")
+    if not provider_id or not credential_id or not bound_identity:
+        raise ProviderConfigurationError("Compte fournisseur demandé non configuré")
     row = next(
         (
             row for row in self.config.provider_accounts(enabled_only=True)
-            if str(row.get("provider") or "").strip().lower() == "kobo"
+            if str(row.get("provider") or "").strip().lower() == provider_id
             and str(row.get("id") or "").strip() == credential_id
         ),
         None,
     )
-    if row is None:
-        raise ProviderConfigurationError("Compte Kobo désactivé ou non configuré")
-    plugin = self.registry.maybe_get("kobo")
+    if (row is None or str(row.get("identity_id") or bound_identity).strip() != bound_identity):\n        raise ProviderConfigurationError("Compte fournisseur désactivé ou non configuré")
+    plugin = self.registry.maybe_get(provider_id)
     if plugin is None or plugin.descriptor.state != "ready":
-        raise ProviderConfigurationError("Provider Kobo indisponible")
+        raise ProviderConfigurationError("Provider fournisseur indisponible")
     from .diagnostic_provider_connection_attempt import new_attempt
     attempt = new_attempt(
-        self.registry, "kobo", diagnostics=self.diagnostics,
+        self.registry, provider_id, diagnostics=self.diagnostics,
         identity_id=bound_identity, credential_id=credential_id,
         source_kind="preview", caller_category="explicit_refresh",
     )
-    key = self._session_key("kobo", credential_id)
+    key = self._session_key(provider_id, credential_id)
     existing = self._sessions.get(key)
     if existing is not None and existing.connected:
-        if existing.provider_id != "kobo" or existing.credential_id != credential_id:
+        if (existing.provider_id != provider_id\n                or existing.credential_id != credential_id\n                or (required_capability is not None and not getattr(\n                    existing.capabilities, required_capability, False\n                ))):
             attempt.emit(self.diagnostics, "terminal", "failed", "session_invalid")
-            raise ProviderConfigurationError("Session Kobo différente du compte demandé")
+            raise ProviderConfigurationError("Session fournisseur différente du compte demandé")
         attempt.emit(self.diagnostics, "session_reused", "success", "session_reused")
         attempt.emit(self.diagnostics, "terminal", "success", "connected")
         return existing
@@ -568,10 +562,10 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     try:
         attempt.emit(self.diagnostics, "connect_invoked", "unknown", "connect_invoked")
         session.connect()
-        if (not session.connected or session.provider_id != "kobo"
+        if (not session.connected or session.provider_id != provider_id
                 or session.credential_id != credential_id
-                or not getattr(session.capabilities, "backup", False)):
-            raise ProviderConfigurationError("Session Kobo sans capacité de sauvegarde")
+                or (required_capability is not None and not getattr(\n                    session.capabilities, required_capability, False\n                ))):
+            raise ProviderConfigurationError("Session fournisseur sans capacité de sauvegarde")
     except Exception:
         attempt.emit(self.diagnostics, "terminal", "failed", "connect_failed")
         try:
@@ -587,6 +581,13 @@ def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
     self._sessions[key] = session
     attempt.emit(self.diagnostics, "terminal", "success", "connected")
     return session
+
+def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
+    """Legacy CLI compatibility; neutral preview enforces exact source scope."""
+    return connect_source_preview(
+        self, "kobo", credential_id, required_capability="backup",
+    )
+
 
 
 def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
