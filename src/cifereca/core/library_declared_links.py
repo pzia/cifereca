@@ -602,7 +602,7 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
             # its history. Only the *exact current* supplier account can
             # support a current-status inspection.
             context = None
-            if _account_current(service.accounts, scope):
+            if _account_current(service.accounts, scope, descriptor=_installed_descriptor(service, scope['provider_id'])):
                 try:
                     context = _context(db, scope)
                 except DeclarationRejected as exc:
@@ -623,7 +623,7 @@ def inspect_declared_link(service, *, relation_id=None, observation, identity_id
                     except DeclarationRejected:
                         matches = False
             _require(valid() and not cancelled(), 'source_scope_changed')
-            matches = matches and _account_current(service.accounts, scope)
+            matches = matches and _account_current(service.accounts, scope, descriptor=_installed_descriptor(service, scope['provider_id']))
             status = ('declared_current'
                       if matches and record['right_state'] == _right_state(context)
                       else 'needs_review')
@@ -718,7 +718,7 @@ def list_declared_links(service, *, identity_id, offset=0, limit=50,
                     # History must use the SAME strict borrower mapping as
                     # preview/confirmation. A different paired account is
                     # neither a collision nor evidence of a changed login.
-                    account_current = _account_current(accounts, scope)
+                    account_current = _account_current(accounts, scope, descriptor=_installed_descriptor(service, scope['provider_id']))
                     if not account_current:
                         review = 'source_or_right_changed'
                     else:
