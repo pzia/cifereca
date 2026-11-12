@@ -19,10 +19,8 @@ from .public_provider_diagnostics import (
 
 def attach_plugin_manager(self, manager: Any) -> list[str]:
     """Attach Plugin API services, preferring external providers/runtimes when ready."""
-    with self._virtual_reconcile_lock:
-        self._unbind_virtual_subscriptions()
-        self._virtual_collection_closed = False
-        self._plugin_manager = manager
+    # Candidate discovery and cardinality preflight are read-only. Do not
+    # replace a working manager or cancel its subscriptions on a rejection.
     attached: list[str] = []
     try:
         statuses = manager.candidates("provider.library")
@@ -56,6 +54,10 @@ def attach_plugin_manager(self, manager: Any) -> list[str]:
     # Commit account bindings only after a descriptor's declared cardinality
     # has been verified. The bootstrap kept all ambiguous groups quarantined.
     self._project_configured_provider_connections(descriptors=descriptors.values())
+    with self._virtual_reconcile_lock:
+        self._unbind_virtual_subscriptions()
+        self._virtual_collection_closed = False
+        self._plugin_manager = manager
     for plugin_id, service in candidates:
         self.registry.register(service, replace=True)
         self._provider_plugin_ids[service.descriptor.id] = plugin_id
