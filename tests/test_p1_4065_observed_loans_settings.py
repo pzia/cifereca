@@ -41,10 +41,10 @@ def loan(identifier, *, borrower="", identity="alice", credential="cred-1",
 
 
 def projection(accounts, rows, *, provider="future-provider",
-               credential="cred-1", identity="alice"):
+               credential="cred-1", identity="alice", descriptor=None):
     return loan_cache_observations(
         provider_id=provider, credential_id=credential, identity_id=identity,
-        observed_borrowers=accounts, cached_loans=rows,
+        observed_borrowers=accounts, cached_loans=rows, descriptor=descriptor,
     )
 
 
@@ -91,7 +91,13 @@ def test_paris_primary_legacy_alias_uses_same_scope_as_core_inventory():
         loan("other-credential", provider="paris", borrower="primary",
              credential="elsewhere"),
     )
-    out = projection((account(provider="paris"),), rows, provider="paris")
+    declared = ProviderDescriptor(
+        id="paris", display_name="Paris", description="Test alias",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    out = projection((account(provider="paris"),), rows, provider="paris",
+                     descriptor=declared)
     assert len(out) == 1
     assert "Numériques : 2 prêt(s) observé(s)" in out[0][1]
     assert "Quota fournisseur : inconnu" in out[0][1]
@@ -104,7 +110,12 @@ def test_paris_legacy_primary_alias_collision_cannot_count_for_two_borrowers():
               account("primary", provider="paris", primary=False))
     rows = (loan("ambiguous", provider="paris", borrower="primary"),
             loan("real-empty", provider="paris", borrower=""))
-    out = projection(owners, rows, provider="paris")
+    declared = ProviderDescriptor(
+        id="paris", display_name="Paris", description="Test alias",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    out = projection(owners, rows, provider="paris", descriptor=declared)
     assert len(out) == 2
     assert "Numériques : 1 prêt(s) observé(s)" in out[0][1]
     assert "Numériques : non vérifiés" in out[1][1]
