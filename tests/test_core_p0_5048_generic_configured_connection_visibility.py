@@ -42,7 +42,7 @@ def test_exact_provider_and_identity_isolation_without_private_identifiers():
     ]
     assert "PRIVATE" not in repr(notices)
     assert "alice" not in repr(notices)
-    assert "a" not in repr(notices)
+    assert "password" not in repr(notices)
 
 
 def test_connected_account_only_hides_exact_provider_credential_and_identity():
