@@ -779,7 +779,7 @@ class DetailPanel(Gtk.Box):
             )
             prepare_bnf.connect(
                 "clicked",
-                lambda _b: self.window.prepare_bnf_acsm_for_loan(loan, prepare_bnf),
+                lambda _b: self.window.prepare_explicit_loan_acsm_for_loan(loan, prepare_bnf),
             )
             buttons.append(prepare_bnf)
         if include_pnb_action and downloadable:
