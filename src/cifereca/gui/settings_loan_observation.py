@@ -90,10 +90,13 @@ def loan_cache_observations(
         borrower: {"digital": set(), "physical": set(), "unknown": set()}
         for borrower in accounts
     }
-    scopes = {
-        borrower: LoanInventoryScope.for_account(account, descriptor=descriptor)
-        for borrower, account in accounts.items()
-    }
+    try:
+        scopes = {
+            borrower: LoanInventoryScope.for_account(account, descriptor=descriptor)
+            for borrower, account in accounts.items()
+        }
+    except (ValueError, TypeError, AttributeError):
+        return unavailable
     for loan in cached_loans:
         if type(loan) is not Loan or not _safe_scope(loan.id):
             continue
