@@ -167,6 +167,7 @@ def _paris_loan_branch_coverage(rows, upstream, medium, failed):
 
 DESCRIPTOR = ProviderDescriptor(
     id="paris",
+    existing_primary_loan_account_alias="primary",
     manual_borrow_policy=ManualBorrowPolicy(
         docbase="DILICOM", primary_borrower_id="",
         source_selection_key="primary_paris_connection_id",
