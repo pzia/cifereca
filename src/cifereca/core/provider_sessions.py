@@ -29,12 +29,34 @@ def attach_plugin_manager(self, manager: Any) -> list[str]:
     except Exception:
         return attached
     from ..providers.base import ProviderPlugin
+    from .provider_account_limits import (
+        ProviderAccountLimitError, validate_provider_account_limits,
+    )
+    candidates = []
     for status in statuses:
         service = manager.service(status.descriptor.id)
         if isinstance(service, ProviderPlugin):
-            self.registry.register(service, replace=True)
-            self._provider_plugin_ids[service.descriptor.id] = status.descriptor.id
-            attached.append(service.descriptor.id)
+            candidates.append((status.descriptor.id, service))
+    # Validate before publishing replacement plugins; bootstrap retains
+    # its conservative guard until descriptors become available.
+    descriptors = {
+        plugin.descriptor.id.strip().lower(): plugin.descriptor
+        for plugin in self.registry.all()
+    }
+    for _, service in candidates:
+        descriptors[service.descriptor.id.strip().lower()] = service.descriptor
+    try:
+        validate_provider_account_limits(
+            self.config.provider_accounts(), descriptors.values(),
+            default_identity=self.identities[0].identity_id,
+            known_identities=(identity.identity_id for identity in self.identities),
+        )
+    except ProviderAccountLimitError as exc:
+        raise ProviderConfigurationError(str(exc)) from None
+    for plugin_id, service in candidates:
+        self.registry.register(service, replace=True)
+        self._provider_plugin_ids[service.descriptor.id] = plugin_id
+        attached.append(service.descriptor.id)
     attached.extend(self.refresh_virtual_collections())
     binder = getattr(manager, "subscribe_services", None)
     if callable(binder):
