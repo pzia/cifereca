@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 PANEL = ROOT / "src/cifereca/gui/detail_panel.py"
-CONTROLLER = ROOT / "src/cifereca/gui/bnf_borrow_controller.py"
+CONTROLLER = ROOT / "src/cifereca/gui/manual_borrow_controller.py"
 
 
 def _function(path, name, owner=None):
