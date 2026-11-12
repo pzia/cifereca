@@ -51,6 +51,15 @@ def attach_plugin_manager(self, manager: Any) -> list[str]:
         )
     except ProviderAccountLimitError as exc:
         raise ProviderConfigurationError(str(exc)) from None
+    # Durable, generic DB guard is installed before any new account binding
+    # or provider session is published. Legacy minimal storage fakes have no
+    # policy API; production Storage always provides it after schema v15.
+    policy_setter = getattr(self.storage, "provider_cardinality_policies_set", None)
+    if callable(policy_setter):
+        try:
+            policy_setter(descriptors.values())
+        except ValueError as exc:
+            raise ProviderConfigurationError(str(exc)) from None
     # Commit account bindings only after a descriptor's declared cardinality
     # has been verified. The bootstrap kept all ambiguous groups quarantined.
     self._project_configured_provider_connections(descriptors=descriptors.values())
