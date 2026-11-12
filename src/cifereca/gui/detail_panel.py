@@ -58,6 +58,7 @@ def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evide
         if state == "remote_owned":
             return "Mes achats · fichier local non présumé"
         return "Notice de bibliothèque · aucun droit d'achat attesté"
+    return ""
 
 class DetailPanel(Gtk.Box):
     def __init__(self, window: "MainWindow"):
