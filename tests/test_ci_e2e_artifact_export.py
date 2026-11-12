@@ -588,6 +588,60 @@ class NativeAbortDiagnosisTests(unittest.TestCase):
             source.write_text(json.dumps([{"scenario":scenario,"returncode":1}]))
             self.assertNotIn("native_failure_kind", module.safe_summary(source)["results"][0])
 
+    def test_maintenance_sigabrt_exports_only_last_closed_gtk_phase(self):
+        module = _module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario = "maintenance-tools-1600"
+            folder = root / scenario / scenario
+            folder.mkdir(parents=True)
+            source = root / "summary.json"
+            source.write_text(json.dumps([{"scenario": scenario, "returncode": 134}]))
+            log = folder / "stderr.log"
+            log.write_bytes(
+                b"PRIVATE-ACCOUNT-TOKEN\n"
+                b"CIFERECA_E2E_GTK_PHASE:maint_window_start\n"
+                b"CIFERECA_E2E_GTK_PHASE:maint_declaration_dialog_open\n"
+                b"PRIVATE-URL https://private.invalid/secret\n"
+            )
+            out = module.safe_summary(source)["results"][0]
+            self.assertEqual(out["maintenance_native_last_phase"],
+                             "maint_declaration_dialog_open")
+            self.assertEqual(out["native_failure_kind"], "unclassified_native_abort")
+            for boundary in ("maint_transfer_start", "maint_transfer_done"):
+                log.write_bytes(f"CIFERECA_E2E_GTK_PHASE:{boundary}\n".encode())
+                self.assertEqual(
+                    module.safe_summary(source)["results"][0]["maintenance_native_last_phase"],
+                    boundary,
+                )
+            log.write_bytes(
+                b"CIFERECA_E2E_GTK_PHASE:maint_declaration_dialog_open\n"
+            )
+            self.assertNotIn("PRIVATE", repr(out))
+            self.assertNotIn("private.invalid", repr(out))
+
+            # Exact, complete, reviewed literals only; no injection through
+            # a public marker-shaped line or an otherwise passing scenario.
+            for invalid in (
+                b"CIFERECA_E2E_GTK_PHASE:maint_private_token\n",
+                b"CIFERECA_E2E_GTK_PHASE:maint_route PRIVATE\n",
+                b"prefix CIFERECA_E2E_GTK_PHASE:maint_route\n",
+                b"CIFERECA_E2E_GTK_PHASE:maint_route_suffix\n",
+            ):
+                log.write_bytes(invalid)
+                self.assertNotIn(
+                    "maintenance_native_last_phase",
+                    module.safe_summary(source)["results"][0],
+                )
+            source.write_text(json.dumps([{"scenario":scenario, "returncode":0}]))
+            log.write_bytes(b"CIFERECA_E2E_GTK_PHASE:maint_route\n")
+            self.assertNotIn("maintenance_native_last_phase",
+                             module.safe_summary(source)["results"][0])
+            source.write_text(json.dumps([{"scenario":"startup","returncode":134}]))
+            self.assertNotIn("maintenance_native_last_phase",
+                             module.safe_summary(source)["results"][0])
+
+
     def test_native_log_symlink_oversize_and_missing_are_not_read(self):
         module = _module()
         with tempfile.TemporaryDirectory() as tmp:

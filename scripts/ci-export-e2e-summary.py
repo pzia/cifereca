@@ -424,6 +424,26 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
         return {}
 
 
+# Fixed, source-reviewed maintenance phase names emitted by the synthetic
+# GTK probe to *both* streams. A SIGABRT cannot execute Python cleanup.
+_MAINTENANCE_ABORT_PHASES = frozenset({
+    "maint_window_start", "maint_window_shown", "maint_route",
+    "maint_busy_guard", "maint_scan", "maint_first_dialog",
+    "maint_cancel_stale", "maint_execute", "maint_refresh",
+    "maint_p1_naming", "maint_p1_duplicates", "maint_done",
+    "maint_dialog_visible", "maint_dialog_response",
+    "maint_p1_dialog_visible", "maint_p1_dialog_response",
+    "maint_inspection_opened", "maint_inspection_right_selected",
+    "maint_inspection_candidate_navigated", "maint_inspection_file_selected",
+    "maint_inspection_preflight", "maint_inspection_finished",
+    "maint_declaration_start", "maint_declaration_audit_done",
+    "maint_declaration_dialog_open", "maint_declaration_right_selected",
+    "maint_declaration_expander_open", "maint_declaration_preview_dialog",
+    "maint_declaration_committed", "maint_declaration_revoked",
+    "maint_transfer_start", "maint_transfer_done",
+})
+
+
 def _native_abort_diagnosis(source: Path, scenario: str, code: int) -> dict:
     """Classify a native abort using fixed markers, never disclose log text.
 
@@ -444,6 +464,17 @@ def _native_abort_diagnosis(source: Path, scenario: str, code: int) -> dict:
         with log.open("rb") as handle:
             handle.seek(max(0, log.stat().st_size - 32768))
             tail = handle.read(32768)
+        # The probe emits a closed stage immediately before each GTK action.
+        # Read only exact complete lines from stderr and export one reviewed
+        # identifier; never print raw log text or inferred exception details.
+        if scenario.startswith("maintenance-tools-"):
+            for line in tail.splitlines():
+                if line.startswith(b"CIFERECA_E2E_GTK_PHASE:"):
+                    phase = line.removeprefix(b"CIFERECA_E2E_GTK_PHASE:")
+                    if phase.isascii():
+                        name = phase.decode("ascii")
+                        if name in _MAINTENANCE_ABORT_PHASES:
+                            result["maintenance_native_last_phase"] = name
         markers = (
             ("allocator_abort_marker", (b"malloc():", b"double free or corruption",
                                         b"free(): invalid pointer", b"corrupted size vs.")),
