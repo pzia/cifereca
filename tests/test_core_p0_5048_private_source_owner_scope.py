@@ -72,3 +72,33 @@ def test_missing_provider_or_connection_is_not_private_authority():
               storage=FakeStorage({}))
     assert private_source_owner_matches(host, item) is False
     assert LibraryService.can_direct_download(host, item) is False
+
+
+def test_owner_rebound_during_live_holdings_never_publishes_or_caches_details():
+    item = row(provider="synthetic", credential="alice-source")
+    owner = {("synthetic", "alice-source"): "alice"}
+    storage = FakeStorage(owner)
+    storage.cache_put = lambda *_args: pytest.fail("revoked details must not be cached")
+    calls = []
+
+    def read_holdings(_item, _terms):
+        calls.append("get")
+        owner[("synthetic", "alice-source")] = "bob"
+        return ItemDetail(
+            record_id=item.record_id, docbase=item.docbase, title=item.title,
+            author=None, type=None, year=None, thumbnail_url=None,
+            availability_status="available", availability_label="PRIVATE",
+            holdings=[], source_provider="synthetic",
+            source_credential="alice-source",
+        )
+
+    host = NS(
+        current_identity=NS(identity_id="alice"), storage=storage,
+        config=NS(get=lambda *_args: 300),
+        _session_for_source=lambda *_args: NS(holdings=read_holdings),
+    )
+    detail = LibraryService.holdings(host, item, force=True)
+    assert calls == ["get"]
+    assert detail.availability_status == "unknown"
+    assert detail.availability_label != "PRIVATE"
+    assert len(storage.reads) == 2
