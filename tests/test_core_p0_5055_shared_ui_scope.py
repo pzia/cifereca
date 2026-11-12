@@ -59,3 +59,29 @@ def test_shared_lease_revokes_context_without_provider_io():
     item.title = "A title"
     window._identity_context_generation += 1
     assert current() is False
+
+
+def test_shared_lease_rejects_wrong_credential_and_revokes_rebound_session():
+    window, item, account, session = _context()
+    item.source_credential = "other-card"
+    assert _capture_borrow_ui_scope(
+        window, item, account, session, provider_id="paris",
+    ) is None
+    item.source_credential = "card-a"
+    lease = _capture_borrow_ui_scope(
+        window, item, account, session, provider_id="paris",
+    )
+    assert lease is not None
+    current = lease[2]
+    assert current() is True
+    account.credential_id = "other-card"
+    assert current() is False
+    account.credential_id = "card-a"
+    session._epoch += 1
+    assert current() is False
+
+
+def test_after_manual_abi_cutover_all_exports_are_live():
+    from cifereca.gui import bnf_borrow_controller as controller
+    assert controller.__all__ == ["present_paris_borrow_verification"]
+    assert all(callable(getattr(controller, key)) for key in controller.__all__)
