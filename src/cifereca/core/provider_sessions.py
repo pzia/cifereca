@@ -48,7 +48,7 @@ def attach_plugin_manager(self, manager: Any) -> list[str]:
         descriptors[service.descriptor.id.strip().lower()] = service.descriptor
     try:
         validate_provider_account_limits(
-            self.config.provider_accounts(), descriptors.values(),
+            self.config.provider_accounts(), descriptors.values(),\n            default_identity=self.identities[0].identity_id,\n            known_identities=(identity.identity_id for identity in self.identities),
         )
     except ProviderAccountLimitError as exc:
         raise ProviderConfigurationError(str(exc)) from None
