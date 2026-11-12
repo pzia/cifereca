@@ -25,3 +25,15 @@ def private_source_owner_matches(service: object, item: object) -> bool:
     except (AttributeError, LookupError, TypeError, ValueError):
         return False
     return type(owner) is str and owner == identity
+
+
+def public_catalogue_source(item: object) -> bool:
+    """Passively recognize a *declared* public, non-owned catalogue row.
+
+    This only preserves public browse/UI paths; neither a catalogue label
+    nor an unauthenticated row proves a downloadable item or private right.
+    """
+    return (
+        getattr(item, "source_collection", None) == "public"
+        and getattr(item, "owned", None) is False
+    )
