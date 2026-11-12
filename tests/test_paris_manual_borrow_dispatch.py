@@ -34,8 +34,7 @@ def _present_test_manual_borrow(window, item, control, *, Adw, TaskPriority, acc
     # Test the generic controller with the original exact Paris Core contract.
     return _present_manual_borrow(
         window, item, control, TaskPriority=TaskPriority,
-        label="Paris", available=window.service.can_borrow_manual,
-        dispatch=window.service.borrow_manual, expected_account=account,
+        label="Paris", expected_account=account,
     )
 
 
