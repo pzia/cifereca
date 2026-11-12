@@ -40,7 +40,7 @@ def setup(tmp_path):
     service.materialize_to_identity = lambda *_args, **_kwargs: (
         pytest.fail("claim observation must never copy another reader's bytes")
     )
-    service.borrow_paris_manual = lambda *_args, **_kwargs: (
+    service.borrow_manual = lambda *_args, **_kwargs: (
         pytest.fail("claim observation must never borrow from any lender")
     )
     try:
