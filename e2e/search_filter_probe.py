@@ -55,6 +55,7 @@ class _OfflineParisSession(ProviderSession):
                     docbase="DILICOM", primary_borrower_id="",
                     source_selection_key="primary_paris_connection_id",
                     verification="provider_observed",
+                    observed_account_alias="primary",
                 ),
             ),
             credential_id=credential, label="Paris hors ligne",
