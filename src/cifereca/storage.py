@@ -2914,30 +2914,51 @@ class Storage:
             db.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (JOURNAL_KEY, json.dumps(committed)))
             db.execute("DELETE FROM cache WHERE namespace='search'")
 
-    def provider_connection_put(self, item: dict[str, Any]) -> str:
+    def provider_connection_put(
+        self, item: dict[str, Any], *, max_accounts_per_identity: int | None = None,
+    ) -> str:
+        """Persist a connection with an atomic provider-neutral cardinality check.
+
+        The optional cap is a Core-admitted descriptor limit, never inferred
+        from a supplier ID. Older databases retain their physical uniqueness
+        indexes until a separate, transactionally guarded schema migration.
+        """
         row = dict(item)
         provider_id = str(row.get("provider_id") or "").strip().lower()
         credential_id = str(row.get("credential_id") or "").strip()
         identity_id = str(row.get("identity_id") or "").strip()
         if not provider_id or not credential_id or not identity_id:
             raise ValueError("provider connection requires identity_id/provider_id/credential_id")
+        if max_accounts_per_identity is not None and (
+            type(max_accounts_per_identity) is not int or max_accounts_per_identity < 1
+        ):
+            raise ValueError("invalid_provider_account_limit")
         connection_id = str(row.get("connection_id") or self._stable_id("connection", provider_id, credential_id))
         now = int(time.time())
         with self._lock, self._connect() as db:
-            if provider_id == "kobo":
-                existing = db.execute(
-                    "SELECT credential_id FROM provider_connections WHERE identity_id=? AND provider_id='kobo' AND credential_id<>?",
-                    (identity_id, credential_id),
+            # BEGIN IMMEDIATE serializes the check and the write across
+            # independent Storage objects/processes sharing this database.
+            db.execute("BEGIN IMMEDIATE")
+            if max_accounts_per_identity is not None:
+                other = db.execute(
+                    "SELECT COUNT(*) FROM provider_connections "
+                    "WHERE provider_id=? AND identity_id=? AND credential_id<>?",
+                    (provider_id, identity_id, credential_id),
                 ).fetchone()
-                if existing:
-                    raise ValueError("une identité Paris ne peut avoir qu'un seul compte Kobo Vault")
-            db.execute(
-                "INSERT INTO provider_connections(connection_id,identity_id,provider_id,credential_id,label,enabled,metadata_json,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(provider_id,credential_id) DO UPDATE SET identity_id=excluded.identity_id,"
-                "label=excluded.label,enabled=excluded.enabled,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
-                (connection_id, identity_id, provider_id, credential_id, str(row.get("label") or provider_id),
-                 int(bool(row.get("enabled", True))), self._json_dump(row.get("metadata")), now, now),
-            )
+                if other is None or other[0] >= max_accounts_per_identity:
+                    raise ValueError("provider_account_limit_exceeded")
+            try:
+                db.execute(
+                    "INSERT INTO provider_connections(connection_id,identity_id,provider_id,credential_id,label,enabled,metadata_json,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(provider_id,credential_id) DO UPDATE SET identity_id=excluded.identity_id,"
+                    "label=excluded.label,enabled=excluded.enabled,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
+                    (connection_id, identity_id, provider_id, credential_id, str(row.get("label") or provider_id),
+                     int(bool(row.get("enabled", True))), self._json_dump(row.get("metadata")), now, now),
+                )
+            except sqlite3.IntegrityError:
+                # Existing historic unique indexes must remain effective
+                # without allowing a raw sqlite error to disclose scope IDs.
+                raise ValueError("provider_connection_constraint_failed") from None
             actual = db.execute(
                 "SELECT connection_id FROM provider_connections WHERE provider_id=? AND credential_id=?",
                 (provider_id, credential_id),
@@ -3038,21 +3059,19 @@ class Storage:
         provider_account_id = str(row.get("provider_account_id") or self._stable_id("provider-account", connection_id, account_id))
         now = int(time.time())
         with self._lock, self._connect() as db:
-            if provider_id == "kobo":
-                existing = db.execute(
-                    "SELECT provider_account_id FROM provider_accounts WHERE identity_id=? AND provider_id='kobo' AND provider_account_id<>?",
-                    (identity_id, provider_account_id),
-                ).fetchone()
-                if existing:
-                    raise ValueError("une identité Paris ne peut avoir qu'un seul compte Kobo")
-            db.execute(
-                "INSERT INTO provider_accounts(provider_account_id,connection_id,identity_id,provider_id,credential_id,account_id,label,is_primary,metadata_json,created_at,updated_at) "
+            # Historic provider-account constraints remain SQLite-enforced.
+            # This generic writer must not implement an extra supplier rule.
+            try:
+                db.execute(
+                    "INSERT INTO provider_accounts(provider_account_id,connection_id,identity_id,provider_id,credential_id,account_id,label,is_primary,metadata_json,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_id,account_id) DO UPDATE SET identity_id=excluded.identity_id,"
                 "label=excluded.label,is_primary=excluded.is_primary,metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
                 (provider_account_id, connection_id, identity_id, provider_id, credential_id, account_id,
                  str(row.get("label") or account_id or "Compte principal"), int(bool(row.get("is_primary", False))),
                  self._json_dump(row.get("metadata")), now, now),
             )
+            except sqlite3.IntegrityError:
+                raise ValueError("provider_account_constraint_failed") from None
             actual = db.execute(
                 "SELECT provider_account_id FROM provider_accounts WHERE connection_id=? AND account_id=?",
                 (connection_id, account_id),
