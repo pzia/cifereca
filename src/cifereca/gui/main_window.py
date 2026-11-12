@@ -1596,7 +1596,7 @@ class MainWindow(Adw.ApplicationWindow):
         from .explicit_loan_acsm_controller import prepare_explicit_loan_acsm
         prepare_explicit_loan_acsm(
             self, loan, control, Adw=Adw, TaskPriority=TaskPriority,
-            stage=self.service.stage_bnf_loan_acsm,
+            stage=self.service.stage_explicit_loan_acsm,
             importer=self.service.import_bnf_loan_acsm,
         )
 

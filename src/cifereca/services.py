@@ -504,31 +504,43 @@ class LibraryService:
             expected_docbase=expected_docbase,
         )
 
-    def stage_bnf_loan_acsm(
+    def stage_explicit_loan_acsm(
         self, loan: Loan, *, confirmed: bool = False,
         expected_identity_id: str = "",
     ) -> dict[str, str]:
-        """Deliberate BnF ACSM candidate only; never the automatic download path.
+        """Deliberate provider-selected ACSM candidate, never automatic download.
 
         Caller must capture the exact identity before its UI confirmation and
         pass it back. The Core revalidates this owner before and after HTTP.
         No entitlement, acquisition, ADEPT or borrowed-state mutation.
         """
         from inspect import getattr_static, isfunction
+        from re import fullmatch
         from .core.diagnostic_explicit_loan_action import (
             ActionObservation, LoanActionError, valid_stage_code,
         )
         from .core.explicit_loan_acsm import stage_explicit_loan_acsm
 
-        observation = ActionObservation(self, 'stage_loan_token', provider_id='bnf-pret')
+        # Derive only a *bounded* diagnostic vocabulary from the exact Loan.
+        # Provider capability, not a Core provider-ID dispatch, grants this path.
+        provider_id = loan.source_provider if type(loan) is Loan else None
+        valid_provider = (type(provider_id) is str and
+                          fullmatch(r"[a-z][a-z0-9-]{0,63}", provider_id) is not None)
+        prefix = provider_id.split("-", 1)[0] if valid_provider else None
+        def reason(suffix):
+            return prefix + "_" + suffix if prefix else "loan_action_failed"
+
+        observation = ActionObservation(
+            self, 'stage_loan_token', provider_id=provider_id,
+        )
         try:
             # The Core validates the exact origin and consent before dispatch:
-            # a missing/wrong provider must not observe or execute a private
-            # session getter. The plugin supplies only the BnF branch/reasons;
+            # an invalid scope never invokes a private session getter.
+            # The plugin supplies the branch/reasons;
             # the shared Core still owns the lock, lease and ACSM inspection.
             if confirmed is not True:
-                raise LoanActionError("bnf_explicit_confirmation_required")
-            if (type(loan) is not Loan or loan.source_provider != observation.provider_id
+                raise LoanActionError(reason("explicit_confirmation_required"))
+            if (type(loan) is not Loan or not valid_provider
                     or loan.medium != "digital" or loan.state != "active"
                     or type(loan.source_credential) is not str
                     or not loan.source_credential
@@ -539,13 +551,13 @@ class LibraryService:
                     or type(loan.record_id) is not str or not loan.record_id
                     or type(expected_identity_id) is not str
                     or expected_identity_id != loan.identity_id):
-                raise LoanActionError("bnf_loan_scope_unproven")
+                raise LoanActionError(reason("loan_scope_unproven"))
             try:
                 session = self._session_for_source(
                     loan.source_provider, loan.source_credential,
                 )
             except Exception:
-                raise LoanActionError("bnf_loan_scope_unproven") from None
+                raise LoanActionError(reason("loan_scope_unproven")) from None
             profile = getattr_static(
                 type(session), "loan_acsm_stage_profile", None,
             )
@@ -562,7 +574,7 @@ class LibraryService:
                            for code in profile[1])
                     or not isfunction(activity_reason)
                     or not isfunction(candidate_reason)):
-                raise LoanActionError("bnf_loan_token_unavailable")
+                raise LoanActionError(reason("loan_token_unavailable"))
             reason_codes = dict(zip(
                 ("confirmation", "scope", "unavailable", "invalid", "busy"),
                 profile[1],
@@ -589,7 +601,7 @@ class LibraryService:
             observation.emit('failed', exc.code)
             raise
         except Exception as exc:
-            code = 'bnf_local_staging_failed' if isinstance(exc, OSError) else 'bnf_action_failed'
+            code = reason('local_staging_failed' if isinstance(exc, OSError) else 'action_failed')
             observation.emit('failed', code)
             raise LoanActionError(code) from None
         observation.emit('success', 'candidate_acsm')

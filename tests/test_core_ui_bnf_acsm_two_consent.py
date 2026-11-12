@@ -28,7 +28,7 @@ def window():
     operations = []
     service = NS(
         current_identity=NS(identity_id="default"),
-        stage_bnf_loan_acsm=Mock(return_value={
+        stage_explicit_loan_acsm=Mock(return_value={
             "status": "candidate_acsm", "path": "/private/staged.acsm",
         }),
         import_bnf_loan_acsm=Mock(return_value={"status": "complete"}),
@@ -56,7 +56,7 @@ def start(w):
     loan = NS(source_provider="bnf-pret", identity_id="default", title="Fiction", id="loan-a", record_id="book-a", source_credential="card-a", source_account_id="reader", state="active", medium="digital")
     prepare_explicit_loan_acsm(w, loan, None, Adw=NS(MessageDialog=Dialog),
                                TaskPriority=NS(USER_ACTION=1),
-                               stage=w.service.stage_bnf_loan_acsm,
+                               stage=w.service.stage_explicit_loan_acsm,
                                importer=w.service.import_bnf_loan_acsm)
     return loan
 
@@ -66,7 +66,7 @@ def test_cancel_retrieval_never_starts_http_or_adept():
     start(w)
     assert len(Dialog.shown) == 1
     Dialog.shown[0].respond("cancel")
-    w.service.stage_bnf_loan_acsm.assert_not_called()
+    w.service.stage_explicit_loan_acsm.assert_not_called()
     w.service.import_bnf_loan_acsm.assert_not_called()
     assert actions == []
 
@@ -75,7 +75,7 @@ def test_retrieval_does_not_automatically_import_without_second_consent():
     w, actions = window()
     loan = start(w)
     Dialog.shown[0].respond("get")
-    w.service.stage_bnf_loan_acsm.assert_called_once_with(
+    w.service.stage_explicit_loan_acsm.assert_called_once_with(
         loan, confirmed=True, expected_identity_id="default")
     assert len(Dialog.shown) == 2
     w.service.import_bnf_loan_acsm.assert_not_called()
@@ -106,7 +106,7 @@ def test_switching_identity_revokes_pending_first_and_second_consent():
     start(w)
     w.service.current_identity = NS(identity_id="another")
     Dialog.shown[0].respond("get")
-    w.service.stage_bnf_loan_acsm.assert_not_called()
+    w.service.stage_explicit_loan_acsm.assert_not_called()
     w, _ = window()
     start(w)
     Dialog.shown[0].respond("get")
@@ -131,7 +131,7 @@ def test_confirmation_is_bound_to_original_loan_even_after_mutable_list_refresh(
     selection.record_id = "book-other"
     selection.title = "Un autre titre"
     Dialog.shown[0].respond("get")
-    submitted = w.service.stage_bnf_loan_acsm.call_args
+    submitted = w.service.stage_explicit_loan_acsm.call_args
     assert submitted.kwargs == {
         "confirmed": True, "expected_identity_id": "default",
     }
@@ -146,7 +146,7 @@ def test_both_dialogs_reject_replayed_positive_responses():
     start(w)
     Dialog.shown[0].respond("get")
     Dialog.shown[0].respond("get")
-    assert w.service.stage_bnf_loan_acsm.call_count == 1
+    assert w.service.stage_explicit_loan_acsm.call_count == 1
     assert len(Dialog.shown) == 2
     Dialog.shown[1].respond("import")
     Dialog.shown[1].respond("import")
@@ -160,7 +160,7 @@ def test_both_dialogs_reject_replayed_positive_responses():
 def test_stage_error_explains_safe_code_without_starting_adept():
     from cifereca.core.diagnostic_explicit_loan_action import LoanActionError
     w,_=window()
-    w.service.stage_bnf_loan_acsm.side_effect=LoanActionError('bnf_access_denied')
+    w.service.stage_explicit_loan_acsm.side_effect=LoanActionError('bnf_access_denied')
     start(w)
     Dialog.shown[0].respond('get')
     message,title=w.show_error.call_args.args
@@ -222,12 +222,12 @@ def test_synthetic_lender_uses_same_two_consent_contract_without_supplier_dispat
     prepare_explicit_loan_acsm(
         w, loan, None, Adw=NS(MessageDialog=Dialog),
         TaskPriority=NS(USER_ACTION=1),
-        stage=w.service.stage_bnf_loan_acsm,
+        stage=w.service.stage_explicit_loan_acsm,
         importer=w.service.import_bnf_loan_acsm,
     )
     assert len(Dialog.shown) == 1
     Dialog.shown[0].respond("get")
-    assert w.service.stage_bnf_loan_acsm.call_args.args[0].source_provider == "synthetic-lender"
+    assert w.service.stage_explicit_loan_acsm.call_args.args[0].source_provider == "synthetic-lender"
     assert len(Dialog.shown) == 2
     Dialog.shown[1].respond("import")
     assert w.service.import_bnf_loan_acsm.call_count == 1
@@ -243,7 +243,7 @@ def test_service_replacement_between_consent_and_work_cannot_dispatch():
     previous = w.service
     w.service = NS(**vars(previous))
     Dialog.shown[0].respond("get")
-    previous.stage_bnf_loan_acsm.assert_not_called()
+    previous.stage_explicit_loan_acsm.assert_not_called()
     previous.import_bnf_loan_acsm.assert_not_called()
 
 
@@ -254,11 +254,11 @@ def test_missing_actions_and_malformed_loan_fail_closed_before_any_dialog():
     prepare_explicit_loan_acsm(
         w, loan, None, Adw=NS(MessageDialog=Dialog),
         TaskPriority=NS(USER_ACTION=1),
-        stage=w.service.stage_bnf_loan_acsm,
+        stage=w.service.stage_explicit_loan_acsm,
         importer=w.service.import_bnf_loan_acsm,
     )
     assert not Dialog.shown
-    assert not w.service.stage_bnf_loan_acsm.called
+    assert not w.service.stage_explicit_loan_acsm.called
     assert not w.service.import_bnf_loan_acsm.called
     prepare_explicit_loan_acsm(
         w, loan, None, Adw=NS(MessageDialog=Dialog),

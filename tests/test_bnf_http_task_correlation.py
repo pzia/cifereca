@@ -49,7 +49,7 @@ def test_real_core_http_and_terminal_share_worker_reference(
     logger.setLevel(logging.INFO)
     pool = PriorityExecutor(max_workers=1)
     try:
-        future = pool.submit(0, lambda: service.stage_bnf_loan_acsm(
+        future = pool.submit(0, lambda: service.stage_explicit_loan_acsm(
             loan, confirmed=True, expected_identity_id='default'))
         with pytest.raises(LoanActionError):
             future.result(timeout=5)
