@@ -182,7 +182,7 @@ def test_bnf_validated_nonempty_html_claims_scoped_coverage_only(html, expected_
     s, a, client = bnf(html)
     try:
         before = client.calls.count("activity")
-        snap = read_loan_inventory(s, a)
+        snap = read_loan_inventory(s, a, descriptor=s.descriptor)
         assert len(snap.loans) == expected_count
         complete = expected_count > 0
         assert snap.status == ("success" if complete else "partial")
