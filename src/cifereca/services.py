@@ -2734,13 +2734,11 @@ class LibraryService:
             from inspect import getattr_static
             if getattr_static(session, "legacy_direct_get_retired", None) is True:
                 return False
-            if item.source_provider == "ebooksgratuits":
-                # Public COPS catalogue rows can precede OPDS enrichment:
-                # a generic remote/distant notice is not an EPUB offer.
-                # The provider exposes the exact acquisition link and an
-                # explicit downloadable flag only for qualifying Atom books.
-                # Never enable a misleading action merely because the
-                # provider *supports* direct downloads in general.
+            if getattr_static(session, "exact_catalogue_download_offer_required", None) is True:
+                # A public catalogue may publish discovery rows before an
+                # exact downloadable offer. This inert plugin capability
+                # requires a selected URL and explicit downloadable flag;
+                # it never authorizes GET or synthesizes ownership.
                 link = item.download_url
                 return bool(
                     session.capabilities.direct_download
