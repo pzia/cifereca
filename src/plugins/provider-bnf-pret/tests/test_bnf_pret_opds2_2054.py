@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 
 
-MODULE = (Path(__file__).resolve().parents[1] / "src/plugins/provider-bnf-pret"
-          / "cifereca_bnf_pret_opds2.py")
+MODULE = Path(__file__).resolve().parents[1] / "cifereca_bnf_pret_opds2.py"
 spec = importlib.util.spec_from_file_location("cifereca_bnf_pret_opds2", MODULE)
 opds = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = opds
