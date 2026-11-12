@@ -137,13 +137,38 @@ def test_detail_usage_is_read_only_and_matches_search_projection():
     exec(compile(isolated, str(owner), "exec"), scope)
     usage = scope["_commercial_search_usage"]
     assert "aucun achat attesté" in usage(_public_numilog())
-    assert "Mes achats Numilog" in usage(
+    assert "Mes achats · fichier local non présumé" in usage(
         _private_numilog(), NS(current_identity=NS(identity_id="alice")),
         purchase_evidence=_proof())
     assert "aucun droit d'achat attesté" in usage(
-        replace(_private_numilog(), source_collection="catalog")
+        replace(_private_numilog(), source_collection="library")
     )
+    assert usage(replace(_private_numilog(), source_collection="catalog")) == ""
     assert usage(_book("paris")) == ""
+    # Kobo retains its supplier-specific *warning* rather than being
+    # mislabelled an owned commercial purchase by the shared library scope.
+    assert "disponibilité à vérifier" in usage(
+        replace(_book("kobo"), source_collection="library", owned=True)
+    )
+    assert "droits non actualisés" in usage(
+        replace(_book("kobo"), source_collection="library",
+                metadata={"search_provenance": "known_catalog_stale"})
+    )
+    # A supplier-name switch must never manufacture purchase provenance.
+    synthetic_public = replace(_public_numilog(), source_provider="synthetic-public")
+    assert usage(synthetic_public) == "Catalogue commercial public · aucun achat attesté"
+    synthetic_private = replace(_private_numilog(), source_provider="synthetic-provider")
+    assert "aucun droit d'achat attesté" in usage(synthetic_private)
+    synthetic_proof = SearchOwnedEvidence(
+        "alice", frozenset({("synthetic-provider", "personal-credential", "account-A", "same", "")}),
+    )
+    assert usage(
+        synthetic_private, NS(current_identity=NS(identity_id="alice")),
+        purchase_evidence=synthetic_proof,
+    ) == "Mes achats · fichier local non présumé"
+    detail_source = owner.read_text(encoding="utf-8").split("class DetailPanel", 1)[0]
+    assert 'item.source_provider == "numilog"' not in detail_source
+    assert 'item.source_provider == "numilog-catalog"' not in detail_source
 
 
 def test_library_references_do_not_confuse_loan_purchase_and_catalogue():
