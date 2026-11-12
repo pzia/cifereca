@@ -170,7 +170,7 @@ def test_real_private_inventory_keeps_opt_in_search_button_but_not_local_file():
     row = host.search_page.show_rows.call_args.args[0][0]
     assert row.options["action_label"] == "Vérifier et télécharger"
     assert callable(row.options["action_callback"])
-    assert "Mes achats Numilog" in row.meta
+    assert "Mes achats · fichier local non présumé" in row.meta
     assert "Offre à vérifier" in row.meta
     assert "Fichier local disponible" not in row.meta
     host.service.can_direct_download.assert_called_once_with(book)
