@@ -39,7 +39,9 @@ def test_read_only_catalogue_never_calls_borrower_holdings(item):
     assert detail.source_credential == item.source_credential
 
 
-def test_same_source_without_public_marker_is_not_silently_suppressed():
-    # Ordinary borrower rows must still use the existing session/rights path.
-    with pytest.raises(AttributeError):
-        LibraryService.holdings(object(), row(metadata={}), force=True)
+def test_unbound_private_source_must_not_query_borrower_holdings():
+    # An unmarked authenticated row cannot enter a private provider session
+    # without an exact owner binding, even if the service is unavailable.
+    detail = LibraryService.holdings(object(), row(metadata={}), force=True)
+    assert detail.holdings == []
+    assert detail.availability_status == "unknown"
