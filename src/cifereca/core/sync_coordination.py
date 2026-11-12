@@ -1018,7 +1018,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
             complete_by_source: dict[str, tuple[str, str, str]] = {}
             accounts = sorted(
                 [a for a in self.accounts_for_identity(identity.identity_id) if self.sync_source_enabled(a)],
-                key=lambda a: (0 if a.provider_id == "paris" else 1, a.provider_id, a.credential_id, a.unique_id),
+                key=lambda a: (a.provider_id, a.credential_id, a.unique_id),
             )
             for account in accounts:
                 source_id = self.sync_source_id(account)
