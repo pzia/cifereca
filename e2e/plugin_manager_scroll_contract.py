@@ -112,11 +112,16 @@ def verify_plugin_scroll(window, later, done, *, width: int, checkpoint=None):
     def first_toggle():
         mark("first_toggle")
         switch = page._plugin_switches[target]
+        mark("first_grab_focus")
         assert switch.grab_focus() is not False
+        mark("first_toggle_geometry")
         row_y, scroll = geometry()
+        mark("first_toggle_scroll")
         assert scroll > 250, "GTK plugin list did not scroll to middle"
         state["offset"] = row_y - scroll
+        mark("first_toggle_set_inactive")
         switch.set_active(False)
+        mark("first_toggle_callback")
         assert manager.calls == [(target, False)]
         later(200, verify_first_toggle)
 
