@@ -25,7 +25,7 @@ def events(service, tmp_path, **kwargs):
 
 def test_stage_terminal_is_unique_and_does_not_invent_task_reference(connected_core, tmp_path):
     service, session, account, loan, state, downloaded = connected_core
-    result = service.stage_bnf_loan_acsm(loan, confirmed=True, expected_identity_id='default')
+    result = service.stage_explicit_loan_acsm(loan, confirmed=True, expected_identity_id='default')
     rows = events(service,tmp_path)
     assert len(rows)==1
     detail = rows[0]['detail']
@@ -43,7 +43,7 @@ def test_actual_task_context_is_shared_with_terminal_without_private_identifiers
     caplog.set_level('INFO',logger='cifereca')
     with diagnostic_task_scope():
         ref=diagnostic_task_reference()
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     row,=events(service,tmp_path)
     assert row['task_ref']==row['detail']['task_ref']==ref
     line=next(r.getMessage() for r in caplog.records if r.getMessage().startswith('EVENT bnf loan action '))
@@ -62,7 +62,7 @@ def test_http_refusal_preserves_only_closed_provider_reason(connected_core,tmp_p
         return original(request)
     session.client.http._transport.handler=handler
     with pytest.raises(LoanActionError,match='^bnf_'+reason+'$'):
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     row,=events(service,tmp_path)
     assert row['detail']['reason_code']=='bnf_'+reason
     assert row['detail']['phase']=='provider_delivery'
@@ -88,7 +88,7 @@ def test_activity_refusal_is_distinct_from_token_get(connected_core,tmp_path,sta
         return original(request)
     session.client.http._transport.handler=handler
     with pytest.raises(LoanActionError) as caught:
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     assert caught.value.code == 'bnf_'+code
     row,=events(service,tmp_path)
     assert row['detail']['phase']=='provider_delivery'
@@ -106,7 +106,7 @@ def test_unknown_activity_failure_is_generic_and_private_safe(connected_core,tmp
         raise ReaderHTTPError('PRIVATE html cookie=synthetic')
     session.client.activity=bad_activity
     with pytest.raises(LoanActionError) as caught:
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     assert caught.value.code == 'bnf_activity_unavailable'
     row,=events(service,tmp_path)
     assert row['detail']['reason_code']=='bnf_activity_unavailable'
@@ -116,7 +116,7 @@ def test_missing_live_loan_is_not_mistaken_for_failed_acsm_get(connected_core,tm
     service,session,account,loan,state,downloaded=connected_core
     state['activity']='<section class="active-loans"></section>'
     with pytest.raises(LoanActionError,match='bnf_loan_not_observed'):
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     row,=events(service,tmp_path)
     assert row['detail']['phase']=='provider_delivery'
     assert row['detail']['reason_code']=='bnf_loan_not_observed'
@@ -128,7 +128,7 @@ def test_private_exception_does_not_become_diagnostic_or_public_error(connected_
     def bad(*args,**kwargs):raise ProviderError('https://private.invalid/ACSM?token=SECRET')
     monkeypatch.setattr(session,'download_digital',bad)
     with pytest.raises(LoanActionError,match='^bnf_loan_token_unavailable$'):
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     row,=events(service,tmp_path)
     assert 'SECRET' not in json.dumps(row) and 'private.invalid' not in caplog.text
 
@@ -146,7 +146,7 @@ def test_import_attribution_does_not_reclassify_manual_acquisition(connected_cor
     def import_acsm(*args,**kwargs):
         calls.append((args,kwargs));return result
     monkeypatch.setattr(service,'import_acsm',import_acsm)
-    source=Path(service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
+    source=Path(service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
     assert service.import_bnf_loan_acsm(source,expected_identity_id='default',loan=loan,title='Fiction') is result
     assert calls==[((source,),{'identity_id':'default','provider_id':'manual','title':'Fiction',
                               'placement_provider_id':'bnf-pret'})]
@@ -164,7 +164,7 @@ def test_import_error_and_scope_refusal_are_distinct_without_calling_another_pro
     with pytest.raises(LoanActionError,match='^bnf_loan_scope_unproven$'):
         service.import_bnf_loan_acsm(tmp_path/'token.acsm',expected_identity_id='alex',loan=loan)
     assert not calls
-    source=Path(service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
+    source=Path(service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
     with pytest.raises(LoanActionError,match='^bnf_import_failed$'):
         service.import_bnf_loan_acsm(source,expected_identity_id='default',loan=loan)
     rows=[r for r in events(service,tmp_path) if r['detail']['action']=='import_acsm']
@@ -176,7 +176,7 @@ def test_bnf_import_refuses_foreign_candidate_before_adept(connected_core,tmp_pa
     service,_,_,loan,*_=connected_core
     calls=[]
     monkeypatch.setattr(service,'import_acsm',lambda *a,**kw:calls.append(kw))
-    candidate=Path(service.stage_bnf_loan_acsm(
+    candidate=Path(service.stage_explicit_loan_acsm(
         loan,confirmed=True,expected_identity_id='default')['path'])
     foreign=tmp_path/candidate.name
     foreign.write_bytes(candidate.read_bytes())
@@ -207,7 +207,7 @@ def test_persisted_core_and_app_log_projection_share_only_actual_task_reference(
     service,session,account,loan,state,downloaded=connected_core
     caplog.set_level('INFO',logger='cifereca')
     with diagnostic_task_scope():
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     core_row,=events(service,tmp_path)
     line=next(r.getMessage() for r in caplog.records if r.getMessage().startswith('EVENT bnf loan action '))
     log=tmp_path/'app.log'
@@ -230,11 +230,11 @@ def test_bad_html_and_staging_storage_failure_have_no_success_or_adept(connected
         return original(request)
     session.client.http._transport.handler=html
     with pytest.raises(LoanActionError,match='^bnf_invalid_loan_token$'):
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     def storage(*args):raise OSError('private directory')
     monkeypatch.setattr(service,'_acquisition_work_dir',storage)
     with pytest.raises(LoanActionError,match='^bnf_local_staging_failed$'):
-        service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
+        service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     rows=events(service,tmp_path)
     assert {(r['detail']['phase'],r['detail']['reason_code']) for r in rows}=={
         ('provider_delivery','bnf_invalid_loan_token'),('local_staging','bnf_local_staging_failed')}
@@ -258,7 +258,7 @@ def test_real_import_orchestration_stays_manual_and_preserves_original(connected
         path.write_bytes(b'%PDF-1.4\n% synthetic document\n%%EOF\n')
         return {'ok':True,'artifact':{'path':str(path)}}
     monkeypatch.setattr(service,'execute_acquisition_request',fulfill)
-    source=Path(service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
+    source=Path(service.stage_explicit_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
     before=source.read_bytes()
     identity=service.current_identity.identity_id
     result=service.import_bnf_loan_acsm(source,expected_identity_id=identity,loan=loan,title='Synthetic')
