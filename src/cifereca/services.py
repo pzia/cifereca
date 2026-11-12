@@ -754,37 +754,55 @@ class LibraryService:
         self.identities = identities
         self.current_identity = identities[0]
 
-        known = {identity.identity_id for identity in identities}
-        configured_accounts = self.config.provider_accounts() if hasattr(self.config, "provider_accounts") else self.config.get("providers.accounts", [])
-        if not isinstance(configured_accounts, list):
-            configured_accounts = []
-        kobo_by_identity: dict[str, str] = {}
-        for row in configured_accounts:
-            if not isinstance(row, dict):
-                continue
-            provider_id = str(row.get("provider") or "").strip().lower()
-            credential_id = str(row.get("id") or "").strip()
-            identity_id = str(row.get("identity_id") or identities[0].identity_id).strip()
-            if identity_id not in known:
-                identity_id = identities[0].identity_id
-            if provider_id == "kobo" and credential_id:
-                previous = kobo_by_identity.get(identity_id)
-                if previous and previous != credential_id:
-                    raise ProviderConfigurationError(
-                        f"Identité {identity_id}: un seul compte Kobo Vault est autorisé ({previous}, {credential_id})"
-                    )
-                kobo_by_identity[identity_id] = credential_id
-            if provider_id and credential_id:
-                self.storage.provider_connection_put({
-                    "identity_id": identity_id,
-                    "provider_id": provider_id,
-                    "credential_id": credential_id,
-                    "label": str(row.get("label") or provider_id),
-                    # Preserve missing-flag legacy activation, but never
-                    # promote truthy malformed values into SQLite consent.
-                    "enabled": row.get("enabled", True) is True,
-                    "metadata": {"anonymous": row.get("anonymous", False) is True},
-                })
+        self._project_configured_provider_connections()
+
+    def _project_configured_provider_connections(self, *, descriptors=()) -> None:
+        """Publish only account bindings admitted at the present plugin stage.
+
+        Bootstrap has no descriptors. Ambiguous scopes stay in Config but
+        receive no *new* SQLite connection binding before plugin validation.
+        Reattachment validates against the exact future provider descriptors.
+        """
+        from .core.provider_account_limits import (
+            ProviderAccountLimitError, projectable_provider_connections,
+            validate_provider_account_limits,
+        )
+        default_identity = self.identities[0].identity_id
+        known = tuple(identity.identity_id for identity in self.identities)
+        configured = (
+            self.config.provider_accounts()
+            if hasattr(self.config, "provider_accounts")
+            else self.config.get("providers.accounts", [])
+        )
+        try:
+            descriptors = tuple(descriptors) or tuple(self.registry.descriptors())
+            if descriptors:
+                validate_provider_account_limits(
+                    configured, descriptors,
+                    default_identity=default_identity,
+                    known_identities=known,
+                )
+            rows = projectable_provider_connections(
+                configured,
+                default_identity=default_identity,
+                known_identities=known,
+                admitted_provider_ids=(
+                    descriptor.id for descriptor in descriptors
+                ),
+            )
+        except ProviderAccountLimitError as exc:
+            raise ProviderConfigurationError(str(exc)) from None
+        for row, provider_id, credential_id, identity_id in rows:
+            self.storage.provider_connection_put({
+                "identity_id": identity_id,
+                "provider_id": provider_id,
+                "credential_id": credential_id,
+                "label": str(row.get("label") or provider_id),
+                # A legacy missing activation flag remains enabled; malformed
+                # truthy values cannot become an active SQLite connection.
+                "enabled": row.get("enabled", True) is True,
+                "metadata": {"anonymous": row.get("anonymous", False) is True},
+            })
 
 
     def identity_by_id(self, identity_id: str | None) -> Identity | None:
