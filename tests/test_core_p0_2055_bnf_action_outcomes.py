@@ -6,8 +6,8 @@ from types import SimpleNamespace as NS
 import httpx
 import pytest
 
-from cifereca.core.diagnostic_bnf_loan_action import (
-    BnfLoanActionError, public_fields, public_log_fields, log_message,
+from cifereca.core.diagnostic_explicit_loan_action import (
+    LoanActionError, public_fields, public_log_fields, log_message,
 )
 from cifereca.core.diagnostic_event_feed import query_diagnostic_events
 from cifereca.diagnostic_task_context import diagnostic_task_scope, diagnostic_task_reference
@@ -61,7 +61,7 @@ def test_http_refusal_preserves_only_closed_provider_reason(connected_core,tmp_p
             return httpx.Response(status,content=b'private ACSM secret',headers={'location':'https://private.invalid/session'})
         return original(request)
     session.client.http._transport.handler=handler
-    with pytest.raises(BnfLoanActionError,match='^bnf_'+reason+'$'):
+    with pytest.raises(LoanActionError,match='^bnf_'+reason+'$'):
         service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     row,=events(service,tmp_path)
     assert row['detail']['reason_code']=='bnf_'+reason
@@ -87,7 +87,7 @@ def test_activity_refusal_is_distinct_from_token_get(connected_core,tmp_path,sta
             return httpx.Response(status,content=b'PRIVATE activity',headers={'content-type':'text/html'})
         return original(request)
     session.client.http._transport.handler=handler
-    with pytest.raises(BnfLoanActionError) as caught:
+    with pytest.raises(LoanActionError) as caught:
         service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     assert caught.value.code == 'bnf_'+code
     row,=events(service,tmp_path)
@@ -105,7 +105,7 @@ def test_unknown_activity_failure_is_generic_and_private_safe(connected_core,tmp
     def bad_activity():
         raise ReaderHTTPError('PRIVATE html cookie=synthetic')
     session.client.activity=bad_activity
-    with pytest.raises(BnfLoanActionError) as caught:
+    with pytest.raises(LoanActionError) as caught:
         service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     assert caught.value.code == 'bnf_activity_unavailable'
     row,=events(service,tmp_path)
@@ -115,7 +115,7 @@ def test_unknown_activity_failure_is_generic_and_private_safe(connected_core,tmp
 def test_missing_live_loan_is_not_mistaken_for_failed_acsm_get(connected_core,tmp_path):
     service,session,account,loan,state,downloaded=connected_core
     state['activity']='<section class="active-loans"></section>'
-    with pytest.raises(BnfLoanActionError,match='bnf_loan_not_observed'):
+    with pytest.raises(LoanActionError,match='bnf_loan_not_observed'):
         service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     row,=events(service,tmp_path)
     assert row['detail']['phase']=='provider_delivery'
@@ -127,7 +127,7 @@ def test_private_exception_does_not_become_diagnostic_or_public_error(connected_
     service,session,account,loan,state,downloaded=connected_core
     def bad(*args,**kwargs):raise ProviderError('https://private.invalid/ACSM?token=SECRET')
     monkeypatch.setattr(session,'download_digital',bad)
-    with pytest.raises(BnfLoanActionError,match='^bnf_loan_token_unavailable$'):
+    with pytest.raises(LoanActionError,match='^bnf_loan_token_unavailable$'):
         service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     row,=events(service,tmp_path)
     assert 'SECRET' not in json.dumps(row) and 'private.invalid' not in caplog.text
@@ -161,11 +161,11 @@ def test_import_error_and_scope_refusal_are_distinct_without_calling_another_pro
     calls=[]
     def fail(*args,**kwargs):calls.append(1);raise RuntimeError('SECRET license private path')
     monkeypatch.setattr(service,'import_acsm',fail)
-    with pytest.raises(BnfLoanActionError,match='^bnf_loan_scope_unproven$'):
+    with pytest.raises(LoanActionError,match='^bnf_loan_scope_unproven$'):
         service.import_bnf_loan_acsm(tmp_path/'token.acsm',expected_identity_id='alex',loan=loan)
     assert not calls
     source=Path(service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')['path'])
-    with pytest.raises(BnfLoanActionError,match='^bnf_import_failed$'):
+    with pytest.raises(LoanActionError,match='^bnf_import_failed$'):
         service.import_bnf_loan_acsm(source,expected_identity_id='default',loan=loan)
     rows=[r for r in events(service,tmp_path) if r['detail']['action']=='import_acsm']
     assert {r['detail']['phase'] for r in rows}=={'admission','adept_import'}
@@ -180,7 +180,7 @@ def test_bnf_import_refuses_foreign_candidate_before_adept(connected_core,tmp_pa
         loan,confirmed=True,expected_identity_id='default')['path'])
     foreign=tmp_path/candidate.name
     foreign.write_bytes(candidate.read_bytes())
-    with pytest.raises(BnfLoanActionError,match='^bnf_loan_scope_unproven$'):
+    with pytest.raises(LoanActionError,match='^bnf_loan_scope_unproven$'):
         service.import_bnf_loan_acsm(foreign,expected_identity_id='default',loan=loan)
     assert not calls and not service.storage.acquisitions()
 
@@ -188,9 +188,9 @@ def test_bnf_import_refuses_foreign_candidate_before_adept(connected_core,tmp_pa
 def test_generic_diagnostic_cannot_attest_action_or_enter_domain(tmp_path):
     diagnostic=Diagnostics()
     fields=dict(schema_version=1,provider_id='bnf-pret',action='stage_loan_token',phase='provider_delivery',status='failed',reason_code='bnf_access_denied',duration_ms=10)
-    diagnostic.add('LOAN','bnf_loan_action','failed',detail=fields)
+    diagnostic.add('LOAN','loan_acsm_action','failed',detail=fields)
     assert not events(NS(diagnostics=diagnostic),tmp_path)
-    diagnostic.add_core_bnf_loan_action(fields)
+    diagnostic.add_core_loan_acsm_action(fields)
     observed, = events(NS(diagnostics=diagnostic), tmp_path)
     # Core event attribution comes only from the closed, validated payload.
     assert observed['provider_id'] == fields['provider_id']
@@ -229,11 +229,11 @@ def test_bad_html_and_staging_storage_failure_have_no_success_or_adept(connected
             return httpx.Response(200,content=b'<html>private login</html>',headers={'content-type':'text/html'})
         return original(request)
     session.client.http._transport.handler=html
-    with pytest.raises(BnfLoanActionError,match='^bnf_invalid_loan_token$'):
+    with pytest.raises(LoanActionError,match='^bnf_invalid_loan_token$'):
         service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     def storage(*args):raise OSError('private directory')
     monkeypatch.setattr(service,'_acquisition_work_dir',storage)
-    with pytest.raises(BnfLoanActionError,match='^bnf_local_staging_failed$'):
+    with pytest.raises(LoanActionError,match='^bnf_local_staging_failed$'):
         service.stage_bnf_loan_acsm(loan,confirmed=True,expected_identity_id='default')
     rows=events(service,tmp_path)
     assert {(r['detail']['phase'],r['detail']['reason_code']) for r in rows}=={
