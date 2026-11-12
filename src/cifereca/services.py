@@ -797,8 +797,14 @@ class LibraryService:
             )
         except ProviderAccountLimitError as exc:
             raise ProviderConfigurationError(str(exc)) from None
+        limits = {
+            descriptor.id.strip().lower(): descriptor.max_accounts_per_identity
+            for descriptor in descriptors
+            if getattr(descriptor, "state", None) == "ready"
+            and type(getattr(descriptor, "max_accounts_per_identity", None)) is int
+        }
         for row, provider_id, credential_id, identity_id in rows:
-            self.storage.provider_connection_put({
+            connection = {
                 "identity_id": identity_id,
                 "provider_id": provider_id,
                 "credential_id": credential_id,
@@ -807,7 +813,14 @@ class LibraryService:
                 # truthy values cannot become an active SQLite connection.
                 "enabled": row.get("enabled", True) is True,
                 "metadata": {"anonymous": row.get("anonymous", False) is True},
-            })
+            }
+            limit = limits.get(provider_id)
+            if limit is None:
+                self.storage.provider_connection_put(connection)
+            else:
+                self.storage.provider_connection_put(
+                    connection, max_accounts_per_identity=limit,
+                )
 
 
     def identity_by_id(self, identity_id: str | None) -> Identity | None:
