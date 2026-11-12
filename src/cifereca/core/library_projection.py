@@ -564,6 +564,19 @@ def local_book_path(self, placement_id: str, *, identity_id: str) -> Path:
     return path
 
 
+def _entitlement_visible_in_library(entitlement: object) -> bool:
+    """Display only: archived purchases are historical, never live rights.
+
+    A remote_archived card does not permit an offer, download or local file
+    association; all subsequent proof and authorization paths remain exact.
+    """
+    if type(entitlement) is not dict:
+        return False
+    state = entitlement.get("state")
+    kind = entitlement.get("entitlement_type")
+    return state == "active" or (state == "archived" and kind == "owned")
+
+
 def local_placement_for_source(self, *, provider_id, credential_id, item_id, identity_id,
                                account_id=None):
     """Find a unique complete acquisition, optionally by exact borrower.
@@ -1205,12 +1218,9 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
 
     for entitlement in self.storage.entitlements():
-        status = str(entitlement.get("state") or "")
-        if status != "active" and not (
-            status == "archived" and entitlement.get("provider_id") == "kobo"
-            and entitlement.get("entitlement_type") == "owned"
-        ):
+        if not _entitlement_visible_in_library(entitlement):
             continue
+        status = str(entitlement.get("state") or "")
         entitlement_type = str(entitlement.get("entitlement_type") or "unknown")
         if entitlement_type not in {"owned", "loan", "license"}: continue
         entitlement_identity = str(entitlement.get("identity_id") or "").strip() or default_identity_id

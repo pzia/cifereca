@@ -47,3 +47,32 @@ def test_source_match_requires_exact_complete_unique_present_acquisition(tmp_pat
             assert ('paris', 'paris-a', 'book') not in bulk
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("provider", ["kobo", "numilog", "paris", "synthetic-provider"])
+def test_archived_purchases_are_display_only_without_supplier_dispatch(provider):
+    from cifereca.core.library_projection import _entitlement_visible_in_library
+
+    assert _entitlement_visible_in_library({
+        "provider_id": provider, "state": "archived", "entitlement_type": "owned",
+    })
+    for kind in ("loan", "license", "unknown", None):
+        assert not _entitlement_visible_in_library({
+            "provider_id": provider, "state": "archived", "entitlement_type": kind,
+        })
+    assert _entitlement_visible_in_library({
+        "provider_id": provider, "state": "active", "entitlement_type": "loan",
+    })
+    for state in ("expired", "revoked", "returned", "cancelled", None, True, 1):
+        assert not _entitlement_visible_in_library({
+            "provider_id": provider, "state": state, "entitlement_type": "owned",
+        })
+
+
+def test_archived_display_policy_never_interprets_provider_claim_as_a_right():
+    from cifereca.core.library_projection import _entitlement_visible_in_library
+
+    for malformed in (None, True, "archived", [], {"state": "archived"}, {
+        "state": "archived", "entitlement_type": "purchase",
+    }):
+        assert not _entitlement_visible_in_library(malformed)
