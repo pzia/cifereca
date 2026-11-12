@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import pytest
 from cifereca.core.sync_coordination import _complete_digital_loan_scope
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 from cifereca.plugin_api import (
     LoanBranchCoverage, LoanInventoryScope, LoanInventorySnapshot,
 )
 from tests.test_core_p1_3119_3122_opening_typed_inventory import (
-    account, attached, loan, result_for,
+    account, attached, loan, result_for, _declared_scope,
 )
 from tests.test_core_p0_2975_manual_source_loan_parity import (
     _fixture as explicit_fixture, _loan as explicit_loan, _right,
@@ -20,7 +21,7 @@ from tests.test_sync_state_contract import _service
 
 def snapshot(a, loans=(), *, status="success", coverage="complete", extra=()):
     return LoanInventorySnapshot(
-        scope=LoanInventoryScope.for_account(a), loans=tuple(loans),
+        scope=_declared_scope(a), loans=tuple(loans),
         status=status, branches=(
             LoanBranchCoverage(
                 upstream="dilicom" if a.provider_id == "paris" else "bnf_html",
@@ -42,6 +43,13 @@ def bound_session(a, *, branch, alias=None, connected=True,
     instance.connected = connected
     instance.provider_id = a.provider_id if provider is None else provider
     instance.credential_id = a.credential_id if credential is None else credential
+    if alias is not None:
+        instance.descriptor = ProviderDescriptor(
+            id=instance.provider_id, display_name="Synthetic source",
+            description="Explicit absence-evidence borrower alias", state="ready",
+            capabilities=ProviderCapabilities(loans=True),
+            existing_primary_loan_account_alias=alias,
+        )
     return instance
 
 

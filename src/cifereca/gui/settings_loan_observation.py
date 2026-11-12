@@ -8,6 +8,7 @@ engine. It never renders personal IDs, book titles, or private diagnostics.
 from __future__ import annotations
 
 from cifereca.models import Account, Loan
+from cifereca.providers.base import ProviderDescriptor
 from cifereca.plugin_api.loan_inventory import LoanInventoryScope, _loan_matches_scope
 
 _MAX_ACCOUNTS = 32
@@ -37,6 +38,7 @@ def _count_label(medium: str, count: int) -> str:
 def loan_cache_observations(
     *, provider_id: str, credential_id: str, identity_id: str,
     observed_borrowers: object, cached_loans: object,
+    descriptor: ProviderDescriptor | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """Presentation-only borrower/medium rows from already loaded Core data.
 
@@ -52,6 +54,14 @@ def loan_cache_observations(
             or len(observed_borrowers) > 256
             or type(cached_loans) not in (tuple, list)
             or len(cached_loans) > _MAX_LOANS):
+        return unavailable
+
+    # The selected provider's descriptor is metadata, not a borrower grant.
+    # A crossed or malformed declaration must never crash passive Settings.
+    if descriptor is not None and (
+        type(descriptor) is not ProviderDescriptor
+        or descriptor.id != provider_id
+    ):
         return unavailable
 
     accounts: dict[str, Account] = {}
@@ -80,16 +90,18 @@ def loan_cache_observations(
         borrower: {"digital": set(), "physical": set(), "unknown": set()}
         for borrower in accounts
     }
-    scopes = {
-        borrower: LoanInventoryScope.for_account(account)
-        for borrower, account in accounts.items()
-    }
+    try:
+        scopes = {
+            borrower: LoanInventoryScope.for_account(account, descriptor=descriptor)
+            for borrower, account in accounts.items()
+        }
+    except (ValueError, TypeError, AttributeError):
+        return unavailable
     for loan in cached_loans:
         if type(loan) is not Loan or not _safe_scope(loan.id):
             continue
-        # Reuse Core's exact typed-inventory predicate, including Paris'
-        # narrow historical primary alias ('primary' for unique_id='').
-        # Never guess a provider-specific alias in CoreUI. If a real linked
+        # Use only the declared descriptor convention; never infer an alias
+        # from the provider name. If a real linked
         # reader has that same ID, reject this ambiguous positive observation
         # rather than attributing it to *both* borrower rows.
         matches = [

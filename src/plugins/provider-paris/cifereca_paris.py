@@ -409,7 +409,7 @@ class ParisProviderSession(ProviderSession):
             return None
         with self._loan_inventory_lock:
             try:
-                scope = LoanInventoryScope.for_account(account)
+                scope = LoanInventoryScope.for_account(account, descriptor=self.descriptor)
                 if (self.connected is not True
                         or lease["scope"] != scope
                         or lease["epoch"] != getattr(self, "_epoch", None)
@@ -417,7 +417,7 @@ class ParisProviderSession(ProviderSession):
                     return None
                 owners = [
                     a for a in self._accounts if type(a) is Account
-                    and LoanInventoryScope.for_account(a) == scope
+                    and LoanInventoryScope.for_account(a, descriptor=self.descriptor) == scope
                 ]
                 if len(owners) != 1 or id(owners[0]) != lease["account_object_id"]:
                     return None
@@ -436,10 +436,10 @@ class ParisProviderSession(ProviderSession):
         if type(account) is not Account:
             raise ProviderCapabilityError("paris_source_sync_account_invalid")
         with self._loan_inventory_lock:
-            scope = LoanInventoryScope.for_account(account)
+            scope = LoanInventoryScope.for_account(account, descriptor=self.descriptor)
             owners = [
                 a for a in self._accounts if type(a) is Account
-                and LoanInventoryScope.for_account(a) == scope
+                and LoanInventoryScope.for_account(a, descriptor=self.descriptor) == scope
             ]
             if (self.connected is not True
                     or scope.provider_id != self.provider_id
@@ -936,7 +936,7 @@ class ParisProviderSession(ProviderSession):
                 # a second LoanInventorySnapshot or a persistent rights cache.
                 matches = [
                     live for live in self._accounts if type(live) is Account
-                    and LoanInventoryScope.for_account(live) == snapshot.scope
+                    and LoanInventoryScope.for_account(live, descriptor=self.descriptor) == snapshot.scope
                 ]
                 if (snapshot.status == "success"
                         and snapshot.observed_at
@@ -1028,7 +1028,7 @@ class ParisProviderSession(ProviderSession):
             )
         )
         return LoanInventorySnapshot(
-            scope=LoanInventoryScope.for_account(account),
+            scope=LoanInventoryScope.for_account(account, descriptor=self.descriptor),
             loans=normalized,
             status="partial" if any(b.completeness == "partial" for b in branches) else "success",
             branches=branches,
@@ -1112,7 +1112,7 @@ class ParisProviderSession(ProviderSession):
                 # a partial/foreign batch to infer absent rights.
                 self._same_cycle_rights_inventory.set(None)
                 if (type(same_cycle) is not LoanInventorySnapshot
-                        or same_cycle.scope != LoanInventoryScope.for_account(account)
+                        or same_cycle.scope != LoanInventoryScope.for_account(account, descriptor=self.descriptor)
                         or same_cycle.status != "success"
                         or not same_cycle.branch_claims_complete("dilicom", "digital")
                         or not same_cycle.branch_claims_complete("syracuse", "physical")):
@@ -1193,7 +1193,7 @@ class ParisProviderSession(ProviderSession):
             if (not self.connected
                     or (self.provider_id, self.credential_id)
                     != (scope.provider_id, scope.credential_id)
-                    or LoanInventoryScope.for_account(account) != scope
+                    or LoanInventoryScope.for_account(account, descriptor=self.descriptor) != scope
                     or len(current) != 1 or current[0] is not bound
                     or (account.unique_id, account.identity_id,
                         account.provider_id, account.credential_id) != scope_key
@@ -1428,7 +1428,7 @@ class ParisProviderSession(ProviderSession):
         """
         if (type(account) is not Account
                 or type(loan_inventory) is not LoanInventorySnapshot
-                or loan_inventory.scope != LoanInventoryScope.for_account(account)
+                or loan_inventory.scope != LoanInventoryScope.for_account(account, descriptor=self.descriptor)
                 or loan_inventory.status != "success"
                 or not loan_inventory.branch_claims_complete("dilicom", "digital")
                 or not loan_inventory.branch_claims_complete("syracuse", "physical")):
@@ -1442,7 +1442,7 @@ class ParisProviderSession(ProviderSession):
             self._last_typed_loan_marker = None
             matching = [
                 live for live in self._accounts if type(live) is Account
-                and LoanInventoryScope.for_account(live) == loan_inventory.scope
+                and LoanInventoryScope.for_account(live, descriptor=self.descriptor) == loan_inventory.scope
             ]
             if (marker is None or len(matching) != 1
                     or marker != (
@@ -1656,7 +1656,7 @@ class ParisProviderSession(ProviderSession):
                 )
                 if (type(old_inventory) is LoanInventorySnapshot
                         and old_inventory.status == "success"
-                        and old_inventory.scope == LoanInventoryScope.for_account(account)
+                        and old_inventory.scope == LoanInventoryScope.for_account(account, descriptor=self.descriptor)
                         and old_inventory.branch_claims_complete("dilicom", "digital")
                         and old_inventory.branch_claims_complete("syracuse", "physical")
                         and prior is not None and prior.delivery_attested
@@ -1864,7 +1864,7 @@ class ParisProviderSession(ProviderSession):
                     # call under the same reentrant session lock. A changed
                     # account or incomplete upstream observation fails closed.
                     if (type(pinned) is not LoanInventorySnapshot
-                            or pinned.scope != LoanInventoryScope.for_account(account)
+                            or pinned.scope != LoanInventoryScope.for_account(account, descriptor=self.descriptor)
                             or not pinned.branch_claims_complete("dilicom", "digital")):
                         raise ProviderConfigurationError("paris_selected_right_unobserved")
                     fresh = pinned

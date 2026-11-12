@@ -156,7 +156,7 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
     typed = raw_reader is not None
     if typed:
         from ..plugin_api.loan_inventory import read_loan_inventory
-        snapshot = read_loan_inventory(session, account)
+        snapshot = read_loan_inventory(session, account, descriptor=getattr_static(session, "descriptor", None))
         if snapshot.status not in {"success", "partial"}:
             raise ValueError("return_inventory_unavailable")
         rows = list(snapshot.loans)

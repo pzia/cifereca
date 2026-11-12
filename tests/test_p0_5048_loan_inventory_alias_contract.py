@@ -145,12 +145,13 @@ def test_legacy_reader_uses_descriptor_without_second_provider_operation():
 def test_explicit_descriptor_without_alias_vetoes_legacy_paris_fallback():
     account = _account("paris")
     row = _loan(account, "primary")
-    # Legacy callers remain compatible until the Paris producer cutover.
-    assert len(LoanInventorySnapshot(
-        scope=LoanInventoryScope.for_account(account), loans=(row,),
-    ).loans) == 1
+    # No provider-name fallback is permitted, even without a descriptor.
+    with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
+        LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(account), loans=(row,),
+        )
     checked = LoanInventoryScope.for_account(account, descriptor=_descriptor("paris"))
-    assert checked.primary_alias_policy_checked is True
+    assert checked.primary_alias_policy_checked is False
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
         LoanInventorySnapshot(scope=checked, loans=(row,))
 
@@ -175,7 +176,31 @@ def test_empty_id_nonprimary_account_cannot_use_declared_alias():
     account.is_primary = False
     desc = _descriptor("synthetic-a", "main")
     scope = LoanInventoryScope.for_account(account, descriptor=desc)
-    assert scope.primary_alias_policy_checked is True
+    assert scope.primary_alias_policy_checked is False
     assert scope.primary_account_alias is None
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
         LoanInventorySnapshot(scope=scope, loans=(_loan(account, "main"),))
+
+
+def test_typed_reader_upgrades_valid_literal_scope_without_inventing_alias():
+    account = _account("synthetic-a")
+    descriptor = _descriptor("synthetic-a", "main")
+    rows = (_loan(account, ""),)
+    calls = []
+    def old_reader(arg):
+        calls.append("typed")
+        return LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(arg),
+            loans=rows, status="partial",
+        )
+    session = SimpleNamespace(
+        connected=True, provider_id=account.provider_id,
+        credential_id=account.credential_id,
+        capabilities=SimpleNamespace(loans=True),
+        loan_inventory_snapshot=old_reader,
+    )
+    observed = read_loan_inventory(session, account, descriptor=descriptor)
+    assert calls == ["typed"]
+    assert len(observed.loans) == 1
+    assert observed.scope.primary_account_alias == "main"
+    assert observed.status == "partial"

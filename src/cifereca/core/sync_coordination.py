@@ -77,7 +77,7 @@ def _sync_loan_inventory_observation(self, account: Account, session: Any):
     if session is not None and getattr_static(
         session, "loan_inventory_snapshot", None,
     ) is not None:
-        snapshot = read_loan_inventory(session, account)
+        snapshot = read_loan_inventory(session, account, descriptor=getattr_static(session, "descriptor", None))
         # A cancelled typed read is neither an empty successful inventory
         # nor a provider failure. Preserve its cancellation through source
         # Sync without a legacy retry or a rights/cache mutation.
@@ -854,7 +854,7 @@ def _complete_digital_loan_scope(
             or not all(c.isascii() and (c.isalnum() or c in "_-")
                        for c in expected)
             or type(snapshot) is not LoanInventorySnapshot
-            or snapshot.scope != LoanInventoryScope.for_account(account)
+            or snapshot.scope != LoanInventoryScope.for_account(account, descriptor=getattr_static(session, "descriptor", None))
             or snapshot.status != "success"
             or not snapshot.branch_claims_complete(expected, "digital")):
         return None

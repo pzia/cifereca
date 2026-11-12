@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from inspect import getattr_static
 from typing import Any
 
 from ..models import Account
@@ -17,6 +18,16 @@ from ..plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapsho
 _CURRENT: ContextVar[tuple[Any, Account, Any, LoanInventorySnapshot, object] | None] = ContextVar(
     "cifereca_opening_scoped_loan_inventory", default=None,
 )
+
+
+def _session_inventory_scope(account: Account, session: Any) -> LoanInventoryScope | None:
+    """Static descriptor read; invalid provenance never admits a lease."""
+    try:
+        return LoanInventoryScope.for_account(
+            account, descriptor=getattr_static(session, "descriptor", None),
+        )
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 @contextmanager
@@ -30,7 +41,7 @@ def opening_scoped_loan_inventory(service, account, session, snapshot):
     allowed = (
         type(account) is Account
         and type(snapshot) is LoanInventorySnapshot
-        and snapshot.scope == LoanInventoryScope.for_account(account)
+        and snapshot.scope == _session_inventory_scope(account, session)
         and snapshot.status == "success"
         and bool(snapshot.branches)
         and all(
@@ -65,7 +76,7 @@ def current_scoped_loan_inventory(service, account, session) -> LoanInventorySna
             or snapshot.status != "success"):
         return None
     try:
-        if snapshot.scope != LoanInventoryScope.for_account(account):
+        if snapshot.scope != _session_inventory_scope(account, session):
             return None
     except (TypeError, ValueError, AttributeError):
         return None

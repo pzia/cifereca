@@ -1274,7 +1274,7 @@ class LibraryService:
         )
         if raw_reader is not None:
             from .plugin_api.loan_inventory import read_loan_inventory
-            snapshot = read_loan_inventory(session, account)
+            snapshot = read_loan_inventory(session, account, descriptor=inspect.getattr_static(session, "descriptor", None))
             if snapshot.status in ("failed", "cancelled"):
                 raise ProviderConfigurationError("loan_inventory_read_unavailable")
             # The reader already checks the account and mutable session

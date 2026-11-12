@@ -15,6 +15,7 @@ from cifereca.plugin_api import (
     Cancelled, LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
 )
 from cifereca.providers import ProviderConfigurationError
+from cifereca.providers.base import ProviderDescriptor, ProviderCapabilities
 from cifereca.services import _loan_cache_key
 from tests.test_core_p0_2975_manual_source_loan_parity import (
     _fixture, _loan, _right,
@@ -23,7 +24,11 @@ from tests.test_core_p0_2975_manual_source_loan_parity import (
 
 def _snapshot(account, rows, *, status="success"):
     return LoanInventorySnapshot(
-        scope=LoanInventoryScope.for_account(account),
+        scope=LoanInventoryScope.for_account(account, descriptor=ProviderDescriptor(
+            id="paris", display_name="Paris", description="Synthetic typed source",
+            state="ready", capabilities=ProviderCapabilities(loans=True),
+            existing_primary_loan_account_alias="primary",
+        )),
         loans=tuple(rows), status=status,
         branches=(
             LoanBranchCoverage(

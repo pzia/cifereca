@@ -185,7 +185,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         # Never trust the GUI/cache's raw JSON. Paris's own normalizing reader
         # stamps exact borrower provenance on each loan. Partial sibling
         # upstream results do not invalidate a *positive* exact row.
-        inventory = read_loan_inventory(session, account)
+        inventory = read_loan_inventory(session, account, descriptor=getattr_static(session, "descriptor", None))
     except Exception:
         return _public("blocked", "loan_read_unavailable")
     if (not lease.current(self)

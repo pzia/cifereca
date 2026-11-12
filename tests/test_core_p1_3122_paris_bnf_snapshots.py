@@ -112,7 +112,7 @@ def test_paris_two_branches_success_are_unknown_not_attested_complete():
     a = account()
     s = paris([a])
     try:
-        snap = read_loan_inventory(s, a)
+        snap = read_loan_inventory(s, a, descriptor=s.descriptor)
         assert snap.status == "success" and len(snap.loans) == 2
         assert {(b.upstream, b.medium, b.completeness) for b in snap.branches} == {
             ("dilicom", "digital", "unknown"),
@@ -133,7 +133,7 @@ def test_paris_broken_one_branch_keeps_other_positive_and_marks_partial(failed):
     s = paris([a])
     s.client.fail.add(failed)
     try:
-        snap = read_loan_inventory(s, a)
+        snap = read_loan_inventory(s, a, descriptor=s.descriptor)
         assert snap.status == "partial" and snap.reason_code == "branch_unavailable"
         assert len(snap.loans) == 1
         assert snap.loans[0].provider != failed
@@ -149,7 +149,7 @@ def test_paris_both_branches_failed_cannot_publish_empty_success():
     s = paris([a])
     s.client.fail.update({"DILICOM", "SYRACUSE"})
     try:
-        snap = read_loan_inventory(s, a)
+        snap = read_loan_inventory(s, a, descriptor=s.descriptor)
         assert snap.status == "failed" and snap.loans == ()
         assert snap.reason_code == "read_failed"
     finally:
@@ -161,15 +161,15 @@ def test_paris_scopes_two_linked_readers_without_merging_borrower_identity():
     linked = account(borrower="linked-7")
     s = paris([primary, linked])
     try:
-        one = read_loan_inventory(s, primary)
-        two = read_loan_inventory(s, linked)
+        one = read_loan_inventory(s, primary, descriptor=s.descriptor)
+        two = read_loan_inventory(s, linked, descriptor=s.descriptor)
         assert len(one.loans) == len(two.loans) == 2
         assert one.scope.account_id == ""
         assert two.scope.account_id == "linked-7"
         assert {x.source_account_id for x in one.loans} == {"primary"}
         assert {x.source_account_id for x in two.loans} == {"linked-7"}
         unknown = account(borrower="not-linked")
-        assert read_loan_inventory(s, unknown).status == "failed"
+        assert read_loan_inventory(s, unknown, descriptor=s.descriptor).status == "failed"
     finally:
         s.close()
 
@@ -182,7 +182,7 @@ def test_bnf_validated_nonempty_html_claims_scoped_coverage_only(html, expected_
     s, a, client = bnf(html)
     try:
         before = client.calls.count("activity")
-        snap = read_loan_inventory(s, a)
+        snap = read_loan_inventory(s, a, descriptor=s.descriptor)
         assert len(snap.loans) == expected_count
         complete = expected_count > 0
         assert snap.status == ("success" if complete else "partial")
@@ -243,7 +243,7 @@ def test_paris_connected_reader_replaced_mid_read_cannot_publish_loan_snapshot()
 
     s.client.loans = replaced
     try:
-        snap = read_loan_inventory(s, a)
+        snap = read_loan_inventory(s, a, descriptor=s.descriptor)
         # The v1+typed Paris boundary now aborts *before* making another
         # private request when the current borrower was unregistered during
         # the first GET. It must not fetch SYRACUSE for a different account.

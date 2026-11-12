@@ -90,7 +90,7 @@ class LoanInventoryScope:
                 alias = declared
         return cls(account.identity_id, account.provider_id,
                    account.credential_id, account.unique_id, alias,
-                   descriptor is not None)
+                   alias is not None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,11 +199,6 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
     allowed_accounts = {scope.account_id}
     if scope.primary_account_alias is not None:
         allowed_accounts.add(scope.primary_account_alias)
-    # Transitional producer-only compatibility. Remove with the Paris plugin
-    # cutover, after its snapshot constructor passes the installed descriptor.
-    elif (not scope.primary_alias_policy_checked
-          and scope.provider_id == "paris" and scope.account_id == ""):
-        allowed_accounts.add("primary")
     return (
         loan.identity_id == scope.identity_id
         and loan.source_provider == scope.provider_id
@@ -280,7 +275,13 @@ def read_loan_inventory(
                 return LoanInventorySnapshot(
                     scope=scope, loans=(), status="failed", reason_code="scope_changed",
                 )
-            if type(result) is not LoanInventorySnapshot or result.scope != scope:
+            # A historical typed producer may publish only the literal
+            # borrower scope. Its already-validated envelope cannot contain
+            # a descriptor-only alias, so upgrading the read envelope is safe
+            # and does not reintroduce provider-specific matching.
+            literal_scope = LoanInventoryScope.for_account(account)
+            if (type(result) is not LoanInventorySnapshot
+                    or result.scope not in (scope, literal_scope)):
                 raise ValueError("invalid_snapshot")
             # Revalidate every positive row even if the provider constructed
             # its own frozen envelope, then take a new defensive copy.

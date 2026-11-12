@@ -16,6 +16,7 @@ from cifereca.plugin_api import (
     LoanBranchCoverage, LoanInventoryScope, LoanInventorySnapshot,
 )
 from cifereca.providers import ProviderConfigurationError
+from cifereca.providers.base import ProviderDescriptor, ProviderCapabilities
 from cifereca.services import _loan_cache_key
 from tests.test_core_p0_1346_opening_source_isolation import _state
 from tests.test_core_p0_2975_manual_source_loan_parity import (
@@ -43,9 +44,19 @@ def loan(a, suffix="one"):
     )
 
 
+def _declared_scope(a):
+    if a.provider_id != "paris":
+        return LoanInventoryScope.for_account(a)
+    return LoanInventoryScope.for_account(a, descriptor=ProviderDescriptor(
+        id="paris", display_name="Paris", description="Synthetic typed source",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    ))
+
+
 def snapshot(a, rows=(), status="success"):
     return LoanInventorySnapshot(
-        scope=LoanInventoryScope.for_account(a),
+        scope=_declared_scope(a),
         loans=tuple(rows), status=status,
         branches=(
             LoanBranchCoverage(
@@ -74,6 +85,11 @@ def attached(service, a, *, observed=None, status="success"):
     state = typed_session(
         provider_id=a.provider_id, credential_id=a.credential_id,
         connected=True, accounts=[a],
+        descriptor=(ProviderDescriptor(
+            id="paris", display_name="Paris", description="Synthetic typed source",
+            state="ready", capabilities=ProviderCapabilities(loans=True),
+            existing_primary_loan_account_alias="primary",
+        ) if a.provider_id == "paris" else None),
         capabilities=NS(loans=True, digital_download=False, personal_library=False),
         last_loan_errors=[{"untrusted": "stale error with token=NEVER_EXPORT"}],
     )

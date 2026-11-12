@@ -164,7 +164,7 @@ def build_provider_account_editor(
         for title, subtitle in loan_cache_observations(
             provider_id=provider_id, credential_id=account_id,
             identity_id=chosen_owner, observed_borrowers=observed_borrowers,
-            cached_loans=observed_loans,
+            cached_loans=observed_loans, descriptor=descriptor,
         ):
             observation = Adw.ActionRow()
             observation.set_title(title)
