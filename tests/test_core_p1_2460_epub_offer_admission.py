@@ -29,7 +29,8 @@ def item(*, provider="ebooksgratuits", downloadable=None, link=None, metadata=No
 class CatalogFixture:
     def __init__(self, *, direct=True):
         self.calls = []
-        self.session = NS(capabilities=NS(direct_download=direct))
+        self.session = NS(capabilities=NS(direct_download=direct),
+                          exact_catalogue_download_offer_required=True)
         self.acquisition = NS(
             override_command=lambda _provider: None,
             acquisition_url=lambda _item: None,
@@ -87,6 +88,8 @@ def test_stale_known_catalogue_never_triggers_session_or_download_button():
 def test_other_provider_contract_is_unchanged():
     service = CatalogFixture()
     other = item(provider="gutenberg", downloadable=None, link=None)
+    # A different, unmarked provider retains the legacy direct capability.
+    service.session.exact_catalogue_download_offer_required = False
     assert LibraryService.can_direct_download(service, other) is True
 
 
