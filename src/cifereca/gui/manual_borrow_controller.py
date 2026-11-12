@@ -16,6 +16,7 @@ def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
     This is an inert guard only: no provider request, borrow permission or
     new right. Both a mutable attempt and a read-only follow-up use it.
     """
+    service = window.service
     identity_id = account.identity_id
     identity_gen = getattr(window, "_identity_context_generation", None)
     account_gen = getattr(window, "_account_context_generation", None)
@@ -46,6 +47,7 @@ def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
         try:
             return (
                 not getattr(window, "_closed", False)
+                and window.service is service
                 and window._identity_context_generation == identity_gen
                 and window._account_context_generation == account_gen
                 and window._selected_search_id == selection_id
@@ -73,12 +75,18 @@ def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
 
 
 def _present_manual_borrow(window, item, control, *, TaskPriority,
-                           label, available, dispatch, expected_account=None):
+                           label, expected_account=None):
     """Submit only a user-clicked, published and Core-admissible loan action.
 
     No second dialog or separate website attestation is required (#3121).
     The provider still decides quota and rights; Core guards one exact POST.
     """
+    # The executor and readiness check come exclusively from the bound Core
+    # service, not injected by a supplier-specific GTK callback.
+    available = getattr(window.service, "can_borrow_manual", None)
+    dispatch = getattr(window.service, "borrow_manual", None)
+    if not callable(available) or not callable(dispatch):
+        return
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
             or not isinstance(item.source_provider, str)
