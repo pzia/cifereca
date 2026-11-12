@@ -154,6 +154,18 @@ def test_detail_usage_is_read_only_and_matches_search_projection():
         replace(_book("kobo"), source_collection="library",
                 metadata={"search_provenance": "known_catalog_stale"})
     )
+    # Generic facts, not the provider identifier, govern warning projection.
+    for provider_id in ("kobo", "numilog", "synthetic-provider"):
+        observed = replace(_book(provider_id), source_collection="library",
+                           metadata={"search_provenance": "known_catalog_stale"})
+        assert usage(observed) == "Notice connue hors ligne · droits non actualisés"
+        assert "disponibilité à vérifier" in usage(
+            replace(_book(provider_id), source_collection="library")
+        )
+    assert usage(replace(_public_numilog(),
+                         metadata={"search_provenance": "known_catalog_stale"})) == (
+        "Notice connue hors ligne · droits non actualisés"
+    )
     # A supplier-name switch must never manufacture purchase provenance.
     synthetic_public = replace(_public_numilog(), source_provider="synthetic-public")
     assert usage(synthetic_public) == "Catalogue commercial public · aucun achat attesté"
@@ -167,6 +179,7 @@ def test_detail_usage_is_read_only_and_matches_search_projection():
         purchase_evidence=synthetic_proof,
     ) == "Mes achats · fichier local non présumé"
     detail_source = owner.read_text(encoding="utf-8").split("class DetailPanel", 1)[0]
+    assert 'item.source_provider == "kobo"' not in detail_source
     assert 'item.source_provider == "numilog"' not in detail_source
     assert 'item.source_provider == "numilog-catalog"' not in detail_source
 
