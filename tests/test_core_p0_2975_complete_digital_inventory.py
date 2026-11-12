@@ -71,7 +71,11 @@ def test_unproven_typed_coverage_cannot_close_existing_loan(tmp_path, condition)
     else:
         status = "failed"
     evidence = snapshot(a, status=status, coverage=coverage, extra=extra)
-    assert _complete_digital_loan_scope(a, evidence) is None
+    proof_session = type("ParisProofSession", (), {
+        "loan_absence_digital_branch": "dilicom",
+        "loan_absence_primary_account_alias": "primary",
+    })()
+    assert _complete_digital_loan_scope(a, evidence, proof_session) is None
     service = _service(tmp_path)
     try:
         service.accounts = [a]
@@ -97,3 +101,50 @@ def test_explicit_source_sync_uses_same_scope_and_is_idempotent(tmp_path, monkey
         assert service.synchronize_account_source(primary)["loans"] == 0
     finally:
         service.close()
+
+
+def test_no_digital_absence_permission_without_static_provider_declaration():
+    a = account()
+    evidence = snapshot(a)
+    assert _complete_digital_loan_scope(a, evidence) is None
+    assert _complete_digital_loan_scope(a, evidence, object()) is None
+    reads = []
+
+    class HostileSession:
+        @property
+        def loan_absence_digital_branch(self):
+            reads.append("dynamic_property_executed")
+            raise RuntimeError("PRIVATE signed token")
+
+    assert _complete_digital_loan_scope(a, evidence, HostileSession()) is None
+    assert reads == []
+
+
+def test_synthetic_provider_can_opt_into_exact_branch_without_core_dispatch():
+    a = account("synthetic-loans", borrower="reader-1")
+    evidence = snapshot(a)
+
+    class SyntheticSession:
+        loan_absence_digital_branch = "bnf_html"
+
+    assert _complete_digital_loan_scope(a, evidence, SyntheticSession()) == (
+        "synthetic-loans", a.credential_id, "reader-1",
+    )
+    wrong = type("WrongBranch", (), {"loan_absence_digital_branch": "other"})()
+    assert _complete_digital_loan_scope(a, evidence, wrong) is None
+
+
+def test_ambiguous_primary_alias_is_not_created_without_explicit_plugin_contract():
+    a = account()
+    evidence = snapshot(a)
+    missing_alias = type("NoAlias", (), {
+        "loan_absence_digital_branch": "dilicom",
+    })()
+    assert _complete_digital_loan_scope(a, evidence, missing_alias) is None
+    explicit_alias = type("DeclaredAlias", (), {
+        "loan_absence_digital_branch": "dilicom",
+        "loan_absence_primary_account_alias": "primary",
+    })()
+    assert _complete_digital_loan_scope(a, evidence, explicit_alias) == (
+        "paris", a.credential_id, "primary",
+    )
