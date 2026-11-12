@@ -1,11 +1,13 @@
 """P0 #5048 — descriptor-scoped aliases in loan inventory, no provider switch."""
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from cifereca.models import Account, Loan
 from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
-from cifereca.plugin_api.loan_inventory import LoanInventoryScope, LoanInventorySnapshot
+from cifereca.plugin_api.loan_inventory import (LoanInventoryScope, LoanInventorySnapshot,
+    legacy_loan_inventory, read_loan_inventory)
 
 
 def _descriptor(provider: str, alias: str | None = None) -> ProviderDescriptor:
@@ -91,3 +93,50 @@ def test_scope_requires_exact_account_and_no_manual_alias_for_linked_account():
     assert scope.primary_account_alias is None
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
         LoanInventorySnapshot(scope=scope, loans=(_loan(account, "main"),))
+
+
+def test_explicit_legacy_adapter_descriptor_accepts_alias_without_network():
+    account = _account("synthetic-a")
+    desc = _descriptor("synthetic-a", "main")
+    row = _loan(account, "main")
+    assert len(legacy_loan_inventory(account, [row], descriptor=desc).loans) == 1
+    with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
+        legacy_loan_inventory(account, [row])
+
+
+def test_typed_reader_uses_same_descriptor_scope_as_producer():
+    account = _account("synthetic-b")
+    desc = _descriptor("synthetic-b", "other-primary")
+    calls = []
+    def observed(arg):
+        calls.append("typed")
+        return LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(arg, descriptor=desc),
+            loans=(_loan(arg, "other-primary"),),
+        )
+    session = SimpleNamespace(
+        connected=True, provider_id=account.provider_id,
+        credential_id=account.credential_id,
+        capabilities=SimpleNamespace(loans=True),
+        loan_inventory_snapshot=observed,
+    )
+    result = read_loan_inventory(session, account, descriptor=desc)
+    assert len(result.loans) == 1 and calls == ["typed"]
+    rejected = read_loan_inventory(session, account)
+    assert rejected.status == "failed" and rejected.loans == ()
+    assert calls == ["typed", "typed"]
+
+
+def test_legacy_reader_uses_descriptor_without_second_provider_operation():
+    account = _account("synthetic-a")
+    desc = _descriptor("synthetic-a", "main")
+    calls = []
+    session = SimpleNamespace(
+        connected=True, provider_id=account.provider_id,
+        credential_id=account.credential_id,
+        capabilities=SimpleNamespace(loans=True),
+        loans=lambda arg: calls.append("legacy") or [_loan(arg, "main")],
+    )
+    result = read_loan_inventory(session, account, descriptor=desc)
+    assert result.status == "partial" and len(result.loans) == 1
+    assert calls == ["legacy"]
