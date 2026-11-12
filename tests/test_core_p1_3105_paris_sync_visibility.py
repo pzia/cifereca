@@ -1,7 +1,12 @@
 """#3105: configured Paris stays visible but never becomes a fake SyncSource."""
 from types import SimpleNamespace as NS
 
-from cifereca.core.sync_connection_visibility import unavailable_paris_connections
+from cifereca.core.sync_connection_visibility import unavailable_configured_connections
+
+
+def unavailable_paris_connections(service, identity_id):
+    # Existing #3105 scenarios now exercise the neutral exact-provider ABI.
+    return unavailable_configured_connections(service, identity_id, provider_id="paris")
 
 
 def _service(configured, accounts=(), *, plugin="ready", enabled=True):
