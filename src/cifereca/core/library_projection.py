@@ -667,32 +667,32 @@ def local_placement_for_source(self, *, provider_id, credential_id, item_id, ide
 
 
 def local_placements_for_sources(self, identity_id):
-    """Read-only search aliases; typed Kobo sources require provider provenance.
+    """Read-only search aliases; typed sources require canonical provenance.
 
     The old 0.7 acquisition ledger has no canonical right/borrower binding.
     It remains a compatibility read only for editions with no typed source.
     """
-    # A typed Kobo edition is identified by credential + edition, even if
+    # A typed private edition is identified by provider, credential and edition, even if
     # the SourceReference belongs to another borrower or identity. The
     # catalogue's account-free search key cannot choose between sources.
     with self.storage._lock, self.storage._connect() as db:
         typed_rows = db.execute(
-            "SELECT identity_id,credential_id,account_id,edition_id "
-            "FROM source_references WHERE provider_id='kobo' "
+            "SELECT identity_id,provider_id,credential_id,account_id,edition_id "
+            "FROM source_references "
             "ORDER BY source_reference_id LIMIT 100001"
         ).fetchall()
     if len(typed_rows) > 100000:
         # A truncated typed-source set must never reactivate an old alias.
         return {}
     typed_scopes = {}
-    for owner, credential, account, edition in typed_rows:
-        key = ("kobo", credential, edition)
+    for owner, provider, credential, account, edition in typed_rows:
+        key = (provider, credential, edition)
         # Keep all rows, including multiple rights of one borrower. A
         # three-coordinate public search key cannot pick a unique origin.
         typed_scopes.setdefault(key, []).append((owner, account))
 
     # Provider OriginLinks, not legacy acquisition rows, authorize the
-    # physical association of an already-typed Kobo search key. The helper
+    # physical association of an already-typed private search key. The helper
     # checks Core origin/SourceReference evidence, artifact identity and
     # current owner; local_book_path below independently checks physical B.
     canonical_artifacts = {}
@@ -705,7 +705,7 @@ def local_placements_for_sources(self, identity_id):
     )
     for artifact, owner, provider, credential, account, edition, _kind in current_origins:
         key = (provider, credential, edition)
-        if provider == "kobo" and key in typed_scopes:
+        if key in typed_scopes:
             canonical_artifacts.setdefault(key, set()).add(
                 (owner, account, artifact),
             )
