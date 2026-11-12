@@ -7,11 +7,12 @@ grant. It performs no network, storage mutation or ADEPT operation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from re import fullmatch
 from inspect import getattr_static
 from typing import Any
 
 from ..models import Account, Loan
-from ..providers.base import ProviderSession
+from ..providers.base import ProviderDescriptor, ProviderSession
 
 
 def _inert_session_state(session: object) -> dict[str, Any] | None:
@@ -79,6 +80,7 @@ class LoanActionScopeLease:
     _loan_fields: tuple[object, ...]
     _context_epoch: int
     _provider_epoch: object = field(default=None, repr=False)
+    _descriptor: ProviderDescriptor | None = field(default=None, repr=False)
 
     def current(self, service: object) -> bool:
         """Check the original owner and epoch, even through an Alice→Bob→Alice.
@@ -117,9 +119,23 @@ class LoanActionScopeLease:
                     or identity_id != self._expected_identity_id
                     or not loan.id or not loan.record_id):
                 return False
+            # The installed session's original typed policy is pinned with
+            # the lease. No supplier-name branch or public-loan metadata can
+            # add an alternate borrower to this set.
+            descriptor = session_state.get("descriptor")
+            if (type(descriptor) is not ProviderDescriptor
+                    or descriptor is not self._descriptor
+                    or descriptor.id != provider):
+                return False
+            alias = descriptor.existing_primary_loan_account_alias
+            if (alias is not None and (
+                    type(alias) is not str
+                    or fullmatch(r"[a-z][a-z0-9_-]{0,63}", alias) is None)):
+                return False
             allowed_borrowers = {borrower}
-            if provider == "paris" and account.is_primary is True and borrower == "":
-                allowed_borrowers.add("primary")
+            if (alias is not None and account.is_primary is True
+                    and borrower == ""):
+                allowed_borrowers.add(alias)
             if (loan.identity_id != identity_id
                     or loan.source_provider != provider
                     or loan.source_credential != credential
@@ -172,6 +188,9 @@ def capture_loan_action_scope(
     session_state = _inert_session_state(session)
     if session_state is None:
         return None
+    descriptor = session_state.get("descriptor")
+    if type(descriptor) is not ProviderDescriptor:
+        return None
     lease = LoanActionScopeLease(
         _account=account, _session=session, _loan=loan,
         _expected_identity_id=expected_identity_id,
@@ -181,6 +200,7 @@ def capture_loan_action_scope(
         ),
         _loan_fields=_exact_loan_fields(loan),
         _context_epoch=epoch, _provider_epoch=session_state.get("_epoch"),
+        _descriptor=descriptor,
     )
     return lease if lease.current(service) else None
 
