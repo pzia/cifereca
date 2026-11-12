@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_bnf_candidate_classifier_has_no_core_owner_or_fallback():
     root = ROOT / "src/cifereca"
-    diagnostic = (root / "core/diagnostic_bnf_loan_action.py").read_text(
+    diagnostic = (root / "core/diagnostic_explicit_loan_action.py").read_text(
         encoding="utf-8",
     )
     service = (root / "services.py").read_text(encoding="utf-8")
