@@ -71,7 +71,7 @@ class DiagnosticEntry:
     verified_browser_recorder: bool = False
     verified_reconciliation: bool = False
     verified_loan_download: bool = False
-    verified_bnf_loan_action: bool = False
+    verified_loan_acsm_action: bool = False
     verified_cover_failure: bool = False
 
 
