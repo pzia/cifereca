@@ -275,7 +275,7 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
 # Only these source-defined synthetic phases may leave the GTK runner.
 _PLUGIN_SCROLL_STAGES = frozenset({
     "initial_scroll", "first_toggle", "first_grab_focus",
-    "first_toggle_geometry", "first_toggle_scroll",
+    "first_scroll_request", "first_toggle_geometry", "first_toggle_scroll",
     "first_toggle_set_inactive", "first_toggle_callback",
     "first_geometry", "first_scroll",
     "first_anchor", "first_switch", "first_focus", "second_geometry",
