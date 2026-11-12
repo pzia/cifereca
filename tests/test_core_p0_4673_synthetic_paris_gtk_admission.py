@@ -10,7 +10,7 @@ import pytest
 
 from cifereca.models import Account, SearchResult
 from cifereca.providers.base import (
-    ProviderSession, ProviderDescriptor, ProviderCapabilities,
+    ProviderSession, ProviderDescriptor, ProviderCapabilities, ManualBorrowPolicy,
 )
 from tests.test_core043_progress_cache_stats import _service
 
@@ -22,6 +22,11 @@ class OfflineParisSession(ProviderSession):
             descriptor=ProviderDescriptor(
                 id="paris", display_name="Paris", description="offline fixture",
                 state="ready",
+                manual_borrow_policy=ManualBorrowPolicy(
+                    docbase="DILICOM", primary_borrower_id="",
+                    source_selection_key="primary_paris_connection_id",
+                    verification="provider_observed",
+                ),
                 capabilities=ProviderCapabilities(
                     search=True, holdings=True, borrow=True,
                 ),
