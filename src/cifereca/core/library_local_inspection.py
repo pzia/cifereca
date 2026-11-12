@@ -16,6 +16,26 @@ from .library_inspection_cache import take_inspection_cache
 from .library_sqlite_freshness import sqlite_source_stamp
 from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
 
+def _private_edition_collision_counts(rights, identity_id):
+    """Conservative count of same-edition rights across private credentials.
+
+    Scope by identity AND provider; a title, ISBN, account hint, or another
+    provider can never identify the source of a private right. This count is
+    diagnostic/negative evidence only and cannot establish ownership.
+    """
+    counts = Counter()
+    if type(identity_id) is not str or not identity_id:
+        return counts
+    for row in rights:
+        if type(row) is not dict or row.get('identity_id') != identity_id:
+            continue
+        provider, item = row.get('provider_id'), row.get('item_id')
+        if (type(provider) is str and provider
+                and type(item) is str and item):
+            counts[(identity_id, provider, item)] += 1
+    return counts
+
+
 PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
              'paris': 'Paris', 'bnf-pret': 'BnF Prêt',
              'local': 'Local (origine attestée)',
@@ -766,16 +786,12 @@ class LocalInspection:
         scope_counts = Counter(
             key for right in rights if (key := right_scope(right)) is not None
         )
-        # Numilog's attested placement cannot encode borrower/credential.
-        # A second right for the same local identity and provider edition
-        # must be surfaced as ambiguous *before* the human confirms. This
-        # matches the fresh Numilog transaction, which checks ALL credentials.
-        numilog_edition_counts = Counter(
-            (row.get('identity_id'), row.get('item_id'))
-            for row in rights
-            if row.get('identity_id') == identity_id
-            and row.get('provider_id') == 'numilog'
-            and type(row.get('item_id')) is str and row.get('item_id')
+        # A source-specific preflight must reject same-edition ambiguity
+        # across credentials even if its legacy placement omits the borrower.
+        # Count every supplier uniformly; the selected manual transaction
+        # independently checks its supported admission/attested provenance.
+        edition_collision_counts = _private_edition_collision_counts(
+            rights, identity_id,
         )
         # Active unverified rights remain the audit's original universe.
         # Closed/returned/expired typed loans are a distinct READ-ONLY
@@ -911,8 +927,9 @@ class LocalInspection:
                 'ambiguous': (
                     scope is None or scope_counts[scope] != 1
                     or (right.get('provider_id') == 'numilog'
-                        and numilog_edition_counts.get(
-                            (identity_id, right.get('item_id')), 0) != 1)
+                        and edition_collision_counts.get(
+                            (identity_id, right.get('provider_id'),
+                             right.get('item_id')), 0) != 1)
                 ),
                 'ledger_conflict': len(own_ledger_indices) != len(ledger_indices),
                 'ledger_count': len(own_ledger),
