@@ -754,7 +754,8 @@ class LibraryService:
         self.identities = identities
         self.current_identity = identities[0]
 
-        self._project_configured_provider_connections()
+        # Reusable for legacy tests and migration hosts without service methods.
+        LibraryService._project_configured_provider_connections(self)
 
     def _project_configured_provider_connections(self, *, descriptors=()) -> None:
         """Publish only account bindings admitted at the present plugin stage.
@@ -775,7 +776,10 @@ class LibraryService:
             else self.config.get("providers.accounts", [])
         )
         try:
-            descriptors = tuple(descriptors) or tuple(self.registry.descriptors())
+            registry = getattr(self, "registry", None)
+            descriptors = tuple(descriptors) or (
+                tuple(registry.descriptors()) if registry is not None else ()
+            )
             if descriptors:
                 validate_provider_account_limits(
                     configured, descriptors,
