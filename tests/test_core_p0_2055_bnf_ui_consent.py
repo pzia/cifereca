@@ -92,7 +92,7 @@ def test_single_explicit_click_queues_once_without_second_confirmation(tmp_path)
         outcome = window.runner.complete_one()
         assert outcome["status"] == "confirmed"
         assert session.dispatches == [("book-1", "reader")]
-        assert service.can_borrow_bnf(item) is False  # checkpoint consumed
+        assert service.can_borrow_manual(item) is False  # checkpoint consumed
         assert results == ["Prêt BnF actif vérifié dans Mes emprunts"]
         assert refreshes == [True]
         assert errors == []
@@ -201,7 +201,7 @@ def test_pre_post_unavailability_is_explicitly_no_request_and_retryable(tmp_path
         assert outcome["status"] == "blocked"
         assert outcome["reason_code"] == "borrow_not_submitted"
         assert service.storage.loan_borrow_state(borrow_claim_key(account, item)) is None
-        assert service.can_borrow_bnf(item) is True
+        assert service.can_borrow_manual(item) is True
         assert len(errors) == 1
         assert "Aucune demande de prêt" in errors[0][0]
         assert "nouvelle demande volontaire" in errors[0][0]
