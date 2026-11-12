@@ -80,6 +80,7 @@ def main():
     parser.add_argument("--geometry-1300", action="store_true", help="UX #611: measure native X11 position, shell and both split views at exact 1300×768")
     parser.add_argument("--component-contracts", action="store_true", help="P0 #1124/#1125: real widget lifecycle, summaries, overflow and stable selection")
     parser.add_argument("--short-component-actions", action="store_true", help="Reproduce the pre-existing boundary overflow case with eight shorter labels")
+    parser.add_argument("--plugin-scroll-only", action="store_true", help="Run the 36-plugin GTK scroll/focus acceptance independently of bibliographic detail")
     args = parser.parse_args()
     if args.geometry_1300 and args.width != 1300:
         parser.error("--geometry-1300 requires --width 1300")
@@ -824,13 +825,9 @@ def main():
             window._online_source_statuses = prior_statuses or {}
             window._update_search_count(window.search_page.store.get_n_items())
         if not args.component_contracts:
-            # #908: the same Core E2E checks a real GTK 36-module inventory
-            # at 1024/1366 pixels without touching installed plugins.
-            from plugin_manager_scroll_contract import verify_plugin_scroll
-            verify_plugin_scroll(
-                window, later, finish,
-                width=1024 if args.width == 1366 else 1366,
-            )
+            # The unrelated 36-plugin focus/scroll fixture has its own GTK
+            # scenarios, so a detail failure cannot be misattributed to it.
+            finish()
             return
 
         p.empty("Résumé réellement long", "Contrat d'overflow")
@@ -973,6 +970,22 @@ def main():
         capture("05-new-identity-cleared-detail")
         finish()
 
+    def complete_plugin_scroll():
+        report["checks"]["P0_908_plugin_scroll_independent"] = True
+        report["status"] = "PASS"
+        save()
+        rc[0] = 0
+        app.quit()
+
+    def start_plugin_scroll():
+        # Same real MainWindow and synthetic 36-plugin GTK acceptance as before.
+        # Run it in a dedicated scenario rather than after the detail fixture.
+        from plugin_manager_scroll_contract import verify_plugin_scroll
+        verify_plugin_scroll(
+            window, later, complete_plugin_scroll,
+            width=1024 if args.width == 1366 else 1366,
+        )
+
     class Application(Adw.Application):
         def __init__(self):
             super().__init__(application_id="org.cifereca.BookDetailUXE2E")
@@ -989,7 +1002,10 @@ def main():
             if args.geometry_1300:
                 report["ux611_probe_stage"] = "probe_start"
             device = X11Input()
-            later(450, search_initial)
+            if args.plugin_scroll_only:
+                later(450, start_plugin_scroll)
+            else:
+                later(450, search_initial)
         def do_shutdown(self):
             if window is not None:
                 if original_search_books[0] is not None:
