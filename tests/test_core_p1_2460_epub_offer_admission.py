@@ -19,6 +19,7 @@ def item(*, provider="ebooksgratuits", downloadable=None, link=None, metadata=No
     return NS(
         source_provider=provider,
         source_credential="public",
+        source_collection="public", owned=False,
         download_url=link,
         downloadable=downloadable,
         metadata=metadata or {},

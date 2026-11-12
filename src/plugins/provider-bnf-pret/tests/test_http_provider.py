@@ -562,6 +562,12 @@ def test_catalogue_uses_core_search_and_detail_without_entitlement(tmp_path):
         account, = session.connect()
         account.identity_id = 'default'
         service.accounts = [account]
+        # A private holdings lookup requires a durable exact connection owner;
+        # session presence or a catalogue result does not establish consent.
+        service.storage.provider_connection_put({
+            'identity_id': 'default', 'provider_id': 'bnf-pret',
+            'credential_id': 'credential-a', 'enabled': True,
+        })
         service.registry.register(PLUGIN)
         service._sessions[service._session_key('bnf-pret', 'credential-a')] = session
         rows = service.search('fiction', provider_id='bnf-pret', scope='digital', force=True)

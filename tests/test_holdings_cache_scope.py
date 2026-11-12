@@ -27,6 +27,13 @@ def test_holdings_cache_isolates_identical_records_by_collection_and_profile(tmp
     first = replace(notice(collection="catalogue-A"),
                     source_provider="fixture-shared-catalogue")
     second = replace(first, source_collection="catalogue-B")
+    # Private catalogue details require a durable source-owner binding.
+    # This fixture switches profiles without opening a real provider.
+    service.storage.identity_for_connection = lambda provider, credential: (
+        service.current_identity.identity_id
+        if provider == first.source_provider and credential == first.source_credential
+        else None
+    )
     try:
         assert service.holdings(first).availability_label == "default:catalogue-A"
         assert service.holdings(second).availability_label == "default:catalogue-B"
