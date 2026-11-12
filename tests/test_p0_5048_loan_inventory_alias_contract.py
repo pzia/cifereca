@@ -145,10 +145,11 @@ def test_legacy_reader_uses_descriptor_without_second_provider_operation():
 def test_explicit_descriptor_without_alias_vetoes_legacy_paris_fallback():
     account = _account("paris")
     row = _loan(account, "primary")
-    # Legacy callers remain compatible until the Paris producer cutover.
-    assert len(LoanInventorySnapshot(
-        scope=LoanInventoryScope.for_account(account), loans=(row,),
-    ).loans) == 1
+    # No provider-name fallback is permitted, even without a descriptor.
+    with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
+        LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(account), loans=(row,),
+        )
     checked = LoanInventoryScope.for_account(account, descriptor=_descriptor("paris"))
     assert checked.primary_alias_policy_checked is True
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
