@@ -1689,7 +1689,7 @@ class MainWindow(Adw.ApplicationWindow):
 
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
         from .bnf_borrow_controller import (
-            _present_manual_borrow, present_paris_borrow_verification,
+            _present_manual_borrow, present_borrow_verification,
         )
         # A read-only spent-claim verification must terminate before any
         # mutating admission, including malformed or unsupported providers.
@@ -1699,7 +1699,7 @@ class MainWindow(Adw.ApplicationWindow):
             and control.get_name() == "cifereca-borrow-followup"
         )
         if verification_only:
-            present_paris_borrow_verification(
+            present_borrow_verification(
                 self, item, control, TaskPriority=TaskPriority,
             )
             return
