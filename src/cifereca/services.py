@@ -489,18 +489,24 @@ class LibraryService:
             result["reason_code"] = "primary_paris_connection_mismatch_or_inactive"
         return result
 
-    def paris_borrow_followup_available(self, item: SearchResult) -> bool:
-        """Read-only, exact-account pending loan check availability."""
+    def can_verify_manual_borrow(self, item: SearchResult) -> bool:
+        """Readonly, exact spent claim; typed plugin policy must opt in."""
         from .core.borrow_later_verification import borrow_followup_available
+        from .core.manual_borrow_contract import manual_borrow_followup_diagnostic
         return borrow_followup_available(
-            self, item, readiness=self.paris_borrow_diagnostic,
+            self, item,
+            readiness=lambda row: manual_borrow_followup_diagnostic(self, row),
         )
 
-    def verify_paris_borrow_followup(self, item: SearchResult) -> dict[str, object]:
-        """Read-only verification of a spent claim, without a second POST."""
+    def verify_manual_borrow_followup(
+        self, item: SearchResult,
+    ) -> dict[str, object]:
+        """Never replay a loan POST, clear its claim or infer an entitlement."""
         from .core.borrow_later_verification import verify_pending_borrow_followup
+        from .core.manual_borrow_contract import manual_borrow_followup_diagnostic
         return verify_pending_borrow_followup(
-            self, item, readiness=self.paris_borrow_diagnostic,
+            self, item,
+            readiness=lambda row: manual_borrow_followup_diagnostic(self, row),
         )
 
     def verify_borrow_without_submission(
