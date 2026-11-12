@@ -33,10 +33,27 @@ class CatalogSearchFacet:
 
 
 @dataclass(frozen=True, slots=True)
+class PublicSearchNotice:
+    """Explicit public-parser output for one exact search row, contract v1.
+
+    The producer must build this from public catalogue fields, never by
+    relabelling a private inventory row. This declaration is descriptive,
+    not permission to consult holdings or acquire anything. Core validates
+    coordinates and rebuilds a non-authorizing row before publication.
+    """
+
+    result: SearchResult
+    schema_version: int = 1
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderSearchResponse:
     results: list[SearchResult]
     facets: tuple[CatalogSearchFacet, ...] = ()
     partial: bool = False
+    # Additive: old positional construction and list-only search still work.
+    # Absence means no attested public projection, never "all rows public".
+    public_notices: tuple[PublicSearchNotice, ...] = ()
 
 
 @runtime_checkable

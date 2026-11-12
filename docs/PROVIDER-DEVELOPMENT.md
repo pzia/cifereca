@@ -150,3 +150,56 @@ Le scope minimal d'une session privée et de ses caches est **`provider_id + ten
 - **Normatif :** `docs/ARCHITECTURE.md`, `docs/PLUGIN-BOUNDARIES.md`, `src/cifereca/plugin_api/`, `docs/CORE-P0-3719-DOWNLOADABLE-RESOURCE-CONTRACT-V2.md`, `docs/CORE-P1-2385-CATALOGUE-INVENTORY-CONTRACT.md`.
 - **Tickets récents :** [#3171](https://github.com/pzia/cifereca/issues/3171) (Sync convergente), [#3719](https://github.com/pzia/cifereca/issues/3719) (référence synthétique), [#2385](https://github.com/pzia/cifereca/issues/2385) (catalogue ≠ bibliothèque), [#4552](https://github.com/pzia/cifereca/issues/4552) (Notice C en cours), [#3724](https://github.com/pzia/cifereca/issues/3724) (adapteurs C), [#3120](https://github.com/pzia/cifereca/issues/3120) (capacité de prêt), [#2703](https://github.com/pzia/cifereca/issues/2703) (matrice), [#2056](https://github.com/pzia/cifereca/issues/2056) et [#3691](https://github.com/pzia/cifereca/issues/3691) (BiblioAccess).
 - **Portée :** ce guide ne prétend ni documenter une API privée de fournisseur, ni fournir la totalité du code du Core, ni transformer une capture en contrat d'accès. Une capture Browser Recorder reste **partielle**, volontaire, et le ZIP privé direct **n'est pas anonymisé**. Les contrats exportés du Core installé, leurs déclarations de capacité et les preuves terrain prévalent sur toute suggestion de code.
+
+## Projection publique exacte de recherche (extension additive #5048 / #5518)
+
+`ProviderSearchResponse` conserve ses trois paramètres positionnels historiques
+`results, facets, partial`. Depuis Plugin API **1.4.8**, le quatrième, `public_notices`, est un tuple optionnel
+de `PublicSearchNotice(result, schema_version=1)`, importable depuis
+`cifereca.plugin_api`. Une réponse ancienne ou une liste simple ne déclare **aucune**
+projection publique. La capacité générale `catalog.search`, les facettes et les
+flags `owned=False` ne prouvent pas que les champs viennent du catalogue public.
+
+Le plugin construit chaque notice depuis son **parseur public**, séparément des
+annotations privées et des inventaires. Il conserve les coordonnées exactes
+`id, provider, credential, docbase, record_id, scenario, collection, medium`.
+Il n'y place ni compte emprunteur, possession, URL de livraison ni capacité
+positive de téléchargement. Core peut associer cette projection publique à une
+ligne privée de mêmes coordonnées sans copier les champs privés de cette ligne.
+Une déclaration plugin n'est pas une preuve cryptographique de publication.
+
+Le point d'adoption Core est
+`core.public_search_projection.project_public_search_result(response, row,
+provider_id=..., credential_id=...)`. Les coordonnées attendues sont celles de
+la **source de la ligne**, préalablement validées contre la session productrice ;
+un catalogue anonyme peut avoir un credential distinct de celui de la session.
+Ne jamais utiliser le credential du profil affiché comme valeur de remplacement.
+Le lecteur exige l'objet ligne de la réponse courante, une enveloppe v1 unique
+et toutes les coordonnées exactes. Absence, doublon, version inconnue ou
+contradiction = `None`, sans fallback depuis des flags de notice.
+
+La sortie est un nouveau `SearchResult` descriptif : bibliographie bornée,
+`catalogue_access=shared_read_only`, possession/téléchargement faux, sans compte,
+prix, révision, classification ou métadonnées d'action. Les listes sont copiées.
+La v1 ne transporte pas d'URL ou de facettes brutes : conserver les gardes
+existantes des images/liens et les facettes de réponse séparément jusqu'à leur
+migration démontrée. Le lecteur réutilise la validation scalaire de
+`notice_source_observation`, sans appeler de plugin, SQLite ou transport.
+
+### Migration coordonnée (appelants volontairement inchangés)
+
+| Groupe / responsabilité | Contrat à réutiliser | Migration encore à réaliser par son propriétaire |
+| --- | --- | --- |
+| Recherche publique Kobo, Numilog, Paris : `_shared_kobo_public_row`, `_shared_numilog_public_row`, `_shared_paris_catalogue_row` | `PublicSearchNotice` + lecteur Core ci-dessus | Produire les notices dans les plugins, adopter la réponse typée dans `search`, `search_progressive` et le cache ; garder les baux SQL/session/génération de #5763, les images et les facettes ; supprimer les trois dispatchs seulement après tests d'intégration équivalents. |
+| Acquisition/offres courantes | `downloadable-resource/2` : `SourceReference`, `ResourceObservation`, `DeliveryCandidate` ; `has_complete_delivery_abi`, `qualify_selected_offers` | Réutiliser les capacités observées ; jamais convertir une notice publique en ressource possédée ou consentement. Aucun nouveau service nécessaire. |
+| Placement, provenance attestée | `canonical_publication`, `convergence_verified_presence`, `provider_scoped_observed_links` | Conserver SourceReference/OriginLink/SHA/Placement et priorité de la preuve canonique ; ne pas inférer l'origine depuis un titre, dossier ou SHA isolé. |
+| Synchronisation/consentement | `synchronize_account_source`, `source_sync_consent`, exécuteur canonique | Réutiliser scope exact, CAS, epoch et idempotence ; les façades historiques ne justifient pas une deuxième boucle. |
+| Comptes / actions sur prêt existant | `ProviderDescriptor.existing_primary_loan_account_alias`, `capture_loan_action_scope` | Réutiliser l'alias explicitement déclaré, compte primaire vide uniquement ; ne pas créer une seconde convention `primary` par nom fournisseur. |
+| Actions UI/emprunt | `ManualBorrowPolicy`, `assess_lending_operation`, `assess_borrower_operation_eligibility`, `assess_lending_action` | Disponibilité descriptive distincte de permission fraîche, consentement et claim durable. |
+| Déclaration subjective locale vs prêt observé | `library_declared_links` et contrats d'observation séparés | **Non débloqué par cette extension.** L'échec de #5604 interdit d'imposer `loan_id` aux déclarations subjectives Paris. La politique d'admission BnF de `library_local_inspection` doit être qualifiée séparément avant suppression. |
+
+Cette extension prépare **trois groupes de projection** ; elle ne supprime
+aucune décision des appelants et ne prouve pas leur cutover. Les flux stream
+`ProviderSearchEvent`, liens/images et facettes spécifiques ne sont pas migrés
+par cette tranche. Aucun contrôle d'identité/génération avant et après I/O,
+consentement, droit, transaction ou contrôle de placement ne doit être retiré.
