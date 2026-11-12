@@ -9,6 +9,10 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
+import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.ci_provider_core_coupling_inventory import (
     _dedicated_provider, inspect_source,
