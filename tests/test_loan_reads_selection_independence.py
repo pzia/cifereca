@@ -70,3 +70,37 @@ def test_source_observation_is_cached_exactly_and_old_ui_never_replaces_new_proj
         assert service.storage.acquisitions() == service.storage.placements() == []
     finally:
         service.close()
+
+
+def test_identity_loan_reads_use_provider_neutral_stable_order(tmp_path, monkeypatch):
+    from cifereca.models import Account
+
+    service = _service(tmp_path)
+    accounts = [
+        Account(identity_id="default", provider_id=provider,
+                credential_id=credential, unique_id="reader")
+        for provider, credential in (
+            ("paris", "z"), ("synthetic", "a"), ("aaa-provider", "b"),
+            ("paris", "a"),
+        )
+    ]
+    service.accounts = accounts
+    observed = []
+    monkeypatch.setattr(service, "_session_for_account", lambda _: NS(
+        capabilities=NS(loans=True),
+    ))
+    monkeypatch.setattr(
+        service, "_loans_for_account",
+        lambda account, force=False: observed.append(
+            (account.provider_id, account.credential_id),
+        ) or [],
+    )
+    try:
+        assert service.refresh_identity_loans(identity_id="default") == []
+        assert observed == [
+            ("aaa-provider", "b"), ("paris", "a"), ("paris", "z"),
+            ("synthetic", "a"),
+        ]
+        assert service.storage.acquisitions() == service.storage.placements() == []
+    finally:
+        service.close()
