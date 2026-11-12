@@ -814,3 +814,51 @@ def test_plugin_scroll_failure_exports_only_closed_fixture_checkpoint():
         assert "plugin_scroll_last_check" not in module.safe_summary(source)["results"][0]
         source.write_text(json.dumps([{"scenario": "startup", "returncode": 1}]))
         assert "plugin_scroll_last_check" not in module.safe_summary(source)["results"][0]
+
+
+def test_p0_5376_bulk_focus_public_evidence_is_closed_boolean_only():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "diagnostics-large-1600"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        evidence = {
+            "button_mapped": True,
+            "button_sensitive": True,
+            "toplevel_active": False,
+            "button_focused": False,
+            "toplevel_focus_is_button": False,
+        }
+        report.write_text(json.dumps({
+            "stage": "P0_2140_bulk_fixture",
+            "bulk_focus_observation": evidence,
+            "private_exception": "TOKEN-ACCOUNT-PRIVATE",
+        }))
+        result = module.safe_summary(source)["results"][0]
+        assert result["bulk_focus_observation"] == evidence
+        assert "TOKEN-ACCOUNT-PRIVATE" not in repr(result)
+        for malformed in (
+            {**evidence, "button_mapped": 1},
+            {**evidence, "button_sensitive": "PRIVATE"},
+            {**evidence, "extra": False},
+            [evidence],
+        ):
+            report.write_text(json.dumps({
+                "stage": "P0_2140_bulk_fixture",
+                "bulk_focus_observation": malformed,
+            }))
+            assert "bulk_focus_observation" not in module.safe_summary(source)["results"][0]
+        report.write_text(json.dumps({
+            "stage": "P0_2140_wait_57_errors",
+            "bulk_focus_observation": evidence,
+        }))
+        assert "bulk_focus_observation" not in module.safe_summary(source)["results"][0]
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({
+            "stage": "P0_2140_bulk_fixture",
+            "bulk_focus_observation": evidence,
+        }))
+        assert "bulk_focus_observation" not in module.safe_summary(source)["results"][0]
