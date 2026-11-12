@@ -1,4 +1,4 @@
-"""Read-only visibility of configured Paris connections without a live account.
+"""Read-only visibility of configured connections without a live account.
 
 A failed provider login must not erase its *configuration* from the Sync UI.
 This projection is intentionally separate from SyncSourceRef: a configured
@@ -18,21 +18,26 @@ class ConfiguredConnectionNotice:
     can_reconnect: bool
 
 
-def unavailable_paris_connections(service: Any, identity_id: str) -> tuple[ConfiguredConnectionNotice, ...]:
+def unavailable_configured_connections(
+    service: Any, identity_id: str, *, provider_id: str,
+) -> tuple[ConfiguredConnectionNotice, ...]:
     """Return bounded, non-identifying status rows for *this* identity only.
 
     Neither labels, borrower IDs, credentials nor provider exceptions are
     copied from config. A live account already has its ordinary SyncSourceRef,
     including its own disconnected state if the session later disappears.
     """
-    if type(identity_id) is not str or not identity_id:
+    from re import fullmatch
+    if (type(identity_id) is not str or not identity_id
+            or type(provider_id) is not str
+            or fullmatch(r'[a-z][a-z0-9-]{0,63}', provider_id) is None):
         return ()
     config = getattr(service, "config", None)
     reader = getattr(config, "provider_accounts", None)
     if not callable(reader):
         return ()
     try:
-        configured = reader("paris")
+        configured = reader(provider_id)
         if type(configured) not in (list, tuple) or len(configured) > 128:
             return ()
         accounts_reader = getattr(service, "accounts_for_identity", None)
@@ -42,16 +47,16 @@ def unavailable_paris_connections(service: Any, identity_id: str) -> tuple[Confi
         live = {
             account.credential_id
             for account in accounts
-            if getattr(account, "provider_id", None) == "paris"
+            if getattr(account, "provider_id", None) == provider_id
             and getattr(account, "identity_id", None) == identity_id
             and type(getattr(account, "credential_id", None)) is str
         }
         registry = getattr(service, "registry", None)
         lookup = getattr(registry, "maybe_get", None)
-        plugin = lookup("paris") if callable(lookup) else None
+        plugin = lookup(provider_id) if callable(lookup) else None
         plugin_ready = getattr(getattr(plugin, "descriptor", None), "state", None) == "ready"
         enabled_reader = getattr(service, "_provider_enabled_for_identity", None)
-        provider_enabled = (enabled_reader("paris", identity_id) is not False
+        provider_enabled = (enabled_reader(provider_id, identity_id) is not False
                             if callable(enabled_reader) else True)
     except Exception:
         # Never reflect raw exceptions: they may include account IDs and URLs.
@@ -88,7 +93,7 @@ def unavailable_paris_connections(service: Any, identity_id: str) -> tuple[Confi
         else:
             state = "not_connected"
         notices.append(ConfiguredConnectionNotice(
-            provider_id="paris", state=state, can_reconnect=state == "not_connected",
+            provider_id=provider_id, state=state, can_reconnect=state == "not_connected",
         ))
         if len(notices) >= 16:
             break
