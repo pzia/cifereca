@@ -274,7 +274,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_1269_query_model_keeps_book_detail_consumers(self):
         selected = mod.select(["src/cifereca/gui/query_model.py"])
-        self.assertEqual(set(selected), set(mod.SEARCH_GTK + mod.BOOK_DETAIL + mod.BNF_COVERS))
+        self.assertEqual(set(selected), set(mod.SEARCH_GTK + mod.BOOK_DETAIL + mod.PLUGIN_SCROLL + mod.BNF_COVERS))
 
     def test_1269_mainwindow_imports_cover_core_diagnostics_navigation(self):
         selected = mod.select(["src/cifereca/gui/main_window.py"])
