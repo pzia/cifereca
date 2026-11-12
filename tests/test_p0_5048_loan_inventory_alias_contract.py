@@ -180,3 +180,27 @@ def test_empty_id_nonprimary_account_cannot_use_declared_alias():
     assert scope.primary_account_alias is None
     with pytest.raises(ValueError, match="mixed_loan_inventory_scope"):
         LoanInventorySnapshot(scope=scope, loans=(_loan(account, "main"),))
+
+
+def test_typed_reader_upgrades_valid_literal_scope_without_inventing_alias():
+    account = _account("synthetic-a")
+    descriptor = _descriptor("synthetic-a", "main")
+    rows = (_loan(account, ""),)
+    calls = []
+    def old_reader(arg):
+        calls.append("typed")
+        return LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(arg),
+            loans=rows, status="partial",
+        )
+    session = SimpleNamespace(
+        connected=True, provider_id=account.provider_id,
+        credential_id=account.credential_id,
+        capabilities=SimpleNamespace(loans=True),
+        loan_inventory_snapshot=old_reader,
+    )
+    observed = read_loan_inventory(session, account, descriptor=descriptor)
+    assert calls == ["typed"]
+    assert len(observed.loans) == 1
+    assert observed.scope.primary_account_alias == "main"
+    assert observed.status == "partial"
