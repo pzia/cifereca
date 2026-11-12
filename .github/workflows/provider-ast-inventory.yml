@@ -1,0 +1,35 @@
+name: Core provider AST responsibility inventory
+
+on:
+  pull_request:
+    paths:
+      - "src/cifereca/**"
+      - "src/plugins/**/cifereca-plugin.json"
+      - "scripts/ci_provider_ast_function_worklist.py"
+      - "scripts/ci_provider_core_coupling_inventory.py"
+      - "scripts/ci_provider_core_coupling_report.py"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ast-responsibilities:
+    name: AST provider responsibility report (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Report unique AST and provider overlap by function
+        run: |
+          set -euo pipefail
+          python3 -m scripts.ci_provider_ast_function_worklist
+          python3 -m scripts.ci_provider_ast_function_worklist --json > provider-ast-responsibilities.json
+      - name: Archive inspectable per-line worklist
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-ast-responsibilities
+          path: provider-ast-responsibilities.json
+          retention-days: 30
