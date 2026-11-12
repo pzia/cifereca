@@ -49,3 +49,33 @@ def download_action_label(
     if check_required:
         return "Vérifier et télécharger"
     return f"Télécharger {detailed_format}" if detailed_format else "Télécharger"
+
+
+def private_notice_download_hint_allowed(
+    item: Any, *, purchase_evidence=None, identity_id=None,
+    account_context_epoch=None, source_context_epoch=None,
+) -> bool:
+    """Passive guard for an unqualified private inventory download hint.
+
+    A supplier's owned/downloadable flag or general direct_download capability
+    is not independent proof for a private library row without a delivery URL.
+    Public provider download policies remain outside this private-only guard.
+    """
+    if getattr(item, "source_credential", None) == "__public__":
+        return True
+    if getattr(item, "download_url", None) is not None:
+        return True
+    if not (
+        getattr(item, "owned", None) is True
+        or getattr(item, "downloadable", None) is True
+        or getattr(item, "source_collection", None) == "library"
+    ):
+        return True
+    if getattr(item, "source_collection", None) != "library":
+        return False
+    from .query_model import result_row
+    return result_row(
+        item, purchase_evidence=purchase_evidence, identity_id=identity_id,
+        account_context_epoch=account_context_epoch,
+        source_context_epoch=source_context_epoch,
+    )["state"] == "remote_owned"
