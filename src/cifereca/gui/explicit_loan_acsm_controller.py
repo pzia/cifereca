@@ -70,9 +70,15 @@ def prepare_explicit_loan_acsm(
         return
     service = window.service
     identity = getattr(service, "current_identity", None)
-    if (identity is None or identity.identity_id != loan.identity_id
-            or not isinstance(getattr(loan, "source_provider", None), str)
-            or not loan.source_provider):
+    if (identity is None
+            or getattr(identity, "identity_id", None) != getattr(loan, "identity_id", None)
+            or any(type(getattr(loan, field, None)) is not str
+                   for field in ("identity_id", "source_provider",
+                                 "source_credential", "source_account_id",
+                                 "id", "record_id", "state", "medium"))
+            or not loan.source_provider or not loan.source_credential
+            or not loan.source_account_id or not loan.id or not loan.record_id
+            or loan.medium != "digital" or loan.state != "active"):
         window.show_error("Choisissez l'identité du prêt avant le téléchargement",
                           "Prêt numérique")
         return
@@ -135,7 +141,15 @@ def prepare_explicit_loan_acsm(
                 )
 
             def done(result):
-                if not current() or result.get("status") == "cancelled":
+                if not current():
+                    return
+                if type(result) is not dict:
+                    window.show_error(
+                        "Import non confirmé ; aucun fichier EPUB/PDF n'a été attesté.",
+                        "Import ADEPT",
+                    )
+                    return
+                if result.get("status") == "cancelled":
                     return
                 if result.get("status") == "attention_required":
                     candidate = result.get("code")
