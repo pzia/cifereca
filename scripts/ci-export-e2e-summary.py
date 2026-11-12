@@ -231,8 +231,8 @@ _BOOK_DETAIL_STAGES = frozenset({
 def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
     """Expose the last *closed* GUI callback stage, never raw failure data."""
     if scenario not in {
-        "book-detail-1300", "book-detail-1366", "book-detail-1600",
-        "book-detail-1700",
+        "book-detail-960", "book-detail-1280", "book-detail-1300",
+        "book-detail-1366", "book-detail-1600", "book-detail-1700",
     }:
         return {}
     root = source.resolve().parent / scenario
@@ -257,6 +257,16 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
             "imagegrab", "display_geometry", "png_write",
         }:
             result["book_detail_capture_failure_phase"] = capture_phase
+        # Closed, finite durations from the synthetic probe only. Never
+        # publish raw exception/GTK text or timestamps. False is rejected.
+        for source_key, public_key in (
+            ("callback_start_elapsed_seconds", "book_detail_callback_start_seconds"),
+            ("failure_elapsed_seconds", "book_detail_failure_elapsed_seconds"),
+            ("failed_callback_duration_seconds", "book_detail_failed_callback_seconds"),
+        ):
+            value = data.get(source_key)
+            if type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 40:
+                result[public_key] = round(value, 3)
         line = data.get("callback_line")
         if type(line) is int:
             tree = ast.parse((ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8"))
