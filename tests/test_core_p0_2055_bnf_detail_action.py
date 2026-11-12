@@ -22,7 +22,7 @@ def test_bnf_unknown_availability_does_not_hide_manual_action(tmp_path):
         assert availability == "Non vérifiée"
         assert search_detail_borrow_action_candidate(item, availability)
         # Real capability/identity/session/claim validation remains separate.
-        assert service.can_borrow_bnf(item)
+        assert service.can_borrow_manual(item)
         assert session.reads == session.dispatches == []
     finally:
         service.close()
@@ -32,11 +32,11 @@ def test_bnf_candidate_remains_advisory_when_attempt_is_spent(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         key = borrow_claim_key(account, item)
-        assert key and service.can_borrow_bnf(item)
+        assert key and service.can_borrow_manual(item)
         service.storage.metadata_set(key, "unreadable-spent-checkpoint")
         availability = compact_availability_label("Disponibilité non vérifiée")
         assert search_detail_borrow_action_candidate(item, availability)
-        assert not service.can_borrow_bnf(item)
+        assert not service.can_borrow_manual(item)
         assert session.reads == session.dispatches == []
     finally:
         service.close()

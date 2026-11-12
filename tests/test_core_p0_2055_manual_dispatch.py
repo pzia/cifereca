@@ -26,7 +26,7 @@ manual_bnf_borrow_available = partial(
 from cifereca.core.borrow_action_scope import borrow_claim_key
 from cifereca.models import Account, Loan, SearchResult
 from cifereca.providers.base import (
-    ProviderCapabilities, ProviderDescriptor, ProviderSession,
+    ProviderCapabilities, ProviderDescriptor, ProviderSession, ManualBorrowPolicy,
 )
 from cifereca.plugin_api import BorrowerOperationEvidence
 from tests.test_sync_state_contract import _service
@@ -66,6 +66,9 @@ class FutureBnf(ProviderSession):
             description="no network", state="ready",
             capabilities=ProviderCapabilities(
                 loans=True, search=True, holdings=True, borrow=True),
+        )
+        descriptor = replace(
+            descriptor, manual_borrow_policy=ManualBorrowPolicy("BNF_PRET"),
         )
         super().__init__(
             descriptor=descriptor, credential_id=account.credential_id,
@@ -358,7 +361,7 @@ def test_inert_ui_visibility_ignores_catalogue_button_without_capability(tmp_pat
     service, session, account, item = setup(tmp_path, declared=False)
     try:
         assert manual_bnf_borrow_available(service, item) is False
-        assert service.can_borrow_bnf(item) is False
+        assert service.can_borrow_manual(item) is False
         assert session.reads == session.dispatches == []
         assert not service.storage.acquisitions()
     finally:
@@ -369,13 +372,12 @@ def test_ui_future_capability_only_offers_action_not_permission(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         assert manual_bnf_borrow_available(service, item) is True
-        assert service.can_borrow_bnf(item) is True
+        assert service.can_borrow_manual(item) is True
         session._evidence = evidence(account, item, permission="unknown")
         assert manual_bnf_borrow_available(service, item) is True
         assert session.reads == session.dispatches == []
-        result = service.borrow_bnf_manual(
-            item, expected_identity_id="default", confirmed=True, site_checked=True,
-            expected_context_epoch=service._account_context_epoch,
+        result = service.borrow_manual(
+            item, expected_identity_id="default", confirmed=True, expected_context_epoch=service._account_context_epoch,
             expected_account=account,
         )
         assert result["status"] == "confirmed"
@@ -403,11 +405,10 @@ def test_ui_hides_button_on_corrupt_spent_borrow_checkpoint(tmp_path, raw):
         assert service.storage.loan_borrow_state(key) is None
         assert service.storage.loan_borrow_claim_once(key, "retry")[0] is False
         assert manual_bnf_borrow_available(service, item) is False
-        assert service.can_borrow_bnf(item) is False
-        outcome = service.borrow_bnf_manual(
+        assert service.can_borrow_manual(item) is False
+        outcome = service.borrow_manual(
             item, expected_identity_id="default",
-            confirmed=True, site_checked=True,
-            expected_context_epoch=service._account_context_epoch,
+            confirmed=True, expected_context_epoch=service._account_context_epoch,
             expected_account=account,
         )
         assert outcome["status"] == "verification_unavailable"
@@ -426,8 +427,8 @@ def test_ui_consent_tied_to_exact_account_ref_and_core_epoch(tmp_path):
             {"expected_context_epoch": "0"},
             {"expected_account": replace(account)},
         ):
-            result = service.borrow_bnf_manual(
-                item, expected_identity_id="default", confirmed=True, site_checked=True, **kw)
+            result = service.borrow_manual(
+                item, expected_identity_id="default", confirmed=True, **kw)
             assert result["status"] == "blocked"
         assert session.reads == session.dispatches == []
         assert service.storage.loan_borrow_state(
@@ -435,9 +436,8 @@ def test_ui_consent_tied_to_exact_account_ref_and_core_epoch(tmp_path):
         # A -> B -> A must not replay consent even when the same account
         # instance and selected source have been restored.
         service._account_context_epoch += 2
-        result = service.borrow_bnf_manual(
-            item, expected_identity_id="default", confirmed=True, site_checked=True,
-            expected_context_epoch=prior, expected_account=account)
+        result = service.borrow_manual(
+            item, expected_identity_id="default", confirmed=True, expected_context_epoch=prior, expected_account=account)
         assert result["status"] == "blocked"
         assert session.dispatches == []
     finally:
