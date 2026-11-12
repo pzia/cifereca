@@ -231,7 +231,7 @@ def present_manual_borrow_verification(window, item, control, *, TaskPriority):
     except Exception:
         return
     scope = _capture_borrow_ui_scope(
-        window, item, account, session, provider_id="paris",
+        window, item, account, session, provider_id=item.source_provider,
     )
     if scope is None:
         return
