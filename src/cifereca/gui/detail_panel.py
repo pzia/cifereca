@@ -1052,7 +1052,7 @@ class DetailPanel(Gtk.Box):
                    source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
             metadata=item.metadata,
         ), description=getattr(detail, "description", None) or item.description)
-        from .offer_actions import private_notice_download_hint_allowed
+        from cifereca.gui.offer_actions import private_notice_download_hint_allowed
         private_hint_ok = private_notice_download_hint_allowed(
             item,
             purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
