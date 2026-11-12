@@ -44,7 +44,7 @@ def new_source(profile="A", *, provider="seller", credential="card-A",
 def store(tmp_path):
     storage = Storage(tmp_path / "state.sqlite")
     try:
-        assert storage.schema_version() == 14
+        assert storage.schema_version() == 15
         yield storage
     finally:
         storage.close()
