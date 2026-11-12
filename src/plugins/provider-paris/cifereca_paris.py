@@ -347,6 +347,11 @@ def _core_account_owners(refs, *, provider_id: str, account_id: str,
 
 
 class ParisProviderSession(ProviderSession):
+    # Static, opt-in negative-loan evidence contract. Only one exhaustive
+    # digital branch can authorize source-scoped realization in Core.
+    loan_absence_digital_branch = "dilicom"
+    loan_absence_primary_account_alias = "primary"
+
     def __init__(self, *, config: Any, diagnostics: Any,
                  identity_broker=None, **kwargs: Any) -> None:
         super().__init__(descriptor=DESCRIPTOR, **kwargs)

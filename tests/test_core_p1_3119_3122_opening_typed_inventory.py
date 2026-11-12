@@ -63,7 +63,15 @@ def snapshot(a, rows=(), status="success"):
 
 def attached(service, a, *, observed=None, status="success"):
     calls = []
-    state = NS(
+    branch = {"paris": "dilicom", "bnf-pret": "bnf_html"}.get(a.provider_id)
+    # Match real plugin declarations without changing any Core provider code.
+    typed_session = type("SyntheticTypedLoanSession", (NS,), {
+        "loan_absence_digital_branch": branch,
+        "loan_absence_primary_account_alias": (
+            "primary" if a.provider_id == "paris" else None
+        ),
+    })
+    state = typed_session(
         provider_id=a.provider_id, credential_id=a.credential_id,
         connected=True, accounts=[a],
         capabilities=NS(loans=True, digital_download=False, personal_library=False),
