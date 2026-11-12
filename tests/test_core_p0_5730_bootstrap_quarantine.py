@@ -77,6 +77,7 @@ def test_limit_one_blocks_registration_and_binding_even_if_disabled(tmp_path):
         )
     assert "cred-" not in str(error.value)
     assert service.registry.descriptors() == []
+    assert service._plugin_manager is None
     assert storage.provider_connections() == []
     assert len(service.config.provider_accounts()) == 2
 
@@ -90,9 +91,8 @@ def test_unavailable_provider_keeps_ambiguous_scope_quarantined(tmp_path):
 
 def test_descriptor_validation_rejects_second_credential_after_reconfiguration(tmp_path):
     service, storage = host(tmp_path, identities=("alice", "bob"))
-    service.attach_plugin_manager(
-        SyntheticManager(SyntheticProvider("synthetic", 2))
-    )
+    original_manager = SyntheticManager(SyntheticProvider("synthetic", 2))
+    service.attach_plugin_manager(original_manager)
     # Narrowed plugin contract must fail before any replacement can be
     # published; the prior provider and persisted rows are preserved.
     with pytest.raises(ProviderConfigurationError, match="limit exceeded"):
@@ -100,4 +100,5 @@ def test_descriptor_validation_rejects_second_credential_after_reconfiguration(t
             SyntheticManager(SyntheticProvider("synthetic", 1))
         )
     assert service.registry.get("synthetic").descriptor.max_accounts_per_identity == 2
+    assert service._plugin_manager is original_manager
     assert len(storage.provider_connections()) == 2
