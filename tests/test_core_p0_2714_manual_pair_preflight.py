@@ -228,3 +228,50 @@ def test_hostile_preflight_inputs_do_not_echo_values_or_raise():
     assert result.status == "blocked"
     assert result.attachment_authorized is False
     assert secret not in result.explanation + repr(result)
+
+
+@pytest.mark.parametrize("incomplete", [
+    {}, {"ambiguous": None}, {"ambiguous": 0}, {"ambiguous": "false"},
+    {"ledger_conflict": None}, {"ledger_conflict": 0},
+    {"ledger_conflict": "false"},
+])
+def test_missing_or_malformed_private_negative_proof_cannot_be_reviewable(incomplete):
+    from cifereca.core.library_manual_link_preflight import review_kobo_candidate
+
+    signature = ("a" * 64, 123)
+    right = {
+        "attested": True, "ambiguous": False,
+        "ledger_conflict": False, "ledger_count": 1,
+        "ledger_complete": True, "signature": signature,
+    }
+    file = {"verified": True, "signature": signature}
+    if not incomplete:
+        right.pop("ambiguous")
+        right.pop("ledger_conflict")
+    else:
+        right.update(incomplete)
+    manual = review_local_pair(right, file, audit_complete=True)
+    assert manual.status == "blocked"
+    assert not manual.attachment_authorized
+    if right.get("ambiguous") is not False:
+        assert "right_scope_ambiguous" in manual.codes
+        kobo = review_kobo_candidate(right, file, audit_complete=True)
+        assert kobo.status == "blocked"
+        assert "kobo_personal_right_unverified" in kobo.codes
+        assert not kobo.attachment_authorized
+    if right.get("ledger_conflict") is not False:
+        assert "acquisition_conflict" in manual.codes
+
+
+def test_negative_evidence_requires_explicit_false_even_with_identical_hashes():
+    from cifereca.core.library_manual_link_preflight import review_kobo_candidate
+
+    signature = ("b" * 64, 456)
+    file = {"verified": True, "signature": signature}
+    right = {"attested": True, "signature": signature, "ambiguous": False}
+    assert review_kobo_candidate(right, file, audit_complete=True).status == (
+        "eligible_for_fresh_validation"
+    )
+    assert review_kobo_candidate(
+        {**right, "ambiguous": None}, file, audit_complete=True,
+    ).status == "blocked"
