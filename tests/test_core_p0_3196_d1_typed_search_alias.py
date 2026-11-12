@@ -35,10 +35,10 @@ def case(tmp_path):
         service.close()
 
 
-def _legacy(service, artifact):
+def _legacy(service, artifact, *, provider="kobo"):
     service.storage.acquisition_put({
         "acquisition_id": "legacy-0.7",
-        "identity_id": "alice", "provider_id": "kobo",
+        "identity_id": "alice", "provider_id": provider,
         "credential_id": "vault", "account_id": "buyer",
         "item_id": "book", "artifact_id": artifact,
         "status": "complete", "title": "Old unverified archive",
@@ -46,7 +46,8 @@ def _legacy(service, artifact):
 
 
 def _typed(service, *, source_id="typed", owner="alice", account="buyer",
-           edition="book", right="purchase", credential="vault"):
+           edition="book", right="purchase", credential="vault",
+           provider="kobo"):
     with service.storage._lock, service.storage._connect() as db:
         db.execute(
             "INSERT INTO source_references("
@@ -54,7 +55,7 @@ def _typed(service, *, source_id="typed", owner="alice", account="buyer",
             "account_id,branch_id,edition_id,right_id,reference_kind,"
             "state,evidence_kind,evidence_ref,created_at,updated_at"
             ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (source_id, owner, "kobo", credential, account, "purchases",
+            (source_id, owner, provider, credential, account, "purchases",
              edition, right, "purchase", "active",
              "provider_response", "synthetic-right-proof", 1, 1),
         )
@@ -230,3 +231,51 @@ def test_d7_typed_source_scope_never_disables_unrelated_legacy_edition(
         service, provider_id="kobo", credential_id="vault",
         item_id="book", identity_id="alice", account_id="buyer",
     )["placement_id"] == placement
+
+
+@pytest.mark.parametrize("provider", ["synthetic-store", "numilog", "paris"])
+def test_single_typed_provider_blocks_unproven_legacy_alias_across_suppliers(
+    case, provider,
+):
+    service, artifact, placement, _ = case
+    _legacy(service, artifact, provider=provider)
+    kw = dict(provider_id=provider, credential_id="vault",
+              item_id="book", identity_id="alice")
+    # Legacy-only compatibility remains, but is never a grant for a typed right.
+    assert service.local_placement_for_source(**kw)["placement_id"] == placement
+    _typed(service, provider=provider)
+    assert service.local_placement_for_source(**kw) is None
+    assert library_projection.local_placement_for_source(
+        service, **kw, account_id="buyer",
+    ) is None
+    _origin(service, artifact)
+    # Once the exact OriginLink is present, the same physical copy is visible.
+    assert service.local_placement_for_source(**kw)["placement_id"] == placement
+    assert library_projection.local_placement_for_source(
+        service, **kw, account_id="other-buyer",
+    ) is None
+
+
+@pytest.mark.parametrize("other", ["second-buyer", "second-identity"])
+def test_synthetic_provider_typed_scope_conflicts_never_borrow_origin(
+    case, other,
+):
+    service, artifact, _, _ = case
+    _legacy(service, artifact, provider="synthetic-store")
+    _typed(service, provider="synthetic-store")
+    _origin(service, artifact)
+    _typed(service, provider="synthetic-store", source_id="second",
+           account="other" if other == "second-buyer" else "buyer",
+           owner="bob" if other == "second-identity" else "alice")
+    args = dict(provider_id="synthetic-store", credential_id="vault",
+                item_id="book", identity_id="alice")
+    assert service.local_placement_for_source(**args) is None
+    # An explicit single-buyer selection may still resolve the original
+    # complete origin, not the competing borrower or foreign identity.
+    selected = library_projection.local_placement_for_source(
+        service, **args, account_id="buyer",
+    )
+    if other == "second-buyer":
+        assert selected is not None
+    else:
+        assert selected is not None  # exact buyer survives a foreign owner
