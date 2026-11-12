@@ -235,3 +235,66 @@ def test_mismatched_explicit_verification_modes_fail_before_supplier_io(tmp_path
         assert state["calls"] == [] and state["mutations"] == 0
     finally:
         service.close()
+
+
+def test_provider_observed_account_alias_mismatch_never_confirms_or_retries(tmp_path):
+    from cifereca.core.borrow_action_scope import borrow_claim_key
+
+    service, session, account, item, state = paris_setup(tmp_path)
+    try:
+        # The actual synthetic Paris provider observes account "primary".
+        # A conflicting installed declaration must never turn that into a
+        # verified loan, even if the lender returns an otherwise valid loan.
+        session.descriptor = replace(
+            session.descriptor,
+            manual_borrow_policy=replace(
+                session.descriptor.manual_borrow_policy,
+                observed_primary_account_alias="foreign_reader",
+            ),
+        )
+        args = dict(
+            expected_identity_id=account.identity_id, confirmed=True,
+            expected_account=account,
+            expected_context_epoch=service._account_context_epoch,
+        )
+        first = service.borrow_manual(item, **args)
+        assert first["status"] == "verification_unavailable"
+        assert first["provider_verified"] is False
+        assert state["mutations"] == 1
+        assert service.storage.loan_borrow_state(
+            borrow_claim_key(account, item),
+        )["status"] == "verification_unavailable"
+        second = service.borrow_manual(item, **args)
+        assert second["status"] == "verification_unavailable"
+        assert second["reason_code"] == "borrow_previous_attempt"
+        assert state["mutations"] == 1
+    finally:
+        service.close()
+
+
+def test_missing_or_inconsistent_observed_account_policy_fails_before_post(tmp_path):
+    service, session, account, item, state = paris_setup(tmp_path)
+    try:
+        original = session.descriptor
+        for policy in (
+            None,
+            ManualBorrowPolicy("DILICOM"),
+            ManualBorrowPolicy(
+                "DILICOM", primary_borrower_id="",
+                verification="provider_observed",
+                observed_primary_account_alias="primary",
+                source_selection_key="another_primary_selection",
+            ),
+        ):
+            session.descriptor = replace(
+                original, manual_borrow_policy=policy,
+            )
+            result = service.borrow_manual(
+                item, expected_identity_id=account.identity_id,
+                confirmed=True, expected_account=account,
+            )
+            assert result["status"] == "blocked"
+            assert state["mutations"] == 0 and state["calls"] == []
+        session.descriptor = original
+    finally:
+        service.close()
