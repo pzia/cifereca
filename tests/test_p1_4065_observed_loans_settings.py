@@ -279,3 +279,19 @@ def test_paris_alias_without_descriptor_is_not_implicitly_attributed():
         provider="paris",
     )
     assert "Numériques : non vérifiés" in out[0][1]
+
+
+def test_malformed_declared_alias_fails_closed_without_ui_exception():
+    malformed = ProviderDescriptor(
+        id="paris", display_name="Paris",
+        description="Invalid synthetic alias", state="ready",
+        capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="Primary",
+    )
+    out = projection(
+        (account(provider="paris"),),
+        (loan("alias", provider="paris", borrower="Primary"),),
+        provider="paris", descriptor=malformed,
+    )
+    assert len(out) == 1
+    assert "indisponible" in out[0][1]
