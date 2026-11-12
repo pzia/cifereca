@@ -862,3 +862,41 @@ def test_p0_5376_bulk_focus_public_evidence_is_closed_boolean_only():
             "bulk_focus_observation": evidence,
         }))
         assert "bulk_focus_observation" not in module.safe_summary(source)["results"][0]
+
+
+def test_p0_5376_diagnostics_file_selector_timeout_exports_only_closed_booleans():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "diagnostics-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        state = {
+            "dialog_visible": True,
+            "selected_file_present": False,
+            "selected_file_matches_fixture": False,
+            "current_name_matches_fixture": True,
+        }
+        report.write_text(json.dumps({
+            "capture_file_selection_timeout": state,
+            "error": "PRIVATE-TOKEN /home/private",
+        }))
+        result = module.safe_summary(source)["results"][0]
+        assert result["capture_file_selection_timeout"] == state
+        assert "PRIVATE-TOKEN" not in repr(result)
+        assert "/home/private" not in repr(result)
+        for invalid in (
+            {**state, "dialog_visible": 1},
+            {**state, "selected_file_present": "PRIVATE"},
+            {**state, "secret": False},
+            [state],
+        ):
+            report.write_text(json.dumps({"capture_file_selection_timeout": invalid}))
+            assert "capture_file_selection_timeout" not in module.safe_summary(source)["results"][0]
+        report.write_text(json.dumps({"capture_file_selection_timeout": state}))
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        assert "capture_file_selection_timeout" not in module.safe_summary(source)["results"][0]
+        source.write_text(json.dumps([{"scenario": "diagnostics-large-1600", "returncode": 1}]))
+        assert "capture_file_selection_timeout" not in module.safe_summary(source)["results"][0]
