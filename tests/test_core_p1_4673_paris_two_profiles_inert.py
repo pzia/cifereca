@@ -51,11 +51,11 @@ def test_two_profiles_never_reuse_other_account_or_edition(tmp_path):
                 "reason_code": "local_action_available_provider_unknown",
                 "provider_eligibility": "unknown",
             }
-            assert service.can_borrow_paris(allowed) is True
+            assert service.can_borrow_manual(allowed) is True
             wrong_result = service.paris_borrow_diagnostic(wrong)
             assert wrong_result["local_action_possible"] is False
             assert wrong_result["provider_eligibility"] == "unknown"
-            assert not service.can_borrow_paris(wrong)
+            assert not service.can_borrow_manual(wrong)
 
         # A read-only projection must not create or consume a mutation claim
         # for either account, even after the A/B/A profile transition.
@@ -81,9 +81,9 @@ def test_other_profile_never_inherits_removed_own_connection(tmp_path):
         })
         rejected = service.paris_borrow_diagnostic(item_b)
         assert rejected["reason_code"] == "primary_paris_connection_mismatch_or_inactive"
-        assert service.can_borrow_paris(item_b) is False
+        assert service.can_borrow_manual(item_b) is False
         service.current_identity = service.identity_by_id("default")
-        assert service.can_borrow_paris(item_a) is True
+        assert service.can_borrow_manual(item_a) is True
         assert state["mutations"] == 0
         assert state["calls"] == []
     finally:

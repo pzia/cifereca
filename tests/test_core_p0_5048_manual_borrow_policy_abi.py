@@ -84,7 +84,10 @@ def test_paris_declared_policy_preserves_existing_exact_source_admission(tmp_pat
             verification="provider_observed",
         )
         assert resolved_manual_borrow_policy(service, item) == policy
-        assert service.can_borrow_manual(item) == service.can_borrow_paris(item)
+        # Preserve the positive exact-source test after deleting the legacy
+        # service facade. The read-only diagnostic is an independent oracle.
+        assert service.paris_borrow_diagnostic(item)["local_action_possible"] is True
+        assert service.can_borrow_manual(item) is True
         assert not state["calls"] and state["mutations"] == 0
         assert not service.can_borrow_manual(replace(item, docbase="OTHER"))
         account.unique_id = "linked-reader"
