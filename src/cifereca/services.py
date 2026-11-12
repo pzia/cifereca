@@ -1145,6 +1145,26 @@ class LibraryService:
     def disconnect_configured(self) -> None:
         return provider_sessions.disconnect_configured(self)
 
+    def connect_source_preview(
+        self, provider_id: str, credential_id: str, *,
+        required_capability: str | None = None,
+    ) -> ProviderSession:
+        """Connect precisely one configured source without creating bindings."""
+        return provider_sessions.connect_source_preview(
+            self, provider_id, credential_id,
+            required_capability=required_capability,
+        )
+
+    def connect_source_canonical(
+        self, provider_id: str, credential_id: str, *,
+        required_capability: str | None = None,
+    ) -> ProviderSession:
+        """Promote only the exact confirmed, persisted borrower in Core memory."""
+        return provider_sessions.connect_source_canonical(
+            self, provider_id, credential_id,
+            required_capability=required_capability,
+        )
+
     def connect_configured(self) -> dict[str, Any]:
         """Public facade with its stable, no-argument compatibility contract."""
         return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
