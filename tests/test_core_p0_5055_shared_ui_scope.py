@@ -85,3 +85,27 @@ def test_after_manual_abi_cutover_all_exports_are_live():
     from cifereca.gui import manual_borrow_controller as controller
     assert controller.__all__ == ["present_manual_borrow_verification"]
     assert all(callable(getattr(controller, key)) for key in controller.__all__)
+
+
+def test_queued_borrow_lease_revoked_if_provider_descriptor_is_replaced():
+    window, item, account, session = _context()
+    descriptor = object()
+    session.descriptor = descriptor
+    lease = _capture_borrow_ui_scope(
+        window, item, account, session, provider_id="paris",
+    )
+    assert lease is not None and lease[2]() is True
+    # Even a newly installed equivalent policy cannot reuse an old click.
+    session.descriptor = object()
+    assert lease[2]() is False
+
+
+def test_queued_borrow_lease_revoked_if_service_replaced_with_identical_values():
+    window, item, account, session = _context()
+    lease = _capture_borrow_ui_scope(
+        window, item, account, session, provider_id="paris",
+    )
+    assert lease is not None and lease[2]() is True
+    old = window.service
+    window.service = NS(**vars(old))
+    assert lease[2]() is False
