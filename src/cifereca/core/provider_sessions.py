@@ -48,7 +48,9 @@ def attach_plugin_manager(self, manager: Any) -> list[str]:
         descriptors[service.descriptor.id.strip().lower()] = service.descriptor
     try:
         validate_provider_account_limits(
-            self.config.provider_accounts(), descriptors.values(),\n            default_identity=self.identities[0].identity_id,\n            known_identities=(identity.identity_id for identity in self.identities),
+            self.config.provider_accounts(), descriptors.values(),
+            default_identity=self.identities[0].identity_id,
+            known_identities=(identity.identity_id for identity in self.identities),
         )
     except ProviderAccountLimitError as exc:
         raise ProviderConfigurationError(str(exc)) from None
@@ -741,7 +743,8 @@ def _configured_rows_for_source(rows, *, source_scope, default_identity):
         return rows
     if (type(source_scope) is not tuple or len(source_scope) != 3
             or any(type(v) is not str or not v or len(v) > 256
-                   or any(c in v for c in "\x00\r\n")
+                   or any(c in v for c in "\x00\r
+")
                    for v in source_scope)):
         raise ValueError("selected_source_invalid_scope")
     identity, provider, credential = source_scope
