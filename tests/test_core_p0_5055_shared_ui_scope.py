@@ -83,5 +83,5 @@ def test_shared_lease_rejects_wrong_credential_and_revokes_rebound_session():
 
 def test_after_manual_abi_cutover_all_exports_are_live():
     from cifereca.gui import bnf_borrow_controller as controller
-    assert controller.__all__ == ["present_paris_borrow_verification"]
+    assert controller.__all__ == ["present_borrow_verification"]
     assert all(callable(getattr(controller, key)) for key in controller.__all__)
