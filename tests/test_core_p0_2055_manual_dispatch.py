@@ -345,7 +345,7 @@ def test_manual_gtk_dispatch_is_provider_neutral_abi_only():
     assert "self.service.borrow_manual" in source
     assert "if policy is None:" in source
     controller = Path(__file__).resolve().parents[1] / (
-        "src/cifereca/gui/bnf_borrow_controller.py"
+        "src/cifereca/gui/manual_borrow_controller.py"
     )
     symbols = {
         node.name for node in ast.parse(
