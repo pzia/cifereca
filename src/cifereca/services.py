@@ -1165,18 +1165,6 @@ class LibraryService:
             required_capability=required_capability,
         )
 
-    def connect_kobo_preview(self, credential_id: str) -> ProviderSession:
-        """Connect only one configured Kobo session for explicit manifest preview.
-
-        Never connect Paris/other accounts or start any acquisition. Offline
-        previews deliberately do not call this method.
-        """
-        return provider_sessions.connect_kobo_preview(self, credential_id)
-
-    def connect_kobo_canonical(self, credential_id: str) -> ProviderSession:
-        """Prepare one confirmed Kobo resume with exact SQLite borrower and ABI."""
-        return provider_sessions.connect_kobo_canonical(self, credential_id)
-
     def connect_configured(self) -> dict[str, Any]:
         """Public facade with its stable, no-argument compatibility contract."""
         return provider_sessions.connect_configured(self, logger=_TRACE_LOG)
