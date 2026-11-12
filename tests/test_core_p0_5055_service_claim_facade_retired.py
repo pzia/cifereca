@@ -15,7 +15,9 @@ def test_legacy_bnf_service_observer_not_reintroduced():
     }
     assert "bnf_borrow_claim_observation" not in methods
     # Borrow admission and one-shot protection must remain independent.
-    assert "borrow_bnf_manual" in methods
-    assert "can_borrow_bnf" in methods
+    assert "borrow_bnf_manual" not in methods
+    assert "borrow_manual" in methods
+    assert "can_borrow_bnf" not in methods
+    assert "can_borrow_manual" in methods
     assert (ROOT / "src/cifereca/core/borrow_claim_observation.py").is_file()
     assert (ROOT / "tests/test_p1_4082_bnf_borrow_claim_observation.py").is_file()
