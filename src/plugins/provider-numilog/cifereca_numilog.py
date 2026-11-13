@@ -1156,6 +1156,42 @@ class NumilogSession(ProviderSession):
         )
         return list(result.items)
 
+    def search_with_response_facets(
+        self, query, scope='all', *, field='all', content_types=(),
+    ):
+        """Same-call anonymous public catalogue declarations, never purchases.
+
+        Core uses scope='catalog' for foreign-profile sessions. This calls
+        the existing bounded public HTML parser once and does not consult
+        Mes achats, authenticated cookies, holdings or acquisitions.
+        """
+        from dataclasses import replace
+        from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+
+        if scope != 'catalog':
+            # Same-owner historical search retains its exact private scope.
+            # A private inventory item is never reclassified as public.
+            return ProviderSearchResponse(self.search(query, scope, field=field))
+        rows = self.search(query, 'catalog', field=field)
+        # The parsed public search card is our producer attestation; publish
+        # only an independent inert bibliographic projection. Core v1
+        # independently checks the exact row and all source coordinates.
+        notices = tuple(
+            PublicSearchNotice(replace(
+                row, owned=False, downloadable=False, download_url=None,
+                source_account_id=None, friendly_url=None, thumbnail_url=None,
+                metadata={}, description=None, price=None, currency=None,
+                revision_id=None, document_classification=None,
+            ))
+            for row in rows
+            if (type(row) is SearchResult
+                and row.source_provider == self.provider_id
+                and row.source_credential == '__public__'
+                and row.source_collection == 'public_catalog'
+                and row.scenario == 'NUMILOG_PUBLIC')
+        )
+        return ProviderSearchResponse(rows, public_notices=notices)
+
     def search(self,query,scope='all',page=0,field='all'):
         # Do not silently coerce or clamp untrusted page selectors. Validate
         # before private library I/O or public HTTP, for every search scope.
