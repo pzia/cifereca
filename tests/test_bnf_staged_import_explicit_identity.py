@@ -82,3 +82,38 @@ def test_import_rejects_changed_persisted_connection_owner(tmp_path, monkeypatch
         )
 
     assert not calls
+
+
+def test_import_rejects_mismatched_loan_identity_despite_matching_connection(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core import diagnostic_explicit_loan_action
+
+    monkeypatch.setattr(diagnostic_explicit_loan_action, "ActionObservation", _Observation)
+    facade, calls = _facade(tmp_path)
+    loan = _loan()
+    loan.identity_id = "bob"
+    candidate = tmp_path / "bnf-loan-synthetic.acsm"
+
+    with pytest.raises(LoanActionError):
+        LibraryService.import_bnf_loan_acsm(
+            facade, candidate, expected_identity_id="alice", loan=loan,
+        )
+
+    assert not calls
+
+
+def test_import_rejects_unrelated_staging_file(tmp_path, monkeypatch):
+    from cifereca.core import diagnostic_explicit_loan_action
+
+    monkeypatch.setattr(diagnostic_explicit_loan_action, "ActionObservation", _Observation)
+    facade, calls = _facade(tmp_path)
+    candidate = tmp_path / "unrelated.acsm"
+    candidate.write_text("synthetic", encoding="utf-8")
+
+    with pytest.raises(LoanActionError):
+        LibraryService.import_bnf_loan_acsm(
+            facade, candidate, expected_identity_id="alice", loan=_loan(),
+        )
+
+    assert not calls
