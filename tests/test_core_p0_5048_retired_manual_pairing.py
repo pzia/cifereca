@@ -68,6 +68,7 @@ def test_retired_confirmation_tokens_have_no_producers_or_state():
     source = inspect.getsource(LocalInspection)
     assert "_manual_pending" not in source
     assert "_manual_undo_pending" not in source
+    assert "self._manual_undo =" not in source
     tree = ast.parse(source)
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef))
     methods = {node.name: node for node in cls.body
