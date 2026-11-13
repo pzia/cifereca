@@ -30,8 +30,10 @@ def test_exact_credential_selects_only_own_session(tmp_path):
         a, b = _sessions(service)
         assert service._session_for_source("paris", "account-A") is a
         assert service._session_for_source("paris", "account-B") is b
-        # The legacy NO-credential caller retains its existing behavior.
-        assert service._session_for_source("paris") is a
+        # A provider-wide legacy lookup is ambiguous with two live accounts.
+        # It must never silently select A when B might own the operation.
+        with pytest.raises(ProviderConfigurationError, match="Provider ambigu"):
+            service._session_for_source("paris")
     finally:
         service.close()
 
