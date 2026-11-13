@@ -93,8 +93,11 @@ def test_adept_profile_read_failure_is_a_closed_diagnostic(tmp_path, monkeypatch
     try:
         def fail_lookup():
             raise RuntimeError(PRIVATE)
-        monkeypatch.setattr(service, "_kobo_adapter",
-                            lambda: NS(available=fail_lookup))
+        service.storage.adept_profile_binding_set("identity", "default", "profile-bound")
+        monkeypatch.setattr(service, "kobo_profiles", fail_lookup)
+        monkeypatch.setattr(service, "_kobo_adapter", lambda: (_ for _ in ()).throw(
+            AssertionError("opening sync must not probe provider runtime")
+        ))
         monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
         result = service.opening_sync()
         assert result["identities"]
@@ -105,6 +108,23 @@ def test_adept_profile_read_failure_is_a_closed_diagnostic(tmp_path, monkeypatch
         assert len(rows) == 1
         assert rows[0]["detail"] == {"code": "adept_profile_lookup_failed"}
         assert PRIVATE not in service.diagnostics.text("test")
+    finally:
+        service.close()
+
+
+def test_unbound_opening_sync_never_queries_adept_provider(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        calls = []
+        def forbidden(*_args, **_kwargs):
+            calls.append("profile_or_runtime")
+            raise AssertionError("unbound identity must not trigger ADEPT runtime")
+        monkeypatch.setattr(service, "_kobo_adapter", forbidden)
+        monkeypatch.setattr(service, "kobo_profiles", forbidden)
+        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
+        result = service.opening_sync()
+        assert result["identities"]
+        assert calls == []
     finally:
         service.close()
 
