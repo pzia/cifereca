@@ -93,6 +93,15 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
             if not mentions_changed_test and not may_import_dynamically and not may_register_pytest_plugin:
                 continue
             parsed = ast.parse(source, filename=str(candidate))
+            # A dynamic import may refer to a separately built namespace:
+            # PREFIX = "tests."; name = PREFIX + fixture_name;
+            # importlib.import_module(name). The call expression alone no
+            # longer contains a literal and cannot be resolved statically.
+            # A matching namespace prefix anywhere in this consumer's AST
+            # therefore forces conservative selection for nonliteral calls.
+            dynamic_test_namespace = _contains_test_namespace(
+                parsed, changed_modules,
+            )
             for node in ast.walk(parsed):
                 if isinstance(node, ast.Import):
                     if any(alias.name == module or alias.name.startswith(module + ".")
@@ -125,8 +134,10 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             if _matches_changed_module(arg.value, changed_modules):
                                 return True
-                        elif _contains_test_namespace(arg, changed_modules):
-                            # Dynamic module expressions cannot be resolved
-                            # without executing test code. Fail closed.
+                        elif (_contains_test_namespace(arg, changed_modules)
+                              or dynamic_test_namespace):
+                            # Unresolved variable/alias may have been assembled
+                            # from a test namespace elsewhere in this module.
+                            # Fail closed instead of silently skipping plugins.
                             return True
     return False
