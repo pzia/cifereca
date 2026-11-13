@@ -1,0 +1,35 @@
+{
+  "schema": "cifereca.test-classification/1",
+  "files": [
+    {
+      "path": "tests/test_core_p0_2565_attested_edge_completeness.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_core_p0_2796_reconciliation_repeatability.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_core_p0_5048_neutral_local_provenance_projection.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_5827_offline_provider_origin.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_library_evidence_scope.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "integration"
+    }
+  ]
+}
