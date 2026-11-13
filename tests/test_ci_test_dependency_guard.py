@@ -113,3 +113,27 @@ def test_pytest_plugins_can_import_changed_test_module(tmp_path, consumer):
 def test_unrelated_plugins_and_dynamic_imports_stay_targeted(tmp_path, consumer):
     root = _sample(tmp_path, consumer)
     assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'importlib.import_module(name)\nPREFIX = "tests."\nname = PREFIX + fixture_name\n',
+    'PREFIX = "tests/"\nmodule = PREFIX + name\nspec_from_file_location("ref", module)\n',
+    'PREFIX = "tests."\nname = PREFIX + fixture_name\n__import__(name)\n',
+    'PREFIX = "tests."\nname = PREFIX + fixture_name\nSourceFileLoader("ref", name)\n',
+])
+def test_split_namespace_variable_dynamic_import_fails_closed(tmp_path, consumer):
+    root = _sample(tmp_path, "def test_unrelated(): pass\n")
+    consumer_path = root / "src/plugins/example/tests/test_dynamic.py"
+    consumer_path.parent.mkdir(parents=True)
+    consumer_path.write_text(consumer, encoding="utf-8")
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'PREFIX = "tests.unrelated"\nmodule = PREFIX + suffix\nimportlib.import_module(module)\n',
+    'PATH = "tests/test_other.py"\nmodule = PATH + suffix\nSourceFileLoader("other", module)\n',
+    '# PREFIX = "tests."\nimportlib.import_module(name)\n',
+])
+def test_split_namespace_unrelated_imports_remain_targeted(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert not has_test_consumers(root, ["tests/test_fixture.py"])
