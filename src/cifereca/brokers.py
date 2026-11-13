@@ -1206,25 +1206,29 @@ class RuntimeCapabilitiesBrokerImpl:
 
     @staticmethod
     def _formats(download: Any, fallback: Any) -> tuple[str, ...]:
+        """Project bounded public format tokens, never runtime objects or prose."""
         values: list[str] = []
-        if isinstance(download, dict):
-            # Each declared download recipe contributes formats; the Core
-            # must not maintain an allow-list of provider/runtime recipes.
-            for row in download.values():
-                if not isinstance(row, dict):
+
+        def append(items: Any) -> None:
+            if type(items) not in (list, tuple):
+                return
+            for value in items[:64]:
+                if type(value) is not str:
                     continue
-                formats = row.get("formats")
-                if not isinstance(formats, (list, tuple)):
-                    continue
-                for value in formats:
-                    normalized = str(value or "").strip().casefold()
-                    if normalized and normalized not in values:
-                        values.append(normalized)
-        if isinstance(fallback, (list, tuple)):
-            for value in fallback:
-                normalized = str(value or "").strip().casefold()
-                if normalized and normalized not in values:
+                normalized = value.strip().casefold()
+                if (0 < len(normalized) <= 64 and normalized.isascii()
+                        and all(ch.isalnum() or ch in ".+/-_" for ch in normalized)
+                        and normalized not in values):
                     values.append(normalized)
+                    if len(values) == 64:
+                        return
+
+        if type(download) is dict:
+            # All declared recipes are eligible; never select by provider name.
+            for row in tuple(download.values())[:64]:
+                if type(row) is dict:
+                    append(row.get("formats"))
+        append(fallback)
         return tuple(values)
 
     def acquisition(self, provider_id: str, *, refresh: bool = False) -> RuntimeAcquisitionCapabilities:
@@ -1258,11 +1262,11 @@ class RuntimeCapabilitiesBrokerImpl:
                 state = {}
         caps = state.get("capabilities") if isinstance(state.get("capabilities"), dict) else {}
         download = caps.get("download") if isinstance(caps.get("download"), dict) else {}
+        raw_declared = state.get("declared_capabilities")
         declared = {
-            str(value)
-            for value in (state.get("declared_capabilities") or ())
-            if str(value)
-        }
+            value for value in raw_declared[:64]
+            if type(value) is str and 0 < len(value) <= 80
+        } if type(raw_declared) in (tuple, list) else set()
 
         modes: list[str] = []
         declared_modes = state.get("modes")
@@ -1298,8 +1302,15 @@ class RuntimeCapabilitiesBrokerImpl:
             operational=state.get("operational") is True,
             contract_version=contract_version,
             modes=tuple(modes),
-            formats=self._formats(download, state.get("kobo_formats")),
-            software_version=str(state.get("software_version") or "")[:80],
+            formats=self._formats(
+                download,
+                (state.get("formats") if callable(state_for_provider)
+                 else state.get("kobo_formats")),
+            ),
+            software_version=(
+                state["software_version"][:80]
+                if type(state.get("software_version")) is str else ""
+            ),
         )
 
 
