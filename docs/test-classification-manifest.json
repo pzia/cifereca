@@ -1,0 +1,29 @@
+{
+  "schema": "cifereca.test-classification/1",
+  "files": [
+    {
+      "path": "tests/test_ci_test_dependency_guard.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_ci_test_core_consumer_graph.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_ci_core_test_selection.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_ci_provider_document_authority.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    }
+  ]
+}
