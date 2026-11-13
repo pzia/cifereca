@@ -2413,9 +2413,14 @@ class LibraryService:
                 or any(ref is not None and type(ref) is not str for ref in refs)):
             raise AttentionRequired("Profils ADEPT invalides.", code="adept_profile_candidates_invalid")
         unique_refs = tuple(dict.fromkeys(ref for ref in refs if ref))
-        # A shared reconciliation batch may reuse resolved profiles only for
-        # the same persisted identity and exact candidate references.
-        key = ("adept_inventory_candidates", identity_id, unique_refs)
+        # A batch cache must not reuse a profile across another account,
+        # credential or provider, even when the identity/profile name matches.
+        scope = tuple(row.get(field) for field in (
+            "provider_id", "credential_id", "account_id",
+        ))
+        if any(value is not None and type(value) is not str for value in scope):
+            raise AttentionRequired("Provenance ADEPT invalide.", code="adept_profile_candidates_invalid")
+        key = ("adept_inventory_candidates", identity_id, scope, unique_refs)
         if type(cache) is dict and key in cache:
             return list(cache[key])
         rows = []
