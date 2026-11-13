@@ -25,8 +25,8 @@ def test_search_detail_remains_non_authorizing_and_keeps_action_gate():
     assert len(candidate_calls[0].args) == 2
     assert isinstance(candidate_calls[0].args[1], ast.Name)
     assert candidate_calls[0].args[1].id == "availability"
-    assert "Empruntable selon le catalogue · compte non vérifié" in source
-    assert '("Compte Paris", "Éligibilité du prêt non vérifiée par le fournisseur")' in source
+    assert "visible_availability = catalogue_availability_label(item, availability)" in source
+    assert '("Disponibilité", visible_availability)' in source
     assert "Éligibilité du compte non vérifiée auprès du fournisseur." in source
     assert "paris_borrow_status_message" not in source
     assert "paris_borrow_diagnostic" not in source

@@ -1,57 +1,34 @@
-"""Paris catalogue status is descriptive, not a borrower-specific right."""
+"""Catalogue availability is descriptive and independent of the supplier."""
 from dataclasses import replace
 
 import pytest
 
 from cifereca.document_classification import DocumentClassification
-from cifereca.gui.detail_model import paris_catalogue_availability
+from cifereca.gui.detail_model import catalogue_availability_label
 from tests.test_p1_4276_search_document_filter import classified, notice
 
 
-@pytest.mark.parametrize("raw_medium,documented,expected", [
+@pytest.mark.parametrize("provider", ["paris", "synthetic-lender"])
+@pytest.mark.parametrize("raw_medium,documented,qualifies", [
     ("physical", classified("digital", "book"), True),
     ("digital", classified("physical", "book"), False),
     ("digital", DocumentClassification(), False),
-    ("digital", None, True),  # legacy notice with no contradictory evidence
+    ("digital", None, True),
     ("physical", None, False),
 ])
-def test_paris_catalogue_candidate_uses_attested_support_not_raw_medium(
-        raw_medium, documented, expected):
+def test_catalogue_borrow_label_uses_documented_support(
+        provider, raw_medium, documented, qualifies):
     item = replace(
         notice("book", medium=raw_medium, doc=documented),
-        source_provider="paris",
+        source_provider=provider,
     )
-    candidate, display = paris_catalogue_availability(
-        item, "Empruntable",
-    )
-    assert candidate is expected
-    assert display == (
+    assert catalogue_availability_label(item, "Empruntable") == (
         "Empruntable selon le catalogue · compte non vérifié"
-        if expected else "Empruntable"
+        if qualifies else "Empruntable"
     )
 
 
-@pytest.mark.parametrize("source", ["bnf-pret", "kobo", "numilog"])
-def test_other_providers_never_gain_paris_borrower_warning(source):
-    item = replace(
-        notice("book", medium="digital",
-               doc=classified("digital", "book")),
-        source_provider=source,
-    )
-    assert paris_catalogue_availability(item, "Empruntable") == (
-        False, "Empruntable",
-    )
-
-
-@pytest.mark.parametrize("availability", [
-    "Non vérifiée", "Réservée", "Disponible",
-])
-def test_paris_non_borrowable_catalogue_label_is_not_changed(availability):
-    item = replace(
-        notice("book", medium="digital",
-               doc=classified("digital", "book")),
-        source_provider="paris",
-    )
-    assert paris_catalogue_availability(item, availability) == (
-        True, availability,
-    )
+@pytest.mark.parametrize("availability", ["Non vérifiée", "Réservée", "Disponible"])
+def test_other_catalogue_labels_keep_the_observed_status(availability):
+    item = notice("book", medium="digital", doc=classified("digital", "book"))
+    assert catalogue_availability_label(item, availability) == availability

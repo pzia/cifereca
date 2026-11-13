@@ -20,7 +20,7 @@ from .action_widgets import AdaptiveActionBar
 from .query_model import result_row
 from ..plugin_api import UiBookDetailPresentation, document_links
 from .detail_selection_perf import current_detail_trace
-from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate, search_detail_support_label, paris_catalogue_availability
+from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate, search_detail_support_label, catalogue_availability_label
 from .action_widgets import clear_box, add_css
 from .loan_download_status import loan_download_unavailable_message
 from .loan_view import loan_due_detail_value
@@ -1010,13 +1010,7 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
-        # This pure projector separates provider catalogue facts from
-        # attested medium and account-specific borrowing admission. It can
-        # show "Empruntable selon le catalogue · compte non vérifié" without
-        # changing the original action eligibility input below.
-        paris_catalogue_candidate, visible_availability = (
-            paris_catalogue_availability(item, availability)
-        )
+        visible_availability = catalogue_availability_label(item, availability)
         usage = _commercial_search_usage(
             item, self.window.service,
             purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
@@ -1034,8 +1028,6 @@ class DetailPanel(Gtk.Box):
                     ("Support", essential_support),
                     ("Langue", detail_language(item.metadata)),
                     ("Disponibilité", visible_availability),
-                    *([("Compte Paris", "Éligibilité du prêt non vérifiée par le fournisseur")]
-                      if paris_catalogue_candidate else []),
                 ]),
                 ("Notice", [
                     ("Type", detail.type or item.type or ""),
