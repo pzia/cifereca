@@ -13,7 +13,6 @@ from typing import Any
 import json
 
 
-_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
 def _valid_scope(loan_id: Any, item_id: Any) -> bool:
