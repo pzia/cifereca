@@ -1443,7 +1443,9 @@ class LocalInspection:
 
     def page(self, *, provider='all', state='all', offset=0, limit=50, query='',
              hide_historical_paths=False):
-        if (type(provider) is not str or provider not in self.provider_options()
+        if (type(provider) is not str
+                or (provider not in self.provider_options()
+                    and _provider(provider) != provider)
                 or state not in STATES or
                 type(hide_historical_paths) is not bool or
                 type(offset) is not int or offset < 0 or type(limit) is not int or
