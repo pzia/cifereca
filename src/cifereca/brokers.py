@@ -568,6 +568,12 @@ class SynchronizationBrokerImpl:
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
+        # None is the existing read-only navigation ABI. An explicitly
+        # supplied empty/invalid identity must not borrow that UI scope.
+        if identity_id is not None and (
+            type(identity_id) is not str or not identity_id.strip()
+        ):
+            raise ValueError("identity_id_required")
         rows = [self._ref(account) for account in self.service.accounts_for_identity(identity_id)]
         rows.sort(key=lambda row: (row.identity_id, row.provider_id, row.label.casefold(), row.source_id))
         return tuple(rows)
