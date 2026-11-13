@@ -112,6 +112,23 @@ def test_adept_profile_read_failure_is_a_closed_diagnostic(tmp_path, monkeypatch
         service.close()
 
 
+def test_unbound_opening_sync_never_queries_adept_provider(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        calls = []
+        def forbidden(*_args, **_kwargs):
+            calls.append("profile_or_runtime")
+            raise AssertionError("unbound identity must not trigger ADEPT runtime")
+        monkeypatch.setattr(service, "_kobo_adapter", forbidden)
+        monkeypatch.setattr(service, "kobo_profiles", forbidden)
+        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
+        result = service.opening_sync()
+        assert result["identities"]
+        assert calls == []
+    finally:
+        service.close()
+
+
 def test_identity_level_failure_keeps_safe_persistent_cause_and_other_identity(
     tmp_path, monkeypatch,
 ):
