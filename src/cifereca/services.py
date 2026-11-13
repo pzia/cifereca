@@ -3676,29 +3676,41 @@ class LibraryService:
         This operation must be initiated by an authorized user, never by sync,
         and never by guessing from the connected/current UI identity.
         """
-        if account_id is None:
-            raise ValueError("Paris borrower account is required")
-        borrower = str(account_id).strip()
+        # Grant creation must establish the same native-coordinate evidence
+        # required by the read path. Never coerce plugin-controlled account
+        # fields or caller-provided identity into an authorization scope.
+        if (type(account_id) is not str or type(credential_id) is not str
+                or not credential_id.strip()
+                or type(borrower_identity_id) is not str
+                or not borrower_identity_id.strip()
+                or type(confirmed) is not bool):
+            raise ValueError("ADEPT borrower grant coordinates invalid")
+        borrower = account_id.strip()
         if borrower in {"", "primary"}:
             borrower = "primary"
         matches = [
             account for account in self.accounts
-            if str(account.provider_id).lower() == "paris"
-            and str(account.credential_id) == str(credential_id)
+            if type(account.provider_id) is str
+            and account.provider_id.casefold() == "paris"
+            and type(account.credential_id) is str
+            and account.credential_id == credential_id
+            and type(account.is_primary) is bool
             and ((borrower == "primary" and account.is_primary)
                  or (borrower != "primary" and not account.is_primary
-                     and str(account.unique_id or "").strip() == borrower))
+                     and type(account.unique_id) is str
+                     and account.unique_id.strip() == borrower))
         ]
-        if (
-            len(matches) != 1
-            or str(matches[0].identity_id) != self.storage.identity_for_connection("paris", credential_id)
-        ):
+        if len(matches) != 1 or type(matches[0].identity_id) is not str:
+            raise ValueError("Paris borrower not uniquely identified for connection")
+        connection_owner = self.storage.identity_for_connection("paris", credential_id)
+        if type(connection_owner) is not str or matches[0].identity_id != connection_owner:
             raise ValueError("Paris borrower not uniquely identified for connection")
         owner = self.identity_by_id(borrower_identity_id)
-        if owner is None:
+        if (owner is None or type(owner.identity_id) is not str
+                or owner.identity_id != borrower_identity_id):
             raise ValueError("unknown ADEPT borrower identity")
         profile_id = self.storage.adept_profile_binding_get("identity", owner.identity_id)
-        if not profile_id:
+        if type(profile_id) is not str or not profile_id:
             raise ValueError("ADEPT borrower identity has no stable profile binding")
         self.storage.paris_borrower_adept_binding_put(
             credential_id=credential_id, account_id=borrower,
