@@ -1424,7 +1424,16 @@ class LibraryService:
         return rows
 
     def refresh_identity_loans(self, force: bool = False, identity_id: str | None = None) -> list[Loan]:
-        identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
+        # Only a missing argument may resolve the legacy GTK selection.
+        # No selection must never expand a scoped loan read to all accounts;
+        # empty or malformed explicit identities must never become wildcards.
+        if identity_id is None:
+            identity_id = (
+                self.current_identity.identity_id
+                if self.current_identity is not None else None
+            )
+        if type(identity_id) is not str or not identity_id.strip():
+            raise ValueError("loan_identity_required")
         request_epoch = self._account_context_epoch
         rows: list[Loan] = []
         seen: set[tuple[str, str, str, str]] = set()
