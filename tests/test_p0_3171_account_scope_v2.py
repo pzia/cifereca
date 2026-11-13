@@ -171,3 +171,46 @@ def test_acquisition_scoped_identity_ignores_other_profiles_with_same_account_id
         item("cred-C"), identity_id="profile-B", account_id="same-upstream-id",
     ) == "cred-C"
     assert core.acquisitions == ["cred-C"]
+
+
+
+@pytest.mark.parametrize("identity", ["", " ", "\t", 0])
+def test_eligible_account_read_refuses_explicit_invalid_identity(identity):
+    core = FakeCore()
+    broker = AcquisitionBrokerImpl(core)
+
+    with pytest.raises(ValueError, match="identity_id_required"):
+        broker.eligible_accounts(item("cred-A"), identity_id=identity)
+
+    assert core.account_reads == 0
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", 0])
+def test_broker_acsm_import_refuses_navigation_identity_without_service_call(identity):
+    class ImportService:
+        def __init__(self):
+            self.calls = []
+
+        def import_acsm(self, path, **kwargs):
+            self.calls.append((path, kwargs))
+            return {"ok": True}
+
+    service = ImportService()
+    broker = AcquisitionBrokerImpl(service)
+
+    with pytest.raises(ValueError, match="identity_id_required"):
+        broker.import_acsm("/fake.acsm", identity_id=identity)
+
+    assert service.calls == []
+
+
+def test_broker_acsm_import_forwards_exact_identity():
+    class ImportService:
+        def import_acsm(self, path, **kwargs):
+            return path, kwargs
+
+    path, options = AcquisitionBrokerImpl(ImportService()).import_acsm(
+        "/fake.acsm", identity_id="profile-B", provider_id="synthetic",
+    )
+    assert path == "/fake.acsm"
+    assert options == {"identity_id": "profile-B", "provider_id": "synthetic"}
