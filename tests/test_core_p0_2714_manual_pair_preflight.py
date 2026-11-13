@@ -280,8 +280,11 @@ def test_numilog_local_evidence_reuses_one_source_identity_decision():
     ]
     assert len(checks) == 1
     assert any(
-        isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "is_numilog_right"
-                for target in node.targets)
+        isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "right_provider"
+        and any(isinstance(value, ast.Constant) and value.value == "numilog"
+                for value in node.test.comparators)
         for node in ast.walk(initializer)
     )
