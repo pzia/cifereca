@@ -156,6 +156,10 @@ def _source(identity_id="alice", source_id="kobo-one", **options):
         enabled=True, connected=True, sync_capable=True,
         status="idle", last_success=None, last_attempt=None, error="",
     )
+    # Other synthetic providers must not inherit the Kobo fixture's
+    # materialization capability merely by overriding provider_id.
+    if "sync_capabilities" not in options and options.get("provider_id", "kobo") != "kobo":
+        fields["sync_capabilities"] = ()
     fields.update(options)
     return NS(**fields)
 
