@@ -100,6 +100,41 @@ def _imports(source: str, *, is_root_test: bool) -> tuple[list[tuple[str, str, i
     return sorted(edges), sorted(unknown)
 
 
+
+def _local_plugin_helper_imports(
+    source: Path, root: Path, known: set[str],
+) -> list[tuple[str, int]]:
+    """Resolve only exact relative imports within this plugin's tests tree.
+
+    An absolute `tests.helpers` is ambiguous with root tests; it must not
+    silently become a dependency on the local plugin directory.
+    """
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    tests_root = root / "src/plugins" / source.relative_to(root).parts[2] / "tests"
+    links: set[tuple[str, int]] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.level < 1:
+            continue
+        base = source.parent
+        for _ in range(node.level - 1):
+            base = base.parent
+        try:
+            base.relative_to(tests_root)
+        except ValueError:
+            continue
+        module = (node.module or "").split(".") if node.module else []
+        candidates = [base.joinpath(*module)] if module else []
+        # `from . import helpers` loads a sibling; `from .helpers import
+        # fixture` loads helpers, and can also load a helpers.fixture module.
+        candidates.extend(base.joinpath(*module, alias.name)
+                          for alias in node.names if alias.name != "*")
+        for candidate in candidates:
+            for match in (candidate.with_suffix(".py"), candidate / "__init__.py"):
+                rel = match.relative_to(root).as_posix()
+                if rel in known:
+                    links.add((rel, node.lineno))
+    return sorted(links)
+
 def inventory(root: Path = ROOT) -> dict:
     root_tests = sorted((root / "tests").glob("test_*.py"))
     plugin_tests = sorted((root / "src/plugins").glob("*/tests/**/*.py"))
@@ -114,6 +149,9 @@ def inventory(root: Path = ROOT) -> dict:
     }
     adjacency: dict[str, set[str]] = {}
     plugin_direct: dict[str, set[str]] = {}
+    plugin_helpers: dict[str, set[str]] = {}
+    plugin_helper_edges: list[dict] = []
+    plugin_known = {path.relative_to(root).as_posix() for path in plugin_tests}
     for source in sources:
         path = source.relative_to(root).as_posix()
         parts = source.relative_to(root).parts
@@ -139,6 +177,18 @@ def inventory(root: Path = ROOT) -> dict:
                     plugin_direct.setdefault(path, set()).add(target)
         for line in unknown:
             unresolved.append({"consumer": path, "owner": owner, "line": line})
+        if owner.startswith("plugin:"):
+            try:
+                links = _local_plugin_helper_imports(source, root, plugin_known)
+            except (SyntaxError, UnicodeError, OSError) as exc:
+                errors.append({"consumer": path, "reason": type(exc).__name__})
+                continue
+            for target, line in links:
+                plugin_helpers.setdefault(path, set()).add(target)
+                plugin_helper_edges.append({
+                    "consumer": path, "owner": owner, "target": target,
+                    "mechanism": "relative_plugin_helper", "line": line,
+                })
     transitive: list[dict] = []
     for consumer, starts in sorted(plugin_direct.items()):
         visited = set(starts)
@@ -151,6 +201,31 @@ def inventory(root: Path = ROOT) -> dict:
                     pending.append(target)
         for target in sorted(visited - starts):
             transitive.append({"consumer": consumer, "target": target})
+    via_helpers: list[dict] = []
+    for consumer in sorted(plugin_known):
+        visited = {consumer}
+        pending = [consumer]
+        while pending:
+            current = pending.pop()
+            for helper in sorted(plugin_helpers.get(current, ())):
+                if helper not in visited:
+                    visited.add(helper)
+                    pending.append(helper)
+        inherited = set()
+        for helper in visited - {consumer}:
+            inherited.update(plugin_direct.get(helper, ()))
+        inherited.difference_update(plugin_direct.get(consumer, ()))
+        # An intermediate root-test fixture may itself import another root
+        # fixture. Reuse the same directed root-test graph as direct consumers.
+        queue = sorted(inherited)
+        while queue:
+            current = queue.pop()
+            for target in sorted(adjacency.get(current, ())):
+                if target not in inherited and target not in plugin_direct.get(consumer, ()):
+                    inherited.add(target)
+                    queue.append(target)
+        for target in sorted(inherited):
+            via_helpers.append({"consumer": consumer, "target": target})
     return {
         "schema": "cifereca.test-core-consumers/1",
         "root_test_files": len(root_tests),
@@ -164,6 +239,11 @@ def inventory(root: Path = ROOT) -> dict:
             key=lambda e: (e["consumer"], e["target_module"], e["line"]),
         ),
         "plugin_to_root_transitive": transitive,
+        "plugin_to_plugin_helper_direct": sorted(
+            plugin_helper_edges,
+            key=lambda edge: (edge["consumer"], edge["target"], edge["line"]),
+        ),
+        "plugin_to_root_via_helpers": via_helpers,
         "unresolved_dynamic_or_pytest_plugins": sorted(
             unresolved, key=lambda e: (e["consumer"], e["line"]),
         ),
@@ -180,7 +260,8 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
     else:
         for key in ("root_test_files", "plugin_test_files", "plugin_to_root_direct",
-                    "plugin_to_root_transitive", "unresolved_dynamic_or_pytest_plugins",
+                    "plugin_to_root_transitive", "plugin_to_plugin_helper_direct",
+                    "plugin_to_root_via_helpers", "unresolved_dynamic_or_pytest_plugins",
                     "parse_errors"):
             value = result[key]
             print(f"{key}: {len(value) if isinstance(value, list) else value}")
