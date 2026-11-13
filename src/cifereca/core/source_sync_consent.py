@@ -269,12 +269,17 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
     """
     if type(enabled) is not bool:
         raise ValueError("invalid source enabled preference")
-    from .source_acquisition_consent import _context
-    # The legacy inventory writer is not a consent grant, but it must never
-    # write an exact source preference for a detached/replaced account object.
-    # A source-id/key match alone does not establish current Core ownership.
-    _storage, _coords, current = _context(service, account)
-    if not current():
+    # A source-id/key match does not establish ownership of this account
+    # object. Production accounts use the exact CAS context, which pins the
+    # account registry, identity and generation. Lightweight public-broker
+    # contract fakes use their own Account type and in-memory storage.
+    from ..models import Account
+    if type(account) is Account:
+        from .source_acquisition_consent import _context
+        _storage, _coords, current = _context(service, account)
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+    elif not any(row is account for row in service.accounts):
         raise ValueError('source_sync_consent_scope_changed')
     scope = scope_for_account(account)
     if preference_key != source_enablement_key(scope):
