@@ -135,9 +135,6 @@ def test_callback_keeps_original_source_route_even_if_view_object_changes():
     assert writes == [(original, True, None)]
 
 
-@pytest.mark.parametrize('provider', ['fixture-vendor', 'kobo', 'numilog', 'bnf-pret', 'paris'])
-
-
 @pytest.mark.parametrize('provider', ['kobo', 'synthetic-lender'])
 def test_modern_consent_takes_precedence_over_manual_materialization_capability(
     monkeypatch, provider,
@@ -182,6 +179,7 @@ def test_modern_consent_takes_precedence_over_manual_materialization_capability(
     )
     assert w.runner.tasks == [] and calls == calls_before
 
+@pytest.mark.parametrize('provider', ['fixture-vendor', 'kobo', 'numilog', 'bnf-pret', 'paris'])
 def test_modern_page_uses_same_controls_and_never_reads_legacy_tools(monkeypatch, provider):
     fn = renderer()
     module = ModuleType('cifereca.gui.source_sync_consent_controls')
