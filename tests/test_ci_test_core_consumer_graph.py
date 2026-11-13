@@ -79,8 +79,8 @@ def test_missing_target_and_parse_errors_are_visible(tmp_path):
            "from tests.test_missing import fixture\n")
     _write(tmp_path, "src/plugins/b/tests/test_b.py", "def broken(:\n")
     graph = inventory(tmp_path)
-    assert graph["plugin_to_root_direct"][0]["resolved"] is False
-    assert graph["plugin_to_root_direct"][0]["target"] is None
+    assert graph["plugin_missing_imports"][0]["resolved"] is False
+    assert graph["plugin_missing_imports"][0]["target"] is None
     assert graph["parse_errors"] == [
         {"consumer": "src/plugins/b/tests/test_b.py", "reason": "SyntaxError"}
     ]
@@ -160,3 +160,23 @@ def test_nested_relative_helper_chain_is_bounded(tmp_path):
     assert {"consumer": "src/plugins/alpha/tests/nested/test_client.py",
             "target": "tests/test_fixture.py"} in graph["plugin_to_root_via_helpers"]
     assert graph == inventory(tmp_path)
+
+
+def test_plugin_package_imports_are_distinct_from_core_dependencies(tmp_path):
+    _write(tmp_path, "tests/test_core.py", "VALUE=1\n")
+    _write(tmp_path, "tests/test_shared_name.py", "VALUE=2\n")
+    prefix = "src/plugins/provider-x/tests/"
+    _write(tmp_path, prefix + "test_local.py", "VALUE=3\n")
+    _write(tmp_path, prefix + "test_shared_name.py", "VALUE=4\n")
+    _write(tmp_path, prefix + "test_consumer.py",
+           "from tests.test_local import VALUE\n"
+           "from tests.test_core import VALUE\n"
+           "from tests.test_shared_name import VALUE\n"
+           "from tests.test_missing import VALUE\n")
+    graph = inventory(tmp_path)
+    assert [e["target"] for e in graph["plugin_to_root_direct"]] == ["tests/test_core.py"]
+    assert [e["target"] for e in graph["plugin_local_imports"]] == [prefix + "test_local.py"]
+    assert [e["local_target"] for e in graph["plugin_ambiguous_imports"]] == [
+        prefix + "test_shared_name.py"
+    ]
+    assert [e["target_module"] for e in graph["plugin_missing_imports"]] == ["tests.test_missing"]
