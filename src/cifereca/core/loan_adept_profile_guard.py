@@ -83,7 +83,9 @@ def check(
     # when Adept explicitly publishes a negative readiness signal;
     # older contracts that omit it remain compatible.
     try:
-        profile_rows = self.kobo_profiles()
+        profile_rows = self.adept_profiles_for_identity(
+            adept_borrower_identity_id, profile_name=profile_name,
+        )
     except Exception:
         profile_rows = []
     profile_row = self._adept_profile_row(profile_name, profile_rows)

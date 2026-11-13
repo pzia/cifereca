@@ -2762,6 +2762,22 @@ class LibraryService:
         rows = payload.get("profiles") if isinstance(payload, dict) else None
         return [dict(x) for x in rows if isinstance(x, dict)] if isinstance(rows, list) else []
 
+    def adept_profiles_for_identity(
+        self, identity_id: str, *, profile_name: str,
+    ) -> list[dict[str, Any]]:
+        """Read only the ADEPT profile explicitly resolved for one identity.
+
+        This is a scoped service contract, not a proof of grant or readiness.
+        The caller must recheck its borrower grant before executing ADEPT.
+        No current identity/account or UI selection is consulted.
+        """
+        if (type(identity_id) is not str or not identity_id
+                or type(profile_name) is not str or not profile_name
+                or self.identity_by_id(identity_id) is None):
+            return []
+        row = self._adept_profile_row(profile_name)
+        return [row] if type(row) is dict else []
+
     @staticmethod
     def _adept_profile_ref(row: dict[str, Any]) -> str:
         return adept_profiles.profile_reference(row)
