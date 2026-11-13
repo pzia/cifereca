@@ -369,7 +369,13 @@ def _public_rows_from_response(
             response, row, provider_id=row.source_provider,
             credential_id=row.source_credential,
         )
-        if projected is not None and row.source_provider == session.provider_id:
+        if (
+            projected is not None
+            and row.source_provider == session.provider_id
+            and row.source_credential in (
+                getattr(session, "credential_id", None), "__public__",
+            )
+        ):
             admitted.append(projected)
     return admitted
 
