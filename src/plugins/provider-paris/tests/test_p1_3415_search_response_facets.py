@@ -377,7 +377,7 @@ def test_foreign_catalog_scope_uses_only_public_searchservice_routes():
     paths = []
     def respond(request):
         paths.append(request.url.path)
-        assert "SearchService" in request.url.path
+        assert "Search.svc/Search" in request.url.path
         scenario = json.loads(request.content)["query"]["ScenarioCode"]
         return httpx.Response(200, json=_response(scenario))
 
@@ -395,6 +395,6 @@ def test_foreign_catalog_scope_uses_only_public_searchservice_routes():
         assert {row.scenario for row in response.results} == {"CATALOGUE", "EBOOKS"}
         assert all(n.result.download_url is None for n in response.public_notices)
         assert len(paths) == 2
-        assert all("SearchService" in path for path in paths)
+        assert all("Search.svc/Search" in path for path in paths)
     finally:
         session.close()
