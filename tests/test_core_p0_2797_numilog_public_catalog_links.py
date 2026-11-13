@@ -84,7 +84,7 @@ def test_product_url_proof_is_bound_to_exact_producer(provider, kind):
     marker = f"{provider}.{kind}"
     assert _public_catalog_url(url, evidence=marker, provider_id=provider) == url
     assert _public_catalog_url(url, evidence="numilog." + kind,
-                               provider_id=provider) is (url if provider == "numilog" else None)
+                               provider_id=provider) == (url if provider == "numilog" else None)
     assert _public_catalog_url(url, evidence=marker, provider_id="different") is None
     assert _public_catalog_url(url, provider_id=provider) is None
 
