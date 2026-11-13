@@ -58,7 +58,7 @@ def test_declaration_is_honest_about_general_query_and_catalogues():
     cap = DESCRIPTOR.search_capabilities
     assert cap.declared
     assert cap.fields == ("all",)
-    assert cap.scopes == ("all", "digital", "physical")
+    assert cap.scopes == ("all", "digital", "physical", "catalog")
     assert cap.pagination == "page" and cap.page_size == 50
     assert cap.max_pages == 101
     assert not cap.supports_field("author")
