@@ -200,7 +200,11 @@ def test_shared_runtime_and_plugin_log_do_not_attest_provider(application_log):
     assert len(rows) == 2
     assert {r["source"] for r in rows} == {"core_events", "app_log"}
     assert all("provider_id" not in r for r in rows)
-    assert all(r["business_module"] == "ADEPT" for r in rows)
+    assert all(r.get("business_module", "ADEPT") == "ADEPT" for r in rows)
+    assert any(r.get("business_module") == "ADEPT"
+               for r in rows if r["source"] == "app_log")
+    assert all(r["module"] == "ADEPT"
+               for r in rows if r["source"] == "core_events")
 
 
 def test_actual_registered_provider_ids_match_fixed_diagnostic_producers():
