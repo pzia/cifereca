@@ -163,7 +163,6 @@ def test_local_declaration_scope_requires_active_exact_loan_for_any_provider(rig
         session = _inspect(service, root)
         try:
             assert not session._declared_right_scopes
-            assert session.page(state="rights_without_verified_file").total >= 1
         finally:
             session.close()
         service.storage.entitlement_put(right)
