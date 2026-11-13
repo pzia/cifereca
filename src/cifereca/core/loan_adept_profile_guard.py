@@ -90,7 +90,7 @@ def check(
     if profile_row:
         if adept_acsm_plan.profile_is_explicitly_acsm_unready(profile_row):
             code = "adept_profile_acsm_not_ready"
-            message = "Le profil Kobo-Adept lié à cette identité n'est pas prêt pour les acquisitions ACSM"
+            message = "Le profil ADEPT lié à cette identité n'est pas prêt pour les acquisitions ACSM"
             self.storage.acquisition_put(
                 attention_receipt(
                     ledger_base=ledger_base, previous_meta=previous_meta,
