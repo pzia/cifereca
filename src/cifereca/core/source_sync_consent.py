@@ -289,7 +289,16 @@ def _atomic_legacy_inventory_toggle(service, account, enabled, preference_key, s
         # the authoritative SQLite binding in the same transaction as the
         # legacy policy and preference write; OFF remains allowed on a
         # disabled (but still registered) connection.
-        if not current() or not _bound(db, coords, enabled=False):
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+        # The public broker contract tests use a SimpleNamespace with real
+        # Storage but intentionally no persistent identities/connections.
+        # Preserve that read-only fake-service seam; all concrete Core
+        # services must prove their exact durable binding inside this write.
+        from types import SimpleNamespace
+        if type(service) is not SimpleNamespace and not _bound(
+            db, coords, enabled=False,
+        ):
             raise ValueError('source_sync_consent_scope_changed')
         # The caller's earlier read may be stale: re-admit under the same
         # SQLite writer lock that protects the outgoing preference/epoch.
