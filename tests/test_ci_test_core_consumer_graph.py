@@ -96,3 +96,67 @@ def test_cycle_is_bounded_and_deterministic(tmp_path):
         {"consumer": "src/plugins/p/tests/test_p.py", "target": "tests/test_b.py"}
     ]
     assert inventory(tmp_path) == graph
+
+
+def test_plugin_test_imports_root_fixture_through_local_helper(tmp_path):
+    _write(tmp_path, "tests/test_fixture.py", "VALUE = 1\n")
+    _write(tmp_path, "tests/test_dep.py", "from tests.test_fixture import VALUE\n")
+    _write(tmp_path, "src/plugins/alpha/tests/helpers.py",
+           "from tests.test_dep import VALUE\n")
+    _write(tmp_path, "src/plugins/alpha/tests/test_client.py",
+           "from .helpers import VALUE\n")
+    graph = inventory(tmp_path)
+    consumer = "src/plugins/alpha/tests/test_client.py"
+    assert graph["plugin_to_root_direct"] == [
+        {"consumer": "src/plugins/alpha/tests/helpers.py",
+         "owner": "plugin:alpha", "target_module": "tests.test_dep",
+         "target": "tests/test_dep.py", "mechanism": "from", "line": 1,
+         "resolved": True},
+    ]
+    assert graph["plugin_to_root_via_helpers"] == [
+        {"consumer": consumer, "target": "tests/test_dep.py"},
+        {"consumer": consumer, "target": "tests/test_fixture.py"},
+    ]
+
+
+def test_plugin_helper_cycles_and_cross_provider_are_isolated(tmp_path):
+    _write(tmp_path, "tests/test_fixture.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/alpha/tests/helpers.py",
+           "from . import second\nfrom tests.test_fixture import VALUE\n")
+    _write(tmp_path, "src/plugins/alpha/tests/second.py",
+           "from . import helpers\n")
+    _write(tmp_path, "src/plugins/alpha/tests/test_client.py",
+           "from . import helpers\n")
+    _write(tmp_path, "src/plugins/beta/tests/test_client.py",
+           "from . import helpers\n")
+    graph = inventory(tmp_path)
+    assert graph["parse_errors"] == []
+    assert {"consumer": "src/plugins/alpha/tests/test_client.py",
+            "target": "tests/test_fixture.py"} in graph["plugin_to_root_via_helpers"]
+    assert not any(
+        entry["consumer"].startswith("src/plugins/beta/")
+        for entry in graph["plugin_to_root_via_helpers"]
+    )
+
+
+def test_non_relative_tests_import_is_not_assumed_plugin_helper(tmp_path):
+    _write(tmp_path, "tests/test_fixture.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/alpha/tests/helpers.py",
+           "from tests.test_fixture import VALUE\n")
+    _write(tmp_path, "src/plugins/alpha/tests/test_client.py",
+           "from tests.helpers import VALUE\n")
+    graph = inventory(tmp_path)
+    assert graph["plugin_to_plugin_helper_direct"] == []
+    assert graph["plugin_to_root_via_helpers"] == []
+
+
+def test_nested_relative_helper_chain_is_bounded(tmp_path):
+    _write(tmp_path, "tests/test_fixture.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/alpha/tests/helpers.py",
+           "from tests.test_fixture import VALUE\n")
+    _write(tmp_path, "src/plugins/alpha/tests/nested/test_client.py",
+           "from ..helpers import VALUE\n")
+    graph = inventory(tmp_path)
+    assert {"consumer": "src/plugins/alpha/tests/nested/test_client.py",
+            "target": "tests/test_fixture.py"} in graph["plugin_to_root_via_helpers"]
+    assert graph == inventory(tmp_path)
