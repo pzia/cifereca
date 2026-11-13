@@ -136,6 +136,51 @@ def test_callback_keeps_original_source_route_even_if_view_object_changes():
 
 
 @pytest.mark.parametrize('provider', ['fixture-vendor', 'kobo', 'numilog', 'bnf-pret', 'paris'])
+
+
+@pytest.mark.parametrize('provider', ['kobo', 'synthetic-lender'])
+def test_modern_consent_takes_precedence_over_manual_materialization_capability(
+    monkeypatch, provider,
+):
+    # A provider may declare manual materialization while exposing the modern
+    # CAS source consent API. That declaration must not add an old manual GET
+    # workflow, a preview task, or even a preflight read on page creation.
+    fn = renderer()
+    module = ModuleType('cifereca.gui.source_sync_consent_controls')
+    module.append_source_sync_consent_controls = fn
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    w, b, calls, _build, _page = _fixture(sources=[])
+    source = _source(
+        identity_id='alice', source_id='exact-materialization-source',
+        provider_id=provider, sync_capabilities=('local_materialization',),
+    )
+    b.sources = lambda _identity: [source]
+    b.source_sync_consent = lambda _source_id: dict(
+        supported=True, configured=True, enabled=False,
+        revision='exact-revision', valid=True,
+    )
+    b.set_source_sync_consent = lambda *_a, **_kw: pytest.fail(
+        'render must not modify consent'
+    )
+    for name in (
+        'prepare_local_materialization', 'materialize_source',
+        'preview_local_materialization',
+    ):
+        setattr(b, name, lambda *_a, **_kw: pytest.fail(
+            'render must not invoke manual materialization'
+        ))
+    w._refresh_sync_page()
+    group, = w._sync_sources_box.children
+    assert [row.title for row in group.children] == [
+        source.label, 'Téléchargement automatique de ce compte',
+    ]
+    assert all(
+        not any('Aperçu local' in str(getattr(button, 'label', ''))
+                for button in row.suffixes)
+        for row in group.children
+    )
+    assert w.runner.tasks == [] and calls == []
+
 def test_modern_page_uses_same_controls_and_never_reads_legacy_tools(monkeypatch, provider):
     fn = renderer()
     module = ModuleType('cifereca.gui.source_sync_consent_controls')
