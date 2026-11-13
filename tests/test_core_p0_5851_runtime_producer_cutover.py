@@ -56,8 +56,10 @@ def test_attested_real_core_producer_has_exact_provider_provenance():
         operational=True, contract_version=8,
         modes=("synthetic_delivery",), formats=("cbz",),
     )
+    # The post-probe check fences revocation/rebinding during runtime I/O.
     assert service.probes == [
         ("binding", "synthetic"), ("producer", True),
+        ("binding", "synthetic"),
     ]
     assert service._plugin_manager.calls == ["runtime.synthetic"]
     assert not hasattr(snapshot, "stdout")
