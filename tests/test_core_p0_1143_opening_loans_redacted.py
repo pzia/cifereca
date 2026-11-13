@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import logging
+
+import pytest
 from types import SimpleNamespace as NS
 
 from tests.test_core_p0_1346_opening_source_isolation import _accounts, _state
@@ -108,6 +110,56 @@ def test_adept_profile_read_failure_is_a_closed_diagnostic(tmp_path, monkeypatch
         assert len(rows) == 1
         assert rows[0]["detail"] == {"code": "adept_profile_lookup_failed"}
         assert PRIVATE not in service.diagnostics.text("test")
+    finally:
+        service.close()
+
+
+def test_opening_dashboard_resolves_bound_adept_profile_per_identity(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        service.storage.adept_profile_binding_set("identity", "default", "profile-A")
+        service.storage.adept_profile_binding_set("identity", "alex", "profile-B")
+        calls = []
+
+        def scoped(identity_id, *, profile_name):
+            calls.append((identity_id, profile_name))
+            return [{
+                "profile_id": profile_name,
+                "name": "safe-" + identity_id,
+                "provisioning": {"acsm_fetch_ready": True},
+            }]
+
+        monkeypatch.setattr(service, "adept_profiles_for_identity", scoped)
+        monkeypatch.setattr(service, "kobo_profiles", lambda: (
+            pytest.fail("global profile enumeration must not occur")
+        ))
+        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
+        result = service.opening_sync()
+        by_identity = {row["identity_id"]: row["detail"] for row in result["identities"]}
+        assert calls == [("default", "profile-A"), ("alex", "profile-B")]
+        assert by_identity["default"]["adept_profile_id"] == "profile-A"
+        assert by_identity["default"]["adept_profile_name"] == "safe-default"
+        assert by_identity["alex"]["adept_profile_id"] == "profile-B"
+        assert by_identity["alex"]["adept_profile_name"] == "safe-alex"
+    finally:
+        service.close()
+
+
+def test_opening_dashboard_missing_scoped_profile_never_uses_other_identity(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        service.storage.adept_profile_binding_set("identity", "default", "profile-A")
+        monkeypatch.setattr(service, "adept_profiles_for_identity",
+                            lambda identity_id, *, profile_name: [])
+        monkeypatch.setattr(service, "kobo_profiles", lambda: (
+            pytest.fail("no global profile fallback")
+        ))
+        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
+        result = service.opening_sync()
+        by_identity = {row["identity_id"]: row["detail"] for row in result["identities"]}
+        assert by_identity["default"]["adept_attention"] == "profile_missing"
+        assert by_identity["default"]["adept_profile_id"] == "profile-A"
+        assert "adept_provisioning" not in by_identity["alex"]
     finally:
         service.close()
 
