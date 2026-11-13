@@ -16,7 +16,7 @@ from cifereca.providers import (
     ProviderCapabilities, ProviderDescriptor, ProviderPlugin, ProviderRegistry,
     ProviderSession,
 )
-from cifereca.plugin_api import ProviderCollectionValidationError
+from cifereca.plugin_api import ProviderCollectionValidationError, ProviderSearchResponse, PublicSearchNotice
 from cifereca.services import LibraryService
 from cifereca.storage import Storage
 
@@ -64,6 +64,20 @@ class SearchSession(ProviderSession):
             scenario="FAKE", source_provider=self.provider_id,
             source_credential=self.credential_id,
         )]
+
+
+    def search_with_response_facets(
+        self, query, scope="all", *, field="all", content_types=(),
+    ):
+        # These synthetic virtual catalogue entries are explicitly public
+        # fixtures. Their own parser emits a same-call public declaration;
+        # unknown real sessions without this contract remain fail-closed.
+        rows = self.search(query, scope, field=field)
+        return ProviderSearchResponse(
+            rows, public_notices=tuple(
+                PublicSearchNotice(row) for row in rows
+            ),
+        )
 
 
 class LocalProvider(ProviderPlugin):
