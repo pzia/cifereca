@@ -46,3 +46,21 @@ def test_rights_gates_remain_external_to_owned_flag_notice():
     assert "self._direct_download_action(item)" in source
     assert "self.window.can_borrow_item(item)" in source
     assert "result_row(" in source
+
+
+def test_search_detail_download_is_guarded_once_at_action_sink():
+    """The caller cannot duplicate a supplier decision already made by the sink."""
+    source = DETAIL.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+               and any(isinstance(child, ast.FunctionDef)
+                       and child.name == "_direct_download_action"
+                       for child in node.body))
+    methods = {node.name: node for node in cls.body
+               if isinstance(node, ast.FunctionDef)}
+    sink = ast.get_source_segment(source, methods["_direct_download_action"])
+    search = ast.get_source_segment(source, methods["show_search"])
+    assert 'item.source_provider == "numilog-catalog"' in sink
+    assert 'item.source_provider != "numilog-catalog"' not in search
+    assert "self._direct_download_action(item)" in search
+    assert "if stale_known:" in search
