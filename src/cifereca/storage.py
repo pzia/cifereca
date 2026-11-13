@@ -4325,17 +4325,6 @@ class Storage:
             )
             return True
 
-    def acquisition_bind_bnf_display_loan(
-        self, acquisition_id: str, *, path: str,
-        artifact_id: str, scope: dict[str, str],
-    ) -> bool:
-        """Legacy BnF compatibility facade; no provider-specific SQL."""
-        return self.acquisition_bind_observed_display_loan(
-            acquisition_id, path=path, artifact_id=artifact_id, scope=scope,
-            placement_provider_id='bnf-pret',
-            provenance_field='bnf_observed_loan',
-        )
-
     def acquisition_update_state(
         self,
         acquisition_id: str,
