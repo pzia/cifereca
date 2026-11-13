@@ -194,6 +194,22 @@ def test_reopening_database_preserves_source_consent_and_off(source):
         other.close()
 
 
+def test_inventory_on_cannot_implicitly_repair_corrupt_acquisition_cas(source):
+    service, db, _root, calls, broker = source
+    sid = broker._source_id(service.account)
+    scope = policy.scope_for_account(service.account)
+    key = policy.policy_key(scope)
+    db.metadata_set(key, '{bad-json')
+    before = broker.source_sync_consent(sid)
+    assert before['configured'] and not before['valid']
+    with pytest.raises(ValueError, match='source_sync_consent_changed'):
+        broker.set_enabled(sid, True)
+    assert db.metadata_get(key) == '{bad-json'
+    assert db.metadata_get(broker._preference_key(sid)) is None
+    assert broker.source_sync_consent(sid) == before
+    assert calls == []
+
+
 def test_inventory_off_on_cannot_revive_acquisition_and_advances_generation(source, monkeypatch):
     service, db, root, calls, broker = source
     on = change(source, True)
