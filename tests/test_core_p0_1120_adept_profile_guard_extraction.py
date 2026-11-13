@@ -253,8 +253,8 @@ def test_scoped_profile_lookup_is_not_an_implicit_ui_selection():
         current_identity=NS(identity_id="other-ui-identity"),
         identity_by_id=lambda identity: NS(identity_id=identity) if identity == "identity-1" else None,
         kobo_profiles=lambda: calls.append("runtime") or rows,
-        _adept_profile_row=lambda name, values: next(
-            (row for row in values if row["name"] == name), None
+        _adept_profile_row=lambda name: next(
+            (row for row in (calls.append("runtime") or rows) if row["name"] == name), None
         ),
     )
     lookup = lambda identity, profile: LibraryService.adept_profiles_for_identity(
