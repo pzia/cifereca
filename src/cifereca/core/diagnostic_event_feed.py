@@ -541,8 +541,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         loan_download_detail = {}
         loan_acsm_action_detail = {}
         adept_detail = {}
-        if (category == "ADEPT" and operation == "kobo adept"
-                and type(diagnostics) is Diagnostics and row.get("verified_kobo_adept") is True):
+        if (category == "ADEPT" and operation == "adept runtime"
+                and type(diagnostics) is Diagnostics and row.get("verified_adept_runtime") is True):
             adept_detail = public_adept_fields(row.get("detail"))
             if adept_detail:
                 public_detail = adept_detail
