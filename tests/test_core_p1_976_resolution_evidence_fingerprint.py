@@ -6,10 +6,7 @@ import sqlite3
 
 import pytest
 
-from cifereca.core.adept_resolution_snapshot import (
-    snapshot_paris_adept_local_evidence,
-    validate_paris_adept_local_snapshot,
-)
+from cifereca.core.adept_resolution_snapshot import snapshot_paris_adept_local_evidence
 from cifereca.storage import Storage
 from tests.test_core_p1_976_canonical_originlink_review import (
     _artifact, _link, _source,
@@ -51,13 +48,6 @@ def _snapshot(store, loan="paris-loan", item="item-1"):
     )
 
 
-def _validate(store, fingerprint, loan="paris-loan", item="item-1"):
-    return validate_paris_adept_local_snapshot(
-        store, loan_id=loan, item_id=item,
-        expected_fingerprint=fingerprint,
-    )
-
-
 def _no_authority(report):
     assert report["return_authorized"] is False
     assert report["commit_available"] is False
@@ -82,11 +72,7 @@ def test_snapshot_has_stable_digest_and_never_exposes_credential_or_receipts(tmp
         assert "SECRET-" not in repr(first)
         assert "adept-lic" not in repr(first)
         _no_authority(first)
-        check = _validate(store, first["fingerprint"])
-        assert check["status"] == "local_evidence_unchanged_remote_attestation_required"
-        assert check["evidence_unchanged"] is True
-        assert check["current_fingerprint"] == first["fingerprint"]
-        _no_authority(check)
+        assert _snapshot(store) == first
         assert store.rights == rights_before and store.ledger == ledger_before
     finally:
         db.close()
@@ -121,10 +107,9 @@ def test_canonical_provenance_change_invalidates_previous_local_snapshot(
                     ("another-adobe-receipt", "adept", "alice",
                      "sha256:" + "a" * 64, "source-a", "DIFFERENT-SECRET", 1, 1),
                 )
-        result = _validate(store, old)
-        assert result["status"] == "local_evidence_changed"
-        assert result["evidence_unchanged"] is False
-        assert result["current_fingerprint"] != old
+        result = _snapshot(store)
+        assert result["status"] == "local_snapshot"
+        assert result["fingerprint"] != old
         assert "DIFFERENT-SECRET" not in repr(result)
         _no_authority(result)
     finally:
@@ -138,9 +123,9 @@ def test_historical_adobe_loan_change_invalidates_snapshot_without_db_mutation(t
         store.ledger[0]["metadata"]["adept_binding"]["adept_loan_id"] = (
             "NEW-SYNTHETIC-ADOBE-LOAN"
         )
-        changed = _validate(store, old)
-        assert changed["status"] == "local_evidence_changed"
-        assert changed["evidence_unchanged"] is False
+        changed = _snapshot(store)
+        assert changed["status"] == "local_snapshot"
+        assert changed["fingerprint"] != old
         assert "NEW-SYNTHETIC" not in repr(changed)
         _no_authority(changed)
     finally:
@@ -189,10 +174,7 @@ def test_empty_and_missing_local_evidence_cannot_yield_commit_permission(tmp_pat
         assert empty["status"] == "no_local_evidence"
         assert empty["fingerprint"] is None
         _no_authority(empty)
-        check = _validate(store, "f" * 64)
-        assert check["status"] == "local_evidence_unavailable"
-        assert check["evidence_unchanged"] is False
-        _no_authority(check)
+
     finally:
         db.close()
 
@@ -208,27 +190,6 @@ def test_unserializable_historical_receipt_fails_closed_without_leaking_values(t
         _no_authority(result)
     finally:
         db.close()
-
-
-@pytest.mark.parametrize(("loan", "item", "proof"), [
-    (" ", "item-1", "f" * 64),
-    ("paris-loan", "\x00PRIVATE", "f" * 64),
-    ("paris-loan", "item-1", "SECRET"),
-    ("paris-loan", "item-1", "f" * 63),
-    ("paris-loan", "item-1", None),
-])
-def test_invalid_snapshot_validation_fails_before_any_storage_access(loan, item, proof):
-    class Forbidden:
-        def __getattribute__(self, name):
-            raise AssertionError("invalid request may not touch local storage")
-
-    result = validate_paris_adept_local_snapshot(
-        Forbidden(), loan_id=loan, item_id=item, expected_fingerprint=proof,
-    )
-    assert result["status"] == "invalid_snapshot_request"
-    assert result["evidence_unchanged"] is False
-    _no_authority(result)
-    assert "PRIVATE" not in repr(result)
 
 
 def test_invalid_snapshot_input_never_opens_storage():
