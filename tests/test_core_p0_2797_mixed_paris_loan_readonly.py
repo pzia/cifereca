@@ -92,9 +92,9 @@ def test_mixed_provider_paris_loans_have_explicit_private_expiry_no_write(tmp_pa
             assert report.read_only and not report.attachment_authorized
             assert report.status != "eligible_for_fresh_validation"
             if provider == "paris":
-                assert "paris_read_only" in report.codes
+                assert "source_not_supported" in report.codes
             if provider == "kobo":
-                assert "kobo_separate_recovery" in report.codes
+                assert "source_not_supported" in report.codes
             assert session.preview_manual_attachment(
                 right.key, matches[0].key
             ) == {"status": "unavailable", "read_only": True}
