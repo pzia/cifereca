@@ -47,3 +47,33 @@ def test_nested_function_is_smallest_scoped_owner():
     )
     assert scope_for_line([(1, 12, "outer")], 20) == "<module>"
     assert responsibility("src/cifereca/gui/detail_panel.py") == "core_ui"
+
+
+def test_worklist_baseline_ignores_line_shifts_and_exposes_offsetting_changes(
+    tmp_path, capsys,
+):
+    import json
+
+    from scripts.ci_provider_ast_function_worklist import main
+
+    source = tmp_path / "src/cifereca/services.py"
+    source.parent.mkdir(parents=True)
+    original = (
+        "def unchanged(provider_id):\n"
+        "    return provider_id == 'kobo'\n"
+        "def removed(provider_id):\n"
+        "    return provider_id == 'paris'\n"
+    )
+    source.write_text(original, encoding="utf-8")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(inventory(tmp_path)), encoding="utf-8")
+    source.write_text("\n\n" + original.replace(
+        "def removed", "def added"
+    ), encoding="utf-8")
+
+    assert main(["--root", str(tmp_path), "--baseline", str(baseline), "--json"]) == 0
+    comparison = json.loads(capsys.readouterr().out)["comparison"]
+    assert comparison["delta"] == 0
+    assert [(row["function"], row["delta"]) for row in comparison["functions"]] == [
+        ("added", 1), ("removed", -1),
+    ]
