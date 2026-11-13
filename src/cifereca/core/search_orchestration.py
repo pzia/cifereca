@@ -1922,10 +1922,9 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             })
         if public_ages:
             allowed_meta["youth_age_ranges"] = public_ages
-        cover_url = (
-            _numilog_public_catalog_url(row.thumbnail_url, cover=True)
-            if row.source_provider == "numilog" else row.thumbnail_url
-        )
+        # A cover is descriptive, never a session or delivery URL. Apply
+        # the same conservative public-image boundary to every provider.
+        cover_url = _shared_catalogue_cover_url(row.thumbnail_url)
         product_url = (
             _numilog_public_catalog_url(
                 row.friendly_url, evidence=raw_meta.get("public_url_evidence"),
