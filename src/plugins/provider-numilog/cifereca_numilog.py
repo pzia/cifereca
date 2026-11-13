@@ -1230,6 +1230,36 @@ class NumilogSession(ProviderSession):
                 )
             return result
 
+    def search_with_response_facets(
+        self, query, scope='all', *, field='all', content_types=(),
+    ):
+        """Attest only an anonymous Numilog catalogue response, never MesLivres.
+
+        The caller must explicitly request scope=catalog; all/digital retain
+        their private search semantics but produce no public declarations.
+        This method does not retry an anonymous 401/403 with account cookies.
+        """
+        from dataclasses import replace
+        from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+
+        if scope != 'catalog':
+            return ProviderSearchResponse(
+                list(self.search(query, scope=scope, field=field)),
+            )
+        # search_public is the bounded brSimple anonymous parser and shares
+        # the provider's public-only cache/budget. It never calls library().
+        rows = list(self.search(query, scope='catalog', field=field))
+        notices = tuple(
+            PublicSearchNotice(replace(
+                row, owned=False, downloadable=False, download_url=None,
+                source_account_id=None, thumbnail_url=None, friendly_url=None,
+                description=None, metadata={}, price=None, currency=None,
+                revision_id=None, document_classification=None,
+            ))
+            for row in rows
+        )
+        return ProviderSearchResponse(rows, public_notices=notices)
+
     def enrich_owned_public_listing(self, item):
         """Explicit one-page public enrichment of an attested, fresh owned book.
 
