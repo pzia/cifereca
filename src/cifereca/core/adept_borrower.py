@@ -35,16 +35,20 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     # A malformed provider loan cannot attest a borrower by coercing
     # arbitrary objects (or str subclasses) into a stored account key.
     # Native strings retain the exact historical trim and primary semantics.
-    if (type(loan.source_account_id) is not str
+    if (type(loan.source_provider) is not str or not loan.source_provider
+            or type(loan.source_account_id) is not str
             or type(loan.source_credential) is not str):
         return None, "adept_borrower_ambiguous"
+    # Canonicalize an explicitly supplied source once: storage conflict keys
+    # must not become case-sensitive aliases for the same provider.
+    source_provider = loan.source_provider.casefold()
     borrower = loan.source_account_id.strip()
     credential = loan.source_credential.strip()
     if not credential:
         return None, "adept_borrower_ambiguous"
     matches = [
         account for account in self.accounts
-        if str(account.provider_id).lower() == "paris"
+        if str(account.provider_id).casefold() == source_provider
         and str(account.credential_id) == credential
         and (
             (borrower == "primary" and account.is_primary)
@@ -55,7 +59,7 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
         return None, "adept_borrower_ambiguous"
     if matches[0].is_primary:
         if self._borrower_identity_conflict(
-            self.accounts, provider_id="paris",
+            self.accounts, provider_id=source_provider,
             account_id=borrower, identity_id=connection_identity_id,
             credential_id=credential,
         ):
