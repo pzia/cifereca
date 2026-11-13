@@ -116,3 +116,22 @@ def test_batch_reconciliation_never_probes_retired_return_capabilities(tmp_path)
         assert second.read_bytes() == b"second-local-artifact"
     finally:
         service.close()
+
+
+def test_missing_inventory_capability_fails_closed_without_mutating_ledger(tmp_path):
+    """Missing ADEPT inventory capability is not a vendor-version check."""
+    service = _service(tmp_path)
+    try:
+        artifact = _artifact(tmp_path)
+        aid = _acquisition(service, artifact)
+        before = service.storage.acquisition_get(aid)
+        service._kobo_adapter = lambda: NS()
+        service.kobo_profiles = lambda: pytest.fail("capability missing: no profile enumeration")
+        with pytest.raises(Exception) as caught:
+            service.reconcile_adept_acquisition(aid)
+        assert getattr(caught.value, "code", None) == "adept_inventory_unavailable"
+        assert "Kobo" not in str(caught.value)
+        assert service.storage.acquisition_get(aid) == before
+        assert artifact.read_bytes() == b"existing-local-artifact"
+    finally:
+        service.close()

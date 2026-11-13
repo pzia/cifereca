@@ -19,7 +19,7 @@ def reconcile_adept_acquisition(
     runtime = self._kobo_adapter()
     inventory_fn = getattr(runtime, "loan_inventories", None)
     if not callable(inventory_fn):
-        raise AttentionRequired("Inventaire indisponible : runtime Kobo-Adept 1.2.2 requis.", code="adept_inventory_unavailable")
+        raise AttentionRequired("Inventaire ADEPT indisponible : capacité de consultation absente.", code="adept_inventory_unavailable")
     cache = cache if cache is not None else {}
     if "profiles" not in cache:
         cache["profiles"] = self.kobo_profiles()
