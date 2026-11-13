@@ -1,10 +1,12 @@
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from cifereca.models import SearchResult
 from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 from cifereca.core.public_search_projection import project_public_search_result
+from cifereca.core.search_orchestration import _public_rows_from_response
 
 
 def row(provider='synthetic-a', credential='source-b', **changes):
@@ -126,3 +128,53 @@ def test_hostile_authority_scalar_is_not_compared_or_executed():
         public = replace(item, **{field: Hostile()})
         response = ProviderSearchResponse([item], public_notices=(PublicSearchNotice(public),))
         assert project(response, item) is None
+
+
+@pytest.mark.parametrize('provider', ['synthetic-a', 'synthetic-b', 'unknown'])
+def test_orchestrator_admits_only_current_response_public_notice(provider):
+    private = row(provider, owned=True, source_account_id='borrower-b',
+                  download_url='https://private.invalid/download')
+    public = row(provider, metadata={'subjects': ['Fiction'], 'private': 'no'})
+    session = SimpleNamespace(provider_id=provider, credential_id='source-b')
+    response = ProviderSearchResponse(
+        [private], public_notices=(PublicSearchNotice(public),),
+    )
+    admitted = _public_rows_from_response(response, session)
+    assert len(admitted) == 1
+    assert admitted[0].title == 'Public title'
+    assert admitted[0].metadata == {
+        'catalogue_access': 'shared_read_only', 'subjects': ['Fiction'],
+    }
+    assert admitted[0].source_account_id is None
+    assert admitted[0].download_url is None
+    assert admitted[0].owned is False
+    assert _public_rows_from_response(
+        ProviderSearchResponse([private]), session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([replace(private)],
+                               public_notices=(PublicSearchNotice(public),)), session,
+    ) == [admitted[0]]
+
+
+def test_orchestrator_rejects_cross_provider_and_ambiguous_notices():
+    session = SimpleNamespace(provider_id='synthetic-a', credential_id='source-b')
+    item = row()
+    other = row('synthetic-b')
+    assert _public_rows_from_response(
+        ProviderSearchResponse([other], public_notices=(PublicSearchNotice(other),)),
+        session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([item], public_notices=(
+            PublicSearchNotice(item), PublicSearchNotice(item),
+        )), session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([item, object()],
+                               public_notices=(PublicSearchNotice(item),)), session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([item], public_notices=[PublicSearchNotice(item)]),
+        session,
+    ) == []
