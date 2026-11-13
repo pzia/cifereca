@@ -5,15 +5,20 @@ from tests import test_core_ui_1347_sync_action_scope as harness
 
 
 def _window(*, provider_status="ready", enabled=True, config_enabled=True,
-            sources=()):
+            sources=(), provider_id="paris", display_name="Bibliothèques de Paris"):
     w, broker, calls, _build, _page = harness._fixture(sources=list(sources))
-    w.service.config = NS(provider_accounts=lambda provider: [
-        {
-            "provider": "paris", "id": "secret-login",
-            "identity_id": "alice", "enabled": config_enabled,
-            "label": "PRIVATE CARD", "credentials": {"password": "PRIVATE PASSWORD"},
-        }
+    configured = [{
+        "provider": provider_id, "id": "secret-login",
+        "identity_id": "alice", "enabled": config_enabled,
+        "label": "PRIVATE CARD", "credentials": {"password": "PRIVATE PASSWORD"},
+    }]
+    w.service.config = NS(provider_accounts=lambda provider=None: [
+        entry for entry in configured
+        if provider is None or entry["provider"] == provider
     ])
+    w.service.provider_display_name = lambda provider: (
+        display_name if provider == provider_id else provider
+    )
     w.service.registry = NS(
         maybe_get=lambda name: None if provider_status is None
         else NS(descriptor=NS(state=provider_status)),
@@ -33,7 +38,7 @@ def test_paris_offline_card_visible_alongside_no_live_sources_and_action_guarded
     assert "connexion non établie" in row.subtitle
     assert "PRIVATE" not in repr((row.title, row.subtitle))
     assert not w._sync_all_button.sensitive
-    assert "1 connexion(s) Paris configurée(s)" in w._sync_summary.label
+    assert "1 connexion(s) configurée(s) non disponible(s)" in w._sync_summary.label
     assert not w.runner.tasks
     retry, = row.suffixes
     assert retry.label == "Reconnecter toutes les sources"
@@ -95,3 +100,41 @@ def test_async_provider_connection_rebuilds_existing_sync_page_only():
     host._refresh_sync_page = lambda: jobs.append("sync-page")
     connect_configured_sources(host, idle_add=pending.append)
     assert jobs == ["accounts", "loans", "dashboard"]
+
+
+def test_synthetic_provider_connection_notice_is_inert_and_private_data_is_hidden():
+    w, _broker, calls = _window(
+        provider_id="synthetic-lender", display_name="Synthetic Lender",
+    )
+    group = w._sync_sources_box.children[0]
+    row = group.children[0]
+    assert row.title == "Synthetic Lender · Connexion configurée"
+    assert "connexion non établie" in row.subtitle
+    assert "PRIVATE" not in repr((row.title, row.subtitle))
+    assert "1 connexion(s) configurée(s)" in w._sync_summary.label
+    assert not w._sync_all_button.sensitive and not w.runner.tasks
+    row.suffixes[0].click()
+    assert calls[-1] == ("user-reconnect",)
+
+
+def test_synthetic_missing_plugin_has_no_reconnect_permission():
+    w, _broker, calls = _window(
+        provider_id="synthetic-lender", display_name="Synthetic Lender",
+        provider_status=None,
+    )
+    row = w._sync_sources_box.children[0].children[0]
+    assert row.title.startswith("Synthetic Lender")
+    assert "Plugin absent" in row.subtitle
+    assert row.suffixes == []
+    assert not w._sync_all_button.sensitive
+    assert not any(x[0] == "user-reconnect" for x in calls)
+
+
+def test_invalid_descriptor_label_falls_back_to_bounded_public_provider_id():
+    w, _broker, calls = _window(
+        provider_id="synthetic-lender", display_name="PRIVATE/path?auth=secret",
+    )
+    row = w._sync_sources_box.children[0].children[0]
+    assert row.title == "synthetic-lender · Connexion configurée"
+    assert "PRIVATE" not in repr((row.title, row.subtitle))
+    assert not w.runner.tasks
