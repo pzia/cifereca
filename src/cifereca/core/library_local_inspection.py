@@ -238,17 +238,7 @@ def _right_bibliography(right, matches):
     # The provenance tag is bound to the right's exact source identity,
     # not a list of built-in provider names. This affects display priority
     # only: it cannot establish an entitlement, acquisition or local file.
-    provider_id = right.get('provider_id')
-    provenance = right.get('attested_source')
-    attested_description = (
-        type(provider_id) is str and bool(provider_id)
-        and provider_id == provider_id.strip()
-        and type(provenance) is str
-        and provenance in {
-            provider_id + '.authenticated_library',
-            provider_id + '.personal_manifest',
-        }
-    )
+    attested_description = _attested_right_source(right)
 
     def field(name, label):
         recorded = right.get(name)
@@ -309,6 +299,27 @@ def _right_bibliography(right, matches):
             '\n'.join(lines))
 
 
+def _attested_right_source(right):
+    """Exact provider-bound source marker, for read-only descriptions only.
+
+    This does not attest acquisition, local bytes, consent, loan state or
+    ownership. Those remain guarded by their independent rights engines.
+    """
+    if type(right) is not dict:
+        return False
+    provider_id = right.get('provider_id')
+    provenance = right.get('attested_source')
+    return (
+        type(provider_id) is str and bool(provider_id)
+        and provider_id == provider_id.strip()
+        and type(provenance) is str
+        and provenance in (
+            provider_id + '.authenticated_library',
+            provider_id + '.personal_manifest',
+        )
+    )
+
+
 def _right_explanation(right, ledger, placements, artifacts, files, incomplete,
                        *, conflicting_ledger=False, path_states=None):
     """Explain missing *confirmation*, not physical absence or download status.
@@ -319,9 +330,7 @@ def _right_explanation(right, ledger, placements, artifacts, files, incomplete,
     """
     why = []
     path_states = path_states or {}
-    expected = {'kobo': 'kobo.personal_manifest',
-                'numilog': 'numilog.authenticated_library'}.get(right.get('provider_id'))
-    if not expected or right.get('attested_source') != expected:
+    if not _attested_right_source(right):
         why.append('Provenance du droit insuffisamment attestée dans les données locales.')
     if right.get('entitlement_type') != 'owned' or right.get('state') != 'active':
         why.append('Type ou état du droit ne permet pas de confirmer une acquisition possédée.')
