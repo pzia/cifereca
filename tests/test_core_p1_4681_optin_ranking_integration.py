@@ -46,7 +46,7 @@ def _setup(tmp_path, monkeypatch, provider):
     session.search = lambda query, scope, **kwargs: [
         replace(row, author="Alice") for row in original(query, scope, **kwargs)
     ]
-    _attest_public_author(session)
+    _attest_public_author(session, service=service)
     return service, session, MetadataBrokerImpl(service)
 
 
