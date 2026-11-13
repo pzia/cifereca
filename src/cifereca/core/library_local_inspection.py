@@ -474,7 +474,6 @@ class LocalInspection:
         self._missing_case_placements = {}
         self._missing_operator = None
         self._missing_pending = None
-        self._manual_undo = None
         # Optional, one-time private cache guard installed only on a verified
         # handoff. A confirmed Core commit may advance its SQLite stamp ONCE
         # so the same-session undo remains reachable.
@@ -1269,7 +1268,6 @@ class LocalInspection:
         self._declared_right_scopes.clear()
         self._declared_pending = None
         self._declared_last = None
-        self._manual_undo = None
         self._accept_own_core_commit = None
         self._manual_preview_generation += 1
         self._manual_service = None
