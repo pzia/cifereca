@@ -10,6 +10,7 @@ from dataclasses import replace
 import pytest
 
 from cifereca.models import Account, Loan, SearchResult
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 from cifereca.plugin_api import (
     LENDING_ACTION_CONTRACT, LendingActionOriginPolicy,
     LendingActionOutcome, assess_lending_action,
@@ -47,9 +48,23 @@ def fact(op, *, status="supported", declared=True, ready=True):
     )
 
 
+def declared_descriptor(provider: str, *, alias: str | None = None):
+    return ProviderDescriptor(
+        id=provider, display_name="Synthetic provider", description="test",
+        state="ready", capabilities=ProviderCapabilities(),
+        existing_primary_loan_account_alias=alias,
+    )
+
+
 def decide(op, a, target, **opts):
+    # Paris's historical primary alias is explicit in its installed
+    # descriptor, not a privileged provider branch in the admission engine.
+    descriptor = opts.pop("descriptor", None)
+    if descriptor is None and a.provider_id == "paris":
+        descriptor = declared_descriptor("paris", alias="primary")
     return assess_lending_action(
-        op, fact=fact(op), account=a, target=target, **opts,
+        op, fact=fact(op), account=a, target=target,
+        descriptor=descriptor, **opts,
     )
 
 
@@ -100,6 +115,44 @@ def test_paris_primary_alias_is_exact_not_default_for_other_loan_sources():
     bnf = account(provider="bnf-pret", borrower="reader")
     assert decide(
         "loan.renew", bnf, loan(bnf, borrower="primary"),
+        confirmed=True, permission_attested=True,
+    ).reason_code == "scope_unverified"
+
+
+def test_primary_alias_requires_exact_descriptor_not_provider_name():
+    a = account(provider="synthetic-provider")
+    item = loan(a, borrower="main")
+    positive = dict(confirmed=True, permission_attested=True)
+    assert not assess_lending_action(
+        "loan.renew", fact=fact("loan.renew"), account=a,
+        target=item, **positive,
+    ).admitted
+    assert decide(
+        "loan.renew", a, item,
+        descriptor=declared_descriptor("synthetic-provider", alias="main"),
+        **positive,
+    ).admitted
+    for descriptor in (
+        declared_descriptor("synthetic-provider", alias="other"),
+        declared_descriptor("unrelated-provider", alias="main"),
+        declared_descriptor("synthetic-provider"),
+    ):
+        assert decide(
+            "loan.renew", a, item, descriptor=descriptor, **positive,
+        ).reason_code == "scope_unverified"
+    linked = account(provider="synthetic-provider", borrower="linked")
+    assert decide(
+        "loan.renew", linked, loan(linked, borrower="main"),
+        descriptor=declared_descriptor("synthetic-provider", alias="main"),
+        **positive,
+    ).reason_code == "scope_unverified"
+
+
+def test_paris_alias_is_no_longer_implicit_without_declaration():
+    a = account()
+    assert assess_lending_action(
+        "loan.renew", fact=fact("loan.renew"), account=a,
+        target=loan(a, borrower="primary"),
         confirmed=True, permission_attested=True,
     ).reason_code == "scope_unverified"
 
