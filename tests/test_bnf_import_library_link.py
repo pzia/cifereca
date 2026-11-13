@@ -272,8 +272,10 @@ def test_two_storage_connections_cannot_replace_first_binding(bnf_importer):
     ready = Barrier(2)
     def bind(storage, scope):
         ready.wait(timeout=5)
-        return storage.acquisition_bind_bnf_display_loan(
-            result['acquisition_id'], path=result['path'], artifact_id=result['artifact_id'], scope=scope)
+        return storage.acquisition_bind_observed_display_loan(
+            result['acquisition_id'], path=result['path'], artifact_id=result['artifact_id'],
+            scope=scope, placement_provider_id='bnf-pret',
+            provenance_field='bnf_observed_loan')
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(bind, storage, scope)
