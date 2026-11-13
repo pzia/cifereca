@@ -57,7 +57,7 @@ def test_recommendations_discard_b_catalogue_without_waiting_for_session_close(
         ]
 
     session.search = matched_search
-    _attest_public_author(session)
+    _attest_public_author(session, service=service)
 
     def calls():
         return session.calls if provider == "paris" else (
