@@ -90,9 +90,65 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                 loader in source for loader in DYNAMIC_IMPORT_LOADERS
             )
             may_register_pytest_plugin = "pytest_plugins" in source
-            if not mentions_changed_test and not may_import_dynamically and not may_register_pytest_plugin:
+            # Alias imports may hide the canonical loader name at the call
+            # site, but the import declaration itself spells it explicitly.
+            imported_loader = any(
+                "import " + loader in source or "import (" in source
+                for loader in DYNAMIC_IMPORT_LOADERS
+            )
+            if (not mentions_changed_test and not may_import_dynamically
+                    and not may_register_pytest_plugin
+                    and not (imported_loader and any(
+                        fragment in source for fragment in namespace_fragments
+                    ))):
                 continue
             parsed = ast.parse(source, filename=str(candidate))
+            # Follow only namespace values assigned to names used by a
+            # dynamic import. Looking for "tests/" anywhere in the AST
+            # incorrectly treats unrelated test data as import provenance
+            # (e.g. selector tests containing path strings).
+            namespace_names: set[str] = set()
+            assignments = [
+                node for node in ast.walk(parsed)
+                if isinstance(node, (ast.Assign, ast.AnnAssign))
+            ]
+            for _ in range(len(assignments) + 1):
+                changed = False
+                for assignment in assignments:
+                    value = assignment.value
+                    if value is None:
+                        continue
+                    if not (_contains_test_namespace(value, changed_modules)
+                            or any(isinstance(part, ast.Name)
+                                   and part.id in namespace_names
+                                   for part in ast.walk(value))):
+                        continue
+                    targets = (
+                        assignment.targets if isinstance(assignment, ast.Assign)
+                        else [assignment.target]
+                    )
+                    for target in targets:
+                        for part in ast.walk(target):
+                            if isinstance(part, ast.Name) and part.id not in namespace_names:
+                                namespace_names.add(part.id)
+                                changed = True
+                if not changed:
+                    break
+            # Keep import aliases local to each consumer module. A helper
+            # imported as `from importlib import import_module as load`
+            # is still an import loader, even though its call is `load(...)`.
+            dynamic_loader_aliases = set(DYNAMIC_IMPORT_LOADERS)
+            for import_node in ast.walk(parsed):
+                if not isinstance(import_node, ast.ImportFrom):
+                    continue
+                if import_node.module not in {
+                    "importlib", "importlib.util", "importlib.machinery",
+                    "builtins",
+                }:
+                    continue
+                for alias in import_node.names:
+                    if alias.name in DYNAMIC_IMPORT_LOADERS:
+                        dynamic_loader_aliases.add(alias.asname or alias.name)
             for node in ast.walk(parsed):
                 if isinstance(node, ast.Import):
                     if any(alias.name == module or alias.name.startswith(module + ".")
@@ -119,14 +175,18 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                     name = function.id if isinstance(function, ast.Name) else (
                         function.attr if isinstance(function, ast.Attribute) else ""
                     )
-                    if name not in DYNAMIC_IMPORT_LOADERS:
+                    if name not in dynamic_loader_aliases:
                         continue
                     for arg in node.args[:2]:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             if _matches_changed_module(arg.value, changed_modules):
                                 return True
-                        elif _contains_test_namespace(arg, changed_modules):
-                            # Dynamic module expressions cannot be resolved
-                            # without executing test code. Fail closed.
+                        elif (_contains_test_namespace(arg, changed_modules)
+                              or any(isinstance(part, ast.Name)
+                                     and part.id in namespace_names
+                                     for part in ast.walk(arg))):
+                            # Unresolved variable/alias may have been assembled
+                            # from a test namespace elsewhere in this module.
+                            # Fail closed instead of silently skipping plugins.
                             return True
     return False
