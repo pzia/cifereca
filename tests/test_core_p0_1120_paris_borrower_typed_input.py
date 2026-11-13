@@ -90,10 +90,11 @@ def test_borrower_source_provider_must_match_the_loan_not_a_static_alias(tmp_pat
         service.close()
 
 
-def test_primary_borrower_conflict_uses_explicit_loan_source(tmp_path, monkeypatch):
+@pytest.mark.parametrize("provider", ["paris", "PARIS"])
+def test_primary_borrower_conflict_uses_explicit_loan_source(tmp_path, monkeypatch, provider):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        source = replace(loan, source_account_id="primary")
+        source = replace(loan, source_account_id="primary", source_provider=provider)
         checked = []
         monkeypatch.setattr(
             service, "_borrower_identity_conflict",
@@ -103,7 +104,7 @@ def test_primary_borrower_conflict_uses_explicit_loan_source(tmp_path, monkeypat
             source, connection_identity_id="alice",
         ) == ("alice", None)
         assert checked == [{
-            "provider_id": source.source_provider,
+            "provider_id": "paris",
             "account_id": "primary",
             "identity_id": "alice",
             "credential_id": "alice-paris",
