@@ -86,3 +86,30 @@ def test_shared_catalogue_cover_never_exports_credentials_or_delivery_urls(
         assert service.can_direct_download(row) is False
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("provider", ["numilog", "paris", "kobo", "synthetic-alpha", "unknown"])
+@pytest.mark.parametrize("cover,expected", [
+    ("https://cdn.example.org/covers/title.jpg", "https://cdn.example.org/covers/title.jpg"),
+    ("https://cdn.example.org/account/reader/cover.jpg", None),
+    ("https://cdn.example.org/covers/title.jpg?token=secret", None),
+    ("https://user:secret@cdn.example.org/covers/title.jpg", None),
+])
+def test_mirrored_cover_uses_exact_neutral_public_url_guard(
+    tmp_path, provider, cover, expected,
+):
+    from tests.test_catalog_083 import _service
+    from tests.test_core_p0_1354_mirrored_source_scope import notice
+
+    service = _service(str(tmp_path))
+    try:
+        row = replace(
+            notice(), source_provider=provider, thumbnail_url=cover,
+        )
+        assert service._mirror_remote_results([row], identity_id="default") == 1
+        saved, = service.storage.catalog_entries(identity_id="default")
+        assert saved["metadata"]["cover_url"] == expected
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
