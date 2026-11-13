@@ -2273,17 +2273,6 @@ class LibraryService:
 
         The core owns policy/destination/ledger, never an external DRM binary.
         """
-        # A direct LibraryService unit-test may inject a fake runtime without a
-        # PluginManager. Production CiferecaCore always attaches the manager, so
-        # this seam never revives the removed internal adapter fallback.
-        if self._plugin_manager is None:
-            try:
-                injected = self._kobo_adapter()
-            except Exception:
-                injected = None
-            if injected is not None and callable(getattr(injected, "download_request", None)):
-                return dict(injected.download_request(request))
-
         source = request.get("source") if isinstance(request, dict) else None
         if not isinstance(source, dict):
             raise ProviderConfigurationError("Recette d'acquisition sans source")
