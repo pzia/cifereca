@@ -138,3 +138,29 @@ def test_mirror_product_link_requires_same_provider_public_marker(tmp_path, prov
         assert service.storage.acquisitions() == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("provider", [
+    "numilog", "paris", "kobo", "synthetic-alpha", "unknown",
+])
+@pytest.mark.parametrize("path", [
+    "/account/reader/book", "/download/title", "/loan/details",
+    "/session/credential", "/public/private/item",
+    "/auth/login", "/acquisition/file",
+])
+def test_attested_public_product_never_persists_private_route(provider, path):
+    from cifereca.core.search_orchestration import _public_catalog_url
+    assert _public_catalog_url(
+        "https://books.new-publisher.org" + path,
+        provider_id=provider,
+        evidence=f"{provider}.public_search_product_card",
+    ) is None
+
+
+@pytest.mark.parametrize("path", [
+    "/catalogue/cover.jpg", "/covers/public/item.webp",
+])
+def test_generic_public_cover_keeps_nonprivate_paths(path):
+    from cifereca.core.search_orchestration import _shared_catalogue_cover_url
+    url = "https://cdn.new-publisher.org" + path
+    assert _shared_catalogue_cover_url(url) == url
