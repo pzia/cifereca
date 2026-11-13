@@ -259,3 +259,29 @@ def test_missing_or_malformed_private_negative_proof_cannot_be_reviewable(incomp
         assert "acquisition_conflict" in manual.codes
 
 
+
+
+def test_numilog_local_evidence_reuses_one_source_identity_decision():
+    """The two diagnostic proof fields share one typed provider veto."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(LocalInspection))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    initializer = next(
+        node for node in cls.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    checks = [
+        node for node in ast.walk(initializer)
+        if isinstance(node, ast.Compare)
+        and any(isinstance(part, ast.Constant) and part.value == "numilog"
+                for part in [node.left, *node.comparators])
+    ]
+    assert len(checks) == 1
+    assert any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "is_numilog_right"
+                for target in node.targets)
+        for node in ast.walk(initializer)
+    )
