@@ -1260,7 +1260,7 @@ class RuntimeCapabilitiesBrokerImpl:
             contract_version = None
 
         return RuntimeAcquisitionCapabilities(
-            provider_id="kobo",
+            provider_id=provider,
             available=state.get("available") is True,
             compatible=state.get("compatible") is True,
             operational=state.get("operational") is True,
