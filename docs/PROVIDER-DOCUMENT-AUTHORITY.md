@@ -2,7 +2,7 @@
 
 **Statut : actif — 13 novembre 2026 · ticket [#5519](https://github.com/pzia/cifereca/issues/5519).**
 
-Cet index est **le point d'entrée de classement**, pas une nouvelle ABI. L'état livré se vérifie dans `src/cifereca/plugin_api/`, les signatures Python et les tests du **HEAD installé**. Une architecture cible ne doit jamais être présentée comme un comportement déjà déployé.
+Cet index est **le point d'entrée de classement**, pas une nouvelle ABI. La frontière publique Python se nomme `cifereca.plugin_api`. L'état livré se vérifie dans `src/cifereca/plugin_api/`, les signatures Python et les tests du **HEAD installé**. Une architecture cible ne doit jamais être présentée comme un comportement déjà déployé.
 
 | Niveau | Référence | Ce qu'elle fait foi |
 | --- | --- | --- |
