@@ -59,6 +59,7 @@ _REASONS = {
     'artifact_sha_size_candidate': 'Même SHA et taille : mêmes octets, sans preuve de droit.',
     'backup_sha_size_candidate': 'Sauvegarde avec même SHA et taille : provenance à vérifier.',
     'explicit_placement_sha_size': 'Placement explicite avec SHA et taille concordants.',
+    'explicit_provider_origin_placement_sha_size': 'Origine fournisseur et fichier vérifiés.',
     'explicit_right_ledger_placement_sha_size': 'Droit, acquisition complète et placement concordants.',
 }
 _INVENTORY_LIMIT_LABELS = {
@@ -667,9 +668,13 @@ class LocalInspection:
                 states.add('metadata_candidate')
             if index in ambiguous:
                 states.add('ambiguous')
-            providers = {_provider(rights[e.row_index].get('provider_id')) for e in edges[index]
-                         if e.table == 'entitlements' and e.certainty == 'attested'
-                         and 0 <= e.row_index < len(rights) and rights[e.row_index].get('identity_id') == identity_id}
+            providers = set()
+            for edge in edges[index]:
+                if edge.certainty != 'attested' or edge.table not in {'entitlements', 'provider_origins'}:
+                    continue
+                rows = audit.snapshot.tables.get(edge.table, [])
+                if 0 <= edge.row_index < len(rows) and rows[edge.row_index].get('identity_id') == identity_id:
+                    providers.add(_provider(rows[edge.row_index].get('provider_id')))
             provider = next(iter(providers)) if 'confirmed_link' in states and len(providers) == 1 else 'unattributed'
             details = [f'Fichier local : {_text(observation.path)}',
                        f'Taille : {observation.size}', f'Format : {_text(observation.media_format)}',

@@ -1,4 +1,4 @@
-"""Core generic attested-writer collision checks, independent of provider projectors."""
+"""Owner collision checks at the active entitlement writer."""
 from __future__ import annotations
 
 import json
@@ -16,7 +16,7 @@ from tests.test_sync_state_contract import _service
     {"entitlement_type": "loan"},
     {"loan_id": "someone-else-loan"},
 ])
-def test_attested_owned_writer_refuses_every_conflicting_owner_coordinate(
+def test_entitlement_writer_refuses_every_conflicting_owner_coordinate(
     tmp_path, mutation,
 ):
     service = _service(tmp_path)
@@ -37,7 +37,8 @@ def test_attested_owned_writer_refuses_every_conflicting_owner_coordinate(
             "title": "PRIVATE REASSIGNMENT",
             "source": "numilog.authenticated_library",
         }}
-        assert service.storage.entitlement_put_attested_owned(offered) is False
+        with pytest.raises(ValueError, match="entitlement_source_scope_conflict"):
+            service.storage.entitlement_put(offered)
         assert service.storage.entitlements() == before
         assert "PRIVATE REASSIGNMENT" not in json.dumps(before)
     finally:

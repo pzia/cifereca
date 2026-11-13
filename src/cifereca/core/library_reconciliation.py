@@ -30,6 +30,21 @@ _COLUMNS = {
     'paris_borrower_adept_bindings': 'connection_identity_id borrower_identity_id profile_id',
 }
 
+# Canonical acquisitions persist a receipt as a provider OriginLink, with
+# the exact owner and right coordinates in SourceReference. Older databases
+# have neither table. Keep that compatibility path independent.
+_PROVIDER_ORIGINS = """
+    SELECT o.origin_link_id,o.source_reference_id,o.identity_id,o.artifact_id,
+           o.evidence_ref AS receipt_ref,
+           s.provider_id,s.credential_id,s.account_id,s.branch_id,s.edition_id,
+           s.right_id,s.reference_kind,s.state,s.evidence_kind,s.evidence_ref,
+           s.observed_at
+      FROM origin_links AS o
+      LEFT JOIN source_references AS s
+        ON s.source_reference_id=o.source_reference_id AND s.identity_id=o.identity_id
+     WHERE o.origin_kind='provider'
+"""
+
 # These tables can be reduced inside SQLite for exactly one active identity.
 # The acquisition ledger also needs foreign conflict evidence, but ONLY for
 # an exact selected entitlement ID or provider/credential/borrower/item tuple.
@@ -153,17 +168,18 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                 result.reasons.add('snapshot_identity_migration')
                 return result
             remaining_rows = max_rows
-            for name, columns in _COLUMNS.items():
+            projections = dict(_COLUMNS)
+            if {'origin_links', 'source_references'} & names:
+                projections['provider_origins'] = None
+            for name, columns in projections.items():
                 if cancelled() or time.monotonic() >= deadline:
                     raise sqlite3.OperationalError('interrupted')
-                if name not in names:
-                    result.reasons.add('snapshot_schema_incomplete')
-                    continue
-                available = {r[1] for r in db.execute(f'PRAGMA table_info({name})')}
-                wanted = columns.split()
-                if not set(wanted) <= available:
-                    result.reasons.add('snapshot_schema_incomplete')
-                    continue
+                if columns is not None:
+                    available = {r[1] for r in db.execute(f'PRAGMA table_info({name})')}
+                    wanted = columns.split()
+                    if name not in names or not set(wanted) <= available:
+                        result.reasons.add('snapshot_schema_incomplete')
+                        continue
                 # Stream small batches instead of materialising potentially
                 # 100k raw SQLite tuples before parsing each row. This keeps
                 # extra projection memory bounded and checks the expensive
@@ -174,9 +190,16 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                 # budget. The later Core in-memory scope guard remains
                 # mandatory and independently rejects foreign borrowers.
                 # SQLite operates solely on the immutable private image.
-                sql = f"SELECT {','.join(wanted)} FROM {name}"
+                sql = _PROVIDER_ORIGINS if columns is None else f"SELECT {','.join(wanted)} FROM {name}"
                 params = ()
-                if identity_id is not None:
+                if name == 'provider_origins':
+                    if not {'origin_links', 'source_references'} <= names:
+                        result.reasons.add('snapshot_schema_incomplete')
+                        continue
+                    if identity_id is not None:
+                        sql += ' AND o.identity_id=?'
+                        params = (identity_id,)
+                elif identity_id is not None:
                     if name in _SCOPABLE_COLUMNS:
                         sql += " WHERE identity_id=?"
                         params = (identity_id,)
@@ -218,6 +241,8 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                         )
                         params = (identity_id, identity_id, identity_id)
                 cursor = db.execute(sql + " LIMIT ?", (*params, remaining_rows + 1))
+                if name == 'provider_origins':
+                    wanted = [column[0] for column in cursor.description]
                 projected = []
                 overflow = False
                 if name == 'catalog_entries':
@@ -392,12 +417,39 @@ class ReconciliationReport:
                 'edge_counts': dict(sorted(Counter(e.reason for e in self.edges).items()))}
 
 
+def _attested_purchase_origin(origin):
+    # Use the publisher's coordinate encoding to reject a reference or
+    # receipt copied onto another owner, edition or artifact.
+    from .canonical_publication import _stable
+
+    source_keys = (
+        'identity_id', 'provider_id', 'credential_id', 'account_id',
+        'branch_id', 'edition_id', 'right_id', 'reference_kind',
+    )
+    if (origin['reference_kind'] != 'purchase'
+            or origin['state'] != 'active'
+            or origin['evidence_kind'] != 'provider_response'
+            or not all(
+                type(origin.get(key)) is str and len(origin[key]) <= 1024
+                and (key == 'account_id' or bool(origin[key].strip()))
+                for key in (*source_keys, 'receipt_ref', 'evidence_ref', 'observed_at')
+            )
+            or origin['receipt_ref'] == origin['evidence_ref']):
+        return False
+    source_id = _stable('source', *(origin[key] for key in source_keys))
+    return (origin['source_reference_id'] == source_id
+            and origin['origin_link_id'] == _stable(
+                'origin', 'provider', origin['identity_id'], origin['artifact_id'],
+                source_id, origin['receipt_ref'],
+            ))
+
+
 def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lambda: False,
               seconds: float = 10) -> ReconciliationReport:
     """Compare file/placement/artifact/right evidence without inferring ownership.
 
-    Confirm only full entitlement -> successful ledger -> artifact -> explicit
-    identity/provider/item placement, with exact SHA AND size. SHA alone is a
+    Confirm a provider purchase OriginLink or a full historical entitlement
+    and successful ledger, with exact identity, placement, SHA and size. SHA alone is a
     present_unlinked byte candidate, never attested right. Missing paths are
     asserted only for completely scanned owning identities; otherwise unknown.
     OPF is retained in Inventory for private inspection, not title matching.
@@ -464,10 +516,18 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
         rights_by_placement[(right['identity_id'], right['provider_id'], right['item_id'])].append((ri, right))
     placements = tables.get('placements', [])
     by_path = defaultdict(list)
+    present_placements = Counter()
     for index, row in enumerate(placements):
         if index_stopped():
             return result
         by_path[(row['identity_id'], row['path'])].append((index, row))
+        if row['state'] == 'present':
+            present_placements[(row['identity_id'], row['artifact_id'])] += 1
+    origins = defaultdict(list)
+    for oi, origin in enumerate(tables.get('provider_origins', [])):
+        if index_stopped():
+            return result
+        origins[(origin['identity_id'], origin['artifact_id'])].append((oi, origin))
     backup_hashes = defaultdict(list)
     for bi, row in enumerate(tables.get('backup_items', [])):
         if index_stopped():
@@ -500,6 +560,7 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
             result.reasons.add('comparison_budget')
         links = by_path.get((observation.identity_id, observation.path), [])
         confirmed = []
+        canonical = None
         for pi, placement in links:
             comparisons += 1
             if in_file_stopped():
@@ -527,6 +588,25 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                     categories.add('hash_mismatch')
                 continue
             result.edges.append(EvidenceEdge(fi, 'placements', pi, 'explicit_placement_sha_size', 'bytes'))
+            verified_bytes = (
+                len(candidates) == 1 and placement['state'] == 'present'
+                and observation.validation == 'ok'
+                and observation.structure_validation == 'epub_structure_crc_ok'
+                and observation.media_format == 'epub'
+                and candidates[0]['media_format'] in {'epub', 'kepub'}
+                and candidates[0]['artifact_id'] == 'sha256:' + observation.sha256
+            )
+            if placement['provider_id'] is None and placement['source_item_id'] is None:
+                origin_key = (observation.identity_id, placement['artifact_id'])
+                provider_origins = origins.get(origin_key, [])
+                if len(provider_origins) > 1 or (
+                        provider_origins and present_placements[origin_key] != 1):
+                    categories.add('ambiguous')
+                elif verified_bytes and provider_origins:
+                    oi, origin = provider_origins[0]
+                    if _attested_purchase_origin(origin):
+                        canonical = oi
+                continue
             edition_rights = rights_by_placement.get((
                 observation.identity_id, placement['provider_id'],
                 placement['source_item_id'],
@@ -562,13 +642,7 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                             and a['artifact_id'] == placement['artifact_id']
                             and all(a.get(k) == right.get(k) for k in ('identity_id', 'provider_id', 'credential_id', 'account_id', 'item_id'))]
                 # Conflicting owner evidence in the linked ledger is not ignored.
-                if (matching and len(ledger) == 1 and len(candidates) == 1
-                        and placement['state'] == 'present'
-                        and observation.validation == 'ok'
-                        and observation.structure_validation == 'epub_structure_crc_ok'
-                        and observation.media_format == 'epub'
-                        and candidates[0]['media_format'] in {'epub', 'kepub'}
-                        and candidates[0]['artifact_id'] == 'sha256:' + observation.sha256):
+                if matching and len(ledger) == 1 and verified_bytes:
                     confirmed.append(ri)
             if 'comparison_budget' in result.reasons or 'cancelled' in result.reasons:
                 break
@@ -582,18 +656,24 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
         # selected-file comparison is complete and uniqueness is established.
         # A truncated or ambiguous graph may keep byte-level candidates, but
         # never a right-level attestation (including edge_counts/private UI).
-        if confirmed:
+        if confirmed or canonical is not None:
             in_file_stopped()
-        if (len(confirmed) == 1 and len(links) == 1
+        if (len(confirmed) + (canonical is not None) == 1 and len(links) == 1
                 and not snapshot.reasons
                 and not {'comparison_budget', 'cancelled'} & result.reasons):
             categories.discard('present_unlinked')
             categories.add('confirmed_link')
-            verified.update(confirmed)
-            result.edges.append(EvidenceEdge(
-                fi, 'entitlements', confirmed[0],
-                'explicit_right_ledger_placement_sha_size', 'attested',
-            ))
+            if canonical is not None:
+                result.edges.append(EvidenceEdge(
+                    fi, 'provider_origins', canonical,
+                    'explicit_provider_origin_placement_sha_size', 'attested',
+                ))
+            else:
+                verified.update(confirmed)
+                result.edges.append(EvidenceEdge(
+                    fi, 'entitlements', confirmed[0],
+                    'explicit_right_ledger_placement_sha_size', 'attested',
+                ))
         else:
             if confirmed or len(links) > 1:
                 categories.add('ambiguous')
