@@ -30,7 +30,7 @@ def _service(tmp_path: Path) -> LibraryService:
 
     def test_session_owner(provider_id, credential_id):
         for session in service._sessions.values():
-            if (type(session) is _FakeSession
+            if (isinstance(session, _FakeSession)
                     and session.provider_id == provider_id
                     and session.credential_id == credential_id):
                 return "alice"
