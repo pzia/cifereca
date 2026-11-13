@@ -1384,6 +1384,14 @@ class AdeptProfileBrokerImpl:
                 code="adept_profile_provisioning_incomplete",
             )
         profile = self._ref(candidates[0])
+        if sum(
+            1 for row in rows
+            if str(row.get("profile_id") or row.get("id") or "").strip() == profile.profile_id
+        ) != 1:
+            raise AttentionRequired(
+                "L'identifiant du profil ADEPT est ambigu dans l'inventaire.",
+                code="adept_profile_provisioning_incomplete",
+            )
         acknowledged_id = str(shown.get("profile_id") or shown.get("id") or "").strip()
         if acknowledged_id and acknowledged_id != profile.profile_id:
             raise AttentionRequired(
