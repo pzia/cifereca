@@ -142,7 +142,10 @@ def test_core_service_explicit_writer_checks_exact_owner_and_key(tmp_path):
             write(identity_id="alice", library_key="artifact:foreign",
                   preference="liked", expected_revision=0, user_confirmed=True)
         assert LibraryService.reading_preference_snapshot(host, identity_id="alice").revision == 0
-        assert calls == [{"identity_id": "alice", "scan": False}]
+        assert calls == [
+            {"identity_id": "bob", "scan": False},
+            {"identity_id": "alice", "scan": False},
+        ]
         a1 = write(
             identity_id="alice", library_key="artifact:verified",
             preference="liked", expected_revision=0, user_confirmed=True,
