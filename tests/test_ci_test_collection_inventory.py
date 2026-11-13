@@ -6,7 +6,7 @@ import json
 import pytest
 
 from scripts.ci_test_collection_inventory import (
-    CollectionCapture, classify, make_report, validate_manifest,
+    CollectionCapture, classify, load_classifications, make_report, validate_manifest,
 )
 
 
@@ -107,3 +107,33 @@ def test_capture_reads_real_pytest_item_objects_without_running_them():
         "nodeid": "tests/test_a.py::test_a[1]",
         "skip_marked": True, "xfail_marked": False,
     }]
+
+def test_independent_manifests_merge_and_report_overlapping_claims(tmp_path):
+    base = tmp_path / "manifest.json"
+    fragments = tmp_path / "manifest.d"
+    fragments.mkdir()
+    core = fragments / "core.json"
+    ui = fragments / "coreui.json"
+    base.write_text(json.dumps(_manifest(_row("tests/test_ci.py"))), encoding="utf-8")
+    core.write_text(json.dumps(_manifest(_row("tests/test_core.py"))), encoding="utf-8")
+    ui.write_text(json.dumps(_manifest(
+        _row("tests/test_ui.py", owner="coreui", business="ui"),
+    )), encoding="utf-8")
+    assert set(load_classifications(base)) == {"tests/test_ci.py"}
+    assert set(load_classifications(base, fragments=fragments)) == {
+        "tests/test_ci.py", "tests/test_core.py", "tests/test_ui.py",
+    }
+
+    ui.write_text(json.dumps(_manifest(_row("tests/test_core.py"))), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"tests/test_core.py: .*core.json and .*coreui.json"):
+        load_classifications(base, fragments=fragments)
+
+
+def test_invalid_fragment_reports_its_path(tmp_path):
+    base = tmp_path / "manifest.json"
+    base.write_text(json.dumps(_manifest()), encoding="utf-8")
+    fragments = tmp_path / "manifest.d"
+    fragments.mkdir()
+    (fragments / "broken.json").write_text("invalid", encoding="utf-8")
+    with pytest.raises(ValueError, match="broken.json"):
+        load_classifications(base, fragments=fragments)
