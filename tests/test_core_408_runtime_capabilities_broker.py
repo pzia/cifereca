@@ -115,3 +115,19 @@ def test_snapshot_has_no_raw_runtime_payload_or_secret_fields():
     assert not hasattr(snapshot, "payload")
     assert not hasattr(snapshot, "stdout")
     assert not hasattr(snapshot, "stderr")
+
+
+
+def test_formats_project_all_declared_recipes_without_provider_names():
+    service = Service({
+        "capabilities": {"download": {
+            "synthetic_recipe": {"formats": ["PDF", "CBZ", "pdf"]},
+            "http": {"formats": ["EPUB"]},
+            "invalid": "untrusted",
+        }},
+    })
+
+    snapshot = RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo")
+
+    assert snapshot.formats == ("pdf", "cbz", "epub")
+    assert snapshot.modes == ()
