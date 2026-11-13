@@ -229,3 +229,21 @@ def test_sync_sources_reject_explicit_invalid_identity_before_account_read(ident
 
     assert core.account_reads == 0
     assert core.acquisitions == []
+
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", "\t", 0])
+def test_sync_batch_rejects_invalid_identity_with_structured_result(identity):
+    from cifereca.brokers import SynchronizationBrokerImpl
+    from cifereca.plugin_api import SyncRequest
+
+    core = FakeCore()
+    result = SynchronizationBrokerImpl(core).synchronize(
+        SyncRequest(identity_id=identity),
+    )
+
+    assert result.ok is False
+    assert result.changed == 0
+    assert result.facts == {"reason": "identity_required"}
+    assert core.account_reads == 0
+    assert core.acquisitions == []
