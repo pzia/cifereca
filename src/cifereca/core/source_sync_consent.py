@@ -326,6 +326,16 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
     if type(enabled) is not bool:
         raise ValueError("invalid source enabled preference")
     scope = scope_for_account(account)
+    # The legacy source digest aliases an empty primary account ID with the
+    # literal upstream ID "provider:credential:primary". Unlike the new CAS
+    # policy this inventory preference cannot distinguish those two owners.
+    # Reject the ambiguous writer before it can mutate either account's
+    # inventory preference, even when the supplied digest looks exact.
+    from .legacy_source_account_id import ambiguous_legacy_source_account_id
+    if ambiguous_legacy_source_account_id(
+        scope.provider_id, scope.credential_id, scope.account_id,
+    ):
+        raise ValueError('source_sync_toggle_scope_mismatch')
     if preference_key != source_enablement_key(scope):
         raise ValueError('source_sync_toggle_scope_mismatch')
     # The public broker supplies its exact account object. An equal-but-
