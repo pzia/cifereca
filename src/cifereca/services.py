@@ -2770,8 +2770,7 @@ class LibraryService:
                 or type(profile_name) is not str or not profile_name
                 or self.identity_by_id(identity_id) is None):
             return []
-        profiles = self.kobo_profiles()
-        row = self._adept_profile_row(profile_name, profiles)
+        row = self._adept_profile_row(profile_name)
         return [row] if type(row) is dict else []
 
     @staticmethod
