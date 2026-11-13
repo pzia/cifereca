@@ -1767,10 +1767,16 @@ _PARIS_RESOURCE_FACET_FIELDS = {
 
 
 def _safe_paris_resource_facets(
-    metadata: dict[str, Any], scenario: str,
+    metadata: dict[str, Any], scenario: str, *, provider_id: str = "paris",
 ) -> dict[str, Any]:
-    """Persist bounded, already-attested Paris fields for the exact edition."""
-    if scenario not in {"CATALOGUE", "EBOOKS"}:
+    """Persist bounded Resource facets only with exact source-bound evidence.
+
+    The historical helper name remains for existing callers; admission is
+    based on the producing provider identity, not a Core supplier dispatch.
+    """
+    if (scenario not in {"CATALOGUE", "EBOOKS"}
+            or type(provider_id) is not str or not provider_id
+            or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) is None):
         return {}
     evidence = metadata.get("bibliography_evidence")
     if type(evidence) is not dict:
@@ -1784,7 +1790,7 @@ def _safe_paris_resource_facets(
         if type(raw_values) is not list or not 1 <= len(raw_values) <= 12:
             continue
         expected = {
-            "source": "paris.syracuse.search",
+            "source": f"{provider_id}.syracuse.search",
             "source_field": "Resource." + source_field,
             "scope": scenario,
             "confidence": "upstream_field_present",
@@ -1891,10 +1897,12 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             safe = _safe_public_search_text(name, raw_meta.get(name))
             if safe is not None:
                 allowed_meta[name] = safe
-        if row.source_provider == "paris":
-            # Only observed Resource fields + their exact scenario-specific
-            # evidence; never persist raw SearchService response dictionaries.
-            allowed_meta.update(_safe_paris_resource_facets(raw_meta, row.scenario))
+        # Only persist bounded Resource facets whose exact, scenario-specific
+        # upstream evidence matches the source of this same result. No
+        # supplier identity grants additional metadata or a right.
+        allowed_meta.update(_safe_paris_resource_facets(
+            raw_meta, row.scenario, provider_id=row.source_provider,
+        ))
         # The generic youth-age contract is also edition-scoped and already
         # structured. Keep only its validated bounds/kind and harmless original
         # label; never persist a raw nested provider age object, provenance
