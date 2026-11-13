@@ -77,8 +77,13 @@ class SearchRegression(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.service=_service(self.tmp.name)
         self.search=Mock(side_effect=httpx.ReadTimeout('unavailable'))
-        self.session=NS(connected=True,capabilities=NS(search=True),provider_id='gallica',search=self.search,descriptor=NS(display_name='Gallica'))
+        self.session=NS(connected=True,capabilities=NS(search=True),provider_id='gallica',credential_id='test-alice-gallica',search=self.search,descriptor=NS(display_name='Gallica'))
         self.service._sessions={'test':self.session};self.service._provider_enabled_for_identity=lambda _:True
+        # The search regression fixture belongs to the active "default"
+        # profile. Production unknown-owner sessions remain fail-closed.
+        self.service.storage.identity_for_connection=lambda p,c: (
+            'default' if (p,c)==('gallica','test-alice-gallica') else None
+        )
         self.service._search_query_variants=lambda _:['original','looser','last']
         self.service._mirror_remote_results=lambda _:None
     def tearDown(self):self.service.close();self.tmp.cleanup()
