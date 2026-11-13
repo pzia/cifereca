@@ -80,6 +80,12 @@ class PluginDescriptor:
     requires_contracts: tuple[ContractRequirement, ...] = ()
     # Optional versioned manifest contribution: read-only GUI text, no permissions.
     ui_usage_hint: str = ""
+    # Optional provider-declared runtime association, not an authorization or
+    # proof of readiness. Core must cross-check the installed runtime service.
+    runtime_acquisition_service: str | None = None
+    # Reciprocal runtime assertion of exact logical provider IDs. This
+    # declaration alone never grants acquisition rights or execution.
+    runtime_acquisition_providers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

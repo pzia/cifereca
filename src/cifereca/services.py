@@ -1152,6 +1152,10 @@ class LibraryService:
     def provider_descriptors(self):
         return provider_sessions.provider_descriptors(self)
 
+    def runtime_acquisition_binding(self, provider_id: str) -> str | None:
+        """Read-only reciprocal registry proof; does not invoke a runtime."""
+        return provider_sessions.runtime_acquisition_binding(self, provider_id)
+
     def provider_diagnostic_state(self) -> dict[str, Any]:
         return provider_sessions.provider_diagnostic_state(self)
 

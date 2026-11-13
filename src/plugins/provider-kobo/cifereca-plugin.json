@@ -36,6 +36,7 @@
     {
       "id": "provider.kobo",
       "type": "provider.library",
+      "runtime_acquisition_service": "runtime.kobo-adept",
       "entrypoint": "cifereca_kobo:PLUGIN",
       "priority": 60,
       "display_name": "Kobo",

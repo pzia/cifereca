@@ -439,6 +439,47 @@ def provider_descriptors(self):
     return self.registry.descriptors()
 
 
+def runtime_acquisition_binding(self, provider_id: str) -> str | None:
+    """Resolve a reciprocal installed provider/runtime claim, without probing.
+
+    A provider's declaration is insufficient on its own: the exact runtime
+    must independently claim the same logical source, and both plugins must
+    still be enabled and ready. No UI identity or plugin recommendation is
+    evidence. This accessor never activates the runtime or grants a download.
+    """
+    if type(provider_id) is not str or not provider_id:
+        return None
+    manager = getattr(self, "_plugin_manager", None)
+    if manager is None:
+        return None
+    try:
+        plugin = self.registry.maybe_get(provider_id)
+        if plugin is None or plugin.descriptor.id != provider_id:
+            return None
+        plugin_id = self._provider_plugin_ids.get(provider_id)
+        if type(plugin_id) is not str or not plugin_id:
+            return None
+        source = manager.status(plugin_id)
+        source_descriptor = source.descriptor
+        if (source.enabled is not True or source.state != "ready"
+                or source_descriptor.id != plugin_id
+                or source_descriptor.type != "provider.library"):
+            return None
+        runtime_id = source_descriptor.runtime_acquisition_service
+        if type(runtime_id) is not str or not runtime_id:
+            return None
+        runtime = manager.status(runtime_id)
+        runtime_descriptor = runtime.descriptor
+        if (runtime.enabled is not True or runtime.state != "ready"
+                or runtime_descriptor.id != runtime_id
+                or runtime_descriptor.type != "runtime.adapter"
+                or provider_id not in runtime_descriptor.runtime_acquisition_providers):
+            return None
+        return runtime_id
+    except (AttributeError, LookupError, TypeError, ValueError):
+        return None
+
+
 def provider_diagnostic_state(self) -> dict[str, Any]:
     """Expose typed session state, never call an untrusted plugin's serializer.
 

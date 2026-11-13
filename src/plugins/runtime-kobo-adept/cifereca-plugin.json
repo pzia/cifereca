@@ -11,6 +11,7 @@
     {
       "id": "runtime.kobo-adept",
       "type": "runtime.adapter",
+      "runtime_acquisition_providers": ["kobo"],
       "entrypoint": "cifereca_kobo_adept_runtime:PLUGIN",
       "priority": 100,
       "display_name": "Kobo-Adept Runtime",
