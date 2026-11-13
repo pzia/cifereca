@@ -66,6 +66,29 @@ def test_detached_account_cannot_write_legacy_inventory_preference(tmp_path):
         storage.close()
 
 
+@pytest.mark.parametrize("provider", ["paris", "kobo", "bnf-pret", "numilog"])
+def test_literal_primary_alias_cannot_write_other_accounts_legacy_inventory(
+    tmp_path, provider,
+):
+    storage = Storage(tmp_path / "library.sqlite3")
+    try:
+        broker = fake_broker(storage)
+        account = broker.service.accounts[0]
+        account.provider_id = provider
+        account.unique_id = provider + ":" + account.credential_id + ":primary"
+        alias_key = broker._preference_key(broker._source_id(account))
+        from cifereca.core.legacy_source_identifier import legacy_source_id
+        assert broker._source_id(account) == legacy_source_id(
+            account.identity_id, provider, account.credential_id, "",
+        )
+        with pytest.raises(ValueError, match="source_sync_toggle_scope_mismatch"):
+            set_inventory_source_enabled(broker.service, account, False, alias_key)
+        assert storage.metadata_get(alias_key) is None
+        assert storage.metadata_get(policy_key(scope_for_account(account))) is None
+    finally:
+        storage.close()
+
+
 def test_legacy_inventory_toggle_does_not_create_cas_opt_in(tmp_path):
     storage = Storage(tmp_path / "library.sqlite3")
     try:
