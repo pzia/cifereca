@@ -148,3 +148,26 @@ def test_identity_broker_explicit_empty_scope_never_uses_navigation_selection():
 
     # Existing explicit scoped reads remain stable regardless of UI selection.
     assert {row.credential_id for row in broker.accounts("profile-B")} == {"cred-C"}
+
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", "\t", 0])
+def test_acquisition_requires_explicit_identity_before_any_account_read(identity):
+    core = FakeCore()
+    broker = AcquisitionBrokerImpl(core)
+
+    with pytest.raises(ValueError, match="identity_id_required"):
+        broker.acquire(item("cred-A"), identity_id=identity, account_id="same-upstream-id")
+
+    assert core.account_reads == 0
+    assert core.acquisitions == []
+
+
+def test_acquisition_scoped_identity_ignores_other_profiles_with_same_account_id():
+    core = FakeCore()
+    broker = AcquisitionBrokerImpl(core)
+
+    assert broker.acquire(
+        item("cred-C"), identity_id="profile-B", account_id="same-upstream-id",
+    ) == "cred-C"
+    assert core.acquisitions == ["cred-C"]
