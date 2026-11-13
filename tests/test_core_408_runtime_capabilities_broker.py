@@ -186,6 +186,32 @@ def test_unattested_malformed_or_foreign_producer_never_falls_back_to_kobo():
         assert service.calls == []
 
 
+def test_attested_producer_exception_does_not_probe_other_runtime():
+    class FailedProducer(Service):
+        def runtime_acquisition_state(self, provider_id, *, force=False):
+            raise RuntimeError("sensitive runtime path / secret")
+
+    service = FailedProducer({"available": True, "kobo_delegated_available": True})
+    for provider in ("synthetic", "kobo"):
+        assert RuntimeCapabilitiesBrokerImpl(service).acquisition(
+            provider, refresh=True,
+        ) == RuntimeAcquisitionCapabilities(provider_id=provider)
+    assert service.calls == []
+
+
+def test_attested_producer_property_exception_fails_closed():
+    class FailedProperty(Service):
+        @property
+        def runtime_acquisition_state(self):
+            raise RuntimeError("sensitive runtime path / secret")
+
+    service = FailedProperty({"available": True})
+    assert RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo") == (
+        RuntimeAcquisitionCapabilities(provider_id="kobo")
+    )
+    assert service.calls == []
+
+
 def test_attested_producer_must_publish_modes_not_legacy_vendor_flags():
     service = AttestedService({
         "provider_id": "synthetic", "provider_attested": True,
