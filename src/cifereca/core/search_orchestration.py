@@ -351,7 +351,7 @@ def _shared_catalogue_cover_url(value: Any) -> str | None:
     """
     from urllib.parse import urlsplit
 
-    public = _numilog_public_catalog_url(value, cover=True)
+    public = _public_catalog_url(value, cover=True)
     if public is None:
         return None
     segments = {segment.casefold() for segment in urlsplit(public).path.split("/")}
@@ -1641,17 +1641,15 @@ def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, f
     )
 
 
-def _numilog_public_catalog_url(
+def _public_catalog_url(
     value: Any, *, cover: bool = False, evidence: str | None = None,
+    provider_id: str | None = None,
 ) -> str | None:
-    """Keep only public HTTPS links qualified by their producing plugin.
+    """Structurally validate public URLs without supplier-specific decisions.
 
-    Numilog's public product hosts and path grammar belong to the Numilog
-    adapter, which emits the closed evidence marker after checking the actual
-    owned-card link. Core does not maintain a vendor-host allowlist and never
-    infers an acquisition URL from a catalogue notice. For older mirrored
-    cover fields the adapter has already verified public image origins; Core
-    retains its independent structural, query-free HTTP(S) protection.
+    Product URLs require exact producer-qualified evidence; a private search
+    result or an arbitrary friendly URL cannot grant public-link authority.
+    Only the producing plugin can attest its public title/card parser.
     """
     from urllib.parse import urlsplit
     import ipaddress
@@ -1694,19 +1692,19 @@ def _numilog_public_catalog_url(
             ".acsm", ".lcpl", ".epub", ".pdf", ".zip",
         )):
             return None
-        # A public product link is qualified by the producing Numilog
-        # adapter's private-card parser. A raw SearchResult without this
-        # evidence may not persist an arbitrary private/download URL.
-        if evidence not in {
-            "numilog.library_title_link",
-            "numilog.public_search_product_card",
-        }:
+        # No evidence inferred from the URL, a known provider, an owned
+        # flag, or a catalogue row. The marker must match the producer exactly.
+        if (type(provider_id) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) is None
+                or evidence not in {
+                    f"{provider_id}.library_title_link",
+                    f"{provider_id}.public_search_product_card",
+                }):
             return None
-        # The public search card has no authenticated-library legacy query.
-        # The optional ref=library belongs only to the exact private-card
-        # title link checked separately by the provider adapter.
+        # The optional historical library reference belongs only to the
+        # private-card marker, never an anonymous search card.
         allowed_queries = (
-            ("", "ref=library") if evidence == "numilog.library_title_link"
+            ("", "ref=library") if evidence == f"{provider_id}.library_title_link"
             else ("",)
         )
         if parsed.query not in allowed_queries:
@@ -1714,6 +1712,15 @@ def _numilog_public_catalog_url(
         return value
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+def _numilog_public_catalog_url(
+    value: Any, *, cover: bool = False, evidence: str | None = None,
+) -> str | None:
+    """Compatibility for existing plugin callers; no supplier policy here."""
+    return _public_catalog_url(
+        value, cover=cover, evidence=evidence, provider_id="numilog",
+    )
 
 
 _PUBLIC_SEARCH_TEXT_FIELDS = (
@@ -1925,11 +1932,11 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         # A cover is descriptive, never a session or delivery URL. Apply
         # the same conservative public-image boundary to every provider.
         cover_url = _shared_catalogue_cover_url(row.thumbnail_url)
-        product_url = (
-            _numilog_public_catalog_url(
-                row.friendly_url, evidence=raw_meta.get("public_url_evidence"),
-            )
-            if row.source_provider == "numilog" else row.friendly_url
+        # Persist a product URL only when this exact producing provider
+        # supplies an eligible public-link marker and the URL is non-private.
+        product_url = _public_catalog_url(
+            row.friendly_url, evidence=raw_meta.get("public_url_evidence"),
+            provider_id=row.source_provider,
         )
         upserts.append({
             "catalog_entry_id": key, "title": row.title, "author": row.author, "media_format": row.format,
