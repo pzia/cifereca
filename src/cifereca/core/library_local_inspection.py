@@ -112,7 +112,9 @@ def _provider_options(cases):
     found = {case.provider for case in cases if type(case.provider) is str}
     for provider_id in sorted(found):
         if provider_id not in options and _provider(provider_id) == provider_id:
-            options[provider_id] = provider_id
+            # Render a readable facet without a Core supplier-name registry.
+            # The key remains the exact canonical identifier for filtering.
+            options[provider_id] = provider_id.replace('-', ' ').title()
     return options
 
 
