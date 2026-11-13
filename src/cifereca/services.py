@@ -633,13 +633,13 @@ class LibraryService:
                     or not loan.id or not loan.record_id or not loan.source_credential
                     or not loan.source_account_id
                     or self.storage.identity_for_connection(
-                        'bnf-pret', loan.source_credential) != expected_identity_id):
+                        loan.source_provider, loan.source_credential) != expected_identity_id):
                 raise LoanActionError('bnf_loan_scope_unproven')
             try:
                 account = self._account_for_loan(loan)
-                expected = self._acquisition_work_dir(expected_identity_id, 'bnf-pret', loan.id)
+                expected = self._acquisition_work_dir(expected_identity_id, loan.source_provider, loan.id)
                 candidate = Path(source)
-                if (account.provider_id != 'bnf-pret'
+                if (account.provider_id != loan.source_provider
                         or account.unique_id != loan.source_account_id
                         or account.credential_id != loan.source_credential
                         or account.identity_id != expected_identity_id
@@ -658,9 +658,9 @@ class LibraryService:
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
                                       provider_id='manual', title=title,
-                                      placement_provider_id='bnf-pret')
+                                      placement_provider_id=loan.source_provider)
             remember_observed_import(
-                self, result, display_scope, provider_id='bnf-pret',
+                self, result, display_scope, provider_id=loan.source_provider,
                 provenance_field='bnf_observed_loan',
             )
         except LoanActionError as exc:

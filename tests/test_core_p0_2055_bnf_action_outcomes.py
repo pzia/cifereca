@@ -172,6 +172,43 @@ def test_import_error_and_scope_refusal_are_distinct_without_calling_another_pro
     assert 'SECRET' not in json.dumps(rows)
 
 
+def test_bnf_import_uses_validated_loan_source_for_all_downstream_coordinates(
+    connected_core, tmp_path, monkeypatch,
+):
+    """The one BnF admission guard precedes any source-bound operation."""
+    service, _, _, loan, *_ = connected_core
+    observed = []
+    actual_identity = service.storage.identity_for_connection
+    actual_directory = service._acquisition_work_dir
+    actual_import = service.import_acsm
+
+    def identity(provider_id, credential_id):
+        observed.append(("identity", provider_id))
+        return actual_identity(provider_id, credential_id)
+
+    def directory(identity_id, provider_id, loan_id):
+        observed.append(("directory", provider_id))
+        return actual_directory(identity_id, provider_id, loan_id)
+
+    def importer(*args, **kwargs):
+        observed.append(("placement", kwargs["placement_provider_id"]))
+        return {"status": "complete"}
+
+    monkeypatch.setattr(service.storage, "identity_for_connection", identity)
+    monkeypatch.setattr(service, "_acquisition_work_dir", directory)
+    monkeypatch.setattr(service, "import_acsm", importer)
+    staged = service.stage_explicit_loan_acsm(
+        loan, confirmed=True, expected_identity_id="default",
+    )
+    from pathlib import Path
+    service.import_bnf_loan_acsm(
+        Path(staged["path"]), expected_identity_id="default", loan=loan,
+    )
+    assert ("identity", loan.source_provider) in observed
+    assert ("directory", loan.source_provider) in observed
+    assert ("placement", loan.source_provider) in observed
+
+
 def test_bnf_import_refuses_foreign_candidate_before_adept(connected_core,tmp_path,monkeypatch):
     service,_,_,loan,*_=connected_core
     calls=[]
