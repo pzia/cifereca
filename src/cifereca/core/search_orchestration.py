@@ -193,14 +193,10 @@ def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> 
         return "Origine Kobo · disponibilité à vérifier auprès du fournisseur"
     if self.can_direct_download(item):
         return "Téléchargement direct"
+    # An upstream availability status is a descriptive observation.
+    # Do not rewrite "available" into a borrowing action for any supplier:
+    # manual borrow requires the separate account, consent and policy gates.
     label = str(detail.availability_label or detail.availability_status or "—").strip()
-    status = self._history_fold(detail.availability_status)
-    folded_label = self._history_fold(label)
-    available = status in {"available", "disponible"} or (
-        folded_label.startswith("disponible") and not folded_label.startswith("indisponible")
-    )
-    if item.source_provider == "paris" and item.medium == "digital" and available:
-        return "Disponible à l’emprunt"
     return label or "—"
 
 
