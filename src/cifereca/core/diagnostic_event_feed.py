@@ -211,7 +211,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         for byte_offset, line in lines:
             match = _LOG_LINE.match(line)
             if not match or not (
-                match["logger"] in {"cifereca", "cifereca_numilog"}
+                match["logger"] == "cifereca"
                 or match["logger"].startswith("cifereca.")
             ):
                 continue
@@ -309,9 +309,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # Logger names are not guaranteed to be static: extensions may
             # embed account identifiers. Publish only recognised components.
             logger_parts = match["logger"].split(".")
-            safe_parts = [
-                "cifereca_numilog" if match["logger"] == "cifereca_numilog" else "cifereca"
-            ]
+            safe_parts = ["cifereca"]
             for part in logger_parts[1:]:
                 if part.lower() not in (_STRUCTURED_TERMS | {"core", "diagnostics", "ui", "service", "worker"}):
                     break
