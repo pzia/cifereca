@@ -270,23 +270,10 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
     if configured(service, account):
         return set_source_enabled(service, account, enabled, preference_key)
 
-    from .source_auto_consent_bridge import (
-        _consent_generation_key, legacy_source_consent_switch_present,
+    # Legacy-only acquisition migration lives behind the existing acquisition
+    # consent boundary. The versioned source CAS module does not depend on
+    # the historical supplier consent decision bridge.
+    from .source_acquisition_consent import legacy_inventory_enablement_toggle
+    return legacy_inventory_enablement_toggle(
+        service, account, enabled, preference_key, scope,
     )
-    if enabled is False and legacy_source_consent_switch_present(
-        service.storage, scope,
-    ):
-        return retire_legacy_acquisition_on_source_disable(
-            service, account, preference_key,
-        )
-
-    # An inventory-only source must not acquire a CAS policy merely because
-    # its visibility was toggled. Preserve the legacy generation fence until
-    # the historical producer and consumers have all been migrated.
-    revision_key = _consent_generation_key(scope)
-    if revision_key is not None:
-        service.storage.metadata_set_with_revision(
-            preference_key, '1' if enabled else '0', revision_key,
-        )
-    else:
-        service.storage.metadata_set(preference_key, '1' if enabled else '0')
