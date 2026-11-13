@@ -90,7 +90,17 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                 loader in source for loader in DYNAMIC_IMPORT_LOADERS
             )
             may_register_pytest_plugin = "pytest_plugins" in source
-            if not mentions_changed_test and not may_import_dynamically and not may_register_pytest_plugin:
+            # Alias imports may hide the canonical loader name at the call
+            # site, but the import declaration itself spells it explicitly.
+            imported_loader = any(
+                "import " + loader in source or "import (" in source
+                for loader in DYNAMIC_IMPORT_LOADERS
+            )
+            if (not mentions_changed_test and not may_import_dynamically
+                    and not may_register_pytest_plugin
+                    and not (imported_loader and any(
+                        fragment in source for fragment in namespace_fragments
+                    ))):
                 continue
             parsed = ast.parse(source, filename=str(candidate))
             # A dynamic import may refer to a separately built namespace:
@@ -102,6 +112,21 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
             dynamic_test_namespace = _contains_test_namespace(
                 parsed, changed_modules,
             )
+            # Keep import aliases local to each consumer module. A helper
+            # imported as `from importlib import import_module as load`
+            # is still an import loader, even though its call is `load(...)`.
+            dynamic_loader_aliases = set(DYNAMIC_IMPORT_LOADERS)
+            for import_node in ast.walk(parsed):
+                if not isinstance(import_node, ast.ImportFrom):
+                    continue
+                if import_node.module not in {
+                    "importlib", "importlib.util", "importlib.machinery",
+                    "builtins",
+                }:
+                    continue
+                for alias in import_node.names:
+                    if alias.name in DYNAMIC_IMPORT_LOADERS:
+                        dynamic_loader_aliases.add(alias.asname or alias.name)
             for node in ast.walk(parsed):
                 if isinstance(node, ast.Import):
                     if any(alias.name == module or alias.name.startswith(module + ".")
@@ -128,7 +153,7 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                     name = function.id if isinstance(function, ast.Name) else (
                         function.attr if isinstance(function, ast.Attribute) else ""
                     )
-                    if name not in DYNAMIC_IMPORT_LOADERS:
+                    if name not in dynamic_loader_aliases:
                         continue
                     for arg in node.args[:2]:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
