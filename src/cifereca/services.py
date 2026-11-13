@@ -1319,17 +1319,31 @@ class LibraryService:
         # Never silently rewrite a supplier-provided different identity into
         # the selected account. Validate the entire batch before mutation,
         # caching or entitlement persistence; provider exceptions remain closed.
+        from .plugin_api.loan_inventory import LoanInventoryScope
+        from .providers.base import ProviderDescriptor
+        # Positive rows may use a primary alias only when the installed
+        # provider descriptor declares it for this exact empty-ID borrower.
+        # The v1 read remains supported, but may not infer Paris or any
+        # other provider's alias from a name alone.
+        descriptor = inspect.getattr_static(session, "descriptor", None)
+        if descriptor is not None and type(descriptor) is not ProviderDescriptor:
+            descriptor = None
+        try:
+            scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
+        except ValueError as exc:
+            raise ProviderConfigurationError(
+                "Inventaire de prêts : périmètre de compte non conforme"
+            ) from exc
+        borrowers = {account.unique_id}
+        if scope.primary_account_alias is not None:
+            borrowers.add(scope.primary_account_alias)
         if type(rows) is not list or any(
             type(row) is not Loan
             or (row.identity_id is not None and row.identity_id != account.identity_id)
             or row.source_provider != account.provider_id
             or row.source_credential != account.credential_id
             or (row.source_account_id is not None
-                and row.source_account_id not in (
-                    account.unique_id,
-                    "primary" if account.provider_id == "paris" and not account.unique_id
-                    else account.unique_id,
-                ))
+                and row.source_account_id not in borrowers)
             for row in rows
         ):
             raise ProviderConfigurationError("Inventaire de prêts : périmètre de compte non conforme")
