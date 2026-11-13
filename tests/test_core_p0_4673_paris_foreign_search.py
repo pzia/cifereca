@@ -316,7 +316,7 @@ def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
 
 @pytest.mark.parametrize("unsafe", [
     "https://private.invalid/account", "Bearer Secret", "token=SECRET",
-    "reader@example.com", "bad\\x00value",
+    "reader@example.com", "bad\x00value",
 ])
 def test_public_notice_rejects_unsafe_bibliographic_values(unsafe):
     from tests.test_core043_progress_cache_stats import _FakeSession
@@ -334,9 +334,5 @@ def test_public_notice_rejects_unsafe_bibliographic_values(unsafe):
         ProviderSearchResponse([private], public_notices=(PublicSearchNotice(public),)),
         private, provider_id="paris", credential_id="bob",
     )
-    # Sensitive values cannot be promoted as arbitrary public metadata.
-    if unsafe == "bad\\x00value":
-        assert result is None
-    else:
-        assert result is not None
-        assert result.metadata["language"] == unsafe
+    # The explicit notice must never carry tokens, emails, private URLs or NUL.
+    assert result is None
