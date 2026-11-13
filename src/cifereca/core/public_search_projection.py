@@ -35,9 +35,9 @@ def _text(value: object, *, required: bool = False, limit: int = 8192) -> bool:
 
 
 _PRIVATE_BIBLIOGRAPHIC_PATTERN = re.compile(
-    r"(?i)(?:https?://|(?<!\\w)(?:bearer|basic)\\s+\\S+|"
-    r"(?<!\\w)(?:token|auth|cookie|signature|access_token|refresh_token)\\s*=|"
-    r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+)"
+    r"(?i)(?:https?://|(?<!\w)(?:bearer|basic)\s+\S+|"
+    r"(?<!\w)(?:token|auth|cookie|signature|access_token|refresh_token)\s*=|"
+    r"[^\s@]+@[^\s@]+\.[^\s@]+)"
 )
 
 
