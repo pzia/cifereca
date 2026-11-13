@@ -111,3 +111,52 @@ def test_primary_borrower_conflict_uses_explicit_loan_source(tmp_path, monkeypat
         }]
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("provider_id", HostileValue()),
+    ("provider_id", HostileString("paris")),
+    ("credential_id", HostileValue()),
+    ("credential_id", HostileString("alice-paris")),
+    ("unique_id", HostileValue()),
+    ("unique_id", HostileString("linked-123")),
+    ("identity_id", HostileValue()),
+    ("identity_id", HostileString("alice")),
+    ("is_primary", HostileValue()),
+])
+def test_malformed_account_evidence_cannot_attest_adept_borrower(
+    tmp_path, monkeypatch, field, bad,
+):
+    """Untrusted account rows cannot coerce their way into a borrower grant."""
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        linked = service.accounts[1]
+        service.accounts[1] = replace(linked, **{field: bad})
+        reads = []
+        def forbidden_lookup(**_kwargs):
+            reads.append(True)
+            raise AssertionError("malformed account cannot read ADEPT grant")
+        monkeypatch.setattr(
+            service.storage, "paris_borrower_adept_binding_get", forbidden_lookup,
+        )
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == (None, "adept_borrower_ambiguous")
+        assert not reads
+        assert service.storage.acquisitions(provider_id="paris") == []
+    finally:
+        service.close()
+
+
+def test_unrelated_malformed_account_does_not_block_valid_source_scope(tmp_path):
+    """Ignore another plugin's hostile row without evaluating its values."""
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        service.accounts.insert(0, replace(
+            service.accounts[1], provider_id=HostileValue(),
+        ))
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == (None, "adept_borrower_binding_required")
+    finally:
+        service.close()
