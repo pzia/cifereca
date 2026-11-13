@@ -1265,7 +1265,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self._populate_history(rows)
 
         self.runner.submit(
-            "Chargement de l'historique…", lambda: self.service.refresh_history(force=force), done, control=control,
+            "Chargement de l'historique…", lambda: self.service.refresh_history(force=force, account=account), done, control=control,
             priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="history",
             origin="user" if control is not None else "automatic",
         )
