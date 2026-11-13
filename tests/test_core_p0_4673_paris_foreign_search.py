@@ -53,7 +53,8 @@ def _fixture(tmp_path, monkeypatch):
     ))
     alice = _ParisCatalogue("paris-alice")
     bob = _ParisCatalogue("paris-bob")
-    public = _FakeSession("public-books")
+    public = _ParisCatalogue("public-credential")
+    public.provider_id = "public-books"
     owners = {
         ("paris", "paris-alice"): "alice",
         ("paris", "paris-bob"): "bob",
@@ -238,18 +239,18 @@ def test_foreign_catalogue_keeps_safe_public_cover_without_entitlements(
         rows = _run(service, progressive)
         assert len(rows) == 1
         shared = rows[0]
-        assert shared.thumbnail_url == public_cover
+        assert shared.thumbnail_url is None  # ABI v1 deliberately strips all URLs.
         assert shared.metadata == {"catalogue_access": "shared_read_only", "language": "fr"}
         assert shared.owned is False and shared.downloadable is False
         assert shared.download_url is None and shared.friendly_url is None
         assert "PRIVATE" not in repr(asdict(shared))
-        assert _run(service, progressive, force=False)[0].thumbnail_url == public_cover
+        assert _run(service, progressive, force=False)[0].thumbnail_url is None
         service.select_identity("bob")
         own = _run(service, progressive, force=False)[0]
         assert own.thumbnail_url == public_cover
         assert own.owned is True
         service.select_identity("alice")
-        assert _run(service, progressive, force=False)[0].thumbnail_url == public_cover
+        assert _run(service, progressive, force=False)[0].thumbnail_url is None
     finally:
         service.close()
 
@@ -326,7 +327,12 @@ def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
             },
         )
         public = replace(original, owned=False, downloadable=False, download_url=None,
-                         source_account_id=None, metadata={"language": "fr"},
+                         source_account_id=None, metadata={
+                             "language": "fr", "languages": ["fr", "en"],
+                             "series": "Romans", "collection": "Littérature",
+                             "publisher": "Éditeur", "isbn": "9780306406157",
+                             "subjects": ["Science-fiction", "Histoire"],
+                         },
                          thumbnail_url=None, friendly_url=None, revision_id=None)
         qualified = project_public_search_result(
             ProviderSearchResponse([original], public_notices=(PublicSearchNotice(public),)),
@@ -339,15 +345,6 @@ def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
             "series": "Romans", "collection": "Littérature",
             "publisher": "Éditeur", "isbn": "9780306406157",
             "subjects": ["Science-fiction", "Histoire"],
-            "bibliography_evidence": {
-                "subjects": {
-                    "source": "paris.syracuse.search",
-                    "source_field": "Resource.Subj",
-                    "scope": "EBOOKS",
-                    "confidence": "upstream_field_present",
-                    "freshness": "search_response",
-                }
-            },
         }
         assert "FOREIGN_SECRET" not in repr(asdict(qualified))
         assert "access_token" not in repr(asdict(qualified))
