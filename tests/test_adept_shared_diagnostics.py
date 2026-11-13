@@ -224,7 +224,7 @@ def test_broken_log_handler_never_changes_the_runtime_callback_result():
 
 def test_core_adept_diagnostic_producer_is_supplier_neutral(tmp_path):
     diag = Diagnostics(enabled=True)
-    diag.add_core_kobo_adept(detail(None), "error")
+    diag.add_core_kobo_adept(detail(), "error")
     rows = query_diagnostic_events(
         diag, source="core_events", log_path=tmp_path / "none",
     )["events"]
