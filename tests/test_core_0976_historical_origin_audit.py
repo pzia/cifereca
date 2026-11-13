@@ -8,7 +8,6 @@ from types import SimpleNamespace
 import pytest
 
 from cifereca.core.adept_origin_audit import inspect_paris_adept_origins
-from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
 
 def _right(identity, credential, *, loan="shared", item="book", entitlement=None):
