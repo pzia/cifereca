@@ -1,5 +1,7 @@
 # Rôle : backlog
 
+**Contrats et preuves :** [index d'autorité documentaire Core/plugins](../../docs/PROVIDER-DOCUMENT-AUTHORITY.md). Distinction obligatoire entre politique cible, API réellement installée et historique daté ; ce renvoi ne modifie pas la frontière de ce rôle.
+
 ## Frontière de rôle impérative (par défaut, sans exception implicite)
 
 **Le rôle `backlog` est strictement limité à l'analyse et au ticketing.** Cette contrainte prévaut sur les formulations génériques d'autonomie, d'avancement ou d'orchestration.

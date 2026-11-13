@@ -65,6 +65,7 @@ def test_right_without_attested_receipt_never_becomes_link_even_if_file_is_good(
     before = filesystem(tmp_path)
     audit, session = session_for(root, db)
     right, file = select_pair(session)
+    assert not hasattr(session, "_manual_right_scopes")
     report = session.preflight_manual_link(right.key, file.key)
     assert report.status == "insufficient_evidence"
     assert report.read_only is True and report.attachment_authorized is False
@@ -236,7 +237,6 @@ def test_hostile_preflight_inputs_do_not_echo_values_or_raise():
     {"ledger_conflict": "false"},
 ])
 def test_missing_or_malformed_private_negative_proof_cannot_be_reviewable(incomplete):
-    from cifereca.core.library_manual_link_preflight import review_kobo_candidate
 
     signature = ("a" * 64, 123)
     right = {
@@ -255,23 +255,33 @@ def test_missing_or_malformed_private_negative_proof_cannot_be_reviewable(incomp
     assert not manual.attachment_authorized
     if right.get("ambiguous") is not False:
         assert "right_scope_ambiguous" in manual.codes
-        kobo = review_kobo_candidate(right, file, audit_complete=True)
-        assert kobo.status == "blocked"
-        assert "kobo_personal_right_unverified" in kobo.codes
-        assert not kobo.attachment_authorized
     if right.get("ledger_conflict") is not False:
         assert "acquisition_conflict" in manual.codes
 
 
-def test_negative_evidence_requires_explicit_false_even_with_identical_hashes():
-    from cifereca.core.library_manual_link_preflight import review_kobo_candidate
 
-    signature = ("b" * 64, 456)
-    file = {"verified": True, "signature": signature}
-    right = {"attested": True, "signature": signature, "ambiguous": False}
-    assert review_kobo_candidate(right, file, audit_complete=True).status == (
-        "eligible_for_fresh_validation"
+
+def test_numilog_local_evidence_reuses_one_source_identity_decision():
+    """The two diagnostic proof fields share one typed provider veto."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(LocalInspection))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    initializer = next(
+        node for node in cls.body
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
     )
-    assert review_kobo_candidate(
-        {**right, "ambiguous": None}, file, audit_complete=True,
-    ).status == "blocked"
+    checks = [
+        node for node in ast.walk(initializer)
+        if isinstance(node, ast.Compare)
+        and any(isinstance(part, ast.Constant) and part.value == "numilog"
+                for part in [node.left, *node.comparators])
+    ]
+    assert len(checks) == 1
+    assert any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "is_numilog_right"
+                for target in node.targets)
+        for node in ast.walk(initializer)
+    )

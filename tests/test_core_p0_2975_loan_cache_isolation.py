@@ -13,6 +13,7 @@ import pytest
 
 from cifereca.models import Account, Loan
 from cifereca.services import _loan_cache_key
+from cifereca.providers.base import ProviderDescriptor, ProviderCapabilities
 from tests.test_sync_state_contract import _service
 
 
@@ -38,6 +39,11 @@ def _loan(account, item):
 
 def _session(service, credential, loans, calls):
     session = NS(
+        descriptor=ProviderDescriptor(
+            "paris", "Paris", "Synthetic offline source", "ready",
+            ProviderCapabilities(loans=True),
+            existing_primary_loan_account_alias="primary",
+        ),
         capabilities=NS(loans=True),
         loans=lambda account: calls.append((credential, account.identity_id)) or
         list(loans(account)),
@@ -179,3 +185,67 @@ def test_invalid_cache_key_coordinate_fails_before_provider_contact(
         assert not service.storage.entitlements()
     finally:
         service.close()
+
+
+def test_unknown_provider_primary_cache_alias_requires_its_installed_descriptor():
+    from cifereca.services import _cached_loans_for_exact_account
+
+    account = _account(credential="fixture-card", uid="", is_primary=True)
+    account.provider_id = "fixture-provider"
+    observed = _loan(account, "item-1")
+    observed.source_provider = "fixture-provider"
+    row = asdict(observed)
+    assert _cached_loans_for_exact_account([row], account) is None
+    wrong_descriptor = ProviderDescriptor(
+        "other-provider", "Other", "Synthetic", "ready",
+        ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    assert _cached_loans_for_exact_account(
+        [row], account, descriptor=wrong_descriptor,
+    ) is None
+    descriptor = ProviderDescriptor(
+        "fixture-provider", "Fixture", "Synthetic", "ready",
+        ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    assert [r.id for r in _cached_loans_for_exact_account(
+        [row], account, descriptor=descriptor,
+    )] == ["item-1"]
+    account.is_primary = False
+    assert _cached_loans_for_exact_account(
+        [row], account, descriptor=descriptor,
+    ) is None
+
+
+def test_exact_account_cache_stays_valid_without_any_alias_contract():
+    from cifereca.services import _cached_loans_for_exact_account
+
+    account = _account(credential="fixture-card", uid="reader-id")
+    account.provider_id = "fixture-provider"
+    observed = _loan(account, "edition")
+    observed.source_provider = "fixture-provider"
+    assert [r.id for r in _cached_loans_for_exact_account(
+        [asdict(observed)], account,
+    )] == ["edition"]
+
+
+def test_foreign_identity_and_credential_never_match_declared_primary_alias():
+    from cifereca.services import _cached_loans_for_exact_account
+
+    account = _account(credential="fixture-card", uid="", is_primary=True)
+    account.provider_id = "fixture-provider"
+    descriptor = ProviderDescriptor(
+        "fixture-provider", "Fixture", "Synthetic", "ready",
+        ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    observed = _loan(account, "edition")
+    observed.source_provider = "fixture-provider"
+    for field, invalid in (("identity_id", "other-identity"),
+                           ("source_credential", "other-card"),
+                           ("source_account_id", "another-borrower")):
+        poisoned = asdict(replace(observed, **{field: invalid}))
+        assert _cached_loans_for_exact_account(
+            [poisoned], account, descriptor=descriptor,
+        ) is None

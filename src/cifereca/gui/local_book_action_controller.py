@@ -58,13 +58,18 @@ def _add_owned_download(window, detail, item, TaskPriority):
                      'Indisponible : aucune cible exacte vérifiée pour ce compte et cette identité.'),
                 ])
         return
-    # No provider on a target is not an implicit Kobo acquisition authority.
-    provider = getattr(target, 'provider_id', None)
-    if provider not in {'kobo', 'numilog'}:
+    # A target is the generic Core contract: selection already required the
+    # exact account/session plus the complete selected-delivery ABI. Do not
+    # repeat that admission as a provider allowlist in CoreUI.
+    from ..core.selected_source_offer import SourceOfferTarget
+    if type(target) is not SourceOfferTarget:
+        return
+    provider = target.provider_id
+    if (type(provider) is not str or not provider or len(provider) > 96
+            or any(char in provider for char in '\x00\r\n')):
         return
     # Presentation belongs to the registered provider descriptor, not a
-    # hard-coded CoreUI mapping. The admission allowlist remains separate:
-    # a display name can never grant download capability.
+    # CoreUI mapping. A display name never supplies action admission.
     label = provider.capitalize()
     display_name = getattr(window.service, 'provider_display_name', None)
     if callable(display_name):
@@ -75,10 +80,6 @@ def _add_owned_download(window, detail, item, TaskPriority):
                 label = candidate.strip()
         except Exception:
             pass
-    # #5054: v1 receipt index-resume is retired. No historical receipt or
-    # provider-specific operation can be presented as an acquisition action.
-    if getattr(target, 'operation', None) == 'resume_index':
-        return
     button = window.action_button(f'Télécharger ce livre {label}', 'folder-download-symbolic')
     button._cifereca_action_id = 'download-owned-' + provider
     button.set_tooltip_text(

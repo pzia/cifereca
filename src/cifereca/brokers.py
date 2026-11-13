@@ -101,6 +101,12 @@ class AcquisitionBrokerImpl:
         return bool(self.service.can_direct_download(item))
 
     def eligible_accounts(self, item: Any, *, identity_id: str | None = None) -> tuple[AccountRef, ...]:
+        # None is retained for read-only ABI compatibility. An explicitly
+        # supplied empty identity must not inherit the UI selection.
+        if identity_id is not None and (
+            type(identity_id) is not str or not identity_id.strip()
+        ):
+            raise ValueError("identity_id_required")
         provider = str(getattr(item, "source_provider", "") or "")
         source_credential = str(getattr(item, "source_credential", "") or "")
         rows = []
@@ -118,6 +124,11 @@ class AcquisitionBrokerImpl:
         return tuple(rows)
 
     def acquire(self, item: Any, *, identity_id: str | None = None, account_id: str | None = None):
+        # A mutation must never inherit the currently displayed identity.
+        # Keep the optional ABI parameter, but reject an omitted/invalid
+        # operation scope before any account enumeration or provider call.
+        if type(identity_id) is not str or not identity_id.strip():
+            raise ValueError("identity_id_required")
         eligible = self.eligible_accounts(item, identity_id=identity_id)
         if account_id:
             choices = [row for row in eligible if row.account_id == account_id]
@@ -160,6 +171,11 @@ class AcquisitionBrokerImpl:
         return self.service.acquire_direct_item(item)
 
     def import_acsm(self, path: Any, **options: Any):
+        # This broker method performs a mutation; unlike UI convenience
+        # reads it may never resolve the identity from navigation state.
+        identity_id = options.get("identity_id")
+        if type(identity_id) is not str or not identity_id.strip():
+            raise ValueError("identity_id_required")
         return self.service.import_acsm(path, **options)
 
 
@@ -552,6 +568,12 @@ class SynchronizationBrokerImpl:
         )
 
     def sources(self, identity_id: str | None = None) -> tuple[SyncSourceRef, ...]:
+        # None is the existing read-only navigation ABI. An explicitly
+        # supplied empty/invalid identity must not borrow that UI scope.
+        if identity_id is not None and (
+            type(identity_id) is not str or not identity_id.strip()
+        ):
+            raise ValueError("identity_id_required")
         rows = [self._ref(account) for account in self.service.accounts_for_identity(identity_id)]
         rows.sort(key=lambda row: (row.identity_id, row.provider_id, row.label.casefold(), row.source_id))
         return tuple(rows)
@@ -649,7 +671,7 @@ class SynchronizationBrokerImpl:
             source_refresh_due,
         )
         from .plugin_api import Cancelled
-        if type(identity_id) is not str or not identity_id:
+        if type(identity_id) is not str or not identity_id.strip():
             return SyncResult(False, facts={"reason": "identity_required"})
         # A syntactically nonempty input is not proof of a configured
         # identity. Do not report a false-success empty scheduled batch for
@@ -1072,7 +1094,7 @@ class SynchronizationBrokerImpl:
         # An omitted identity must never turn a nominal "Sync" into an
         # unpreviewed batch across all provider accounts.
         if not isinstance(request, SyncRequest) or (
-            type(request.identity_id) is not str or not request.identity_id
+            type(request.identity_id) is not str or not request.identity_id.strip()
         ):
             return SyncResult(ok=False, changed=0, warnings=("explicit identity required",),
                               facts={"reason": "identity_required"})
@@ -1164,7 +1186,17 @@ class IdentityBrokerImpl:
             rows.append({"identity_id": getattr(identity, "identity_id", ""), "name": getattr(identity, "name", ""), "label": getattr(identity, "label", "")})
         return rows
     def select(self, identity_id: str): return self.service.select_identity(identity_id)
-    def accounts(self, identity_id: str | None = None): return tuple(_account_ref(self.service, row) for row in self.service.accounts_for_identity(identity_id))
+    def accounts(self, identity_id: str | None = None):
+        # None remains the legacy navigation-only read. A supplied but empty
+        # identity is never permission to silently adopt the UI selection.
+        if identity_id is not None and (
+            type(identity_id) is not str or not identity_id.strip()
+        ):
+            raise ValueError("identity_id_required")
+        return tuple(
+            _account_ref(self.service, row)
+            for row in self.service.accounts_for_identity(identity_id)
+        )
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000): return self.service.identity_statistics(identity_id, window_seconds=window_seconds)
 
 
@@ -1176,8 +1208,9 @@ class RuntimeCapabilitiesBrokerImpl:
     def _formats(download: Any, fallback: Any) -> tuple[str, ...]:
         values: list[str] = []
         if isinstance(download, dict):
-            for name in ("http", "acsm", "kobo"):
-                row = download.get(name)
+            # Each declared download recipe contributes formats; the Core
+            # must not maintain an allow-list of provider/runtime recipes.
+            for row in download.values():
                 if not isinstance(row, dict):
                     continue
                 formats = row.get("formats")
@@ -1227,7 +1260,7 @@ class RuntimeCapabilitiesBrokerImpl:
             contract_version = None
 
         return RuntimeAcquisitionCapabilities(
-            provider_id="kobo",
+            provider_id=provider,
             available=state.get("available") is True,
             compatible=state.get("compatible") is True,
             operational=state.get("operational") is True,

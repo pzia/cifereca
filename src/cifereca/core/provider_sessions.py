@@ -1350,12 +1350,6 @@ def connect_configured(self, *, logger, caller_category: str = "other",
     return {"accounts": self.accounts, "identities": self.identities, "loans": loans, "connected": connected, "errors": errors, "connection_failures": public_failures}
 
 
-def login(self, username: str, password: str) -> dict[str, Any]:
-    raise ProviderConfigurationError(
-        "La connexion legacy Paris a été retirée de cifereca 0.9.2 ; configurez le plugin provider.paris."
-    )
-
-
 def select_account(self, unique_id: str, provider_id: str | None=None, credential_id: str | None=None) -> Account:
     for account in self.accounts:
         if account.unique_id != unique_id:

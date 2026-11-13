@@ -115,9 +115,18 @@ def test_legacy_plugin_without_snapshot_keeps_exact_one_read(tmp_path):
         a = account()
         service.accounts = [a]
         calls = []
+        # Legacy v1 reader, with the already-supported provider-owned
+        # positive borrower-alias declaration (no v2 snapshot).
+        from cifereca.providers.base import ProviderDescriptor, ProviderCapabilities
         session = NS(
             provider_id=a.provider_id, credential_id=a.credential_id,
             connected=True, capabilities=NS(loans=True),
+            descriptor=ProviderDescriptor(
+                id=a.provider_id, display_name="Synthetic lender",
+                description="Legacy offline session", state="ready",
+                capabilities=ProviderCapabilities(loans=True),
+                existing_primary_loan_account_alias="primary",
+            ),
         )
 
         def loans(requested):

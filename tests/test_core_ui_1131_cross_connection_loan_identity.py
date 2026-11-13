@@ -293,14 +293,14 @@ def test_gtk_population_keeps_only_safe_source_keys_without_importing_gtk():
     host = NS(
         service=NS(current_identity=NS(identity_id="alice"), last_loans=[]),
         _render_loans=lambda: events.append("render"),
-        _render_kobo_loans=lambda: events.append("kobo"),
+        _render_library=lambda: events.append("library"),
     )
     namespace["_populate_loans"](host, [
         owner, conflicting, foreign, sibling, owner,
     ])
     assert host.service.last_loans == [sibling]
     assert host.loan_objects == {loan_source_key(sibling): sibling}
-    assert events == ["render", "kobo"]
+    assert events == ["render", "library"]
 
 
 def test_library_loan_lookup_rejects_forged_nonloan_objects_and_fake_scalar_ids():

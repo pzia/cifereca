@@ -256,12 +256,29 @@ def _refresh_sync_page(self) -> None:
         source for source in rows
         if getattr(source, "identity_id", None) == scope.identity_id
     ]
-    # #3105: a configured Paris credential with a failed/absent session is
-    # NOT a SyncSourceRef. Only a separate, inert configuration row may show it.
-    # The helper reads local config only, scoped to this identity.
+    # Configured credentials without live sessions remain inert notices,
+    # never broker SyncSourceRefs. Enumerate bounded provider IDs from this
+    # identity's configuration without rendering any account credentials.
+    from re import fullmatch
     from cifereca.core.sync_connection_visibility import unavailable_configured_connections
-    unavailable_paris = unavailable_configured_connections(
-        self.service, scope.identity_id, provider_id="paris",
+    try:
+        reader = getattr(getattr(self.service, "config", None), "provider_accounts", None)
+        configured = reader() if callable(reader) else ()
+        if type(configured) not in (tuple, list) or len(configured) > 512:
+            configured = ()
+    except Exception:
+        configured = ()
+    configured_provider_ids = sorted({
+        entry["provider"] for entry in configured
+        if type(entry) is dict and entry.get("identity_id") == scope.identity_id
+        and type(entry.get("provider")) is str
+        and fullmatch(r"[a-z][a-z0-9-]{0,63}", entry["provider"]) is not None
+    })[:64]
+    unavailable_connections = tuple(
+        notice for provider_id in configured_provider_ids
+        for notice in unavailable_configured_connections(
+            self.service, scope.identity_id, provider_id=provider_id,
+        )
     )
     if not sync_action_scope_current(self, scope):
         return
@@ -274,7 +291,7 @@ def _refresh_sync_page(self) -> None:
             "not_connected", "plugin_missing", "plugin_unavailable",
             "invalid_configuration",
         }
-        for notice in unavailable_paris
+        for notice in unavailable_connections
     )
     presentations = [sync_source_presentation(source) for source in rows]
     # Keep a user's open account tools across passive refreshes, but never
@@ -298,8 +315,8 @@ def _refresh_sync_page(self) -> None:
         summary.set_label(
             f"{len(rows)} source(s) · "
             f"{sum(item.action_enabled for item in presentations)} synchronisable(s) maintenant"
-            + (f" · {len(unavailable_paris)} connexion(s) Paris configurée(s) non disponibles"
-               if unavailable_paris else "")
+            + (f" · {len(unavailable_connections)} connexion(s) configurée(s) non disponible(s)"
+               if unavailable_connections else "")
             + "\n" + sync_axes_dashboard_summary(rows, broker)
         )
     if alert_row is not None:
@@ -445,27 +462,46 @@ def _refresh_sync_page(self) -> None:
         disclosure.set_child(group)
         box.append(disclosure)
 
-    def append_unavailable_paris():
+    def append_unavailable_connections():
         # Disabled cards cannot be routed through broker.synchronize_source,
         # toggled as SyncSourceRef, or used as proof of an active loan.
         descriptions = {
             "not_connected": "Compte configuré · connexion non établie dans cette session.",
             "account_disabled": "Compte désactivé dans la configuration de ce profil.",
-            "plugin_missing": "Plugin Paris absent ou non chargé.",
-            "plugin_unavailable": "Plugin Paris non prêt.",
-            "plugin_disabled": "Plugin Paris désactivé pour ce profil.",
+            "plugin_missing": "Plugin absent ou non chargé.",
+            "plugin_unavailable": "Plugin non prêt.",
+            "plugin_disabled": "Plugin désactivé pour ce profil.",
             "invalid_configuration": "Configuration du compte à vérifier.",
         }
-        for index, notice in enumerate(unavailable_paris, start=1):
+        # Only validated descriptor display names can decorate these cards.
+        label_reader = getattr(self.service, "provider_display_name", None)
+        labels = {}
+        for provider_id in configured_provider_ids:
+            try:
+                name = label_reader(provider_id) if callable(label_reader) else None
+            except Exception:
+                name = None
+            labels[provider_id] = (
+                name if type(name) is str and 1 <= len(name) <= 80
+                and name.isprintable() and not any(c in name for c in "/\\?@")
+                else provider_id
+            )
+        totals = {}
+        for notice in unavailable_connections:
+            totals[notice.provider_id] = totals.get(notice.provider_id, 0) + 1
+        seen = {}
+        for notice in unavailable_connections:
             if not sync_action_scope_current(self, scope):
                 return
+            provider_id = notice.provider_id
+            seen[provider_id] = seen.get(provider_id, 0) + 1
             group = Adw.PreferencesGroup()
             group.set_hexpand(True)
             add_css(group, "sync-source-panel")
             row = Adw.ActionRow()
             row.set_title(
-                "Bibliothèques de Paris · Connexion configurée"
-                + (f" ({index})" if len(unavailable_paris) > 1 else "")
+                labels.get(provider_id, provider_id) + " · Connexion configurée"
+                + (f" ({seen[provider_id]})" if totals[provider_id] > 1 else "")
             )
             row.set_subtitle(
                 descriptions[notice.state]
@@ -498,12 +534,12 @@ def _refresh_sync_page(self) -> None:
                 self._sync_attention_targets.append(("warning", row))
 
     if not rows:
-        if not unavailable_paris:
+        if not unavailable_connections:
             box.append(Gtk.Label(label="Aucune source synchronisable pour cette identité", xalign=0))
-        append_unavailable_paris()
+        append_unavailable_connections()
         append_catalogue_searches()
         return
-    append_unavailable_paris()
+    append_unavailable_connections()
     # Prioritize actual sync-capable accounts. Public-only catalogues remain
     # reachable and activatable, but must not push Kobo/Numilog below the fold.
     ordered_sources = sorted(
@@ -703,24 +739,30 @@ def _refresh_sync_page(self) -> None:
                 # Legacy per-vendor widgets must not re-enter this pathway.
                 # even if the generic read fails or the adapter is unsupported.
                 continue
-        if source.provider_id == "kobo":
+        # Compatibility surface only when the generic consent controls are
+        # absent: a declared materialization capability, never provider name,
+        # selects explicit manual preview / confirmation. No action runs here.
+        local_capabilities = getattr(source, "sync_capabilities", ())
+        if (source.sync_capable is True
+                and type(local_capabilities) in (tuple, list)
+                and "local_materialization" in local_capabilities):
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.
             preflight = self.action_button(
                 "Aperçu local…", "document-properties-symbolic",
             )
-            capability = "local_materialization" in source.sync_capabilities
+            capability = True  # already validated via strict capability declaration
             supported = callable(getattr(broker, "preview_local_materialization", None))
             preflight.set_sensitive(bool(source.enabled is True and capability and supported))
             preflight.set_tooltip_text(
                 "Prévisualiser ce seul compte, hors réseau, sans téléchargement"
                 if capability and supported else
-                "Aperçu Kobo non pris en charge par cette source"
+                "Aperçu local non pris en charge par cette source"
             )
             preflight.set_valign(Gtk.Align.CENTER)
             add_sync_action(row, preflight)
             preview_row = Adw.ActionRow()
-            preview_row.set_title("Aperçu local des acquisitions Kobo")
+            preview_row.set_title("Aperçu local des acquisitions")
             preview_row.set_subtitle(
                 "Non consulté · pas de téléchargement ni de rafraîchissement distant"
             )
@@ -754,7 +796,7 @@ def _refresh_sync_page(self) -> None:
                             "Aperçu local indisponible. Aucun téléchargement autorisé."
                         )
                 self.runner.submit(
-                    "Prévisualisation locale Kobo…",
+                    "Prévisualisation locale…",
                     lambda: broker.preview_local_materialization(sid)
                     if sync_action_scope_current(self, scope) else None,
                     completed, failed, control=button,
@@ -764,8 +806,8 @@ def _refresh_sync_page(self) -> None:
             group.add(sync_action_row(row))
             add_sync_detail(group, preview_row, action=preflight, source_row=row)
 
-            # #1347: this is the *only* GUI entry for confirmed Kobo local
-            # acquisitions. Unlike the advisory local preview above, the
+            # Compatibility GUI for explicitly confirmed local acquisitions.
+            # Unlike the advisory local preview above, the
             # broker prepares a fresh account-bound manifest and one-use token.
             # No preparation or materialization runs while building this page.
             download_button = self.action_button(
@@ -780,7 +822,7 @@ def _refresh_sync_page(self) -> None:
             download_button.set_tooltip_text(
                 "Préparer puis confirmer le téléchargement de ce compte uniquement"
                 if can_download else
-                "Compte Kobo connecté et capable de téléchargement requis"
+                "Compte connecté et capable de téléchargement requis"
             )
             stop_download = self.action_button("Annuler le téléchargement", "process-stop-symbolic")
             stop_download.set_sensitive(False)
@@ -893,7 +935,7 @@ def _refresh_sync_page(self) -> None:
                         return
                     output.set_subtitle(summary + " En attente d’une confirmation explicite.")
                     dialog = Adw.MessageDialog.new(
-                        self, "Confirmer les téléchargements Kobo ?",
+                        self, "Confirmer les téléchargements de ce compte ?",
                         summary + "\n\nSeuls les fichiers admissibles de ce compte "
                         "seront traités. Le manifeste et les preuves locales "
                         "seront revérifiés sous verrou. Les fichiers déjà "
@@ -936,9 +978,9 @@ def _refresh_sync_page(self) -> None:
                                     if self.cancelled():
                                         return
                                     if type(current) is int and 0 <= current <= 1000000:
-                                        report(f"Téléchargement Kobo · {current} fichier(s) acquis")
+                                        report(f"Téléchargement local · {current} fichier(s) acquis")
                                     else:
-                                        report("Téléchargement Kobo en cours…")
+                                        report("Téléchargement local en cours…")
 
                             try:
                                 return broker.materialize_source(
@@ -947,7 +989,7 @@ def _refresh_sync_page(self) -> None:
                             except Exception:
                                 # TaskRunner records exceptions before its
                                 # callback; redact at the worker boundary.
-                                raise RuntimeError("Téléchargement Kobo indisponible") from None
+                                raise RuntimeError("Téléchargement local indisponible") from None
 
                         def done(result):
                             if not current() or state["serial"] != serial:
@@ -1001,7 +1043,7 @@ def _refresh_sync_page(self) -> None:
                                 )
 
                         self.runner.submit(
-                            "Téléchargement Kobo confirmé…",
+                            "Téléchargement local confirmé…",
                             work, done, failed, control=button,
                             priority=TaskPriority.USER_ACTION,
                             kind="kobo-acquisition", with_progress=True,
@@ -1023,10 +1065,10 @@ def _refresh_sync_page(self) -> None:
                         return broker.prepare_local_materialization(sid)
                     except Exception:
                         # Do not leak a provider exception via TaskRunner.
-                        raise RuntimeError("Préparation Kobo indisponible") from None
+                        raise RuntimeError("Préparation locale indisponible") from None
 
                 self.runner.submit(
-                    "Préparer les acquisitions Kobo…",
+                    "Préparer les acquisitions locales…",
                     prepare_work,
                     prepared, failed, control=button,
                     priority=TaskPriority.USER_ACTION,
@@ -1042,6 +1084,10 @@ def _refresh_sync_page(self) -> None:
         # Malformed/missing declarations do not create schedule controls.
         inventory_capabilities = getattr(source, "sync_capabilities", ())
         if (type(inventory_capabilities) in (tuple, list)
+                and 0 < len(inventory_capabilities) <= 64
+                and all(type(capability) is str and bool(capability)
+                        for capability in inventory_capabilities)
+                and len(set(inventory_capabilities)) == len(inventory_capabilities)
                 and "remote_inventory" in inventory_capabilities):
             # Inventory consent is separate from local materialization.
             def inventory_current(expected_identity=source.identity_id, captured_scope=scope):

@@ -126,3 +126,50 @@ def test_cancellation_inside_selected_file_revokes_tentative_link():
     assert _attested(result) == []
     assert result.unverified_rights == [0]
 
+
+
+def test_unknown_provider_competing_borrowers_are_ambiguous_without_any_grant():
+    # A future plugin receives no implicit ownership from a plausible file,
+    # receipt or entitlement. Its non-unique provider/edition placement is
+    # ambiguous even though Core has no vendor-specific provenance mapping.
+    inventory, tables = _fixture(1)
+    for name in ("entitlements", "acquisition_ledger", "placements"):
+        for row in tables[name]:
+            row["provider_id"] = "synthetic-future-provider"
+    second = dict(tables["entitlements"][0], entitlement_id="competing-right",
+                  account_id="other-borrower", credential_id="other-credential",
+                  state="inactive")
+    tables["entitlements"].append(second)
+    before = deepcopy(tables)
+    report = _reconcile(inventory, tables)
+    assert "ambiguous" in report.files[0]
+    assert "confirmed_link" not in report.files[0]
+    assert _attested(report) == []
+    assert tables == before
+    assert "competing-right" not in json.dumps(report.redacted())
+
+
+def test_cross_identity_and_different_edition_do_not_create_false_ambiguity():
+    inventory, tables = _fixture(1)
+    observed = tables["entitlements"][0]
+    different_identity = dict(observed, entitlement_id="foreign-right",
+                              identity_id="bob", credential_id="bob-card")
+    different_edition = dict(observed, entitlement_id="other-edition",
+                             item_id="different-edition", account_id="other")
+    tables["entitlements"].extend((different_identity, different_edition))
+    report = _reconcile(inventory, tables)
+    assert "ambiguous" not in report.files[0]
+    assert report.files[0] == {"confirmed_link"}
+    assert len(_attested(report)) == 1
+
+
+def test_same_provider_edition_with_inactive_other_account_still_blocks():
+    inventory, tables = _fixture(1)
+    competitor = dict(tables["entitlements"][0], entitlement_id="inactive-other",
+                      credential_id="other-credential", account_id="other-account",
+                      state="inactive")
+    tables["entitlements"].append(competitor)
+    report = _reconcile(inventory, tables)
+    assert "ambiguous" in report.files[0]
+    assert "confirmed_link" not in report.files[0]
+    assert _attested(report) == []

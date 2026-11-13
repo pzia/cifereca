@@ -9,6 +9,7 @@ import pytest
 
 from cifereca.models import Account, Booking, HistoryItem
 from cifereca.services import LibraryService
+from cifereca.core import library_projection
 from cifereca.gui import shell_account_selection_controller
 
 
@@ -43,7 +44,8 @@ def _ui_host():
         type_ignores=[],
     )
     namespace = {"TaskPriority": NS(USER_ACTION="user", NORMAL="normal"),
-                 "shell_account_selection_controller": shell_account_selection_controller}
+                 "shell_account_selection_controller": shell_account_selection_controller,
+                 "library_projection": library_projection}
     exec(compile(ast.fix_missing_locations(module), str(MAIN), "exec"), namespace)
 
     class Runner:
@@ -232,3 +234,44 @@ def test_retired_booking_read_never_projects_historical_cache_as_rights():
                                   medium="digital", title="Historical booking")]
     assert host.refresh_bookings() == []
     assert host.last_bookings == []
+
+
+def test_queued_history_worker_uses_admitted_account_after_ui_switch(monkeypatch):
+    host = _ui_host()
+    admitted = host.service.current_account
+    calls = []
+
+    def read(_service, *, force=False, account=None):
+        calls.append((force, account))
+        return ["history for A"]
+
+    monkeypatch.setattr(library_projection, "refresh_history", read)
+    host.refresh_history(force=True)
+    pending = host.runner.pending[-1]
+    host._account_changed(NS(get_selected=lambda: 1), None)
+    assert host.service.current_account.unique_id == "b"
+    assert pending.work() == ["history for A"]
+    assert calls == [(True, admitted)]
+    pending.done(["history for A"])
+    assert host.history_displayed == []
+
+
+def test_history_explicit_account_uses_its_cache_and_session_after_switch():
+    host, writes = _service_host()
+    admitted = host.current_account
+    host.select_account("b", "paris", "vault-b")
+    seen = []
+    host._session_for_account = lambda account: (
+        seen.append(account) or NS(
+            capabilities=NS(history=True),
+            history=lambda account: [],
+        )
+    )
+    host._key = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("mutable navigation cache key")
+    )
+    assert library_projection.refresh_history(host, force=True, account=admitted) == []
+    assert seen == [admitted]
+    assert len(writes) == 1
+    assert writes[0][1] == "paris:vault-a:a:history-v3"
+    assert host.current_account.unique_id == "b"

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from cifereca.providers.base import ProviderCapabilities
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 
 
 def enable_synthetic_paris_opening(service) -> None:
@@ -25,14 +25,23 @@ def enable_synthetic_paris_opening(service) -> None:
         # fixtures; they already have an explicit runtime session.
         if key in service._sessions:
             continue
+        capabilities = ProviderCapabilities(
+            loans=True, digital_download=True,
+            opening_loan_auto_acquisition=True,
+        )
         service._sessions[key] = SimpleNamespace(
             provider_id="paris",
             credential_id=credential,
             connected=True,
-            capabilities=ProviderCapabilities(
-                loans=True,
-                digital_download=True,
-                opening_loan_auto_acquisition=True,
+            capabilities=capabilities,
+            # Declare the fixture's historical empty-ID borrower convention
+            # explicitly. This must never be inferred from provider_id or
+            # is_primary by Core admission.
+            descriptor=ProviderDescriptor(
+                id="paris", display_name="Synthetic Paris",
+                description="offline opening test session",
+                state="ready", capabilities=capabilities,
+                existing_primary_loan_account_alias="primary",
             ),
             accounts=accounts,
             options={},

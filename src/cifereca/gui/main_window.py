@@ -20,6 +20,7 @@ from .. import __version__
 from ..catalogue_link import safe_document_link_url
 from ..config import Config
 from ..core.search import file_format
+from ..core import library_projection
 from ..identity_selection import identity_change_required
 from ..language import language_label
 from ..diagnostics import Diagnostics
@@ -1265,7 +1266,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self._populate_history(rows)
 
         self.runner.submit(
-            "Chargement de l'historique…", lambda: self.service.refresh_history(force=force), done, control=control,
+            "Chargement de l'historique…", lambda: library_projection.refresh_history(self.service, force=force, account=account), done, control=control,
             priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="history",
             origin="user" if control is not None else "automatic",
         )
@@ -1546,11 +1547,6 @@ class MainWindow(Adw.ApplicationWindow):
             self, row, Path=Path, format_recent_timestamp=format_recent_timestamp,
         )
 
-    # Compatibility name used by the 0.8.0 refresh paths.
-    def _render_kobo_loans(self) -> None:
-        self._render_library()
-
-
     def _book_recommendation_target(self, item):
         return recommendation_target_controller.book_recommendation_target(
             self, item,
@@ -1568,9 +1564,6 @@ class MainWindow(Adw.ApplicationWindow):
             book_detail_presentation=book_detail_presentation,
             detail_language=detail_language, document_links=document_links,
         )
-
-    def _kobo_selected(self, row: BookListItem | None) -> None:
-        self._library_selected(row)
 
     def choose_adept_loan(self, acquisition_id, loan, control):
         self.runner.submit("Lecture des prêts ADEPT…", lambda: self.service.adept_loan_choices(acquisition_id),

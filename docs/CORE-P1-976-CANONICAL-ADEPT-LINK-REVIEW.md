@@ -1,3 +1,5 @@
+> **Historique — #5842 (13/11/2026) :** les commandes `cifereca-cli paris-adept ...` décrites ci-dessous ont été retirées et ne sont plus exécutables. Les mécanismes Core/SQLite de preuves ADEPT restent disponibles aux traitements autorisés. Un **diagnostic ADEPT multicomptes** générique et hors réseau est prévu en P2 #5841. Ne pas réintroduire ces commandes comme solution de repli.
+
 # P1 #976 — revue locale des SourceReference et OriginLink ADEPT
 
 Le contrat #3171 impose de **conserver séparément** la source du droit Paris,

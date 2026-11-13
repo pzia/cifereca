@@ -18,7 +18,7 @@ def _future(source_id, identity_id="alice", **changes):
     )
 
 
-def test_unknown_provider_card_shows_typed_phases_without_provider_tools():
+def test_unknown_provider_card_shows_typed_phases_and_declared_manual_tools():
     source = _future(
         "future-one", status="partial", error="Synchronisation partielle",
         phase_states=(
@@ -37,9 +37,10 @@ def test_unknown_provider_card_shows_typed_phases_without_provider_tools():
     assert "Notices et droits : Partielle" in row.subtitle
     assert "Téléchargement local : Réussie" in row.subtitle
     assert "couverture partielle (information)" in row.subtitle
-    # No provider-specific download/loan/backup widgets appear on an
-    # unrecognized provider that only publishes the generic Sync contract.
-    assert len(row.suffixes) == 2
+    # This synthetic provider explicitly declares local_materialization.
+    # Offer only the same manual preview, with no implicit preparation/GET.
+    assert len(row.suffixes) == 3
+    assert row.suffixes[2].label == "Aperçu local…"
     assert not any("Kobo" in str(getattr(item, "title", ""))
                    or "Numilog" in str(getattr(item, "title", ""))
                    for item in group.children)

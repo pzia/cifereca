@@ -56,11 +56,8 @@ def test_canonical_kobo_does_not_fall_through_to_legacy_get(
             row for row in result["identities"] if row["identity_id"] == "alice"
         )
         assert owner["canonical_execution"]["pending"] == int(canonical_pending)
-        assert result["kobo"]["status"] == (
-            "partial" if canonical_pending else "complete"
-        )
-        assert result["kobo"]["canonical_sources"] == 1
-        assert result["kobo"]["synced_accounts"] == 1
+        # Canonical outcomes live on exact identity/source summaries only.
+        assert "kobo" not in result and "kobo_decision" not in result
         assert calls == [("canonical", account.identity_id, account.credential_id)]
         assert service.storage.metadata_get(
             "sync.source.materialization.last_attempt." +
@@ -171,7 +168,7 @@ def test_on_start_partial_abi_never_reenables_older_kobo_worker(tmp_path, monkey
 
 
 def test_opening_canonical_account_convergence_is_supplier_neutral():
-    """No supplier branch in Core A→B execution; Kobo is a read-only legacy view."""
+    """No supplier branch or retired Kobo view in Core A→B execution."""
     import ast
     from pathlib import Path
 
@@ -184,9 +181,11 @@ def test_opening_canonical_account_convergence_is_supplier_neutral():
         "completed = detail.setdefault", 1,
     )[0]
     assert 'account.provider_id == "kobo"' not in target
-    assert 'canonical_source_completion[' in target
-    assert '(account.provider_id, source_id)' in target
-    assert 'if provider_id == "kobo"' in source  # compatibility projection
+    # The old supplier-specific completion mirror is physically retired.
+    # Exact-source convergence remains in the identity's canonical counters.
+    assert 'canonical_source_completion[' not in source
+    assert 'if provider_id == "kobo"' not in source
+    assert 'completed = detail.setdefault("canonical_execution"' in source
     assert '_run_observed_canonical_convergence(' in source
 
 

@@ -61,3 +61,22 @@ def test_all_four_retired_manual_operations_are_read_only_without_proofs():
     )
     assert all(result == {"status": "unavailable", "read_only": True}
                for result in (preview, confirm, undo, undo_confirm))
+
+
+def test_retired_confirmation_tokens_have_no_producers_or_state():
+    """No legacy token may be minted or consumed after the writer's retirement."""
+    source = inspect.getsource(LocalInspection)
+    assert "_manual_pending" not in source
+    assert "_manual_undo_pending" not in source
+    assert "self._manual_undo =" not in source
+    tree = ast.parse(source)
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    methods = {node.name: node for node in cls.body
+               if isinstance(node, ast.FunctionDef)}
+    for name in ("confirm_manual_attachment", "preview_manual_undo", "confirm_manual_undo"):
+        node = methods[name]
+        returns = [n for n in ast.walk(node) if isinstance(n, ast.Return)]
+        assert len(returns) == 1
+        assert ast.literal_eval(returns[0].value) == {
+            "status": "unavailable", "read_only": True,
+        }

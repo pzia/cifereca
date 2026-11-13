@@ -81,7 +81,9 @@ def _loan_cache_key(account: Account) -> str:
     return "loans.v2:" + hashlib.sha256(serialized.encode('utf-8')).hexdigest()
 
 
-def _cached_loans_for_exact_account(value: object, account: Account) -> list[Loan] | None:
+def _cached_loans_for_exact_account(
+    value: object, account: Account, *, descriptor=None,
+) -> list[Loan] | None:
     """Treat cached rows as untrusted: never rewrite their source/identity.
 
     A cache hit is only usable if every row still identifies the same
@@ -90,9 +92,10 @@ def _cached_loans_for_exact_account(value: object, account: Account) -> list[Loa
     """
     if type(value) is not list or len(value) > 10_000:
         return None
-    expected_accounts = {account.unique_id}
-    if account.provider_id == 'paris' and account.unique_id == '':
-        expected_accounts.add('primary')
+    from .plugin_api.loan_scope import loan_matches_account
+    # Exact account IDs need no alias convention. A different observed ID
+    # requires an attestation from this installed provider descriptor, not
+    # an implicit Paris/default-primary fallback encoded in Core.
     loans = []
     for value_row in value:
         if type(value_row) is not dict:
@@ -109,7 +112,8 @@ def _cached_loans_for_exact_account(value: object, account: Account) -> list[Loa
             and type(row.source_credential) is str
             and row.source_credential == account.credential_id
             and type(row.source_account_id) is str
-            and row.source_account_id in expected_accounts
+            and (row.source_account_id == account.unique_id
+                 or loan_matches_account(row, account, descriptor))
             and type(row.identity_id) is str
             and row.identity_id == account.identity_id
             and type(row.medium) is str
@@ -1215,9 +1219,6 @@ class LibraryService:
             self, logger=_TRACE_LOG, caller_category=caller_category,
         )
 
-    def login(self, username: str, password: str) -> dict[str, Any]:
-        return provider_sessions.login(self, username, password)
-
     def select_account(self, unique_id: str, provider_id: str | None = None, credential_id: str | None = None) -> Account:
         return provider_sessions.select_account(self, unique_id, provider_id, credential_id)
 
@@ -1238,7 +1239,17 @@ class LibraryService:
         ttl = int(self.config.get("cache.dashboard_seconds", 300))
         if not force:
             cached = self.storage.cache_get("account", key)
-            rows = _cached_loans_for_exact_account(cached, account)
+            # A cache is never evidence of a supplier primary-account alias.
+            # Inspect only the registered session's static descriptor; do not
+            # reconnect, invoke plugin properties or issue a provider GET.
+            registered = self._sessions.get(
+                self._session_key(account.provider_id, account.credential_id),
+            )
+            descriptor = (inspect.getattr_static(registered, "descriptor", None)
+                          if registered is not None else None)
+            rows = _cached_loans_for_exact_account(
+                cached, account, descriptor=descriptor,
+            )
             if rows is not None:
                 self._record_loan_statistics(account, rows, from_cache=True)
                 return rows
@@ -1308,17 +1319,31 @@ class LibraryService:
         # Never silently rewrite a supplier-provided different identity into
         # the selected account. Validate the entire batch before mutation,
         # caching or entitlement persistence; provider exceptions remain closed.
+        from .plugin_api.loan_inventory import LoanInventoryScope
+        from .providers.base import ProviderDescriptor
+        # Positive rows may use a primary alias only when the installed
+        # provider descriptor declares it for this exact empty-ID borrower.
+        # The v1 read remains supported, but may not infer Paris or any
+        # other provider's alias from a name alone.
+        descriptor = inspect.getattr_static(session, "descriptor", None)
+        if descriptor is not None and type(descriptor) is not ProviderDescriptor:
+            descriptor = None
+        try:
+            scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
+        except ValueError as exc:
+            raise ProviderConfigurationError(
+                "Inventaire de prêts : périmètre de compte non conforme"
+            ) from exc
+        borrowers = {account.unique_id}
+        if scope.primary_account_alias is not None:
+            borrowers.add(scope.primary_account_alias)
         if type(rows) is not list or any(
             type(row) is not Loan
             or (row.identity_id is not None and row.identity_id != account.identity_id)
             or row.source_provider != account.provider_id
             or row.source_credential != account.credential_id
             or (row.source_account_id is not None
-                and row.source_account_id not in (
-                    account.unique_id,
-                    "primary" if account.provider_id == "paris" and not account.unique_id
-                    else account.unique_id,
-                ))
+                and row.source_account_id not in borrowers)
             for row in rows
         ):
             raise ProviderConfigurationError("Inventaire de prêts : périmètre de compte non conforme")
@@ -1945,7 +1970,7 @@ class LibraryService:
         return detail
 
     def renew(self, loan: Loan, *, confirmed: bool = False) -> dict[str, Any]:
-        """Manual Paris renewal; at-most-once remote POST per exact loan.
+        """Manually renew a physical loan when its source declares support.
 
         A GUI button, a cached CanRenew flag or a truthy confirmation is not
         sufficient. Preserve the existing cross-process loan mutation lock
@@ -1957,9 +1982,8 @@ class LibraryService:
                 "provider_request_accepted": False, "provider_verified": False,
                 "retry": "explicit_only",
             }
-        # Reject non-Paris/digital renewals before taking a mutation lock.
+        # Reject malformed and digital scopes before taking a mutation lock.
         if (type(loan) is not Loan
-                or loan.source_provider != "paris"
                 or loan.medium != "physical"
                 or type(loan.source_provider) is not str
                 or type(loan.id) is not str or not loan.id
@@ -3456,27 +3480,6 @@ class LibraryService:
         )
         return self.storage.paris_borrower_adept_binding_get(
             credential_id=credential_id, account_id=borrower,
-        )
-
-    def audit_paris_adept_loan_origins(self, loan: Loan) -> dict[str, Any]:
-        """Read-only historical evidence for the exceptional ADEPT resolver.
-
-        Never authorizes new fulfillment or return; no live inventory refresh,
-        provider session, profile selection or ledger mutation.
-        """
-        from .core.adept_origin_audit import inspect_paris_adept_origins
-        if str(loan.source_provider).casefold() != "paris":
-            return {"status": "unsupported_source", "shared_visibility": False,
-                    "profile_disagreement": False,
-                    "adept_loan_reference_disagreement": False,
-                    "adobe_loan_state_disagreement": False,
-                    "origin_resolution": "unknown", "sources": [], "origins": []}
-        return inspect_paris_adept_origins(
-            loan_id=str(loan.id or ""),
-            item_id=str(loan.record_id or loan.id or ""),
-            entitlements=self.storage.entitlements(provider_id="paris"),
-            acquisitions=self.storage.acquisitions(provider_id="paris"),
-            artifact_inspector=inspect_artifact,
         )
 
     def _paris_adept_identity_for_loan(

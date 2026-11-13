@@ -96,8 +96,11 @@ def group_evidence(inventory: Inventory, snapshot: EvidenceSnapshot,
     rights = snapshot.tables.get('entitlements', [])
     confirmed = defaultdict(set)
     for edge in report.edges:
-        if edge.table == 'entitlements' and edge.certainty == 'attested' and 0 <= edge.row_index < len(rights):
-            confirmed[edge.file_index].add(rights[edge.row_index].get('provider_id'))
+        if edge.certainty != 'attested' or edge.table not in {'entitlements', 'provider_origins'}:
+            continue
+        rows = snapshot.tables.get(edge.table, [])
+        if 0 <= edge.row_index < len(rows):
+            confirmed[edge.file_index].add(rows[edge.row_index].get('provider_id'))
     for fi, observation in enumerate(inventory.files):
         if observation.identity_id not in indices:
             continue

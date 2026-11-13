@@ -47,6 +47,9 @@ def test_legacy_source_never_evaluates_dynamic_side_channel_property(
         credential_id = session.credential_id
         connected = True
         capabilities = session.capabilities
+        # Preserve the installed provider's *static* borrower convention.
+        # The dynamic v1 error side-channel remains deliberately poisoned.
+        descriptor = session.descriptor
 
         @property
         def last_loan_errors(self):

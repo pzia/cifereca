@@ -14,7 +14,7 @@ from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_evidence_scope import _public_provider_group
 from .library_inspection_cache import take_inspection_cache
 from .library_sqlite_freshness import sqlite_source_stamp
-from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
+from .library_manual_link_preflight import review_local_pair, review_source_read_only
 
 def _private_edition_collision_counts(rights, identity_id):
     """Conservative count of same-edition rights across private credentials.
@@ -59,6 +59,7 @@ _REASONS = {
     'artifact_sha_size_candidate': 'Même SHA et taille : mêmes octets, sans preuve de droit.',
     'backup_sha_size_candidate': 'Sauvegarde avec même SHA et taille : provenance à vérifier.',
     'explicit_placement_sha_size': 'Placement explicite avec SHA et taille concordants.',
+    'explicit_provider_origin_placement_sha_size': 'Origine fournisseur et fichier vérifiés.',
     'explicit_right_ledger_placement_sha_size': 'Droit, acquisition complète et placement concordants.',
 }
 _INVENTORY_LIMIT_LABELS = {
@@ -468,14 +469,11 @@ class LocalInspection:
         # Core session only; never serialised or exposed through a plugin.
         self._manual_service = service
         self._manual_identity = identity_id
-        self._manual_pending = None
         # Private mapping from case keys observed in THIS scoped audit. The
         # UI never supplies raw Placement IDs or filesystem paths for repair.
         self._missing_case_placements = {}
         self._missing_operator = None
         self._missing_pending = None
-        self._manual_undo = None
-        self._manual_undo_pending = None
         # Optional, one-time private cache guard installed only on a verified
         # handoff. A confirmed Core commit may advance its SQLite stamp ONCE
         # so the same-session undo remains reachable.
@@ -500,9 +498,7 @@ class LocalInspection:
         self._title_only_file_keys = {}
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
-        self._kobo_right_proofs = {}
         self._manual_file_proofs = {}
-        self._manual_right_scopes = {}
         self._manual_file_observations = {}
         # A declaration is descriptive, never one of the attested strategies.
         self._declared_right_scopes = {}
@@ -588,16 +584,6 @@ class LocalInspection:
         edges, candidates, ledgers = defaultdict(list), defaultdict(list), defaultdict(list)
         rights = audit.snapshot.tables.get('entitlements', [])
         catalog = audit.snapshot.tables.get('catalog_entries', [])
-        # The older Kobo mirror intentionally omits manifest provenance and
-        # revision from the generic snapshot. It DOES contain a previously
-        # recorded backup SHA/size. Use this only to gate a fresh Kobo preview;
-        # the dedicated writer checks the missing account/revision/connection.
-        kobo_backups = defaultdict(list)
-        for backup in audit.snapshot.tables.get('backup_items', ()):
-            if backup.get('provider_id') == 'kobo':
-                kobo_backups[(
-                    backup.get('credential_id'), backup.get('item_id'),
-                )].append(backup)
         # Invert the already bounded, exact, same-identity, metadata_only
         # candidates from the shared auditor. There is deliberately NO
         # title/author/path/provider inference at the file level.
@@ -667,9 +653,13 @@ class LocalInspection:
                 states.add('metadata_candidate')
             if index in ambiguous:
                 states.add('ambiguous')
-            providers = {_provider(rights[e.row_index].get('provider_id')) for e in edges[index]
-                         if e.table == 'entitlements' and e.certainty == 'attested'
-                         and 0 <= e.row_index < len(rights) and rights[e.row_index].get('identity_id') == identity_id}
+            providers = set()
+            for edge in edges[index]:
+                if edge.certainty != 'attested' or edge.table not in {'entitlements', 'provider_origins'}:
+                    continue
+                rows = audit.snapshot.tables.get(edge.table, [])
+                if 0 <= edge.row_index < len(rows) and rows[edge.row_index].get('identity_id') == identity_id:
+                    providers.add(_provider(rows[edge.row_index].get('provider_id')))
             provider = next(iter(providers)) if 'confirmed_link' in states and len(providers) == 1 else 'unattributed'
             details = [f'Fichier local : {_text(observation.path)}',
                        f'Taille : {observation.size}', f'Format : {_text(observation.media_format)}',
@@ -886,48 +876,10 @@ class LocalInspection:
                     and (scope[1] != 'bnf-pret' or bnf_exact_loan)
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
-            if scope is not None and right.get('provider_id') == 'numilog':
-                self._manual_right_scopes[f'right:{index}'] = scope
-            # The shared audit does not project backup revision or provider
-            # connections. These are deliberately NOT inferred from metadata:
-            # the independent Kobo transaction recollects them freshly.
-            if right.get('provider_id') == 'kobo':
-                backup_rows = (
-                    kobo_backups.get((scope[2], scope[4]), ())
-                    if scope is not None else ()
-                )
-                backup = backup_rows[0] if len(backup_rows) == 1 else {}
-                backup_sha = backup.get('sha256')
-                backup_signature = (
-                    (backup_sha.lower(), backup.get('size'))
-                    if type(backup_sha) is str else None
-                )
-                kobo_attested = (
-                    scope is not None
-                    and len(backup_rows) == 1
-                    and backup.get('identity_id') == scope[0]
-                    and type(backup_sha) is str and len(backup_sha) == 64
-                    and all(ch in '0123456789abcdef' for ch in backup_sha.lower())
-                    and type(backup.get('size')) is int and backup['size'] > 0
-                    # Legacy backup_items compatibility rights have no
-                    # attested_source marker. This gate only permits a fresh
-                    # read-only preview, NEVER a write. The Kobo engine
-                    # independently requires the personal backup, revision,
-                    # active owned entitlement and exact account/SHA.
-                    and right.get('state') == 'active'
-                    and right.get('entitlement_type') == 'owned'
-                    and not right.get('loan_id') and not right.get('expires_at')
-                    and scope_counts[scope] == 1
-                )
-                self._kobo_right_proofs[f'right:{index}'] = {
-                    'attested': kobo_attested,
-                    'ambiguous': (scope is None or scope_counts[scope] != 1
-                                  or len(backup_rows) != 1),
-                    'signature': backup_signature,
-                }
+            is_numilog_right = right_provider == 'numilog'
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
-                    right.get('provider_id') == 'numilog'
+                    is_numilog_right
                     and right.get('attested_source') == 'numilog.authenticated_library'
                     and right.get('state') == 'active'
                     and right.get('entitlement_type') == 'owned'
@@ -935,7 +887,7 @@ class LocalInspection:
                 ),
                 'ambiguous': (
                     scope is None or scope_counts[scope] != 1
-                    or (right.get('provider_id') == 'numilog'
+                    or (is_numilog_right
                         and edition_collision_counts.get(
                             (identity_id, right.get('provider_id'),
                              right.get('item_id')), 0) != 1)
@@ -1312,16 +1264,11 @@ class LocalInspection:
         self._title_only_file_keys.clear()
         self._file_facets.clear()
         self._manual_right_proofs.clear()
-        self._kobo_right_proofs.clear()
         self._manual_file_proofs.clear()
-        self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
         self._declared_right_scopes.clear()
         self._declared_pending = None
         self._declared_last = None
-        self._manual_pending = None
-        self._manual_undo = None
-        self._manual_undo_pending = None
         self._accept_own_core_commit = None
         self._manual_preview_generation += 1
         self._manual_service = None
@@ -1589,45 +1536,6 @@ class LocalInspection:
                 or not file_key.startswith('file:')):
             return review_local_pair(None, None, audit_complete=False)
 
-        # Shared browsing is available for Kobo and Paris, but neither can
-        # accidentally enter Numilog's purchase-only transaction from here.
-        # An explicit reason is safer than reporting a real Kobo/Paris right
-        # as a missing Numilog entitlement.
-        if right.provider == 'kobo':
-            proof = self._kobo_right_proofs.get(right_key)
-            if not proof or proof.get('attested') is not True:
-                return _explain_pair_coverage(review_source_read_only(
-                    'kobo', audit_complete=self._manual_audit_complete,
-                    bibliographic_hint=(
-                        file_key in self._candidate_file_keys.get(right_key, ())
-                    ),
-                ), self._manual_pair_coverage_gaps)
-
-            observation = self._manual_file_observations.get(file_key)
-            verified = (
-                observation is not None
-                and (
-                    (observation.media_format == 'epub'
-                     and observation.validation == 'ok'
-                     and observation.structure_validation == 'epub_structure_crc_ok')
-                    or
-                    (observation.media_format == 'pdf'
-                     and observation.validation == 'pdf_signature_only'
-                     and observation.structure_validation == 'pdf_structure_minimal')
-                )
-            )
-            return _explain_pair_coverage(review_kobo_candidate(
-                proof,
-                {'verified': verified,
-                 'signature': (observation.sha256, observation.size)
-                              if observation is not None else None},
-                audit_complete=self._manual_pair_evidence_complete,
-                global_audit_partial=not self._manual_audit_complete,
-                bibliographic_hint=(
-                    file_key in self._candidate_file_keys.get(right_key, ())
-                ),
-            ), self._manual_pair_coverage_gaps)
-
         if right.provider != 'numilog':
             return review_source_read_only(
                 right.provider,
@@ -1651,8 +1559,6 @@ class LocalInspection:
         """A changed selection invalidates pending and in-flight previews."""
         self.cancel_missing_repair()
         self._manual_preview_generation += 1
-        self._manual_pending = None
-        self._manual_undo_pending = None
         self._declared_pending = None
         self._history_withdraw_pending = None
 
@@ -1835,30 +1741,17 @@ class LocalInspection:
     def confirm_manual_attachment(self, right_key, file_key, *,
                                   user_confirmed=False, cancelled=lambda: False):
         """Consume any stale token but never authorize a retired writer."""
-        pending, self._manual_pending = self._manual_pending, None
-        if (user_confirmed is not True or pending is None
-                or pending[:2] != (right_key, file_key)):
-            return {'status': 'unavailable', 'read_only': True}
-        return self._refuse_obsolete_manual_attachment(right_key, file_key)
+        return {'status': 'unavailable', 'read_only': True}
 
     def preview_manual_undo(self, right_key, file_key, *, cancelled=lambda: False):
         """No historical local-pair undo can reverse canonical provenance."""
         self.revoke_manual_attachment_preview()
-        previous = self._manual_undo
-        if (previous is None or previous[:2] != (right_key, file_key)
-                or self._manual_service is None):
-            return {'status': 'unavailable', 'read_only': True}
-        return self._refuse_obsolete_manual_attachment(right_key, file_key)
+        return {'status': 'unavailable', 'read_only': True}
 
     def confirm_manual_undo(self, right_key, file_key, *,
                             user_confirmed=False, cancelled=lambda: False):
         """Consume stale undo tokens; no link, placement or right mutation."""
-        pending, self._manual_undo_pending = self._manual_undo_pending, None
-        if (user_confirmed is not True or pending is None
-                or pending[:2] != (right_key, file_key)
-                or self._manual_undo != pending[:3]):
-            return {'status': 'unavailable', 'read_only': True}
-        return self._refuse_obsolete_manual_attachment(right_key, file_key)
+        return {'status': 'unavailable', 'read_only': True}
 
     def candidate_files(self, right_key):
         """Only local, metadata_only cross-reference hints; never an action plan.

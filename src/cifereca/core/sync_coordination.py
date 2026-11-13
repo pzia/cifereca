@@ -12,14 +12,12 @@ from uuid import uuid4
 
 import time
 import hashlib
-import json
 import logging
 from contextlib import ExitStack
 from inspect import getattr_static
 from .source_sync_timing import measure, timing_scope
 from datetime import datetime, timezone
 from typing import Any, Callable
-from ..diagnostics import _core_journal_record
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 
@@ -140,7 +138,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             snapshot, loans = _sync_loan_inventory_observation(
                 self, account, session,
             )
-        if not _opening_loans_scoped(account, source_scope[0], loans):
+        if not _opening_loans_scoped(account, source_scope[0], loans, session=session):
             raise ProviderConfigurationError("loan_source_scope_mismatch")
         matching = [
             row for row in self.accounts
@@ -251,34 +249,32 @@ def _run_observed_canonical_convergence(
         legacy_source_auto_policy, legacy_source_auto_current,
         legacy_source_auto_in_transaction,
     )
-    canonical_on = False
+    observed = admitted_snapshots[0]
+    # One authoritative policy snapshot decides both the canonical branch
+    # and whether the historical source-wide loan switch may be consulted.
+    # A later grant/revocation is still fenced by revision checks before GET
+    # and inside the final SQLite publication transaction.
+    source_policy = read_policy(self.storage, observed.scope)
+    canonical_on = source_policy.mode == "on"
     legacy_revision = None
     legacy_keys = frozenset()
-    if type(admitted_snapshots) is list and len(admitted_snapshots) == 1:
-        observed = admitted_snapshots[0]
-        policy = read_policy(self.storage, observed.scope)
-        canonical_on = policy.mode == "on"
-        # Existing BnF source-wide ON is a user consent, not a loan right.
-        # Promote only the ephemeral exact keys from THIS admitted provider
-        # snapshot; never consult/persist old entitlement or file history.
-        # An explicitly configured generic policy always overrides legacy.
-        if not policy.configured:
-            from .source_convergence import SourceKey
-            keys = frozenset(
-                SourceKey(observed.scope, row.edition_id, row.right_id,
-                          row.kind, observed.branch)
-                for row in observed.rights
-                if row.provider_attested is True and row.kind == "loan"
+    if not source_policy.configured:
+        from .source_convergence import SourceKey
+        keys = frozenset(
+            SourceKey(observed.scope, row.edition_id, row.right_id,
+                      row.kind, observed.branch)
+            for row in observed.rights
+            if row.provider_attested is True and row.kind == "loan"
+        )
+        if keys:
+            mode, revision = legacy_source_auto_policy(
+                self.storage, observed.scope, "loan",
             )
-            if keys and all(key.kind == "loan" for key in keys):
-                mode, revision = legacy_source_auto_policy(
-                    self.storage, observed.scope, "loan",
-                )
-                if mode == "on" and type(revision) is str:
-                    legacy_revision = revision
-                    legacy_keys = keys
+            if mode == "on" and type(revision) is str:
+                legacy_revision = revision
+                legacy_keys = keys
     legacy_on = legacy_revision is not None
-    if (delivery is None and admitted_snapshots
+    if (delivery is None
             and (canonical_on or legacy_on or callable(consent_reader))):
         from inspect import getattr_static
         try:
@@ -301,7 +297,7 @@ def _run_observed_canonical_convergence(
                 # Plugins receive it only via the explicit guarded candidate ABI.
                 consent_still_current=lambda: current_consent(key),
             )
-    if (admitted_snapshots and callable(delivery)
+    if (callable(delivery)
             and (canonical_on or legacy_on or callable(consent_reader))):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
@@ -315,8 +311,6 @@ def _run_observed_canonical_convergence(
         # An explicitly configured source-wide policy adds a second,
         # independently revocable generation fence. Legacy unset sources
         # retain their existing exact-right permission checks.
-        from .source_sync_consent import read_policy
-        source_policy = read_policy(self.storage, admitted_snapshots[0].scope)
         if source_policy.configured and source_policy.mode != "on":
             # A revoked/invalid whole-source policy withholds every observed
             # resource. Never invent one pending item for an empty inventory.
@@ -679,64 +673,6 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
         raise ProviderConfigurationError("Une synchronisation automatique est déjà en cours") from exc
 
 
-def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
-    """Passive decision: only explicit *source* opt-ins permit acquisition.
-
-    Historical global kobo_backup.enabled remains diagnostic/rollback data,
-    never an authorization to download. Deep inventory scanning cannot
-    silently change an acquisition policy. No provider calls here.
-    """
-    legacy_enabled = self.config.get("kobo_backup.enabled", False) is True
-    try:
-        interval_minutes = max(15, int(self.config.get("kobo_backup.interval_minutes", 60)))
-    except (TypeError, ValueError):
-        interval_minutes = 60
-    kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
-    connected = [s for s in kobo if s.connected]
-    capable = [s for s in connected if getattr(s.capabilities, "backup", False)]
-    eligible_accounts = [
-        a for a in self.accounts
-        if a.provider_id == "kobo"
-        and any(s.credential_id == a.credential_id for s in capable)
-        and self.sync_source_enabled(a)
-    ]
-    eligible = [
-        s for s in capable
-        if any(a.credential_id == s.credential_id for a in eligible_accounts)
-    ]
-    # #3198: only current source/session facts determine the opening state.
-    # Historical kobo_backup.enabled is exposed separately for rollback,
-    # never as a source-wide OFF decision or acquisition permission.
-    if not kobo and not any(a.provider_id == "kobo" for a in self.accounts):
-        reason = "disabled"  # No configured account and no active session.
-    elif not connected:
-        reason = "no_session"
-    elif not capable:
-        reason = "capability_unavailable"
-    elif not eligible:
-        reason = "source_disabled"
-    else:
-        reason = "manual_only"  # Legacy on_start W2 is retired.
-    # Only age/counts, never user/account identifiers, file paths or tokens.
-    raw_last = self.storage.metadata_get("kobo_backup_last_success_at")
-    try:
-        last = int(raw_last)
-        age = int(time.time()) - last
-        last_success_age_minutes = age // 60 if 0 <= age <= 366 * 86400 else None
-    except (TypeError, ValueError, OverflowError):
-        last_success_age_minutes = None
-    return {
-        "status": reason, "persisted_enabled": legacy_enabled,
-        "configured_kobo": len(kobo), "connected_kobo": len(connected),
-        "eligible_kobo": len(eligible),
-        "eligible_kobo_bindings": len(eligible_accounts),
-        "scheduled_kobo": 0,
-        "interval_minutes": interval_minutes,
-        "last_success_age_minutes": last_success_age_minutes,
-        "deep": bool(deep),
-    }
-
-
 def _opening_loan_acquisition_allowed(loan: Loan, *, session: Any = None) -> bool:
     """Opening acquisition requires an explicit capability, never a provider-ID exception.
 
@@ -761,27 +697,38 @@ def _opening_loan_acquisition_allowed(loan: Loan, *, session: Any = None) -> boo
             and type(loan.source_account_id) is str
         ):
             return False
-        # The primary Paris account can be serialized under its empty
-        # upstream ID or the Core alias "primary", but no other account
-        # may inherit that alias. All other account IDs match exactly.
-        for a in session.accounts:
-            if type(a) is not Account:
-                continue
-            if (a.provider_id != loan.source_provider
-                    or a.credential_id != loan.source_credential
-                    or a.identity_id != loan.identity_id):
-                continue
-            valid_ids = {a.unique_id}
-            if a.is_primary is True and a.unique_id == "":
-                valid_ids.add("primary")
-            if loan.source_account_id in valid_ids:
-                return True
+        # Only the installed descriptor may attest an existing borrower's
+        # upstream alias. A provider name, primary flag or observed row is
+        # never enough to grant opening acquisition.
+        from inspect import getattr_static
+        from ..providers.base import ProviderDescriptor
+        from ..plugin_api.loan_inventory import (
+            LoanInventoryScope, _loan_matches_scope,
+        )
+        descriptor = getattr_static(session, "descriptor", None)
+        if descriptor is not None and type(descriptor) is not ProviderDescriptor:
+            return False
+        matching = []
+        for account in session.accounts:
+            if (type(account) is Account
+                    and account.provider_id == loan.source_provider
+                    and account.credential_id == loan.source_credential
+                    and account.identity_id == loan.identity_id):
+                scope = LoanInventoryScope.for_account(
+                    account, descriptor=descriptor,
+                )
+                if _loan_matches_scope(loan, scope):
+                    matching.append(account)
+        # An ambiguous account list cannot select an acquiring borrower.
+        return len(matching) == 1
     except Exception:
         return False
     return False
 
 
-def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool:
+def _opening_loans_scoped(
+    account: Account, identity_id: str, rows: Any, *, session: Any = None,
+) -> bool:
     """Reject a mixed or malformed supplier batch before writing loan rights.
 
     An account listing may contain several upstream branches (Paris DILICOM
@@ -793,17 +740,23 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
     provider, credential = account.provider_id, account.credential_id
     if type(provider) is not str or not provider or type(credential) is not str or not credential:
         return False
-    # "primary" is a Core alias for the Paris principal account's empty
-    # upstream UID, NOT a default for any malformed/unpaired Account. A
-    # secondary account with no UID (or the reserved alias as its UID)
-    # must never publish or certify the principal borrower's loans.
-    if type(account.unique_id) is not str:
+    # Empty borrower IDs identify only an explicitly primary account.
+    # An alias can be admitted only by the exact installed descriptor, never
+    # by a provider name or by the contents of a borrowed item.
+    if (type(account.unique_id) is not str
+            or (account.unique_id == "" and account.is_primary is not True)
+            or type(identity_id) is not str or not identity_id
+            or account.identity_id != identity_id):
         return False
-    if (provider == "paris" and account.is_primary is not True
-            and account.unique_id in ("", "primary")):
-        return False
-    expected_account = account.unique_id or ("primary" if provider == "paris" else "")
-    if type(identity_id) is not str or not identity_id:
+    from inspect import getattr_static
+    from ..providers.base import ProviderDescriptor
+    from ..plugin_api.loan_inventory import LoanInventoryScope, _loan_matches_scope
+    try:
+        descriptor = getattr_static(session, "descriptor", None) if session is not None else None
+        if descriptor is not None and type(descriptor) is not ProviderDescriptor:
+            return False
+        scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
+    except (AttributeError, TypeError, ValueError):
         return False
     # Do not silently keep whichever conflicting upstream row happens to
     # arrive first. Opening sync deduplicates later by loan ID; without this
@@ -816,9 +769,8 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
             and type(loan.id) is str and bool(loan.id)
             and type(loan.source_provider) is str and loan.source_provider == provider
             and type(loan.source_credential) is str and loan.source_credential == credential
-            and type(loan.source_account_id) is str and loan.source_account_id == expected_account
-            and type(loan.identity_id) is str and loan.identity_id == identity_id
-            and type(loan.medium) is str and loan.medium in ("digital", "physical", "unknown")
+            and type(loan.source_account_id) is str
+            and _loan_matches_scope(loan, scope)
         ):
             return False
         key, signature = _positive_loan_identity(loan)
@@ -961,16 +913,19 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     expired_before = self.acquisition_reconciler.realize_expired_loans()
     summaries: list[dict[str, Any]] = []
     all_loans: list[Loan] = []
-    # Canonical convergence is recorded for every exact source, not dispatched
-    # by supplier. A retired compatibility projection must never schedule a
-    # second acquisition after the Core A→B executor.
-    canonical_source_completion: dict[tuple[str, str], bool] = {}
-    # Device/profile state is provider-owned by Kobo-Adept. Read it once per
-    # opening sync and only project it into the dashboard summary; Paris does
-    # not persist a competing device inventory.
+    # The canonical A→B convergence is tracked on exact source outcomes;
+    # no separate retired supplier-specific startup backup projection.
+    # Only a persisted identity-to-ADEPT binding warrants a profile lookup.
+    # An opening inventory is not an invitation to probe a particular runtime
+    # or enumerate unrelated profiles. The profile list remains read-only and
+    # cannot grant a download or acquisition.
     adept_profiles: list[dict[str, Any]] = []
     try:
-        if self._kobo_adapter().available():
+        has_bound_profile = any(
+            bool(self.storage.adept_profile_binding_get("identity", identity.identity_id))
+            for identity in self.identities
+        )
+        if has_bound_profile:
             adept_profiles = self.kobo_profiles()
     except Exception:
         self.diagnostics.add(
@@ -1053,7 +1008,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
                     )
-                    if not _opening_loans_scoped(account, identity.identity_id, account_loans):
+                    if not _opening_loans_scoped(
+                        account, identity.identity_id, account_loans, session=session,
+                    ):
                         # Do not persist any row from an ambiguous account batch;
                         # avoid displaying or logging provider-controlled details.
                         raise ProviderConfigurationError("loan_source_scope_mismatch")
@@ -1219,16 +1176,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             and canonical.get("pending", 0) > 0):
                         inventory_partial = True
                     if counts is not None:
-                        # Every exact source has already received its one
-                        # canonical acquisition decision, including pending.
-                        # Record only passive outcomes; no legacy worker/GET.
-                        canonical_source_completion[
-                            (account.provider_id, source_id)
-                        ] = not any(
-                            counts[name] for name in (
-                                "pending", "blocked", "failed", "cancelled"
-                            )
-                        )
                         completed = detail.setdefault("canonical_execution", {
                             status: 0 for status in counts
                         })
@@ -1297,7 +1244,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 if any(
                     source_consent_configured(self, account)
                     for account in accounts
-                    if _opening_loans_scoped(account, identity.identity_id, [loan])
+                    if _opening_loans_scoped(
+                        account, identity.identity_id, [loan],
+                        session=self._sessions.get(
+                            self._session_key(account.provider_id, account.credential_id),
+                        ),
+                    )
                 ):
                     # This source has one authoritative canonical ON/OFF,
                     # including OFF/invalid or a failed typed inventory.
@@ -1339,7 +1291,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # solely from an identical credential or a book title.
                     affected = [
                         self.sync_source_id(account) for account in accounts
-                        if _opening_loans_scoped(account, identity.identity_id, [loan])
+                        if _opening_loans_scoped(
+                            account, identity.identity_id, [loan],
+                            session=self._sessions.get(
+                                self._session_key(account.provider_id, account.credential_id),
+                            ),
+                        )
                     ]
                     # An orphan/ambiguous loan cannot prove that any source
                     # completed its opening cycle. Be conservative.
@@ -1475,85 +1432,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         logger.warning("TRACE catalog mirror opening error code=catalog_mirror_failed")
     emit("catalog_mirror", result=catalog_mirror)
 
-    # #4858 D4: startup Kobo acquisition is handled by the already-executed
-    # canonical source Sync above. Never schedule legacy W2 by the historical
-    # on_start preference or refresh its 0.7 retry clock/checkpoint.
-    kobo_decision = _kobo_opening_decision(self, deep=deep)
-    # Historical CLI/TRACE compatibility only; no provider-specific branch
-    # participates in the canonical source execution above.
-    canonical_kobo_sources = {
-        source_id: complete
-        for (provider_id, source_id), complete
-        in canonical_source_completion.items()
-        if provider_id == "kobo"
-    }
-    if canonical_kobo_sources:
-        canonical_ok = all(canonical_kobo_sources.values())
-        kobo_summary: dict[str, Any] | None = {
-            "scope": "accounts",
-            "status": "complete" if canonical_ok else "partial",
-            "canonical_sources": len(canonical_kobo_sources),
-            "sessions": len(canonical_kobo_sources),
-            "synced_accounts": len(canonical_kobo_sources),
-            "cached_accounts": 0,
-            "sources": [],
-            "skipped_fresh": False,
-        }
-        kobo_decision["status"] = "started" if canonical_ok else "partial"
-    else:
-        # Preserve only a descriptive compatibility state, never an implied
-        # 0.7 permission to acquire bytes or mutate backup_items.
-        kobo_summary = (
-            {"status": "manual_only", "skipped": True}
-            if kobo_decision["persisted_enabled"] is True else None
-        )
-        kobo_decision["status"] = "manual_only"
-    for field in ("manifest_items", "owned", "archived", "downloadable",
-                  "candidate_count", "attempted", "downloaded", "pending",
-                  "attention_required", "reconcile_required", "errors"):
-        value = (kobo_summary or {}).get(field)
-        if type(value) is int and 0 <= value <= 1_000_000:
-            kobo_decision[field] = value
-    # One physical log record: the canonical formatter persists the complete
-    # Core decision while existing TRACE listeners keep their original text.
-    _decision_format = (
-        "TRACE kobo backup decision status=%s enabled=%s connected=%s eligible=%s interval=%s"
-    )
-    _decision_args = (
-        kobo_decision["status"], kobo_decision["persisted_enabled"],
-        kobo_decision["connected_kobo"], kobo_decision["eligible_kobo"],
-        kobo_decision["interval_minutes"],
-    )
-    _decision_severity = (
-        logging.ERROR if kobo_decision["status"] == "error"
-        else logging.WARNING if kobo_decision["status"] == "partial"
-        else logging.INFO
-    )  # Never discard a failed opening in errors-only mode.
-    logger.log(
-        _decision_severity, _decision_format, *_decision_args,
-        extra=_core_journal_record(
-            "KOBO", "automatic backup decision",
-            "warning" if kobo_decision["status"] in {"partial", "error"} else "ok",
-            _decision_format % _decision_args, kobo_decision,
-        ),
-    )
-    # The no-item case has no backup rows or checkpoint. Persist only a
-    # minimal, enumerated decision so kobo-sync-errors can explain *why* on a
-    # fresh CLI process, without relying on volatile Diagnostics history.
-    try:
-        self.storage.metadata_set("kobo_backup_opening_decision_v1", json.dumps({
-            "schema_version": 1,
-            "status": kobo_decision["status"],
-            "persisted_enabled": kobo_decision["persisted_enabled"] is True,
-            "connected_kobo": kobo_decision["connected_kobo"],
-            "eligible_kobo": kobo_decision["eligible_kobo"],
-            "scheduled_kobo": kobo_decision["scheduled_kobo"],
-            "checked_at": int(time.time()),
-        }, sort_keys=True))
-    except Exception:
-        # Optional persistence must neither fail the opening nor reveal a
-        # filesystem, plugin or database exception class in TRACE.
-        logger.warning("TRACE kobo backup decision persistence error code=decision_save_failed")
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
     # The opening inventory covers ALL local identities to keep their rights
@@ -1578,7 +1456,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         sync_mode = "fast"
     return {
         "started_at": started, "finished_at": int(time.time()), "recovered_interrupted": recovered,
-        "expired_realized": expired_before, "identities": summaries, "kobo": kobo_summary, "kobo_decision": kobo_decision, "catalog": catalog,
+        "expired_realized": expired_before, "identities": summaries, "catalog": catalog,
         "sync_mode": sync_mode, "acsm_cleanup": acsm_cleanup,
         "catalog_mirror": catalog_mirror,
     }

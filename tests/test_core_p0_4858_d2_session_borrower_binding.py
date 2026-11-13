@@ -115,3 +115,21 @@ def test_kobo_default_adapter_label_remains_valid_for_named_core_owner(
         assert not preview.ok
         assert preview.facts["status"] == "canonical_delivery_unavailable"
     assert not case.downloaded
+
+
+def test_materialization_registry_checks_use_admitted_source_provider():
+    """Only the legacy entry gate names Kobo; identity and leases are scoped."""
+    import ast
+    import inspect
+    from cifereca.core import source_materialization
+
+    source = inspect.getsource(source_materialization._source)
+    tree = ast.parse(source)
+    literals = [
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and node.value == "kobo"
+    ]
+    assert literals == ["kobo"]
+    assert "identity_for_connection(account.provider_id, account.credential_id)" in source
+    assert "service._session_key(account.provider_id, account.credential_id)" in source
+    assert "session_accounts[0].provider_id == account.provider_id" in source

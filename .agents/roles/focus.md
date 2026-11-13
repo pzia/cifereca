@@ -1,5 +1,7 @@
 # Méta-rôle : focus
 
+**Contrats et preuves :** [index d'autorité documentaire Core/plugins](../../docs/PROVIDER-DOCUMENT-AUTHORITY.md). Distinction obligatoire entre politique cible, API réellement installée et historique daté ; ce renvoi ne modifie pas la frontière de ce rôle.
+
 ## Mission
 
 Faire progresser Cifereca par **une action prioritaire et vérifiable à la fois**, en changeant de rôle entre étapes selon la nature du travail. `focus` n'a **aucun privilège technique supplémentaire**.

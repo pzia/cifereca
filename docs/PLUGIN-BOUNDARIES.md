@@ -1,5 +1,7 @@
 # Frontières Core / plugins
 
+**Position documentaire :** cette page précise les frontières techniques ; consulter l'[index normatif](PROVIDER-DOCUMENT-AUTHORITY.md) pour distinguer modèle métier cible, API actuellement installée et notes historiques.
+
 État documentaire : 7 octobre 2026. Complément opérationnel pour les nouveaux providers : **[PROVIDER-DEVELOPMENT.md](PROVIDER-DEVELOPMENT.md)** (isolation Core, catalogue C / inventaire A / livraison B, bundles multi-établissements, tests, ZIP Browser Recorder).
 
 ## Consigne Diagnostics prioritaire — 25/10/2026

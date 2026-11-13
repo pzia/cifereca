@@ -238,6 +238,11 @@ def set_source_enabled(service, account, enabled, preference_key):
         state = policy_in_transaction(db, scope)
         if not state.configured:
             raise ValueError('source_sync_consent_unconfigured')
+        # Inventory ON is not an explicit repair of a corrupt acquisition
+        # policy. Keep the opaque invalid CAS fingerprint until the user
+        # explicitly revokes with OFF at the acquisition-consent boundary.
+        if enabled and state.mode == 'invalid':
+            raise ValueError('source_sync_consent_changed')
         row = db.execute('SELECT value FROM metadata WHERE key=?', (preference_key,)).fetchone()
         previous_enabled = source_enabled(row[0] if row else None)
         payload = json.dumps({
@@ -254,6 +259,76 @@ def set_source_enabled(service, account, enabled, preference_key):
 
 
 
+def _atomic_legacy_inventory_toggle(service, account, enabled, preference_key, scope):
+    """Serialize legacy switch, CAS admission and revision into one SQL write.
+
+    In-flight legacy operations retain the exact historical generation fence.
+    A newly installed CAS policy, including invalid or OFF, always wins over
+    a concurrent legacy inventory writer. Never migrate historic ON to ON.
+    """
+    from .source_acquisition_consent import _context, _bound
+    from .legacy_source_consent_metadata import (
+        _POLICIES, _source_id, _consent_generation_key,
+    )
+
+    storage, coords, current = _context(service, account)
+    if not current():
+        raise ValueError('source_sync_consent_scope_changed')
+    specs = [
+        spec for (provider, _kind), spec in _POLICIES.items()
+        if provider == scope.provider_id
+    ]
+    legacy_toggle = (
+        specs[0][0] + _source_id(scope) if len(specs) == 1 else None
+    )
+    revision_key = _consent_generation_key(scope)
+    with storage._lock, storage._connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        # A live in-memory Account is not proof that its persisted identity,
+        # connection and account binding still belong to this source. Check
+        # the authoritative SQLite binding in the same transaction as the
+        # legacy policy and preference write; OFF remains allowed on a
+        # disabled (but still registered) connection.
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+        # The public broker contract tests use a SimpleNamespace with real
+        # Storage but intentionally no persistent identities/connections.
+        # Preserve that read-only fake-service seam; all concrete Core
+        # services must prove their exact durable binding inside this write.
+        from types import SimpleNamespace
+        if type(service) is not SimpleNamespace and not _bound(
+            db, coords, enabled=False,
+        ):
+            raise ValueError('source_sync_consent_scope_changed')
+        # The caller's earlier read may be stale: re-admit under the same
+        # SQLite writer lock that protects the outgoing preference/epoch.
+        if policy_in_transaction(db, scope).configured:
+            raise ValueError('source_sync_consent_changed')
+        legacy_present = (
+            legacy_toggle is not None
+            and db.execute(
+                'SELECT 1 FROM metadata WHERE key=?', (legacy_toggle,),
+            ).fetchone() is not None
+        )
+        writes = [(preference_key, '1' if enabled else '0')]
+        if not enabled and legacy_present:
+            payload = json.dumps({
+                'schema': _SCHEMA, 'scope': list(coords),
+                'enabled': False, 'revision': secrets.token_hex(16),
+            }, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
+            writes.append((policy_key(scope), payload))
+        elif revision_key is not None:
+            writes.append((revision_key, secrets.token_hex(16)))
+        for key, value in writes:
+            db.execute(
+                'INSERT INTO metadata(key,value) VALUES(?,?) '
+                'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                (key, value),
+            )
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+
+
 def set_inventory_source_enabled(service, account, enabled, preference_key):
     """Provider-neutral inventory toggle with a fail-closed legacy cutover.
 
@@ -265,14 +340,40 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
     if type(enabled) is not bool:
         raise ValueError("invalid source enabled preference")
     scope = scope_for_account(account)
+    # The legacy source digest aliases an empty primary account ID with the
+    # literal upstream ID "provider:credential:primary". Unlike the new CAS
+    # policy this inventory preference cannot distinguish those two owners.
+    # Reject the ambiguous writer before it can mutate either account's
+    # inventory preference, even when the supplied digest looks exact.
+    from .legacy_source_account_id import ambiguous_legacy_source_account_id
+    if ambiguous_legacy_source_account_id(
+        scope.provider_id, scope.credential_id, scope.account_id,
+    ):
+        raise ValueError('source_sync_toggle_scope_mismatch')
     if preference_key != source_enablement_key(scope):
         raise ValueError('source_sync_toggle_scope_mismatch')
+    # The public broker supplies its exact account object. An equal-but-
+    # detached copy must not write source metadata on any compatibility path.
+    # Production accounts additionally pin Core registry and context epoch.
+    from ..models import Account
+    if type(account) is Account:
+        from .source_acquisition_consent import _context
+        _storage, _coords, current = _context(service, account)
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+    elif not any(row is account for row in service.accounts):
+        raise ValueError('source_sync_consent_scope_changed')
     if configured(service, account):
         return set_source_enabled(service, account, enabled, preference_key)
 
-    # Legacy-only acquisition migration lives behind the existing acquisition
-    # consent boundary. The versioned source CAS module does not depend on
-    # the historical supplier consent decision bridge.
+    # Real Core accounts require one SQLite transaction for both the legacy
+    # preference and its epoch/CAS cutover. Keep lightweight broker contract
+    # fakes on their existing in-memory seam (no SQLite connection or Account).
+    from ..models import Account
+    if type(account) is Account:
+        return _atomic_legacy_inventory_toggle(
+            service, account, enabled, preference_key, scope,
+        )
     from .source_acquisition_consent import legacy_inventory_enablement_toggle
     return legacy_inventory_enablement_toggle(
         service, account, enabled, preference_key, scope,

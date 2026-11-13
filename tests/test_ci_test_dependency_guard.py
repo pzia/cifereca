@@ -113,3 +113,75 @@ def test_pytest_plugins_can_import_changed_test_module(tmp_path, consumer):
 def test_unrelated_plugins_and_dynamic_imports_stay_targeted(tmp_path, consumer):
     root = _sample(tmp_path, consumer)
     assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'importlib.import_module(name)\nPREFIX = "tests."\nname = PREFIX + fixture_name\n',
+    'PREFIX = "tests/"\nmodule = PREFIX + name\nspec_from_file_location("ref", module)\n',
+    'PREFIX = "tests."\nname = PREFIX + fixture_name\n__import__(name)\n',
+    'PREFIX = "tests."\nname = PREFIX + fixture_name\nSourceFileLoader("ref", name)\n',
+])
+def test_split_namespace_variable_dynamic_import_fails_closed(tmp_path, consumer):
+    root = _sample(tmp_path, "def test_unrelated(): pass\n")
+    consumer_path = root / "src/plugins/example/tests/test_dynamic.py"
+    consumer_path.parent.mkdir(parents=True)
+    consumer_path.write_text(consumer, encoding="utf-8")
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'PREFIX = "tests.unrelated"\nmodule = PREFIX + suffix\nimportlib.import_module(module)\n',
+    'PATH = "tests/test_other.py"\nmodule = PATH + suffix\nSourceFileLoader("other", module)\n',
+    '# PREFIX = "tests."\nimportlib.import_module(name)\n',
+])
+def test_split_namespace_unrelated_imports_remain_targeted(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'from importlib import import_module as load\nPREFIX = "tests."\nname = PREFIX + fixture_name\nload(name)\n',
+    'from builtins import __import__ as load\nPREFIX = "tests."\nname = PREFIX + fixture_name\nload(name)\n',
+    'from importlib.util import spec_from_file_location as load\nPREFIX = "tests/"\nname = PREFIX + fixture_name\nload("fixture", name)\n',
+    'from importlib.machinery import SourceFileLoader as Load\nPREFIX = "tests/"\nname = PREFIX + fixture_name\nLoad("fixture", name)\n',
+])
+def test_aliased_dynamic_import_loaders_force_full_selection(tmp_path, consumer):
+    root = _sample(tmp_path, "def test_unrelated(): pass\n")
+    plugin = root / "src/plugins/fake/tests/test_consumer.py"
+    plugin.parent.mkdir(parents=True, exist_ok=True)
+    plugin.write_text(consumer, encoding="utf-8")
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+def test_aliased_dynamic_import_unrelated_namespace_stays_targeted(tmp_path):
+    root = _sample(
+        tmp_path,
+        'from importlib import import_module as load\n'
+        'PREFIX = "tests.unrelated"\n'
+        'name = PREFIX + suffix\n'
+        'load(name)\n',
+    )
+    assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+def test_unrelated_test_path_data_does_not_taint_dynamic_loader(tmp_path):
+    root = _sample(
+        tmp_path,
+        'import importlib.util\n'
+        'SELECTOR = "scripts/ci-select-core-tests.py"\n'
+        'PATH = "tests/test_fixture.py"\n'
+        'spec = importlib.util.spec_from_file_location("selector", SELECTOR)\n',
+    )
+    assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+def test_chained_namespace_assignments_reach_dynamic_loader(tmp_path):
+    root = _sample(
+        tmp_path,
+        'from importlib import import_module as load\n'
+        'PREFIX = "tests."\n'
+        'one = PREFIX + fixture_name\n'
+        'two = one\n'
+        'load(two)\n',
+    )
+    assert has_test_consumers(root, ["tests/test_fixture.py"])

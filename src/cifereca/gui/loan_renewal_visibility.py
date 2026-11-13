@@ -1,4 +1,4 @@
-"""Read-only, non-authorizing Paris physical-loan renewal display policy.
+"""Read-only, non-authorizing physical-loan renewal display policy.
 
 The Core always re-reads the exact loan and applies its own mutation guards.
 """
@@ -8,10 +8,9 @@ from ..models import Loan
 
 
 def paris_physical_renewal_visible(loan: object) -> bool:
-    """Never offer digital or non-Paris renewal, even with CanRenew=True."""
+    """Display a physical loan only when its normalized source says renewable."""
     return (
         type(loan) is Loan
-        and loan.source_provider == "paris"
         and loan.medium == "physical"
         and loan.renewable is True
         and (loan.state is None or (

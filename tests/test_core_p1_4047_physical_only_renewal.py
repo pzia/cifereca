@@ -1,4 +1,4 @@
-"""#4047: digital and non-Paris loans must never reach a renewal mutation.
+"""#4047: only a fresh, explicitly capable source may renew physical loans.
 
 Synthetic Core fixture only: no supplier HTTP or ADEPT call. The public
 facade and private renewal executor must both reject before SQLite claims.
@@ -15,9 +15,8 @@ from tests.test_core_p1_3121_paris_renewal_one_post import loan, setup
 
 @pytest.mark.parametrize(("provider", "branch", "medium"), [
     ("paris", "DILICOM", "digital"),
-    ("bnf-pret", "SYRACUSE", "physical"),
-    ("other.future", "SYRACUSE", "physical"),
     ("paris", "SYRACUSE", "digital"),
+    ("future.synthetic", "SYRACUSE", "digital"),
 ])
 def test_direct_core_and_public_renew_reject_unsupported_loan_before_any_io(
     tmp_path, provider, branch, medium,

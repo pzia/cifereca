@@ -115,3 +115,42 @@ def test_snapshot_has_no_raw_runtime_payload_or_secret_fields():
     assert not hasattr(snapshot, "payload")
     assert not hasattr(snapshot, "stdout")
     assert not hasattr(snapshot, "stderr")
+
+
+
+def test_formats_project_all_declared_recipes_without_provider_names():
+    service = Service({
+        "capabilities": {"download": {
+            "synthetic_recipe": {"formats": ["PDF", "CBZ", "pdf"]},
+            "http": {"formats": ["EPUB"]},
+            "invalid": "untrusted",
+        }},
+    })
+
+    snapshot = RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo")
+
+    assert snapshot.formats == ("pdf", "cbz", "epub")
+    assert snapshot.modes == ()
+
+
+
+def test_runtime_snapshot_uses_normalized_requested_provider_not_fixed_label():
+    service = Service({"available": True, "compatible": True})
+
+    snapshot = RuntimeCapabilitiesBrokerImpl(service).acquisition(" KOBO ")
+
+    assert snapshot.provider_id == "kobo"
+    assert snapshot.available is True
+    assert service.calls == [False]
+
+
+def test_other_runtime_provider_never_inherits_kobo_capabilities():
+    service = Service({
+        "available": True, "compatible": True, "operational": True,
+        "kobo_delegated_available": True,
+    })
+
+    snapshot = RuntimeCapabilitiesBrokerImpl(service).acquisition("synthetic")
+
+    assert snapshot == RuntimeAcquisitionCapabilities(provider_id="synthetic")
+    assert service.calls == []

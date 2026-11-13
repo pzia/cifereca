@@ -201,61 +201,6 @@ def test_invalid_selection_fails_without_storage_or_artifact_access(
     assert "PRIVATE" not in repr(report)
 
 
-def test_cli_preview_selection_is_offline_and_cannot_mutate_adobe(tmp_path, monkeypatch, capsys):
-    db, store = _setup(tmp_path)
-    try:
-        core = SimpleNamespace(
-            storage=store, close=lambda: None,
-            library=SimpleNamespace(
-                connect_configured=lambda: (_ for _ in ()).throw(
-                    AssertionError("preview must not connect to providers")
-                ),
-            ),
-        )
-        monkeypatch.setattr(cli.CiferecaCore, "open", lambda **_: core)
-        assert cli.main([
-            "paris-adept", "preview-resolution",
-            "--loan-id", "paris-loan", "--item-id", "item-1",
-            "--source-reference-id", "source-a",
-            "--acquisition-ref", ACQUISITION_REF,
-        ]) == 0
-        report = json.loads(capsys.readouterr().out)
-        assert report["status"] == "review_candidate"
-        assert report["recorded_adept_profile_id"] == "adobe-a"
-        _no_permission(report)
-        # CLI wraps the original preview in two independent snapshots:
-        # before, preview, after. A hash is diagnostic, never an Adobe grant.
-        assert store.calls == ["rights", "ledger"] * 3
-    finally:
-        db.close()
-
-
-@pytest.mark.parametrize(("loan", "source", "acquisition"), [
-    ("", "source-a", ACQUISITION_REF),
-    (" paris-loan ", "source-a", ACQUISITION_REF),
-    ("paris-loan", " source-a", ACQUISITION_REF),
-    ("paris-loan", "source-a", "not-opaque"),
-    ("paris-loan", "source-a", "f" * 15),
-])
-def test_cli_preview_rejects_invalid_selection_without_opening_core(
-    monkeypatch, loan, source, acquisition,
-):
-    monkeypatch.setattr(
-        cli.CiferecaCore, "open",
-        lambda **_: (_ for _ in ()).throw(
-            AssertionError("bad selection should not open Core")
-        ),
-    )
-    with pytest.raises(SystemExit) as caught:
-        cli.main([
-            "paris-adept", "preview-resolution",
-            "--loan-id", loan, "--item-id", "item-1",
-            "--source-reference-id", source,
-            "--acquisition-ref", acquisition,
-        ])
-    assert caught.value.code == 2
-
-
 def test_two_canonical_branches_of_same_paris_borrower_block_preview(tmp_path):
     db, store = _setup(tmp_path)
     try:
