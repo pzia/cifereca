@@ -370,3 +370,31 @@ def test_paris_failed_anonymous_search_never_reuses_previous_public_notice():
         assert first.public_notices[0].result is not first.results[0]
     finally:
         session.close()
+
+
+def test_foreign_catalog_scope_uses_only_public_searchservice_routes():
+    """#5869/#5806: Core calls foreign sessions using scope=catalog."""
+    paths = []
+    def respond(request):
+        paths.append(request.url.path)
+        assert "SearchService" in request.url.path
+        scenario = json.loads(request.content)["query"]["ScenarioCode"]
+        return httpx.Response(200, json=_response(scenario))
+
+    client = _client(respond)
+    session = ParisProviderSession(
+        credential_id="synthetic", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = client
+    try:
+        assert "catalog" in session.descriptor.search_capabilities.scopes
+        response = session.search_with_response_facets("public", "catalog")
+        assert len(response.results) == len(response.public_notices) == 2
+        assert {row.scenario for row in response.results} == {"CATALOGUE", "EBOOKS"}
+        assert all(n.result.download_url is None for n in response.public_notices)
+        assert len(paths) == 2
+        assert all("SearchService" in path for path in paths)
+    finally:
+        session.close()
