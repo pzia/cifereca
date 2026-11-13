@@ -6,7 +6,7 @@ import pytest
 from cifereca.models import SearchResult
 from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 from cifereca.core.public_search_projection import project_public_search_result
-from cifereca.core.search_orchestration import _public_rows_from_response
+from cifereca.core.search_orchestration import _public_rows_from_response, _configured_search_preferences
 
 
 def row(provider='synthetic-a', credential='source-b', **changes):
@@ -298,5 +298,31 @@ def test_foreign_legacy_response_without_public_notice_never_publishes(
             assert service.search('Progressive Book', force=True) == []
         assert session.response_calls >= 1
         assert session.stream_calls == 0
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-a", "synthetic-b"])
+def test_configured_primary_preference_is_generic_but_never_rights(
+    tmp_path, provider,
+):
+    from tests.test_core043_progress_cache_stats import _service
+    service = _service(tmp_path)
+    try:
+        session = SimpleNamespace(provider_id=provider, credential_id="source-a")
+        service.config.set("identities", [{
+            "id": "alice", "label": "Alice",
+            f"primary_{provider}_connection_id": "source-a",
+        }])
+        hints = _configured_search_preferences(
+            service, service.current_identity, [session],
+        )
+        assert hints == {provider: "source-a"}
+        # A preference merely ranks already-owned credentials; it must not
+        # turn an unrelated session into a publicly attested response.
+        malformed = SimpleNamespace(provider_id="bad/name", credential_id="source-a")
+        assert _configured_search_preferences(
+            service, service.current_identity, [malformed],
+        ) == {}
     finally:
         service.close()
