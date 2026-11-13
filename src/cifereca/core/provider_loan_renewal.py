@@ -1,6 +1,6 @@
-"""Core P1 #3121: explicit Paris renewal with fresh borrower and durable claim.
+"""Explicit source loan renewal with fresh borrower and durable claim.
 
-A user's selected Loan is not permission and its raw Syracuse data may be
+A user's selected Loan is not permission and its raw source data may be
 stale/absent. This path reads one exact connected borrower, validates positive
 eligibility, and records an at-most-once claim *before* RenewLoans. A provider
 HTTP acknowledgement is only submitted, never independently confirmed.
@@ -41,8 +41,7 @@ def _source_key(loan: Loan) -> str | None:
         loan.source_account_id, loan.provider, loan.id,
     )
     if (any(type(part) is not str or not part or len(part) > 1024
-            or chr(0) in part for part in parts)
-            or loan.source_provider != "paris"):
+            or chr(0) in part for part in parts)):
         return None
     payload = json.dumps(parts, separators=(",", ":"), ensure_ascii=False)
     return "loan.renew.v1:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -73,15 +72,8 @@ def _same_positive_loan(candidate: Any, selected: Loan, account: Any) -> bool:
             or candidate.source_account_id != selected.source_account_id
             or candidate.renewable is not True):
         return False
-    # Paris's RenewLoans POST sends loan.raw, not the public Loan DTO.
-    # Without one matching upstream Id and positive CanRenew, NEVER POST.
-    raw = candidate.raw
-    if (type(raw) is not dict or type(raw.get("CanRenew")) is not bool
-            or raw["CanRenew"] is not True):
-        return False
-    raw_id = raw.get("Id") or raw.get("HoldingId")
-    if type(raw_id) is not str or raw_id != candidate.id:
-        return False
+    # Eligibility is normalized by the typed inventory; wire formats and
+    # provider-specific request-target checks stay inside session.renew().
     if (candidate.state is not None and
             (type(candidate.state) is not str
              or candidate.state.casefold() in {
@@ -158,7 +150,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         )
 
     try:
-        # The strict Paris preflight rejects an unknown borrower; never use the
+        # The strict borrower preflight rejects an unknown borrower; never use the
         # currently selected account or another credential as a fallback.
         account, session, _return_key = self._return_loan_identity(loan)
         if (account.identity_id != loan.identity_id
@@ -166,8 +158,8 @@ def renew(self, loan: Loan) -> dict[str, Any]:
                     session, loan.source_credential, loan.source_provider,
                 )):
             return _public("blocked", "loan_scope_unverified")
-        # Loan.state from older Paris models may be None even when CanRenew is
-        # attested upstream. This normalized *scope copy* cannot authorize
+        # Loan.state may be absent even when positive renewal is attested
+        # upstream. This normalized *scope copy* cannot authorize
         # dispatch by itself; a fresh verified loan is mandatory below.
         scope_loan = replace(
             loan, state=loan.state if type(loan.state) is str else "active",
@@ -182,7 +174,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         return _public("blocked", "loan_scope_unverified")
 
     try:
-        # Never trust the GUI/cache's raw JSON. Paris's own normalizing reader
+        # Never trust the GUI/cache's raw JSON. The provider's normalizing reader
         # stamps exact borrower provenance on each loan. Partial sibling
         # upstream results do not invalidate a *positive* exact row.
         inventory = read_loan_inventory(session, account, descriptor=getattr_static(session, "descriptor", None))
@@ -208,7 +200,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
     if len(positives) != 1 or len(same_id) != 1:
         return _public("blocked", "loan_permission_unverified")
 
-    # Only the server's positively renewable original row is sent to Paris.
+    # Only the source's positively renewable original row is sent to its adapter.
     # A fabricated/state-normalized clone carries the exact raw provider
     # request but only the Core-scoped identity; never mutate the cache DTO.
     candidate = replace(
