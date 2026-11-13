@@ -18,6 +18,7 @@ from recommendation_service import compute_recommendations
 
 from tests.test_core_p0_4673_paris_foreign_search import _fixture as paris_setup
 from tests.test_core_p1_4909_numilog_shared_public import setup as numilog_setup
+from cifereca.plugin_api import PublicSearchNotice
 from tests.test_core_p1_4909_kobo_shared_public import setup as kobo_setup
 
 
@@ -30,6 +31,23 @@ class _Metadata:
             {"title": "Seed 2", "author": "Alice",
              "metadata": {"subjects": ["mémoire"]}},
         ]
+
+
+def _attest_public_author(session, *, author="Alice"):
+    """Modify only pre-existing synthetic public notices of the same response.
+
+    Never promote a private row into an attested public notice. The producer
+    must already have furnished an explicit source-bound public projection.
+    """
+    original = session.search_with_response_facets
+
+    def response(*args, **kwargs):
+        envelope = original(*args, **kwargs)
+        return replace(envelope, public_notices=tuple(
+            PublicSearchNotice(replace(notice.result, author=author))
+            for notice in envelope.public_notices
+        ))
+    session.search_with_response_facets = response
 
 
 def _recommend(service, identity):
@@ -67,6 +85,7 @@ def test_shared_bibliography_survives_recommendations_ranking_without_b_rights(
         ]
 
     session.search = matched_search
+    _attest_public_author(session)
 
     def shared_only(rows):
         assert rows
@@ -159,6 +178,7 @@ def test_recommendations_never_rank_foreign_catalogue_after_provider_revocation(
         ]
 
     session.search = matching_search
+    _attest_public_author(session)
 
     def compute():
         partials = []
