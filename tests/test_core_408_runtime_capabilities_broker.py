@@ -212,6 +212,48 @@ def test_attested_producer_property_exception_fails_closed():
     assert service.calls == []
 
 
+def test_attested_provider_formats_use_neutral_field_not_kobo_fallback():
+    service = AttestedService({
+        "provider_id": "synthetic", "provider_attested": True,
+        "available": True,
+        "formats": ["CBZ", "EPUB", "cbz"],
+        "kobo_formats": ["KDRM"],
+    })
+    assert RuntimeCapabilitiesBrokerImpl(service).acquisition("synthetic").formats == (
+        "cbz", "epub",
+    )
+    assert service.calls == []
+
+
+def test_attested_runtime_rejects_untrusted_format_objects_and_bad_declared_values():
+    class Hostile:
+        def __str__(self):
+            raise AssertionError("Do not stringify runtime-controlled objects")
+
+    service = AttestedService({
+        "provider_id": "synthetic", "provider_attested": True,
+        "available": True,
+        "declared_capabilities": [Hostile(), {"untrusted": "dict"}],
+        "software_version": Hostile(),
+        "capabilities": {"download": {
+            "custom": {"formats": [Hostile(), "PDF", "bad token", "PDF", "CBZ"]},
+        }},
+        "formats": [Hostile(), "EPUB", "x" * 500, "bad\\nvalue"],
+    })
+    result = RuntimeCapabilitiesBrokerImpl(service).acquisition("synthetic")
+    assert result.formats == ("pdf", "cbz", "epub")
+    assert result.software_version == ""
+    assert service.calls == []
+
+
+def test_legacy_runtime_keeps_kobo_format_fallback():
+    service = Service({"kobo_formats": ["KEPUB"]})
+    assert RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo").formats == (
+        "kepub",
+    )
+    assert service.calls == [False]
+
+
 def test_attested_producer_must_publish_modes_not_legacy_vendor_flags():
     service = AttestedService({
         "provider_id": "synthetic", "provider_attested": True,
