@@ -229,6 +229,15 @@ def parse_manifest(data: Mapping[str, Any]) -> PluginPackageManifest:
             instantiation = "singleton_public"
         if instantiation not in {"multiple", "per_identity", "singleton_public"}:
             raise ManifestError(f"invalid plugin instantiation mode: {instantiation}")
+        if "runtime_acquisition_service" in row and (
+            type_id != "provider.library"
+            or type(row["runtime_acquisition_service"]) is not str
+            or not row["runtime_acquisition_service"]
+        ):
+            raise ManifestError(
+                f"plugins[{index}].runtime_acquisition_service requires "
+                "a provider.library and a valid runtime plugin ID"
+            )
         plugins.append(PluginDescriptor(
             id=plugin_id,
             type=type_id,
@@ -253,6 +262,11 @@ def parse_manifest(data: Mapping[str, Any]) -> PluginPackageManifest:
             requires_brokers=_string_tuple(row.get("requires_brokers"), f"plugins[{index}].requires_brokers"),
             requires_contracts=_contract_requirements(row.get("requires_contracts"), f"plugins[{index}].requires_contracts"),
             requires_services=_string_tuple(row.get("requires_services"), f"plugins[{index}].requires_services"),
+            runtime_acquisition_service=(
+                _id(row["runtime_acquisition_service"], f"plugins[{index}].runtime_acquisition_service")
+                if "runtime_acquisition_service" in row and type(row["runtime_acquisition_service"]) is str
+                and type_id == "provider.library" else None
+            ),
         ))
     return PluginPackageManifest(package=package, categories=tuple(categories), plugins=tuple(plugins), raw=dict(data))
 
