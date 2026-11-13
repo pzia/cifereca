@@ -184,13 +184,13 @@ def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> 
         if metadata.get("search_provenance") == "known_catalog_stale":
             return "Notice publique connue hors ligne"
         return "Notice publique · disponibilité à vérifier auprès du fournisseur"
-    if item.source_provider == "kobo":
-        # A search notice is an observation, not a durable supplier right.
-        # Only the canonical selected-offer acquisition path may resolve a
-        # delivery for this exact provider account, on explicit consent.
-        if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
-            return "Notice Kobo connue hors ligne"
-        return "Origine Kobo · disponibilité à vérifier auprès du fournisseur"
+    if item.source_collection == "library":
+        # A supplier inventory observation is not a current delivery right,
+        # irrespective of vendor, owned/downloadable flags or upstream label.
+        # The selected-offer and entitlement contracts remain authoritative.
+        if metadata.get("search_provenance") == "known_catalog_stale":
+            return "Notice d’inventaire connue hors ligne"
+        return "Notice d’inventaire · disponibilité à vérifier auprès du fournisseur"
     if self.can_direct_download(item):
         return "Téléchargement direct"
     # An upstream availability status is a descriptive observation.
