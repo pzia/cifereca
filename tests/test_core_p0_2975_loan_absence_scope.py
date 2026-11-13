@@ -301,3 +301,42 @@ def test_opening_scope_helper_accepts_only_exact_positive_row_origin():
     assert not _opening_loans_scoped(account, "default", [_loan("wrong", identity="alex")])
     assert not _opening_loans_scoped(account, "default", [_loan("wrong", credential="other")])
     assert not _opening_loans_scoped(account, "default", [object()])
+
+
+
+@pytest.mark.parametrize("provider,declared_alias,accepted", [
+    ("synthetic-a", "main", True),
+    ("synthetic-a", None, False),
+    ("synthetic-a", "other", False),
+    ("paris", None, False),
+])
+def test_legacy_positive_loan_primary_alias_requires_exact_descriptor(
+    tmp_path, monkeypatch, provider, declared_alias, accepted,
+):
+    from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
+    from cifereca.providers import ProviderConfigurationError
+
+    service = _service(tmp_path)
+    try:
+        account = Account(
+            display_name="Synthetic", unique_id="", is_primary=True,
+            provider_id=provider, credential_id="cred", identity_id="default",
+        )
+        row = _loan("observed", provider=provider, account="main")
+        session = SimpleNamespace(
+            descriptor=ProviderDescriptor(
+                id=provider, display_name="Synthetic", description="Offline",
+                state="ready", capabilities=ProviderCapabilities(loans=True),
+                existing_primary_loan_account_alias=declared_alias,
+            ),
+            capabilities=SimpleNamespace(loans=True),
+            loans=lambda _account: [row],
+        )
+        monkeypatch.setattr(service, "_session_for_account", lambda _account: session)
+        if accepted:
+            assert service._loans_for_account(account, force=True)[0].source_account_id == "main"
+        else:
+            with pytest.raises(ProviderConfigurationError, match="périmètre de compte"):
+                service._loans_for_account(account, force=True)
+    finally:
+        service.close()
