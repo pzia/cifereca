@@ -1,0 +1,24 @@
+name: TEMP AST count 0845e
+on:
+  pull_request:
+    paths:
+      - .github/workflows/temp-ast-count-0845e.yml
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Measure AST and LOC
+        run: |
+          python3 scripts/ci_provider_core_coupling_report.py --json > /tmp/report.json
+          python3 -m scripts.ci_provider_ast_function_worklist --json > /tmp/functions.json
+          python3 - <<'PY'
+          import json,subprocess
+          r=json.load(open('/tmp/report.json'))
+          f=json.load(open('/tmp/functions.json'))
+          print('COUNT_BEGIN')
+          print(json.dumps({'sha':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'loc':r['historical']['dedicated_by_provider'],'named':r['vendor_named_modules_outside_legacy_dedicated_scope'],'unique':f['unique_lines'],'responsibilities':f['unique_lines_by_responsibility'],'providers':f['overlapping_occurrences_by_provider'],'files':f['files'],'functions':f['functions'],'top':f['top_functions'][:16],'errors':f['parse_errors']},sort_keys=True))
+          print('COUNT_END')
+          PY
