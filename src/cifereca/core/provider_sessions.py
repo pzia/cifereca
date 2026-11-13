@@ -486,11 +486,11 @@ def provider_diagnostic_state(self) -> dict[str, Any]:
     A plugin diagnostic_state() can contain arbitrary account identifiers,
     tokens, paths or URLs. Only Core-observed booleans and counts are needed
     for the overview. Fine-grained redacted logs belong to Diagnostics.
+
+    This generic session report deliberately does not probe supplier-specific
+    runtimes. ADEPT's explicit diagnostic contract remains available through
+    LibraryService.kobo_adept_state() when requested by its own consumers.
     """
-    try:
-        adept = self.kobo_adept_state()
-    except Exception:
-        adept = {"available": False, "error": "ADEPT indisponible"}
     sessions = []
     for session in self._sessions.values():
         try:
@@ -511,7 +511,6 @@ def provider_diagnostic_state(self) -> dict[str, Any]:
         "connection_failures": bounded_connection_failures(
             getattr(self, "_connect_failures_public", ()),
         ),
-        "kobo_adept": adept,
     }
 
 
