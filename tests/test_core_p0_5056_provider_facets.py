@@ -51,8 +51,17 @@ def test_builtin_provider_identifiers_are_not_predeclared_in_core():
 def test_absent_well_formed_provider_filter_is_not_a_permission_error():
     # A legitimate but absent supplier is an empty read-only selection.
     # This keeps old bookmarked filters usable without a static supplier list.
-    from cifereca.core.library_local_inspection import LocalInspection, LocalPage
-    from inspect import signature
-    assert 'provider' in signature(LocalInspection.page).parameters
+    from cifereca.core.library_local_inspection import LocalInspection
+    instance = object.__new__(LocalInspection)
+    instance._valid = lambda: True
+    instance._cases = {}
+    instance._case_search = {}
+    instance._limited = False
+    assert instance.page(provider='future-library').cases == ()
+    assert instance.page(provider='kobo').total == 0
     assert _provider('future-library') == 'future-library'
-    assert _provider('bad/path') == 'other'
+    for invalid in ('bad/path', 'SECRET', ''):
+        assert _provider(invalid) == 'other'
+        import pytest
+        with pytest.raises(ValueError, match='invalid_inspection_page'):
+            instance.page(provider=invalid)
