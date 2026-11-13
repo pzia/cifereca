@@ -85,7 +85,7 @@ def test_closed_paris_loans_are_visible_without_inflating_active_rights(tmp_path
         report = session.preflight_manual_link(case.key, file.key)
         assert report.status == "blocked"
         assert report.read_only and not report.attachment_authorized
-        assert {"paris_loan_inactive", "paris_read_only"} <= set(report.codes)
+        assert {"loan_inactive_read_only", "source_not_supported"} <= set(report.codes)
         assert "Numilog" not in report.explanation
         assert session.preview_manual_attachment(
             case.key, file.key,
