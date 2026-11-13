@@ -163,7 +163,7 @@ def test_malformed_runtime_profile_rows_never_gain_binding(payload):
     assert service.storage.bound == {}
 
 
-@pytest.mark.parametrize("mode", ["absent", "ambiguous", "mismatched_id", "unready"])
+@pytest.mark.parametrize("mode", ["absent", "ambiguous", "duplicate_stable_id", "mismatched_id", "unready"])
 def test_provision_does_not_bind_unattested_or_ambiguous_runtime_profile(mode):
     service = Service()
     runtime = service.runtime
@@ -175,6 +175,8 @@ def test_provision_does_not_bind_unattested_or_ambiguous_runtime_profile(mode):
             runtime.rows = []
         elif mode == "ambiguous":
             runtime.rows.append(dict(runtime.rows[0], profile_id="another-stable"))
+        elif mode == "duplicate_stable_id":
+            runtime.rows.append(dict(runtime.rows[0], name="second-name"))
         elif mode == "mismatched_id":
             runtime.rows[0]["profile_id"] = "substituted-profile"
         elif mode == "unready":
