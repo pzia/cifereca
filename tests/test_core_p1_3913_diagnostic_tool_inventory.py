@@ -75,8 +75,7 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
         "doctor", "sync", "list", "run", "acquisition-audit",
         "statistics", "catalog-list", "acquisition-ledger",
         "acquisition-reconcile",
-        "paris-adept", "audit-origin", "audit-canonical", "audit-transaction",
-        "preview-resolution", "bind", "unbind", "plugin", "diagnose",
+        "plugin", "diagnose",
         "config-get", "config-set", "deps-repair", "identity-directory",
         "catalog-scan",
     }
@@ -84,9 +83,9 @@ def test_operator_diagnostics_and_destructive_commands_have_documented_scope():
         "--provider", "--identity", "--credential", "--account-id",
         "--confirm", "--json", "--report", "--verify-files",
         "--trace-export", "--confirm-trace-export", "--output",
-        "--confirm-ownership",
     }
     assert required_commands <= commands
+    assert "paris-adept" not in commands  # P0 #5842: retired without alias
     assert required_options <= arguments
 
     document = DOC.read_text(encoding="utf-8")
@@ -298,6 +297,6 @@ def test_shell_scripts_and_environment_launchers_are_classified():
 
 def test_adept_snapshot_diagnostic_is_not_described_as_server_evidence():
     document = DOC.read_text(encoding="utf-8")
-    assert "validate-resolution-snapshot" in document
+    assert "diagnostic ADEPT multicomptes" in document
     assert "sans mutation ni attestation Adobe serveur" in document
     assert "ticket P0 #3909" in document
