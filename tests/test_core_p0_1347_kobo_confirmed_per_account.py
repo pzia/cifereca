@@ -147,7 +147,7 @@ def test_explicit_dialog_runs_only_chosen_account_and_safe_progress(monkeypatch)
     result = task.work(labels.append)
     assert ("acquire", "kobo-one", "d" * 64) in calls
     assert not any(c[0] == "acquire" and c[1] == "kobo-two" for c in calls)
-    assert labels == ["Téléchargement Kobo · 1 fichier(s) acquis"]
+    assert labels == ["Téléchargement local · 1 fichier(s) acquis"]
     task.done(result)
     assert "1 fichier(s) acquis durablement" in output.subtitle
     assert ("refresh-library", False) in calls
@@ -240,7 +240,7 @@ def test_backend_preparation_failure_is_redacted_before_taskrunner(monkeypatch):
     task = w.runner.tasks[-1]
     with pytest.raises(RuntimeError) as exc:
         task.work()
-    assert str(exc.value) == "Préparation Kobo indisponible"
+    assert str(exc.value) == "Préparation locale indisponible"
     assert exc.value.__suppress_context__
 
 
