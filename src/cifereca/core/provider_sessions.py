@@ -1438,9 +1438,15 @@ def _session_for_source(self, provider_id: str, credential_id: str | None=None) 
         if session is None:
             raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
         return session
-    # Only legacy callers which provided NO credential may resolve a
-    # provider-wide session. This is never used to remap an explicit source.
-    for session in self._sessions.values():
-        if session.provider_id == provider_id and session.connected:
-            return session
+    # Legacy provider-wide lookup is admissible only for one live session.
+    # Choosing the first connected credential would silently redirect work
+    # from another account when concurrent Core callers share a provider.
+    matches = [
+        session for session in self._sessions.values()
+        if session.provider_id == provider_id and session.connected
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ProviderConfigurationError(f"Provider ambigu: {provider_id}")
     raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
