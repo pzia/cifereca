@@ -183,3 +183,41 @@ def test_inventory_candidates_reject_untyped_references_before_profile_read(tmp_
         assert getattr(exc.value, "code", None) == "adept_profile_candidates_invalid"
     finally:
         service.close()
+
+
+def test_same_profile_name_from_other_account_cannot_reuse_inventory_cache(tmp_path):
+    """A runtime inventory result is scoped to the persisted acquisition owner."""
+    service = _service(tmp_path)
+    try:
+        path = _artifact(tmp_path)
+        first = service.storage.acquisition_get(
+            _acquisition(service, path, acquisition_id="acq-a")
+        )
+        second = service.storage.acquisition_get(
+            _acquisition(service, path, acquisition_id="acq-b")
+        )
+        second["credential_id"] = "another-credential"
+        second["account_id"] = "another-account"
+        service.storage.acquisition_put(second)
+        inventories = []
+        def inventory(names):
+            inventories.append(tuple(names))
+            return {"complete": True, "profiles": [{
+                "profile": "origin", "loans": [{
+                    "id": "loan-from-runtime", "local_book": str(path),
+                    "returned": False, "expired": False, "token_present": True,
+                }],
+            }]}
+        service.kobo_profiles = lambda: [
+            {"profile_id": "stable-profile", "name": "origin"},
+        ]
+        service._kobo_adapter = lambda: NS(loan_inventories=inventory)
+        cache = {}
+        for row in (first, second):
+            assert service._reconcile_adept_acquisition(
+                row, cache=cache,
+            )["status"] == "resolved"
+        assert inventories == [("origin",), ("origin",)]
+        assert path.read_bytes() == b"existing-local-artifact"
+    finally:
+        service.close()
