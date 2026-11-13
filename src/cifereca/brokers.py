@@ -118,6 +118,11 @@ class AcquisitionBrokerImpl:
         return tuple(rows)
 
     def acquire(self, item: Any, *, identity_id: str | None = None, account_id: str | None = None):
+        # A mutation must never inherit the currently displayed identity.
+        # Keep the optional ABI parameter, but reject an omitted/invalid
+        # operation scope before any account enumeration or provider call.
+        if type(identity_id) is not str or not identity_id.strip():
+            raise ValueError("identity_id_required")
         eligible = self.eligible_accounts(item, identity_id=identity_id)
         if account_id:
             choices = [row for row in eligible if row.account_id == account_id]
