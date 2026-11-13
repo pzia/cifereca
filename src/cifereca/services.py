@@ -1322,16 +1322,17 @@ class LibraryService:
         # Never silently rewrite a supplier-provided different identity into
         # the selected account. Validate the entire batch before mutation,
         # caching or entitlement persistence; provider exceptions remain closed.
-        from .plugin_api.loan_scope import loan_matches_account
-        descriptor = inspect.getattr_static(session, "descriptor", None)
         if type(rows) is not list or any(
             type(row) is not Loan
             or (row.identity_id is not None and row.identity_id != account.identity_id)
             or row.source_provider != account.provider_id
             or row.source_credential != account.credential_id
             or (row.source_account_id is not None
-                and row.source_account_id != account.unique_id
-                and not loan_matches_account(row, account, descriptor))
+                and row.source_account_id not in (
+                    account.unique_id,
+                    "primary" if account.provider_id == "paris" and not account.unique_id
+                    else account.unique_id,
+                ))
             for row in rows
         ):
             raise ProviderConfigurationError("Inventaire de prêts : périmètre de compte non conforme")
