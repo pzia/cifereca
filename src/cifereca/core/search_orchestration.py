@@ -1773,7 +1773,7 @@ _RESOURCE_FACET_FIELDS = {
 
 
 def _safe_resource_facets(
-    metadata: dict[str, Any], scenario: str, *, provider_id: str = "paris",
+    metadata: dict[str, Any], scenario: str, *, provider_id: str,
 ) -> dict[str, Any]:
     """Persist bounded Resource facets only with exact source-bound evidence.
 
