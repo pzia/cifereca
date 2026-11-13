@@ -1242,33 +1242,20 @@ class RuntimeCapabilitiesBrokerImpl:
             state_for_provider = getattr(self.service, "runtime_acquisition_state", None)
         except Exception:
             return RuntimeAcquisitionCapabilities(provider_id=provider)
-        if callable(state_for_provider):
-            try:
-                state = state_for_provider(provider, force=bool(refresh))
-            except Exception:
-                # A failed producer must not trigger a cross-provider probe,
-                # leak diagnostic payloads or disrupt read-only capability UI.
-                return RuntimeAcquisitionCapabilities(provider_id=provider)
-            if (type(state) is not dict
-                    or state.get("provider_attested") is not True
-                    or type(state.get("provider_id")) is not str
-                    or state["provider_id"] != provider):
-                return RuntimeAcquisitionCapabilities(provider_id=provider)
-        else:
-            # Legacy Kobo-only probe. Never attribute this runtime's state to
-            # another provider while the Core attested producer is absent.
-            if provider != "kobo":
-                return RuntimeAcquisitionCapabilities(provider_id=provider)
-            state = self.service.kobo_adept_state(force=bool(refresh))
-            if not isinstance(state, dict):
-                state = {}
-        caps = state.get("capabilities") if isinstance(state.get("capabilities"), dict) else {}
-        download = caps.get("download") if isinstance(caps.get("download"), dict) else {}
-        raw_declared = state.get("declared_capabilities")
-        declared = {
-            value for value in raw_declared[:64]
-            if type(value) is str and 0 < len(value) <= 80
-        } if type(raw_declared) in (tuple, list) else set()
+        if not callable(state_for_provider):
+            return RuntimeAcquisitionCapabilities(provider_id=provider)
+        try:
+            state = state_for_provider(provider, force=bool(refresh))
+        except Exception:
+            # Absent or failed attested producer: never try a foreign runtime.
+            return RuntimeAcquisitionCapabilities(provider_id=provider)
+        if (type(state) is not dict
+                or state.get("provider_attested") is not True
+                or type(state.get("provider_id")) is not str
+                or state["provider_id"] != provider):
+            return RuntimeAcquisitionCapabilities(provider_id=provider)
+        caps = state.get("capabilities") if type(state.get("capabilities")) is dict else {}
+        download = caps.get("download") if type(caps.get("download")) is dict else {}
 
         modes: list[str] = []
         declared_modes = state.get("modes")
@@ -1280,17 +1267,6 @@ class RuntimeCapabilitiesBrokerImpl:
                         and mode.isascii() and mode.replace("_", "").isalnum()
                         and mode not in modes):
                     modes.append(mode)
-        elif state_for_provider is None or not callable(state_for_provider):
-            # Legacy Kobo probe format until the producer is upgraded.
-            http = download.get("http") if isinstance(download.get("http"), dict) else {}
-            if bool(http.get("available")) or "download_http_epub_pdf" in declared:
-                modes.append("http_plain")
-            if state.get("acsm_available") is True:
-                modes.append("adobe_adept")
-            if state.get("kobo_delegated_available") is True:
-                modes.append("kobo_delegated")
-            if state.get("kobo_kdrm_available") is True:
-                modes.append("kobo_kdrm")
 
         try:
             contract_version = int(state.get("contract_version")) if state.get("contract_version") is not None else None
@@ -1304,11 +1280,7 @@ class RuntimeCapabilitiesBrokerImpl:
             operational=state.get("operational") is True,
             contract_version=contract_version,
             modes=tuple(modes),
-            formats=self._formats(
-                download,
-                (state.get("formats") if callable(state_for_provider)
-                 else state.get("kobo_formats")),
-            ),
+            formats=self._formats(download, state.get("formats")),
             software_version=(
                 state["software_version"][:80]
                 if type(state.get("software_version")) is str else ""
