@@ -11,7 +11,9 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
+import os
 import re
+import tempfile
 import subprocess
 import sys
 from typing import Any
@@ -26,6 +28,7 @@ BUSINESS = {
 }
 LEVELS = {"unit", "contract", "integration", "e2e", "unclassified"}
 _PATH_RE = re.compile(r"^(tests|src/plugins/[a-zA-Z0-9_-]+/tests)/.+\.py$")
+_SUITE_RE = re.compile(r"^(?:tests|src/plugins/[a-zA-Z0-9_-]+/tests)$")
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -160,6 +163,37 @@ def make_report(
     }
 
 
+def write_verified_collection(
+    report: dict[str, Any], output: Path, *, collection_exit_code: int,
+) -> None:
+    """Replace a prior successful inventory only with another complete one.
+
+    Collection imports fixtures and may abort after yielding a subset of
+    items. Never publish that subset as a current baseline, nor overwrite an
+    earlier successful report. Write atomically to avoid truncated JSON.
+    """
+    if collection_exit_code != 0:
+        raise ValueError("collection_incomplete")
+    if not report["items"] or report["count_collected"] != len(report["items"]):
+        raise ValueError("collection_empty_or_inconsistent")
+    if not isinstance(report["source_sha"], str) or not _SHA_RE.fullmatch(report["source_sha"]):
+        raise ValueError("missing_exact_git_head")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    temp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=output.parent,
+            prefix=".cifereca-collection-", suffix=".tmp", delete=False,
+        ) as stream:
+            temp = Path(stream.name)
+            stream.write(payload)
+        os.replace(temp, output)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", required=True, help="tests or src/plugins/<package>/tests")
@@ -167,8 +201,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Use only this manifest instead of the repository manifests.")
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args(argv)
-    if not _PATH_RE.fullmatch(arguments.suite + "/inventory.py"):
-        parser.error("suite must be tests or src/plugins/<package>/tests")
+    if not _SUITE_RE.fullmatch(arguments.suite):
+        parser.error("suite must be exactly tests or src/plugins/<package>/tests")
+    suite_dir = ROOT / arguments.suite
+    if not suite_dir.is_dir() or suite_dir.is_symlink():
+        parser.error("suite must be an existing non-symlink test directory")
     try:
         mapping = (
             load_classifications(arguments.manifest)
@@ -193,12 +230,18 @@ def main(argv: list[str] | None = None) -> int:
     report = make_report(collector.items, mapping, suite=arguments.suite,
                          source_sha=source_sha)
     report["collection_exit_code"] = int(result)
-    # No output masquerading as a successful report on collection errors.
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    try:
+        write_verified_collection(
+            report, arguments.output, collection_exit_code=int(result),
+        )
+    except ValueError as exc:
+        print(
+            f"Collection not published: {exc} "
+            f"(exit={int(result)}, collected={report['count_collected']}). "
+            "An existing successful report was left unchanged.",
+            file=sys.stderr,
+        )
+        return 1
     unclassified = sum(
         row["count"] for row in report["matrix"]
         if "unclassified" in (
