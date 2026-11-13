@@ -41,6 +41,10 @@ def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
     assert files.total == 1
     file = files.cases[0]
 
+    # The retired Kobo pairing engine must no longer retain a private
+    # backup-derived proof map or offer a provider-specific preflight.
+    if provider == "kobo":
+        assert not hasattr(session, "_kobo_right_proofs")
     report = session.preflight_manual_link(right.key, file.key)
     assert report.status == "blocked"
     assert report.codes == (reason,)
