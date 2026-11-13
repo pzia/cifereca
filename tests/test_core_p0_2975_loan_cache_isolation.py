@@ -13,6 +13,7 @@ import pytest
 
 from cifereca.models import Account, Loan
 from cifereca.services import _loan_cache_key
+from cifereca.providers.base import ProviderDescriptor, ProviderCapabilities
 from tests.test_sync_state_contract import _service
 
 
@@ -38,6 +39,11 @@ def _loan(account, item):
 
 def _session(service, credential, loans, calls):
     session = NS(
+        descriptor=ProviderDescriptor(
+            "paris", "Paris", "Synthetic offline source", "ready",
+            ProviderCapabilities(loans=True),
+            existing_primary_loan_account_alias="primary",
+        ),
         capabilities=NS(loans=True),
         loans=lambda account: calls.append((credential, account.identity_id)) or
         list(loans(account)),
