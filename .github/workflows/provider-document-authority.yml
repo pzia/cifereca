@@ -1,0 +1,37 @@
+name: Provider documentation authority
+
+on:
+  pull_request:
+    paths:
+      - "docs/PROVIDER-DOCUMENT-AUTHORITY.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/PROVIDER-DEVELOPMENT.md"
+      - "docs/PLUGIN-BOUNDARIES.md"
+      - "docs/LOGGING-CONTRACT.md"
+      - "docs/DIAGNOSTICS_CANONICAL_JOURNAL.md"
+      - "AGENTS.md"
+      - "README.md"
+      - ".agents/roles/README.md"
+      - ".agents/roles/plugins.md"
+      - "src/plugins/README.md"
+      - "src/plugins/browser-recorder/PROVIDER-DEVELOPMENT.md"
+      - "src/plugins/browser-recorder/browser_recorder_devkit.py"
+      - "src/cifereca/plugin_api/__init__.py"
+      - "src/cifereca/providers/base.py"
+      - "scripts/ci_provider_document_authority.py"
+      - ".github/workflows/provider-document-authority.yml"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  documentation-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate normative links and byte-identical developer kit
+        run: python3 scripts/ci_provider_document_authority.py
