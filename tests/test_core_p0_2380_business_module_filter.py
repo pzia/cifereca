@@ -54,14 +54,13 @@ def test_numilog_session_filter_keeps_plugin_observation_distinct_from_core(
     assert {x["source"] for x in report["events"]} == {"core_events"}
     assert "detail" not in report["events"][0]
     assert "provider_id" not in report["events"][0]
+    # The retired source-specific logger is no longer imported into the
+    # Core event feed. Its raw logfile remains untouched.
     logger_report = query_diagnostic_events(
         diagnostics, source="app_log", log_path=log, module="cifereca_numilog",
     )
-    assert logger_report["total"] == 1
-    log_event = logger_report["events"][0]
-    assert log_event["module"] == "cifereca_numilog"
-    assert "business_module" not in log_event
-    assert "detail" not in log_event
+    assert logger_report["total"] == 0
+    assert logger_report["events"] == []
     assert all("task_ref" not in event for event in report["events"])
     assert "PRIVATE_USER" not in json.dumps(report)
     assert "VERY_PRIVATE" not in json.dumps(report)
@@ -113,6 +112,9 @@ def test_untrusted_trace_never_promotes_business_module(tmp_path, logger, body):
     all_rows = query_diagnostic_events(
         Diagnostics(), source="app_log", log_path=log,
     )["events"]
+    if logger == "cifereca_numilog":
+        assert all_rows == []
+        return
     assert len(all_rows) == 1
     assert "business_module" not in all_rows[0]
     for guessed in ("KOBO", "NUMILOG", "ADEPT", "SYNC", "PLUGIN"):
