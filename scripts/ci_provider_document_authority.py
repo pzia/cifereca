@@ -74,10 +74,12 @@ def check(root: Path = ROOT) -> list[str]:
             continue
         text = candidate.read_text(encoding="utf-8")
         prefix = "\n".join(text.splitlines()[:20])
-        reference = (Path("docs/PROVIDER-DOCUMENT-AUTHORITY.md")
-                     if candidate.parent == root else
-                     Path("../" * len(candidate.parent.relative_to(root).parts))
-                     / "docs/PROVIDER-DOCUMENT-AUTHORITY.md")
+        reference = (
+            Path("PROVIDER-DOCUMENT-AUTHORITY.md")
+            if candidate.parent == index.parent
+            else Path("../" * len(candidate.parent.relative_to(root).parts))
+                 / "docs/PROVIDER-DOCUMENT-AUTHORITY.md"
+        )
         if reference.as_posix() not in prefix:
             errors.append(f"Entrypoint does not prioritize index: {candidate.relative_to(root)}")
     if not source.is_file() or not copy.is_file():
