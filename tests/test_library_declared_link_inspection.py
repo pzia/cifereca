@@ -60,7 +60,7 @@ def test_declaration_choice_is_explicit_distinct_and_token_never_leaves_core(sel
     assert applied['rights_mutations'] == applied['placement_mutations'] == 0
     assert confirm(selected, user_confirmed=True)['status'] == 'unavailable'
     assert len(records(service)) == 1 and not rows(service, 'placements')
-    assert session._manual_undo is None
+    assert not hasattr(session, "_manual_undo")
 
 
 def test_revocation_is_separately_previewed_and_confirmed(selected):
