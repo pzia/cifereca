@@ -761,21 +761,30 @@ def _opening_loan_acquisition_allowed(loan: Loan, *, session: Any = None) -> boo
             and type(loan.source_account_id) is str
         ):
             return False
-        # The primary Paris account can be serialized under its empty
-        # upstream ID or the Core alias "primary", but no other account
-        # may inherit that alias. All other account IDs match exactly.
-        for a in session.accounts:
-            if type(a) is not Account:
-                continue
-            if (a.provider_id != loan.source_provider
-                    or a.credential_id != loan.source_credential
-                    or a.identity_id != loan.identity_id):
-                continue
-            valid_ids = {a.unique_id}
-            if a.is_primary is True and a.unique_id == "":
-                valid_ids.add("primary")
-            if loan.source_account_id in valid_ids:
-                return True
+        # Only the installed descriptor may attest an existing borrower's
+        # upstream alias. A provider name, primary flag or observed row is
+        # never enough to grant opening acquisition.
+        from inspect import getattr_static
+        from ..providers.base import ProviderDescriptor
+        from ..plugin_api.loan_inventory import (
+            LoanInventoryScope, _loan_matches_scope,
+        )
+        descriptor = getattr_static(session, "descriptor", None)
+        if descriptor is not None and type(descriptor) is not ProviderDescriptor:
+            return False
+        matching = []
+        for account in session.accounts:
+            if (type(account) is Account
+                    and account.provider_id == loan.source_provider
+                    and account.credential_id == loan.source_credential
+                    and account.identity_id == loan.identity_id):
+                scope = LoanInventoryScope.for_account(
+                    account, descriptor=descriptor,
+                )
+                if _loan_matches_scope(loan, scope):
+                    matching.append(account)
+        # An ambiguous account list cannot select an acquiring borrower.
+        return len(matching) == 1
     except Exception:
         return False
     return False
