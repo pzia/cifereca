@@ -10,6 +10,7 @@ from dataclasses import asdict, replace
 import pytest
 
 from tests.test_core043_progress_cache_stats import _FakeSession, _service
+from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 
 
 class _ParisCatalogue(_FakeSession):
@@ -32,6 +33,17 @@ class _ParisCatalogue(_FakeSession):
             friendly_url="https://private.invalid/profile/PRIVATE",
             revision_id="PRIVATE", metadata={"account": "PRIVATE", "language": "fr"},
         ) for row in super().search(query, scope, **kwargs)]
+
+    def search_with_response_facets(self, query, scope, *, field, content_types):
+        rows = self.search(query, scope, field=field, content_types=content_types)
+        public = tuple(PublicSearchNotice(replace(
+            row, owned=False, downloadable=False, download_url=None,
+            source_account_id=None, metadata={"language": "fr"},
+            thumbnail_url=None, friendly_url=None, revision_id=None,
+        )) for row in rows if row.source_collection == "catalog")
+        return ProviderSearchResponse(rows, public_notices=public)
+
+
 
 
 def _fixture(tmp_path, monkeypatch):
@@ -282,7 +294,7 @@ def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
     tmp_path, monkeypatch, progressive,
 ):
     """The Core identity selector is not an ACL for catalogue language/facets."""
-    from cifereca.core.search_orchestration import _shared_paris_catalogue_row
+    from cifereca.core.public_search_projection import project_public_search_result
     service, _, bob, _, _ = _fixture(tmp_path, monkeypatch)
     service._sessions = {"bob": bob}
     try:
@@ -313,7 +325,13 @@ def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
                 "subjects": ["Science-fiction", "Histoire"],
             },
         )
-        qualified = _shared_paris_catalogue_row(original, bob)
+        public = replace(original, owned=False, downloadable=False, download_url=None,
+                         source_account_id=None, metadata={"language": "fr"},
+                         thumbnail_url=None, friendly_url=None, revision_id=None)
+        qualified = project_public_search_result(
+            ProviderSearchResponse([original], public_notices=(PublicSearchNotice(public),)),
+            original, provider_id="paris", credential_id=bob.credential_id,
+        )
         assert qualified is not None
         assert qualified.metadata == {
             "catalogue_access": "shared_read_only",
@@ -343,7 +361,7 @@ def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
     "bad\x00value",  # NUL is not bibliographic data
 ])
 def test_shared_paris_bibliography_rejects_non_bibliographic_values(unsafe):
-    from cifereca.core.search_orchestration import _shared_paris_catalogue_bibliography
+    from cifereca.core.public_search_projection import project_public_search_result
     from tests.test_core043_progress_cache_stats import _FakeSession
     session = _FakeSession("paris")
     source = replace(
@@ -352,5 +370,10 @@ def test_shared_paris_bibliography_rejects_non_bibliographic_values(unsafe):
         scenario="EBOOKS", docbase="DILICOM",
         metadata={"language": unsafe, "series": unsafe, "account": "SECRET"},
     )
-    metadata = _shared_paris_catalogue_bibliography(source)
-    assert metadata == {"catalogue_access": "shared_read_only"}
+    invalid = replace(source, owned=False, downloadable=False, download_url=None,
+                      source_account_id=None, metadata={"subject": unsafe})
+    projected = project_public_search_result(
+        ProviderSearchResponse([source], public_notices=(PublicSearchNotice(invalid),)),
+        source, provider_id="paris", credential_id=source.source_credential,
+    )
+    assert projected is None
