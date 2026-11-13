@@ -105,11 +105,3 @@ jobs:
           print(f"- Unclassified cases: {unknown}")
           print("- Executed/passed/failed: not measured (collection only)")
           PY
-      - name: Upload verified JSON artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-collection-${{ inputs.suite }}-${{ github.sha }}
-          path: ${{ runner.temp }}/collection-evidence/inventory.json
-          retention-days: 30
-          if-no-files-found: error
