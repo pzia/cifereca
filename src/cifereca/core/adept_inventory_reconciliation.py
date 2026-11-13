@@ -21,10 +21,9 @@ def reconcile_adept_acquisition(
     if not callable(inventory_fn):
         raise AttentionRequired("Inventaire ADEPT indisponible : capacité de consultation absente.", code="adept_inventory_unavailable")
     cache = cache if cache is not None else {}
-    if "profiles" not in cache:
-        cache["profiles"] = self.kobo_profiles()
-    profiles = cache["profiles"]
-    candidates = self._adept_inventory_candidates(row, profiles, profile_references)
+    candidates = self.adept_inventory_candidates_for_acquisition(
+        row, profile_references=profile_references, cache=cache,
+    )
     if not candidates:
         return {"status": "profile_missing", "acquisition_id": row["acquisition_id"]}
     names = tuple(self._adept_profile_name(p) for p in candidates)

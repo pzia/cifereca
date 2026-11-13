@@ -135,3 +135,51 @@ def test_missing_inventory_capability_fails_closed_without_mutating_ledger(tmp_p
         assert artifact.read_bytes() == b"existing-local-artifact"
     finally:
         service.close()
+
+ 
+def test_inventory_candidate_scope_never_uses_another_identity_or_ambient_selection(tmp_path):
+    """Resolve exact persisted identity/profile and cache per scope."""
+    service = _service(tmp_path)
+    try:
+        service.current_identity = None
+        identity = service.identity_by_id("default")
+        assert identity is not None
+        row = {
+            "identity_id": "default",
+            "metadata": {"adept_binding": {"adept_profile_id": "stable-profile"}},
+        }
+        observed = []
+        service._adept_profile_row = lambda ref: (
+            observed.append(ref) or {"profile_id": ref, "name": "origin"}
+        )
+        cache = {}
+        first = service.adept_inventory_candidates_for_acquisition(row, cache=cache)
+        assert first == [{"profile_id": "stable-profile", "name": "origin"}]
+        assert service.adept_inventory_candidates_for_acquisition(row, cache=cache) == first
+        assert observed == ["stable-profile"]
+        other_account = dict(row, credential_id="another-credential")
+        assert service.adept_inventory_candidates_for_acquisition(
+            other_account, cache=cache,
+        ) == first
+        assert observed == ["stable-profile", "stable-profile"]
+        foreign = dict(row, identity_id="nonexistent-identity")
+        with pytest.raises(Exception) as exc:
+            service.adept_inventory_candidates_for_acquisition(foreign, cache=cache)
+        assert getattr(exc.value, "code", None) == "adept_identity_unproven"
+        assert observed == ["stable-profile", "stable-profile"]
+    finally:
+        service.close()
+
+
+def test_inventory_candidates_reject_untyped_references_before_profile_read(tmp_path):
+    service = _service(tmp_path)
+    try:
+        service._adept_profile_row = lambda *_: pytest.fail("bad reference must not read profiles")
+        row = {"identity_id": "default", "metadata": {"adept_binding": {}}}
+        with pytest.raises(Exception) as exc:
+            service.adept_inventory_candidates_for_acquisition(
+                row, profile_references=[{"untrusted": "profile"}],
+            )
+        assert getattr(exc.value, "code", None) == "adept_profile_candidates_invalid"
+    finally:
+        service.close()

@@ -2382,6 +2382,58 @@ class LibraryService:
             match_local_book=match_local_book, AttentionRequired=AttentionRequired, time=time,
         )
 
+    def adept_inventory_candidates_for_acquisition(
+        self, row, *, profile_references=None, cache=None,
+    ):
+        """Resolve only the ADEPT profiles referenced by one persisted acquisition.
+
+        The exact local identity and profile references are the authority for
+        this read. A foreign UI selection never supplies candidate profiles.
+        This does not attest the runtime inventory or grant a DRM action.
+        """
+        if type(row) is not dict or type(row.get("identity_id")) is not str:
+            raise AttentionRequired("Identité ADEPT absente.", code="adept_identity_unproven")
+        identity_id = row["identity_id"]
+        if not identity_id or self.identity_by_id(identity_id) is None:
+            raise AttentionRequired("Identité ADEPT inconnue.", code="adept_identity_unproven")
+        metadata = row.get("metadata") or {}
+        if type(metadata) is not dict:
+            raise AttentionRequired("Provenance ADEPT invalide.", code="adept_profile_candidates_invalid")
+        binding = metadata.get("adept_binding") or {}
+        if type(binding) is not dict:
+            raise AttentionRequired("Provenance ADEPT invalide.", code="adept_profile_candidates_invalid")
+        origin = binding.get("adept_profile_id")
+        if origin:
+            refs = (origin,)
+        elif profile_references is not None:
+            refs = profile_references
+        else:
+            refs = (self.storage.adept_profile_binding_get("identity", identity_id),)
+        if (type(refs) not in (tuple, list) or len(refs) > 8
+                or any(ref is not None and type(ref) is not str for ref in refs)):
+            raise AttentionRequired("Profils ADEPT invalides.", code="adept_profile_candidates_invalid")
+        unique_refs = tuple(dict.fromkeys(ref for ref in refs if ref))
+        # A batch cache must not reuse a profile across another account,
+        # credential or provider, even when the identity/profile name matches.
+        scope = tuple(row.get(field) for field in (
+            "provider_id", "credential_id", "account_id",
+        ))
+        if any(value is not None and type(value) is not str for value in scope):
+            raise AttentionRequired("Provenance ADEPT invalide.", code="adept_profile_candidates_invalid")
+        key = ("adept_inventory_candidates", identity_id, scope, unique_refs)
+        if type(cache) is dict and key in cache:
+            return list(cache[key])
+        rows = []
+        for ref in unique_refs:
+            profile = self._adept_profile_row(ref)
+            if type(profile) is not dict:
+                raise AttentionRequired("Profil ADEPT absent ou ambigu.", code="adept_origin_profile_missing")
+            rows.append(profile)
+        candidates = self._adept_inventory_candidates(row, rows, profile_references)
+        if type(cache) is dict:
+            cache[key] = list(candidates)
+        return candidates
+
     def adept_loan_choices(self, acquisition_id, *, profile_references=None):
         row = self.storage.acquisition_get(acquisition_id)
         if not row or row.get("status") != "complete":
