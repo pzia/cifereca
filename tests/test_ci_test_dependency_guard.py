@@ -162,3 +162,26 @@ def test_aliased_dynamic_import_unrelated_namespace_stays_targeted(tmp_path):
         'load(name)\n',
     )
     assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+def test_unrelated_test_path_data_does_not_taint_dynamic_loader(tmp_path):
+    root = _sample(
+        tmp_path,
+        'import importlib.util\n'
+        'SELECTOR = "scripts/ci-select-core-tests.py"\n'
+        'PATH = "tests/test_fixture.py"\n'
+        'spec = importlib.util.spec_from_file_location("selector", SELECTOR)\n',
+    )
+    assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+def test_chained_namespace_assignments_reach_dynamic_loader(tmp_path):
+    root = _sample(
+        tmp_path,
+        'from importlib import import_module as load\n'
+        'PREFIX = "tests."\n'
+        'one = PREFIX + fixture_name\n'
+        'two = one\n'
+        'load(two)\n',
+    )
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
