@@ -1,0 +1,29 @@
+name: TEMP CLI AST attribution 13Nov
+on:
+  pull_request:
+    paths:
+      - .github/workflows/temp-cli-ast-attribution-13nov.yml
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Attribute AST to CLI statements
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.ci_provider_ast_function_worklist import inventory
+          from scripts.ci_provider_core_coupling_inventory import inspect_source
+          from scripts.ci_provider_core_coupling_report import _installed_provider_aliases, _SIGNAL_KINDS
+          result=inventory(Path("."))
+          lines=Path("src/cifereca/cli.py").read_text().splitlines()
+          entries=[dict(entry,source=lines[entry["line"]-1].strip()) for entry in result["entries"] if entry["path"]=="src/cifereca/cli.py"]
+          print("CLI_AST_BEGIN")
+          print(json.dumps({"total":result["unique_lines"],"cli":entries},ensure_ascii=False))
+          print("CLI_AST_END")
+          PY
