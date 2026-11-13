@@ -25,22 +25,14 @@ def _fixture(tmp_path, monkeypatch, provider, cover):
         service, session, _ = setup_numilog(tmp_path, monkeypatch)
         run = run_numilog
         collection = "public_catalog"
-    original = session.search
-
-    def search(*args, **kwargs):
-        return [
-            replace(row, thumbnail_url=cover)
-            if row.source_collection == collection else row
-            for row in original(*args, **kwargs)
-        ]
-
-    session.search = search
+    # The public notice v1 explicitly excludes even safe cover URLs;
+    # changing a private search row must not create a public image.
     return service, session, run
 
 
 @pytest.mark.parametrize("provider", ["kobo", "numilog"])
 @pytest.mark.parametrize("progressive", [False, True])
-def test_cross_profile_public_cover_survives_search_cache_and_identity_roundtrip(
+def test_cross_profile_public_cover_is_not_exported_across_cache_or_identity_roundtrip(
     tmp_path, monkeypatch, provider, progressive,
 ):
     cover = "https://cdn.example.com/catalogue/books/cover.jpg"
@@ -49,7 +41,7 @@ def test_cross_profile_public_cover_survives_search_cache_and_identity_roundtrip
         shared = run(service, progressive, force=True)
         assert len(shared) == 1
         row = shared[0]
-        assert row.thumbnail_url == cover
+        assert row.thumbnail_url is None  # v1 exports no URLs
         assert row.source_provider == provider
         assert row.owned is False and row.downloadable is False
         assert row.download_url is None and row.friendly_url is None
@@ -62,7 +54,7 @@ def test_cross_profile_public_cover_survives_search_cache_and_identity_roundtrip
         own = run(service, progressive, force=False)
         assert len(own) == 1 and own[0].owned is True
         service.select_identity("alice")
-        assert run(service, progressive, force=False)[0].thumbnail_url == cover
+        assert run(service, progressive, force=False)[0].thumbnail_url is None
         assert session.private_calls >= 1
     finally:
         service.close()
