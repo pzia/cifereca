@@ -40,6 +40,7 @@ def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
     files = session.unconfirmed_files(query="code-5", limit=5)
     assert files.total == 1
     file = files.cases[0]
+    assert right.key not in session._manual_right_proofs
 
     # The retired Kobo pairing engine must no longer retain a private
     # backup-derived proof map or offer a provider-specific preflight.

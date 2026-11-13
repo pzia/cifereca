@@ -876,27 +876,26 @@ class LocalInspection:
                     and (scope[1] != 'bnf-pret' or bnf_exact_loan)
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
-            is_numilog_right = right_provider == 'numilog'
-            self._manual_right_proofs[f'right:{index}'] = {
-                'attested': (
-                    is_numilog_right
-                    and right.get('attested_source') == 'numilog.authenticated_library'
-                    and right.get('state') == 'active'
-                    and right.get('entitlement_type') == 'owned'
-                    and scope is not None
-                ),
-                'ambiguous': (
-                    scope is None or scope_counts[scope] != 1
-                    or (is_numilog_right
-                        and edition_collision_counts.get(
-                            (identity_id, right.get('provider_id'),
-                             right.get('item_id')), 0) != 1)
-                ),
-                'ledger_conflict': len(own_ledger_indices) != len(ledger_indices),
-                'ledger_count': len(own_ledger),
-                'ledger_complete': ledger_ok,
-                'signature': right_signature,
-            }
+            # Only Numilog's diagnostic preflight consumes private receipt
+            # proofs. Other sources use a separate, read-only report.
+            if right_provider == 'numilog':
+                self._manual_right_proofs[f'right:{index}'] = {
+                    'attested': (
+                        right.get('attested_source') == 'numilog.authenticated_library'
+                        and right.get('state') == 'active'
+                        and right.get('entitlement_type') == 'owned'
+                        and scope is not None
+                    ),
+                    'ambiguous': (
+                        scope is None or scope_counts[scope] != 1
+                        or edition_collision_counts.get(
+                            (identity_id, right_provider, right_item), 0) != 1
+                    ),
+                    'ledger_conflict': len(own_ledger_indices) != len(ledger_indices),
+                    'ledger_count': len(own_ledger),
+                    'ledger_complete': ledger_ok,
+                    'signature': right_signature,
+                }
             why = _right_explanation(
                 right, own_ledger, by_edition.get((right_provider, right_item), ()),
                 by_artifact, by_path, incomplete,
