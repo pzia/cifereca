@@ -87,7 +87,7 @@ def test_small_kobo_identity_nine_rights_five_hints_never_authorizes_placement(t
         reviewed = session.preflight_manual_link(rights.cases[0].key, file.key)
         assert reviewed.status == "blocked"
         assert reviewed.read_only and reviewed.attachment_authorized is False
-        assert "kobo_separate_recovery" in reviewed.codes
+        assert "source_not_supported" in reviewed.codes
         assert session.preview_manual_attachment(
             rights.cases[0].key, file.key,
         ) == {"status": "unavailable", "read_only": True}
